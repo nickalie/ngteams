@@ -147,6 +147,7 @@ use crate::{presence, presence_badge};
 
 pub mod channel;
 mod events;
+pub mod reactors;
 mod saved;
 
 use channel::{ChannelLooks, THREAD_EVENT};
@@ -522,8 +523,15 @@ pub struct MeetingEnd {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReactionCount {
     pub key: String,
-    pub count: usize,
+    pub users: Vec<String>,
     pub mine: bool,
+}
+
+impl ReactionCount {
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.users.len()
+    }
 }
 
 /// A message's row.
@@ -858,11 +866,12 @@ pub fn count_reactions(reactions: &[Reaction], me: &str) -> Vec<ReactionCount> {
     keys.sort_by_key(|&(key, at)| (at, key));
     keys.into_iter()
         .map(|(key, _)| {
-            let users: Vec<&Reaction> = reactions.iter().filter(|reaction| reaction.key == key).collect();
+            let mut given: Vec<&Reaction> = reactions.iter().filter(|reaction| reaction.key == key).collect();
+            given.sort_by_key(|reaction| (reaction.time, reaction.user.as_str()));
             ReactionCount {
                 key: key.to_owned(),
-                count: users.len(),
-                mine: users.iter().any(|reaction| reaction.user == me),
+                users: given.iter().map(|reaction| reaction.user.clone()).collect(),
+                mine: given.iter().any(|reaction| reaction.user == me),
             }
         })
         .collect()
@@ -1032,6 +1041,7 @@ pub struct ChatView {
     quick: Vec<String>,
     /// How many reactions of the account's the rows held when its most used were last asked for.
     own_reactions: Option<usize>,
+    reactors: reactors::Reactors,
     /// The text selected with the mouse, in any of the messages ([`crate::selection`]).
     text_selection: TextSelection,
     /// The message whose more-options menu is open.
@@ -1216,6 +1226,7 @@ impl ChatView {
             quick_bar: Rc::default(),
             quick: quick_reactions(&[]),
             own_reactions: None,
+            reactors: reactors::Reactors::default(),
             text_selection: TextSelection::default(),
             options: None,
             options_at: Rc::default(),
@@ -2521,6 +2532,11 @@ impl ChatView {
             }
         }
         self.messages = messages;
+        originals.extend(
+            self.reactions
+                .values()
+                .flat_map(|(_, reactions)| reactions.iter().map(|reaction| reaction.user.clone())),
+        );
         self.ask_people(originals, true, cx);
         let typing: Vec<String> = self
             .models
@@ -3530,7 +3546,7 @@ impl ChatView {
                 bar,
                 forward,
             ))
-            .children(footer_line(item, mark, palette, cx))
+            .children(footer_line(item, mark, &self.reactors, palette, cx))
             .children(item.replies.as_ref().map(|replies| {
                 let post = item.id.clone();
                 let open: forwarded::OnOpen = Box::new(cx.listener(move |_, _: &gpui::ClickEvent, _, cx| {
@@ -4974,6 +4990,7 @@ fn muted(text: &'static str, palette: Palette) -> AnyElement {
 fn footer_line(
     item: &MessageItem,
     mark: Option<AnyElement>,
+    reactors: &reactors::Reactors,
     palette: Palette,
     cx: &mut Context<ChatView>,
 ) -> Option<AnyElement> {
@@ -4985,7 +5002,7 @@ fn footer_line(
     let reactions = item
         .reactions
         .iter()
-        .map(|reaction| reaction_pill(item, reaction, palette, cx))
+        .map(|reaction| reaction_pill(item, reaction, reactors.measure(&item.id, &reaction.key), palette, cx))
         .collect::<Vec<_>>();
     let add = (!item.reactions.is_empty() && item.actions().contains(&MessageAction::React)).then(|| {
         let message = item.id.clone();
@@ -5024,17 +5041,22 @@ fn footer_line(
 fn reaction_pill(
     item: &MessageItem,
     reaction: &ReactionCount,
+    measure: Option<AnyElement>,
     palette: Palette,
     cx: &mut Context<ChatView>,
 ) -> gpui::Stateful<gpui::Div> {
     let key = reaction.key.clone();
     let (message, toggled) = (item.id.clone(), reaction.key.clone());
-    let described = SharedString::from(reactions::description(&key).to_owned());
+    let (hovered_message, hovered_key) = (item.id.clone(), reaction.key.clone());
     let chip = pill(ElementId::Name(format!("reaction-{}-{key}", item.id).into()), palette)
         .debug_selector(move || format!("reaction-{key}"))
-        .tooltip(move |window, cx| Tooltip::new(described.clone()).build(window, cx))
+        .relative()
+        .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+            this.hover_pill(&hovered_message, &hovered_key, *hovered, cx);
+        }))
+        .children(measure)
         .child(reactions::emoji(&reaction.key, px(CHIP_EMOJI)))
-        .children((reaction.count > 1).then(|| reaction.count.to_string()));
+        .children((reaction.count() > 1).then(|| reaction.count().to_string()));
     // a chip of a reaction Teams offers sets or takes back the account's own; any other key only shows
     let chip = if reactions::catalog().offers(&reaction.key) {
         chip.on_click(cx.listener(move |this, _, _, cx| this.toggle_reaction(&message, &toggled, cx)))
@@ -5183,6 +5205,7 @@ impl Render for ChatView {
         let more = self.more_overlay();
         let options = self.options_overlay(palette, window, cx);
         let selection_menu = self.selection_menu(palette, window, cx);
+        let reactors = self.reactors_card(palette, cx);
         let rows = list(
             self.list.clone(),
             cx.processor(|this: &mut Self, index: usize, _window, cx| this.render_item(index, cx)),
@@ -5258,6 +5281,7 @@ impl Render for ChatView {
             .children(self.confirmation(palette, cx))
             .child(self.compose.clone())
             .children(more)
+            .children(reactors)
             .children(options)
             .children(selection_menu)
             .children((self.file_drop == FileDrop::Hovering).then(|| file_drop_overlay(palette)))

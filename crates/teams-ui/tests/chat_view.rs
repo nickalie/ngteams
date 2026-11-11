@@ -36,6 +36,8 @@ mod people;
 // a click on a reply's quote goes to the message it quotes
 #[path = "chat_view/quote_jump.rs"]
 mod quote_jump;
+#[path = "chat_view/reactors.rs"]
+mod reactors;
 // a message's picture opened in the picture viewer's window
 #[path = "chat_view/viewer.rs"]
 mod viewer;
@@ -327,12 +329,12 @@ fn the_messages_show_oldest_first_with_their_markers_reactions_and_events() {
         [
             ReactionCount {
                 key: "like".to_owned(),
-                count: 2,
+                users: vec![LAB_B.to_owned(), LAB_A.to_owned()],
                 mine: true,
             },
             ReactionCount {
                 key: "heart".to_owned(),
-                count: 1,
+                users: vec![LAB_B.to_owned()],
                 mine: false,
             },
         ]
@@ -576,11 +578,16 @@ fn reactions_count_by_key_in_the_order_first_given() {
     );
     let shown: Vec<(&str, usize, bool)> = counted
         .iter()
-        .map(|reaction| (reaction.key.as_str(), reaction.count, reaction.mine))
+        .map(|reaction| (reaction.key.as_str(), reaction.count(), reaction.mine))
         .collect();
     assert_eq!(
         shown,
         [("like", 2, false), ("custom-key", 1, true), ("surprised", 1, false)]
+    );
+    assert_eq!(
+        counted[0].users,
+        [LAB_B, "8:orgid:00000000-0000-4000-8000-00000000000c"],
+        "who reacted, in the order they did"
     );
     assert_eq!(reaction_label("like"), "👍");
     assert_eq!(
