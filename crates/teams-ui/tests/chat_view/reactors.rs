@@ -111,6 +111,57 @@ fn the_account_itself_is_asked_for_by_name_as_teams_lists_it() {
     assert!(held.contains(&LAB_A.to_owned()), "{held:?}");
 }
 
+fn focus(view: &Entity<ChatView>, cx: &mut VisualTestContext) -> Option<String> {
+    cx.update(|_, cx| view.read(cx).reaction_focus().map(|(_, key)| key.to_owned()))
+}
+
+fn press(cx: &mut VisualTestContext, keys: &str) {
+    cx.simulate_keystrokes(keys);
+    draw(cx);
+}
+
+#[test]
+fn the_keyboard_goes_through_the_selected_message_s_reactions_shows_who_and_space_reacts() {
+    let rig = varied_chat();
+    let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    cx.update(|window, cx| view.read(cx).focus_handle().clone().focus(window, cx));
+    view.update(cx, |view, cx| view.select(Some("101".to_owned()), cx));
+    draw(cx);
+    press(cx, "right");
+    assert_eq!(focus(&view, cx).as_deref(), Some("like"));
+    assert!(bounds(cx, "reactors-like").is_some(), "shown at once");
+    press(cx, "right");
+    press(cx, "right");
+    assert_eq!(focus(&view, cx).as_deref(), Some("heart"), "the last stays");
+    assert!(bounds(cx, "reactors-heart").is_some() && bounds(cx, "reactors-like").is_none());
+    wait(cx, GRACE * 4);
+    assert!(bounds(cx, "reactors-heart").is_some(), "no pointer to leave it");
+    press(cx, "space");
+    assert_eq!(
+        *rig.core.actions.lock().unwrap(),
+        [teams_core::Action::React {
+            conversation: super::AB.to_owned(),
+            message_id: "101".to_owned(),
+            key: "heart".to_owned(),
+        }]
+    );
+    press(cx, "left");
+    press(cx, "left");
+    assert_eq!(focus(&view, cx), None, "left of the first leaves the reactions");
+    press(cx, "right");
+    press(cx, "escape");
+    assert_eq!(focus(&view, cx), None);
+    assert_eq!(
+        cx.update(|_, cx| view.read(cx).selected().map(str::to_owned))
+            .as_deref(),
+        Some("101"),
+        "escape closes the card first"
+    );
+    press(cx, "right");
+    press(cx, "up");
+    assert_eq!(focus(&view, cx), None, "another message selected");
+}
+
 #[test]
 fn shown_on_request_at_once_and_none_for_a_key_nobody_set() {
     let rig = varied_chat();

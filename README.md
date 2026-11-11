@@ -169,6 +169,7 @@ To add another account, press **+** under your avatar on the left.
 | <kbd>Ctrl</kbd>+<kbd>4</kbd> | Open the calendar |
 | <kbd>Enter</kbd> / <kbd>Shift</kbd>+<kbd>Enter</kbd> | Send / new line |
 | <kbd>R</kbd>, <kbd>A</kbd>, <kbd>E</kbd> on a selected message | Reply, react, edit |
+| <kbd>Left</kbd> / <kbd>Right</kbd>, <kbd>Space</kbd> on a selected message | See who reacted, add or remove your reaction |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> | Mute or unmute in a call |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> | Turn the camera on or off |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> | Raise or lower your hand |

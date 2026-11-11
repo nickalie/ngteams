@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, AsyncApp, Bounds, Context, ElementId, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Task, anchored, deferred, div, px, rgb,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Task, actions, anchored, deferred, div, px, rgb,
 };
 use gpui_component::Size;
 
@@ -20,10 +20,19 @@ const MIN_WIDTH: f32 = 200.0;
 const MAX_WIDTH: f32 = 320.0;
 const MAX_HEIGHT: f32 = 320.0;
 
+actions!(teams_ui, [NextReaction, PreviousReaction, PressReaction]);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Opened {
+    ByPointer,
+    ByKeys,
+}
+
 struct Hovered {
     message: String,
     key: String,
     shown: bool,
+    by: Opened,
     on_pill: bool,
     on_card: bool,
     wait: Option<Task<()>>,
@@ -45,6 +54,31 @@ impl Reactors {
     pub(super) fn measure(&self, message: &str, key: &str) -> Option<AnyElement> {
         self.is(message, key).then(|| measured(&self.at))
     }
+
+    pub(super) fn focused(&self, message: &str, key: &str) -> bool {
+        self.is(message, key)
+            && self
+                .hovered
+                .as_ref()
+                .is_some_and(|hovered| hovered.by == Opened::ByKeys)
+    }
+
+    pub(super) fn unfocus(&mut self) -> bool {
+        let focused = self
+            .hovered
+            .as_ref()
+            .is_some_and(|hovered| hovered.by == Opened::ByKeys);
+        if focused {
+            self.hovered = None;
+        }
+        focused
+    }
+}
+
+pub(super) fn reaction_keys(list: gpui::Div, cx: &mut Context<ChatView>) -> gpui::Div {
+    list.on_action(cx.listener(|this, _: &NextReaction, _, cx| this.step_reaction(true, cx)))
+        .on_action(cx.listener(|this, _: &PreviousReaction, _, cx| this.step_reaction(false, cx)))
+        .on_action(cx.listener(|this, _: &PressReaction, _, cx| this.press_reaction(cx)))
 }
 
 impl ChatView {
@@ -57,11 +91,21 @@ impl ChatView {
             .map(|hovered| (hovered.message.as_str(), hovered.key.as_str()))
     }
 
+    #[must_use]
+    pub fn reaction_focus(&self) -> Option<(&str, &str)> {
+        self.reactors
+            .hovered
+            .as_ref()
+            .filter(|hovered| hovered.by == Opened::ByKeys)
+            .map(|hovered| (hovered.message.as_str(), hovered.key.as_str()))
+    }
+
     pub fn show_reactors(&mut self, of: Option<(&str, &str)>, cx: &mut Context<Self>) {
         self.reactors.hovered = of.map(|(message, key)| Hovered {
             message: message.to_owned(),
             key: key.to_owned(),
             shown: true,
+            by: Opened::ByPointer,
             on_pill: true,
             on_card: false,
             wait: None,
@@ -74,6 +118,54 @@ impl ChatView {
             .find(|item| item.id == message)
             .and_then(|item| item.reactions.iter().find(|reaction| reaction.key == key))
             .map_or(&[], |reaction| reaction.users.as_slice())
+    }
+
+    fn step_reaction(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let Some(message) = self.selected.clone() else {
+            return;
+        };
+        let keys: Vec<String> = self
+            .message_items()
+            .find(|item| item.id == message)
+            .map(|item| item.reactions.iter().map(|reaction| reaction.key.clone()).collect())
+            .unwrap_or_default();
+        let at = self
+            .reaction_focus()
+            .filter(|(focused, _)| *focused == message)
+            .and_then(|(_, focused)| keys.iter().position(|key| key == focused));
+        let next = match (at, forward) {
+            (None, true) => Some(0),
+            (Some(at), true) => Some((at + 1).min(keys.len().saturating_sub(1))),
+            (Some(at), false) => at.checked_sub(1),
+            (None, false) => None,
+        };
+        match next.and_then(|at| keys.get(at)) {
+            Some(key) => {
+                self.reactors.hovered = Some(Hovered {
+                    key: key.clone(),
+                    message,
+                    shown: true,
+                    by: Opened::ByKeys,
+                    on_pill: false,
+                    on_card: false,
+                    wait: None,
+                });
+            }
+            None => {
+                self.reactors.unfocus();
+            }
+        }
+        cx.notify();
+    }
+
+    fn press_reaction(&mut self, cx: &mut Context<Self>) {
+        let Some((message, key)) = self
+            .reaction_focus()
+            .map(|(message, key)| (message.to_owned(), key.to_owned()))
+        else {
+            return;
+        };
+        self.toggle_reaction(&message, &key, cx);
     }
 
     pub(super) fn hover_pill(&mut self, message: &str, key: &str, hovered: bool, cx: &mut Context<Self>) {
@@ -103,6 +195,7 @@ impl ChatView {
             message: message.to_owned(),
             key: key.to_owned(),
             shown,
+            by: Opened::ByPointer,
             on_pill: true,
             on_card: false,
             wait,
@@ -133,7 +226,7 @@ impl ChatView {
         let Some(hovered) = &mut self.reactors.hovered else {
             return;
         };
-        if hovered.on_pill || hovered.on_card {
+        if hovered.on_pill || hovered.on_card || hovered.by == Opened::ByKeys {
             return;
         }
         if !hovered.shown {

@@ -189,7 +189,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 276] = [
+const STEPS: [Step; 5 + 277] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -220,6 +220,9 @@ const STEPS: [Step; 5 + 276] = [
     ("chat-reactors", |shell, _, cx| show_reactors(shell, cx)),
     ("chat-reactors-dark", |shell, _, cx| {
         fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    ("chat-reaction-focus", |shell, window, cx| {
+        focus_reaction(shell, window, cx);
     }),
     ("chat-actions", |shell, window, cx| {
         fixed_theme(shell, None, cx);
@@ -3278,6 +3281,31 @@ fn hover_none(shell: &Entity<Shell>, cx: &mut App) {
             chat.show_reactors(None, cx);
         });
     }
+}
+
+fn focus_reaction(shell: &Entity<Shell>, window: &mut Window, cx: &mut App) {
+    let Some(chat) = shell.read(cx).chat().cloned() else {
+        return;
+    };
+    let reacted = chat
+        .read(cx)
+        .message_items()
+        .filter(|message| !message.reactions.is_empty())
+        .max_by_key(|message| {
+            message
+                .reactions
+                .iter()
+                .map(teams_ui::chat_view::ReactionCount::count)
+                .sum::<usize>()
+        })
+        .map(|message| message.id.clone());
+    chat.update(cx, |chat, cx| {
+        chat.show_reactors(None, cx);
+        chat.select(reacted, cx);
+    });
+    let focus = chat.read(cx).focus_handle().clone();
+    focus.focus(window, cx);
+    window.dispatch_action(Box::new(teams_ui::chat_view::reactors::NextReaction), cx);
 }
 
 fn show_reactors(shell: &Entity<Shell>, cx: &mut App) {

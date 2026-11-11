@@ -290,6 +290,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("4", PickFourth, context),
         KeyBinding::new("5", PickMore, context),
         KeyBinding::new("ctrl-c", CopySelected, context),
+        KeyBinding::new("right", reactors::NextReaction, context),
+        KeyBinding::new("left", reactors::PreviousReaction, context),
+        KeyBinding::new("space", reactors::PressReaction, context),
     ]);
 }
 
@@ -1177,7 +1180,7 @@ impl ChatView {
         let writes_to = writes_to(&conversation, &place);
         let (seen, people_seen) = Self::seen_at(&parts.models, [&conversation, &writes_to], cx);
         let (translation, observing_translation) = Self::translation_of(&parts, &conversation, &compose, cx);
-        let mut view = Self {
+        Self {
             core: parts.core,
             models: parts.models,
             trace: parts.trace,
@@ -1251,17 +1254,17 @@ impl ChatView {
             seeking: None,
             quote: QuoteJump::default(),
             _subscriptions: subscriptions,
-        };
-        view.start(cx);
-        view
+        }
+        .start(cx)
     }
 
     /// A new view's first reads: its messages, who types, its notes' outbox and its saved call transcripts.
-    fn start(&mut self, cx: &mut Context<Self>) {
+    fn start(mut self, cx: &mut Context<Self>) -> Self {
         self.kick(cx);
         self.typing_changed(cx);
         self.sync_notes(cx);
         self.read_saved(cx);
+        self
     }
 
     /// The chat's translation, handed to its compose box too, and its observation: a change builds the rows again.
@@ -1924,6 +1927,7 @@ impl ChatView {
             if self.options.is_some() && self.options != message {
                 self.options = None;
             }
+            self.reactors.unfocus();
             self.selected = message;
             cx.notify();
         }
@@ -2295,6 +2299,7 @@ impl ChatView {
             | self.deleting.take().is_some()
             | self.resending.take().is_some()
             | self.options.take().is_some()
+            | self.reactors.unfocus()
             | self.text_selection.clear();
         if open {
             cx.notify();
@@ -5002,7 +5007,7 @@ fn footer_line(
     let reactions = item
         .reactions
         .iter()
-        .map(|reaction| reaction_pill(item, reaction, reactors.measure(&item.id, &reaction.key), palette, cx))
+        .map(|reaction| reaction_pill(item, reaction, reactors, palette, cx))
         .collect::<Vec<_>>();
     let add = (!item.reactions.is_empty() && item.actions().contains(&MessageAction::React)).then(|| {
         let message = item.id.clone();
@@ -5041,7 +5046,7 @@ fn footer_line(
 fn reaction_pill(
     item: &MessageItem,
     reaction: &ReactionCount,
-    measure: Option<AnyElement>,
+    reactors: &reactors::Reactors,
     palette: Palette,
     cx: &mut Context<ChatView>,
 ) -> gpui::Stateful<gpui::Div> {
@@ -5054,12 +5059,17 @@ fn reaction_pill(
         .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
             this.hover_pill(&hovered_message, &hovered_key, *hovered, cx);
         }))
-        .children(measure)
+        .children(reactors.measure(&item.id, &reaction.key))
         .child(reactions::emoji(&reaction.key, px(CHIP_EMOJI)))
         .children((reaction.count() > 1).then(|| reaction.count().to_string()));
     // a chip of a reaction Teams offers sets or takes back the account's own; any other key only shows
     let chip = if reactions::catalog().offers(&reaction.key) {
         chip.on_click(cx.listener(move |this, _, _, cx| this.toggle_reaction(&message, &toggled, cx)))
+    } else {
+        chip
+    };
+    let chip = if reactors.focused(&item.id, &reaction.key) {
+        chip.bg(rgb(palette.selection))
     } else {
         chip
     };
@@ -5215,7 +5225,7 @@ impl Render for ChatView {
         self.centre(cx);
         let pill = self.jump_pill(cx);
         let typing = self.typing_line(palette, cx);
-        let messages = hover_bar_keys(div(), cx)
+        let messages = reactors::reaction_keys(hover_bar_keys(div(), cx), cx)
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             // a click in the messages leaves the focus where it is (the compose box, as in Teams): the list takes it
