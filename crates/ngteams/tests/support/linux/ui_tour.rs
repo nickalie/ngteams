@@ -189,7 +189,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 277] = [
+const STEPS: [Step; 5 + 284] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -202,6 +202,59 @@ const STEPS: [Step; 5 + 277] = [
             cx,
         );
         shell.update(cx, |shell, cx| shell.open_chat(AB_CHAT.to_owned(), window, cx));
+    }),
+    // the rail's Activity: the feed in the list pane, unread items bold with a dot, the rail's count gone once shown
+    ("activity", |shell, window, cx| {
+        shell.update(cx, |shell, cx| shell.show_activity(window, cx))
+    }),
+    // an item's "More options" (Mark as read or unread, Remove), shown in place of its date
+    ("activity-item-menu", |shell, _, cx| {
+        with_activity(shell, cx, |view, cx| {
+            let first = view.feed().items.first().map(|item| item.id.clone());
+            view.show_item_menu(first, cx);
+        });
+    }),
+    // the header's "More options": Mark all as read
+    ("activity-header-menu", |shell, _, cx| {
+        with_activity(shell, cx, |view, cx| view.show_header_menu(true, cx));
+    }),
+    // the Unread chip chosen
+    ("activity-unread", |shell, _, cx| {
+        with_activity(shell, cx, |view, cx| {
+            view.show_header_menu(false, cx);
+            view.choose_filter(teams_core::activity::ActivityFilter::Unread, cx);
+        });
+    }),
+    // the search's box, its words keeping the items that have them
+    ("activity-search", |shell, window, cx| {
+        with_activity(shell, cx, |view, cx| {
+            view.choose_filter(teams_core::activity::ActivityFilter::Unread, cx);
+            view.search_for("Lab C", window, cx);
+        });
+    }),
+    // in Teams Dark, a mention opened: its chat at the message on the right, the item read and selected
+    ("activity-dark-opened", |shell, window, cx| {
+        theme(shell, teams_ui::theme::DARK_KEY, cx);
+        with_activity(shell, cx, |view, cx| {
+            view.search_for("", window, cx);
+            let mention = view
+                .feed()
+                .items
+                .iter()
+                .find(|item| matches!(item.kind, teams_core::activity::ActivityKind::Mention(_)))
+                .map(|item| item.id.clone());
+            if let Some(id) = mention {
+                view.open(&id, cx);
+            }
+        });
+    }),
+    // back to the chats, in Teams Light, for the steps after
+    ("activity-left", |shell, window, cx| {
+        theme(shell, teams_ui::theme::LIGHT_KEY, cx);
+        shell.update(cx, |shell, cx| {
+            shell.show_chats(window, cx);
+            shell.open_chat(AB_CHAT.to_owned(), window, cx);
+        });
     }),
     // the title bar's update button (`teams_ui::update`), its states as the app's updater sets them
     ("update-available", |_, _, cx| {
@@ -2352,6 +2405,111 @@ fn held_by_far_end(shell: &Entity<Shell>, held: bool, cx: &mut App) {
 }
 
 /// The app in the theme `key`.
+fn with_activity(
+    shell: &Entity<Shell>,
+    cx: &mut App,
+    change: impl FnOnce(&mut teams_ui::activity_view::ActivityView, &mut Context<teams_ui::activity_view::ActivityView>),
+) {
+    let view = shell.read(cx).activity_view().clone();
+    view.update(cx, change);
+}
+
+/// a's activity feed, made up for the tour: reactions of b and c to one of a's messages (folded into one item),
+/// mentions in the group chat, a missed call from b, a meeting c updated, an app's notification and a team a was
+/// added to; some read, some not.
+fn seed_activity(mock: &ChatServiceMock) -> SandboxResult {
+    let mine = mock
+        .post_as(LAB_A, AB_CHAT, "<p>The made-up report is ready for a look</p>")
+        .ok_or("a's post refused")?;
+    let theirs = mock
+        .post_as(
+            LAB_C,
+            ABC_CHAT,
+            "<p>Lab A can you check the made-up numbers before noon?</p>",
+        )
+        .ok_or("c's post refused")?;
+    let mine_number: u64 = mine.parse()?;
+    let theirs_number: u64 = theirs.parse()?;
+    let item = |kind: &str, sub: &str, (from, name): (&str, &str), (thread, message): (&str, u64), preview: &str| {
+        serde_json::json!({
+            "activityType": kind, "activitySubtype": sub, "activityId": 100_000 + message,
+            "sourceThreadId": thread, "sourceMessageId": message, "sourceUserId": from,
+            "sourceUserImDisplayName": name, "messagePreview": preview,
+            "sourceThreadType": if thread.ends_with("tacv2") { "space" } else { "chat" },
+        })
+    };
+    let added = [
+        (
+            item("teamMembershipChange", "addedToTeam", (LAB_B, "Lab B"), (TEAM, 1), ""),
+            true,
+        ),
+        (
+            serde_json::json!({
+                "activityType": "msGraph", "activitySubtype": "customNotification", "activityId": 7,
+                "sourceThreadId": TEAM, "sourceMessageId": CHANNEL_POST, "sourceUserImDisplayName": "Workflows",
+                "messagePreview": "Made-up reminder to follow up", "sourceThreadType": "space",
+                "activityContext": {"templateParameters": "{\"customMessage\":\"Follow up on a message\"}"},
+            }),
+            true,
+        ),
+        (
+            item(
+                "mentionInChat",
+                "everyone",
+                (LAB_B, "Lab B"),
+                (ABC_CHAT, theirs_number),
+                "Everyone the made-up demo moved to Friday",
+            ),
+            true,
+        ),
+        (item("call", "missedCall", (LAB_B, "Lab B"), ("", 1), ""), false),
+        (
+            item(
+                "msGraph",
+                "privateMeetingUpdated",
+                (LAB_C, "Lab C"),
+                ("", 1),
+                "Made-up weekly sync",
+            ),
+            false,
+        ),
+        (
+            item(
+                "mentionInChat",
+                "person",
+                (LAB_C, "Lab C"),
+                (ABC_CHAT, theirs_number),
+                "Lab A can you check the made-up numbers before noon?",
+            ),
+            false,
+        ),
+        (
+            item(
+                "reactionInChat",
+                "like",
+                (LAB_C, "Lab C"),
+                (AB_CHAT, mine_number),
+                "The made-up report is ready for a look",
+            ),
+            true,
+        ),
+        (
+            item(
+                "reactionInChat",
+                "heart",
+                (LAB_B, "Lab B"),
+                (AB_CHAT, mine_number),
+                "The made-up report is ready for a look",
+            ),
+            false,
+        ),
+    ];
+    for (activity, read) in added {
+        mock.add_activity(LAB_A, activity, read).ok_or("no feed")?;
+    }
+    Ok(())
+}
+
 fn theme(shell: &Entity<Shell>, key: &'static str, cx: &mut App) {
     let model = shell.read(cx).settings().clone();
     model.update(cx, |model, cx| {
@@ -3621,6 +3779,7 @@ impl MockLab {
         seed_mixed(&mock, &runtime)?;
         seed_own(&mock)?;
         seed_mentions(&mock)?;
+        seed_activity(&mock)?;
         seed_forwards(&mock, &runtime)?;
         seed_cards(&mock)?;
         seed_profile_cards(&mock, &runtime);

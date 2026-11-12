@@ -205,21 +205,21 @@ impl ActivityItem {
             || self.thread.as_deref().is_some_and(teams_proto::is_team_thread_id)
     }
 
-    /// Whether the item matches a filter's words: its title, its preview or where it happened, case folded.
+    /// Whether the item matches what the search's box holds: its title, its preview or where it happened contains it,
+    /// case folded and its spaces folded, as Teams' "Filter by name or group name" finds a name typed.
     #[must_use]
     pub fn matches(&self, words: &str) -> bool {
-        let words = words.trim().to_lowercase();
+        let words = fold(words);
         if words.is_empty() {
             return true;
         }
-        let haystack = format!(
-            "{}\n{}\n{}",
+        [
             self.title(),
-            self.preview,
-            self.topic.as_deref().unwrap_or_default()
-        )
-        .to_lowercase();
-        words.split_whitespace().all(|word| haystack.contains(word))
+            self.preview.clone(),
+            self.topic.clone().unwrap_or_default(),
+        ]
+        .iter()
+        .any(|text| fold(text).contains(&words))
     }
 }
 
@@ -458,6 +458,11 @@ fn id_of(value: Option<&Value>) -> Option<String> {
         _ => return None,
     };
     (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) && id != "0" && id != "1").then_some(id)
+}
+
+/// Text lower-cased, its runs of white space one space, trimmed.
+fn fold(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 /// `isread` as a boolean or its text.

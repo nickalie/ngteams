@@ -204,9 +204,16 @@ fn dispatch(state: &mut State, route: Route, call: &Call<'_>) -> ResponseTemplat
         Route::Post { chat } => writes::post(state, call, &chat),
         Route::Edit { chat, message } => writes::edit(state, call, &chat, &message),
         Route::Delete { chat, message } => writes::delete(state, call, &chat, &message),
+        Route::Reaction {
+            chat,
+            message,
+            remove: false,
+        } if call.query("name") == Some("isread") => writes::activity_read(state, call, &chat, &message),
         Route::Reaction { chat, message, remove } => writes::reaction(state, call, &chat, &message, remove),
         Route::ConversationProperty { chat } => match call.query("name") {
-            Some("channelNotificationSettings" | "followAllRc") => writes::own_property(state, call, &chat),
+            Some("channelNotificationSettings" | "followAllRc" | "consumptionHorizonBookmark") => {
+                writes::own_property(state, call, &chat)
+            }
             _ => writes::read_horizon(state, call, &chat),
         },
         Route::OwnConversation { chat } => reads::own_conversation(state, call, &chat),

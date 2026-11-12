@@ -63,6 +63,7 @@ use teams_core::{Availability, ChannelMeetup, Reporting};
 use teams_proto::ManualAvailability;
 
 use crate::accounts::{AccountTile, Accounts};
+use crate::activity_view::{ActivityParts, ActivityView, ActivityViewEvent};
 use crate::bridge::Core;
 use crate::calendar_view::{CalendarView, CalendarViewEvent};
 use crate::call_view::CallBar;
@@ -119,7 +120,7 @@ actions!(
     ]
 );
 actions!(teams_ui, [FontLarger, FontSmaller, FontReset]);
-actions!(teams_ui, [ShowChats, ShowCalendar]);
+actions!(teams_ui, [ShowActivity, ShowChats, ShowCalendar]);
 actions!(
     teams_ui,
     [
@@ -163,6 +164,10 @@ struct RailItem {
 }
 
 impl RailItem {
+    const ACTIVITY: Self = Self {
+        icon: include_bytes!("../assets/icons/bell.svg"),
+        label: "Activity",
+    };
     const CHAT: Self = Self {
         icon: include_bytes!("../assets/icons/chat.svg"),
         label: "Chat",
@@ -191,6 +196,7 @@ pub fn init(cx: &mut App) {
     }
     cx.set_global(Bound);
     global_search::init(cx);
+    crate::activity_view::init(cx);
     cx.bind_keys([
         KeyBinding::new("ctrl-k", ToggleSwitcher, None),
         // Teams' desktop key for New message
@@ -208,6 +214,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl--", FontSmaller, None),
         KeyBinding::new("ctrl-0", FontReset, None),
         // Teams' keys for its apps on the rail
+        KeyBinding::new("ctrl-1", ShowActivity, None),
         KeyBinding::new("ctrl-2", ShowChats, None),
         KeyBinding::new("ctrl-4", ShowCalendar, None),
         KeyBinding::new("ctrl-shift-c", CallChat, None),
@@ -254,6 +261,14 @@ pub enum Main {
     NewChat,
 }
 
+/// What the list pane shows: the chats and teams, or the Activity pane (the rail's Activity).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ListPlace {
+    #[default]
+    Chats,
+    Activity,
+}
+
 /// Where the account menu opens: over the rail's account, or under the title bar's avatar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuAnchor {
@@ -280,6 +295,9 @@ pub struct Shell {
     teams: Entity<TeamsList>,
     /// The list pane: the chats and the teams.
     sidebar: Entity<Sidebar>,
+    /// The Activity pane, with what it tells; shown in the list pane's place while [`ListPlace::Activity`].
+    activity: (Entity<ActivityView>, Subscription),
+    list_place: ListPlace,
     /// The chat opened in the conversation pane.
     chat: Option<Entity<ChatView>>,
     /// A meeting chat's tabs: the one shown, its Recap and Shared views.
@@ -391,7 +409,10 @@ impl Shell {
         let (call_bar, calling) = Self::calls(&core, &models, &list, &trace, &settings, cx);
         let (focus, chat, chat_events) = Self::kept_chat(chat_parts, selected.clone(), window, cx);
         let (search_box, searched) = Self::search_box(&core, &list, &teams, &trace, window, cx);
+        let activity = Self::activity_pane(&core, &models, (&list, &teams), &trace, window, cx);
         Self {
+            activity,
+            list_place: ListPlace::Chats,
             cards: Self::card_host(&models, (&search_box, previews), window, cx),
             core,
             models,
@@ -451,6 +472,97 @@ impl Shell {
                 searched,
                 new_message_asked,
             ],
+        }
+    }
+
+    /// The Activity pane, and what it tells followed: an item opens its conversation at its message, a missed call's
+    /// Chat and Call reach the caller's 1:1 chat.
+    fn activity_pane(
+        core: &Arc<dyn Core>,
+        models: &Models,
+        (chats, teams): (&Entity<ChatList>, &Entity<TeamsList>),
+        trace: &Arc<ViewTrace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Entity<ActivityView>, Subscription) {
+        let parts = ActivityParts {
+            core: Arc::clone(core),
+            models: models.clone(),
+            chats: chats.clone(),
+            teams: teams.clone(),
+            trace: Arc::clone(trace),
+        };
+        let view = cx.new(|cx| ActivityView::new(parts, window, cx));
+        // the rail's count follows the feed
+        let events = cx.subscribe_in(&view, window, |this: &mut Self, _, event, window, cx| match event {
+            ActivityViewEvent::Open(target) => this.open_message(target.clone(), window, cx),
+            ActivityViewEvent::ChatWith(mri) => {
+                this.chat_with(mri, window, cx);
+            }
+            ActivityViewEvent::CallBack(mri) => {
+                if this.chat_with(mri, window, cx) {
+                    this.call_chat(cx);
+                }
+            }
+            ActivityViewEvent::Toast(_) => this.show_toast(crate::activity_view::REMOVED, cx),
+        });
+        (view, events)
+    }
+
+    /// Opens the 1:1 chat with `mri`, when the list has one; whether it did.
+    fn chat_with(&mut self, mri: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let found = self
+            .list
+            .read(cx)
+            .findable_rows()
+            .find(|row| row.partner.as_deref() == Some(mri) && row.id.ends_with("@unq.gbl.spaces"))
+            .map(|row| row.id.clone());
+        match found {
+            Some(id) => {
+                self.open_chat(id, window, cx);
+                true
+            }
+            None => {
+                self.show_toast("There's no chat with them yet", cx);
+                false
+            }
+        }
+    }
+
+    /// The Activity pane.
+    #[must_use]
+    pub fn activity_view(&self) -> &Entity<ActivityView> {
+        &self.activity.0
+    }
+
+    /// What the list pane shows.
+    #[must_use]
+    pub fn list_place(&self) -> ListPlace {
+        self.list_place
+    }
+
+    /// The rail's Activity (and Ctrl+1): the Activity pane in the list pane's place, leaving the settings, the
+    /// calendar or the search's results for what they hid; the keyboard goes to the pane.
+    pub fn show_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_chats_pane(window, cx);
+        self.list_shown = true;
+        if self.list_place != ListPlace::Activity {
+            self.trace.record(&TraceLine::new("activity", "shown"));
+            self.list_place = ListPlace::Activity;
+        }
+        self.sync_activity_shown(window, cx);
+        cx.notify();
+    }
+
+    /// Tells the Activity pane whether it is on screen: the list pane shows it and nothing covers both panes.
+    fn sync_activity_shown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let covered = matches!(
+            self.main,
+            Main::Settings | Main::Calendar | Main::Search | Main::JoinTeam | Main::CreateTeamMore | Main::Workflows
+        );
+        let shown = self.list_place == ListPlace::Activity && self.list_shown && !covered;
+        if self.activity.0.read(cx).shown() != shown {
+            self.activity.0.update(cx, |view, cx| view.set_shown(shown, window, cx));
         }
     }
 
@@ -2234,6 +2346,11 @@ impl Shell {
     /// what they hid (the chat or the channel shown before them, opened again), or nothing; elsewhere it does nothing.
     pub fn show_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_chats_pane(window, cx);
+        if self.list_place != ListPlace::Chats {
+            self.list_place = ListPlace::Chats;
+            self.sync_activity_shown(window, cx);
+            cx.notify();
+        }
         // the keyboard goes to the list, as Teams' Ctrl+2 takes it there
         if self.list_shown {
             self.sidebar.update(cx, |sidebar, cx| sidebar.focus_list(window, cx));
@@ -2297,6 +2414,7 @@ impl Shell {
             .on_action(cx.listener(|this, _: &FontLarger, _, cx| this.step_font(Some(1), cx)))
             .on_action(cx.listener(|this, _: &FontSmaller, _, cx| this.step_font(Some(-1), cx)))
             .on_action(cx.listener(|this, _: &FontReset, _, cx| this.step_font(None, cx)))
+            .on_action(cx.listener(|this, _: &ShowActivity, window, cx| this.show_activity(window, cx)))
             .on_action(cx.listener(|this, _: &ShowChats, window, cx| this.show_chats(window, cx)))
             .on_action(cx.listener(|this, _: &ShowCalendar, window, cx| this.show_calendar(window, cx)))
     }
@@ -2443,7 +2561,10 @@ impl Shell {
     }
 
     fn rail_view(&self, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {
-        let chats = !matches!(self.main, Main::Settings | Main::Calendar | Main::Workflows);
+        let place = !matches!(self.main, Main::Settings | Main::Calendar | Main::Workflows);
+        let chats = place && self.list_place == ListPlace::Chats;
+        let activity = place && self.list_place == ListPlace::Activity;
+        let unseen = self.activity.0.read(cx).unseen();
         div()
             .debug_selector(|| "rail".to_owned())
             .w(px(RAIL_WIDTH))
@@ -2454,6 +2575,20 @@ impl Shell {
             .gap_1()
             .py_2()
             // on the frame, whose gradient the shell draws behind it
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .child(Self::rail_button(
+                        "rail-activity",
+                        RailItem::ACTIVITY,
+                        activity,
+                        palette,
+                        cx,
+                        Self::show_activity,
+                    ))
+                    .children((unseen > 0).then(|| rail_count("rail-activity-count", unseen))),
+            )
             .child(Self::rail_button(
                 "rail-chats",
                 RailItem::CHAT,
@@ -2728,11 +2863,12 @@ impl Shell {
     }
 
     fn list_pane(&self) -> AnyElement {
-        div()
-            .debug_selector(|| "list-pane".to_owned())
-            .size_full()
-            .child(self.sidebar.clone())
-            .into_any_element()
+        let pane = div().debug_selector(|| "list-pane".to_owned()).size_full();
+        match self.list_place {
+            ListPlace::Chats => pane.child(self.sidebar.clone()),
+            ListPlace::Activity => pane.child(self.activity.0.clone()),
+        }
+        .into_any_element()
     }
 
     fn main_pane(&self, palette: Palette, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -2992,6 +3128,7 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = theme::current(cx);
+        self.sync_activity_shown(window, cx);
         self.sync_new_message_row(cx);
         self.history.note(&self.main);
         let suggestions = self.search_suggestions(palette, window, cx);
@@ -3059,6 +3196,31 @@ impl Render for Shell {
             .children(toast)
             .children(first_run)
     }
+}
+
+/// A rail item's count of what is new (the Activity's), at its icon's top right, Teams' red; its test selector `id`.
+fn rail_count(id: &'static str, count: usize) -> gpui::Div {
+    div()
+        .debug_selector(move || id.to_owned())
+        .absolute()
+        .top(px(2.0))
+        .left(px(RAIL_WIDTH / 2.0 + 2.0))
+        .min_w(px(16.0))
+        .h(px(16.0))
+        .px_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(rgb(theme::DANGER))
+        .text_color(rgb(0x00ff_ffff))
+        .text_size(px(10.0))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .child(SharedString::from(if count > 99 {
+            "99+".to_owned()
+        } else {
+            count.to_string()
+        }))
 }
 
 /// Another account's unread total on its avatar in the rail, its test selector `rail-account-<index>-unread`.

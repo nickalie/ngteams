@@ -223,6 +223,35 @@ pub(crate) fn reaction(state: &mut State, call: &Call<'_>, chat: &str, id: &str,
     changed.map_or_else(status, |()| fixture.template())
 }
 
+/// `PUT …/conversations/48:notifications/messages/<id>/properties?name=isread` with `{"isread": "true"|"false"}`: an
+/// item of the caller's activity feed marked read or unread (`docs/protocol/chat.md`, "The activity feed"). The item's
+/// `isread` becomes the boolean and its `version` the service's time, answered 200 with an empty body; the change is
+/// told to the caller as the item's edit.
+pub(crate) fn activity_read(state: &mut State, call: &Call<'_>, chat: &str, id: &str) -> ResponseTemplate {
+    if let Err(code) = writable(state, chat, &call.caller) {
+        return status(code);
+    }
+    let read = match call
+        .object()
+        .and_then(|body| body.get("isread")?.as_str().map(str::to_owned))
+    {
+        Some(text) if text == "true" => true,
+        Some(text) if text == "false" => false,
+        _ => return status(400),
+    };
+    let caller = call.caller.clone();
+    let changed = change(state, chat, id, &caller, EventKind::Edit, |message, time| {
+        if is_deleted(message) {
+            return Err(404);
+        }
+        let fields = object(message);
+        object(fields.entry("properties").or_insert(Value::Null)).insert("isread".to_owned(), json!(read));
+        fields.insert("version".to_owned(), json!(time.to_string()));
+        Ok(())
+    });
+    changed.map_or_else(status, |()| status(200))
+}
+
 /// `PUT …/conversations/<chat>/properties?name=consumptionhorizon`: the caller's own read horizon, answered 200 with
 /// an empty body (`docs/protocol/chat.md`).
 pub(crate) fn read_horizon(state: &mut State, call: &Call<'_>, chat: &str) -> ResponseTemplate {

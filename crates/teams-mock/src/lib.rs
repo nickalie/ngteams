@@ -381,6 +381,39 @@ impl ChatServiceMock {
         Some(arrival.to_string())
     }
 
+    /// An item in `owner`'s activity feed ([`NOTIFICATIONS`]): its `activity` as the service's feed carries it (made up
+    /// by the test: `activityType`, `sourceUserId`, …), read or not, stored as the feed's newest entry and queued for
+    /// `owner`, as a new item reaches the feed live. Its id, or `None` when the mock has no feed.
+    #[must_use = "None says no item was added"]
+    pub fn add_activity(&self, owner: &str, activity: serde_json::Value, read: bool) -> Option<String> {
+        let mut world = self.lock();
+        let arrival = world.tick();
+        let sequence = world.conversation(NOTIFICATIONS)?.next_sequence();
+        let message = serde_json::json!({
+            "sequenceId": sequence,
+            "conversationid": NOTIFICATIONS,
+            "conversationLink": format!("{CHAT_BASE}/v1/users/ME/conversations/{NOTIFICATIONS}"),
+            "type": "Message",
+            "id": arrival.to_string(),
+            "version": arrival.to_string(),
+            "clientmessageid": (9_100_000_000_000_000_000_u64 + arrival).to_string(),
+            "messagetype": "Text",
+            "contenttype": "text",
+            "content": "",
+            "from": writes::contact(owner),
+            "imdisplayname": "",
+            "composetime": world::iso_time(arrival, 7),
+            "originalarrivaltime": world::iso_time(arrival, 7),
+            "properties": {"activity": activity, "isread": read, "s2spartnername": "skypespaces"},
+        });
+        let stored = world.conversation_mut(NOTIFICATIONS)?;
+        stored.messages.push(message.clone());
+        stored.version = arrival;
+        // the service tells the feed's owner: no member is its sender
+        world.queue(NOTIFICATIONS, "", EventKind::Message, &message);
+        Some(arrival.to_string())
+    }
+
     /// Adds a copy of the message of `conversation` that carries `client_message_id`, changed as `change` says, as
     /// the conversation's newest entry, the original kept as it is (a test's stand-in for a second entry of one
     /// message, one a client can't read, met by the same read as the readable one). `false` when there is no such

@@ -179,6 +179,10 @@ pub trait Core: Send + Sync + 'static {
     }
     /// The account's own read horizon in a conversation.
     fn read_horizon(&self, conversation: String) -> Reply<Option<ReadHorizon>>;
+    /// The account's activity feed as stored ([`teams_core::activity`]); an empty one where the engine has none.
+    fn activity(&self) -> Reply<teams_core::activity::ActivityFeed> {
+        Reply::ready(Ok(teams_core::activity::ActivityFeed::default()))
+    }
     /// The kept translations into `language` of the messages `ids` of `conversation` (a chat translated on this
     /// computer: [`crate::chat_translate`]), every version kept. A fake keeps none.
     fn translations(&self, conversation: String, language: String, ids: Vec<String>) -> Reply<Vec<StoredTranslation>> {
@@ -503,6 +507,10 @@ pub trait Core: Send + Sync + 'static {
 }
 
 impl Core for EngineRequests {
+    fn activity(&self) -> Reply<teams_core::activity::ActivityFeed> {
+        EngineRequests::activity(self)
+    }
+
     fn workflow_request(&self, request: teams_proto::WorkflowRequest) -> Reply<teams_proto::WorkflowResponse> {
         self.workflow_request(request)
     }

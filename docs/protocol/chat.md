@@ -993,6 +993,42 @@ Fixture: `tests/fixtures/chatsvc/mention-group.json`.
   form for a group chat), and its `48:mentions` stream one of `activityType` `mentions`, reason and subtype `mention`,
   each pointing at the message (`T_<chat>_M_<message>`) as in the 1:1 chat.
 
+## The activity feed
+
+Teams' Activity pane reads the account's own stream `48:notifications` (`threadType` `streamofnotifications`), which
+the conversation list brings and the catch-up and Trouter store as any conversation's messages. Seen with lab account a
+in browser Teams (team-manage, 2026-11-12), and in a lab store's synced feed.
+
+- **An item** is a message of `messagetype` `Text`, empty `content`, `from` the account itself, and in `properties`:
+  `activity` (`activityType`, `activitySubtype`, `activityTimestamp`, `activityId`, `sourceThreadId`,
+  `sourceMessageId`, `sourceReplyChainId`, `sourceUserId`, `sourceUserImDisplayName`, `messagePreview`,
+  `sourceThreadType`, `sourceThreadTopic`, `activityContext`), `isread` (a boolean), `messageUpdatePolicyValue`. A
+  `sourceMessageId` of `1` names no message (a missed call's, an app's). Kinds seen: `mentionInChat`/`person` and
+  `everyone` (a group chat), `mentions`/`mention` (a 1:1 chat), `call`/`missedCall` and `voicemail`,
+  `teamMembershipChange`/`addedToTeam` (with `sourceThreadTopic`, the team), `msGraph`/`customNotification` (an app:
+  its title in `activityContext.templateParameters`, a JSON string, `customMessage`) and
+  `msGraph`/`privateMeetingUpdated`. The bundle's `MTMAHubFeedItemActivityType` names more (`reply`, `replyToReply`,
+  `like`, `likeInChat`, `reaction`, `reactionInChat`, …) and the Meet app's manifest the meeting titles
+  ("{actor} invited you", "{actor} updated", "{actor} canceled"); none of those was captured.
+- **The pane**: header "Activity" with "More options" ("Mark all as read", Shift+Esc; "Notification settings") and
+  "Filter" (a box, "Filter by name or group name", filtering the loaded items with no request); chips "Unread"
+  (Ctrl+Alt+U), "@Mentions" (Ctrl+Alt+M), "Tag mentions" (the bundle's filter types: unread, mention, reactions,
+  missed call, reply, voicemail, apps). An item's "More options": "Mark as unread" (or read), "Remove", "Notification
+  settings", "Turn off <app>". A missed call shows Call and Chat. Removing shows the toast "Removed".
+- **Opening the pane** puts the feed's own horizon: `PUT …/48:notifications/properties?name=consumptionhorizon` with
+  `{"consumptionhorizon": "<newest item's activityTimestamp, ms>;<now>;<its activityId>"}`. What arrived after it is
+  new: the web client's rail showed no count while every unread item was older.
+- **Opening an item** marks it read: `PUT …/48:notifications/messages/<id>/properties?name=isread` with
+  `{"isread": "true"}`; "Mark as unread" sends `{"isread": "false"}`. Each answered 200; the item's `version` moved to
+  the time of the change, and the next sync brought it with `isread` changed.
+- **Mark all as read** sends `PUT …/48:notifications/properties?name=consumptionHorizonBookmark` with
+  `{"consumptionHorizonBookmark": "0;<now>;0"}`, then the horizon as above, and nothing per item: every item then
+  showed read. The conversation list carries the bookmark in the feed's `properties`. An item marked unread after it
+  showed unread: an item reads as read when its `isread` is true or its `version` is no later than the bookmark.
+- **Remove**: `DELETE …/48:notifications/messages/<id>?behavior=softDelete`, answered 200.
+
+The native client: [`teams_core::activity`](../../crates/teams-core/src/activity.rs).
+
 ## Read horizons
 
 - The account's own horizon is the conversation property `consumptionhorizon`, `<arrival id>;<ms>;<clientmessageid>`:

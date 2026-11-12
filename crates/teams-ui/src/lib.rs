@@ -71,6 +71,7 @@
 
 pub mod account_prompt;
 pub mod accounts;
+pub mod activity_view;
 pub mod app_icon;
 pub mod assets;
 pub mod bridge;
