@@ -4865,3 +4865,108 @@ fn a_call_waiting_for_discovery_shows_preparing_then_calling(cx: &mut TestAppCon
     }
     assert_eq!(teams_ui::calls::status_name(&CallStatus::Preparing), "preparing");
 }
+
+#[test]
+fn an_answer_waiting_for_discovery_says_so_stops_the_ring_and_can_still_be_declined() {
+    use teams_media::devices::catalog::DeviceStatus;
+    let rig = calling();
+    let (trace, written) = trace();
+    let ringer = Arc::new(FakeRinger::default());
+    let server = Arc::new(FakeServer::default());
+    let _alert = alert(&rig, &trace, &ringer, &server);
+    let (_shell, cx) = shell_window(&rig, None, trace);
+    let directory = Arc::new(FixedDirectory::default());
+    directory.set_status(DeviceStatus::Preparing);
+    rig.cx
+        .update(|cx| teams_ui::calls::follow_devices(&calls_of(&rig), directory.clone(), cx));
+    registered(&rig);
+    *rig.core.hold_calls.lock().unwrap() = true;
+    rig.send(Event::IncomingCall(invitation(7, Some(CALLER_NAME), None)));
+    click(cx, "call-answer");
+    assert_eq!(actions(&rig), [CallAction::Answer { call: call(7) }]);
+    // the answer waits: the banner says so, with Decline alone, and the ring stops
+    assert!(drawn(cx, "call-banner") && drawn(cx, "call-banner-status") && drawn(cx, "call-decline"));
+    assert!(!drawn(cx, "call-answer"), "answered once");
+    let calls = calls_of(&rig);
+    assert!(
+        rig.cx
+            .read(|cx| calls.read(cx).answering() && calls.read(cx).devices_preparing())
+    );
+    assert_eq!((ringer.started(), ringer.stopped()), (1, 1));
+    assert_eq!(server.closed(), [1]);
+    assert_eq!(lines(&written, "call-banner", "answering").len(), 1);
+    // its key again asks nothing more, and Ctrl+K offers Decline alone
+    cx.simulate_keystrokes("ctrl-shift-s");
+    assert_eq!(actions(&rig).len(), 1);
+    assert_eq!(
+        rig.cx.read(|cx| CallCommand::fitting(calls.read(cx), None)),
+        [CallCommand::Decline]
+    );
+    directory.set_status(DeviceStatus::Ready);
+    rig.cx.run_until_parked();
+    assert!(
+        !rig.cx.read(|cx| calls.read(cx).devices_preparing()),
+        "Connecting… from here"
+    );
+    // Decline still declines; the waiting answer's refusal then says nothing
+    click(cx, "call-decline");
+    assert_eq!(actions(&rig)[1], CallAction::Decline { call: call(7) });
+    status(&rig, 7, CallStatus::Declining);
+    status(&rig, 7, CallStatus::Ended(End::Declined));
+    let mut held = std::mem::take(&mut *rig.core.held_calls.lock().unwrap()).into_iter();
+    held.next().unwrap().send(Err(EngineError::Call(CallActionError::Call(
+        teams_core::CallError::NotNow,
+    ))));
+    held.next().unwrap().send(Ok(call(7)));
+    rig.cx.run_until_parked();
+    assert!(rig.cx.read(|cx| calls.read(cx).refused().is_none()));
+}
+
+#[test]
+fn a_refused_answer_rings_again_and_can_be_answered_again() {
+    let rig = calling();
+    let (trace, _written) = trace();
+    let ringer = Arc::new(FakeRinger::default());
+    let server = Arc::new(FakeServer::default());
+    let _alert = alert(&rig, &trace, &ringer, &server);
+    let (_shell, cx) = shell_window(&rig, None, trace);
+    registered(&rig);
+    *rig.core.hold_calls.lock().unwrap() = true;
+    rig.send(Event::IncomingCall(invitation(7, Some(CALLER_NAME), None)));
+    click(cx, "call-answer");
+    assert!(drawn(cx, "call-banner-status"));
+    for answer in std::mem::take(&mut *rig.core.held_calls.lock().unwrap()) {
+        answer.send(Err(EngineError::Call(CallActionError::Media("made-up".to_owned()))));
+    }
+    rig.cx.run_until_parked();
+    assert!(drawn(cx, "call-answer") && !drawn(cx, "call-banner-status"));
+    assert_eq!((ringer.started(), ringer.stopped()), (2, 1), "it rings again");
+    assert!(rig.cx.read(|cx| calls_of(&rig).read(cx).refused().is_some()));
+    click(cx, "call-answer");
+    assert_eq!(actions(&rig).len(), 2);
+}
+
+#[test]
+fn the_calls_page_says_why_calls_are_unavailable_and_offers_no_test_call() {
+    use teams_media::devices::catalog::DeviceStatus;
+    let rig = calling();
+    let (trace, _written) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), trace);
+    registered(&rig);
+    let directory = FixedDirectory::default();
+    directory.set_status(DeviceStatus::Preparing);
+    cx.update(|_, cx| {
+        let model = shell.read(cx).settings().clone();
+        attach_devices(&model, Arc::new(directory.clone()), cx);
+    });
+    calls_page(&shell, cx);
+    assert!(drawn(cx, "media-status") && drawn(cx, "make-test-call"));
+    directory.set_status(DeviceStatus::Unavailable);
+    draw(cx);
+    assert!(drawn(cx, "media-status"), "the warning box");
+    assert!(!drawn(cx, "make-test-call"));
+    assert!(
+        teams_ui::settings_view::MEDIA_UNAVAILABLE.contains("Restart the app"),
+        "what to do"
+    );
+}

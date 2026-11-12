@@ -1,6 +1,6 @@
 //! The incoming call on the desktop (M3 Task 17): while an invitation the engine offered rings, its ringtone on the
 //! default output ([`Ringer`]) and a notification with Answer and Decline on the bus the app is given, both gone once
-//! the ring ends (answered, declined, cancelled, answered elsewhere, timed out). Answer and Decline on the notification
+//! the ring ends (answered, declined, cancelled, answered elsewhere, timed out) or the user answers it here. Answer and Decline on the notification
 //! are the user's asks, as the banner's buttons are ([`calls::ask`]); its body shows the window, where the banner is.
 //!
 //! What it does is traced: `ringtone started`/`stopped` and `call-notification shown`/`closed`/`answered`/`declined`,
@@ -113,7 +113,8 @@ impl CallAlert {
 
     /// The invitation that rings changed: the old one's alert stops, a new one's starts.
     fn follow(&mut self, cx: &mut Context<Self>) {
-        let ringing = self.calls.read(cx).ringing().cloned();
+        // an answered invitation stops ringing at once, though its answer may wait for the devices
+        let ringing = self.calls.read(cx).alerting().cloned();
         if self.alerting.as_ref().map(|alerting| alerting.call) == ringing.as_ref().map(|ringing| ringing.call) {
             return;
         }

@@ -195,6 +195,9 @@ impl CallCommand {
         if !calls.shows() {
             return Vec::new();
         }
+        if calls.answering() {
+            return vec![Self::Decline];
+        }
         if calls.ringing().is_some() {
             return vec![Self::Answer, Self::Decline];
         }

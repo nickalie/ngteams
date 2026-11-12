@@ -10,10 +10,11 @@
 //! - `pending`: a (its USB microphone remembered in its settings) and b open their windows and chat lists while
 //!   discovery waits. a calls b: its call window says Preparing…, nothing reaches the mock or b, and a cancels it.
 //!   Settings → Calls and devices says "Preparing media…". a calls b again; a's discovery ends and the call rings at b,
-//!   whose own discovery still waits; b answers from its notification, and the call connects once b's discovery ends.
+//!   whose own discovery still waits; b answers from its notification: its ring stops and its banner says Answering
+//!   and Preparing… with Decline alone, and the call connects once b's discovery ends.
 //!   b hears a's remembered USB microphone, a hears b. Settings then lists the devices.
 //! - `failure`: b calls a while a's discovery waits; a's discovery fails: a's ring goes, the chat has no call button,
-//!   Settings says "Calls aren't available", a's call key does nothing, and a still receives and sends messages.
+//!   Settings says why calls aren't available and what to do in a warning box, a's call key does nothing, and a still receives and sends messages.
 //!
 //! `NGTEAMS_DEFERRED_SCENARIO=pending` or `failure` runs one. Screenshots go to `target/ui-shots/deferred-*.png`.
 //! Without weston 15, niri, `dbus-daemon`, PipeWire or WirePlumber it says so and passes, unless
@@ -740,9 +741,18 @@ fn answered_across_discovery(world: &World, apps: &mut Apps, (a_box, b_box): (&S
     let ringing = call_notification(b_box, 0)?;
     b_box.bus().invoke_action(ringing, "answer")?;
     b.trace.wait_for("call-notification", "answered")?;
+    // the answer waits for b's discovery: the banner says so at once, and the ring stops
+    b.trace.wait_for("call-banner", "answering")?;
+    b.trace.wait_for("call-notification", "closed")?;
     let waiting = b.lines_while_quiet();
     say(&format!("b's lines while its answer waits: {waiting:?}"));
-    shot_of(b_box, "deferred-answer-pending.png", true)?;
+    if let Some(odd) = waiting
+        .iter()
+        .find(|line| line["view"] == "call-banner" && line["change"] == "hidden")
+    {
+        return Err(format!("b's banner went before its answer could go: {odd}").into());
+    }
+    shots_light_and_dark(b, b_box, "deferred-answer-pending", true)?;
     let sent = requests_of(world, LAB_B);
     if sent.iter().any(|op| op == "accept") {
         return Err(format!("b accepted before its discovery ended: {sent:?}").into());

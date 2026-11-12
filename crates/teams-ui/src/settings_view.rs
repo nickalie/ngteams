@@ -879,6 +879,9 @@ impl SettingsView {
 
     fn calls(&mut self, settings: &Settings, palette: Palette, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut groups = Vec::new();
+        if self.model.read(cx).media_status() == DeviceStatus::Unavailable {
+            groups.push(media_unavailable());
+        }
         let rows = self.call_device_rows(settings, palette, cx);
         if !rows.is_empty() {
             groups.push(group(Some("Devices"), rows, palette));
@@ -924,29 +927,25 @@ impl SettingsView {
             .devices()
             .map(|list| self.devices(settings, list, palette))
             .unwrap_or_default();
-        let model = self.model.read(cx);
-        let status = model.media_status();
-        if status != DeviceStatus::Ready {
-            rows.clear();
-            rows.push(
-                div()
-                    .p_4()
-                    .text_sm()
-                    .text_color(rgb(palette.muted_foreground))
-                    .debug_selector(|| "media-status".to_owned())
-                    .child(if status == DeviceStatus::Preparing {
-                        "Preparing media…"
-                    } else {
-                        "Calls aren't available"
-                    })
-                    .into_any_element(),
-            );
+        let status = self.model.read(cx).media_status();
+        match status {
+            DeviceStatus::Ready => {}
+            DeviceStatus::Preparing => {
+                rows.clear();
+                rows.push(
+                    div()
+                        .p_4()
+                        .text_sm()
+                        .text_color(rgb(palette.muted_foreground))
+                        .debug_selector(|| "media-status".to_owned())
+                        .child("Preparing media…")
+                        .into_any_element(),
+                );
+            }
+            // said in a warning box over the page instead ([`media_unavailable`])
+            DeviceStatus::Unavailable => return Vec::new(),
         }
-        let offer = if status == DeviceStatus::Unavailable {
-            TestCallOffer::Hidden
-        } else {
-            self.test_call_offer(cx)
-        };
+        let offer = self.test_call_offer(cx);
         if offer != TestCallOffer::Hidden {
             rows.push(Self::test_call_row(offer, palette, cx));
         }
@@ -1590,21 +1589,42 @@ fn problems(model: &SettingsModel) -> Option<AnyElement> {
     }
     let lines = problems
         .iter()
-        .map(|problem| div().child(SharedString::from(problem.to_string())));
-    Some(
-        div()
-            .debug_selector(|| "settings-problems".to_owned())
-            .flex()
-            .gap_3()
-            .p_3()
-            .rounded_lg()
-            .border_1()
-            .border_color(rgb(theme::DANGER))
-            .text_sm()
-            .child(Glyph::INFO.icon().size(px(16.0)).text_color(rgb(theme::DANGER)))
-            .child(div().flex_1().flex().flex_col().gap_1().children(lines))
-            .into_any_element(),
+        .map(|problem| div().child(SharedString::from(problem.to_string())).into_any_element());
+    Some(warning_box("settings-problems", lines))
+}
+
+/// The call devices couldn't be set up this run: what that means and what to do, in a warning box.
+fn media_unavailable() -> AnyElement {
+    warning_box(
+        "media-status",
+        [
+            div()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child("Calls aren't available")
+                .into_any_element(),
+            div().child(MEDIA_UNAVAILABLE).into_any_element(),
+        ],
     )
+}
+
+/// What the Calls page says when the call devices couldn't be set up.
+pub const MEDIA_UNAVAILABLE: &str = "The app couldn't set up your microphone, speaker and camera, so you can't make or \
+                                     answer calls. Restart the app to try again. Chats work as usual.";
+
+/// A problem, said in a box with Teams' red edge and a mark, a line per element.
+fn warning_box(selector: &'static str, lines: impl IntoIterator<Item = AnyElement>) -> AnyElement {
+    div()
+        .debug_selector(move || selector.to_owned())
+        .flex()
+        .gap_3()
+        .p_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(rgb(theme::DANGER))
+        .text_sm()
+        .child(Glyph::INFO.icon().size(px(16.0)).text_color(rgb(theme::DANGER)))
+        .child(div().flex_1().min_w_0().flex().flex_col().gap_1().children(lines))
+        .into_any_element()
 }
 
 impl Render for SettingsView {

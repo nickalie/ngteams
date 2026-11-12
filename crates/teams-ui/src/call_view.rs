@@ -4,7 +4,9 @@
 //!
 //! - **The incoming call's banner** while an invitation the engine offered rings: who calls (the caller's name as the
 //!   invitation gives it, "Someone" without one; a group call's chat by its row's name), Answer in Teams' green and
-//!   Decline in its red. The ringtone and the notification are the desktop's ([`crate::call_alert`]).
+//!   Decline in its red. Once answered, until its call is told, it says "Answering" and "Preparing…" (devices still
+//!   being discovered) or "Connecting…", with Decline alone. The ringtone and the notification are the desktop's
+//!   ([`crate::call_alert`]).
 //! - **The in-call strip** while a call is up or being set up, the way back to its window as Teams' call monitor is:
 //!   who it is with (a chat's members other than the account, by their names; an invitation's caller; the test
 //!   call's echo, "Echo", as a 1:1 call's other member), its state (calling, ringing, connecting, connected with its
@@ -19,7 +21,8 @@
 //!
 //! Every button asks through [`calls::ask`], as the shell's keys and the switcher's commands do. What is shown is
 //! traced (`calling registered`/`unregistered` as the calling endpoint goes, `call-banner shown`/`hidden` with the
-//! call's number, its kind, whether the caller is named, a group call's chat and the caller's MRI; `in-call shown`
+//! call's number, its kind, whether the caller is named, a group call's chat and the caller's MRI; `call-banner
+//! answering` with the call's number; `in-call shown`
 //! with the call's number, its kind, state, end, mute, camera and voicemail, its chat and its participants' MRIs;
 //! `in-call hidden`; `test-call results` once a test call ended, a kind per check), never a name.
 
@@ -268,6 +271,8 @@ pub struct CallBar {
     results_traced: Option<CallId>,
     trace: Arc<ViewTrace>,
     banner_traced: Option<CallId>,
+    /// The banner's invitation last traced as being answered.
+    banner_answered_traced: Option<CallId>,
     bar_traced: Option<BarShown>,
     /// Whether the calling endpoint was last traced registered.
     registered_traced: bool,
@@ -297,6 +302,7 @@ impl CallBar {
             results_traced: None,
             trace,
             banner_traced: None,
+            banner_answered_traced: None,
             bar_traced: None,
             registered_traced: false,
             people: CallPeople::default(),
@@ -361,7 +367,8 @@ impl CallBar {
         let ringing = model.ringing().cloned();
         let shown = model.call().map(|active| self.bar_of(active));
         let ended = model.ended().cloned();
-        self.trace_banner(ringing.as_ref());
+        let answering = model.answering();
+        self.trace_banner(ringing.as_ref(), answering);
         match (shown, ended) {
             (Some(shown), _) => {
                 if self.bar_traced.as_ref() != Some(&shown) {
@@ -440,8 +447,16 @@ impl CallBar {
         self.trace.record(&line);
     }
 
-    fn trace_banner(&mut self, ringing: Option<&IncomingCall>) {
+    fn trace_banner(&mut self, ringing: Option<&IncomingCall>, answering: bool) {
         let call = ringing.map(|ringing| ringing.call);
+        let answered = call.filter(|_| answering);
+        if self.banner_answered_traced != answered {
+            if let Some(call) = answered {
+                self.trace
+                    .record(&TraceLine::new("call-banner", "answering").call(call.get()));
+            }
+            self.banner_answered_traced = answered;
+        }
         if self.banner_traced == call {
             return;
         }
@@ -498,10 +513,44 @@ impl CallBar {
 
     fn banner(&self, ringing: &IncomingCall, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
         let caller = ringing.caller_name.clone().unwrap_or_else(|| SOMEONE.to_owned());
-        let text: SharedString = match &ringing.group_chat {
-            Some(chat) => format!("{caller} is calling in {}", self.chat_name(chat, cx)).into(),
-            None => format!("{caller} is calling").into(),
+        let model = self.calls.read(cx);
+        let answering = model.answering();
+        let text: SharedString = match (&ringing.group_chat, answering) {
+            (Some(chat), false) => format!("{caller} is calling in {}", self.chat_name(chat, cx)).into(),
+            (None, false) => format!("{caller} is calling").into(),
+            (Some(chat), true) => format!("Answering {caller} in {}", self.chat_name(chat, cx)).into(),
+            (None, true) => format!("Answering {caller}").into(),
         };
+        // the answer waits for the devices (minutes on a first start) and the media: said here, as a start says it
+        let status = answering.then(|| {
+            div()
+                .debug_selector(|| "call-banner-status".to_owned())
+                .flex_none()
+                .text_xs()
+                .text_color(rgb(palette.muted_foreground))
+                .child(if model.devices_preparing() {
+                    "Preparing…"
+                } else {
+                    "Connecting…"
+                })
+        });
+        let mark = call_mark(palette).relative();
+        // rings spreading from the mark while it rings
+        let mark = if answering {
+            mark
+        } else {
+            mark.children(crate::motion::ripple("call-banner-mark", palette.accent, 32.0, cx))
+        };
+        let answer = (!answering).then(|| {
+            control(
+                "call-answer",
+                Control::Labelled(Glyph::PHONE, "Answer"),
+                ("Answer", &AnswerCall),
+                Look::Success,
+                cx,
+                |this, cx| this.ask(Ask::Answer, cx),
+            )
+        });
         let banner = strip(palette)
             .debug_selector(|| "call-banner".to_owned())
             .bg(theme::gradient(
@@ -509,22 +558,18 @@ impl CallBar {
                 theme::mix(palette.surface, palette.accent, 0.12),
                 90.0,
             ))
-            // rings spreading from the mark while it rings
-            .child(call_mark(palette).relative().children(crate::motion::ripple(
-                "call-banner-mark",
-                palette.accent,
-                32.0,
-                cx,
-            )))
-            .child(div().flex_1().font_weight(gpui::FontWeight::SEMIBOLD).child(text))
-            .child(control(
-                "call-answer",
-                Control::Labelled(Glyph::PHONE, "Answer"),
-                ("Answer", &AnswerCall),
-                Look::Success,
-                cx,
-                |this, cx| this.ask(Ask::Answer, cx),
-            ))
+            .child(mark)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().truncate().font_weight(gpui::FontWeight::SEMIBOLD).child(text))
+                    .children(status),
+            )
+            .children(answer)
             .child(control(
                 "call-decline",
                 Control::Labelled(Glyph::PHONE_OFF, "Decline"),

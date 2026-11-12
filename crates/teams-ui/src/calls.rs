@@ -751,6 +751,11 @@ pub struct Calls {
     echo: Option<Mri>,
     registered: bool,
     ringing: Option<IncomingCall>,
+    /// The ringing invitation the user answered, until its call is told, its ring ends or the answer is refused: the
+    /// answer waits for the call's devices and media, which can take minutes on a first start.
+    answering: Option<CallId>,
+    /// Where the call devices' discovery is, as [`follow_devices`] last saw it.
+    devices: teams_media::devices::catalog::DeviceStatus,
     /// The invitation that last stopped ringing without being answered here, and who ended it.
     rang_out: Option<(CallId, Option<Mri>)>,
     call: Option<ActiveCall>,
@@ -884,6 +889,26 @@ impl Calls {
         self.ringing.as_ref()
     }
 
+    /// Whether the user answered the invitation that rings and the answer still waits to go.
+    #[must_use]
+    pub fn answering(&self) -> bool {
+        self.ringing
+            .as_ref()
+            .is_some_and(|ringing| self.answering == Some(ringing.call))
+    }
+
+    /// The invitation to ring aloud and notify: the one that rings, unless it is being answered.
+    #[must_use]
+    pub fn alerting(&self) -> Option<&IncomingCall> {
+        self.ringing.as_ref().filter(|_| !self.answering())
+    }
+
+    /// Whether the call devices are still being discovered, so a call waits before it goes.
+    #[must_use]
+    pub fn devices_preparing(&self) -> bool {
+        self.devices == teams_media::devices::catalog::DeviceStatus::Preparing
+    }
+
     /// The invitation `me` last missed, if one: it stopped ringing and `me` didn't end it from another device.
     #[must_use]
     pub fn missed(&self, me: &str) -> Option<CallId> {
@@ -944,6 +969,7 @@ impl Calls {
         }
         self.registered = false;
         self.ringing = None;
+        self.answering = None;
         self.asked = None;
         self.prejoin = None;
         self.choices = None;
@@ -1121,6 +1147,7 @@ impl Calls {
             Event::RingEnded { call, end } => {
                 if self.ringing.as_ref().is_some_and(|ringing| ringing.call == *call) {
                     self.ringing = None;
+                    self.answering = None;
                     self.rang_out = Some((*call, end.by.clone()));
                 }
             }
@@ -1389,6 +1416,7 @@ impl Calls {
     /// A call told for the first time: the invitation it answers (or declines), else the start or join asked for.
     fn adopt(&mut self, call: CallId) -> ActiveCall {
         let invitation = self.ringing.take_if(|ringing| ringing.call == call);
+        self.answering.take_if(|answering| *answering == call);
         let (kind, chat, caller, caller_name) = if let Some(incoming) = invitation {
             (
                 CallKind::Incoming,
@@ -1730,6 +1758,14 @@ impl Calls {
             // an unmute a newer mute overtook: that mute's state stands and nothing went wrong to tell
             Err(EngineError::Call(CallActionError::Superseded)) => {}
             Err(error) => {
+                // a refused answer leaves the invitation ringing, answerable again; one whose invitation was declined
+                // or ended while it waited has nothing left to tell
+                if let CallAction::Answer { call } = action {
+                    if self.answering.take_if(|answering| answering == call).is_none() {
+                        return;
+                    }
+                    cx.notify();
+                }
                 if let Some(start) = start {
                     // a start already given up on was said not to start: its refusal (the engine refuses it as late)
                     // says nothing more, and leaves a start asked since alone
@@ -1828,20 +1864,31 @@ pub fn follow_devices(
             return;
         }
         DeviceStatus::Ready => return,
-        DeviceStatus::Preparing => {}
+        DeviceStatus::Preparing => calls.update(cx, |calls, cx| {
+            calls.devices = DeviceStatus::Preparing;
+            cx.notify();
+        }),
     }
     let weak = calls.downgrade();
     cx.spawn(async move |cx: &mut AsyncApp| {
         while changes.recv().await.is_ok() {
-            if directory.status() == DeviceStatus::Unavailable {
-                let _ = weak.update(cx, |calls, cx| {
-                    *calls = Calls::default();
-                    cx.notify();
-                });
-                break;
-            }
-            if directory.status() == DeviceStatus::Ready || weak.upgrade().is_none() {
-                break;
+            match directory.status() {
+                DeviceStatus::Unavailable => {
+                    let _ = weak.update(cx, |calls, cx| {
+                        *calls = Calls::default();
+                        cx.notify();
+                    });
+                    break;
+                }
+                DeviceStatus::Ready => {
+                    let _ = weak.update(cx, |calls, cx| {
+                        calls.devices = DeviceStatus::Ready;
+                        cx.notify();
+                    });
+                    break;
+                }
+                DeviceStatus::Preparing if weak.upgrade().is_none() => break,
+                DeviceStatus::Preparing => {}
             }
         }
     })
@@ -1900,7 +1947,10 @@ pub fn ask_then(
     trace.record(&asked);
     log::info!("call: {} asked{}", ask.name(), logged_chat(&ask));
     // the caption pane shown or hidden here; the captions themselves only when they don't run for the saved transcript
-    let Some(ask) = calls.update(cx, |calls, cx| calls.caption_pane_ask(ask, cx)) else {
+    // an answer that already waits for its media: the key again changes nothing
+    let Some(ask) = calls.update(cx, |calls, cx| {
+        (ask != Ask::Answer || !calls.answering()).then(|| calls.caption_pane_ask(ask, cx))?
+    }) else {
         cx.defer(move |cx| then(Answered::Taken, cx));
         return;
     };
@@ -1925,6 +1975,12 @@ pub fn ask_then(
             calls.starts
         })
     });
+    if let CallAction::Answer { call } = action {
+        calls.update(cx, |calls, cx| {
+            calls.answering = Some(call);
+            cx.notify();
+        });
+    }
     let reply = core.call(action.clone());
     let (weak, trace) = (calls.downgrade(), Arc::clone(trace));
     if let Some(start) = start {
