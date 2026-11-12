@@ -128,6 +128,8 @@ pub struct FakeCore {
     pub limits: Mutex<Vec<usize>>,
     /// Every write asked for, in order; each is answered with a pending row of its own.
     pub actions: Mutex<Vec<Action>>,
+    /// The activity feed `activity` answers.
+    pub activity: Mutex<teams_core::activity::ActivityFeed>,
     pub write_answers: Mutex<std::collections::VecDeque<OutboxEntry>>,
     pub outbox_answers: Mutex<std::collections::VecDeque<OutboxEntry>>,
     /// Every transient asked for, in order; each is answered sent.
@@ -732,6 +734,11 @@ impl Core for FakeCore {
 
     fn read_only(&self) -> bool {
         *locked(&self.read_only)
+    }
+
+    fn activity(&self) -> Reply<teams_core::activity::ActivityFeed> {
+        let feed = locked(&self.activity).clone();
+        self.answer("activity", || feed)
     }
 
     fn write(&self, action: Action) -> Reply<OutboxEntry> {

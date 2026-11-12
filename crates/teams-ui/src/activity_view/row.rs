@@ -10,7 +10,7 @@ use gpui_component::tooltip::Tooltip;
 use gpui_component::{Sizable as _, Size};
 use teams_core::activity::{ActivityItem, ActivityKind, MeetingChange, Mention};
 
-use super::{AVATAR, ActivityView, ActivityViewEvent, BADGE, activity_time, menu_surface, reaction_emoji};
+use super::{AVATAR, ActivityView, ActivityViewEvent, BADGE, activity_time, menu_surface};
 use crate::clock;
 use crate::icons::{Glyph, icon_button, selected_by};
 use crate::people;
@@ -18,14 +18,15 @@ use crate::theme::{self, Palette};
 
 /// What an item's badge shows.
 enum Badge {
-    Emoji(&'static str),
+    /// A reaction, by its key: drawn as the chat draws it.
+    Reaction(String),
     At,
     Glyph(Glyph),
 }
 
 fn badge_of(kind: &ActivityKind) -> Badge {
     match kind {
-        ActivityKind::Reaction(key) => Badge::Emoji(reaction_emoji(key)),
+        ActivityKind::Reaction(key) => Badge::Reaction(key.clone()),
         ActivityKind::Mention(Mention::You) => Badge::At,
         ActivityKind::Mention(_) | ActivityKind::AddedToTeam => Badge::Glyph(Glyph::USERS),
         ActivityKind::Reply => Badge::Glyph(Glyph::REPLY),
@@ -82,7 +83,7 @@ impl ActivityView {
             .as_ref()
             .and_then(|actor| self.pictures.get(actor))
             .and_then(Option::as_ref);
-        let avatar = people::avatar(name.as_ref(), picture, Size::Size(px(AVATAR)));
+        let avatar = people::avatar(name.as_ref(), picture, Size::Medium);
         let badge = div()
             .debug_selector({
                 let id = item.id.clone();
@@ -99,7 +100,7 @@ impl ActivityView {
             .bg(rgb(palette.surface))
             .text_size(px(10.0));
         let badge = match badge_of(&item.kind) {
-            Badge::Emoji(emoji) => badge.child(emoji),
+            Badge::Reaction(key) => badge.child(crate::reactions::emoji(&key, px(BADGE - 4.0))),
             Badge::At => badge
                 .text_color(rgb(theme::DANGER))
                 .font_weight(gpui::FontWeight::BOLD)

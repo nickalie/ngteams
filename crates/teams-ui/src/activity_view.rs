@@ -579,7 +579,8 @@ fn kind_key(kind: &ActivityKind) -> &'static str {
     }
 }
 
-/// A reaction's emoji, by Teams' keys; another key shows a like's.
+/// A reaction's emoji as text, by Teams' keys (another key shows a like's): where a picture can't go, such as a
+/// line of `ngteamsctl`.
 #[must_use]
 pub fn reaction_emoji(key: &str) -> &'static str {
     match key {
