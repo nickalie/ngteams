@@ -570,8 +570,9 @@ fn reactions_count_by_key_in_the_order_first_given() {
     let counted = count_reactions(
         &[
             reaction("surprised", LAB_B, 30),
-            reaction("like", LAB_B, 10),
-            reaction("like", "8:orgid:00000000-0000-4000-8000-00000000000c", 40),
+            // as the store gives them: by key, then by person, not by time
+            reaction("like", LAB_B, 40),
+            reaction("like", "8:orgid:00000000-0000-4000-8000-00000000000c", 10),
             reaction("custom-key", LAB_A, 20),
         ],
         LAB_A,
@@ -586,7 +587,7 @@ fn reactions_count_by_key_in_the_order_first_given() {
     );
     assert_eq!(
         counted[0].users,
-        [LAB_B, "8:orgid:00000000-0000-4000-8000-00000000000c"],
+        ["8:orgid:00000000-0000-4000-8000-00000000000c", LAB_B],
         "who reacted, in the order they did"
     );
     assert_eq!(reaction_label("like"), "👍");

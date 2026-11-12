@@ -51,7 +51,9 @@
 //!   messages; react's key numbers the bar's quick reactions (keys 1–4) and "more reactions" (key 5, or react's
 //!   button: [`ReactionPicker`], every reaction Teams offers, over the view), and a quick reaction or a reaction chip
 //!   clicked sets or takes back the account's own (a chip of a key Teams doesn't offer only shows:
-//!   [`reactions::Catalog::offers`]); react and delete select the message they act on, and moving the selection
+//!   [`reactions::Catalog::offers`]); a chip under the pointer shows who gave it, and Left and Right go through the
+//!   selected message's chips, Space setting or taking back the account's own on the one under the keys
+//!   ([`reactors`]); react and delete select the message they act on, and moving the selection
 //!   closes them; delete asks first (Enter or the button confirms, Escape cancels). Every write goes out through the
 //!   engine ([`Core::write`]), never from the view.
 //! - **The account's writes as they go out** ([`crate::sending`]): a message post shows at once as a pending message of
@@ -2509,7 +2511,9 @@ impl ChatView {
 
     /// Asks the engine for the people the rows name: the senders (their profile's name and their picture), events'
     /// members (the account too in a meeting chat, whose events name it by its name, and as a recording's owner),
-    /// forwarded messages' original senders (the account too: a forward names it, never "You") and who is typing.
+    /// forwarded messages' original senders (the account too: a forward names it, never "You"), everyone who gave a
+    /// reaction on a message held (the account too: the who-reacted card names it, never "You"; asked when the chat
+    /// loads, so the names are there once a card opens) and who is typing.
     fn want_names(&mut self, cx: &mut Context<Self>) {
         let mut wanted: Vec<String> = Vec::new();
         let mut originals: Vec<String> = Vec::new();
@@ -3154,8 +3158,9 @@ impl ChatView {
     }
 
     /// Closes what waits on a message that no longer offers it (gone from the rows, or deleted meanwhile): its quick
-    /// reactions, its delete's confirmation.
+    /// reactions, its delete's confirmation, and the card of a reaction no longer shown.
     fn close_gone(&mut self) {
+        self.close_gone_reactors();
         let offers = |view: &Self, id: &str, action: MessageAction| {
             view.message_items()
                 .any(|item| item.id == id && item.actions().contains(&action))
@@ -5215,7 +5220,7 @@ impl Render for ChatView {
         let more = self.more_overlay();
         let options = self.options_overlay(palette, window, cx);
         let selection_menu = self.selection_menu(palette, window, cx);
-        let reactors = self.reactors_card(palette, cx);
+        let reactors = self.reactors_card(palette, window, cx);
         let rows = list(
             self.list.clone(),
             cx.processor(|this: &mut Self, index: usize, _window, cx| this.render_item(index, cx)),

@@ -6,7 +6,7 @@ use teams_ui::chat_view::ChatView;
 use teams_ui::chat_view::reactors::{DELAY, GRACE};
 
 use super::common::{LAB_A, LAB_B};
-use super::{chat_window, draw, varied_chat};
+use super::{chat_window, draw, many, rig_with, scroll_up, varied_chat};
 
 fn bounds(cx: &mut VisualTestContext, selector: &str) -> Option<Bounds<Pixels>> {
     cx.debug_bounds(Box::leak(selector.to_owned().into_boxed_str()))
@@ -187,7 +187,24 @@ fn space_sets_nothing_on_a_pill_gone_since_the_keys_reached_it() {
     press(cx, "right");
     press(cx, "right");
     assert_eq!(focus(&view, cx).as_deref(), Some("heart"));
-    // b takes back the only heart: its pill goes
+    heart_taken_back(&rig, cx);
+    assert!(bounds(cx, "reaction-heart").is_none(), "the heart's pill has gone");
+    assert_eq!(focus(&view, cx), None, "the keys left it with it");
+    press(cx, "space");
+    assert!(
+        rig.core.actions.lock().unwrap().is_empty(),
+        "no reaction set on a pill no longer shown"
+    );
+    press(cx, "escape");
+    assert_eq!(
+        cx.update(|_, cx| view.read(cx).selected().map(str::to_owned)),
+        None,
+        "escape isn't spent on a card no longer shown"
+    );
+}
+
+/// b takes back the only heart on 101: its pill goes.
+fn heart_taken_back(rig: &super::Rig, cx: &mut VisualTestContext) {
     rig.core.reactions.lock().unwrap().insert(
         "101".to_owned(),
         vec![
@@ -215,10 +232,86 @@ fn space_sets_nothing_on_a_pill_gone_since_the_keys_reached_it() {
         source: teams_core::Source::Delivery,
     });
     draw(cx);
-    assert!(bounds(cx, "reaction-heart").is_none(), "the heart's pill has gone");
-    press(cx, "space");
+}
+
+#[test]
+fn a_card_whose_pill_went_under_the_pointer_closes_and_comes_back_only_when_asked() {
+    let rig = varied_chat();
+    let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    let heart = bounds(cx, "reaction-heart").unwrap();
+    point_at(cx, heart.center());
+    wait(cx, DELAY);
+    assert!(bounds(cx, "reactors-heart").is_some());
+    heart_taken_back(&rig, cx);
+    assert_eq!(shown(&view, cx), None, "no pointer leaves a pill that has gone");
+    let like = bounds(cx, "reaction-like").unwrap();
+    point_at(cx, like.center());
     assert!(
-        rig.core.actions.lock().unwrap().is_empty(),
-        "no reaction set on a pill no longer shown"
+        bounds(cx, "reactors-like").is_none(),
+        "another pill waits for the pointer to rest as ever"
+    );
+}
+
+/// A chat whose newest message, at the bottom, has a like from more people than its card shows at once.
+fn liked_by_many() -> super::Rig {
+    let rig = rig_with(many(40));
+    let people: Vec<super::Reaction> = (0..12)
+        .map(|n| {
+            super::reaction(
+                "like",
+                &format!("8:orgid:00000000-0000-4000-8000-0000000001{n:02}"),
+                super::NOON + n,
+            )
+        })
+        .collect();
+    rig.core.reactions.lock().unwrap().insert("40".to_owned(), people);
+    rig
+}
+
+#[test]
+fn with_no_room_under_its_pill_the_card_shows_over_it_and_the_pill_still_takes_clicks() {
+    let rig = liked_by_many();
+    let (_view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    let like = bounds(cx, "reaction-like").unwrap();
+    point_at(cx, like.center());
+    wait(cx, DELAY);
+    let card = bounds(cx, "reactors-like").unwrap();
+    assert!(
+        card.bottom() <= like.top(),
+        "the card over its pill: {card:?} over {like:?}"
+    );
+    assert!(card.top() >= px(0.0), "in the window: {card:?}");
+    cx.simulate_click(like.center(), Modifiers::none());
+    draw(cx);
+    assert_eq!(
+        *rig.core.actions.lock().unwrap(),
+        [teams_core::Action::React {
+            conversation: super::AB.to_owned(),
+            message_id: "40".to_owned(),
+            key: "like".to_owned(),
+        }],
+        "the pill under the card's gap still sets the account's own"
+    );
+}
+
+#[test]
+fn a_card_goes_with_its_pill_scrolled_out_of_the_list_and_comes_back_with_it() {
+    let rig = liked_by_many();
+    let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    cx.update(|window, cx| view.read(cx).focus_handle().clone().focus(window, cx));
+    view.update(cx, |view, cx| view.select(Some("40".to_owned()), cx));
+    draw(cx);
+    press(cx, "right");
+    assert!(bounds(cx, "reactors-like").is_some(), "shown at once");
+    scroll_up(cx, 1_000.0);
+    assert!(bounds(cx, "reaction-like").is_none(), "the pill is out of the list");
+    assert!(bounds(cx, "reactors-like").is_none(), "its card went with it");
+    assert_eq!(focus(&view, cx).as_deref(), Some("like"), "the keys stay on it");
+    scroll_up(cx, -1_000.0);
+    let like = bounds(cx, "reaction-like").unwrap();
+    let card = bounds(cx, "reactors-like").expect("back with its pill");
+    assert!(
+        card.bottom() <= like.top() || card.top() >= like.bottom(),
+        "by its pill: {card:?}, {like:?}"
     );
 }
