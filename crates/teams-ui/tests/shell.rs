@@ -1522,6 +1522,23 @@ fn an_imported_pack_is_chosen_listed_and_removed() {
 }
 
 #[test]
+fn the_own_file_in_the_sound_picker_can_be_chosen_with_the_keyboard() {
+    let rig = seeded();
+    let (_dir, model) = filed_settings();
+    let (shell, cx) = shell_window_with(&rig, model, Arc::new(ViewTrace::off()));
+    cx.update(|_, cx| shell.update(cx, Shell::show_settings));
+    click(cx, "settings-page-notifications");
+    click(cx, "sound-message");
+    cx.simulate_keystrokes("up enter");
+    assert!(cx.did_prompt_for_paths());
+    cx.simulate_path_prompt_response(|options| {
+        assert!(options.files && !options.directories && !options.multiple);
+        None
+    });
+    cx.run_until_parked();
+}
+
+#[test]
 fn replacing_an_own_file_refreshes_the_playing_sound_without_changing_the_source() {
     use teams_media::devices::file::{AudioInput, FileDevices, Pacing, PatternCamera};
     use teams_media::devices::wav::{self, WavWriter};
@@ -1553,7 +1570,18 @@ fn replacing_an_own_file_refreshes_the_playing_sound_without_changing_the_source
         writer.write(&vec![value; 12_000]).unwrap();
         writer.finish().unwrap();
         click(cx, "sound-message");
+        let menu_row = bounds(cx, "sound-message-pack").expect("drawn");
+        let before = bounds(cx, "sound-message-own-file").expect("drawn").origin.y;
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: menu_row.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-400.0))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        let after = bounds(cx, "sound-message-own-file").expect("drawn").origin.y;
+        assert!(after < before, "the menu scrolled: {before:?} to {after:?}");
         click(cx, "sound-message-own-file");
+        assert!(cx.did_prompt_for_paths());
         cx.simulate_path_prompt_response(|options| {
             assert!(options.files && !options.directories && !options.multiple);
             Some(vec![file])
