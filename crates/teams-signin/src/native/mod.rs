@@ -2,17 +2,14 @@
 //! and a host-gated proxy with no direct bypass. The worker never receives tokens or credential-store handles.
 //! All descendants belong to a private kill-on-close job before their first instruction. Its profile directory
 //! is private and removed only after the complete tree exits, including on a failed setup or page crash.
-use crate::guard::{Decision, Guard, GuardEvent};
-use gpui::App;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader};
 use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::AsHandle as _;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock, mpsc};
+use std::sync::OnceLock;
 use std::time::Duration;
-use teams_auth::redirect::RedirectUri;
-use teams_auth::signin::{SignInAnswer, SignInRequest};
+use teams_auth::signin::SignInAnswer;
 use teams_platform::{
     private,
     windows_job::Job,
@@ -23,31 +20,22 @@ mod browser;
 mod policy;
 mod profile;
 mod refusals;
+mod session;
 mod wire;
 
-const PAGE: u64 = 1;
+#[cfg(feature = "test-support")]
+pub use session::is_local_page;
+pub use session::{Bound, GuardSetup, WindowConfig, Windows};
+
+/// The engine's name, as a load failure names it.
+const ENGINE: &str = "WebView2";
 
 pub const TITLE: &str = "Sign in to Microsoft Teams";
 pub const EXTENSION_FILE: &str = "ngteams-webview.exe";
 pub const SIZE: (u16, u16) = (520, 720);
-pub type GuardSetup = Box<dyn FnOnce(Guard) -> Guard + Send>;
 
 /// Windows selects Microsoft's installed evergreen runtime; no Linux runtime archive is loaded here.
 pub struct EngineSource;
-
-#[derive(Clone, Debug)]
-pub enum Bound {
-    Hosts(Arc<crate::hosts::SignInHosts>),
-}
-
-pub struct WindowConfig {
-    pub request: SignInRequest,
-    pub bound: Bound,
-    /// The native worker beside the app; the common config retains the Linux field's name.
-    pub extension: PathBuf,
-    pub engine: EngineSource,
-    pub setup: GuardSetup,
-}
 
 struct Pinned {
     path: PathBuf,
@@ -78,38 +66,11 @@ pub fn pin_worker() -> io::Result<()> {
         .ok_or_else(|| io::Error::other("native sign-in worker missing"))
 }
 
-/// Sign-in is a native worker window; its STA/message loop never blocks GPUI's foreground.
-#[derive(Clone)]
-pub struct Windows {
-    app_id: String,
-}
-impl Windows {
-    #[must_use]
-    pub fn serve(app_id: &str, _cx: &mut App) -> Self {
-        Self::new(app_id)
-    }
-
-    #[must_use]
-    pub fn new(app_id: &str) -> Self {
-        Self {
-            app_id: app_id.to_owned(),
-        }
-    }
-
-    /// # Errors
-    /// The installed `WebView2` runtime is missing.
-    pub fn engine_source(&self, _data_dir: &Path) -> Result<EngineSource, SignInAnswer> {
-        browser::runtime().map(|()| EngineSource).map_err(|_| {
-            SignInAnswer::Failed("Install or repair the Microsoft Edge WebView2 Runtime, then sign in again.".into())
-        })
-    }
-
-    #[must_use]
-    pub fn ask(&self, config: WindowConfig) -> SignInAnswer {
-        ask(config, &self.app_id).unwrap_or_else(|_| {
-            SignInAnswer::Failed("The sign-in window could not finish. Close it and try again.".into())
-        })
-    }
+/// The installed `WebView2` runtime, or what to do without it.
+fn engine_source() -> Result<EngineSource, SignInAnswer> {
+    browser::runtime().map(|()| EngineSource).map_err(|_| {
+        SignInAnswer::Failed("Install or repair the Microsoft Edge WebView2 Runtime, then sign in again.".into())
+    })
 }
 
 struct Worker {
@@ -180,85 +141,7 @@ impl Drop for Worker {
     }
 }
 
-fn ask(config: WindowConfig, app_id: &str) -> io::Result<SignInAnswer> {
-    let Bound::Hosts(hosts) = config.bound;
-    let redirect =
-        RedirectUri::parse(&config.request.redirect_uri).map_err(|_| io::Error::other("invalid redirect"))?;
-    if !hosts.admits_url(&config.request.authorize) {
-        return Err(io::Error::other("authorize host refused"));
-    }
-    let (events, hearing) = mpsc::channel();
-    let guard = Arc::new((config.setup)(Guard::new(Arc::clone(&hosts), redirect.clone(), events)));
-    guard.arm(PAGE);
-    let proxy = crate::egress::HostGate::start(Arc::clone(&guard), Arc::clone(&hosts))?.uri();
-    let mut worker = Worker::start(&config.extension, config.request.authorize, proxy, app_id)?;
-    let mut refused = None;
-    loop {
-        let event: wire::Event = wire::read(&mut worker.output)?;
-        let allow = match event {
-            wire::Event::Request { method, url } => guard.decide(PAGE, &method, &url) == Decision::Allow,
-            wire::Event::Navigation(url) => {
-                if redirect.matches(&url) {
-                    guard.caught_navigation(&url);
-                    wire::send(&mut worker.input, &false)?;
-                    return Ok(SignInAnswer::Redirect(teams_auth::secrets::Secret::new(url)));
-                }
-                let allowed = hosts.admits_url(&url);
-                if !allowed {
-                    guard.refuse("GET", &url);
-                    refused = hosts.idp_candidate(&url).or(refused);
-                }
-                allowed
-            }
-            wire::Event::NetworkFailure(code) => {
-                log::warn!("sign-in network load failed: {code}");
-                continue;
-            }
-            wire::Event::LoadFailed(code) => {
-                return Ok(SignInAnswer::Failed(format!(
-                    "The sign-in page could not load (WebView2 error {code}). Check your connection and try again."
-                )));
-            }
-            wire::Event::Closed => return Ok(refused.map_or(SignInAnswer::Closed, SignInAnswer::Refused)),
-            wire::Event::Failed(reason) => return Ok(SignInAnswer::Failed(reason)),
-        };
-        wire::send(&mut worker.input, &allow)?;
-        while let Ok(event) = hearing.try_recv() {
-            if let GuardEvent::Redirect(url) = event {
-                return Ok(SignInAnswer::Redirect(url));
-            }
-        }
-    }
-}
-
-/// Whether an offline test URL uses HTTP(S) on a numerical loopback address.
-#[cfg(feature = "test-support")]
-#[must_use]
-pub fn is_local_page(text: &str) -> bool {
-    url::Url::parse(text).is_ok_and(|url| {
-        matches!(url.scheme(), "http" | "https")
-            && match url.host() {
-                Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-                Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-                _ => false,
-            }
-    })
-}
-
-/// Private worker entry point; stdout carries protocol only, stderr is discarded by the parent.
+/// The worker's entry point (`ngteams-webview --guarded-signin`).
 pub fn worker() {
-    let result = (|| {
-        if std::env::args_os().nth(1).as_deref() != Some(std::ffi::OsStr::new("--guarded-signin")) {
-            return Err("the sign-in worker must be started by ngteams");
-        }
-        let start: wire::Start =
-            wire::read(&mut io::stdin().lock()).map_err(|_| "the sign-in worker's private pipe failed")?;
-        if start.identity != wire::identity() {
-            return Err("the sign-in worker and app versions differ; restart ngteams after updating");
-        }
-        browser::run(&start)
-    })();
-    if let Err(reason) = result {
-        let _ = wire::send(&mut io::stdout().lock(), &wire::Event::Failed(reason.into()));
-    }
+    session::worker(browser::run);
 }

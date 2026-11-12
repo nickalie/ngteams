@@ -193,20 +193,7 @@ fn unpack_zip(asset: &Path, into: &Path) -> Result<(), Error> {
 /// An unpacked app bundle is the release it should be: the macOS app's marker, `version` as its identity, its
 /// programs, and a code signature that verifies over the whole bundle.
 fn validate_app(candidate: &Path, version: Version) -> Result<(), Error> {
-    let marker = fs::read_to_string(candidate.join(MARKER)).unwrap_or_default();
-    let identity = fs::read_to_string(candidate.join(IDENTITY)).unwrap_or_default();
-    if marker.trim() != Format::MacApp.marker()
-        || identity.lines().next().map(str::trim) != Some(version.to_string().as_str())
-    {
-        return Err(error(format!(
-            "The download isn't release {version}'s app. Nothing was changed."
-        )));
-    }
-    if let Some(missing) = APP_PROGRAMS.iter().find(|program| !candidate.join(program).is_file()) {
-        return Err(error(format!(
-            "The downloaded app has no {missing}. Nothing was changed."
-        )));
-    }
+    validate_release(candidate, version, Format::MacApp, &APP_PROGRAMS, "app")?;
     let verified = std::process::Command::new("/usr/bin/codesign")
         .args(["--verify", "--deep", "--strict"])
         .arg(candidate)
@@ -223,18 +210,29 @@ fn validate_app(candidate: &Path, version: Version) -> Result<(), Error> {
 
 /// An unpacked archive is the release it should be: an archive's marker, `version` as its identity, and its programs.
 pub(crate) fn validate_tree(candidate: &Path, version: Version) -> Result<(), Error> {
+    validate_release(candidate, version, Format::Archive, &PROGRAMS, "archive")
+}
+
+/// An unpacked release (`noun`, as what is said names it) is `version` of `format`: its marker, its identity's first
+/// line, and each of `programs` in it.
+fn validate_release(
+    candidate: &Path,
+    version: Version,
+    format: Format,
+    programs: &[&str],
+    noun: &str,
+) -> Result<(), Error> {
     let marker = fs::read_to_string(candidate.join(MARKER)).unwrap_or_default();
     let identity = fs::read_to_string(candidate.join(IDENTITY)).unwrap_or_default();
-    if marker.trim() != Format::Archive.marker()
-        || identity.lines().next().map(str::trim) != Some(version.to_string().as_str())
+    if marker.trim() != format.marker() || identity.lines().next().map(str::trim) != Some(version.to_string().as_str())
     {
         return Err(error(format!(
-            "The downloaded archive isn't release {version}'s archive. Nothing was changed."
+            "The downloaded {noun} isn't release {version}'s {noun}. Nothing was changed."
         )));
     }
-    if let Some(missing) = PROGRAMS.iter().find(|program| !candidate.join(program).is_file()) {
+    if let Some(missing) = programs.iter().find(|program| !candidate.join(program).is_file()) {
         return Err(error(format!(
-            "The downloaded archive has no {missing}. Nothing was changed."
+            "The downloaded {noun} has no {missing}. Nothing was changed."
         )));
     }
     Ok(())

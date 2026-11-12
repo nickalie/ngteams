@@ -7,50 +7,39 @@
 //!   refused at the tunnel, whatever asked for it.
 //! - Every navigation, main frame or not, redirects included, is asked of this process with its method before it
 //!   starts ([`wire::Event::Navigation`], then [`wire::Event::Request`]); the redirect to the app's redirect URI is
-//!   caught there and never loaded. Every `fetch` and `XMLHttpRequest` the page makes is asked the same way first
+//!   caught there and never loaded (the guard's loop is Windows', `native/session.rs`). Every `fetch` and `XMLHttpRequest` the page makes is asked the same way first
 //!   (`worker.rs`'s document-start script, in every frame); `WKWebView` offers no hook for its other subresource loads,
 //!   which are reads and reach only the gate's hosts.
 //! - New windows, downloads, ambient HTTP authentication and client certificates are refused; TLS is the system's,
 //!   with no click-through.
 //!
 //! The worker never receives tokens or credential-store handles: the code in the caught redirect is redeemed here.
-use crate::guard::{Decision, Guard, GuardEvent};
-use gpui::App;
 use std::fs::File;
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::{Arc, OnceLock, mpsc};
-use teams_auth::redirect::RedirectUri;
-use teams_auth::signin::{SignInAnswer, SignInRequest};
+use std::sync::OnceLock;
+use teams_auth::signin::SignInAnswer;
 
+#[path = "../native/session.rs"]
+mod session;
 #[path = "../native/wire.rs"]
 mod wire;
 mod worker;
 
-const PAGE: u64 = 1;
+#[cfg(feature = "test-support")]
+pub use session::is_local_page;
+pub use session::{Bound, GuardSetup, WindowConfig, Windows};
+
+/// The engine's name, as a load failure names it.
+const ENGINE: &str = "WebKit";
 
 pub const TITLE: &str = "Sign in to Microsoft Teams";
 pub const EXTENSION_FILE: &str = "ngteams-webview";
 pub const SIZE: (u16, u16) = (520, 720);
-pub type GuardSetup = Box<dyn FnOnce(Guard) -> Guard + Send>;
 
 /// macOS signs in with the system's `WebKit`; there is no engine to choose or download.
 pub struct EngineSource;
-
-#[derive(Clone, Debug)]
-pub enum Bound {
-    Hosts(Arc<crate::hosts::SignInHosts>),
-}
-
-pub struct WindowConfig {
-    pub request: SignInRequest,
-    pub bound: Bound,
-    /// The native worker beside the app; the common config keeps the Linux field's name.
-    pub extension: PathBuf,
-    pub engine: EngineSource,
-    pub setup: GuardSetup,
-}
 
 struct Pinned {
     path: PathBuf,
@@ -80,38 +69,13 @@ pub fn pin_worker() -> io::Result<()> {
         .ok_or_else(|| io::Error::other("native sign-in worker missing"))
 }
 
-/// Sign-in is a native worker window; it never blocks GPUI's foreground.
-#[derive(Clone)]
-pub struct Windows {
-    app_id: String,
-}
-
-impl Windows {
-    #[must_use]
-    pub fn serve(app_id: &str, _cx: &mut App) -> Self {
-        Self::new(app_id)
-    }
-
-    #[must_use]
-    pub fn new(app_id: &str) -> Self {
-        Self {
-            app_id: app_id.to_owned(),
-        }
-    }
-
-    /// # Errors
-    /// Never: `WebKit` is part of macOS.
-    pub fn engine_source(&self, _data_dir: &Path) -> Result<EngineSource, SignInAnswer> {
-        Ok(EngineSource)
-    }
-
-    #[must_use]
-    pub fn ask(&self, config: WindowConfig) -> SignInAnswer {
-        ask(config, &self.app_id).unwrap_or_else(|error| {
-            log::warn!("the sign-in worker failed: {error}");
-            SignInAnswer::Failed("The sign-in window could not finish. Close it and try again.".into())
-        })
-    }
+/// `WebKit` is part of macOS: always there.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the sign-in service's engine check, which fails on Windows"
+)]
+fn engine_source() -> Result<EngineSource, SignInAnswer> {
+    Ok(EngineSource)
 }
 
 /// The running worker: killed and reaped when dropped, so no sign-in window outlives its ask.
@@ -167,85 +131,7 @@ impl Drop for Worker {
     }
 }
 
-fn ask(config: WindowConfig, app_id: &str) -> io::Result<SignInAnswer> {
-    let Bound::Hosts(hosts) = config.bound;
-    let redirect =
-        RedirectUri::parse(&config.request.redirect_uri).map_err(|_| io::Error::other("invalid redirect"))?;
-    if !hosts.admits_url(&config.request.authorize) {
-        return Err(io::Error::other("authorize host refused"));
-    }
-    let (events, hearing) = mpsc::channel();
-    let guard = Arc::new((config.setup)(Guard::new(Arc::clone(&hosts), redirect.clone(), events)));
-    guard.arm(PAGE);
-    let proxy = crate::egress::HostGate::start(Arc::clone(&guard), Arc::clone(&hosts))?.uri();
-    let mut worker = Worker::start(&config.extension, config.request.authorize, proxy, app_id)?;
-    let mut refused = None;
-    loop {
-        let event: wire::Event = wire::read(&mut worker.output)?;
-        let allow = match event {
-            wire::Event::Request { method, url } => guard.decide(PAGE, &method, &url) == Decision::Allow,
-            wire::Event::Navigation(url) => {
-                if redirect.matches(&url) {
-                    guard.caught_navigation(&url);
-                    wire::send(&mut worker.input, &false)?;
-                    return Ok(SignInAnswer::Redirect(teams_auth::secrets::Secret::new(url)));
-                }
-                let allowed = hosts.admits_url(&url);
-                if !allowed {
-                    guard.refuse("GET", &url);
-                    refused = hosts.idp_candidate(&url).or(refused);
-                }
-                allowed
-            }
-            wire::Event::NetworkFailure(code) => {
-                log::warn!("sign-in network load failed: {code}");
-                continue;
-            }
-            wire::Event::LoadFailed(code) => {
-                return Ok(SignInAnswer::Failed(format!(
-                    "The sign-in page could not load (WebKit error {code}). Check your connection and try again."
-                )));
-            }
-            wire::Event::Closed => return Ok(refused.map_or(SignInAnswer::Closed, SignInAnswer::Refused)),
-            wire::Event::Failed(reason) => return Ok(SignInAnswer::Failed(reason)),
-        };
-        wire::send(&mut worker.input, &allow)?;
-        while let Ok(event) = hearing.try_recv() {
-            if let GuardEvent::Redirect(url) = event {
-                return Ok(SignInAnswer::Redirect(url));
-            }
-        }
-    }
-}
-
-/// Whether an offline test URL uses HTTP(S) on a numerical loopback address.
-#[cfg(feature = "test-support")]
-#[must_use]
-pub fn is_local_page(text: &str) -> bool {
-    url::Url::parse(text).is_ok_and(|url| {
-        matches!(url.scheme(), "http" | "https")
-            && match url.host() {
-                Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-                Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-                _ => false,
-            }
-    })
-}
-
-/// The worker's entry point (`ngteams-webview --guarded-signin`): stdout carries the protocol only.
+/// The worker's entry point (`ngteams-webview --guarded-signin`).
 pub fn worker() {
-    let result = (|| {
-        if std::env::args_os().nth(1).as_deref() != Some(std::ffi::OsStr::new("--guarded-signin")) {
-            return Err("the sign-in worker must be started by ngteams");
-        }
-        let start: wire::Start =
-            wire::read(&mut io::stdin().lock()).map_err(|_| "the sign-in worker's private pipe failed")?;
-        if start.identity != wire::identity() {
-            return Err("the sign-in worker and app versions differ; restart ngteams after updating");
-        }
-        worker::run(&start)
-    })();
-    if let Err(reason) = result {
-        let _ = wire::send(&mut io::stdout().lock(), &wire::Event::Failed(reason.into()));
-    }
+    session::worker(worker::run);
 }
