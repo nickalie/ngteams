@@ -124,6 +124,8 @@ pub struct ActivityItem {
     pub topic: Option<String>,
     /// An app item's own title (`activityContext.templateParameters.customMessage`).
     pub custom_title: Option<String>,
+    /// A meeting item's start and end, ms (`activityContext.location`'s `DateTimeRange`).
+    pub meeting_time: Option<(i64, i64)>,
     /// When it happened (`activityTimestamp`), else when it arrived, ms.
     pub at_ms: i64,
     /// When it arrived in the feed, ms.
@@ -162,12 +164,17 @@ impl ActivityItem {
         let at_ms = text("activityTimestamp")
             .and_then(|stamp| teams_proto::chat::iso_millis(&stamp))
             .unwrap_or(message.arrival_time);
+        // an app's item about a person's doing (the Calendar app's "AI updated") names that person besides the app
+        let actor = text("sourceUserId")
+            .filter(|source| !source.starts_with("28:"))
+            .or_else(|| context.and_then(|context| context_text(context, "attributedToActorId")))
+            .or_else(|| text("sourceUserId"));
         Some(Self {
             id: message.id.clone(),
             activity_id: id_of(activity.get("activityId")),
             ids: vec![message.id.clone()],
             kind,
-            actor: text("sourceUserId"),
+            actor,
             actor_name,
             others: 0,
             preview: text("messagePreview")
@@ -179,6 +186,7 @@ impl ActivityItem {
             thread_type: text("sourceThreadType"),
             topic: text("sourceThreadTopic"),
             custom_title: context.and_then(custom_title),
+            meeting_time: context.and_then(meeting_time),
             at_ms,
             arrival_ms: message.arrival_time,
             version: message.version,
@@ -497,6 +505,31 @@ fn read_flag(value: Option<&Value>) -> bool {
         Some(Value::String(text)) => text.eq_ignore_ascii_case("true"),
         _ => false,
     }
+}
+
+/// A context's text value, trimmed; none when empty.
+fn context_text(context: &Map<String, Value>, key: &str) -> Option<String> {
+    context
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
+}
+
+/// A meeting item's start and end: `location` (a JSON object as text) `Custom`, which holds
+/// `<DateTimeRange><StartDateTime>…</StartDateTime><EndDateTime>…</EndDateTime></DateTimeRange>` in UTC.
+fn meeting_time(context: &Map<String, Value>) -> Option<(i64, i64)> {
+    let location: Map<String, Value> = serde_json::from_str(context.get("location")?.as_str()?).ok()?;
+    let range = location.get("Custom")?.as_str()?;
+    let between = |tag: &str| {
+        let open = format!("<{tag}>");
+        let start = range.find(&open)? + open.len();
+        let end = start + range[start..].find(&format!("</{tag}>"))?;
+        teams_proto::chat::iso_millis(range[start..end].trim())
+    };
+    let (start, end) = (between("StartDateTime")?, between("EndDateTime")?);
+    (start <= end).then_some((start, end))
 }
 
 /// An app item's own title: `templateParameters` (a JSON object or its text) `customMessage`.

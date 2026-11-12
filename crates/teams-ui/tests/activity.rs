@@ -14,7 +14,7 @@ use teams_core::Action;
 use teams_core::activity::{ActivityFeed, ActivityFilter, FEED};
 use teams_store::Message;
 use teams_ui::ViewTrace;
-use teams_ui::activity_view::{ActivityView, activity_time, reaction_emoji};
+use teams_ui::activity_view::{ActivityView, activity_time, meeting_span, reaction_emoji};
 use teams_ui::settings::{Settings, SettingsModel};
 use teams_ui::shell::{ListPlace, Main, Shell, ShellParts};
 
@@ -212,6 +212,11 @@ fn the_item_menu_marks_unread_and_removes() {
         cx.update(|_, cx| shell.read(cx).toast().cloned()),
         Some("Removed".into())
     );
+    // its second group: the notification settings
+    cx.update(|_, cx| view.update(cx, |view, cx| view.show_item_menu(Some("2000".to_owned()), cx)));
+    click(cx, "activity-item-settings");
+    assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), Main::Settings);
+    assert_eq!(cx.update(|_, cx| view.read(cx).menus().1.map(str::to_owned)), None);
 }
 
 #[test]
@@ -311,4 +316,32 @@ fn dates_and_emoji_read_as_teams_shows_them() {
     assert!(activity_time(today, &now, cycle).contains("2:00"));
     assert_eq!(reaction_emoji("heart"), "❤️");
     assert_eq!(reaction_emoji("made-up"), "👍");
+}
+
+#[test]
+fn a_meeting_s_time_reads_as_its_item_s_third_line() {
+    use chrono::TimeZone as _;
+    let at = |day, hour, minute| {
+        chrono::Utc
+            .with_ymd_and_hms(2026, 11, day, hour, minute, 0)
+            .unwrap()
+            .timestamp_millis()
+    };
+    let (twelve, twenty_four) = (
+        teams_ui::clock::HourCycle::Twelve,
+        teams_ui::clock::HourCycle::TwentyFour,
+    );
+    assert_eq!(
+        meeting_span(at(11, 16, 30), at(11, 17, 0), &chrono::Utc, twelve),
+        "Nov 11, 4:30 PM - 5:00 PM"
+    );
+    assert_eq!(
+        meeting_span(at(11, 16, 30), at(11, 17, 0), &chrono::Utc, twenty_four),
+        "Nov 11, 16:30 - 17:00"
+    );
+    assert_eq!(
+        meeting_span(at(11, 23, 0), at(12, 1, 0), &chrono::Utc, twelve),
+        "Nov 11, 11:00 PM - Nov 12, 1:00 AM"
+    );
+    assert_eq!(meeting_span(i64::MAX, 0, &chrono::Utc, twelve), "");
 }

@@ -509,6 +509,9 @@ impl Shell {
                 }
             }
             ActivityViewEvent::Toast(_) => this.show_toast(crate::activity_view::REMOVED, cx),
+            ActivityViewEvent::NotificationSettings => {
+                this.open_settings_page(crate::settings_view::Page::Notifications, window, cx);
+            }
         });
         (view, events)
     }

@@ -274,6 +274,17 @@ impl ActivityView {
                 cx.stop_propagation();
                 this.remove(&removed, cx);
             }));
+        // Teams' second group: the account's notification settings (Settings, "Notifications and activity")
+        let settings = crate::shell::menu_row("activity-item-settings", palette)
+            .child(Glyph::SETTINGS.icon().size(px(14.0)))
+            .child("Notification settings")
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.item_menu = None;
+                cx.emit(ActivityViewEvent::NotificationSettings);
+                cx.notify();
+            }));
+        let divider = div().my_1().h(px(1.0)).bg(rgb(palette.border));
         let menu = menu_surface("activity-item-menu", palette)
             .top(px(30.0))
             .right(px(8.0))
@@ -292,7 +303,9 @@ impl ActivityView {
                         .child("This window only reads your activity"),
                 )
             })
-            .when(!read_only, |menu| menu.child(mark).child(remove));
+            .when(!read_only, |menu| menu.child(mark).child(remove))
+            .child(divider)
+            .child(settings);
         deferred(menu).with_priority(1).into_any_element()
     }
 }

@@ -170,6 +170,35 @@ fn each_kind_has_its_own_key() {
 }
 
 #[test]
+fn a_meeting_item_carries_its_time_and_the_person_behind_the_calendar_app() {
+    // as the Calendar app's item came (made up): the app sends it, the organizer is `attributedToActorId`
+    let mut properties = activity("msGraph", "privateMeetingUpdated", "28:app:made-up", "Lab B", "", 1);
+    properties["activityContext"] = json!({
+        "location": "{\"Custom\":\"<DateTimeRange><StartDateTime>2026-11-09T09:00:00Z</StartDateTime><EndDateTime>2026-11-09T09:30:00Z</EndDateTime></DateTimeRange>\"}",
+        "attributedToActorId": B,
+    });
+    let parsed = ActivityItem::from_message(&item(1, &properties, false)).expect("an item");
+    assert_eq!(parsed.meeting_time, Some((1_794_214_800_000, 1_794_216_600_000)));
+    assert_eq!(parsed.actor.as_deref(), Some(B));
+    assert_eq!(parsed.title(), "Lab B updated");
+
+    // no range, a range that doesn't read, or one the wrong way round: no time; no person named: the app
+    for location in [
+        json!("{}"),
+        json!("{\"Custom\":\"<DateTimeRange><StartDateTime>soon</StartDateTime></DateTimeRange>\"}"),
+        json!(
+            "{\"Custom\":\"<DateTimeRange><StartDateTime>2026-11-09T10:00:00Z</StartDateTime><EndDateTime>2026-11-09T09:30:00Z</EndDateTime></DateTimeRange>\"}"
+        ),
+        json!("not json"),
+    ] {
+        properties["activityContext"] = json!({ "location": location });
+        let parsed = ActivityItem::from_message(&item(1, &properties, false)).expect("an item");
+        assert_eq!(parsed.meeting_time, None, "{location}");
+        assert_eq!(parsed.actor.as_deref(), Some("28:app:made-up"));
+    }
+}
+
+#[test]
 fn a_message_with_no_activity_or_removed_is_no_item() {
     assert_eq!(
         ActivityItem::from_message(&message(1, 1, &json!({"isread": false}))),

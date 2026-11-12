@@ -10,7 +10,8 @@
 //!   reaction's emoji, "@" for a mention, people for a group mention or a team, a missed call's phone, a meeting's
 //!   calendar), its title (semibold while unread, a dot at the left edge), its date (the time today), the preview and
 //!   where it happened (a channel's team and name, a chat's name, "In chat with you" for a 1:1 chat). Hovered, the
-//!   date gives way to "More options": Mark as read or unread, and Remove (a toast says "Removed"). A missed call
+//!   date gives way to "More options": Mark as read or unread, Remove (a toast says "Removed"), and Notification
+//!   settings (the settings' Notifications page). A missed call
 //!   offers Call and Chat with the caller.
 //! - **Opening an item** (a click, or Enter on the item the keyboard is on) marks it read and opens its conversation
 //!   at its message ([`ActivityViewEvent::Open`]).
@@ -102,6 +103,8 @@ pub enum ActivityViewEvent {
     CallBack(String),
     /// Show a short note (a toast).
     Toast(SharedString),
+    /// Show the notification settings (an item's "Notification settings").
+    NotificationSettings,
 }
 
 /// The pane (see the module docs).
@@ -516,6 +519,9 @@ impl ActivityView {
         if matches!(item.kind, ActivityKind::MissedCall | ActivityKind::Voicemail) {
             return TEAMS_CALL.to_owned();
         }
+        if let Some((start, end)) = item.meeting_time {
+            return meeting_span(start, end, &chrono::Local, crate::clock::cycle(cx));
+        }
         let Some(thread) = item.thread.as_deref() else {
             return item.topic.clone().unwrap_or_default();
         };
@@ -627,6 +633,33 @@ fn kind_key(kind: &ActivityKind) -> &'static str {
         ActivityKind::App => "app",
         ActivityKind::Other => "other",
     }
+}
+
+/// A meeting's time as its item's third line says it: "Nov 11, 4:30 PM - 5:00 PM" in `zone`, the end's date too when
+/// it ends on another day.
+#[must_use]
+pub fn meeting_span<Tz: TimeZone>(start: i64, end: i64, zone: &Tz, cycle: HourCycle) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let (Some(start), Some(end)) = (
+        DateTime::from_timestamp_millis(start),
+        DateTime::from_timestamp_millis(end),
+    ) else {
+        return String::new();
+    };
+    let (start, end) = (start.with_timezone(zone), end.with_timezone(zone));
+    let day = "%b %-d, ";
+    let end_format = if end.date_naive() == start.date_naive() {
+        cycle.time_of_day().to_owned()
+    } else {
+        format!("{day}{}", cycle.time_of_day())
+    };
+    format!(
+        "{} - {}",
+        start.format(&format!("{day}{}", cycle.time_of_day())),
+        end.format(&end_format)
+    )
 }
 
 /// A reaction's emoji as text, by Teams' keys (another key shows a like's): where a picture can't go, such as a

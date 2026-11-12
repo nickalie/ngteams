@@ -1026,6 +1026,27 @@ in browser Teams (team-manage, 2026-11-12), and in a lab store's synced feed.
   showed read. The conversation list carries the bookmark in the feed's `properties`. An item marked unread after it
   showed unread: an item reads as read when its `isread` is true or its `version` is no later than the bookmark.
 - **Remove**: `DELETE …/48:notifications/messages/<id>?behavior=softDelete`, answered 200.
+- **A meeting item** (`msGraph`/`privateMeetingUpdated`, seen live in lab account c's feed, 2026-11-06) comes from the
+  Calendar app (`sourceUserId` the app's `28:app:…`, `sourceAppDisplayName` "Calendar", `sourceThreadId` empty) and
+  names the person behind it in `activityContext.attributedToActorId` (and `attributedToActor`, JSON text with their
+  name). Its `activityContext.location` is JSON text whose `Custom` holds
+  `<DateTimeRange><StartDateTime>…Z</StartDateTime><EndDateTime>…Z</EndDateTime></DateTimeRange>`: the meeting's time,
+  which the pane's third line shows ("Nov 11, 4:30 PM - 5:00 PM"). Its `customTapAction` is the meeting's details link
+  (`l/meeting/details/?eventId=…`).
+- **App items** carry `activityContext.teamsAppId`. The pane draws them with the app's own icon and no kind badge
+  (Workflows' tile; Teams' own for "A team owner added you to …"); the app definitions Teams reads
+  (`aggregatedEntitlements`, `batchedDefinitions`) carry `largeImageUrl`, a picture on `res.cdn.office.net`. The native
+  client draws an app's initials with its badge for now.
+- **An item's second menu group** (team-manage, 2026-11-12, account a): "Notification settings" opens the settings at
+  "Notifications and activity" and sends nothing. "Turn off <app>" (an app item's, in red) sent `PUT
+  v1/users/ME/properties?name=userGraphSettings` with `{"userGraphSettings": "<JSON text>"}`: `{"<teamsAppId>":
+  {"activityGenerationSettings": {<each activity type of the app>: false, "systemDefault": false}, "emailSettings": {},
+  "toastSettings": {…the same…}}}`, Workflows' types being `messageNotify` and `customNotification` (the app
+  manifest's `activities.activityTypes`). The run held it, so its answer and what the pane does after it are not
+  known; no dialog asks first.
+- **Opening the pane** in the web client also opened its newest item (a missed call: the Calls page).
+- **A chat on screen**: an item whose chat was open when it arrived was marked read at once (see "Seen beside it");
+  the native client marks the unread items of the conversation it shows read.
 
 The native client: [`teams_core::activity`](../../crates/teams-core/src/activity.rs).
 
