@@ -22,6 +22,20 @@ media = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(media)
 REPO = Path(__file__).resolve().parent.parent
 BINARIES = ("ngteams.exe", "ngteams-webview.exe", "ngteamsctl.exe")
+# The app's main-thread stack reserve, set by crates/ngteams/build.rs.
+APP_STACK = 8 * 1024 * 1024
+
+
+def stack_reserve(path: Path) -> int:
+    """A PE32+ image's SizeOfStackReserve: the main thread's stack."""
+    with path.open("rb") as image:
+        header = image.read(4096)
+    if header[:2] != b"MZ":
+        raise ValueError(f"{path.name} is not a PE image")
+    optional = int.from_bytes(header[0x3C:0x40], "little") + 24
+    if header[optional - 24:optional - 20] != b"PE\0\0" or header[optional:optional + 2] != b"\x0b\x02":
+        raise ValueError(f"{path.name} is not a PE32+ image")
+    return int.from_bytes(header[optional + 72:optional + 80], "little")
 
 
 def inventory(root: Path) -> dict[str, str]:
@@ -64,6 +78,8 @@ def check(root: Path, reader: Path, version: str | None = None, commit: str | No
         raise ValueError("stale media plugin inventory")
     if any(manifest["files"].get(p) != sha for p, sha in runtime["files"].items()):
         raise ValueError("package media differs from verified runtime")
+    if stack_reserve(root / "bin/ngteams.exe") < APP_STACK:
+        raise ValueError("ngteams.exe reserves less than 8 MiB for its main thread's stack")
     files = {root / p: Path(p) for p in manifest["files"] if Path(p).suffix.lower() in (".exe", ".dll")}
     media.closure(files, media.index(root / "bin"), reader)
     print(f"checked Windows {manifest['version']}: {len(files)} PE files, {len(manifest['files'])} hashed files")

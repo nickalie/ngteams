@@ -917,7 +917,8 @@ in the release's checksums and build-provenance attestation. No agent builds the
 are built, `scripts/package-release-windows.ps1 -Binaries target/release -Version <major.minor.patch.run> -Commit
 <full-commit>` assembles the verified media closure, collects notices from the resolved Windows Cargo graph and
 libwebrtc, and stages all three executables under `bin/`. `scripts/windows-release.py` checks every PE's ordinary
-and delay imports against that private tree. `PACKAGE-MANIFEST.json` hashes every shipped file, including the
+and delay imports against that private tree, and that `ngteams.exe` reserves 8 MiB for its main (GPUI) thread's
+stack, as Linux gives it, instead of MSVC's 1 MiB default. `PACKAGE-MANIFEST.json` hashes every shipped file, including the
 unchanged media manifest. By default the media closure uses a unique system temporary directory, removed after
 packaging, outside Cargo's `target/` tree. A restored rust-cache may contain an empty old `target/windows-media-release`
 directory; the packager never consults it. An explicit `-Runtime` remains a verified caller-owned input.

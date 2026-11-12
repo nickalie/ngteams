@@ -36,6 +36,10 @@ class WindowsRelease(unittest.TestCase):
         self.binaries.mkdir()
         for name in release.BINARIES:
             shutil.copy2(self.root / "Top.dll", self.binaries / name)
+        self.dll("App", "__declspec(dllimport) int middle(void); __declspec(dllexport) int top(void) { return middle(); }"
+                 "void *__delayLoadHelper2(void *a, void *b) { return 0; }", "Middle.lib", "/delayload:Middle.dll",
+                 f"/stack:{release.APP_STACK}")
+        shutil.copy2(self.root / "App.dll", self.binaries / "ngteams.exe")
         self.notices = self.root / "notices"
         self.notices.mkdir()
         (self.notices / "license.txt").write_text("Synthetic package license fixture\n")
@@ -76,6 +80,15 @@ class WindowsRelease(unittest.TestCase):
         del manifest["files"]["bin/Middle.dll"]
         (self.runtime / "MEDIA-MANIFEST.json").write_text(json.dumps(manifest))
         with self.assertRaisesRegex(ValueError, "unresolved dependency middle.dll"):
+            release.stage(self.args, self.reader)
+        self.assertFalse(self.args.archive.exists())
+        self.assertFalse(self.args.output.exists())
+
+    def test_an_app_with_the_default_1_mib_main_stack_refuses_public_archive(self):
+        self.assertEqual(release.stack_reserve(self.binaries / "ngteams.exe"), release.APP_STACK)
+        self.assertEqual(release.stack_reserve(self.root / "Top.dll"), 1024 * 1024)
+        shutil.copy2(self.root / "Top.dll", self.binaries / "ngteams.exe")
+        with self.assertRaisesRegex(ValueError, "less than 8 MiB"):
             release.stage(self.args, self.reader)
         self.assertFalse(self.args.archive.exists())
         self.assertFalse(self.args.output.exists())
