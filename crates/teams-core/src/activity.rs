@@ -1,0 +1,490 @@
+//! The account's activity feed, as Teams' Activity pane shows it (`docs/protocol/chat.md`, "The activity feed").
+//!
+//! - **Where it comes from**: the chat service keeps the feed as the account's own stream `48:notifications`; the
+//!   catch-up and the push channel store its items as any conversation's messages, each with its `activity` in its
+//!   properties (who, what, where, a preview). [`ActivityFeed::from_store`] reads the newest [`FEED_LIMIT`] of them and
+//!   leaves out the removed ones (soft-deleted).
+//! - **What an item says** ([`ActivityItem`]): its kind from `activityType`/`activitySubtype` ([`ActivityKind`]), the
+//!   person or app behind it, the message preview and where it happened (the source thread, its type and topic), and
+//!   the source message it opens at. A kind no capture or bundle names is [`ActivityKind::Other`], still listed.
+//! - **Folded reactions**: several reactions to the same message are one item, as Teams shows "Sean Hopkins +1 reacted
+//!   to your message": the newest one's, counting the other people ([`ActivityItem::others`]) and carrying every
+//!   item's id ([`ActivityItem::ids`]) so marking it marks them all.
+//! - **Read or not** ([`ActivityFeed::is_read`]): an item is read when its own `isread` says so, or when its `version`
+//!   is no later than the feed's all-read bookmark (`consumptionHorizonBookmark`, set by "Mark all as read"). Marking
+//!   an item unread moves its version past the bookmark, so it reads unread again.
+//! - **New** ([`ActivityFeed::unseen`], the rail's badge): unread items newer than the feed's own read horizon, which
+//!   Teams moves to the newest item whenever the Activity pane is opened ([`ActivityFeed::seen_horizon`]).
+
+use serde_json::{Map, Value};
+use teams_store::{Message, Store, StoreError};
+
+/// The account's activity feed stream.
+pub const FEED: &str = teams_proto::ACTIVITY_FEED;
+
+/// How many of the newest items the feed reads.
+pub const FEED_LIMIT: usize = 200;
+
+/// What kind of mention an item is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mention {
+    /// The account by name.
+    You,
+    /// Everyone in a chat.
+    Everyone,
+    /// A team.
+    Team,
+    /// A channel.
+    Channel,
+    /// A tag the account has.
+    Tag,
+}
+
+/// What an item tells.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ActivityKind {
+    Mention(Mention),
+    /// A reaction to the account's message, by its key (`like`, `heart`, …).
+    Reaction(String),
+    /// A reply to a thread the account is in.
+    Reply,
+    MissedCall,
+    Voicemail,
+    /// The account was added to a team.
+    AddedToTeam,
+    /// A meeting the account is invited to, by what happened to it.
+    Meeting(MeetingChange),
+    /// An app's own notification (Workflows' "Follow up on a message", …): its title is the app's.
+    App,
+    /// Any other kind, listed with what the service says of it.
+    Other,
+}
+
+/// What happened to a meeting, by the Meet app's activity types.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeetingChange {
+    Invited,
+    Updated,
+    Canceled,
+    Forwarded,
+}
+
+/// One item of the feed (see the module docs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActivityItem {
+    /// The feed message's id (the newest one's, for folded reactions).
+    pub id: String,
+    /// The service's id of the activity (`activityId`): what the feed's horizon names.
+    pub activity_id: Option<String>,
+    /// Every feed message the item stands for, the newest first.
+    pub ids: Vec<String>,
+    pub kind: ActivityKind,
+    /// The person or app behind it (`sourceUserId`), when it names one.
+    pub actor: Option<String>,
+    /// Their name as the item carries it (`sourceUserImDisplayName`, else the app's name).
+    pub actor_name: String,
+    /// How many other people a folded item stands for.
+    pub others: usize,
+    /// The message's text as the service previews it (`messagePreview`), whitespace folded.
+    pub preview: String,
+    /// The thread it happened in (`sourceThreadId`), when it names one.
+    pub thread: Option<String>,
+    /// The message it is about in that thread (`sourceMessageId`), when it names a real one.
+    pub message: Option<String>,
+    /// The post whose thread the message is in, for a channel's reply (`sourceReplyChainId`).
+    pub reply_chain: Option<String>,
+    /// The thread's type (`sourceThreadType`: `chat`, `space`, `topic`, …).
+    pub thread_type: Option<String>,
+    /// The thread's or team's name, when the item carries it (`sourceThreadTopic`).
+    pub topic: Option<String>,
+    /// An app item's own title (`activityContext.templateParameters.customMessage`).
+    pub custom_title: Option<String>,
+    /// When it happened (`activityTimestamp`), else when it arrived, ms.
+    pub at_ms: i64,
+    /// When it arrived in the feed, ms.
+    pub arrival_ms: i64,
+    /// The feed message's version: moved by every change of its read state.
+    pub version: i64,
+    /// What the item's own `isread` says.
+    pub read_flag: bool,
+}
+
+impl ActivityItem {
+    /// The item a feed message tells; `None` for one that carries no activity, or was removed.
+    #[must_use]
+    pub fn from_message(message: &Message) -> Option<Self> {
+        if message.delete_time.is_some() {
+            return None;
+        }
+        let properties: Map<String, Value> = serde_json::from_str(message.properties.as_deref()?).ok()?;
+        let activity = properties.get("activity")?.as_object()?;
+        let text = |key: &str| {
+            activity
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+        };
+        let context = activity.get("activityContext").and_then(Value::as_object);
+        let kind = kind(
+            text("activityType").as_deref().unwrap_or_default(),
+            text("activitySubtype").as_deref().unwrap_or_default(),
+        );
+        let actor_name = text("sourceUserImDisplayName")
+            .or_else(|| text("sourceAppDisplayName"))
+            .unwrap_or_default();
+        let at_ms = text("activityTimestamp")
+            .and_then(|stamp| teams_proto::chat::iso_millis(&stamp))
+            .unwrap_or(message.arrival_time);
+        Some(Self {
+            id: message.id.clone(),
+            activity_id: id_of(activity.get("activityId")),
+            ids: vec![message.id.clone()],
+            kind,
+            actor: text("sourceUserId"),
+            actor_name,
+            others: 0,
+            preview: text("messagePreview")
+                .map(|preview| preview.split_whitespace().collect::<Vec<_>>().join(" "))
+                .unwrap_or_default(),
+            thread: text("sourceThreadId"),
+            message: id_of(activity.get("sourceMessageId")),
+            reply_chain: id_of(activity.get("sourceReplyChainId")),
+            thread_type: text("sourceThreadType"),
+            topic: text("sourceThreadTopic"),
+            custom_title: context.and_then(custom_title),
+            at_ms,
+            arrival_ms: message.arrival_time,
+            version: message.version,
+            read_flag: read_flag(properties.get("isread")),
+        })
+    }
+
+    /// What Teams titles the item with: "Sean Hopkins +1 reacted to your message", "Lab B mentioned you", "Missed call
+    /// from Lab B", an app's own title, …
+    #[must_use]
+    pub fn title(&self) -> String {
+        let who = match (self.actor_name.as_str(), self.others) {
+            ("", _) => "Someone".to_owned(),
+            (name, 0) => name.to_owned(),
+            (name, others) => format!("{name} +{others}"),
+        };
+        match &self.kind {
+            ActivityKind::Mention(Mention::You) => format!("{who} mentioned you"),
+            ActivityKind::Mention(Mention::Everyone) => format!("{who} mentioned Everyone"),
+            ActivityKind::Mention(Mention::Team) => format!("{who} mentioned your team"),
+            ActivityKind::Mention(Mention::Channel) => format!("{who} mentioned a channel"),
+            ActivityKind::Mention(Mention::Tag) => format!("{who} mentioned your tag"),
+            ActivityKind::Reaction(_) => format!("{who} reacted to your message"),
+            ActivityKind::Reply => format!("{who} replied"),
+            ActivityKind::MissedCall => format!("Missed call from {who}"),
+            ActivityKind::Voicemail => format!("Voicemail from {who}"),
+            ActivityKind::AddedToTeam => match &self.topic {
+                Some(team) => format!("A team owner added you to {team}"),
+                None => "A team owner added you to a team".to_owned(),
+            },
+            ActivityKind::Meeting(MeetingChange::Invited) => format!("{who} invited you"),
+            ActivityKind::Meeting(MeetingChange::Updated) => format!("{who} updated"),
+            ActivityKind::Meeting(MeetingChange::Canceled) => format!("{who} canceled"),
+            ActivityKind::Meeting(MeetingChange::Forwarded) => format!("{who} forwarded a meeting"),
+            ActivityKind::App | ActivityKind::Other => self.custom_title.clone().unwrap_or(who),
+        }
+    }
+
+    /// Whether the item opens a conversation: it names its thread.
+    #[must_use]
+    pub fn opens(&self) -> Option<&str> {
+        self.thread.as_deref()
+    }
+
+    /// Whether it happened in a team's channel (`space`: a general channel, `topic`: another).
+    #[must_use]
+    pub fn in_channel(&self) -> bool {
+        matches!(self.thread_type.as_deref(), Some("space" | "topic"))
+            || self.thread.as_deref().is_some_and(teams_proto::is_team_thread_id)
+    }
+
+    /// Whether the item matches a filter's words: its title, its preview or where it happened, case folded.
+    #[must_use]
+    pub fn matches(&self, words: &str) -> bool {
+        let words = words.trim().to_lowercase();
+        if words.is_empty() {
+            return true;
+        }
+        let haystack = format!(
+            "{}\n{}\n{}",
+            self.title(),
+            self.preview,
+            self.topic.as_deref().unwrap_or_default()
+        )
+        .to_lowercase();
+        words.split_whitespace().all(|word| haystack.contains(word))
+    }
+}
+
+/// The filter chips Teams offers over the feed (`MTMAHubActivityFilterTypes`): unread, mentions, reactions, missed
+/// calls, replies, voicemail and apps.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ActivityFilter {
+    #[default]
+    All,
+    Unread,
+    Mentions,
+    Reactions,
+    MissedCalls,
+    Replies,
+    Voicemail,
+    Apps,
+}
+
+impl ActivityFilter {
+    /// Every chip, in Teams' order (not All, which is no chip chosen).
+    pub const CHIPS: [Self; 7] = [
+        Self::Unread,
+        Self::Mentions,
+        Self::Reactions,
+        Self::MissedCalls,
+        Self::Replies,
+        Self::Voicemail,
+        Self::Apps,
+    ];
+
+    /// The chip's words.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Unread => "Unread",
+            Self::Mentions => "@Mentions",
+            Self::Reactions => "Reactions",
+            Self::MissedCalls => "Missed calls",
+            Self::Replies => "Replies",
+            Self::Voicemail => "Voicemail",
+            Self::Apps => "Apps",
+        }
+    }
+
+    /// Its key, for a test selector and `ngteamsctl`.
+    #[must_use]
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Unread => "unread",
+            Self::Mentions => "mentions",
+            Self::Reactions => "reactions",
+            Self::MissedCalls => "missed-calls",
+            Self::Replies => "replies",
+            Self::Voicemail => "voicemail",
+            Self::Apps => "apps",
+        }
+    }
+
+    /// The filter of a key; `None` for another word.
+    #[must_use]
+    pub fn of_key(key: &str) -> Option<Self> {
+        std::iter::once(Self::All)
+            .chain(Self::CHIPS)
+            .find(|filter| filter.key() == key)
+    }
+}
+
+/// The feed as stored (see the module docs).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ActivityFeed {
+    /// The items, the newest first, reactions to one message folded.
+    pub items: Vec<ActivityItem>,
+    /// The feed's own read horizon: when the newest item seen happened (ms).
+    pub seen_ms: Option<i64>,
+    /// The all-read bookmark (ms).
+    pub bookmark_ms: Option<i64>,
+}
+
+impl ActivityFeed {
+    /// The feed from feed messages (any order), the feed's own horizon and its bookmark.
+    #[must_use]
+    pub fn new(messages: &[Message], seen_ms: Option<i64>, bookmark_ms: Option<i64>) -> Self {
+        let mut items: Vec<ActivityItem> = messages.iter().filter_map(ActivityItem::from_message).collect();
+        items.sort_by(|a, b| b.at_ms.cmp(&a.at_ms).then_with(|| b.id.cmp(&a.id)));
+        let mut feed = Self {
+            items: Vec::new(),
+            seen_ms,
+            bookmark_ms,
+        };
+        for item in items {
+            feed.push_folded(item);
+        }
+        feed
+    }
+
+    /// The feed as the store holds it for `me`.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] when a read fails.
+    pub fn from_store(store: &Store, me: &str) -> Result<Self, StoreError> {
+        let page = store.messages_before(FEED, None, FEED_LIMIT)?;
+        let seen = store.read_horizon(FEED, me)?.map(|horizon| horizon.last_read_arrival);
+        let bookmark = store.horizon_bookmark(FEED)?;
+        Ok(Self::new(&page.messages, seen, bookmark))
+    }
+
+    /// Adds an item, folding a reaction into the newer one to the same message.
+    fn push_folded(&mut self, item: ActivityItem) {
+        let folds = |kept: &ActivityItem| {
+            matches!(kept.kind, ActivityKind::Reaction(_))
+                && matches!(item.kind, ActivityKind::Reaction(_))
+                && kept.thread.is_some()
+                && kept.thread == item.thread
+                && kept.message.is_some()
+                && kept.message == item.message
+        };
+        let Some(kept) = self.items.iter_mut().find(|kept| folds(kept)) else {
+            self.items.push(item);
+            return;
+        };
+        let counted = item.actor.is_none() || item.actor != kept.actor;
+        if counted && !kept.ids.is_empty() {
+            kept.others += 1;
+        }
+        kept.ids.push(item.id);
+        // the folded item stays unread while any of its own is
+        kept.read_flag &= item.read_flag;
+        kept.version = kept.version.max(item.version);
+    }
+
+    /// Whether `item` reads as read (see the module docs).
+    #[must_use]
+    pub fn is_read(&self, item: &ActivityItem) -> bool {
+        item.read_flag || self.bookmark_ms.is_some_and(|bookmark| item.version <= bookmark)
+    }
+
+    /// How many unread items are newer than the feed's horizon: what the rail's badge counts.
+    #[must_use]
+    pub fn unseen(&self) -> usize {
+        self.items
+            .iter()
+            .filter(|item| !self.is_read(item) && self.seen_ms.is_none_or(|seen| item.at_ms > seen))
+            .count()
+    }
+
+    /// The horizon to put when the pane is opened: the newest item's time and activity id, when it is past the
+    /// stored one.
+    #[must_use]
+    pub fn seen_horizon(&self) -> Option<&ActivityItem> {
+        self.items
+            .first()
+            .filter(|newest| self.seen_ms.is_none_or(|seen| newest.at_ms > seen))
+    }
+
+    /// The items a filter and a search's words keep, in order.
+    pub fn shown(&self, filter: ActivityFilter, words: &str) -> impl Iterator<Item = &ActivityItem> {
+        self.items
+            .iter()
+            .filter(move |item| self.keeps(filter, item) && item.matches(words))
+    }
+
+    /// Whether a filter keeps `item`.
+    #[must_use]
+    pub fn keeps(&self, filter: ActivityFilter, item: &ActivityItem) -> bool {
+        match filter {
+            ActivityFilter::All => true,
+            ActivityFilter::Unread => !self.is_read(item),
+            ActivityFilter::Mentions => matches!(item.kind, ActivityKind::Mention(_)),
+            ActivityFilter::Reactions => matches!(item.kind, ActivityKind::Reaction(_)),
+            ActivityFilter::MissedCalls => item.kind == ActivityKind::MissedCall,
+            ActivityFilter::Replies => item.kind == ActivityKind::Reply,
+            ActivityFilter::Voicemail => item.kind == ActivityKind::Voicemail,
+            ActivityFilter::Apps => item.kind == ActivityKind::App,
+        }
+    }
+
+    /// The item standing for feed message `id`.
+    #[must_use]
+    pub fn item(&self, id: &str) -> Option<&ActivityItem> {
+        self.items.iter().find(|item| item.ids.iter().any(|own| own == id))
+    }
+}
+
+/// The kind of `activityType`/`activitySubtype` (see the enum's docs for the names).
+fn kind(activity_type: &str, subtype: &str) -> ActivityKind {
+    let lower = activity_type.to_ascii_lowercase();
+    match lower.as_str() {
+        "mention" | "mentions" | "mentioninchat" | "mentionincommunity" | "mentioninsubcommunity" => {
+            ActivityKind::Mention(match subtype.to_ascii_lowercase().as_str() {
+                "everyone" => Mention::Everyone,
+                "team" => Mention::Team,
+                "channel" => Mention::Channel,
+                "tag" => Mention::Tag,
+                _ => Mention::You,
+            })
+        }
+        "reaction" | "reactioninchat" | "like" | "likeinchat" | "reactionincommunity" => {
+            ActivityKind::Reaction(if subtype.is_empty() { "like" } else { subtype }.to_owned())
+        }
+        "reply" | "replytoreply" | "communityreply" | "communityreplytoreply" => ActivityKind::Reply,
+        "call" if subtype.eq_ignore_ascii_case("missedcall") => ActivityKind::MissedCall,
+        "call" if subtype.eq_ignore_ascii_case("voicemail") => ActivityKind::Voicemail,
+        "voicemail" => ActivityKind::Voicemail,
+        "teammembershipchange" if subtype.eq_ignore_ascii_case("addedtoteam") => ActivityKind::AddedToTeam,
+        "msgraph" => meeting(subtype).map_or(ActivityKind::App, ActivityKind::Meeting),
+        "calendar" => ActivityKind::Meeting(meeting(subtype).unwrap_or(MeetingChange::Updated)),
+        _ => ActivityKind::Other,
+    }
+}
+
+/// The Meet app's activity types (`privateMeetingUpdated`, `channelMeetingCreated`, …).
+fn meeting(subtype: &str) -> Option<MeetingChange> {
+    let lower = subtype.to_ascii_lowercase();
+    if !lower.contains("meeting") {
+        return None;
+    }
+    Some(if lower.contains("forwarded") {
+        MeetingChange::Forwarded
+    } else if lower.contains("cancel") {
+        MeetingChange::Canceled
+    } else if lower.contains("created") {
+        MeetingChange::Invited
+    } else {
+        MeetingChange::Updated
+    })
+}
+
+/// A source id as the item gives it: a number or a string of digits, `0` and `1` (a placeholder) none.
+fn id_of(value: Option<&Value>) -> Option<String> {
+    let id = match value? {
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => text.trim().to_owned(),
+        _ => return None,
+    };
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) && id != "0" && id != "1").then_some(id)
+}
+
+/// `isread` as a boolean or its text.
+fn read_flag(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Bool(read)) => *read,
+        Some(Value::String(text)) => text.eq_ignore_ascii_case("true"),
+        _ => false,
+    }
+}
+
+/// An app item's own title: `templateParameters` (a JSON object or its text) `customMessage`.
+fn custom_title(context: &Map<String, Value>) -> Option<String> {
+    let parameters = context.get("templateParameters")?;
+    let parsed;
+    let object = match parameters {
+        Value::Object(object) => object,
+        Value::String(text) => {
+            parsed = serde_json::from_str::<Map<String, Value>>(text).ok()?;
+            &parsed
+        }
+        _ => return None,
+    };
+    object
+        .get("customMessage")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_owned)
+}

@@ -72,8 +72,9 @@ use teams_call::Tracker;
 use teams_proto::Mri;
 use teams_proto::chat::MessageText;
 use teams_proto::{
-    AddChatMembers, Author, CreateChat, DEFAULT_RETRY_WAIT, DeleteMessage, EditMessage, HttpError, Original,
-    ReadReceipt, RemoveReaction, Request, Response, SendMessage, SetReaction, SharedHistory, Transport,
+    ACTIVITY_FEED, AddChatMembers, Author, CreateChat, DEFAULT_RETRY_WAIT, DeleteMessage, EditMessage, HttpError,
+    MarkFeedRead, Original, ReadReceipt, RemoveReaction, Request, Response, SendMessage, SetActivityRead, SetReaction,
+    SharedHistory, Transport,
 };
 use teams_store::{
     Applied, AttemptOutcome, CheckFailed, Message, NewOutboxEntry, OutboxEntry, OutboxKind, OutboxState, Reaction,
@@ -140,6 +141,10 @@ pub enum Command {
         members: Vec<String>,
         share_history_time: i64,
     },
+    /// Marks an item of the account's activity feed ([`ACTIVITY_FEED`]) read or unread.
+    ActivityRead { item: String, read: bool },
+    /// Marks the whole activity feed read as of the row's time ("Mark all as read").
+    FeedRead,
 }
 
 /// What commands go out in the order they were asked for on: a later one of this run waits while an earlier one on
@@ -194,6 +199,8 @@ impl Command {
             Self::ReadReceipt { .. } => OutboxKind::ReadReceipt,
             Self::CreateChat { .. } => OutboxKind::CreateChat,
             Self::AddMembers { .. } => OutboxKind::AddMembers,
+            Self::ActivityRead { .. } => OutboxKind::ActivityRead,
+            Self::FeedRead => OutboxKind::FeedRead,
         }
     }
 
@@ -207,6 +214,7 @@ impl Command {
             | Self::React { conversation, .. }
             | Self::ReadReceipt { conversation, .. }
             | Self::AddMembers { conversation, .. } => Some(conversation),
+            Self::ActivityRead { .. } | Self::FeedRead => Some(ACTIVITY_FEED),
             Self::CreateChat { .. } => None,
         }
     }
@@ -234,6 +242,13 @@ impl Command {
                 message_id,
             }),
             Self::ReadReceipt { conversation, .. } => Some(Lane::ReadHorizon { conversation }),
+            Self::ActivityRead { item, .. } => Some(Lane::Message {
+                conversation: ACTIVITY_FEED,
+                message_id: item,
+            }),
+            Self::FeedRead => Some(Lane::ReadHorizon {
+                conversation: ACTIVITY_FEED,
+            }),
             Self::Send { .. } | Self::CreateChat { .. } | Self::AddMembers { .. } => None,
         }
     }
@@ -246,7 +261,8 @@ impl Command {
             | Self::Delete { message_id, .. }
             | Self::React { message_id, .. }
             | Self::ReadReceipt { message_id, .. } => Some(message_id),
-            Self::Send { .. } | Self::CreateChat { .. } | Self::AddMembers { .. } => None,
+            Self::ActivityRead { item, .. } => Some(item),
+            Self::Send { .. } | Self::CreateChat { .. } | Self::AddMembers { .. } | Self::FeedRead => None,
         }
     }
 }
@@ -980,6 +996,11 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
                     None => Tried::NotSent("nobody to add".to_owned()),
                 }
             }
+            Command::ActivityRead { item, read } => match SetActivityRead::new(&item, read) {
+                Some(request) => self.deliver(request).await,
+                None => Tried::NotSent("the activity item's id can't be read".to_owned()),
+            },
+            Command::FeedRead => self.deliver(MarkFeedRead::at(at)).await,
         }
     }
 
@@ -1145,8 +1166,12 @@ fn from_transport(error: HttpError) -> Tried {
 fn answered_id(row: &OutboxEntry, answer: &Response) -> Option<String> {
     match row.kind {
         OutboxKind::Send | OutboxKind::CreateChat => message_id(answer),
-        OutboxKind::ReadReceipt | OutboxKind::AddMembers => None,
-        OutboxKind::Edit | OutboxKind::Delete | OutboxKind::AddReaction | OutboxKind::RemoveReaction => {
+        OutboxKind::ReadReceipt | OutboxKind::AddMembers | OutboxKind::FeedRead => None,
+        OutboxKind::Edit
+        | OutboxKind::Delete
+        | OutboxKind::AddReaction
+        | OutboxKind::RemoveReaction
+        | OutboxKind::ActivityRead => {
             let command = serde_json::from_str::<Command>(&row.payload).ok()?;
             command.message_id().map(str::to_owned)
         }

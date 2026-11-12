@@ -145,6 +145,54 @@ impl Store {
             .unwrap_or_default())
     }
 
+    /// Keeps when the account last marked a whole conversation read (its `consumptionHorizonBookmark`, ms), unless the
+    /// stored time is the same or later: [`Applied::Ignored`] then.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::UnknownConversation`] when the conversation isn't stored, [`StoreError::Sqlite`] when the write
+    /// fails.
+    pub fn set_horizon_bookmark(&mut self, conversation_id: &str, time_ms: i64) -> Result<Applied, StoreError> {
+        let tx = self.conn.transaction()?;
+        Self::require_conversation(&tx, conversation_id)?;
+        let stored: Option<i64> = tx
+            .query_row(
+                "SELECT time_ms FROM horizon_bookmarks WHERE conversation_id = ?1",
+                params![conversation_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let applied = match stored {
+            None => Applied::Inserted,
+            Some(stored) if time_ms > stored => Applied::Updated,
+            Some(_) => return Ok(Applied::Ignored),
+        };
+        tx.execute(
+            "INSERT INTO horizon_bookmarks (conversation_id, time_ms) VALUES (?1, ?2)
+             ON CONFLICT DO UPDATE SET time_ms = excluded.time_ms",
+            params![conversation_id, time_ms],
+        )?;
+        tx.commit()?;
+        Ok(applied)
+    }
+
+    /// When the account last marked a whole conversation read (ms); `None` when it never did, as far as the store
+    /// knows.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlite`] when the read fails.
+    pub fn horizon_bookmark(&self, conversation_id: &str) -> Result<Option<i64>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT time_ms FROM horizon_bookmarks WHERE conversation_id = ?1",
+                params![conversation_id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
     /// A member's read horizon in a conversation.
     ///
     /// # Errors

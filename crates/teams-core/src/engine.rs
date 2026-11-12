@@ -132,6 +132,7 @@ use teams_trouter::{
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, MissedTickBehavior};
 
+use crate::activity::{self, ActivityFeed};
 use crate::calendar::{
     Calendar, CalendarDone, EventWrite, EventWritten, Invitable, MeetingAvailability, WindowRead, WriteOver,
 };
@@ -282,6 +283,13 @@ pub enum Action {
         members: Vec<Mri>,
         history: ChatHistory,
     },
+    /// An item of the account's activity feed ([`activity::FEED`]), by its feed message's id, marked read or unread.
+    ActivityRead { item: String, read: bool },
+    /// The Activity pane was opened: the feed's own horizon moves to its newest item, which clears the rail's count of
+    /// new activity, as Teams does ([`ActivityFeed::seen_horizon`]). Nothing goes when it is there already.
+    ActivitySeen,
+    /// Every item of the feed marked read ("Mark all as read").
+    ActivityAllRead,
 }
 
 /// How much of a group chat's history people added to it see, as Teams' "Add" offers it.
@@ -535,6 +543,8 @@ pub enum EngineError {
     Teams(#[from] TeamsReadError),
     #[error("no message {message} in conversation {conversation} in the store")]
     UnknownMessage { conversation: String, message: String },
+    #[error("the activity feed holds nothing newer than what was seen")]
+    NothingNewInActivity,
     #[error("message {message} isn't the account's own, so it can't be {action}")]
     NotOwn { message: String, action: &'static str },
     #[error("message {message} is deleted")]
@@ -625,6 +635,7 @@ impl EngineError {
             Self::CatchUp(_) => "catch-up",
             Self::Teams(_) => "teams",
             Self::UnknownMessage { .. } => "unknown message",
+            Self::NothingNewInActivity => "nothing new in activity",
             Self::NotOwn { .. } => "not the account's own",
             Self::Deleted { .. } => "deleted",
             Self::Unknown { .. } => "unknown field",
@@ -910,6 +921,8 @@ enum Query {
     OutboxUnsettled(String, Responder<Vec<OutboxEntry>>),
     LeftByEarlierRuns(Responder<Vec<OutboxEntry>>),
     ReplyRoots(String, Responder<Vec<(String, String)>>),
+    /// The account's activity feed as stored ([`ActivityFeed::from_store`]).
+    Activity(Responder<ActivityFeed>),
     /// The kept translations into a language of some of a conversation's messages.
     Translations {
         conversation: String,
@@ -1761,6 +1774,12 @@ impl EngineRequests {
         self.ask(|reply| Request::FileSize(share_url, reply))
     }
 
+    /// The account's activity feed as stored: its newest items, their read state, and what is new since the Activity
+    /// pane was last opened ([`crate::activity`]).
+    pub fn activity(&self) -> Reply<ActivityFeed> {
+        self.query(Query::Activity)
+    }
+
     /// The account's own stored read horizon in a conversation.
     pub fn read_horizon(&self, conversation: impl Into<String>) -> Reply<Option<ReadHorizon>> {
         let conversation = conversation.into();
@@ -2575,6 +2594,9 @@ where
     }
 
     async fn write(&mut self, action: Action) -> Result<OutboxEntry, EngineError> {
+        if matches!(action, Action::ActivitySeen | Action::ActivityAllRead) {
+            return self.activity_write(&action).await;
+        }
         if let Action::Read {
             conversation,
             message_id,
@@ -2736,7 +2758,66 @@ where
                 members,
                 history,
             } => self.add_members(conversation, &members, history)?,
+            Action::ActivityRead { item, read } => {
+                self.standing(activity::FEED, &item)?;
+                Command::ActivityRead { item, read }
+            }
+            Action::ActivitySeen => self.activity_seen()?.0,
+            Action::ActivityAllRead => Command::FeedRead,
         })
+    }
+
+    /// The feed's horizon moved to its newest item: the read receipt Teams puts on the feed
+    /// (`<activityTimestamp>;<now>;<activityId>`) and the time it names; `NothingNewInActivity` when the stored horizon
+    /// is there already.
+    fn activity_seen(&self) -> Result<(Command, i64), EngineError> {
+        let feed = ActivityFeed::from_store(&self.store, self.outbox.me().mri().as_str())?;
+        let newest = feed.seen_horizon().ok_or(EngineError::NothingNewInActivity)?;
+        let command = Command::ReadReceipt {
+            conversation: activity::FEED.to_owned(),
+            message_id: newest.at_ms.to_string(),
+            client_message_id: newest.activity_id.clone().unwrap_or_default(),
+        };
+        Ok((command, newest.at_ms))
+    }
+
+    /// Seen or all read: the row queued, the store changed at once as the service will have it (the feed's horizon,
+    /// or its all-read bookmark at the row's time), the change told, then the row sent.
+    async fn activity_write(&mut self, action: &Action) -> Result<OutboxEntry, EngineError> {
+        let me = self.outbox.me().mri().as_str().to_owned();
+        let (command, seen) = match action {
+            Action::ActivitySeen => {
+                let (command, at) = self.activity_seen()?;
+                (command, Some(at))
+            }
+            _ => (Command::FeedRead, None),
+        };
+        let row = enqueue(&mut self.store, &command)?;
+        self.emit(Event::Queued(row.clone()));
+        let applied = match seen {
+            Some(at) => {
+                let updated = self
+                    .store
+                    .read_horizon(activity::FEED, &me)?
+                    .map_or(row.created_at, |before| {
+                        row.created_at.max(before.updated.saturating_add(1))
+                    });
+                self.store.set_read_horizon(&ReadHorizon {
+                    conversation_id: activity::FEED.to_owned(),
+                    user: me,
+                    last_read_arrival: at,
+                    updated,
+                    raw: None,
+                })?
+            }
+            None => self.store.set_horizon_bookmark(activity::FEED, row.created_at)?,
+        };
+        if applied != Applied::Ignored {
+            self.emit(Event::ConversationChanged {
+                conversation: activity::FEED.to_owned(),
+            });
+        }
+        self.send_row(row.id).await
     }
 
     /// The command adding `members` to the stored group chat `conversation`: nobody already in it, not the account,
@@ -2821,7 +2902,7 @@ where
     async fn settled(&mut self, row: &OutboxEntry) {
         let conversation = match row.kind {
             _ if row.state != OutboxState::Sent => None,
-            OutboxKind::ReadReceipt => None,
+            OutboxKind::ReadReceipt | OutboxKind::FeedRead => None,
             OutboxKind::CreateChat => row.message_id.clone(),
             // a reply posted to a post's chain is stored with its channel's messages
             _ => row

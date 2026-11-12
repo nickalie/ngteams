@@ -138,17 +138,18 @@ pub use team_read::{
 pub use thumbnail::{FileThumbnails, THUMBNAIL_HOST_SUFFIX, ThumbnailLink, is_thumbnail_link};
 pub use urlp::LinkPreviewPicture;
 pub use write::{
-    AcceptCall, AcceptParts, AcceptTransfer, AcknowledgeAcceptance, AcknowledgeMediaAnswer, AddChatMembers, AddParts,
-    AddToCall, AnswerMedia, AnswerMediaParts, AppDefinition, ApplyChannelParameters, AttachCall, AttachParts, Author,
-    CALL_REACTIONS, CALL_START_URL, CALLING_BASE, CALLING_HOST, CallContext, CallLink, CallParticipant, CallWriteError,
-    ChannelParameters, ClientInfo, CreateChat, DecideLobby, DeclineCall, DeleteMessage, EditMessage, EndConversation,
-    ForceAvailability, HoldCall, Invitee, JoinCall, JoinMedia, JoinParts, KeepAliveCall, LeaveCall, LeaveReason, Links,
-    ManualAvailability, MediaContent, MediaDescription, MediaDescriptions, MeetingInfo, MemberUpdate, NewTeam,
-    Original, PublishState, RAISE_HANDS, RawBody, ReadReceipt, RemoveReaction, RemoveState, RenegotiateMedia,
-    ReportRinging, ResumeCall, SendCallReaction, SendMessage, SetEndpointAvailability, SetMeetingTitle, SetReaction,
-    SharedHistory, StartCall, StartParts, TEAMS_ECHO_BOT_MRI, TEST_CALL_SCENARIO, TeamCopy, TeamRole, TeamWrite,
-    TemplateTeam, TransferCall, Transferor, Typing, UpdateEndpointMetadata, UpdateEndpointState,
-    UpdateMediaDescriptions, UpdateParticipantProperties, VoiceConsent, Wire, team_created, team_error_code,
+    ACTIVITY_FEED, AcceptCall, AcceptParts, AcceptTransfer, AcknowledgeAcceptance, AcknowledgeMediaAnswer,
+    AddChatMembers, AddParts, AddToCall, AnswerMedia, AnswerMediaParts, AppDefinition, ApplyChannelParameters,
+    AttachCall, AttachParts, Author, CALL_REACTIONS, CALL_START_URL, CALLING_BASE, CALLING_HOST, CallContext, CallLink,
+    CallParticipant, CallWriteError, ChannelParameters, ClientInfo, CreateChat, DecideLobby, DeclineCall,
+    DeleteMessage, EditMessage, EndConversation, ForceAvailability, HoldCall, Invitee, JoinCall, JoinMedia, JoinParts,
+    KeepAliveCall, LeaveCall, LeaveReason, Links, ManualAvailability, MarkFeedRead, MediaContent, MediaDescription,
+    MediaDescriptions, MeetingInfo, MemberUpdate, NewTeam, Original, PublishState, RAISE_HANDS, RawBody, ReadReceipt,
+    RemoveReaction, RemoveState, RenegotiateMedia, ReportRinging, ResumeCall, SendCallReaction, SendMessage,
+    SetActivityRead, SetEndpointAvailability, SetMeetingTitle, SetReaction, SharedHistory, StartCall, StartParts,
+    TEAMS_ECHO_BOT_MRI, TEST_CALL_SCENARIO, TeamCopy, TeamRole, TeamWrite, TemplateTeam, TransferCall, Transferor,
+    Typing, UpdateEndpointMetadata, UpdateEndpointState, UpdateMediaDescriptions, UpdateParticipantProperties,
+    VoiceConsent, Wire, team_created, team_error_code,
 };
 pub use write::{
     AddChannelMembers, ChannelCreated, ChannelLayout, CreateChannel, NewChannel, NewChannelKind, ShowChannelByDefault,

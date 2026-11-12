@@ -39,6 +39,10 @@ pub(super) fn action(action: &Action) -> String {
         Action::AddMembers {
             conversation, members, ..
         } => format!("{} people added to {conversation}", members.len()),
+        Action::ActivityRead { item, read: true } => format!("activity item {item} marked read"),
+        Action::ActivityRead { item, read: false } => format!("activity item {item} marked unread"),
+        Action::ActivitySeen => "activity seen".to_owned(),
+        Action::ActivityAllRead => "all activity marked read".to_owned(),
     }
 }
 

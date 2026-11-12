@@ -34,6 +34,7 @@
 //! (`docs/plans/20261021-native-teams-m2-gpui-daily-driver.md`).
 
 pub mod account;
+pub mod activity;
 mod attachments;
 pub mod call_floor;
 pub use call_floor::CallFloor;

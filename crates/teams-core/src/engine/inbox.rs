@@ -296,6 +296,7 @@ impl Inbox {
             Query::UnreadCount(conversation, reply) => give(reply, store.unread_count(&conversation, me)),
             Query::DisplayName(mri, reply) => give(reply, store.display_name(&mri)),
             Query::ReadHorizon(conversation, reply) => give(reply, store.read_horizon(&conversation, me)),
+            Query::Activity(reply) => give(reply, crate::activity::ActivityFeed::from_store(store, me)),
             Query::HistoryComplete(conversation, reply) => give(
                 reply,
                 store

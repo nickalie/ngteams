@@ -225,6 +225,17 @@ impl Conversation {
             .and_then(Value::as_str)
             .map(ConsumptionHorizon::parse)
     }
+
+    /// When the account last marked the whole conversation read (`properties.consumptionHorizonBookmark`,
+    /// `0;<ms>;0`, ms): the activity feed's "Mark all as read" (`docs/protocol/chat.md`, "The activity feed");
+    /// `None` when it is absent or its time can't be read.
+    #[must_use]
+    pub fn horizon_bookmark(&self) -> Option<u64> {
+        self.properties
+            .get("consumptionHorizonBookmark")
+            .and_then(Value::as_str)
+            .and_then(|raw| ConsumptionHorizon::parse(raw).updated)
+    }
 }
 
 /// What kind of conversation a thread is.
@@ -1070,7 +1081,8 @@ impl<T> Field<T> {
 }
 
 /// An ISO time (RFC 3339, any number of fraction digits) in ms since the epoch.
-fn iso_millis(text: &str) -> Option<i64> {
+#[must_use]
+pub fn iso_millis(text: &str) -> Option<i64> {
     let time = OffsetDateTime::parse(text, &Rfc3339).ok()?;
     i64::try_from(time.unix_timestamp_nanos() / 1_000_000).ok()
 }

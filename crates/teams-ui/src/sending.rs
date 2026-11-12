@@ -184,7 +184,12 @@ impl Note {
             OutboxKind::Delete => "Delete",
             OutboxKind::AddReaction => "Reaction",
             OutboxKind::RemoveReaction => "Taking a reaction back",
-            OutboxKind::Send | OutboxKind::ReadReceipt | OutboxKind::CreateChat | OutboxKind::AddMembers => {
+            OutboxKind::Send
+            | OutboxKind::ReadReceipt
+            | OutboxKind::CreateChat
+            | OutboxKind::AddMembers
+            | OutboxKind::ActivityRead
+            | OutboxKind::FeedRead => {
                 return self.state.label().to_owned();
             }
         };

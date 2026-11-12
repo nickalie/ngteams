@@ -254,7 +254,7 @@ fn the_topics_migration_takes_the_chats_without_a_topic_again() -> Result<(), St
          ALTER TABLE teams DROP COLUMN tenant_wide; ALTER TABLE teams DROP COLUMN channel_only; ALTER TABLE teams DROP COLUMN hidden;
          ALTER TABLE teams DROP COLUMN picture_etag; ALTER TABLE teams DROP COLUMN site; ALTER TABLE team_channels DROP COLUMN shown; ALTER TABLE team_channels DROP COLUMN kind; ALTER TABLE team_channels DROP COLUMN description; ALTER TABLE team_channels DROP COLUMN archived; ALTER TABLE team_channels DROP COLUMN owner; ALTER TABLE team_channels DROP COLUMN can_edit; ALTER TABLE team_channels DROP COLUMN can_delete; ALTER TABLE team_channels DROP COLUMN channel_group;
          DROP TABLE app_read_horizon; DROP TABLE calendar_events; DROP TABLE forgotten_conversations;
-         DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; DROP TABLE translation_glossary; DROP VIEW pending_conversation_previews; DROP TABLE conversation_previews;
+         DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; DROP TABLE translation_glossary; DROP TABLE horizon_bookmarks; DROP VIEW pending_conversation_previews; DROP TABLE conversation_previews;
          PRAGMA user_version = 9;",
     )
     .expect("back to schema 9");
@@ -1396,13 +1396,13 @@ fn the_forgotten_threads_migration_keeps_the_conversations_and_forgets_none() ->
     drop(store);
     // the store as schema 18 left it
     let raw = rusqlite::Connection::open(store_path(&dir)).expect("open directly");
-    raw.execute_batch("DROP TABLE forgotten_conversations; DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; DROP TABLE translation_glossary; DROP VIEW pending_conversation_previews; DROP TABLE conversation_previews; PRAGMA user_version = 18;")
+    raw.execute_batch("DROP TABLE forgotten_conversations; DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; DROP TABLE translation_glossary; DROP TABLE horizon_bookmarks; DROP VIEW pending_conversation_previews; DROP TABLE conversation_previews; PRAGMA user_version = 18;")
         .expect("back to schema 18");
     drop(raw);
 
     let mut store = open(&dir)?;
     assert_eq!(store.schema_version()?, SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 23);
+    assert_eq!(SCHEMA_VERSION, 24);
     assert_eq!(store.conversation(GROUP)?.map(|stored| stored.version), Some(3));
     assert_eq!(store.forgotten_thread(GROUP)?, None);
     store.forget_conversation(GROUP)?;
@@ -2273,4 +2273,33 @@ fn the_members_and_forgotten_threads_gone_answer_an_error_never_a_panic() -> Res
     refused(store.forget_conversation(GROUP).is_err_and(|error| sqlite(&error)));
     refused(store.forgotten_thread(GROUP).is_err_and(|error| sqlite(&error)));
     Ok(())
+}
+
+#[test]
+fn a_horizon_bookmark_keeps_the_later_time_and_goes_with_its_conversation() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut store = open(&dir).expect("open");
+    assert!(matches!(
+        store.set_horizon_bookmark(CHAT, 5),
+        Err(StoreError::UnknownConversation(_))
+    ));
+    store
+        .upsert_conversation(&conversation(
+            CHAT,
+            ConversationKind::Other("notifications".to_owned()),
+            1,
+        ))
+        .expect("conversation");
+    assert_eq!(store.horizon_bookmark(CHAT).expect("none"), None);
+    assert_eq!(
+        store.set_horizon_bookmark(CHAT, 2000).expect("first"),
+        Applied::Inserted
+    );
+    assert_eq!(store.set_horizon_bookmark(CHAT, 1000).expect("older"), Applied::Ignored);
+    assert_eq!(store.set_horizon_bookmark(CHAT, 2000).expect("same"), Applied::Ignored);
+    assert_eq!(store.horizon_bookmark(CHAT).expect("kept"), Some(2000));
+    assert_eq!(store.set_horizon_bookmark(CHAT, 3000).expect("later"), Applied::Updated);
+    assert_eq!(store.horizon_bookmark(CHAT).expect("moved"), Some(3000));
+    store.forget_conversation(CHAT).expect("forget");
+    assert_eq!(store.horizon_bookmark(CHAT).expect("gone"), None);
 }

@@ -404,6 +404,9 @@ fn conversation_of(action: &Action) -> Option<String> {
         | Action::Unreact { conversation, .. }
         | Action::Read { conversation, .. }
         | Action::AddMembers { conversation, .. } => Some(conversation.clone()),
+        Action::ActivityRead { .. } | Action::ActivitySeen | Action::ActivityAllRead => {
+            Some(teams_core::activity::FEED.to_owned())
+        }
         Action::CreateChat { .. } => None,
     }
 }
