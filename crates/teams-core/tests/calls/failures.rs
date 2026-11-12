@@ -654,3 +654,81 @@ async fn answering_waits_for_deferred_discovery_before_sending() {
     assert_eq!(answer.await.unwrap(), incoming.call);
     a.status(incoming.call, &CallStatus::Connected).await;
 }
+
+async fn ended_invitation_cancels_pending_answer(decline: bool) {
+    let lab = Lab::start().await;
+    let (devices, _release) = pending_devices(false);
+    let mut a = lab.account_with_devices(devices).await;
+    let id = lab.mock.ring(LAB_C, LAB_A);
+    let incoming = a.incoming().await;
+    let requests = a.handle.requests();
+    let mut answer = Box::pin(requests.call(CallAction::Answer { call: incoming.call }));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut answer)
+            .await
+            .is_err()
+    );
+    end_pending_invitation(&lab, &mut a, incoming.call, &id, decline).await;
+    let refused = tokio::time::timeout(Duration::from_secs(2), answer).await.unwrap();
+    assert!(matches!(
+        refused,
+        Err(EngineError::Call(CallActionError::Call(teams_call::CallError::NotNow)))
+    ));
+    cancel_another_call_waiting_for_discovery(&mut a).await;
+    assert_no_call_setup_writes(&lab).await;
+}
+
+async fn assert_no_call_setup_writes(lab: &Lab) {
+    assert_eq!(lab.attempts("/accept").await, 0);
+    assert_eq!(lab.attempts("/epconv").await, 0);
+    assert_eq!(lab.attempts("/trap/tokens").await, 0);
+}
+
+async fn end_pending_invitation(
+    lab: &Lab,
+    a: &mut crate::support::Account,
+    call: teams_core::CallId,
+    id: &str,
+    decline: bool,
+) {
+    if decline {
+        a.handle.requests().call(CallAction::Decline { call }).await.unwrap();
+        assert_eq!(a.ended(call).await, End::Declined);
+    } else {
+        assert!(lab.mock.end_ring(id, 487, teams_mock::TIMED_OUT));
+        a.next(|event| matches!(event, Event::RingEnded { call: of, .. } if *of == call).then_some(()))
+            .await;
+    }
+}
+
+async fn cancel_another_call_waiting_for_discovery(a: &mut crate::support::Account) {
+    let requests = a.handle.requests();
+    let mut start = Box::pin(requests.call(test_call()));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut start)
+            .await
+            .is_err()
+    );
+    let call = a
+        .next(|event| match event {
+            Event::Call {
+                call,
+                status: CallStatus::Preparing,
+            } => Some(*call),
+            _ => None,
+        })
+        .await;
+    requests.call(CallAction::HangUp { call }).await.unwrap();
+    assert_eq!(start.await.unwrap(), call);
+    assert_eq!(a.ended(call).await, End::HungUp);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_remote_ring_end_cancels_an_answer_waiting_for_discovery() {
+    ended_invitation_cancels_pending_answer(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn declining_cancels_an_answer_waiting_for_discovery() {
+    ended_invitation_cancels_pending_answer(true).await;
+}

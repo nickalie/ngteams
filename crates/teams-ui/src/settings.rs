@@ -1518,7 +1518,7 @@ impl SettingsModel {
     pub fn media_status(&self) -> DeviceStatus {
         self.devices
             .as_ref()
-            .map_or(DeviceStatus::Unavailable, |devices| devices.directory.status())
+            .map_or(DeviceStatus::Ready, |devices| devices.directory.status())
     }
 
     /// Where the background pictures the user added are kept: [`BACKGROUNDS_DIR`] beside the settings file; `None` for

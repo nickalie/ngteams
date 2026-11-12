@@ -6,12 +6,13 @@
 //!   running call, an answer or a decline of an invitation the engine offered ([`Event::IncomingCall`]), a hang-up,
 //!   muting the microphone, the camera turned on or off, a renegotiation of the call's media. One call at a time: an
 //!   action while one is up (or set up) is refused. Nothing answers or declines an invitation but its action: the engine never does by itself.
-//! - **The media comes first, the devices last**: a start, a join or an answer goes only once its media is set up
+//! - **The media comes first, the devices last**: a start, a join or an answer first waits for device discovery,
+//!   outside [`SETUP_TIMEOUT`], then goes only once its media is set up
 //!   ([`CallMedia`]: the relay's credentials read, an allocation on the relay, the session started without its devices,
 //!   our offer or our answer in Teams' dialect, within [`SETUP_TIMEOUT`]); a setup that fails refuses the action and
 //!   sends nothing (an invitation keeps ringing, still answerable or declinable). A start's or a join's call is told
-//!   placing as its setup begins, so its window shows it calling at once (the setup takes seconds, and a header's Call
-//!   that only went away until then looked like nothing happened); a setup that fails ends that call
+//!   preparing while discovery runs, otherwise placing as setup begins, so its window appears at once. Once the
+//!   machine places it, it is told placing; a setup that fails ends that call
 //!   (`End::Failed("setup")`), a hang-up meanwhile drops it unsent, and a mute meanwhile holds once its media runs.
 //!   The microphone and the speaker open only once the start, the join or the answer was admitted and taken: when the
 //!   machine tells the call ringing at its callees, joining, or connected. An audio device that cannot open is told
@@ -114,6 +115,7 @@ const MEDIA_LOOK: Duration = Duration::from_millis(50);
 /// How long a start's, a join's or an answer's media may take to be set up (the relay's credentials read, the session
 /// made, its candidates gathered) before the action fails: a setup that never ends would hold the calling busy, every
 /// later start refused, with nothing to show for it.
+/// Device discovery is awaited first, outside this bound; a waiting action can be cancelled.
 pub const SETUP_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long a start or a join may wait for the engine to hand it to the calling (behind a write or a sync the engine
 /// awaits) before it is refused ([`CallActionError::Late`]) rather than placed. A view gives up on a start it isn't
@@ -940,6 +942,7 @@ where
                 }));
             }
             CallEvent::RingEnded { call, end } => {
+                self.cancel_answer(call);
                 self.offers.remove(&call);
                 self.emit(Event::RingEnded { call, end });
             }
@@ -1271,6 +1274,7 @@ where
     }
 
     fn ended(&mut self, call: CallId, end: End) {
+        self.cancel_answer(call);
         self.held_mute = None;
         self.caption_ended(call);
         self.record_ended(call);
@@ -1769,6 +1773,12 @@ where
         };
         let _ = reply.send(answer.map_err(EngineError::from));
         self.drive(now);
+    }
+
+    fn cancel_answer(&mut self, call: CallId) {
+        if let Some(preparing) = self.preparing.take_if(|preparing| preparing.answering == Some(call)) {
+            refuse(preparing.reply, CallError::NotNow.into());
+        }
     }
 
     fn hang_up(&mut self, call: CallId, now: Instant) -> Result<CallId, CallActionError> {

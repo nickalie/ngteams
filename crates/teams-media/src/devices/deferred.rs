@@ -23,7 +23,22 @@ struct Shared {
     state: Mutex<State>,
     opened: Condvar,
     ready: watch::Sender<bool>,
-    watchers: Mutex<Vec<DeviceWatcher>>,
+    watchers: Mutex<Watchers>,
+}
+
+#[derive(Default)]
+struct Watchers {
+    revision: u64,
+    callbacks: Vec<DeviceWatcher>,
+}
+
+impl Watchers {
+    fn tell(&mut self, list: &DeviceList) {
+        self.revision = self.revision.wrapping_add(1);
+        for watcher in &self.callbacks {
+            watcher(list);
+        }
+    }
 }
 
 impl Shared {
@@ -32,9 +47,7 @@ impl Shared {
     }
 
     fn tell(&self, list: &DeviceList) {
-        for watcher in &*self.watchers.lock().unwrap_or_else(PoisonError::into_inner) {
-            watcher(list);
-        }
+        self.watchers.lock().unwrap_or_else(PoisonError::into_inner).tell(list);
     }
 
     fn finish(self: &Arc<Self>, connected: Connected) {
@@ -60,12 +73,17 @@ impl Shared {
         drop(state);
         self.opened.notify_all();
         self.ready.send_replace(true);
+        let revision = self.watchers.lock().unwrap_or_else(PoisonError::into_inner).revision;
         let backend = self.lock().connected.clone();
         let list = backend
             .and_then(Result::ok)
             .map(|backend| backend.devices())
             .unwrap_or_default();
-        self.tell(&list);
+        let mut watchers = self.watchers.lock().unwrap_or_else(PoisonError::into_inner);
+        // Reading outside this lock avoids inverting a backend's directory and watcher locks.
+        if watchers.revision == revision {
+            watchers.tell(&list);
+        }
     }
 }
 
@@ -86,7 +104,7 @@ impl DeferredDevices {
             }),
             opened: Condvar::new(),
             ready: watch::channel(false).0,
-            watchers: Mutex::new(Vec::new()),
+            watchers: Mutex::new(Watchers::default()),
         });
         let worker = Arc::clone(&shared);
         let spawned = std::thread::Builder::new()
@@ -167,6 +185,7 @@ impl DeviceDirectory for DeferredDevices {
             .watchers
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
+            .callbacks
             .push(watcher);
     }
 
@@ -194,12 +213,19 @@ mod tests {
     struct Silent {
         directory: FixedDirectory,
         files: FileDevices,
+        snapshot_pause: Mutex<Option<SnapshotPause>>,
+    }
+
+    struct SnapshotPause {
+        taken: mpsc::Sender<()>,
+        resume: mpsc::Receiver<()>,
     }
 
     impl Silent {
         fn new(directory: FixedDirectory) -> Self {
             Self {
                 directory,
+                snapshot_pause: Mutex::new(None),
                 files: FileDevices {
                     input: AudioInput::Silence,
                     recording: None,
@@ -225,7 +251,12 @@ mod tests {
     }
     impl DeviceDirectory for Silent {
         fn devices(&self) -> DeviceList {
-            self.directory.devices()
+            let list = self.directory.devices();
+            if let Some(pause) = self.snapshot_pause.lock().unwrap().take() {
+                pause.taken.send(()).unwrap();
+                pause.resume.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+            list
         }
         fn watch(&self, watcher: DeviceWatcher) {
             self.directory.watch(watcher);
@@ -285,6 +316,41 @@ mod tests {
         assert_eq!(directory.chosen(DeviceKind::Camera), None);
         assert!(matches!(devices.screen(), Err(DeviceError::Closed)));
         futures_executor::block_on(devices.ready()).unwrap();
+    }
+
+    #[test]
+    fn a_hotplug_update_supersedes_the_discovery_snapshot_before_it_is_published() {
+        let directory = FixedDirectory::default();
+        let backend = Silent::new(directory.clone());
+        let (taken, snapshot) = mpsc::channel();
+        let (resume, held) = mpsc::channel();
+        *backend.snapshot_pause.lock().unwrap() = Some(SnapshotPause { taken, resume: held });
+        let shared = Arc::new(Shared {
+            state: Mutex::new(State {
+                connected: None,
+                choices: Choices::default(),
+            }),
+            opened: Condvar::new(),
+            ready: watch::channel(false).0,
+            watchers: Mutex::new(Watchers::default()),
+        });
+        let devices = DeferredDevices { shared };
+        let (told, changes) = mpsc::channel();
+        devices.watch(Box::new(move |list| told.send(list.clone()).unwrap()));
+        let discovery = Arc::clone(&devices.shared);
+        let worker = std::thread::spawn(move || discovery.finish(Ok(Arc::new(backend))));
+        snapshot.recv_timeout(Duration::from_secs(5)).unwrap();
+        let plugged = DeviceList::new(vec![DeviceInfo {
+            kind: DeviceKind::Camera,
+            name: "camera".to_owned(),
+            description: "Camera".to_owned(),
+        }]);
+        directory.set_devices(plugged.clone());
+        assert_eq!(changes.recv_timeout(Duration::from_secs(5)).unwrap(), plugged);
+        resume.send(()).unwrap();
+        worker.join().unwrap();
+        assert!(matches!(changes.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        assert_eq!(devices.devices(), plugged);
     }
 
     #[test]

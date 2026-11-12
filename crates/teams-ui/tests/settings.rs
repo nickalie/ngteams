@@ -1134,6 +1134,10 @@ fn settings_follow_media_preparation_and_failure_even_when_the_list_stays_empty(
     let directory = FixedDirectory::default();
     directory.set_status(DeviceStatus::Preparing);
     let model = cx.new(|_| SettingsModel::in_memory(Settings::default()));
+    assert_eq!(
+        model.read_with(cx, |model, _| model.media_status()),
+        DeviceStatus::Ready
+    );
     cx.update(|cx| attach_devices(&model, std::sync::Arc::new(directory.clone()), cx));
     assert_eq!(
         model.read_with(cx, |model, _| model.media_status()),

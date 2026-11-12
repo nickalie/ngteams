@@ -435,8 +435,7 @@ impl SettingsView {
     /// Whether the Calls page offers the video effects: the app's calls have video, or there is a camera to preview.
     fn shows_effects(&self, cx: &App) -> bool {
         let model = self.model.read(cx);
-        (model.devices().is_none() || model.media_status() == DeviceStatus::Ready)
-            && (self.video_switch || model.camera_preview().is_some())
+        model.media_status() == DeviceStatus::Ready && (self.video_switch || model.camera_preview().is_some())
     }
 
     /// Gives the page column the keyboard, as Settings opens.
@@ -926,11 +925,7 @@ impl SettingsView {
             .map(|list| self.devices(settings, list, palette))
             .unwrap_or_default();
         let model = self.model.read(cx);
-        let status = if model.devices().is_some() {
-            model.media_status()
-        } else {
-            DeviceStatus::Ready
-        };
+        let status = model.media_status();
         if status != DeviceStatus::Ready {
             rows.clear();
             rows.push(
