@@ -962,8 +962,10 @@ client. The signed-in VM checks and physical device/GPU limits remain separate f
 ### macOS host runner
 
 The macOS port (Apple silicon, macOS 14 or later) is debugged on a Mac over SSH; its logged-in console is this port's
-GUI place, as the win11 VM's console is Windows', only through the lab runner below and within its limits. This is the
-user's allowance and is pending in [AGENTS.md](../AGENTS.md): its sandbox rule doesn't name the Mac console yet. Prerequisites there: Xcode's command line tools (the `security`, `codesign`,
+GUI place, as the win11 VM's console is Windows', only through the lab runner below ([AGENTS.md](../AGENTS.md)'s
+sandbox rule): lab-marked builds; lab accounts within the [lab-contact rule](lab-rules.md) (or a synthetic alias);
+never the user's own account or its Keychain items; short runs, every window and process closed after. Prerequisites
+there: Xcode's command line tools (the `security`, `codesign`,
 `iconutil` and `hdiutil` tools; GPUI compiles its Metal shaders at run time, so no Metal Toolchain), rustup with the
 repository toolchain, Python 3, and GStreamer's official macOS runtime in a private prefix:
 
@@ -1004,9 +1006,34 @@ tray's place (closing the main window keeps the app, a Dock click shows it again
 `scripts/run-lab-macos.py <alias>` runs a lab alias on the console: lab-marked builds only, its broker and app on a
 private socket pair, `--shot <name>` saving the run's own windows (`screencapture -l`, which needs the Screen
 Recording permission for the SSH session's process), `--status` and `--stop`; runs are short and every process stops
-with the run. Agents use it only with a synthetic alias (an `example.invalid` account, no tokens) unless a task's
-brief says otherwise: no password is typed, no tenant session opens, nobody is contacted. Lab devices stay refused on
-macOS (no device sandbox).
+with the run. State the lab-contact check before a run of a lab account; a synthetic alias (an `example.invalid`
+account, no tokens) stops at the sign-in window and reaches nobody. Lab devices stay refused on macOS (no device
+sandbox). With `--app`, the runner takes only a lab bundle (below) and takes it out of LaunchServices after the run.
+
+A lab account is signed in by the lab tooling, as on Linux; nobody types a password into the app:
+
+```sh
+cargo build --locked -p proto-lab --target-dir target/lab
+# ~/.config/teams-lab/lab.toml as on Linux; accounts.json (0600) with only the accounts to sign in
+proto-lab chrome install       # the pinned Chrome for Testing for mac-arm64, under ~/.local/share/teams-lab/chrome
+proto-lab login a              # headless: the lab password from accounts.json, typed into Microsoft's page
+rm ~/.config/teams-lab/accounts.json
+proto-lab auth a               # tokens, accounts.toml and region where the Mac lab build reads them
+python3 scripts/run-lab-macos.py a --timeout 600
+```
+
+`proto-lab auth` on macOS writes the alias to `~/Library/Application Support/ngteams-lab/<alias>/` and its tokens to
+the lab keychain, `~/Library/Application Support/ngteams-lab/ngteams-lab.keychain-db`
+(`crates/teams-auth/src/secrets/macos_lab.rs`): the `ngteams-lab` namespace never uses the login keychain, which is
+locked over SSH. The lab keychain opens with a fixed password, isn't in the user's keychain search list, and its items
+are readable by any of the lab's programs (`proto-lab` writes them, the lab build's broker reads them). The lab
+browser uses a mock keychain (`--use-mock-keychain`), never the login keychain.
+
+After the run, `--stop` it, then remove what the sign-in made: the alias
+(`rm -rf ~/Library/Application\ Support/ngteams-lab/<alias>`), its tokens (the lab keychain file, or one alias's
+items with `security unlock-keychain -p ngteams-lab <keychain>` and `security delete-generic-password -a <upn>
+<keychain>` until none is left), the browser profile, captures and Chrome under `~/.local/share/teams-lab/`, and
+`~/.config/teams-lab/`.
 
 `scripts/package-macos.sh --binaries <dir> --gstreamer <prefix> --version <v> --out <dir>` assembles
 `ngteams.app` (the three binaries, the runtime's libraries and the plugins `packaging/macos/gstreamer-plugins.txt`
@@ -1015,4 +1042,7 @@ microphone usage descriptions and the `msteams:` scheme, the release marker the 
 a `.zip` and a `.dmg`: ad hoc, or with `NGTEAMS_MACOS_SIGN_IDENTITY` a Developer ID with the hardened runtime, and
 with the `NGTEAMS_NOTARY_*` key notarized and stapled ([CI guide](ci.md#macos-signing)). Ad hoc, a user opens the app
 the first time with right-click → Open. Build its binaries first (`run-lab-macos.py --build-only`, then
-`cargo build -p teams-ctl --bin ngteamsctl` into the same target dir).
+`cargo build -p teams-ctl --bin ngteamsctl` into the same target dir). Lab-marked binaries (`ngteams --build-marker`
+says `lab`) make a lab bundle: id `com.nickalie.ngteams.lab` and no URL scheme, so LaunchServices never hands it a
+Teams link or the personal app's notifications. Running a bundle registers it with LaunchServices: take a copy out
+with `lsregister -u <ngteams.app>` before deleting it.
