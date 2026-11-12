@@ -52,6 +52,8 @@ jobs:
           -p teams-update -- --test-threads=1
       - name: Sign-in guard and worker protocol, without a window
         run: cargo test --locked -p teams-signin --lib --test classify --test gate -- --test-threads=1
+      - name: Notifications' tags and actions, and the Dock's badge server (no notification center reached)
+        run: cargo test --locked -p teams-ui --lib desktop::macos
       - name: Native device backend's catalog (no device opened)
         run: cargo test --locked -p teams-media --lib devices:: -- --test-threads=1
       - name: Coverage tools

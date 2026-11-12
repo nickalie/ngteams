@@ -22,7 +22,8 @@
 //!   closed without a tray item to stay in quits only once the call window is closed too.
 //! - [`Desktop::connect`] connects to the bus the app is given ([`crate::bus`]) and puts the notifications and the
 //!   tray item on it; without one, neither is there and nothing else is tried. On Windows it instead connects to
-//!   the native shell in the current interactive session, without reading or reaching a D-Bus address.
+//!   the native shell in the current interactive session, and on macOS to the notification center and the Dock (the
+//!   Dock is the tray there), without reading or reaching a D-Bus address.
 //!
 //! - **Several accounts** ([`Desktop::add_account`], [`Desktop::remove_account`]): each account has its own notifier,
 //!   call alert and own presence, all live at once, so every account notifies and rings whichever one the window
@@ -45,11 +46,9 @@ use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
 use futures_util::StreamExt as _;
-#[cfg(not(target_os = "macos"))]
-use gpui::AsyncApp;
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription, Task, WeakEntity, Window,
-    WindowHandle, WindowId,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task, WeakEntity,
+    Window, WindowHandle, WindowId,
 };
 #[cfg(target_os = "linux")]
 use tokio::sync::mpsc;
@@ -75,6 +74,8 @@ use crate::trace::{TraceLine, ViewTrace};
 use crate::tray::{BusTray, Hosted};
 use crate::tray::{Tray, TrayEvent};
 
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
 use crate::view::Root;
@@ -170,6 +171,9 @@ pub struct Desktop {
     bus: Option<Connection>,
     #[cfg(windows)]
     native_tray: Option<Arc<windows::tray::NativeTray>>,
+    /// macOS's notifications, withdrawn on the quit.
+    #[cfg(target_os = "macos")]
+    mac_notifications: Option<Arc<macos::Notifications>>,
     /// The bus's notification server, for an account added once it is up.
     server: Option<Arc<dyn NotificationServer>>,
     /// The call's own window.
@@ -259,6 +263,8 @@ impl Desktop {
             bus: None,
             #[cfg(windows)]
             native_tray: None,
+            #[cfg(target_os = "macos")]
+            mac_notifications: None,
             server: None,
             call_windows,
             _subscriptions: [asking, closing, calling],
@@ -761,6 +767,10 @@ impl Desktop {
     /// Asks the app to quit, every account's own presence stopped first: nothing more is reported (and nothing is
     /// sent for the quit: no captured request reports Offline, M2 Task 20).
     fn quit(&mut self, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        if let Some(notifications) = &self.mac_notifications {
+            notifications.withdraw_all(cx);
+        }
         for slot in &self.slots {
             slot.own_presence.update(cx, OwnPresence::quit);
         }
@@ -825,11 +835,18 @@ impl Desktop {
         cx.spawn(async move |this, cx: &mut AsyncApp| windows::connect(this, app_id, app_name, with_tray, cx).await)
     }
 
-    /// macOS: no native notifications or menu bar item yet.
+    /// Puts the notifications and the Dock badge up on macOS (its module's docs); closing the window keeps the app in
+    /// the Dock, but in the read-only mode. D-Bus addresses have no role here.
     #[cfg(target_os = "macos")]
     pub fn connect(&mut self, address: Result<String, BusError>, cx: &mut Context<Self>) -> Task<Vec<String>> {
         drop(address);
-        cx.spawn(async move |_, _| vec!["no notifications or menu bar item on macOS yet".to_owned()])
+        // a deterministic GPUI model test never reaches the system's notification center or the Dock
+        if cx.is_test() {
+            return cx
+                .spawn(async move |_, _| vec!["native desktop is not opened by a deterministic UI test".to_owned()]);
+        }
+        let with_dock = !self.parts.shell.core.read_only();
+        cx.spawn(async move |this, cx: &mut AsyncApp| macos::connect(&this, with_dock, cx))
     }
 
     /// Keep the native taskbar target current when closing to tray and opening a new GPUI window.
@@ -862,10 +879,6 @@ impl Desktop {
     }
 
     /// Notification `id` had `action` invoked: the call alert's it is, else (its body) the notifier's it is.
-    #[cfg_attr(
-        target_os = "macos",
-        expect(dead_code, reason = "macOS notifications aren't wired yet")
-    )]
     fn activated(&mut self, id: u32, action: &str, cx: &mut Context<Self>) {
         for slot in &self.slots {
             if slot.call_alert.update(cx, |alert, cx| alert.activated(id, action, cx)) {

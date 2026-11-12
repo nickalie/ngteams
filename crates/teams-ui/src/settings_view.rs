@@ -621,7 +621,14 @@ impl SettingsView {
                 vec![
                     row(
                         "Font size",
-                        Some("Ctrl+= and Ctrl+- change it anywhere in the app, Ctrl+0 resets it."),
+                        Some(concat!(
+                            ctrl!(),
+                            "+= and ",
+                            ctrl!(),
+                            "+- change it anywhere in the app, ",
+                            ctrl!(),
+                            "+0 resets it."
+                        )),
                         self.font_size(appearance, palette),
                         palette,
                     ),
@@ -734,7 +741,7 @@ impl SettingsView {
             .child(step(
                 "font-smaller",
                 Glyph::MINUS,
-                "Smaller (Ctrl+-)".to_owned(),
+                concat!("Smaller (", ctrl!(), "+-)").to_owned(),
                 appearance.stepped_font_size(-1),
                 size <= *FONT_SIZES.start(),
             ))
@@ -749,7 +756,7 @@ impl SettingsView {
             .child(step(
                 "font-larger",
                 Glyph::PLUS,
-                "Larger (Ctrl+=)".to_owned(),
+                concat!("Larger (", ctrl!(), "+=)").to_owned(),
                 appearance.stepped_font_size(1),
                 size >= *FONT_SIZES.end(),
             ));
@@ -761,7 +768,7 @@ impl SettingsView {
             .child(step(
                 "font-reset",
                 Glyph::RESET,
-                format!("Reset to {FONT_SIZE} px (Ctrl+0)"),
+                format!(concat!("Reset to {} px (", ctrl!(), "+0)"), FONT_SIZE),
                 FONT_SIZE,
                 size == FONT_SIZE,
             ))

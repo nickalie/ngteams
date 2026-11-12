@@ -2,7 +2,8 @@
 //! (`osxaudio`) and `AVFoundation` (`avfvideosrc`) on macOS. Device monitor events refresh the catalog; each active
 //! stream follows the current choice (or the system default) on its own thread. Opening a backend only enumerates
 //! devices: it never starts a microphone or camera. Screen sharing separately invokes the Windows picker and captures
-//! only its result. Queues remain bounded across a device switch.
+//! only its result; on macOS it captures the main display (`avfvideosrc`'s screen capture, behind macOS's Screen
+//! Recording permission). Queues remain bounded across a device switch.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -287,5 +288,9 @@ impl Devices for WindowsDevices {
     #[cfg(windows)]
     fn screen(&self) -> Result<Box<dyn VideoSource>, DeviceError> {
         screen::open()
+    }
+    #[cfg(target_os = "macos")]
+    fn screen(&self) -> Result<Box<dyn VideoSource>, DeviceError> {
+        streams::screen()
     }
 }

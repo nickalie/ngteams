@@ -199,36 +199,36 @@ pub fn init(cx: &mut App) {
     global_search::init(cx);
     crate::activity_view::init(cx);
     cx.bind_keys([
-        KeyBinding::new("ctrl-k", ToggleSwitcher, None),
+        KeyBinding::new("secondary-k", ToggleSwitcher, None),
         // Teams' desktop key for New message
-        KeyBinding::new("ctrl-n", NewMessage, None),
-        KeyBinding::new("ctrl-e", FocusSearch, None),
-        KeyBinding::new("ctrl-shift-f", FocusSearch, None),
-        KeyBinding::new("ctrl-alt-g", GoToChat, None),
+        KeyBinding::new("secondary-n", NewMessage, None),
+        KeyBinding::new("secondary-e", FocusSearch, None),
+        KeyBinding::new("secondary-shift-f", FocusSearch, None),
+        KeyBinding::new("secondary-alt-g", GoToChat, None),
         KeyBinding::new("alt-left", GoBack, None),
         KeyBinding::new("alt-right", GoForward, None),
-        KeyBinding::new("ctrl-alt-down", NextAccount, None),
-        KeyBinding::new("ctrl-alt-up", PreviousAccount, None),
+        KeyBinding::new("secondary-alt-down", NextAccount, None),
+        KeyBinding::new("secondary-alt-up", PreviousAccount, None),
         // Teams' zoom keys, on the base font size
-        KeyBinding::new("ctrl-=", FontLarger, None),
-        KeyBinding::new("ctrl-+", FontLarger, None),
-        KeyBinding::new("ctrl--", FontSmaller, None),
-        KeyBinding::new("ctrl-0", FontReset, None),
+        KeyBinding::new("secondary-=", FontLarger, None),
+        KeyBinding::new("secondary-+", FontLarger, None),
+        KeyBinding::new("secondary--", FontSmaller, None),
+        KeyBinding::new("secondary-0", FontReset, None),
         // Teams' keys for its apps on the rail
-        KeyBinding::new("ctrl-1", ShowActivity, None),
-        KeyBinding::new("ctrl-2", ShowChats, None),
-        KeyBinding::new("ctrl-4", ShowCalendar, None),
-        KeyBinding::new("ctrl-shift-c", CallChat, None),
-        KeyBinding::new("ctrl-shift-j", JoinCall, None),
-        KeyBinding::new("ctrl-shift-s", AnswerCall, None),
-        KeyBinding::new("ctrl-shift-d", DeclineCall, None),
-        KeyBinding::new("ctrl-shift-h", HangUpCall, None),
-        KeyBinding::new("ctrl-shift-m", ToggleMuteCall, None),
+        KeyBinding::new("secondary-1", ShowActivity, None),
+        KeyBinding::new("secondary-2", ShowChats, None),
+        KeyBinding::new("secondary-4", ShowCalendar, None),
+        KeyBinding::new("secondary-shift-c", CallChat, None),
+        KeyBinding::new("secondary-shift-j", JoinCall, None),
+        KeyBinding::new("secondary-shift-s", AnswerCall, None),
+        KeyBinding::new("secondary-shift-d", DeclineCall, None),
+        KeyBinding::new("secondary-shift-h", HangUpCall, None),
+        KeyBinding::new("secondary-shift-m", ToggleMuteCall, None),
         KeyBinding::new("alt-shift-c", ToggleCaptionsCall, None),
         // Teams' own key for the camera
-        KeyBinding::new("ctrl-shift-o", ToggleCameraCall, None),
+        KeyBinding::new("secondary-shift-o", ToggleCameraCall, None),
         // Teams' own key for Raise and Lower hand
-        KeyBinding::new("ctrl-shift-k", ToggleHandCall, None),
+        KeyBinding::new("secondary-shift-k", ToggleHandCall, None),
     ]);
 }
 
@@ -3235,7 +3235,7 @@ fn no_chat(palette: Palette, cx: &App) -> gpui::Div {
                 .items_center()
                 .gap_1()
                 .child("Choose one from the list, or press")
-                .child(Kbd::new(gpui::Keystroke::parse("ctrl-k").unwrap_or_default()).outline())
+                .child(Kbd::new(gpui::Keystroke::parse("secondary-k").unwrap_or_default()).outline())
                 .child("to find one"),
         );
     div()

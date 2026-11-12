@@ -273,6 +273,48 @@ pub(super) fn camera(devices: WindowsDevices) -> Result<Box<dyn VideoSource>, De
     Ok(Box::new(Camera { frames, _pump: pump }))
 }
 
+/// macOS's screen share: the main display through `avfvideosrc`'s screen capture, the cursor drawn in, on a thread of
+/// its own as a camera's. macOS asks the user for the Screen Recording permission the first time; without it no frame
+/// comes, or the pipeline fails and the share ends.
+#[cfg(target_os = "macos")]
+pub(super) fn screen() -> Result<Box<dyn VideoSource>, DeviceError> {
+    let frames = Queue::new(3);
+    let (write, close) = (frames.clone(), frames.clone());
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopped = Arc::clone(&stop);
+    let (ready, response) = mpsc::sync_channel(1);
+    let thread = thread::Builder::new().name("macos-screen".to_owned()).spawn(move || {
+        let shared = || -> Result<(), DeviceError> {
+            let source = element("avfvideosrc")?;
+            source.set_property("capture-screen", true);
+            source.set_property("capture-screen-cursor", true);
+            let (pipeline, sink) = capture(&source, true)?;
+            let _ = ready.try_send(Ok(()));
+            while !stopped.load(Ordering::Acquire) {
+                healthy(&pipeline.0)?;
+                if let Some(sample) = sample(&sink) {
+                    write.push(video_frame(&sample)?);
+                }
+            }
+            Ok(())
+        };
+        if let Err(failure) = shared() {
+            let _ = ready.try_send(Err(failure.to_string()));
+            log::warn!("the macOS screen share stopped: {failure}");
+        }
+        close.close();
+    })?;
+    let pump = Pump {
+        stop,
+        thread: Some(thread),
+    };
+    match response.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(())) => Ok(Box::new(Camera { frames, _pump: pump })),
+        Ok(Err(failure)) => Err(error(failure)),
+        Err(failure) => Err(error(failure)),
+    }
+}
+
 fn video_frame(sample: &gst::Sample) -> Result<VideoFrame, DeviceError> {
     let caps = sample
         .caps()

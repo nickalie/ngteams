@@ -59,7 +59,7 @@ use crate::trace::{TraceLine, ViewTrace};
 actions!(teams_ui, [LeaveSearchResults]);
 
 /// The box's hint, as Teams' says it.
-pub const PLACEHOLDER: &str = "Press Ctrl+Alt+G to go right to a chat or channel";
+pub const PLACEHOLDER: &str = concat!("Press ", ctrl!(), "+Alt+G to go right to a chat or channel");
 /// The box's hint in its go-to mode.
 pub const GOTO_PLACEHOLDER: &str = "Go to a chat or channel";
 /// The results page's key context (Escape leaves it).

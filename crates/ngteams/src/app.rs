@@ -253,6 +253,8 @@ pub fn launch<S: SecretStore + 'static>(cx: &mut App, launch: Launch<S>) -> Resu
     hold(&running, ctl.as_deref(), cx);
     follow_desktop(&desktop, running, cx);
     connect(&desktop, bus, cx);
+    #[cfg(target_os = "macos")]
+    crate::mac_app::install(cx);
     Ok(Launched { window, desktop })
 }
 
@@ -701,6 +703,13 @@ pub fn open_link(url: String, cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// The running app's desktop; none before the launch.
+#[cfg(target_os = "macos")]
+pub(crate) fn desktop(cx: &App) -> Option<Entity<Desktop>> {
+    cx.try_global::<Held>()
+        .map(|held| held.running.read(cx).desktop.clone())
 }
 
 /// Quits the app: every account's engine shut down first ([`Running`]'s quit), then the app; before the app was

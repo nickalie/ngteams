@@ -22,6 +22,8 @@ pub mod engine;
 pub mod forget;
 pub mod handoff;
 pub mod lab;
+#[cfg(target_os = "macos")]
+pub mod mac_app;
 pub mod read_only;
 pub mod refusal;
 pub mod restart;

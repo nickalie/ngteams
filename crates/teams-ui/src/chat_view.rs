@@ -294,7 +294,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("3", PickThird, context),
         KeyBinding::new("4", PickFourth, context),
         KeyBinding::new("5", PickMore, context),
-        KeyBinding::new("ctrl-c", CopySelected, context),
+        KeyBinding::new("secondary-c", CopySelected, context),
         KeyBinding::new("right", reactors::NextReaction, context),
         KeyBinding::new("left", reactors::PreviousReaction, context),
         KeyBinding::new("space", reactors::PressReaction, context),

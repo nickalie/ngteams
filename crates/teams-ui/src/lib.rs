@@ -69,6 +69,21 @@
 //!
 //! M2 Tasks 6–17 and 20 (`docs/plans/20261021-native-teams-m2-gpui-daily-driver.md`).
 
+/// The key a shortcut's hint names, as Teams names it: Ctrl, or Cmd on macOS. The shortcuts bind `secondary-`, which
+/// GPUI reads as Ctrl elsewhere and Cmd there; hints are put together with `concat!`.
+#[cfg(target_os = "macos")]
+macro_rules! ctrl {
+    () => {
+        "Cmd"
+    };
+}
+#[cfg(not(target_os = "macos"))]
+macro_rules! ctrl {
+    () => {
+        "Ctrl"
+    };
+}
+
 pub mod account_prompt;
 pub mod accounts;
 pub mod activity_view;

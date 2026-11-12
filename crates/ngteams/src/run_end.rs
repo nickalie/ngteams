@@ -4,14 +4,15 @@
 //! GPUI's own quit on macOS is `-[NSApplication terminate:]`, which exits the process inside `AppKit`: `run` never
 //! returns there. On macOS this stops `AppKit`'s run loop instead (`-[NSApplication stop:]`, then an event posted so
 //! the loop wakes to see it), as GPUI's other platforms return from `run` after their quit.
+//! When `AppKit` itself asked the app to quit (the Dock's Quit, a logout: [`crate::mac_app`]), it is told to go on
+//! instead and the process ends inside it: such a quit restarts nothing and installs no update.
 
 use gpui::App;
 
 /// End the run: `run` returns once the current event is handled.
 pub fn end(cx: &mut App) {
     #[cfg(target_os = "macos")]
-    {
-        let _ = cx;
+    if !crate::mac_app::answer_terminate(cx) {
         stop_app_kit();
     }
     #[cfg(not(target_os = "macos"))]

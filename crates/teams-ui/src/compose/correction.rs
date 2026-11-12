@@ -59,9 +59,9 @@ const CORRECT_TIP: &str = "Correct spelling and style";
 /// Binds the keys of correcting a draft.
 pub(super) fn bind_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("ctrl-shift-g", CorrectDraft, Some(super::CONTEXT)),
+        KeyBinding::new("secondary-shift-g", CorrectDraft, Some(super::CONTEXT)),
         KeyBinding::new("enter", UseCorrection, Some(PROPOSAL_CONTEXT)),
-        KeyBinding::new("ctrl-enter", SendCorrection, Some(PROPOSAL_CONTEXT)),
+        KeyBinding::new("secondary-enter", SendCorrection, Some(PROPOSAL_CONTEXT)),
         KeyBinding::new("escape", KeepOriginal, Some(PROPOSAL_CONTEXT)),
     ]);
 }

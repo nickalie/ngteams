@@ -921,7 +921,7 @@ impl CalendarView {
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         let modifiers = keystroke.modifiers;
-        if modifiers.control && modifiers.alt {
+        if modifiers.secondary() && modifiers.alt {
             let mode = match keystroke.key.as_str() {
                 "1" => Mode::Day,
                 "2" => Mode::WorkWeek,

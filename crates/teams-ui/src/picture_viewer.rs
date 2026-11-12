@@ -111,16 +111,16 @@ pub fn init(cx: &mut App) {
     let context = Some(CONTEXT);
     cx.bind_keys([
         KeyBinding::new("escape", CloseViewer, context),
-        KeyBinding::new("ctrl-=", ZoomIn, context),
-        KeyBinding::new("ctrl-+", ZoomIn, context),
+        KeyBinding::new("secondary-=", ZoomIn, context),
+        KeyBinding::new("secondary-+", ZoomIn, context),
         KeyBinding::new("=", ZoomIn, context),
         KeyBinding::new("+", ZoomIn, context),
-        KeyBinding::new("ctrl--", ZoomOut, context),
+        KeyBinding::new("secondary--", ZoomOut, context),
         KeyBinding::new("-", ZoomOut, context),
-        KeyBinding::new("ctrl-0", ZoomFit, context),
+        KeyBinding::new("secondary-0", ZoomFit, context),
         KeyBinding::new("left", PreviousPicture, context),
         KeyBinding::new("right", NextPicture, context),
-        KeyBinding::new("ctrl-s", DownloadPicture, context),
+        KeyBinding::new("secondary-s", DownloadPicture, context),
     ]);
 }
 
@@ -561,7 +561,7 @@ impl PictureViewer {
         let Some(natural) = self.natural() else { return };
         let stage = stage(window);
         let delta = event.delta.pixel_delta(px(WHEEL_LINE));
-        if event.modifiers.control {
+        if event.modifiers.secondary() {
             let scale = self.placement.scale(natural, stage);
             let to = scale * WHEEL_ZOOM.powf(f32::from(delta.y) / WHEEL_LINE);
             let anchor = from_centre(event.position, window);

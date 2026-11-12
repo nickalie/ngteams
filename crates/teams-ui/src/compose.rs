@@ -154,11 +154,11 @@ pub fn init(cx: &mut App) {
     // the last bound is the one a tooltip names
     cx.bind_keys([CONTEXT, EMOJI_CONTEXT].into_iter().flat_map(|context| {
         [
-            KeyBinding::new("ctrl-;", ToggleEmoji, Some(context)),
-            KeyBinding::new("ctrl-.", ToggleEmoji, Some(context)),
+            KeyBinding::new("secondary-;", ToggleEmoji, Some(context)),
+            KeyBinding::new("secondary-.", ToggleEmoji, Some(context)),
         ]
     }));
-    cx.bind_keys([KeyBinding::new("ctrl-shift-u", AttachFiles, Some(CONTEXT))]);
+    cx.bind_keys([KeyBinding::new("secondary-shift-u", AttachFiles, Some(CONTEXT))]);
     correction::bind_keys(cx);
     draft_translation::bind_keys(cx);
 }
@@ -1581,9 +1581,9 @@ impl Compose {
             || !self.editor.read(cx).pictures_ready();
         let tip = match (matches!(self.mode, Mode::Edit { .. }), self.expanded) {
             (true, false) => "Save (Enter)",
-            (true, true) => "Save (Ctrl+Enter)",
+            (true, true) => concat!("Save (", ctrl!(), "+Enter)"),
             (false, false) => "Send (Enter)",
-            (false, true) => "Send (Ctrl+Enter)",
+            (false, true) => concat!("Send (", ctrl!(), "+Enter)"),
         };
         if empty {
             return selected_by(

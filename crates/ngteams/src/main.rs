@@ -63,7 +63,10 @@ mod platform {
         }
         #[cfg(target_os = "macos")]
         {
-            gpui_platform::application()
+            let application = gpui_platform::application();
+            // the Dock's icon clicked with no window open shows the main window again
+            application.on_reopen(ngteams::mac_app::reopened);
+            application
         }
     }
 }
@@ -93,6 +96,9 @@ enum Outcome {
 }
 
 fn main() -> ExitCode {
+    // before any thread: the environment is read and written here alone
+    #[cfg(target_os = "macos")]
+    ngteams::mac_app::bundled_gstreamer();
     if let Some(refusal) = ngteams::refusal() {
         eprintln!("teams: {refusal}");
         return ExitCode::FAILURE;

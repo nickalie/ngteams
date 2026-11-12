@@ -339,10 +339,14 @@ impl FormatBar {
             }),
             self.menu_button("format-link", Glyph::LINK, "Insert link", Menu::Link, cx),
             {
-                let button = icon_button("format-code", Glyph::CODE, "Code (Ctrl+Shift+B block)")
-                    .with_size(Size::Size(px(BUTTON)))
-                    .selected(code)
-                    .on_click(cx.listener(|this, _, window, cx| this.act(window, cx, super::Editor::code)));
+                let button = icon_button(
+                    "format-code",
+                    Glyph::CODE,
+                    concat!("Code (", ctrl!(), "+Shift+B block)"),
+                )
+                .with_size(Size::Size(px(BUTTON)))
+                .selected(code)
+                .on_click(cx.listener(|this, _, window, cx| this.act(window, cx, super::Editor::code)));
                 selected_by("format-code", button).into_any_element()
             },
         ]

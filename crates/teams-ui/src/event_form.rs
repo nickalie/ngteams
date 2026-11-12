@@ -967,7 +967,7 @@ impl EventForm {
             "escape" if self.custom.is_some() => self.custom = None,
             "escape" if self.confirm.is_some() => self.confirm = None,
             "escape" if self.suggestions.is_some() => self.suggestions = None,
-            "s" if keystroke.modifiers.control && !keystroke.modifiers.alt => self.save(window, cx),
+            "s" if keystroke.modifiers.secondary() && !keystroke.modifiers.alt => self.save(window, cx),
             _ => return,
         }
         cx.stop_propagation();
@@ -1241,7 +1241,7 @@ impl EventForm {
                 .label(if self.saving.is_some() { "Saving…" } else { save_label })
                 .disabled(!self.may_write())
                 .tooltip(if writes {
-                    "Save (Ctrl+S)"
+                    concat!("Save (", ctrl!(), "+S)")
                 } else {
                     "Read-only: nothing is saved"
                 })

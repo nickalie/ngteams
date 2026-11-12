@@ -178,6 +178,12 @@ zbus.workspace = true
 # Linux compositor, private bus and virtual keyboard; Windows uses the authorized VM console.
 ui-sandbox.workspace = true
 
+# macOS: the Dock icon's badge (AppKit through objc2, the versions GPUI already links)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 dirs.workspace = true
 # Native desktop shell and WinRT toasts; no optional logging features.
