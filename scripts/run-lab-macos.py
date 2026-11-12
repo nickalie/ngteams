@@ -18,7 +18,13 @@ runner's marker (`NGTEAMS_MACOS_CONSOLE_RUNNER`). The alias's files are `~/Libra
 <alias>/`; the run's logs and shots are in its `.runs/<alias>/` beside them. The app serves `ngteamsctl`'s control
 socket where `ngteamsctl --lab <alias>` looks for it (`<alias>/ctl.sock` there). Builds need GStreamer's runtime
 (`scripts/macos-gstreamer.sh`): `NGTEAMS_GSTREAMER` names its prefix (default `~/ngteams-agent/gstreamer`);
-`NGTEAMS_LAB_TARGET` the target dir (default `target/lab`).
+`NGTEAMS_LAB_TARGET` the target dir (default `target/lab`). A build or run refuses a program that isn't a Mach-O
+executable of a sane size: a link or strip cut short by a full disk leaves a small broken file that cargo still counts
+as built, so the build removes it to be linked again once there is room.
+
+A run from a bundle turns `AppKit`'s window animations off for the lab bundle's id while it runs: on a locked console
+a window's close animation never ends, and the window server keeps listing a closed window as on screen
+(CGWindowList), so the run's window checks would see windows the app has closed.
 
 The alias's credentials are the lab keychain's items (`ngteams-lab.keychain-db` beside the aliases), which
 `proto-lab login`/`auth` provision (docs/development.md, "macOS host runner"). Never type credentials into a lab
@@ -31,6 +37,7 @@ from __future__ import annotations
 import argparse
 import os
 import plistlib
+import shutil
 import signal
 import socket
 import subprocess
@@ -42,6 +49,13 @@ ROOT = Path(__file__).resolve().parent.parent
 LAB_HOME = Path.home() / "Library" / "Application Support" / "ngteams-lab"
 MARKER = "NGTEAMS_MACOS_CONSOLE_RUNNER"
 LAB_BUNDLE_ID = "com.nickalie.ngteams.lab"
+# the first four bytes of an arm64 (64-bit, little-endian) Mach-O and of a universal one
+MACHO_MAGICS = (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
+# far smaller than any program the lab build makes (ngteams-webview, the smaller one, is a few MB), far larger than
+# what a link or strip cut short leaves (a few KB)
+MIN_PROGRAM = 256 << 10
+PROGRAMS = ("ngteams", "ngteams-webview")
+ANIMATIONS = "NSAutomaticWindowAnimationsEnabled"
 LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/"
               "lsregister")
 WINDOWS = """
@@ -88,7 +102,34 @@ def gstreamer() -> Path:
     return Path(os.environ.get("NGTEAMS_GSTREAMER", str(Path.home() / "ngteams-agent" / "gstreamer")))
 
 
-def build() -> None:
+def broken_program(path: Path) -> str | None:
+    """Why `path` isn't a program to start, or None when it is: an executable Mach-O of at least `MIN_PROGRAM` bytes."""
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as file:
+            magic = file.read(4)
+    except OSError:
+        return f"{path} is missing"
+    if magic not in MACHO_MAGICS:
+        return f"{path} is not a Mach-O executable ({size} bytes)"
+    if size < MIN_PROGRAM:
+        return f"{path} is too small for a built program ({size} bytes)"
+    if not os.access(path, os.X_OK):
+        return f"{path} is not executable"
+    return None
+
+
+def remove_built(programs: Path, name: str) -> None:
+    """Removes program `name` and its linked copies in `deps/`, so the next build links it again (cargo counts a
+    broken output as built)."""
+    for path in [programs / name, *(programs / "deps").glob(f"{name.replace('-', '_')}-*")]:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def build() -> int:
     env = dict(os.environ)
     env.pop("TEAMS_PERSONAL_INSTALL", None)
     env["TEAMS_LAB_BUILD"] = "1"
@@ -96,6 +137,22 @@ def build() -> None:
     command = ["cargo", "build", "--locked", "-p", "ngteams", "-p", "teams-signin", "--bin", "ngteams",
                "--bin", "ngteams-webview", "--target-dir", str(lab_target())]
     subprocess.run(command, cwd=ROOT, env=env, check=True, timeout=3600)
+    broken = [(name, why) for name in PROGRAMS if (why := broken_program(target() / name))]
+    for name, why in broken:
+        print(f"the lab build is broken: {why}", file=sys.stderr)
+        remove_built(target(), name)
+    if broken:
+        print("removed for a new link: free disk (a lab build needs ~7.5 GB at its peak) and build again",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
+def window_animations(on: bool) -> None:
+    """`AppKit`'s window animations for the lab bundle's id: off for a run (see the module docs), its own setting
+    again after."""
+    change = ["delete", LAB_BUNDLE_ID, ANIMATIONS] if on else ["write", LAB_BUNDLE_ID, ANIMATIONS, "-bool", "false"]
+    subprocess.run(["defaults", *change], check=False, capture_output=True, timeout=60)
 
 
 def lab_bundle(bundle: Path) -> str | None:
@@ -157,9 +214,12 @@ def serve(alias: str, timeout: int, bundle: Path | None = None) -> int:
         return 1
     programs = bundle / "Contents" / "MacOS" if bundle else target()
     app = programs / "ngteams"
-    if not app.is_file() or not (programs / "ngteams-webview").is_file():
-        print("no lab build: run scripts/run-lab-macos.py --build-only", file=sys.stderr)
+    if broken := [why for name in PROGRAMS if (why := broken_program(programs / name))]:
+        print(f"no usable lab build ({'; '.join(broken)}): run scripts/run-lab-macos.py --build-only",
+              file=sys.stderr)
         return 1
+    if bundle:
+        window_animations(on=False)
     here = run_dir(alias)
     # GStreamer's libraries are named `@rpath/...`; a development binary has no rpath to the private prefix, a bundle
     # finds its own
@@ -194,6 +254,7 @@ def serve(alias: str, timeout: int, bundle: Path | None = None) -> int:
             pass
     stopped(broker, 10)
     if bundle:
+        window_animations(on=True)
         # running from a bundle registers it with LaunchServices; take it out again
         subprocess.run([LSREGISTER, "-u", str(bundle)], check=False, capture_output=True, timeout=60)
     (here / "holder.pid").unlink(missing_ok=True)
@@ -250,8 +311,7 @@ def main() -> int:
     if sys.platform != "darwin":
         parser.error("this runner is the macOS one: use scripts/run-lab.sh (Linux) or scripts/run-lab.ps1 (Windows)")
     if args.build_only:
-        build()
-        return 0
+        return build()
     if not args.alias or not alias_ok(args.alias):
         parser.error("give a lab alias: ASCII letters, digits, '_' and '-'")
     if args.stop:

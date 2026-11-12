@@ -421,6 +421,24 @@ fn the_window_hides_to_the_tray_and_shows_again() {
     quit(&app.cx);
 }
 
+/// The platform's windows: the one the app closes is gone, and showing it again (as macOS's Dock reopen does) opens one,
+/// never a second beside it.
+#[test]
+fn a_closed_window_is_gone_and_showing_it_again_opens_one() {
+    let app = App::start();
+    app.set_in_tray(true);
+    let open = || app.cx.read(|cx| cx.windows().len());
+    assert_eq!(open(), 1);
+    app.window(WindowOp::Hide).unwrap();
+    assert_eq!(open(), 0);
+    app.window(WindowOp::Show).unwrap();
+    assert_eq!(open(), 1);
+    // shown already: the same window, raised
+    app.window(WindowOp::Show).unwrap();
+    assert_eq!(open(), 1);
+    quit(&app.cx);
+}
+
 #[test]
 fn hiding_without_a_tray_item_is_refused_and_the_window_stays() {
     let app = App::start();

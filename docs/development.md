@@ -980,6 +980,9 @@ a development binary or test finds them with `DYLD_FALLBACK_LIBRARY_PATH=<prefix
 `ngteams.app` through its own rpath; GStreamer finds its plugins beside its library. Bring the branch over as for the Windows VM: a
 `git bundle` copied with `scp` into a directory of your own on the Mac (or `git fetch` from it over SSH), never a push
 to GitHub. Mac disks are small: use one `CARGO_TARGET_DIR`, `CARGO_INCREMENTAL=0` and `CARGO_PROFILE_DEV_DEBUG=0`.
+A lab build needs ~7.5 GB free at its peak (with less, its last link or strip fails and leaves a broken program, which
+`run-lab-macos.py` refuses and removes for the next build). Each test command below needs up to ~8 GB in a fresh
+target dir, and several sharing one dir pass 9 GB: run them one at a time and delete the target dir between.
 
 ```sh
 cargo check --locked --workspace --all-targets
@@ -1009,6 +1012,9 @@ Recording permission for the SSH session's process), `--status` and `--stop`; th
 `ngteamsctl --lab <alias>` looks for it; runs are short and every process stops with the run. State the lab-contact check before a run of a lab account; a synthetic alias (an `example.invalid`
 account, no tokens) stops at the sign-in window and reaches nobody. Lab devices stay refused on macOS (no device
 sandbox). With `--app`, the runner takes only a lab bundle (below) and takes it out of LaunchServices after the run.
+On a locked console (the usual state over SSH) `AppKit`'s close animation never ends, so the window server keeps
+listing a window the app has closed as on screen (CGWindowList), a few points larger; an `--app` run turns the lab
+bundle's window animations off while it runs, so check windows opening and closing on such a run.
 
 A lab account is signed in by the lab tooling, as on Linux; nobody types a password into the app:
 
