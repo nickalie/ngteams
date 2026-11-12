@@ -4,7 +4,20 @@ name: Windows portability
 on:
   push:
     branches: [main]
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      # Keep build/test inputs aligned with coverage.yml.
+      - '**/tests/fixtures/**'
+      - vendor/gpui-pre/README.md
   pull_request:
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      - '**/tests/fixtures/**'
+      - vendor/gpui-pre/README.md
   merge_group:
   workflow_dispatch:
 

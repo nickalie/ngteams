@@ -1,7 +1,25 @@
 # Continuous integration
 
-The [Coverage workflow](../.github/workflows/coverage.yml) runs on pull requests, pushes to `main`, merge queues and
-manual dispatch. Its `Coverage ≥90%` job runs `scripts/coverage.sh --require-target` over all runtime crates
+The [Coverage workflow](../.github/workflows/coverage.yml) and
+[Windows portability workflow](../.github/workflows/windows.yml) skip pull requests and pushes to `main` whose
+changes are entirely Markdown (`**/*.md`) or under `docs/`. This includes `README.md`, `AGENTS.md` and skill prose.
+Files under any `tests/fixtures/` directory and `vendor/gpui-pre/README.md` remain included: tests consume fixtures
+and GPUI compiles its README with `include_str!`. Licenses remain included because packaging reads them. A mixed
+documentation/code change runs both workflows. Merge queues and manual dispatch remain unfiltered, as does
+Coverage's reusable `workflow_call` entry point used by releases.
+
+The small [Fixture and documentation guard workflow](../.github/workflows/fixtures.yml) still runs
+`cargo test --locked -p fixture-guard` when `docs/`, any `tests/fixtures/`, the guard crate, the root manifest/lockfile,
+the toolchain, Cargo configuration or its workflow changes. This preserves secret scanning of documentation and
+fixtures and synthetic-marker checks without compiling the native client. Root Markdown and skill prose alone
+run no workflow; a change confined to `docs/` runs only this guard. No other check reads those documentation paths:
+`scripts/lint-report.sh` reads Rust sources; packaging tests read generated documentation and repository licenses.
+
+Main currently has no branch protection or applicable rulesets requiring these checks. Before requiring a
+path-filtered check, replace workflow filtering with an always-triggered workflow and job-level changed-file
+conditions: [skipped workflows leave required checks pending](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#using-filters-to-target-specific-paths-for-pull-request-or-push-events).
+
+Coverage's `Coverage ≥90%` job runs `scripts/coverage.sh --require-target` over all runtime crates
 selected by `coverage-report.py list`. A crate
 below 90% in **any** of LLVM's lines, functions or regions fails the job, even if the workspace average or that
 crate's saved standalone baseline is higher or lower. Exactly 90% passes. Failed tests, missing dependencies and
@@ -59,8 +77,8 @@ debug assertions. It also removes the temporary Chrome-installer build before co
 A historical instrumented build with these settings measured about 23 GiB locally, before temporary test outputs;
 actual size depends on the selected sources and dependencies.
 
-To block merges on coverage failures, make `Coverage ≥90%` a required status check in branch rules; the hosted
-reporter tests alone are not a coverage measurement.
+To block merges on coverage failures, first apply the required-check pattern above, then make `Coverage ≥90%`
+a required status check in branch rules; the hosted reporter tests alone are not a coverage measurement.
 
 ## Windows portability
 

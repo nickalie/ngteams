@@ -3,7 +3,20 @@ name: Coverage
 on:
   push:
     branches: [main]
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      # These Markdown files are build/test inputs; docs/ is checked by fixtures.yml.
+      - '**/tests/fixtures/**'
+      - vendor/gpui-pre/README.md
   pull_request:
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      - '**/tests/fixtures/**'
+      - vendor/gpui-pre/README.md
   merge_group:
   workflow_dispatch:
   # the release workflow runs this whole suite and publishes only if it passes
