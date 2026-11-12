@@ -56,6 +56,9 @@ pub struct Cli {
     /// Print this build's version and commit, then exit.
     #[arg(long, hide = true)]
     pub build_identity: bool,
+    /// Print this build's marker (`lab`, `install` or `none`), then exit.
+    #[arg(long, hide = true, conflicts_with = "build_identity")]
+    pub build_marker: bool,
     /// Install the sign-in window's web engine from a downloaded archive (the release's
     /// `ngteams-web-engine-*.tar.zst`), for a computer that can't download it; the same checks apply.
     #[arg(long, value_name = "ARCHIVE", conflicts_with_all = ["forget", "url"])]

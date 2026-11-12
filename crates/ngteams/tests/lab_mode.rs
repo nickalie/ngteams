@@ -10,7 +10,7 @@ use clap::Parser as _;
 use ngteams::accounts_file::{PersonalLocations, PersonalPaths};
 use ngteams::cli::{Cli, Command, LabMode};
 use ngteams::lab;
-use ngteams::refusal::build_refusal;
+use ngteams::refusal::{build_refusal, marker_name};
 
 fn parse(args: &[&str]) -> Cli {
     Cli::try_parse_from(std::iter::once("ngteams").chain(args.iter().copied())).unwrap()
@@ -263,6 +263,22 @@ fn the_build_marker_matrix_keeps_lab_builds_in_lab_and_all_test_support_builds_o
         build_refusal(false, Some("1"), None, true).is_none(),
         "installed builds may run --lab too"
     );
+}
+
+#[test]
+fn the_build_marker_flag_names_the_marker_packaging_reads() {
+    assert_eq!(marker_name(None, Some("1")), "lab");
+    assert_eq!(
+        marker_name(Some("1"), Some("1")),
+        "lab",
+        "the lab marker wins, as in the refusal"
+    );
+    assert_eq!(marker_name(Some("1"), None), "install");
+    assert_eq!(marker_name(Some("1"), Some("")), "install");
+    assert_eq!(marker_name(None, None), "none");
+    assert_eq!(marker_name(Some(""), Some("")), "none");
+    assert!(parse(&["--build-marker"]).build_marker);
+    assert!(Cli::try_parse_from(["ngteams", "--build-marker", "--build-identity"]).is_err());
 }
 
 #[cfg(target_os = "macos")]

@@ -19,7 +19,9 @@
 # - Notarization, only with a Developer ID: with NGTEAMS_NOTARY_KEY (an App Store Connect API key's .p8 file),
 #   NGTEAMS_NOTARY_KEY_ID and NGTEAMS_NOTARY_ISSUER, the app and then the dmg go to Apple's notary service and get its
 #   ticket stapled (docs/ci.md, "macOS signing").
-# - Info.plist: id com.nickalie.ngteams, the camera and microphone usage descriptions, the msteams: URL scheme.
+# - Info.plist: id com.nickalie.ngteams, the camera and microphone usage descriptions, the msteams: URL scheme. A lab
+#   build (`ngteams --build-marker` says `lab`) gets id com.nickalie.ngteams.lab and no URL scheme, as Windows' lab
+#   runs under its own app id: LaunchServices never hands it a Teams link or the personal app's notifications.
 set -euo pipefail
 
 binaries= gstreamer= version= out=
@@ -43,6 +45,21 @@ out=$(cd "$out" && pwd)
 app="$out/ngteams.app"
 [[ ! -e $app ]] || { echo "$app exists: remove it first" >&2; exit 1; }
 short=$(echo "$version" | cut -d. -f1-3)
+marker=$(DYLD_FALLBACK_LIBRARY_PATH="$gstreamer/lib" "$binaries/ngteams" --build-marker) ||
+    { echo "can't read the build marker of $binaries/ngteams" >&2; exit 1; }
+if [[ $marker == lab ]]; then
+    bundle_id=com.nickalie.ngteams.lab
+    url_types=''
+else
+    bundle_id=com.nickalie.ngteams
+    url_types='    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>Microsoft Teams link</string>
+            <key>CFBundleURLSchemes</key><array><string>msteams</string></array>
+        </dict>
+    </array>'
+fi
 
 contents="$app/Contents"
 frameworks="$contents/Frameworks/gstreamer"
@@ -101,7 +118,7 @@ cat > "$contents/Info.plist" <<PLIST
     <key>CFBundleDisplayName</key><string>ngteams</string>
     <key>CFBundleExecutable</key><string>ngteams</string>
     <key>CFBundleIconFile</key><string>ngteams</string>
-    <key>CFBundleIdentifier</key><string>com.nickalie.ngteams</string>
+    <key>CFBundleIdentifier</key><string>$bundle_id</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>ngteams</string>
     <key>CFBundlePackageType</key><string>APPL</string>
@@ -113,13 +130,7 @@ cat > "$contents/Info.plist" <<PLIST
     <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
     <key>NSCameraUsageDescription</key><string>ngteams uses the camera for your video in Teams calls and meetings.</string>
     <key>NSMicrophoneUsageDescription</key><string>ngteams uses the microphone for your voice in Teams calls and meetings.</string>
-    <key>CFBundleURLTypes</key>
-    <array>
-        <dict>
-            <key>CFBundleURLName</key><string>Microsoft Teams link</string>
-            <key>CFBundleURLSchemes</key><array><string>msteams</string></array>
-        </dict>
-    </array>
+$url_types
 </dict>
 </plist>
 PLIST
@@ -136,7 +147,7 @@ entitlements="$root/packaging/macos/ngteams.entitlements"
 find "$contents/Frameworks" -type f \( -name '*.dylib' -o -perm -u+x \) -exec "${sign[@]}" {} \;
 "${sign[@]}" "$contents/MacOS/ngteamsctl"
 "${sign[@]}" --entitlements "$entitlements" "$contents/MacOS/ngteams-webview"
-"${sign[@]}" --entitlements "$entitlements" --identifier com.nickalie.ngteams "$app"
+"${sign[@]}" --entitlements "$entitlements" --identifier "$bundle_id" "$app"
 codesign --verify --strict --deep "$app"
 
 stem="ngteams-$version-macos-arm64"

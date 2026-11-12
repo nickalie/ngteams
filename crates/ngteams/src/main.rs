@@ -120,6 +120,13 @@ fn main() -> ExitCode {
         println!("{}", option_env!("NGTEAMS_BUILD_COMMIT").unwrap_or(""));
         return ExitCode::SUCCESS;
     }
+    if cli.build_marker {
+        println!(
+            "{}",
+            ngteams::refusal::marker_name(ngteams::refusal::INSTALLED, ngteams::refusal::LAB_BUILD)
+        );
+        return ExitCode::SUCCESS;
+    }
     if let Some(archive) = &cli.install_web_engine {
         return install_web_engine(archive);
     }

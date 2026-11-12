@@ -34,6 +34,19 @@ pub fn build_refusal(
     (!marked(installed)).then_some(UNMARKED)
 }
 
+/// The marker a build carries, as `--build-marker` prints it: `lab` (it wins, as in [`build_refusal`]), `install` or
+/// `none`. Packaging reads it to give a lab build its own identity.
+#[must_use]
+pub fn marker_name(installed: Option<&str>, lab_build: Option<&str>) -> &'static str {
+    if marked(lab_build) {
+        "lab"
+    } else if marked(installed) {
+        "install"
+    } else {
+        "none"
+    }
+}
+
 /// Whether this binary was built with any crate's test-support (`cargo test`, `--all-targets`, `--all-features`).
 #[must_use]
 pub fn test_support() -> bool {

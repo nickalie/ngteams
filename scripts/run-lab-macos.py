@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """The macOS lab runner: the Mac's logged-in console is the macOS port's GUI place, as the win11 VM's console is
-Windows', by the user's allowance (not yet written into AGENTS.md's sandbox rule, which names only the UI sandbox and
-win11). Lab-marked builds only, one alias per run, short runs.
+Windows' (AGENTS.md's sandbox rule). Lab-marked builds only, one alias per run, short runs.
 
     scripts/run-lab-macos.py --build-only              lab-marked build of ngteams and ngteams-webview in target/lab
     scripts/run-lab-macos.py <alias> [--timeout 600]   run `ngteams --lab <alias>` until it quits or the deadline
     scripts/run-lab-macos.py <alias> --app <ngteams.app>   the same from a packaged lab build's bundle, on its own
-                                                       GStreamer runtime (`scripts/package-macos.sh` over target/lab)
+                                                       GStreamer runtime (`scripts/package-macos.sh` over target/lab);
+                                                       only a lab bundle (id com.nickalie.ngteams.lab, no URL scheme),
+                                                       taken out of LaunchServices again after the run
     scripts/run-lab-macos.py <alias> --shot <name>     each of the run's windows to <run>/shots/<name>-<n>.png
     scripts/run-lab-macos.py <alias> --status          whether the run is up
     scripts/run-lab-macos.py <alias> --stop            stop the run (TERM, then KILL after 10 s)
@@ -18,7 +19,9 @@ runner's marker (`NGTEAMS_MACOS_CONSOLE_RUNNER`). The alias's files are `~/Libra
 (`scripts/macos-gstreamer.sh`): `NGTEAMS_GSTREAMER` names its prefix (default `~/ngteams-agent/gstreamer`);
 `NGTEAMS_LAB_TARGET` the target dir (default `target/lab`).
 
-Never type credentials into a lab window from a script. Screenshots need the Screen Recording permission for the
+The alias's credentials are the lab keychain's items (`ngteams-lab.keychain-db` beside the aliases), which
+`proto-lab login`/`auth` provision (docs/development.md, "macOS host runner"). Never type credentials into a lab
+window from a script. Screenshots need the Screen Recording permission for the
 process that runs this script (System Settings > Privacy & Security > Screen Recording).
 """
 
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import plistlib
 import signal
 import socket
 import subprocess
@@ -36,6 +40,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LAB_HOME = Path.home() / "Library" / "Application Support" / "ngteams-lab"
 MARKER = "NGTEAMS_MACOS_CONSOLE_RUNNER"
+LAB_BUNDLE_ID = "com.nickalie.ngteams.lab"
+LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/"
+              "lsregister")
 WINDOWS = """
 import CoreGraphics
 let wanted = Set(CommandLine.arguments.dropFirst().compactMap { Int32($0) })
@@ -81,6 +88,20 @@ def build() -> None:
     subprocess.run(command, cwd=ROOT, env=env, check=True, timeout=3600)
 
 
+def lab_bundle(bundle: Path) -> str | None:
+    """Why `bundle` isn't a lab bundle LaunchServices keeps apart from the personal app, or None when it is."""
+    try:
+        with open(bundle / "Contents" / "Info.plist", "rb") as file:
+            info = plistlib.load(file)
+    except (OSError, plistlib.InvalidFileException):
+        return f"{bundle} has no readable Contents/Info.plist"
+    if info.get("CFBundleIdentifier") != LAB_BUNDLE_ID:
+        return f"{bundle} is not a lab bundle (id {info.get('CFBundleIdentifier')}, not {LAB_BUNDLE_ID})"
+    if "CFBundleURLTypes" in info:
+        return f"{bundle} claims a URL scheme: a lab bundle must not"
+    return None
+
+
 def holder(alias: str) -> int | None:
     try:
         pid = int((run_dir(alias) / "holder.pid").read_text().split()[0])
@@ -121,6 +142,9 @@ def serve(alias: str, timeout: int, bundle: Path | None = None) -> int:
     if holder(alias) is not None:
         print(f"lab alias {alias} is already running: --stop it first", file=sys.stderr)
         return 1
+    if bundle and (refused := lab_bundle(bundle)):
+        print(f"{refused}: package target/lab with scripts/package-macos.sh", file=sys.stderr)
+        return 1
     programs = bundle / "Contents" / "MacOS" if bundle else target()
     app = programs / "ngteams"
     if not app.is_file() or not (programs / "ngteams-webview").is_file():
@@ -158,6 +182,9 @@ def serve(alias: str, timeout: int, bundle: Path | None = None) -> int:
         except OSError:
             pass
     stopped(broker, 10)
+    if bundle:
+        # running from a bundle registers it with LaunchServices; take it out again
+        subprocess.run([LSREGISTER, "-u", str(bundle)], check=False, capture_output=True, timeout=60)
     (here / "holder.pid").unlink(missing_ok=True)
     print(f"lab alias {alias} stopped (app exit {child.returncode}); logs in {here}")
     return 0

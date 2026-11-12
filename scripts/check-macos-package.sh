@@ -7,6 +7,7 @@
 #   link to /Applications (drag to install);
 # - the app is signed (`codesign --verify --strict --deep`), from the zip and from the dmg;
 # - Info.plist: the id, the executable, the msteams: scheme, the camera and microphone descriptions, macOS 14, the icon;
+#   a lab build's own id (com.nickalie.ngteams.lab) and no URL scheme;
 # - the three programs, GStreamer's runtime under Contents/Frameworks/gstreamer (libraries, every plugin
 #   packaging/macos/gstreamer-plugins.txt names, the scanner) and no dotted folder there (codesign takes it for a
 #   bundle);
@@ -65,15 +66,24 @@ ok "the zip's app is signed ($(codesign -dv "$app" 2>&1 | sed -n 's/^Signature=/
 
 plist="$app/Contents/Info.plist"
 key() { plutil -extract "$1" raw -o - "$plist" 2>/dev/null; }
-[[ $(key CFBundleIdentifier) == com.nickalie.ngteams ]] || fail "bundle id com.nickalie.ngteams"
+marker=$(env -u DYLD_FALLBACK_LIBRARY_PATH -u DYLD_LIBRARY_PATH "$app/Contents/MacOS/ngteams" --build-marker) ||
+    fail "ngteams --build-marker runs from the bundle"
+if [[ $marker == lab ]]; then
+    [[ $(key CFBundleIdentifier) == com.nickalie.ngteams.lab ]] || fail "a lab build's id com.nickalie.ngteams.lab"
+    ! plutil -extract CFBundleURLTypes xml1 -o - "$plist" >/dev/null 2>&1 || fail "a lab build claims no URL scheme"
+    scheme="its own id, no URL scheme"
+else
+    [[ $(key CFBundleIdentifier) == com.nickalie.ngteams ]] || fail "bundle id com.nickalie.ngteams"
+    [[ $(key CFBundleURLTypes.0.CFBundleURLSchemes.0) == msteams ]] || fail "the msteams: scheme is claimed"
+    scheme="msteams:"
+fi
 [[ $(key CFBundleExecutable) == ngteams ]] || fail "the executable is ngteams"
 [[ $(key CFBundleVersion) == "$version" ]] || fail "CFBundleVersion is $version"
-[[ $(key CFBundleURLTypes.0.CFBundleURLSchemes.0) == msteams ]] || fail "the msteams: scheme is claimed"
 [[ -n $(key NSCameraUsageDescription) && -n $(key NSMicrophoneUsageDescription) ]] ||
     fail "the camera and microphone say why they are asked for"
 [[ $(key LSMinimumSystemVersion) == 14.0 ]] || fail "macOS 14 or later"
 [[ -f $app/Contents/Resources/$(key CFBundleIconFile).icns ]] || fail "the icon file is in Resources"
-ok "Info.plist: id, executable, version, msteams:, camera and microphone, macOS 14, icon"
+ok "Info.plist ($marker build): id, $scheme, executable, version, camera and microphone, macOS 14, icon"
 
 for program in ngteams ngteams-webview ngteamsctl; do
     [[ -x $app/Contents/MacOS/$program ]] || fail "Contents/MacOS/$program"
