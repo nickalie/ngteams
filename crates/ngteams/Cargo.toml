@@ -123,6 +123,10 @@ harness = false
 name = "activity_window"
 harness = false
 
+[[test]]
+name = "translate_draft_window"
+harness = false
+
 [build-dependencies]
 embed-resource.workspace = true
 
