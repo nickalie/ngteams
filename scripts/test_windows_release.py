@@ -93,6 +93,16 @@ class WindowsRelease(unittest.TestCase):
         self.assertFalse(self.args.archive.exists())
         self.assertFalse(self.args.output.exists())
 
+    def test_truncated_stack_reserve_is_rejected(self):
+        app = self.binaries / "ngteams.exe"
+        image = app.read_bytes()
+        optional = int.from_bytes(image[0x3C:0x40], "little") + 24
+        for size in range(8):
+            with self.subTest(field_bytes=size):
+                app.write_bytes(image[:optional + 72 + size])
+                with self.assertRaisesRegex(ValueError, "truncated.*stack reserve"):
+                    release.stack_reserve(app)
+
     def test_low_space_and_invalid_metadata_refuse_before_copy(self):
         with patch.object(release.shutil, "disk_usage", return_value=shutil._ntuple_diskusage(100, 99, 1)):
             with self.assertRaisesRegex(ValueError, "1.5 GiB"):

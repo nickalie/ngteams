@@ -35,6 +35,8 @@ def stack_reserve(path: Path) -> int:
     optional = int.from_bytes(header[0x3C:0x40], "little") + 24
     if header[optional - 24:optional - 20] != b"PE\0\0" or header[optional:optional + 2] != b"\x0b\x02":
         raise ValueError(f"{path.name} is not a PE32+ image")
+    if len(header) < optional + 80:
+        raise ValueError(f"{path.name} has a truncated main-thread stack reserve")
     return int.from_bytes(header[optional + 72:optional + 80], "little")
 
 
