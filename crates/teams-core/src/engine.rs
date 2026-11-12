@@ -157,7 +157,7 @@ use crate::presence::{Availability, PRESENCE_POLL, PRESENCE_POLL_SUBSCRIBED, Pre
 use crate::profiles::{PROFILE_RETRY, Person, Profiles};
 use crate::search::{Backfill, INDEX_BATCH, Step};
 use crate::sync::{CatchUp, CatchUpError, CatchUpReport, Gaps, Meanwhile, NOTES, Synced};
-use crate::teams::{ChatListing, READING_TEAMS, TEAMS_RETRY, Teams, TeamsRead, TeamsReadError};
+use crate::teams::{ChatListing, TEAMS_RETRY, Teams, TeamsRead, TeamsReadError};
 use crate::thumbnails::Thumbnails;
 
 mod described;
@@ -2006,9 +2006,6 @@ struct Core<C, T> {
     endpoint: Option<RegisteredEndpoint>,
     /// When a catch-up is tried again after one that failed, or after something a delivery brought was missed.
     retry_at: Option<Instant>,
-    /// A read of the teams changed the favourites: the account's own notes may be due a sync
-    /// ([`Core::sync_favourite_notes`]).
-    notes_due: bool,
     /// When the next poll's catch-up is due, while there is no push channel and the engine polls
     /// ([`EngineOptions::poll`]).
     poll_at: Option<Instant>,
@@ -2093,7 +2090,6 @@ where
             endpoint: None,
             retry_at: None,
             poll_at: None,
-            notes_due: false,
             losses: Vec::new(),
             backfill: Some(Backfill::new(parts.options.index_batch)),
             calling,
@@ -2289,19 +2285,8 @@ where
                 log::info!("action: own availability {status:?}");
                 let _ = reply.send(self.own_availability(status).await);
             }
-            Request::LoadOlder(conversation, reply) => {
-                log::info!("action: older history of {conversation}");
-                let older = self.catch_up.load_older(&mut self.store, &conversation).await;
-                self.brought(Source::History);
-                self.arrived(&[]);
-                let _ = reply.send(older.map_err(EngineError::from));
-            }
-            Request::SyncConversation(conversation, reply) => {
-                log::info!("action: a sync of {conversation}");
-                let synced = self.catch_up.sync_messages(&mut self.store, &conversation).await;
-                let synced = synced.map_err(EngineError::from);
-                let _ = reply.send(logged(synced, || format!("sync of {conversation}")));
-            }
+            Request::LoadOlder(conversation, reply) => self.older_asked(&conversation, reply).await,
+            Request::SyncConversation(conversation, reply) => self.sync_asked(&conversation, reply).await,
             Request::Query(query) => self.answer(query),
             Request::KeepTranslations(translations, reply) => {
                 let _ = reply.send(self.store.put_translations(&translations).map_err(EngineError::from));
@@ -2539,26 +2524,13 @@ where
     /// The account's own notes, once a favourite and not stored yet, are synced from the next tick (see the module
     /// docs).
     fn on_teams(&mut self, read: Option<Result<TeamsRead, TeamsReadError>>) {
-        let Some(read) = read else { return };
-        match self.inbox.teams().store(&mut self.store, read) {
-            Ok(Ok(true)) => {
-                self.emit(Event::Teams);
-                self.notes_due = true;
-            }
-            Ok(Ok(false)) => {}
-            Ok(Err(error)) => self.failed(READING_TEAMS, error),
-            Err(error) => self.failed("storing the teams", error),
-        }
+        self.inbox.store_teams(&mut self.store, read);
     }
 
     /// Syncs the account's own notes ([`NOTES`]) when the stored favourites name them and the store has none yet
     /// (the catch-up's own pass over them, [`CatchUp::catch_up`], ran before it knew they were a favourite).
     async fn sync_favourite_notes(&mut self) {
-        self.notes_due |= self
-            .inbox
-            .teams_changed
-            .swap(false, std::sync::atomic::Ordering::Relaxed);
-        if !std::mem::take(&mut self.notes_due) {
+        if !self.inbox.take_teams_changed() {
             return;
         }
         let due = self
@@ -2585,6 +2557,29 @@ where
     /// The account's MRI.
     fn me(&self) -> &str {
         self.outbox.me().mri().as_str()
+    }
+
+    /// Older history of `conversation`, unless the view that asked was dropped while it was queued.
+    async fn older_asked(&mut self, conversation: &str, reply: Responder<Option<Synced>>) {
+        if reply.is_closed() {
+            return;
+        }
+        log::info!("action: older history of {conversation}");
+        let older = self.catch_up.load_older(&mut self.store, conversation).await;
+        self.brought(Source::History);
+        self.arrived(&[]);
+        let _ = reply.send(older.map_err(EngineError::from));
+    }
+
+    /// A sync of `conversation`, unless the view that asked was dropped while it was queued.
+    async fn sync_asked(&mut self, conversation: &str, reply: Responder<Synced>) {
+        if reply.is_closed() {
+            return;
+        }
+        log::info!("action: a sync of {conversation}");
+        let synced = self.catch_up.sync_messages(&mut self.store, conversation).await;
+        let synced = synced.map_err(EngineError::from);
+        let _ = reply.send(logged(synced, || format!("sync of {conversation}")));
     }
 
     // --- writes ---

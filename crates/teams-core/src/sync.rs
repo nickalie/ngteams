@@ -87,7 +87,8 @@
 //!   so opening a queued conversation doesn't make the background fetch it again. At each background read, one
 //!   queued foreground operation gets first turn; after that a ready background answer wins. Continuous user
 //!   requests cannot starve catch-up. The store has one owner throughout: the pending network
-//!   answer is held until the foreground operation has applied its changes.
+//!   read is still polled (its transport timeout runs) and its answer held until the foreground operation has applied
+//!   its changes.
 //!
 //! Every read is a `GET` through the native transport (`teams_proto::chat::ChatReads`), and every link is the
 //! service's own, followed only on the same chat base. Nothing here writes to the service.
@@ -515,7 +516,8 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         self
     }
 
-    /// Waits for `read` of the service, the store meanwhile handed to [`Meanwhile::serve`] (see the module docs).
+    /// Waits for `read` of the service, the store meanwhile handed to [`Meanwhile::serve`], or during a catch-up to
+    /// [`Meanwhile::priority`], whose foreground read is applied before `read`'s answer (see the module docs).
     async fn waiting<F: Future>(&self, store: &mut Store, read: F) -> F::Output {
         let mut read = pin!(read);
         if let Some(meanwhile) = &self.meanwhile {
@@ -547,19 +549,39 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         meanwhile: &dyn Meanwhile,
         blocked: &[String],
     ) -> F::Output {
-        let first = tokio::select! {
+        let mut priority = tokio::select! {
             biased;
             priority = meanwhile.priority(store, blocked) => priority,
             output = &mut read => return output,
         };
-        Box::pin(self.priority_read(store, first)).await;
         loop {
-            let priority = tokio::select! {
+            if let Some(output) = self.priority_beside(store, priority, read.as_mut()).await {
+                return output;
+            }
+            priority = tokio::select! {
                 biased;
                 output = &mut read => return output,
                 priority = meanwhile.priority(store, blocked) => priority,
             };
-            Box::pin(self.priority_read(store, priority)).await;
+        }
+    }
+
+    /// Runs `priority` to completion while still polling the background `read`, whose transport timeout runs from
+    /// its first poll; its answer, when it came meanwhile, is held for the caller.
+    async fn priority_beside<F: Future>(
+        &self,
+        store: &mut Store,
+        priority: PriorityRead,
+        mut read: Pin<&mut F>,
+    ) -> Option<F::Output> {
+        let mut foreground = Box::pin(self.priority_read(store, priority));
+        let mut answer = None;
+        loop {
+            tokio::select! {
+                biased;
+                () = &mut foreground => return answer,
+                output = &mut read, if answer.is_none() => answer = Some(output),
+            }
         }
     }
 
@@ -753,6 +775,12 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
     }
 
     fn stage_listed(&self, store: &mut Store, conversations: &[chat::Conversation]) -> Result<(), CatchUpError> {
+        // a foreground sync done before this page may predate the version it lists
+        if let Some(completed) = &mut self.scheduling.lock().unwrap_or_else(PoisonError::into_inner).completed {
+            for listed in conversations {
+                completed.remove(&listed.id);
+            }
+        }
         for listed in conversations {
             if store.conversation(&listed.id)?.is_none() && !still_forgotten(store, listed, known_i64(&listed.version))?
             {

@@ -85,6 +85,15 @@ impl Rig {
         })
     }
 
+    fn hold_thread(&self, chat: &str) -> Hold {
+        let plain = format!("/threads/{chat}");
+        let encoded = format!("/threads/{}", chat.replace(':', "%3A").replace('@', "%40"));
+        self.mock.hold(move |target| {
+            let path = target.split('?').next().unwrap_or_default();
+            path.ends_with(&plain) || path.ends_with(&encoded)
+        })
+    }
+
     async fn reads_of(&self, chat: &str) -> usize {
         self.mock
             .received_requests()
@@ -305,5 +314,82 @@ async fn a_reopened_chat_reads_new_changes_during_the_same_catch_up() {
     assert!(held.release());
     soon(sync).await.unwrap();
     assert_eq!(rig.reads_of(&opened).await, 2);
+    rig.handle.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_background_read_is_still_sent_while_a_queued_foreground_read_runs() {
+    let rig = Rig::new().await;
+    let first = synthetic_chat(0);
+    let background = rig.hold_messages(&first);
+    // what the catch-up reads after chat 0's messages: its members
+    let next_background = rig.hold_thread(&first);
+    let foreground = rig.hold_messages(&synthetic_chat(6));
+    let next_foreground = rig.hold_messages(&synthetic_chat(7));
+    let sync = rig.handle.sync();
+    assert!(background.wait_entered(WAIT));
+    let two = rig.handle.sync_conversation(synthetic_chat(6));
+    assert!(foreground.wait_entered(WAIT));
+    let three = rig.handle.sync_conversation(synthetic_chat(7));
+    assert!(background.release());
+    // chat 0's answer comes back while chat 6 still runs, so the catch-up moves on to its members as chat 7 starts
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(foreground.release());
+    soon(two).await.unwrap();
+    assert!(next_foreground.wait_entered(WAIT));
+    // the catch-up's next read is polled (its transport timeout running) beside the queued foreground read
+    assert!(next_background.wait_entered(WAIT), "background read left unpolled");
+    assert!(next_background.release());
+    assert!(next_foreground.release());
+    soon(three).await.unwrap();
+    assert!(soon(sync).await.unwrap().failed.is_empty());
+    rig.handle.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_dropped_sync_queued_after_catch_up_is_not_read() {
+    let rig = Rig::new().await;
+    soon(rig.handle.sync()).await.unwrap();
+    let (first, dropped, last) = (synthetic_chat(0), synthetic_chat(1), synthetic_chat(2));
+    let reads = rig.reads_of(&dropped).await;
+    let held = rig.hold_messages(&first);
+    let one = rig.handle.sync_conversation(&first);
+    assert!(held.wait_entered(WAIT));
+    drop(rig.handle.sync_conversation(&dropped));
+    drop(rig.handle.load_older(&dropped));
+    let three = rig.handle.sync_conversation(&last);
+    assert!(held.release());
+    soon(one).await.unwrap();
+    soon(three).await.unwrap();
+    assert_eq!(rig.reads_of(&dropped).await, reads);
+    rig.handle.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_foreground_sync_from_before_the_listing_is_not_reused_over_a_newer_version() {
+    let rig = Rig::new().await;
+    soon(rig.handle.sync()).await.unwrap();
+    let opened = synthetic_chat(7);
+    rig.mock
+        .post_as(teams_mock::LAB_B, &opened, "<p>Before the listing</p>")
+        .unwrap();
+    let list = rig
+        .mock
+        .hold(|target| target.split('?').next().unwrap_or_default().ends_with("/conversations"));
+    let sync = rig.handle.sync();
+    assert!(list.wait_entered(WAIT));
+    soon(rig.handle.sync_conversation(&opened)).await.unwrap();
+    rig.mock
+        .post_as(teams_mock::LAB_B, &opened, "<p>After the foreground sync</p>")
+        .unwrap();
+    assert!(list.release());
+    assert!(soon(sync).await.unwrap().failed.is_empty());
+    let messages = rig.handle.messages(&opened, None, 10).await.unwrap().messages;
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.content.contains("After the foreground sync")),
+        "{messages:?}"
+    );
     rig.handle.shutdown();
 }

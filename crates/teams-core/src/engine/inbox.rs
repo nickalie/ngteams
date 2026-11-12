@@ -1,8 +1,9 @@
 //! The engine's requests as they come in, shared by its loop and its catch-up. The loop takes them one at a time, in
 //! the order they were made ([`Inbox::next`]). While a read of the catch-up waits on the service (a catch-up, a
 //! conversation's sync, older history, the outbox's check), the inbox answers what the views read from the store as it
-//! stands, and keeps every other request, in order, for the loop to take once the read is over ([`Meanwhile`]): an
-//! account whose catch-up runs for minutes still opens its chats, channels and lists at once.
+//! stands, and keeps every other request, in order, for the loop to take once the read is over ([`Meanwhile`]), except
+//! the priority reads below, which take the foreground lane while the catch-up waits: an account whose catch-up runs
+//! for minutes still opens its chats, channels and lists at once.
 //!
 //! - **Answered meanwhile**: every store query and cached person, team and chat listing. Person lookups wait for
 //!   the main loop. The teams scheduler lives here so its one read can start, settle and publish during catch-up.
@@ -55,7 +56,8 @@ pub(super) struct Inbox<C> {
     calls: OnceLock<CallActions>,
     /// A shutdown was kept: the engine stops once the read is over, and starts no call meanwhile.
     stopping: AtomicBool,
-    pub(super) teams_changed: AtomicBool,
+    /// A read of the teams changed the favourites: the account's own notes may be due a sync.
+    teams_changed: AtomicBool,
     /// Team threads the reads and deliveries brought since the last tick.
     noticed: std::sync::Mutex<Vec<String>>,
 }
@@ -131,7 +133,11 @@ impl<C: Credentials + 'static> Inbox<C> {
         poll_fn(|cx| self.teams().poll_next(cx)).await
     }
 
-    fn store_teams(&self, store: &mut Store, read: Option<Result<TeamsRead, TeamsReadError>>) {
+    pub(super) fn take_teams_changed(&self) -> bool {
+        self.teams_changed.swap(false, Ordering::Relaxed)
+    }
+
+    pub(super) fn store_teams(&self, store: &mut Store, read: Option<Result<TeamsRead, TeamsReadError>>) {
         let Some(read) = read else { return };
         let result = self.teams().store(store, read);
         let event = match result {
