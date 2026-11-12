@@ -38,7 +38,7 @@ use super::prompt::{Answer, Brief, Item, Said, Term};
 use super::session::{Job, Limits, Outcome, Session, Spec};
 use super::{
     BATCH_CHARS, BATCH_ITEMS, CONTEXT_CHARS, CONTEXT_LINE, CONTEXT_LINES, Entry, MAX_MESSAGE, Source, entry_of_row,
-    key_of, original_row, stored_original, translatable,
+    key_of, original_row, quote_line, stored_original, translatable,
 };
 use crate::bridge::Core;
 use crate::local_ai::{AiChoice, Failure, Tools};
@@ -638,20 +638,21 @@ impl Previews {
         let core = Arc::clone(&self.core);
         self.idle = None;
         self.preparing = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let (brief, context, items) = prepare(&*core, &conversation, language, &chosen).await;
+            let prepared = prepare(&*core, &conversation, language, &chosen).await;
             let keys = chosen.into_iter().map(|(key, _, _, shells)| (key, shells)).collect();
-            let job = Job::Batch {
-                id: 0,
-                brief: Arc::new(brief),
-                context,
-                items,
-            };
-            let _ = this.update(cx, |this, cx| this.start(language, job, keys, cx));
+            let _ = this.update(cx, |this, cx| this.start(language, prepared, keys, cx));
         }));
     }
 
-    /// Hands a prepared batch to the language's tool, numbered here.
-    fn start(&mut self, language: &'static str, mut job: Job, keys: Vec<(Key, Shells)>, cx: &mut Context<Self>) {
+    /// Hands a prepared batch (what the tool is told of its chat, its context and its items) to the language's tool,
+    /// numbered here.
+    fn start(
+        &mut self,
+        language: &'static str,
+        (brief, context, items): (Brief, Vec<Said>, Vec<Item>),
+        keys: Vec<(Key, Shells)>,
+        cx: &mut Context<Self>,
+    ) {
         self.preparing = None;
         if self.ensure_session(language, cx).is_err() {
             self.failed(keys.into_iter().map(|(key, _)| key).collect(), cx);
@@ -664,11 +665,13 @@ impl Previews {
             .enumerate()
             .map(|(n, (key, shells))| (n + 1, key, shells))
             .collect();
-        if let Job::Batch { id: numbered, .. } = &mut job {
-            *numbered = id;
-        }
         if let Some((session, _)) = self.sessions.get(language) {
-            session.send(job);
+            session.send(Job::Batch {
+                id,
+                brief: Arc::new(brief),
+                context,
+                items,
+            });
             self.batches += 1;
             self.running = Some(Running { id, items: running });
         }
@@ -809,6 +812,15 @@ fn source_of(message: &Message) -> Source {
     }
 }
 
+/// A message the chat view doesn't hold, read from the store, as a source: named as the engine names its sender.
+pub(crate) async fn far_source(core: &dyn Core, message: &Message, names: &mut HashMap<String, String>) -> Source {
+    Source {
+        from: name_of(core, message, names).await,
+        own: message.sender.as_deref() == Some(core.me()),
+        ..source_of(message)
+    }
+}
+
 /// A kept translation of `key`.
 fn row_of(key: &Key, kind: TranslationKind, content: String, source_language: Option<String>) -> StoredTranslation {
     StoredTranslation {
@@ -870,7 +882,7 @@ async fn prepare(
         .await
         .map(|page| page.messages)
         .unwrap_or_default();
-    let mut context: Vec<(&str, Said)> = Vec::new();
+    let mut context: Vec<(&Message, Said)> = Vec::new();
     let mut chars = 0;
     // the page is the newest first
     for message in before.iter().filter(|message| translatable(message)) {
@@ -879,7 +891,7 @@ async fn prepare(
         if chars > CONTEXT_CHARS {
             break;
         }
-        context.push((message.id.as_str(), said));
+        context.push((message, said));
     }
     context.reverse();
     let quoted = with_replied_to(core, conversation, labels, context, &mut items, &mut names).await;
@@ -893,20 +905,22 @@ async fn prepare(
     (Arc::unwrap_or_clone(brief), quoted, items)
 }
 
-/// `context` (oldest first, by the messages' ids) with each message `labels` names labelled where it is, else read
-/// and put first (it is older); a reply whose message isn't held names nothing (its preview is all there is).
+/// `context` (oldest first, with their messages) with each message `labels` names labelled where it is, else read and
+/// put first (it is older), told whole up to [`super::QUOTE_LINE`]; a reply whose message isn't held names nothing
+/// (its preview is all there is).
 async fn with_replied_to(
     core: &dyn Core,
     conversation: &str,
     labels: Vec<(String, String)>,
-    mut context: Vec<(&str, Said)>,
+    mut context: Vec<(&Message, Said)>,
     items: &mut [Item],
     names: &mut HashMap<String, String>,
 ) -> Vec<Said> {
     let mut quoted = Vec::new();
     for (id, label) in labels {
-        if let Some((_, said)) = context.iter_mut().find(|(held, _)| *held == id.as_str()) {
+        if let Some((message, said)) = context.iter_mut().find(|(held, _)| held.id == id) {
             said.label = Some(label);
+            said.text = quote_line(&crate::compose::rich_text_of(message));
             continue;
         }
         let Some(message) = core
@@ -925,6 +939,7 @@ async fn with_replied_to(
         };
         let mut said = said_of(core, &message, names).await;
         said.label = Some(label);
+        said.text = quote_line(&crate::compose::rich_text_of(&message));
         quoted.push(said);
     }
     quoted.extend(context.into_iter().map(|(_, said)| said));

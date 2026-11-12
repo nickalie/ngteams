@@ -7,6 +7,7 @@
 //! Ignored: it runs the user's own tool and costs its tokens. Run it on purpose:
 //! `NGTEAMS_TRANSLATE_EVAL=1 cargo test -p teams-ui --lib chat_translate::eval -- --ignored --nocapture`.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -16,8 +17,11 @@ use super::brief::replied_to;
 use super::codec::{decode, encode, one_line};
 use super::prompt::{self, Brief, Item, Term};
 use super::session::{Given, Job, Limits, Outcome, Session, Spec};
-use super::{CONTEXT_LINE, Source, key_of, window};
+use super::{CONTEXT_CHARS, CONTEXT_LINE, CONTEXT_LINES, Source, key_of, window};
 use crate::local_ai::{Model, ToolChoice, Tools};
+
+/// A batch's context window: the chat view's.
+const WINDOW: (usize, usize) = (CONTEXT_LINES, CONTEXT_CHARS);
 
 /// One made-up message: who, what, and the earlier message it replies to (its index) with the preview Teams quotes.
 struct Said0 {
@@ -416,7 +420,7 @@ fn translate(
     let held = sources(chat);
     let picked: Vec<usize> = range.clone().collect();
     let replies: Vec<Vec<String>> = picked.iter().map(|at| replied_to(&held[*at].text)).collect();
-    let (context, re) = window(&held, &picked, &replies, range.end - 1);
+    let (context, re) = window(&held, &HashMap::new(), &picked, &replies, range.end - 1, WINDOW);
     let mut items = Vec::new();
     let mut shells = Vec::new();
     for ((n, at), re) in range.clone().enumerate().zip(re) {
@@ -533,7 +537,7 @@ fn run(chat: &Chat) -> Found {
             let held = sources(chat);
             let mut given = Given::default();
             for (n, text) in texts.iter().enumerate() {
-                let (context, _) = window(&held, &[], &[], held.len());
+                let (context, _) = window(&held, &HashMap::new(), &[], &[], held.len(), WINDOW);
                 let (encoded, shells) = encode(&RichText::plain(text));
                 let preface = given.preface(&brief, &context);
                 let prompt = prompt::outgoing(&preface, Some(chat.written_in), None, &encoded);

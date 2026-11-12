@@ -474,7 +474,9 @@ fn a_preview_s_reply_goes_with_what_it_answers_and_its_chat_s_terms_are_kept() {
         .unwrap()
         .insert(LAB_B.to_owned(), "Lab B".to_owned());
     // the question far back, out of the page of context before the reply
-    let mut held = vec![message(CHAT, "1", 1, LAB_B, "Which one?")];
+    // and longer than a history line: it goes whole
+    let question = format!("Which one? {}the end", "really ".repeat(80));
+    let mut held = vec![message(CHAT, "1", 1, LAB_B, &question)];
     held.extend((2..60).map(|at| message(CHAT, &at.to_string(), at, LAB_A, "Filler")));
     let mut reply = message(
         CHAT,
@@ -500,6 +502,7 @@ fn a_preview_s_reply_goes_with_what_it_answers_and_its_chat_s_terms_are_kept() {
         "Title: Synthetic topic",
         "Members: Lab B",
         "[q1] Lab B: Which one?",
+        "really the end",
         "re=\\\"q1\\\"",
     ] {
         assert!(asked[0].contains(told), "{told}: {}", asked[0]);

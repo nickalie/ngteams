@@ -215,7 +215,14 @@ fn a_window_holds_the_nearest_lines_and_every_message_replied_to() {
     let picked = [last, last + 1];
     let replies: Vec<Vec<String>> = picked.iter().map(|at| brief::replied_to(&sources[*at].text)).collect();
     assert_eq!(replies, [vec!["m0".to_owned()], vec!["r1".to_owned()]]);
-    let (context, re) = window(&sources, &picked, &replies, last + 1);
+    let (context, re) = window(
+        &sources,
+        &HashMap::new(),
+        &picked,
+        &replies,
+        last + 1,
+        (CONTEXT_LINES, CONTEXT_CHARS),
+    );
     assert_eq!(re, [Some("q1".to_owned()), Some("1".to_owned())]);
     assert_eq!(context.len(), CONTEXT_LINES + 1);
     assert_eq!(context[0].text, "line 0");
@@ -229,7 +236,14 @@ fn a_window_holds_the_nearest_lines_and_every_message_replied_to() {
     assert_eq!(context[0].key, key_of(&sources[0]));
     // a reply to a message not held names nothing; the same one twice has one label
     let replies = vec![vec!["gone".to_owned()], vec!["m0".to_owned()], vec!["m0".to_owned()]];
-    let (context, re) = window(&sources, &[], &replies, 2);
+    let (context, re) = window(
+        &sources,
+        &HashMap::new(),
+        &[],
+        &replies,
+        2,
+        (CONTEXT_LINES, CONTEXT_CHARS),
+    );
     assert_eq!(re, [None, Some("q1".to_owned()), Some("q1".to_owned())]);
     assert_eq!(context.len(), 2);
     // the characters bound the window too
@@ -240,5 +254,45 @@ fn a_window_holds_the_nearest_lines_and_every_message_replied_to() {
             long
         })
         .collect();
-    assert_eq!(window(&long, &[], &[], 3).0.len(), 2);
+    assert_eq!(
+        window(&long, &HashMap::new(), &[], &[], 3, (CONTEXT_LINES, CONTEXT_CHARS))
+            .0
+            .len(),
+        2
+    );
+    assert_eq!(
+        window(&long, &HashMap::new(), &[], &[], 3, (5, CONTEXT_CHARS / 2))
+            .0
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn a_message_replied_to_goes_whole_from_the_view_or_the_store() {
+    let long = format!("{} the end", "word ".repeat(200));
+    let mut sources = vec![source("near", None, None, &long)];
+    sources.push(reply_source("r1", "near", "That one"));
+    sources.push(reply_source("r2", "far", "And this"));
+    sources.push(reply_source("r3", "gone", "Hm"));
+    let far = HashMap::from([
+        (
+            "far".to_owned(),
+            Some(source("far", None, None, "Which hostel has its own meeting room?")),
+        ),
+        ("gone".to_owned(), None),
+    ]);
+    let picked = [1, 2, 3];
+    let replies: Vec<Vec<String>> = picked.iter().map(|at| brief::replied_to(&sources[*at].text)).collect();
+    let (context, re) = window(&sources, &far, &picked, &replies, 1, (CONTEXT_LINES, CONTEXT_CHARS));
+    // the one the store has goes first (it is older), the one it hasn't names nothing
+    assert_eq!(re, [Some("q1".to_owned()), Some("q2".to_owned()), None]);
+    assert_eq!(context.len(), 2);
+    assert_eq!(context[0].label.as_deref(), Some("q2"));
+    assert_eq!(context[0].text, "Which hostel has its own meeting room?");
+    assert_eq!(context[0].key, key_of(&far["far"].clone().unwrap()));
+    // a quote isn't cut where a history line is
+    assert_eq!(context[1].label.as_deref(), Some("q1"));
+    assert!(!sources[0].line.contains("the end"));
+    assert!(context[1].text.ends_with("the end"), "{}", context[1].text);
 }

@@ -19,8 +19,8 @@
 //!   keeps the conversation; the messages without a translation go in batches of up to [`BATCH_ITEMS`] messages or
 //!   [`BATCH_CHARS`] characters, the newest first (what the view shows), each with the messages before it (who said
 //!   what, up to [`CONTEXT_LINES`] and [`CONTEXT_CHARS`]: the session gives a process each line once, and a running
-//!   one only what is new to it) and the whole of each message one of them replies to, wherever it is in the chat
-//!   ([`window`]). Formatting, mentions, links, emoji and code are kept as markers the tool must keep ([`codec`]): the
+//!   one only what is new to it) and the whole of each message one of them replies to (up to [`QUOTE_LINE`]),
+//!   wherever it is in the chat: read from the store when the view hasn't loaded it ([`window`]). Formatting, mentions, links, emoji and code are kept as markers the tool must keep ([`codec`]): the
 //!   translation is put back together as the message's own rich text, drawn only through the sanitized [`RichText`].
 //! - **What the tool is told of the chat** ([`brief`]): its title, who is who (the account is the member translated
 //!   for, the others by name), and its glossary: the renderings the tool chose for the chat's terms, kept in the store
@@ -87,6 +87,13 @@ pub const CONTEXT_LINES: usize = 40;
 pub const CONTEXT_CHARS: usize = 8000;
 /// The longest a context line is.
 const CONTEXT_LINE: usize = 400;
+/// The longest a message replied to is, as a labelled context line (`[q1]`): what the reply answers, told whole
+/// within reason.
+const QUOTE_LINE: usize = 2000;
+/// The most lines and characters of the chat's latest messages a draft's correction is given
+/// ([`ChatTranslation::recent_context`]): it starts a process anew for each draft, so it is given less than a batch.
+pub const CORRECTION_LINES: usize = 15;
+pub const CORRECTION_CHARS: usize = 3000;
 /// How many times a message the tool's answer left out is asked again before it shows as written for good.
 const ATTEMPTS: u8 = 2;
 /// The longest a message's text sent to the tool may be (its encoded text); a longer one shows as written.
@@ -320,9 +327,14 @@ pub struct ChatTranslation {
     originals: Arc<HashSet<String>>,
     sent: Arc<Vec<Sent>>,
     session: Option<Session>,
-    /// What the tool is told of the chat, once read ([`brief::brief_of`]); nothing goes to the tool before.
+    /// What the tool is told of the chat, once read ([`brief::brief_of`]): no batch goes to the tool before; an
+    /// outgoing message sent before it is read goes with the chat alone.
     brief: Option<Arc<Brief>>,
     briefing: Option<Task<()>>,
+    /// Messages replied to that the view doesn't hold, read from the store, by id (`None`: the store hasn't it).
+    quoted: HashMap<String, Option<Source>>,
+    /// Reading them: no batch goes to the tool meanwhile.
+    quoting: Option<Task<()>>,
     running: Option<Running>,
     outgoing: HashMap<u64, (Shells, async_channel::Sender<Outgoing>)>,
     next_id: u64,
@@ -376,6 +388,8 @@ impl ChatTranslation {
             session: None,
             brief: None,
             briefing: None,
+            quoted: HashMap::new(),
+            quoting: None,
             running: None,
             outgoing: HashMap::new(),
             next_id: 1,
@@ -595,6 +609,8 @@ impl ChatTranslation {
         self.originals = Arc::default();
         self.brief = None;
         self.briefing = None;
+        self.quoted.clear();
+        self.quoting = None;
         self.status = if language.is_some() { Status::On } else { Status::Off };
         if let Some(language) = language {
             self.read_brief(language, cx);
@@ -759,7 +775,12 @@ impl ChatTranslation {
 
     /// Hands the tool the next batch, when none runs and there is one: the newest messages the store had nothing for.
     fn pump(&mut self, cx: &mut Context<Self>) {
-        if self.running.is_some() || self.reading.is_some() || self.briefing.is_some() || self.status != Status::On {
+        if self.running.is_some()
+            || self.reading.is_some()
+            || self.briefing.is_some()
+            || self.quoting.is_some()
+            || self.status != Status::On
+        {
             return;
         }
         let Some(language) = self.language else { return };
@@ -802,6 +823,10 @@ impl ChatTranslation {
             return cx.notify();
         }
         chosen.reverse();
+        let unread = self.unread_quotes(chosen.iter().map(|(at, _, _)| *at));
+        if !unread.is_empty() {
+            return self.read_quotes(unread, cx);
+        }
         if let Err(failure) = self.ensure_session(language, cx) {
             self.status = Status::Failed(failure);
             return cx.notify();
@@ -818,6 +843,48 @@ impl ChatTranslation {
         }
     }
 
+    /// The messages the sources at `picked` reply to that neither the view holds nor the store was asked for.
+    fn unread_quotes(&self, picked: impl Iterator<Item = usize>) -> Vec<String> {
+        let mut unread: Vec<String> = picked
+            .flat_map(|at| brief::replied_to(&self.sources[at].text))
+            .filter(|id| !self.quoted.contains_key(id) && !self.sources.iter().any(|source| source.id == *id))
+            .collect();
+        unread.sort_unstable();
+        unread.dedup();
+        unread
+    }
+
+    /// Reads the messages `ids` from the store (replied to, older than the view holds), then hands the tool what
+    /// waits: the reply's whole question goes along, not only the preview the reply holds.
+    fn read_quotes(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
+        let core = Arc::clone(&self.core);
+        let chat = self.chat.clone();
+        self.quoting = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let mut names = HashMap::new();
+            let mut read = Vec::with_capacity(ids.len());
+            for id in ids {
+                let message = core
+                    .message(chat.clone(), id.clone())
+                    .await
+                    .ok()
+                    .flatten()
+                    .filter(translatable);
+                let source = match message {
+                    Some(message) => Some(previews::far_source(&*core, &message, &mut names).await),
+                    None => None,
+                };
+                read.push((id, source));
+            }
+            let _ = this.update(cx, |this, cx| {
+                if this.quoting.is_some() {
+                    this.quoting = None;
+                    this.quoted.extend(read);
+                    this.pump(cx);
+                }
+            });
+        }));
+    }
+
     /// The job asking about the messages `chosen` (their places among the sources, oldest first, with their encoded
     /// texts and markers), numbered anew: what the tool is told of the chat, their context and each one's item; and
     /// how their answers are read back, and its number.
@@ -828,7 +895,8 @@ impl ChatTranslation {
             .iter()
             .map(|at| brief::replied_to(&self.sources[*at].text))
             .collect();
-        let (context, re) = window(&self.sources, &picked, &replies, last);
+        let limits = (CONTEXT_LINES, CONTEXT_CHARS);
+        let (context, re) = window(&self.sources, &self.quoted, &picked, &replies, last, limits);
         let around: Vec<usize> = picked
             .iter()
             .copied()
@@ -864,10 +932,11 @@ impl ChatTranslation {
     }
 
     /// The chat's latest messages, oldest first, as context for something new written in it: at most
-    /// [`CONTEXT_LINES`] and [`CONTEXT_CHARS`].
+    /// [`CORRECTION_LINES`] and [`CORRECTION_CHARS`].
     #[must_use]
     pub fn recent_context(&self) -> Vec<Said> {
-        window(&self.sources, &[], &[], self.sources.len()).0
+        let limits = (CORRECTION_LINES, CORRECTION_CHARS);
+        window(&self.sources, &HashMap::new(), &[], &[], self.sources.len(), limits).0
     }
 
     fn next_job_id(&mut self) -> u64 {
@@ -1080,7 +1149,8 @@ impl ChatTranslation {
             return Some(Task::ready(Ok(None)));
         }
         let replies = vec![brief::replied_to(text)];
-        let (context, mut re) = window(&self.sources, &[], &replies, self.sources.len());
+        let limits = (CONTEXT_LINES, CONTEXT_CHARS);
+        let (context, mut re) = window(&self.sources, &self.quoted, &[], &replies, self.sources.len(), limits);
         if target.is_none() && !self.sources.iter().any(|source| !source.own) {
             return Some(Task::ready(Err(SendFailure::Unknown)));
         }
@@ -1205,16 +1275,21 @@ pub(crate) fn key_of(source: &Source) -> String {
 
 /// The context of what is asked about `sources`' messages at `picked` (oldest first), which reply to the messages
 /// `replies` names (each picked one's, or what an outgoing message replies to): the messages before the one at
-/// `before` but the picked, the nearest first, at most [`CONTEXT_LINES`] and [`CONTEXT_CHARS`], and every message
-/// replied to that isn't picked, wherever it is, labelled (`q1`); oldest first. With it, what each of `replies`
-/// replies to: a context line's label, or a picked message's number in the batch.
+/// `before` but the picked, the nearest first, at most `limits` (lines, characters), and every message replied to that
+/// isn't picked, among the sources or read from the store (`far`, by id: older than the sources), labelled (`q1`) and
+/// told whole up to [`QUOTE_LINE`]; oldest first. With it, what each of `replies` replies to: a context line's label,
+/// or a picked message's number in the batch.
 pub(crate) fn window(
     sources: &[Source],
+    far: &HashMap<String, Option<Source>>,
     picked: &[usize],
     replies: &[Vec<String>],
     before: usize,
+    (max_lines, max_chars): (usize, usize),
 ) -> (Vec<Said>, Vec<Option<String>>) {
-    let mut labels: Vec<(usize, String)> = Vec::new();
+    let far_of = |id: &str| far.get(id).and_then(Option::as_ref);
+    // each message replied to: its id and its label
+    let mut labels: Vec<(&str, String)> = Vec::new();
     let re = replies
         .iter()
         .map(|ids| {
@@ -1222,16 +1297,24 @@ pub(crate) fn window(
                 if let Some(n) = picked.iter().position(|at| sources[*at].id == *id) {
                     return Some((n + 1).to_string());
                 }
-                let index = sources.iter().position(|source| source.id == *id)?;
-                if let Some((_, label)) = labels.iter().find(|(at, _)| *at == index) {
+                if let Some((_, label)) = labels.iter().find(|(known, _)| *known == id) {
                     return Some(label.clone());
                 }
+                if !sources.iter().any(|source| source.id == *id) && far_of(id).is_none() {
+                    return None;
+                }
                 let label = format!("q{}", labels.len() + 1);
-                labels.push((index, label.clone()));
+                labels.push((id.as_str(), label.clone()));
                 Some(label)
             })
         })
         .collect();
+    let label_of = |id: &str| {
+        labels
+            .iter()
+            .find(|(known, _)| *known == id)
+            .map(|(_, label)| label.clone())
+    };
     let mut chosen: Vec<usize> = Vec::new();
     let mut chars = 0;
     for index in (0..before.min(sources.len()))
@@ -1239,30 +1322,39 @@ pub(crate) fn window(
         .filter(|index| !picked.contains(index))
     {
         chars += sources[index].line.len();
-        if chosen.len() >= CONTEXT_LINES || chars > CONTEXT_CHARS {
+        if chosen.len() >= max_lines || chars > max_chars {
             break;
         }
         chosen.push(index);
     }
-    chosen.extend(labels.iter().map(|(at, _)| *at).filter(|at| !picked.contains(at)));
+    chosen.extend((0..sources.len()).filter(|at| !picked.contains(at) && label_of(&sources[*at].id).is_some()));
     chosen.sort_unstable();
     chosen.dedup();
-    let context = chosen
-        .into_iter()
-        .map(|index| {
-            let source = &sources[index];
-            Said {
-                key: key_of(source),
-                from: source.from.clone(),
-                text: source.line.clone(),
-                label: labels
-                    .iter()
-                    .find(|(at, _)| *at == index)
-                    .map(|(_, label)| label.clone()),
-            }
-        })
+    let said = |source: &Source| {
+        let label = label_of(&source.id);
+        Said {
+            key: key_of(source),
+            from: source.from.clone(),
+            text: if label.is_some() {
+                quote_line(&source.text)
+            } else {
+                source.line.clone()
+            },
+            label,
+        }
+    };
+    let context = labels
+        .iter()
+        .filter_map(|(id, _)| far_of(id).filter(|_| !sources.iter().any(|source| source.id == *id)))
+        .map(said)
+        .chain(chosen.into_iter().map(|index| said(&sources[index])))
         .collect();
     (context, re)
+}
+
+/// A message replied to as a context line.
+pub(crate) fn quote_line(text: &RichText) -> String {
+    one_line(text, QUOTE_LINE)
 }
 
 /// Whether `message` is one a chat's translation reads: a text message with something in it, not deleted.
@@ -1359,8 +1451,8 @@ fn outgoing_of(answer: Result<(Option<String>, Option<String>), Failure>, shells
 }
 
 /// The settings' description of where a chat's text goes.
-pub const SETTINGS_NOTE: &str =
-    "When you translate a chat, its messages and yours go to this tool on your computer and its provider.";
+pub const SETTINGS_NOTE: &str = "When you translate a chat, its messages and yours, with its title and its members' \
+     names, go to this tool on your computer and its provider.";
 
 #[cfg(test)]
 #[path = "../tests/support/chat_translate_units.rs"]

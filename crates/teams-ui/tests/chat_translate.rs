@@ -928,3 +928,47 @@ fn the_tool_is_told_the_chat_who_is_who_its_glossary_and_what_a_reply_answers() 
         "{kept:?}"
     );
 }
+
+#[test]
+fn a_reply_to_a_message_the_view_hasn_t_loaded_carries_it_read_from_the_store() {
+    let mut rig = Rig::new(TERMING_CLAUDE);
+    seed_chat(&rig.core);
+    // the question is far back: in the store, not among the messages the view holds
+    let question = message(
+        "1",
+        1,
+        LAB_B,
+        &format!("{} with its own meeting room?", "Which hostel ".repeat(60)),
+    );
+    rig.core
+        .messages
+        .lock()
+        .unwrap()
+        .entry(CHAT.to_owned())
+        .or_default()
+        .push(question);
+    let mut reply = message(
+        "2",
+        2,
+        LAB_B,
+        "<blockquote itemscope=\"\" itemtype=\"http://schema.skype.com/Reply\" itemid=\"1\"><strong \
+         itemprop=\"mri\" itemid=\"8:orgid:synthetic-b\">Lab B</strong><p itemprop=\"preview\">Which…</p>\
+         </blockquote><p>That one</p>",
+    );
+    reply.message_type = "RichText/Html".to_owned();
+    let messages = vec![reply.clone()];
+    let translation = rig.open();
+    rig.follow(&translation, &messages);
+    translation.update(&mut rig.app, |translation, cx| translation.set_language(Some("de"), cx));
+    rig.until(&translation, |translation| shown_text(translation, &reply).is_some());
+    let asked = questions(rig.dir.path());
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    // whole, past where a history line is cut
+    for told in [
+        "[q1] Lab B: Which hostel",
+        "with its own meeting room?",
+        "re=\\\"q1\\\"",
+    ] {
+        assert!(asked[0].contains(told), "{told}: {}", asked[0]);
+    }
+}
