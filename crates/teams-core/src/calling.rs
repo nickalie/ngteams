@@ -285,6 +285,8 @@ impl CallAction {
 /// Where a call is, as the account is told ([`Event::Call`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallStatus {
+    /// Native device discovery is still running; the start or join has not been sent.
+    Preparing,
     /// The account's start or join goes out.
     Placing,
     /// The account's call rings at its callees.
@@ -333,7 +335,7 @@ pub struct IncomingCall {
 /// Why a call action was refused. Nothing was sent.
 #[derive(Debug, thiserror::Error)]
 pub enum CallActionError {
-    /// The engine runs without calling (`Parts::calls` `None`).
+    /// The engine runs without calling (`Parts::calls` `None`) or native device discovery failed.
     #[error("this engine has no calling")]
     NoCalling,
     /// A call is up or being set up: one at a time.
@@ -436,8 +438,8 @@ enum Landed {
 struct Preparing {
     /// What it is set up for: a start or join (`None`), or the answer of an offered invitation.
     answering: Option<CallId>,
-    /// A start's or a join's call, told [`CallStatus::Placing`] as its setup began: the call window shows it calling
-    /// at once, and a failed setup ends it there.
+    /// A start's or a join's call, told preparing or placing as setup begins so its window appears at once;
+    /// a failed setup ends it there.
     told: Option<CallId>,
     /// When its setup began, for the log.
     since: Instant,
@@ -445,7 +447,7 @@ struct Preparing {
     muted: bool,
     act: Act,
     reply: Waiting,
-    setup: Pin<Box<dyn Future<Output = Result<Prepared, String>>>>,
+    setup: Pin<Box<dyn Future<Output = Result<Prepared, CallActionError>>>>,
 }
 
 /// A call's media being set up again once it was let in from its meeting's lobby ([`Calling::rebuild`]).
@@ -460,7 +462,7 @@ enum CallStep {
     /// A 1:1 call's new group chat made (or not) for someone added to it.
     ChatMade(Box<(CallId, Mri, CallTried)>),
     Due,
-    Prepared(Box<Result<Prepared, String>>),
+    Prepared(Box<Result<Prepared, CallActionError>>),
     /// A call's media set up again once it was let in from its meeting's lobby ([`Calling::rebuild`]).
     Rebuilt(Box<(CallId, Result<Prepared, String>)>),
     Media(MediaDone),
@@ -1891,16 +1893,7 @@ where
         } else {
             media::TenantRead::Wanted
         };
-        let told = answering.is_none().then(|| self.calls.reserve());
-        match (told, answering) {
-            (Some(call), _) => {
-                log::info!("call {}: its media is being set up", call.get());
-                self.told_placing = Some(call);
-                self.emit_status(call, CallStatus::Placing);
-            }
-            (None, Some(call)) => log::info!("call {}: its media is being set up to answer it", call.get()),
-            (None, None) => {}
-        }
+        let told = self.tell_setup(answering);
         let prepare = media::prepare(
             Arc::clone(&self.client),
             self.media.clone(),
@@ -1920,10 +1913,13 @@ where
             }
             _ => Box::pin(prepare),
         };
+        let devices = Arc::clone(&self.media.devices);
         let setup = Box::pin(async move {
+            devices.ready().await.map_err(|_| CallActionError::NoCalling)?;
             tokio::time::timeout(SETUP_TIMEOUT, setup)
                 .await
                 .unwrap_or_else(|_| Err(format!("it took over {} s", SETUP_TIMEOUT.as_secs())))
+                .map_err(CallActionError::Media)
         });
         self.preparing = Some(Preparing {
             answering,
@@ -1936,8 +1932,27 @@ where
         });
     }
 
+    fn tell_setup(&mut self, answering: Option<CallId>) -> Option<CallId> {
+        let told = answering.is_none().then(|| self.calls.reserve());
+        match (told, answering) {
+            (Some(call), _) => {
+                log::info!("call {}: its media is being set up", call.get());
+                let status = if self.media.devices.preparing() {
+                    CallStatus::Preparing
+                } else {
+                    self.told_placing = Some(call);
+                    CallStatus::Placing
+                };
+                self.emit_status(call, status);
+            }
+            (None, Some(call)) => log::info!("call {}: its media is being set up to answer it", call.get()),
+            (None, None) => {}
+        }
+        told
+    }
+
     /// The media of an action is set up (or not): the action goes now.
-    fn prepared(&mut self, prepared: Result<Prepared, String>, now: Instant) {
+    fn prepared(&mut self, prepared: Result<Prepared, CallActionError>, now: Instant) {
         let Some(preparing) = self.preparing.take() else {
             return;
         };
@@ -1948,7 +1963,7 @@ where
             Err(why) => {
                 log::warn!("call {call}: its media couldn't be set up in {took} ms: {why}");
                 self.fail_told(preparing.told);
-                return refuse(preparing.reply, CallActionError::Media(why));
+                return refuse(preparing.reply, why);
             }
         };
         log::info!("call {call}: its media was set up in {took} ms");
@@ -2130,7 +2145,7 @@ async fn rebuilt(rebuilding: Option<&mut Rebuilding>) -> (CallId, Result<Prepare
     }
 }
 
-async fn prepared(preparing: Option<&mut Preparing>) -> Result<Prepared, String> {
+async fn prepared(preparing: Option<&mut Preparing>) -> Result<Prepared, CallActionError> {
     match preparing {
         Some(preparing) => (&mut preparing.setup).await,
         None => pending().await,

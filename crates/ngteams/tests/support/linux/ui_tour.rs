@@ -42,7 +42,7 @@ use teams_auth::token::TokenError;
 use teams_core::Outbox;
 use teams_core::VideoOutput;
 use teams_core::engine::{self, EngineHandle, EngineOptions, Parts, Push};
-use teams_media::devices::catalog::{DeviceInfo, DeviceKind, DeviceList, FixedDirectory};
+use teams_media::devices::catalog::{DeviceInfo, DeviceKind, DeviceList, DeviceStatus, FixedDirectory};
 use teams_media::devices::pattern::TestPattern;
 use teams_mock::{
     AB_CHAT, ABC_CHAT, AC_CHAT, AMS_BASE, AX_CHAT, CHAT_BASE, CSA_BASE, ChatServiceMock, ECHO, LAB_A, LAB_B, LAB_C,
@@ -189,7 +189,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 298] = [
+const STEPS: [Step; 5 + 303] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -967,6 +967,24 @@ const STEPS: [Step; 5 + 298] = [
         shell.read(cx).settings_view().read(cx).scroll_to_end();
     }),
     ("settings-privacy", |shell, _, cx| show_page(shell, Page::Privacy, cx)),
+    ("settings-calls-preparing", |shell, _, cx| {
+        made_up_ai_tools(cx);
+        let model = shell.read(cx).settings().clone();
+        let directory = FixedDirectory::default();
+        directory.set_status(DeviceStatus::Preparing);
+        teams_ui::settings::attach_devices(&model, Arc::new(directory), cx);
+        show_page(shell, Page::Calls, cx);
+    }),
+    ("settings-calls-preparing-dark", |shell, _, cx| {
+        theme(shell, teams_ui::theme::DARK_KEY, cx);
+    }),
+    ("settings-calls-unavailable", |shell, _, cx| {
+        theme(shell, teams_ui::theme::LIGHT_KEY, cx);
+        let model = shell.read(cx).settings().clone();
+        let directory = FixedDirectory::default();
+        directory.set_status(DeviceStatus::Unavailable);
+        teams_ui::settings::attach_devices(&model, Arc::new(directory), cx);
+    }),
     ("settings-calls", |shell, _, cx| {
         // the mock's engine has no calls: made-up devices give the settings their Calls page, and calls shown with the
         // calling endpoint registered its "Make a test call"; made-up AI tools and models for its AI pickers
@@ -1781,6 +1799,30 @@ const STEPS: [Step; 5 + 298] = [
         shell.update(cx, |shell, cx| shell.close_card(window, cx));
         fake_call(shell, cx);
     }),
+    ("call-window-preparing", |shell, _, cx| {
+        let models = shell.read(cx).models().clone();
+        models
+            .calls
+            .update(cx, |calls, _| *calls = teams_ui::Calls::shown(Some(Mri::new(ECHO))));
+        let call = teams_core::CallId::for_tests(FAKE_CALL + 1);
+        models.apply(
+            teams_core::Event::IncomingCall(teams_core::IncomingCall {
+                call,
+                caller: Mri::new(LAB_B),
+                caller_name: Some("Lab Bee".to_owned()),
+                group_chat: None,
+            }),
+            cx,
+        );
+        models.apply(
+            teams_core::Event::Call {
+                call,
+                status: teams_core::CallStatus::Preparing,
+            },
+            cx,
+        );
+    }),
+    ("call-window-prepared", |shell, _, cx| fake_call(shell, cx)),
     // its participants' pane open from People
     ("call-window-people", |_, _, cx| {
         with_stage(cx, |stage, cx| stage.show_roster(true, cx));
@@ -3319,13 +3361,28 @@ fn side_by_side(sandbox: &Sandbox, file: &str) -> SandboxResult<PathBuf> {
     sandbox.screenshot(file, false)
 }
 
+fn tour_steps() -> Vec<Step> {
+    let filter = std::env::var("NGTEAMS_TOUR_FILTER").unwrap_or_default();
+    let steps: Vec<Step> = STEPS
+        .into_iter()
+        .filter(|(name, _)| filter.is_empty() || filter.split(',').any(|wanted| wanted == *name))
+        .collect();
+    assert!(!steps.is_empty(), "the tour filter selected no steps");
+    steps
+}
+
 fn tour(sandbox: &Sandbox) -> SandboxResult {
     let (reader, writer) = io::pipe()?;
     let fd = writer.as_raw_fd().to_string();
+    let filter = std::env::var("NGTEAMS_TOUR_FILTER").unwrap_or_default();
     let child = sandbox.spawn_with_fds(
         &std::env::current_exe()?,
         &[],
-        &[(CHILD_ENV, "window"), (TRACE_FD_ENV, &fd)],
+        &[
+            (CHILD_ENV, "window"),
+            (TRACE_FD_ENV, &fd),
+            ("NGTEAMS_TOUR_FILTER", &filter),
+        ],
         &[writer.as_fd()],
     )?;
     // the child holds the only writer from here, so the trace ends when it exits
@@ -3336,7 +3393,7 @@ fn tour(sandbox: &Sandbox) -> SandboxResult {
     running
         .line_where(STARTUP, |line| line == "ready")
         .map_err(|error| running.fail(&format!("no ready line: {error:?}")))?;
-    for (name, _) in STEPS {
+    for (name, _) in tour_steps() {
         running
             .line_where(WAIT, |line| line == format!("shot {name}"))
             .map_err(|error| running.fail(&format!("no shot {name}: {error:?}")))?;
@@ -3859,7 +3916,7 @@ fn walk(window: WindowHandle<KitRoot>, cx: &mut App) {
     cx.spawn(async move |cx: &mut AsyncApp| {
         // the catch-up lists the chats
         cx.background_executor().timer(SETTLE).await;
-        for (name, step) in STEPS {
+        for (name, step) in tour_steps() {
             if let Some(shell) = shown(window, cx) {
                 let _ = window.update(cx, |_, window, cx| step(&shell, window, cx));
             }

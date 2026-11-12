@@ -504,3 +504,153 @@ async fn a_call_from_a_chat_that_names_nobody_is_refused_as_not_a_chat_and_sends
     assert_eq!(lab.attempts("/epconv").await, 0, "no start was sent");
     assert_eq!(a.microphones(), 0);
 }
+
+struct PendingDevices {
+    released: tokio::sync::watch::Receiver<bool>,
+    fail: bool,
+    files: teams_media::devices::file::FileDevices,
+}
+
+impl teams_media::devices::Devices for PendingDevices {
+    fn preparing(&self) -> bool {
+        !*self.released.borrow()
+    }
+    fn ready(&self) -> teams_media::devices::DeviceReady<'_> {
+        Box::pin(async move {
+            let mut released = self.released.clone();
+            released
+                .wait_for(|released| *released)
+                .await
+                .map_err(|_| teams_media::devices::DeviceError::Closed)?;
+            if self.fail {
+                Err(teams_media::devices::DeviceError::Closed)
+            } else {
+                Ok(())
+            }
+        })
+    }
+    fn microphone(&self) -> Result<Box<dyn teams_media::devices::AudioSource>, teams_media::devices::DeviceError> {
+        self.files.microphone()
+    }
+    fn speaker(&self) -> Result<Box<dyn teams_media::devices::AudioSink>, teams_media::devices::DeviceError> {
+        self.files.speaker()
+    }
+    fn camera(&self) -> Result<Box<dyn teams_media::devices::VideoSource>, teams_media::devices::DeviceError> {
+        self.files.camera()
+    }
+}
+
+fn pending_devices(fail: bool) -> (Arc<PendingDevices>, tokio::sync::watch::Sender<bool>) {
+    use teams_media::devices::file::{AudioInput, FileDevices, Pacing, PatternCamera};
+    let (release, released) = tokio::sync::watch::channel(false);
+    (
+        Arc::new(PendingDevices {
+            released,
+            fail,
+            files: FileDevices {
+                input: AudioInput::Silence,
+                recording: None,
+                camera: PatternCamera::default(),
+                pacing: Pacing::Unpaced,
+            },
+        }),
+        release,
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deferred_discovery_leaves_engine_running_and_a_call_preparing_until_ready() {
+    let lab = Lab::start().await;
+    let (devices, release) = pending_devices(false);
+    let mut a = lab.account_with_devices(devices).await;
+    let start = a.handle.requests().call(test_call());
+    let told = a
+        .next(|event| match event {
+            Event::Call {
+                call,
+                status: CallStatus::Preparing,
+            } => Some(*call),
+            _ => None,
+        })
+        .await;
+    tokio::time::timeout(Duration::from_secs(5), a.handle.requests().sync())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(lab.attempts("/epconv").await, 0);
+    assert_eq!(lab.attempts("/trap/tokens").await, 0, "discovery precedes media setup");
+    release.send_replace(true);
+    assert_eq!(start.await.unwrap(), told);
+    a.status(told, &CallStatus::Placing).await;
+    a.status(told, &CallStatus::Connected).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deferred_discovery_failure_refuses_calls_without_sending_and_keeps_sync_working() {
+    let lab = Lab::start().await;
+    let (devices, release) = pending_devices(true);
+    let mut a = lab.account_with_devices(devices).await;
+    let start = a.handle.requests().call(test_call());
+    let told = a
+        .next(|event| match event {
+            Event::Call {
+                call,
+                status: CallStatus::Preparing,
+            } => Some(*call),
+            _ => None,
+        })
+        .await;
+    release.send_replace(true);
+    let refused = start.await;
+    assert!(matches!(refused, Err(EngineError::Call(CallActionError::NoCalling))));
+    assert_eq!(a.ended(told).await, End::Failed("setup"));
+    assert_eq!(lab.attempts("/epconv").await, 0);
+    assert_eq!(lab.attempts("/trap/tokens").await, 0);
+    a.handle.requests().sync().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_call_can_be_cancelled_while_discovery_is_pending() {
+    let lab = Lab::start().await;
+    let (devices, _release) = pending_devices(false);
+    let mut a = lab.account_with_devices(devices).await;
+    let start = a.handle.requests().call(test_call());
+    let told = a
+        .next(|event| match event {
+            Event::Call {
+                call,
+                status: CallStatus::Preparing,
+            } => Some(*call),
+            _ => None,
+        })
+        .await;
+    a.handle
+        .requests()
+        .call(CallAction::HangUp { call: told })
+        .await
+        .unwrap();
+    assert_eq!(start.await.unwrap(), told);
+    assert_eq!(a.ended(told).await, End::HungUp);
+    assert_eq!(lab.attempts("/epconv").await, 0);
+    a.shut_down().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn answering_waits_for_deferred_discovery_before_sending() {
+    let lab = Lab::start().await;
+    let (devices, release) = pending_devices(false);
+    let mut a = lab.account_with_devices(devices).await;
+    let _ = lab.mock.ring(LAB_C, LAB_A);
+    let incoming = a.incoming().await;
+    let mut answer = Box::pin(a.handle.requests().call(CallAction::Answer { call: incoming.call }));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut answer)
+            .await
+            .is_err()
+    );
+    assert_eq!(lab.attempts("/accept").await, 0);
+    assert_eq!(lab.attempts("/trap/tokens").await, 0);
+    release.send_replace(true);
+    assert_eq!(answer.await.unwrap(), incoming.call);
+    a.status(incoming.call, &CallStatus::Connected).await;
+}

@@ -1,18 +1,12 @@
 //! Personal call-device controllers over silent file devices; the real backend's sandbox reach is checked separately.
 
-use std::cell::Cell;
 use std::process::Command;
 use std::sync::Arc;
 
 use teams_media::devices::Reach;
-use teams_media::devices::catalog::{DeviceKind, DeviceList, DeviceWatcher, FixedDirectory};
+use teams_media::devices::catalog::{DeviceInfo, DeviceKind, DeviceList, DeviceWatcher, FixedDirectory};
 use teams_media::devices::file::{AudioInput, FileDevices, Pacing, PatternCamera};
 use teams_media::devices::{AudioSink, AudioSource, DeviceError, Devices, VideoSource};
-
-thread_local! {
-    static REFUSE: Cell<bool> = const { Cell::new(false) };
-    static LAST_REACH: Cell<Option<Reach>> = const { Cell::new(None) };
-}
 
 pub(super) struct SystemDevices {
     files: FileDevices,
@@ -21,10 +15,6 @@ pub(super) struct SystemDevices {
 
 impl SystemDevices {
     pub(super) fn connect(reach: Reach) -> Result<Self, DeviceError> {
-        LAST_REACH.set(Some(reach));
-        if REFUSE.get() {
-            return Err(DeviceError::Refused("synthetic unavailable devices".to_owned()));
-        }
         Ok(Self {
             files: FileDevices {
                 input: AudioInput::Silence,
@@ -32,7 +22,11 @@ impl SystemDevices {
                 camera: PatternCamera::default(),
                 pacing: Pacing::Unpaced,
             },
-            directory: FixedDirectory::default(),
+            directory: FixedDirectory::new(DeviceList::new(vec![DeviceInfo {
+                kind: DeviceKind::Microphone,
+                name: format!("{reach:?}"),
+                description: "Synthetic microphone".to_owned(),
+            }])),
         })
     }
 }
@@ -66,7 +60,7 @@ impl teams_media::devices::catalog::DeviceDirectory for SystemDevices {
 
 #[test]
 fn account_devices_share_the_catalog_and_playback_but_keep_their_video_feeds_separate() {
-    let devices = super::CallDevices::open(Reach::Sandbox).unwrap();
+    let devices = super::CallDevices::open(Reach::Sandbox);
     let (first_engine, first) = devices.for_account();
     let (_, second) = devices.for_account();
     assert_eq!(first.echo, super::echo());
@@ -93,16 +87,8 @@ fn account_devices_share_the_catalog_and_playback_but_keep_their_video_feeds_sep
     let mut speaker = devices.playback().speaker.unwrap().speaker().unwrap();
     speaker.play(&teams_media::devices::AudioFrame::silence()).unwrap();
     assert!(format!("{devices:?}").contains("CallDevices"));
-    let (opened, _) = super::open(Reach::Sandbox).unwrap();
+    let (opened, _) = super::open(Reach::Sandbox);
     assert!(opened.media.video.is_some());
-}
-
-#[test]
-fn a_device_backend_failure_is_returned_before_any_account_calling_is_built() {
-    REFUSE.set(true);
-    let refused = super::CallDevices::open(Reach::Sandbox).unwrap_err();
-    REFUSE.set(false);
-    assert!(matches!(refused, DeviceError::Refused(_)));
 }
 
 #[test]
@@ -136,11 +122,15 @@ fn real_guard_child() {
 }
 
 #[test]
-fn the_call_controller_passes_the_selected_reach_to_its_backend() {
+fn the_call_controller_passes_the_selected_reach_to_its_background_backend() {
     for reach in [Reach::Desktop, Reach::Sandbox] {
-        super::CallDevices::open(reach).unwrap();
-        assert_eq!(LAST_REACH.get(), Some(reach));
-        super::open(reach).unwrap();
-        assert_eq!(LAST_REACH.get(), Some(reach));
+        let devices = super::CallDevices::open(reach);
+        devices.playback().speaker.unwrap().speaker().unwrap();
+        let (_, calls) = devices.for_account();
+        let list = calls.devices.unwrap().devices();
+        assert_eq!(list.all()[0].name, format!("{reach:?}"));
+        let (engine, calls) = super::open(reach);
+        engine.media.devices.speaker().unwrap();
+        assert_eq!(calls.devices.unwrap().devices().all()[0].name, format!("{reach:?}"));
     }
 }

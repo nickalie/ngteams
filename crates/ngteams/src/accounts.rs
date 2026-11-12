@@ -17,7 +17,7 @@ use crate::signin::{self, SignInClients};
 pub struct Started<S = AppSecrets> {
     pub account: PersonalAccount,
     pub engine: PersonalEngine<S>,
-    /// The window's calls of the account, when the app's devices could be opened.
+    /// The window's calling; its shared devices may still be preparing.
     pub calls: Option<PersonalCalls>,
 }
 
@@ -35,7 +35,7 @@ impl<S> std::fmt::Debug for Started<S> {
 pub struct Runner {
     pub setup: Setup,
     pub floor: CallFloor,
-    /// The calls' devices; `None`: the app runs without calls.
+    /// The shared device discovery; `None` opens no call devices.
     pub devices: Option<CallDevices>,
 }
 

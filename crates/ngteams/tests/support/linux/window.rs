@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{fs, future, io, thread};
 
 use gpui::{
@@ -110,6 +110,7 @@ fn say(line: &str) {
 fn parent() -> SandboxResult {
     let options = SandboxOptions {
         niri_extra: NIRI_FULL_WINDOW,
+        pipewire: std::env::var_os("NGTEAMS_STARTUP_DEVICES").map(|_| ui_sandbox::pipewire::PipeWireOptions::default()),
         ..SandboxOptions::default()
     };
     let Some(sandbox) = sandbox_or_skip("ngteams window", &options)? else {
@@ -243,16 +244,33 @@ fn shots_dir() -> io::Result<PathBuf> {
 fn an_empty_window_opens_on_the_mock(sandbox: &Sandbox) -> SandboxResult {
     let (reader, writer) = io::pipe()?;
     let fd = writer.as_raw_fd().to_string();
+    let mode = std::env::var("NGTEAMS_STARTUP_DEVICES").unwrap_or_default();
+    let registry = sandbox.dir().join("fresh-gst-registry.bin");
+    fs::write(&registry, [])?;
+    let registry = registry.to_string_lossy();
     let child = sandbox.spawn_with_fds(
         &std::env::current_exe()?,
         &[],
-        &[(CHILD_ENV, "window"), (TRACE_FD_ENV, &fd)],
+        &[
+            (CHILD_ENV, "window"),
+            (TRACE_FD_ENV, &fd),
+            ("NGTEAMS_STARTUP_DEVICES", &mode),
+            ("GST_REGISTRY", &registry),
+        ],
         &[writer.as_fd()],
     )?;
     // the child holds the only writer from here, so the trace ends when it exits
     drop(writer);
     let mut running = Running::new(child)?;
     let mut trace = TraceReader::start(reader);
+    if !mode.is_empty() {
+        for milestone in ["startup-engine", "startup-window"] {
+            let timing = running
+                .line_where(STARTUP, |line| line.starts_with(milestone))
+                .map_err(|error| running.fail(&format!("no {milestone}: {error:?}")))?;
+            say(&format!("{mode} {timing}"));
+        }
+    }
     let rem = running
         .line_where(STARTUP, |line| line.starts_with("rem-size "))
         .map_err(|error| running.fail(&format!("no rem-size line: {error:?}")))?;
@@ -710,11 +728,40 @@ fn passed_trace_fd() -> SandboxResult<RawFd> {
     Ok(std::env::var(TRACE_FD_ENV)?.parse()?)
 }
 
+fn startup_devices(mode: &str) -> SandboxResult<Option<Arc<dyn teams_media::devices::Devices + Send + Sync>>> {
+    use teams_media::devices::deferred::DeferredDevices;
+    use teams_media::devices::{Reach, SystemDevices};
+    let connect = |slow: bool| {
+        if slow {
+            thread::sleep(Duration::from_secs(3));
+        }
+        SystemDevices::connect(Reach::Sandbox)
+    };
+    match mode {
+        "" => Ok(None),
+        "blocking" | "blocking-slow" => Ok(Some(Arc::new(connect(mode.ends_with("slow"))?))),
+        "deferred" | "deferred-slow" => {
+            let slow = mode.ends_with("slow");
+            Ok(Some(Arc::new(DeferredDevices::connect(move || connect(slow)))))
+        }
+        _ => Err("unknown startup device mode".into()),
+    }
+}
+
 fn child_window() -> SandboxResult {
     ngteams::read_only::window_allowed_here()?;
     let trace = teams_ui::ViewTrace::new(adopt_trace(passed_trace_fd()?)?);
+    let started = Instant::now();
+    let mode = std::env::var("NGTEAMS_STARTUP_DEVICES").unwrap_or_default();
+    let devices = startup_devices(&mode)?;
     let (lab, engine) = MockLab::start()?;
-    let first = support::started(Alias::A, engine)?;
+    if !mode.is_empty() {
+        say(&format!("startup-engine {} ms", started.elapsed().as_millis()));
+    }
+    let mut first = support::started(Alias::A, engine)?;
+    if let Some(devices) = devices {
+        first.calls = Some(ngteams::calling::on_devices(devices, false).1);
+    }
     let settings = teams_ui::SettingsFile::new(lab.dir.path().join("ui").join("a.toml"));
     let runner = support::runner(lab.dir.path())?;
     let failed = Arc::new(Mutex::new(None));
@@ -741,7 +788,10 @@ fn child_window() -> SandboxResult {
             Ok(launched) => {
                 post_when_asked(mock, cx);
                 let _ = launched.window.update(cx, |_, window, _| {
-                    after_frames(window, READY_FRAMES, |window, _| {
+                    after_frames(window, READY_FRAMES, move |window, _| {
+                        if !mode.is_empty() {
+                            say(&format!("startup-window {} ms", started.elapsed().as_millis()));
+                        }
                         say(&format!("rem-size {}", window.rem_size().as_f32()));
                         say("ready");
                     });

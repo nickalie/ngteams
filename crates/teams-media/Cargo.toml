@@ -47,7 +47,7 @@ burn-store.workspace = true
 cubecl.workspace = true
 # libwebrtc's video source keeps its track alive on a tokio task until the camera's first frame, and the media's
 # threads wait for libwebrtc's streams with a timeout: the media's own runtime runs both
-tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync"] }
 teams-platform.workspace = true
 
 # The model's GPU API: Vulkan where the drivers have it, Metal on macOS

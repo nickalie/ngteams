@@ -4818,3 +4818,50 @@ fn the_organizers_mute_shows_its_card_and_an_attendee_s_kept_controls_are_greyed
     stage.run_until_parked();
     assert_eq!(actions(&rig).len(), before, "the key asks nothing");
 }
+
+#[gpui::test]
+fn failed_background_media_setup_hides_calls_and_drops_an_incoming_ring(cx: &mut TestAppContext) {
+    use teams_media::devices::catalog::DeviceStatus;
+    let directory = Arc::new(FixedDirectory::default());
+    directory.set_status(DeviceStatus::Preparing);
+    let calls = cx.new(|_| Calls::shown(Some(Mri::new(ECHO))));
+    cx.update(|cx| teams_ui::calls::follow_devices(&calls, directory.clone(), cx));
+    assert!(calls.read_with(cx, |calls, _| calls.shows()));
+    calls.update(cx, |calls, cx| {
+        calls.apply(
+            &Event::IncomingCall(IncomingCall {
+                call: CallId::for_tests(1),
+                caller: Mri::new(LAB_B),
+                caller_name: None,
+                group_chat: None,
+            }),
+            cx,
+        );
+    });
+    assert!(calls.read_with(cx, |calls, _| calls.ringing().is_some()));
+    directory.set_status(DeviceStatus::Unavailable);
+    cx.run_until_parked();
+    assert!(!calls.read_with(cx, |calls, _| calls.shows()));
+    assert!(calls.read_with(cx, |calls, _| calls.ringing().is_none()));
+}
+
+#[gpui::test]
+fn a_call_waiting_for_discovery_shows_preparing_then_calling(cx: &mut TestAppContext) {
+    let calls = cx.new(|_| Calls::shown(Some(Mri::new(ECHO))));
+    for (status, text) in [(CallStatus::Preparing, "Preparing…"), (CallStatus::Placing, "Calling…")] {
+        calls.update(cx, |calls, cx| {
+            calls.apply(
+                &Event::Call {
+                    call: CallId::for_tests(1),
+                    status,
+                },
+                cx,
+            );
+        });
+        assert_eq!(
+            calls.read_with(cx, |calls, _| teams_ui::calls::status_text(calls.call().unwrap())),
+            text
+        );
+    }
+    assert_eq!(teams_ui::calls::status_name(&CallStatus::Preparing), "preparing");
+}

@@ -221,7 +221,10 @@ the bindings build them only when `CUDA_HOME` (or `/usr/local/cuda`) holds CUDA'
 build. NVIDIA's decoder library hangs the process at exit while a decoder is still alive.
 Its PipeWire binding needs libpipewire's headers and `clang` for `bindgen`.
 PipeWire reach is selected at run time: desktop for the user's normal app, sandbox for lab/test runs.
-Read-only mode opens no media devices.
+Read-only mode opens no media devices. Native call-device discovery runs on its own thread, so it cannot delay
+account engines or the first window. Settings → Calls and devices shows "Preparing media…" until discovery finishes;
+a call started meanwhile waits before its media setup and signaling. If discovery fails, calls stay unavailable for
+that app run and chats keep working.
 
 A video a message carries is played in its card by the system's GStreamer (`teams-media`'s `player`: `playbin` on an
 `appsrc` the engine feeds, its frames and sound to appsinks, the sound on the device seam's speaker). The build needs
@@ -585,6 +588,12 @@ cargo test -p <crate> [--test <name>] [<filter>]
 cargo test -p fixture-guard
 python3 -B -m unittest discover -s scripts -p test_run_lab.py
 ```
+
+The UI tour accepts `NGTEAMS_TOUR_FILTER=<comma-separated-step-names>` for a focused set of screenshots; include
+any steps that set up the selected views. The `window` sandbox test accepts `NGTEAMS_STARTUP_DEVICES=blocking` or
+`deferred` to time eager versus background native device discovery around the same mock-engine startup and first
+window. Each run supplies a fresh empty `GST_REGISTRY` file; append `-slow` to either mode to add a synthetic
+three-second discovery delay.
 
 The widest local gates are `cargo clippy --workspace --all-targets -- -D warnings` and
 `PROTO_LAB_REQUIRE_CHROME=1 GPUI_SMOKE_REQUIRE=1 cargo test --workspace`. Ordinary tests use synthetic mocks and

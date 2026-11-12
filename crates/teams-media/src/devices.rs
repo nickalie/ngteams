@@ -20,6 +20,7 @@ use std::io;
 use std::time::Duration;
 
 pub mod catalog;
+pub mod deferred;
 pub mod file;
 #[cfg(any(windows, target_os = "macos", test))]
 mod native;
@@ -203,8 +204,21 @@ pub trait VideoSink: Send {
     fn show(&mut self, frame: &VideoFrame) -> Result<(), DeviceError>;
 }
 
+/// Completion of backend discovery; waiting must not block the engine or UI thread.
+pub type DeviceReady<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DeviceError>> + Send + 'a>>;
+
 /// A backend: opens the microphone, the speaker and the camera, and the screen the user shares.
 pub trait Devices {
+    /// Waits for backend discovery before a call starts; ordinary backends are ready at once.
+    fn ready(&self) -> DeviceReady<'_> {
+        Box::pin(std::future::ready(Ok(())))
+    }
+
+    /// Whether backend discovery is still running.
+    fn preparing(&self) -> bool {
+        false
+    }
+
     /// # Errors
     /// The microphone can't be opened.
     fn microphone(&self) -> Result<Box<dyn AudioSource>, DeviceError>;

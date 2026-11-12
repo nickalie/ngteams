@@ -233,7 +233,7 @@ fn an_invalid_added_account_reports_the_failure_in_its_existing_prompt() {
 #[test]
 fn account_video_and_device_settings_follow_the_shared_model_after_an_account_is_added() {
     // The unit backend is silent FileDevices + FixedDirectory; the ordinary build still requires real PipeWire.
-    let devices = crate::calling::CallDevices::open(teams_media::devices::Reach::Sandbox).unwrap();
+    let devices = crate::calling::CallDevices::open(teams_media::devices::Reach::Sandbox);
     let (_, calls) = devices.for_account();
     let first_feed = calls.video.clone().unwrap();
     let dir = tempfile::tempdir().unwrap();

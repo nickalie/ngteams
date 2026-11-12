@@ -44,7 +44,7 @@ use gpui::{App, AppContext as _, AsyncApp, ClipboardItem, Context, Entity, Task,
 use teams_core::Choice;
 pub use teams_log::Level as LogLevel;
 use teams_log::diagnostics::{Report, Source as DiagnosticsSource};
-use teams_media::devices::catalog::{DeviceDirectory, DeviceKind, DeviceList};
+use teams_media::devices::catalog::{DeviceDirectory, DeviceKind, DeviceList, DeviceStatus};
 use teams_media::video::effects::{self, Backdrop, Background};
 use teams_proto::ManualAvailability;
 use toml::{Table, Value};
@@ -1511,6 +1511,14 @@ impl SettingsModel {
     #[must_use]
     pub fn devices(&self) -> Option<&DeviceList> {
         self.devices.as_ref().map(|devices| &devices.list)
+    }
+
+    /// Whether call devices are still being discovered, ready, or unavailable for this run.
+    #[must_use]
+    pub fn media_status(&self) -> DeviceStatus {
+        self.devices
+            .as_ref()
+            .map_or(DeviceStatus::Unavailable, |devices| devices.directory.status())
     }
 
     /// Where the background pictures the user added are kept: [`BACKGROUNDS_DIR`] beside the settings file; `None` for

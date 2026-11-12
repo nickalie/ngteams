@@ -608,6 +608,9 @@ pub fn bridge(engine: EngineHandle, calls: Option<&PersonalCalls>, cx: &mut App)
         },
         None => Models::new(cx),
     };
+    if let Some(directory) = calls.and_then(|calls| calls.devices.clone()) {
+        teams_ui::calls::follow_devices(&models.calls, directory, cx);
+    }
     let core: Arc<dyn Core> = Arc::new(engine.requests());
     let drained = models.clone();
     let bridge = cx.new(|cx| Bridge::start(engine, core, drained, cx));

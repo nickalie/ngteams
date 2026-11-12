@@ -1127,3 +1127,28 @@ fn reading_preserves_unix_modes_that_already_exclude_other_users() {
         assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, mode);
     }
 }
+
+#[gpui::test]
+fn settings_follow_media_preparation_and_failure_even_when_the_list_stays_empty(cx: &mut TestAppContext) {
+    use teams_media::devices::catalog::DeviceStatus;
+    let directory = FixedDirectory::default();
+    directory.set_status(DeviceStatus::Preparing);
+    let model = cx.new(|_| SettingsModel::in_memory(Settings::default()));
+    cx.update(|cx| attach_devices(&model, std::sync::Arc::new(directory.clone()), cx));
+    assert_eq!(
+        model.read_with(cx, |model, _| model.media_status()),
+        DeviceStatus::Preparing
+    );
+    directory.set_status(DeviceStatus::Unavailable);
+    cx.run_until_parked();
+    assert_eq!(
+        model.read_with(cx, |model, _| model.media_status()),
+        DeviceStatus::Unavailable
+    );
+    directory.set_status(DeviceStatus::Ready);
+    cx.run_until_parked();
+    assert_eq!(
+        model.read_with(cx, |model, _| model.media_status()),
+        DeviceStatus::Ready
+    );
+}

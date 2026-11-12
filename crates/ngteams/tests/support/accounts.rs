@@ -10,7 +10,7 @@ fn the_runner_holds_one_engine_per_account_and_releases_it_on_shutdown() {
     let runner = Runner {
         setup,
         floor: CallFloor::new(),
-        devices: Some(crate::calling::CallDevices::open(teams_media::devices::Reach::Sandbox).unwrap()),
+        devices: Some(crate::calling::CallDevices::open(teams_media::devices::Reach::Sandbox)),
     };
     let started = runner.start_on(&account, MemorySecretStore::new()).unwrap();
     assert!(format!("{started:?}").contains(&account.upn));

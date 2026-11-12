@@ -40,7 +40,7 @@ use gpui_component::switch::Switch;
 use gpui_component::{Disableable as _, Sizable as _};
 use teams_core::{Choice, Reporting};
 use teams_log::diagnostics::WARNING;
-use teams_media::devices::catalog::{DeviceKind, DeviceList};
+use teams_media::devices::catalog::{DeviceKind, DeviceList, DeviceStatus};
 
 use crate::clock::{self, HourCycle};
 use crate::effects::{EffectsPicker, PickerPlace};
@@ -434,7 +434,9 @@ impl SettingsView {
 
     /// Whether the Calls page offers the video effects: the app's calls have video, or there is a camera to preview.
     fn shows_effects(&self, cx: &App) -> bool {
-        self.video_switch || self.model.read(cx).camera_preview().is_some()
+        let model = self.model.read(cx);
+        (model.devices().is_none() || model.media_status() == DeviceStatus::Ready)
+            && (self.video_switch || model.camera_preview().is_some())
     }
 
     /// Gives the page column the keyboard, as Settings opens.
@@ -878,16 +880,7 @@ impl SettingsView {
 
     fn calls(&mut self, settings: &Settings, palette: Palette, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut groups = Vec::new();
-        let mut rows = self
-            .model
-            .read(cx)
-            .devices()
-            .map(|list| self.devices(settings, list, palette))
-            .unwrap_or_default();
-        let offer = self.test_call_offer(cx);
-        if offer != TestCallOffer::Hidden {
-            rows.push(Self::test_call_row(offer, palette, cx));
-        }
+        let rows = self.call_device_rows(settings, palette, cx);
         if !rows.is_empty() {
             groups.push(group(Some("Devices"), rows, palette));
         }
@@ -923,6 +916,46 @@ impl SettingsView {
         ));
         groups.extend(self.ai_pickers(cx).into_iter().map(IntoElement::into_any_element));
         groups
+    }
+
+    fn call_device_rows(&self, settings: &Settings, palette: Palette, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut rows = self
+            .model
+            .read(cx)
+            .devices()
+            .map(|list| self.devices(settings, list, palette))
+            .unwrap_or_default();
+        let model = self.model.read(cx);
+        let status = if model.devices().is_some() {
+            model.media_status()
+        } else {
+            DeviceStatus::Ready
+        };
+        if status != DeviceStatus::Ready {
+            rows.clear();
+            rows.push(
+                div()
+                    .p_4()
+                    .text_sm()
+                    .text_color(rgb(palette.muted_foreground))
+                    .debug_selector(|| "media-status".to_owned())
+                    .child(if status == DeviceStatus::Preparing {
+                        "Preparing media…"
+                    } else {
+                        "Calls aren't available"
+                    })
+                    .into_any_element(),
+            );
+        }
+        let offer = if status == DeviceStatus::Unavailable {
+            TestCallOffer::Hidden
+        } else {
+            self.test_call_offer(cx)
+        };
+        if offer != TestCallOffer::Hidden {
+            rows.push(Self::test_call_row(offer, palette, cx));
+        }
+        rows
     }
 
     /// The chats' translator's picker ([`crate::chat_translate`]), on the General page beside the chats' other

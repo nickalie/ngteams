@@ -385,15 +385,7 @@ fn run_setup(
         }
         return ask_account(setup, unready.first().map(|account| account.upn.clone()));
     }
-    // the native devices, shared by every account; without them the app runs without calls
-    let devices = match CallDevices::open(reach) {
-        Ok(devices) => Some(devices),
-        Err(error) => {
-            eprintln!("teams: no calls: {error}");
-            log::warn!("no calls: {error}");
-            None
-        }
-    };
+    let devices = Some(CallDevices::open(reach));
     let runner = Runner {
         setup: setup.clone(),
         floor: CallFloor::new(),

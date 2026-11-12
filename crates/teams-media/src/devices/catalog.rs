@@ -111,8 +111,22 @@ impl DeviceList {
 /// Told every new list of devices, on the backend's own thread: it must return at once.
 pub type DeviceWatcher = Box<dyn Fn(&DeviceList) + Send>;
 
+/// Whether the device backend has finished discovery.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DeviceStatus {
+    Preparing,
+    #[default]
+    Ready,
+    Unavailable,
+}
+
 /// The devices a backend sees and the user's choice of each kind (see the module docs).
 pub trait DeviceDirectory: Send + Sync {
+    /// Discovery's status; changes notify the directory watchers even if its list stays empty.
+    fn status(&self) -> DeviceStatus {
+        DeviceStatus::Ready
+    }
+
     /// The devices there now.
     fn devices(&self) -> DeviceList;
 
@@ -157,6 +171,7 @@ pub struct FixedDirectory {
 
 #[derive(Default)]
 struct Fixed {
+    status: DeviceStatus,
     list: DeviceList,
     choices: Choices,
     made: Vec<(DeviceKind, Option<String>)>,
@@ -191,6 +206,15 @@ impl FixedDirectory {
         }
     }
 
+    /// Changes discovery's status and notifies watchers, for pending and failed view states.
+    pub fn set_status(&self, status: DeviceStatus) {
+        let mut fixed = self.lock();
+        fixed.status = status;
+        for watcher in &fixed.watchers {
+            watcher(&fixed.list);
+        }
+    }
+
     /// Every choice made, in order, the ones that changed nothing included.
     #[must_use]
     pub fn choices_made(&self) -> Vec<(DeviceKind, Option<String>)> {
@@ -199,6 +223,10 @@ impl FixedDirectory {
 }
 
 impl DeviceDirectory for FixedDirectory {
+    fn status(&self) -> DeviceStatus {
+        self.lock().status
+    }
+
     fn devices(&self) -> DeviceList {
         self.lock().list.clone()
     }

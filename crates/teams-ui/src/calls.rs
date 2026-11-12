@@ -1078,7 +1078,7 @@ impl Calls {
         let choices = self.choices.as_mut()?;
         let active = self.call.as_ref().filter(|active| active.kind == CallKind::Meeting)?;
         let connected = active.status == CallStatus::Connected;
-        let ask = if choices.muted && active.status != CallStatus::Placing {
+        let ask = if choices.muted && !matches!(active.status, CallStatus::Preparing | CallStatus::Placing) {
             choices.muted = false;
             Some(Ask::ToggleMute)
         } else if choices.camera && connected {
@@ -1781,6 +1781,7 @@ fn refusal_text(error: &EngineError) -> String {
             "the call there has ended".to_owned()
         }
         EngineError::Call(CallActionError::NoVideo) => "this call carries no video".to_owned(),
+        EngineError::Call(CallActionError::NoCalling) => "calls aren't available".to_owned(),
         other => other.to_string(),
     }
 }
@@ -1805,6 +1806,46 @@ fn local_refusal_text(why: &str) -> String {
         "not-told" => "the call didn't start: the app got no answer from the calling service, try again".to_owned(),
         _ => "calls aren't available".to_owned(),
     }
+}
+
+/// Stops presenting calls if background device discovery fails, as a startup without calling would.
+pub fn follow_devices(
+    calls: &Entity<Calls>,
+    directory: Arc<dyn teams_media::devices::catalog::DeviceDirectory>,
+    cx: &mut App,
+) {
+    use teams_media::devices::catalog::DeviceStatus;
+    let (told, changes) = async_channel::unbounded();
+    directory.watch(Box::new(move |_| {
+        let _ = told.try_send(());
+    }));
+    match directory.status() {
+        DeviceStatus::Unavailable => {
+            calls.update(cx, |calls, cx| {
+                *calls = Calls::default();
+                cx.notify();
+            });
+            return;
+        }
+        DeviceStatus::Ready => return,
+        DeviceStatus::Preparing => {}
+    }
+    let weak = calls.downgrade();
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        while changes.recv().await.is_ok() {
+            if directory.status() == DeviceStatus::Unavailable {
+                let _ = weak.update(cx, |calls, cx| {
+                    *calls = Calls::default();
+                    cx.notify();
+                });
+                break;
+            }
+            if directory.status() == DeviceStatus::Ready || weak.upgrade().is_none() {
+                break;
+            }
+        }
+    })
+    .detach();
 }
 
 /// The user asks `ask` of the calls: the engine's call action for it, traced (`call asked`, and `call refused` with
@@ -2043,6 +2084,7 @@ pub const LOBBY_WAIT: &str = "Someone in the meeting should let you in soon";
 #[must_use]
 pub fn status_name(status: &CallStatus) -> &'static str {
     match status {
+        CallStatus::Preparing => "preparing",
         CallStatus::Placing => "placing",
         CallStatus::Ringing => "ringing",
         CallStatus::Joining => "joining",
@@ -2075,6 +2117,7 @@ pub fn status_text(active: &ActiveCall) -> String {
         return "Declined or not answered: voicemail".to_owned();
     }
     match &active.status {
+        CallStatus::Preparing => "Preparing…".to_owned(),
         CallStatus::Placing if active.kind == CallKind::Meeting => "Joining…".to_owned(),
         CallStatus::Placing => "Calling…".to_owned(),
         CallStatus::Ringing => "Ringing…".to_owned(),

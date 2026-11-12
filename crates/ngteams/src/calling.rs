@@ -7,8 +7,8 @@
 //!
 //! - **The devices** are the native backend selected by [`Reach`]: PipeWire and the camera portal on Linux,
 //!   WASAPI/Media Foundation and the system screen picker on Windows. Sandbox reach selects Linux's private server
-//!   or validates the explicitly authorized Windows VM console. Read-only startup opens no devices. Without devices the app runs without calls: no call is shown, and
-//!   the engine has no calling socket.
+//!   or validates the explicitly authorized Windows VM console. Read-only startup opens no devices.
+//!   Discovery runs in the background; calls wait for it and stay unavailable if it fails.
 //! - **The test call** goes to the echo service by its MRI from the web bundle ([`echo`],
 //!   `teams_proto::TEAMS_ECHO_BOT_MRI`), never one taken from the network or the UI.
 //! - **Video**: a call takes video on the OpenH264 built into the app; the settings' switch turns it off and on.
@@ -18,11 +18,12 @@
 use std::sync::Arc;
 
 use teams_core::account::{AccountCalls, account_calls, call_video};
+use teams_media::devices::Devices;
 use teams_media::devices::Reach;
 #[cfg(not(test))]
 use teams_media::devices::SystemDevices;
 use teams_media::devices::catalog::DeviceDirectory;
-use teams_media::devices::{DeviceError, Devices};
+use teams_media::devices::deferred::DeferredDevices;
 use teams_media::player::PlayerSetup;
 use teams_proto::Mri;
 use teams_ui::sounds::SoundBoard;
@@ -94,7 +95,7 @@ pub fn on_devices(devices: Arc<dyn Devices + Send + Sync>, video: bool) -> (Acco
 /// accounts"): the native devices selected by the caller.
 #[derive(Clone)]
 pub struct CallDevices {
-    devices: Arc<SystemDevices>,
+    devices: Arc<DeferredDevices>,
     /// The app's sounds, one board for every account: one setting, one ringtone at a time.
     sounds: Arc<SoundBoard>,
 }
@@ -106,15 +107,13 @@ impl std::fmt::Debug for CallDevices {
 }
 
 impl CallDevices {
-    /// The native devices selected by `reach` (see the module docs).
-    ///
-    /// # Errors
-    /// The devices are refused or can't be reached ([`SystemDevices::connect`]).
-    pub fn open(reach: Reach) -> Result<Self, DeviceError> {
-        let devices = Arc::new(SystemDevices::connect(reach)?);
+    /// Starts native device discovery without delaying account engines or the first window.
+    #[must_use]
+    pub fn open(reach: Reach) -> Self {
+        let devices = Arc::new(DeferredDevices::connect(move || SystemDevices::connect(reach)));
         let shared: Arc<dyn Devices + Send + Sync> = devices.clone();
         let sounds = Arc::new(SoundBoard::new(shared));
-        Ok(Self { devices, sounds })
+        Self { devices, sounds }
     }
 
     /// What a video a message carries is played with: its sound on these devices.
@@ -139,9 +138,8 @@ impl CallDevices {
 }
 
 /// The engine's calling and the window's calls on the native devices selected by `reach` (see the module docs).
-///
-/// # Errors
-/// The devices are refused or can't be reached ([`SystemDevices::connect`]).
-pub fn open(reach: Reach) -> Result<(AccountCalls, PersonalCalls), DeviceError> {
-    CallDevices::open(reach).map(|devices| devices.for_account())
+/// Discovery runs in the background; a call waits for it before starting.
+#[must_use]
+pub fn open(reach: Reach) -> (AccountCalls, PersonalCalls) {
+    CallDevices::open(reach).for_account()
 }

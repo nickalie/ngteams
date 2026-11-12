@@ -194,7 +194,12 @@ fn sandbox_devices_are_refused_outside_the_sandbox_and_the_engine_without_them_p
     let dir = tempfile::tempdir().unwrap();
     let (setup, account) = signed_in_setup(&dir);
     assert!(
-        ngteams::calling::open(teams_media::devices::Reach::Sandbox).is_err()
+        ngteams::calling::open(teams_media::devices::Reach::Sandbox)
+            .0
+            .media
+            .devices
+            .microphone()
+            .is_err()
             || std::env::var_os("UI_SANDBOX_DIR").is_some()
     );
 
