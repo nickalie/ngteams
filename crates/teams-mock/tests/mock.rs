@@ -407,6 +407,71 @@ async fn a_paged_list_synthetic_chat_edited_keeps_its_place_and_reads_give_the_n
 }
 
 #[tokio::test]
+async fn a_paged_list_synthetic_history_pages_back_and_a_new_message_keeps_the_chats_place() -> TestResult {
+    let lab = Lab::start().await?;
+    let made = lab.mock.add_synthetic_chats(3);
+    lab.mock.page_conversation_list(2);
+    let before = lab.list(LAB_A).await?;
+    assert!(lab.mock.add_synthetic_history(1, 5));
+    assert!(!lab.mock.add_synthetic_history(3, 5));
+    let path = format!(
+        "users/ME/conversations/{}/messages?view=msnp24Equivalent&pageSize=4",
+        segment(&made[1])
+    );
+    let texts = |page: &Value| -> Vec<String> {
+        page["messages"]
+            .as_array()
+            .map(|messages| {
+                messages
+                    .iter()
+                    .filter_map(|message| message["content"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let first = lab.get(LAB_A, &path).await?;
+    assert_eq!(
+        texts(&first),
+        [
+            "<p>Synthetic message 0001</p>",
+            "<p>History 0001-004</p>",
+            "<p>History 0001-003</p>",
+            "<p>History 0001-002</p>"
+        ]
+    );
+    let newest_first_ids: Vec<u64> = first["messages"]
+        .as_array()
+        .map(|messages| {
+            messages
+                .iter()
+                .filter_map(|message| message["id"].as_str()?.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        newest_first_ids.windows(2).all(|pair| pair[0] > pair[1]),
+        "ids grow with time: {newest_first_ids:?}"
+    );
+    let back = first["_metadata"]["backwardLink"].as_str().ok_or("no backward link")?;
+    let older = lab.follow(LAB_A, back).await?;
+    assert_eq!(texts(&older), ["<p>History 0001-001</p>", "<p>History 0001-000</p>"]);
+    assert!(older["_metadata"]["backwardLink"].is_null(), "the history ends there");
+
+    assert!(lab.mock.add_synthetic_message(1, "New 1"));
+    assert!(!lab.mock.add_synthetic_message(3, "no such chat"));
+    let after = lab.list(LAB_A).await?;
+    assert_eq!(ids(&after), ids(&before), "neither moved a chat");
+    let entry = after["conversations"]
+        .as_array()
+        .and_then(|chats| chats.iter().find(|chat| chat["id"] == made[1].as_str()))
+        .ok_or("the chat isn't listed")?;
+    assert_eq!(entry["lastMessage"]["content"], "<p>New 1</p>");
+    assert_eq!(texts(&lab.get(LAB_A, &path).await?)[0], "<p>New 1</p>");
+    assert!(lab.mock.take_events(LAB_A).is_empty(), "nobody is told");
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_read_around_a_time_replays_the_message_fixture() -> TestResult {
     let lab = Lab::start().await?;
     let recorded = fixture("messages.json")?;

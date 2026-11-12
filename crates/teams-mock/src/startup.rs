@@ -41,6 +41,39 @@ pub fn synthetic_text(n: usize) -> String {
     format!("Synthetic message {n:04}")
 }
 
+/// What message `i` (the oldest 0) of the synthetic chat `n`'s older history says
+/// ([`ChatServiceMock::add_synthetic_history`]).
+#[must_use]
+pub fn synthetic_history_text(n: usize, i: usize) -> String {
+    format!("History {n:04}-{i:03}")
+}
+
+/// When the synthetic chat `n`'s one message was sent: a second apart, chat 0 the newest.
+fn synthetic_sent(n: usize) -> u64 {
+    SYNTHETIC_NEWEST.saturating_sub(u64::try_from(n).unwrap_or(u64::MAX).saturating_mul(1000))
+}
+
+/// A message of b's in the synthetic chat `chat`, as a read gives it: `arrival` its id and version.
+fn synthetic_message(chat: &str, arrival: u64, sequence: u64, text: &str, sent: u64) -> serde_json::Value {
+    json!({
+        "sequenceId": sequence,
+        "conversationid": chat,
+        "conversationLink": format!("{CHAT_BASE}/v1/users/ME/conversations/{chat}"),
+        "type": "Message",
+        "id": arrival.to_string(),
+        "version": arrival.to_string(),
+        "clientmessageid": (8_000_000_000_000_000_000_u64 + arrival).to_string(),
+        "messagetype": "RichText/Html",
+        "contenttype": "Text",
+        "content": format!("<p>{text}</p>"),
+        "from": crate::writes::contact(LAB_B),
+        "imdisplayname": "Lab B",
+        "composetime": world::iso_time(sent, 7),
+        "originalarrivaltime": world::iso_time(sent, 7),
+        "properties": {},
+    })
+}
+
 /// What a held request is let go with.
 #[derive(Clone, Copy)]
 enum Outcome {
@@ -167,24 +200,13 @@ impl ChatServiceMock {
             let mut conversation = world::created(&empty, &id, Kind::Group, &[LAB_B, LAB_A], created);
             conversation.entry["threadProperties"]["topic"] = json!(synthetic_topic(n));
             let arrival = state.tick();
-            let sent = SYNTHETIC_NEWEST.saturating_sub(u64::try_from(n).unwrap_or(u64::MAX).saturating_mul(1000));
-            conversation.messages.push(json!({
-                "sequenceId": 1,
-                "conversationid": id,
-                "conversationLink": format!("{CHAT_BASE}/v1/users/ME/conversations/{id}"),
-                "type": "Message",
-                "id": arrival.to_string(),
-                "version": arrival.to_string(),
-                "clientmessageid": (8_000_000_000_000_000_000_u64 + arrival).to_string(),
-                "messagetype": "RichText/Html",
-                "contenttype": "Text",
-                "content": format!("<p>{}</p>", synthetic_text(n)),
-                "from": crate::writes::contact(LAB_B),
-                "imdisplayname": "Lab B",
-                "composetime": world::iso_time(sent, 7),
-                "originalarrivaltime": world::iso_time(sent, 7),
-                "properties": {},
-            }));
+            conversation.messages.push(synthetic_message(
+                &id,
+                arrival,
+                1,
+                &synthetic_text(n),
+                synthetic_sent(n),
+            ));
             conversation.version = arrival;
             state.conversations.push(conversation);
         }
@@ -206,6 +228,69 @@ impl ChatServiceMock {
         };
         message["content"] = json!(format!("<p>{text}</p>"));
         message["version"] = json!(version.to_string());
+        true
+    }
+
+    /// Puts `count` (under 1000) older messages of b's ([`synthetic_history_text`], a millisecond apart) before the
+    /// messages of the synthetic chat `n`, as a long chat's history: a first read gets its newest page, the rest only
+    /// through backward links. The chat keeps its place and its last message (given a newer id, so ids still grow
+    /// with time). Nobody is told. `false` when there is no such chat.
+    #[must_use = "false says there was no such chat"]
+    pub fn add_synthetic_history(&self, n: usize, count: usize) -> bool {
+        let id = synthetic_chat(n);
+        let mut state = self.lock();
+        if state.conversation(&id).is_none() {
+            return false;
+        }
+        let sent = synthetic_sent(n);
+        let mut history: Vec<serde_json::Value> = (0..count)
+            .map(|i| {
+                let arrival = state.tick();
+                let back = u64::try_from(count - i).unwrap_or(u64::MAX);
+                let sequence = u64::try_from(i + 1).unwrap_or(u64::MAX);
+                synthetic_message(
+                    &id,
+                    arrival,
+                    sequence,
+                    &synthetic_history_text(n, i),
+                    sent.saturating_sub(back),
+                )
+            })
+            .collect();
+        let mut later = Vec::new();
+        if let Some(conversation) = state.conversation(&id) {
+            later.clone_from(&conversation.messages);
+        }
+        for message in &mut later {
+            let arrival = state.tick();
+            let sequence = message["sequenceId"].as_u64().unwrap_or(1) + u64::try_from(count).unwrap_or(u64::MAX);
+            message["sequenceId"] = json!(sequence);
+            message["id"] = json!(arrival.to_string());
+            message["version"] = json!(arrival.to_string());
+        }
+        history.extend(later);
+        let Some(conversation) = state.conversation_mut(&id) else {
+            return false;
+        };
+        conversation.messages = history;
+        true
+    }
+
+    /// Adds a new message of b's saying `text` to the synthetic chat `n`, its newest (half a second after its last),
+    /// as every later read gives it (the conversation list's `lastMessage` too) while the chat keeps its place in the
+    /// list. Nobody is told. `false` when there is no such chat.
+    #[must_use = "false says there was no such chat"]
+    pub fn add_synthetic_message(&self, n: usize, text: &str) -> bool {
+        let id = synthetic_chat(n);
+        let mut state = self.lock();
+        let arrival = state.tick();
+        let Some(conversation) = state.conversation_mut(&id) else {
+            return false;
+        };
+        let sequence = conversation.next_sequence();
+        conversation
+            .messages
+            .push(synthetic_message(&id, arrival, sequence, text, synthetic_sent(n) + 500));
         true
     }
 

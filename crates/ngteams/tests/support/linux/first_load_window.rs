@@ -14,6 +14,11 @@
 //!   go. The first page's rows show each chat's last message and unread mark from the list page at once; a chat's
 //!   own sync replaces that preview (a message edited on the service after its list page came shows its new text).
 //!   No chat is listed twice, no message shown twice, no message held twice.
+//! - **User reads go first.** While a background read of the catch-up is held, a chat opened shows its messages,
+//!   "Older messages" in a long chat loads its older page from the service (scrolled to the top), the teams list
+//!   shows the teams and their channels and a channel opened shows its posts, and a chat opened again after a new
+//!   message came shows it; each seen in Teams Light and Dark. Once the held reads go the catch-up ends and every
+//!   chat holds all its messages, each once: none starved or skipped.
 //! - **A failed later page and a restart.** The second page refused, the catch-up fails and the list keeps the first
 //!   page. The app quit and started again on the same store shows that page at once, then the whole list once its
 //!   catch-up is done, each chat once with its one message. The previews kept from the list page are no messages of
@@ -30,7 +35,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 use std::{fs, future, thread};
 
-use gpui::{App, Window, WindowingModes};
+use gpui::{App, AsyncApp, Entity, Window, WindowingModes};
 use ngteams::app::{self, Launch};
 #[path = "../window.rs"]
 mod support;
@@ -44,8 +49,8 @@ use teams_core::engine::{self, EngineHandle, EngineOptions, Parts, Push};
 use teams_ctl::protocol::{CtlEvent, EventFilter, EventLine, OpenTarget, Request, Response};
 use teams_ctl::{Client, Timeouts};
 use teams_mock::{
-    AB_CHAT, ABC_CHAT, AC_CHAT, AX_CHAT, CHAT_BASE, ChatServiceMock, Front, Hold, LAB_A, TrouterMock, synthetic_chat,
-    synthetic_text,
+    AB_CHAT, ABC_CHAT, AC_CHAT, AX_CHAT, CHANNEL, CHAT_BASE, CSA_BASE, ChatServiceMock, Front, Hold, LAB_A,
+    TEAM_CHANNEL, TrouterMock, synthetic_chat, synthetic_history_text, synthetic_text,
 };
 use teams_proto::{Author, Client as ChatClient, Credentials, HttpTransport, Mri};
 use teams_store::Store;
@@ -76,12 +81,35 @@ const HELD: usize = 10;
 const PRIORITY: usize = 20;
 /// A first-page chat whose message is edited on the service after its list page came, before its sync.
 const EDITED: usize = 7;
+/// Chats queued after [`HELD`] whose messages reads are held in turn, each once the one before is let go: each hold
+/// covers a few of the user's reads, well within [`MAX_HOLD`](teams_mock::MAX_HOLD).
+const HELD_LATER: [usize; 2] = [12, 14];
+/// A first-page chat with a long history: its first read gets the newest page, the rest only through "Older messages".
+const HISTORY: usize = 30;
+/// How many older messages [`HISTORY`] holds besides its last one: more than a read's page of 200.
+const HISTORY_COUNT: usize = 230;
+/// The chats a new message comes to while the catch-up waits, each opened before: one the user opened, one the
+/// catch-up synced.
+const REOPENED: [usize; 2] = [PRIORITY, SYNCED];
+/// Where the child's pointer turns the wheel over the open chat's messages.
+const MESSAGES_AT: (u32, u32) = (820, 360);
+/// Where the pointer rests for a shot: over the conversation's header, clear of its buttons.
+const PARKED: (u32, u32) = (900, 70);
+/// Over the sidebar's rows, where its wheel turns.
+const SIDEBAR_AT: (u32, u32) = (260, 400);
+/// The sidebar's "Chats" header with the list at its top: under the header (to 96 px), "Favorites" (32 px) and the
+/// favourite channel's row (64 px).
+const CHATS_HEADER_AT: (u32, u32) = (114, 208);
+/// The file in the app's directory the child reads the theme to show from (`light` or `dark`).
+const THEME_FILE: &str = "theme";
 /// What [`EDITED`]'s message says after the edit.
 const EDITED_TEXT: &str = "Edited synthetic message 0007";
 const STARTUP: Duration = Duration::from_secs(90);
 const WAIT: Duration = Duration::from_secs(30);
 /// How soon something already synced should show.
 const SOON: Duration = Duration::from_secs(4);
+/// How long the user reads a chat before moving on: past the read receipt's 800 ms wait (`READ_DEBOUNCE`).
+const READ: Duration = Duration::from_millis(1500);
 /// How long a list that should stay as it is is watched.
 const STILL: Duration = Duration::from_secs(2);
 
@@ -256,6 +284,20 @@ impl TraceReader {
         }
     }
 
+    /// The latest line seen that `found` takes, else [`Self::next_within`].
+    fn seen_or_next(
+        &mut self,
+        within: Duration,
+        what: &str,
+        found: impl Fn(&serde_json::Value) -> bool,
+    ) -> SandboxResult<serde_json::Value> {
+        self.drain();
+        if let Some(line) = self.seen.iter().rev().find(|line| found(line)) {
+            return Ok(line.clone());
+        }
+        self.next_within(within, what, found)
+    }
+
     /// Takes in the lines that came.
     fn drain(&mut self) {
         while let Ok(line) = self.lines.try_recv() {
@@ -269,7 +311,7 @@ impl TraceReader {
         self.seen
             .iter()
             .filter(|line| line["view"] == "chat-list" && line["change"] == "shown")
-            .map(|line| strings(line, "conversations"))
+            .map(chats_listed)
             .collect()
     }
 
@@ -284,7 +326,7 @@ impl TraceReader {
             return Ok(());
         }
         self.next_where(what, |line| {
-            line["view"] == "chat-list" && line["change"] == "shown" && strings(line, "conversations") == wanted
+            line["view"] == "chat-list" && line["change"] == "shown" && chats_listed(line) == wanted
         })
         .map(|_| ())
         .map_err(|error| format!("{error}; the list showed {}", summary(&self.chat_list())).into())
@@ -327,6 +369,14 @@ fn strings(line: &serde_json::Value, key: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The chats a `chat-list shown` line lists, without the channels its Favorites section shows (the mock's team
+/// channel is a favourite).
+fn chats_listed(line: &serde_json::Value) -> Vec<String> {
+    let mut chats = strings(line, "conversations");
+    chats.retain(|id| !id.ends_with("@thread.tacv2"));
+    chats
 }
 
 /// A list's length and its first and last chats, for an error.
@@ -437,6 +487,44 @@ impl AppRun {
             }
             other => Err(format!("messages answered {other:?}").into()),
         }
+    }
+
+    /// `ngteamsctl messages <chat> --limit 1000`: every message it holds, the newest first, ids and texts.
+    fn all_messages(&self, chat: &str) -> SandboxResult<Vec<(String, String)>> {
+        match self.ask(Request::Messages {
+            chat: chat.to_owned(),
+            limit: Some(1000),
+            before: None,
+        })? {
+            Response::Messages { messages } => {
+                Ok(messages.into_iter().map(|message| (message.id, message.text)).collect())
+            }
+            other => Err(format!("messages answered {other:?}").into()),
+        }
+    }
+
+    /// `ngteamsctl open channel <channel>`, then the trace's `channel opened`.
+    fn open_channel(&mut self, channel: &str) -> SandboxResult {
+        self.ask(Request::Open {
+            target: OpenTarget::Channel {
+                channel: channel.to_owned(),
+            },
+        })?;
+        self.trace.next_where(&format!("channel {channel} opened"), |line| {
+            line["view"] == "channel" && line["change"] == "opened" && line["conversation"] == channel
+        })?;
+        Ok(())
+    }
+
+    /// Shows the app in Teams Light or Dark (`dark`), as the user picks it in Settings; once it is applied.
+    fn theme(&mut self, dir: &Path, dark: bool) -> SandboxResult {
+        let key = if dark { "dark" } else { "light" };
+        fs::write(dir.join(THEME_FILE), key)?;
+        let applied = format!("theme {key}");
+        self.running
+            .line_where(WAIT, |line| line == applied)
+            .map_err(|error| self.running.fail(&format!("{applied} never applied: {error:?}")))?;
+        Ok(())
     }
 
     /// `ngteamsctl ui state`: the chat open.
@@ -720,8 +808,240 @@ fn the_opened_chat_passes_the_held_background_read(sandbox: &Sandbox, run: &mut 
     Ok(())
 }
 
+/// What synthetic chat `n`'s new message says ([`REOPENED`]).
+fn new_text(n: usize) -> String {
+    format!("New message {n:04}")
+}
+
+/// What synthetic chat `n`'s row shows as its last message once the new messages came.
+fn last_text(n: usize) -> String {
+    if REOPENED.contains(&n) {
+        new_text(n)
+    } else {
+        text_of(n, true)
+    }
+}
+
+/// The catch-up hasn't ended yet: `what` happened during it.
+fn still_catching_up(events: &mpsc::Receiver<EventLine>, what: &str) -> SandboxResult {
+    match events.try_recv() {
+        Err(mpsc::TryRecvError::Empty) => Ok(()),
+        Ok(event) => Err(format!("{what} only after the catch-up ended: {event:?}").into()),
+        Err(mpsc::TryRecvError::Disconnected) => Err("the catch-up events stopped".into()),
+    }
+}
+
+/// While a background read waits: [`HISTORY`] opened shows its newest messages, and scrolled to the top it has read
+/// its older page from the service ("Older messages": only the view asks for it; it may ask before the wheel turns,
+/// as rows near the top are drawn), all of it held once.
+fn older_messages_load_during_the_catch_up(
+    sandbox: &Sandbox,
+    run: &mut AppRun,
+    caught_up: &mpsc::Receiver<EventLine>,
+) -> SandboxResult {
+    let chat = synthetic_chat(HISTORY);
+    run.open(&chat)?;
+    let newest_shown = |line: &serde_json::Value| {
+        line["view"] == "chat-view"
+            && line["change"] == "shown"
+            && line["conversation"] == chat.as_str()
+            && !strings(line, "messages").is_empty()
+    };
+    let shown = run
+        .trace
+        .seen_or_next(SOON, "the long chat's newest messages", newest_shown)
+        .map_err(|error| format!("{chat}, opened while a background read waits, shows no messages: {error}"))?;
+    if strings(&shown, "messages").len() != teams_ui::chat_view::TRACED {
+        return Err(format!(
+            "{chat} shows {} messages, not a page",
+            strings(&shown, "messages").len()
+        )
+        .into());
+    }
+    step(&format!(
+        "the long chat shows its newest messages, {} held",
+        run.all_messages(&chat)?.len()
+    ));
+    // read the newest messages past the read receipt's wait before scrolling back
+    thread::sleep(READ);
+    let mut input = sandbox.input()?;
+    let (x, y) = MESSAGES_AT;
+    let deadline = std::time::Instant::now() + Duration::from_secs(12);
+    loop {
+        let held = run.all_messages(&chat)?.len();
+        if held == HISTORY_COUNT + 1 {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            return Err(format!(
+                "{chat} scrolled to its top while a background read waits holds {held} of {} messages: its older \
+                 messages didn't load",
+                HISTORY_COUNT + 1
+            )
+            .into());
+        }
+        input.scroll(x, y, -40)?;
+        thread::sleep(Duration::from_millis(100));
+    }
+    still_catching_up(caught_up, "the older messages loaded")?;
+    step("the long chat's older messages loaded");
+    input.scroll(x, y, -200)?;
+    // off the messages, so no hover bar covers them in the shot
+    input.move_to(PARKED.0, PARKED.1)?;
+    let messages = run.all_messages(&chat)?;
+    let ids: Vec<String> = messages.iter().map(|(id, _)| id.clone()).collect();
+    once_each("the long chat", &ids)?;
+    let oldest = messages.last().map(|(_, text)| text.as_str());
+    if oldest != Some(synthetic_history_text(HISTORY, 0).as_str()) {
+        return Err(format!("{chat}'s oldest message is {oldest:?}").into());
+    }
+    AppRun::shot(sandbox, "first-load-older-while-syncing.png")?;
+    Ok(())
+}
+
+/// While a background read waits: the teams list shows the mock's teams with their channels, and a channel opened
+/// shows its posts; in Teams Light and Dark.
+fn teams_show_during_the_catch_up(
+    sandbox: &Sandbox,
+    run: &mut AppRun,
+    dir: &Path,
+    caught_up: &mpsc::Receiver<EventLine>,
+) -> SandboxResult {
+    let listed = |line: &serde_json::Value| {
+        let channels = strings(line, "conversations");
+        line["view"] == "teams-list"
+            && line["change"] == "shown"
+            && channels.iter().any(|channel| channel == CHANNEL)
+            && channels.iter().any(|channel| channel == TEAM_CHANNEL)
+    };
+    run.trace
+        .seen_or_next(SOON, "the teams list with its channels", listed)
+        .map_err(|error| format!("the teams and channels don't show while a background read waits: {error}"))?;
+    still_catching_up(caught_up, "the teams listed")?;
+    step("the teams and channels listed during the catch-up");
+    run.open_channel(TEAM_CHANNEL)?;
+    let posts = |line: &serde_json::Value| {
+        line["view"] == "channel-view"
+            && line["change"] == "shown"
+            && line["conversation"] == TEAM_CHANNEL
+            && !strings(line, "messages").is_empty()
+    };
+    run.trace
+        .seen_or_next(SOON, "the channel's posts", posts)
+        .map_err(|error| format!("{TEAM_CHANNEL}, opened while a background read waits, shows no posts: {error}"))?;
+    still_catching_up(caught_up, "the channel's posts shown")?;
+    step("the channel shows its posts during the catch-up");
+    // the chats folded, so "Teams and channels" shows under them
+    let mut input = sandbox.input()?;
+    input.scroll(SIDEBAR_AT.0, SIDEBAR_AT.1, -100)?;
+    fold_chats(run, &mut input, "folded")?;
+    input.move_to(PARKED.0, PARKED.1)?;
+    AppRun::shot(sandbox, "first-load-teams-while-syncing.png")?;
+    run.theme(dir, true)?;
+    AppRun::shot(sandbox, "first-load-teams-while-syncing-dark.png")?;
+    fold_chats(run, &mut input, "unfolded")?;
+    Ok(())
+}
+
+/// Clicks the sidebar's "Chats" header (the list at its top), then waits for the trace's `sidebar <change>`.
+fn fold_chats(run: &mut AppRun, input: &mut ui_sandbox::input::VirtualInput, change: &str) -> SandboxResult {
+    input.click(CHATS_HEADER_AT.0, CHATS_HEADER_AT.1, ui_sandbox::input::keys::BTN_LEFT)?;
+    run.trace
+        .next_within(SOON, &format!("the chats {change}"), |line| {
+            line["view"] == "sidebar" && line["change"] == change && strings(line, "kinds") == ["chats"]
+        })
+        .map(|_| ())
+}
+
+/// While a background read waits, a new message comes to each [`REOPENED`] chat (nobody told): opened again, each shows
+/// it beside its first message.
+fn reopened_chats_refresh_during_the_catch_up(
+    sandbox: &Sandbox,
+    run: &mut AppRun,
+    service: &Service,
+    caught_up: &mpsc::Receiver<EventLine>,
+) -> SandboxResult {
+    for n in REOPENED {
+        if !service.mock.add_synthetic_message(n, &new_text(n)) {
+            return Err(format!("the mock has no chat {n}").into());
+        }
+        let chat = synthetic_chat(n);
+        run.open(&chat)?;
+        let shown = run.trace.chat_view_within(SOON, &chat, 2).map_err(|error| {
+            format!("{chat}, opened again while a background read waits, doesn't show its new message: {error}")
+        })?;
+        once_each("a reopened chat's view", &shown)?;
+        let texts: Vec<String> = run.all_messages(&chat)?.into_iter().map(|(_, text)| text).collect();
+        if texts != [new_text(n), synthetic_text(n)] {
+            return Err(format!("{chat}, opened again, holds {texts:?}").into());
+        }
+        // read past the read receipt's wait, so the row ends read
+        thread::sleep(READ);
+    }
+    still_catching_up(caught_up, "the reopened chats refreshed")?;
+    step("the reopened chats show their new messages during the catch-up");
+    AppRun::shot(sandbox, "first-load-reopened-chat-while-syncing-dark.png")?;
+    Ok(())
+}
+
+/// Holds synthetic chat `n`'s messages read, lets `held` go (still held until now), and waits until the catch-up
+/// reaches `n`.
+fn hold_next(
+    run: &mut AppRun,
+    service: &Service,
+    held: Hold,
+    n: usize,
+    caught_up: &mpsc::Receiver<EventLine>,
+) -> SandboxResult<Hold> {
+    let next = service.hold_messages(n);
+    if !held.release() {
+        return Err("a held read went at its limit before the checks it covers ended".into());
+    }
+    if !next.wait_entered(WAIT) {
+        return Err(run.running.fail(&format!("chat {n}'s messages were never read")));
+    }
+    still_catching_up(caught_up, "a later chat's read held")?;
+    step(&format!("chat {n}'s messages read waits"));
+    Ok(next)
+}
+
+/// Every synthetic chat holds all its messages, each once, as the service has them: none starved or skipped.
+fn every_chat_is_synced(run: &AppRun) -> SandboxResult {
+    let mut wrong = Vec::new();
+    for n in 0..CHATS {
+        let messages = run.all_messages(&synthetic_chat(n))?;
+        let ids: Vec<String> = messages.iter().map(|(id, _)| id.clone()).collect();
+        once_each(&format!("chat {n}"), &ids)?;
+        let texts: Vec<String> = messages.into_iter().map(|(_, text)| text).collect();
+        let wanted: Vec<String> = if n == HISTORY {
+            std::iter::once(synthetic_text(n))
+                .chain((0..HISTORY_COUNT).rev().map(|i| synthetic_history_text(n, i)))
+                .collect()
+        } else if REOPENED.contains(&n) {
+            vec![new_text(n), synthetic_text(n)]
+        } else {
+            vec![text_of(n, true)]
+        };
+        if texts != wanted {
+            wrong.push((n, texts.len(), texts.first().cloned()));
+        }
+    }
+    if !wrong.is_empty() {
+        return Err(format!(
+            "{} chats don't hold their messages after the catch-up (chat, count, newest): {:?}",
+            wrong.len(),
+            wrong.iter().take(10).collect::<Vec<_>>()
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxResult {
     let dir = tempfile::tempdir()?;
+    if !service.mock.add_synthetic_history(HISTORY, HISTORY_COUNT) {
+        return Err("the mock has no long chat".into());
+    }
     let later_pages = service.hold_later_pages();
     let mut run = AppRun::launch(sandbox, service, dir.path())?;
     let caught_up = run.follow_catch_up()?;
@@ -766,12 +1086,20 @@ fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxR
     step("the held chat shows no message yet");
     AppRun::shot(sandbox, "first-load-chat-loading.png")?;
     ctl_lists(&run, &service.whole)?;
-    if !held.release() {
-        return Err("the held read went at its limit before the checks ended".into());
-    }
+    // later background reads held in turn, so the user's reads below wait beside one too
+    let second = hold_next(&mut run, service, held, HELD_LATER[0], &caught_up)?;
     let shown = run.trace.wait_chat_view(&held_chat, 1)?;
     once_each("the held chat's view", &shown)?;
     step("the held chat shows its message");
+    older_messages_load_during_the_catch_up(sandbox, &mut run, &caught_up)?;
+    let third = hold_next(&mut run, service, second, HELD_LATER[1], &caught_up)?;
+    teams_show_during_the_catch_up(sandbox, &mut run, dir.path(), &caught_up)?;
+    reopened_chats_refresh_during_the_catch_up(sandbox, &mut run, service, &caught_up)?;
+    run.theme(dir.path(), false)?;
+    AppRun::shot(sandbox, "first-load-reopened-chat-while-syncing.png")?;
+    if !third.release() {
+        return Err("the last held read went at its limit before the checks ended".into());
+    }
     wait_event(&caught_up, "caught_up", Duration::from_secs(120))?;
     step("caught up");
     AppRun::shot(sandbox, "first-load-caught-up.png")?;
@@ -780,15 +1108,16 @@ fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxR
         .wait_list("the whole list after the catch-up", &service.whole)?;
     the_list_never_jumped(&mut run.trace, &service.whole)?;
     ctl_lists(&run, &service.whole)?;
-    rows_are_right(&run, |n| text_of(n, true), &[EARLY, EDITED, SYNCED, HELD, PRIORITY])?;
-    for n in [0, EARLY, SYNCED, HELD, PAGE - 1, PAGE, CHATS - 1] {
-        holds_its_message(&run, n)?;
-    }
-    holds_text(&run, EDITED, EDITED_TEXT)?;
-    for n in [EARLY, SYNCED] {
+    rows_are_right(&run, last_text, &[EARLY, EDITED, SYNCED, HELD, PRIORITY, HISTORY])?;
+    every_chat_is_synced(&run)?;
+    step("every chat holds all its messages");
+    for (n, count) in [(EARLY, 1), (SYNCED, 2)] {
         let chat = synthetic_chat(n);
         run.open(&chat)?;
-        once_each("a chat's view after the catch-up", &run.trace.wait_chat_view(&chat, 1)?)?;
+        once_each(
+            "a chat's view after the catch-up",
+            &run.trace.wait_chat_view(&chat, count)?,
+        )?;
     }
     run.quit(sandbox)
 }
@@ -942,7 +1271,7 @@ fn engine_on_the_mock(dir: &Path) -> SandboxResult<EngineHandle> {
     Ok(engine::start(Parts {
         calls: None,
         store: Store::open(&support::store_file(dir, Alias::A))?,
-        client: Arc::new(ChatClient::new(http()?)),
+        client: Arc::new(ChatClient::new(http()?.with_csa(CSA_BASE)?)),
         outbox: Outbox::new(transport, author),
         push: Some(Push::new(trouter)),
         options: EngineOptions::default(),
@@ -961,6 +1290,43 @@ fn after_frames(window: &Window, frames: usize, done: impl FnOnce(&mut Window, &
     });
 }
 
+/// The settings as the Appearance page leaves them once theme `key` is picked.
+fn show_theme(settings: &mut teams_ui::Settings, key: &'static str) {
+    settings.appearance.follow_system = false;
+    settings.appearance.theme = key;
+}
+
+/// Shows the theme `file` names (`light` or `dark`) once it changes, as the user picks one in Settings, and says
+/// `theme <name>` once it is applied.
+fn follow_theme_file(settings: &Entity<teams_ui::SettingsModel>, file: PathBuf, cx: &mut App) {
+    let settings = settings.downgrade();
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        let mut applied = String::new();
+        loop {
+            cx.background_executor().timer(Duration::from_millis(100)).await;
+            let Ok(wanted) = fs::read_to_string(&file) else {
+                continue;
+            };
+            if wanted == applied {
+                continue;
+            }
+            let key = if wanted == "dark" {
+                teams_ui::theme::DARK_KEY
+            } else {
+                teams_ui::theme::LIGHT_KEY
+            };
+            let changed =
+                cx.update(|cx| settings.update(cx, |model, cx| model.change(|chosen| show_theme(chosen, key), cx)));
+            if changed.is_err() {
+                return;
+            }
+            say(&format!("theme {wanted}"));
+            applied = wanted;
+        }
+    })
+    .detach();
+}
+
 fn child() -> SandboxResult {
     ngteams::read_only::window_allowed_here()?;
     let fd: RawFd = std::env::var(TRACE_FD_ENV)?.parse()?;
@@ -973,6 +1339,7 @@ fn child() -> SandboxResult {
     let failed = Arc::new(Mutex::new(None));
     let failed_in_app = Arc::clone(&failed);
     let ctl = dir.join("ctl.sock");
+    let theme_file = dir.join(THEME_FILE);
     let application = gpui_platform::linux(WindowingModes::WAYLAND).with_assets(teams_ui::AppAssets);
     application.run(move |cx: &mut App| {
         let launched = app::launch(
@@ -991,6 +1358,8 @@ fn child() -> SandboxResult {
         );
         match launched {
             Ok(launched) => {
+                let settings = launched.desktop.read(cx).settings().clone();
+                follow_theme_file(&settings, theme_file.clone(), cx);
                 let _ = launched.window.update(cx, |_, window, _| {
                     after_frames(window, 3, |_, _| say("ready"));
                 });

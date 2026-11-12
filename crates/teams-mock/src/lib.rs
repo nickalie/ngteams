@@ -125,7 +125,7 @@ pub use channels::{ChannelWrite, NOT_ADDED};
 pub use fixtures::FixtureError;
 pub use front::Front;
 pub use loki::{LOKI_REGION, LokiCard};
-pub use startup::{Hold, MAX_HOLD, synthetic_chat, synthetic_text, synthetic_topic};
+pub use startup::{Hold, MAX_HOLD, synthetic_chat, synthetic_history_text, synthetic_text, synthetic_topic};
 pub use trouter::{CALLING_APP, MESSAGING_APP, REGIONAL_NAME, Registration, SocketRecord, TrouterMock};
 pub use ups::{AvailabilityChange, OwnAvailability};
 
