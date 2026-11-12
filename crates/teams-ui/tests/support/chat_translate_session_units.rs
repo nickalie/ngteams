@@ -554,28 +554,116 @@ fn a_batch_s_terms_are_told_and_a_new_process_is_told_the_chat_again() {
     drop(session);
 }
 
+fn said(n: usize, text: &str) -> Item {
+    Item {
+        text: text.to_owned(),
+        ..item(n, &format!("key {n}"))
+    }
+}
+
+fn translated(text: &str, source: &str) -> Answer {
+    Answer::Translated {
+        text: text.to_owned(),
+        source: Some(source.to_owned()),
+    }
+}
+
+fn same(source: &str) -> Answer {
+    Answer::Same {
+        source: Some(source.to_owned()),
+    }
+}
+
+/// `answers` to `items` judged in a chat read in German, nothing handed back before but `echoed`.
+fn judged(items: &[Item], answers: &[(usize, Answer)], echoed: &[&str]) -> (HashMap<usize, Answer>, Vec<String>) {
+    let all: HashMap<usize, Answer> = answers.iter().cloned().collect();
+    let echoed = echoed.iter().map(|key| (*key).to_owned()).collect();
+    judge_echoes(all.clone(), &all, items, "German", &echoed)
+}
+
 #[test]
-fn a_message_handed_back_as_written_is_no_answer() {
-    let items = [item(1, "a"), item(2, "b"), item(3, "c")];
-    let answers = HashMap::from([
-        (
-            1,
-            Answer::Translated {
-                text: " message 1 ".to_owned(),
-                source: Some("ru".to_owned()),
-            },
-        ),
-        (
-            2,
-            Answer::Translated {
-                text: "Nachricht 2".to_owned(),
-                source: Some("en".to_owned()),
-            },
-        ),
-        (3, Answer::Same { source: None }),
-    ]);
-    let kept = without_echoes(answers, &items);
-    let mut numbers: Vec<usize> = kept.keys().copied().collect();
-    numbers.sort_unstable();
-    assert_eq!(numbers, [2, 3]);
+fn a_batch_handed_back_as_written_is_asked_again() {
+    // the failure a fast model shows: every message as written, with the language it was written in
+    let items = [said(1, "Wie weit ist der Ausbau?"), said(2, "Ich frage morgen nach")];
+    let (kept, mut held) = judged(
+        &items,
+        &[
+            (1, translated(" Wie weit ist der Ausbau? ", "ru")),
+            (2, translated("Ich frage morgen nach", "ru")),
+        ],
+        &[],
+    );
+    assert!(kept.is_empty(), "{kept:?}");
+    held.sort();
+    assert_eq!(held, ["key 1", "key 2"]);
+}
+
+#[test]
+fn a_message_handed_back_twice_is_taken_as_written() {
+    let items = [said(1, "Wie weit ist der Ausbau?")];
+    let (kept, held) = judged(&items, &[(1, translated("Wie weit ist der Ausbau?", "ru"))], &["key 1"]);
+    assert_eq!(kept, HashMap::from([(1, same("ru"))]));
+    assert!(held.is_empty());
+}
+
+#[test]
+fn an_answer_that_is_rightly_its_message_is_taken() {
+    let items = [
+        said(1, "OK"),
+        said(2, "<x1>Kubernetes</x1>"),
+        said(3, "42 / 17:30"),
+        said(4, "Bis morgen dann"),
+    ];
+    let (kept, held) = judged(
+        &items,
+        &[
+            // a single word, a name or a product: nothing else it could be
+            (1, translated("OK", "en")),
+            (2, translated("<x1>Kubernetes</x1>", "en")),
+            // no words at all
+            (3, translated("42 / 17:30", "en")),
+            // the model named the chat's own language rather than answering `same`
+            (4, translated("Bis morgen dann", "de")),
+        ],
+        &[],
+    );
+    assert!(held.is_empty(), "{held:?}");
+    assert_eq!(
+        kept,
+        HashMap::from([(1, same("en")), (2, same("en")), (3, same("en")), (4, same("de"))])
+    );
+}
+
+#[test]
+fn a_message_left_as_written_beside_translated_ones_is_meant_so() {
+    let items = [
+        said(1, "Visual Studio Code"),
+        said(2, "see you tomorrow"),
+        said(3, "Anna Schmidt"),
+    ];
+    let (kept, held) = judged(
+        &items,
+        &[
+            (1, translated("Visual Studio Code", "en")),
+            (2, translated("bis morgen", "en")),
+            (3, Answer::Same { source: None }),
+        ],
+        &[],
+    );
+    assert!(held.is_empty(), "{held:?}");
+    assert_eq!(
+        kept,
+        HashMap::from([
+            (1, same("en")),
+            (2, translated("bis morgen", "en")),
+            (3, Answer::Same { source: None })
+        ])
+    );
+}
+
+#[test]
+fn words_count_only_words_with_letters_markers_aside() {
+    assert_eq!(words("<x3>OK</x3> <x7/>"), 1);
+    assert_eq!(words("12:30 — 5 €"), 0);
+    assert_eq!(words("Guten <x2>Morgen</x2>!"), 2);
 }

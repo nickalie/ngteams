@@ -742,6 +742,91 @@ fn a_failure_ends_the_busy_state_and_says_how_to_try_again() {
     });
 }
 
+/// A fake Claude Code that logs each question and hands its first `@ECHOES@` batches back as written (each message
+/// with the language it is in, the way a fast model sometimes fails), then translates each message as `DE <text>`.
+const ECHOING_CLAUDE: &str = r#"#!/bin/bash
+log="$(dirname "$0")/received.log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  asked=$(wc -l < "$log")
+  ans=""
+  while IFS= read -r m; do
+    n=$(printf '%s' "$m" | sed 's/^<m id=\\"\([0-9]*\)\\".*/\1/')
+    t=$(printf '%s' "$m" | sed 's/^.*\\">\(.*\)<\/m>$/\1/')
+    if [ "$asked" -le @ECHOES@ ]; then
+      ans="$ans<m id=\\\"$n\\\" lang=\\\"en\\\">$t</m>"
+    else
+      ans="$ans<m id=\\\"$n\\\" lang=\\\"en\\\">DE $t</m>"
+    fi
+  done < <(printf '%s' "$line" | grep -o '<m id=\\"[0-9]*\\" from=\\"[^\\]*\\">[^<]*</m>')
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}\n' "$ans"
+done
+"#;
+
+/// A word, and two sentences that need translating.
+fn echoed() -> Vec<Message> {
+    vec![
+        message("1", 1, LAB_B, "OK"),
+        message("2", 2, LAB_B, "See you at the station"),
+        message("3", 3, LAB_B, "The build is green again"),
+    ]
+}
+
+/// `messages` read in German by a tool handing its first `echoes` batches back as written, until nothing is under way.
+fn read_by_echoing_tool(echoes: u32, messages: &[Message]) -> (Rig, Entity<ChatTranslation>) {
+    let mut rig = Rig::new(&ECHOING_CLAUDE.replace("@ECHOES@", &echoes.to_string()));
+    let translation = rig.open();
+    rig.follow(&translation, messages);
+    translation.update(&mut rig.app, |translation, cx| translation.set_language(Some("de"), cx));
+    rig.until(&translation, |translation| !translation.busy());
+    (rig, translation)
+}
+
+#[test]
+fn a_batch_handed_back_as_written_is_asked_again_and_its_translation_shown() {
+    let messages = echoed();
+    let (rig, translation) = read_by_echoing_tool(1, &messages);
+    let asked = questions(rig.dir.path());
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    // the word was taken as written at once; only the sentences were asked again
+    assert!(
+        !asked[1].contains(">OK</m>") && asked[1].contains("See you at the station"),
+        "{}",
+        asked[1]
+    );
+    translation.read_with(&rig.app, |translation, _| {
+        assert_eq!(translation.status(), &Status::On);
+        assert_eq!(shown_text(translation, &messages[0]), None);
+        assert_eq!(translation.shown().mark_of(&messages[0]), None);
+        assert_eq!(
+            shown_text(translation, &messages[1]).as_deref(),
+            Some("DE See you at the station")
+        );
+        assert_eq!(
+            shown_text(translation, &messages[2]).as_deref(),
+            Some("DE The build is green again")
+        );
+    });
+}
+
+#[test]
+fn a_message_whose_answer_is_its_own_text_never_ends_as_untranslatable() {
+    let messages = echoed();
+    let (rig, translation) = read_by_echoing_tool(99, &messages);
+    assert_eq!(questions(rig.dir.path()).len(), 2, "asked once again, then taken");
+    translation.read_with(&rig.app, |translation, _| {
+        assert_eq!(translation.status(), &Status::On);
+        for message in &messages {
+            assert_eq!(translation.shown().mark_of(message), None, "{}", message.id);
+            assert_eq!(shown_text(translation, message), None);
+        }
+    });
+    // kept as already in the language, so a later run asks nothing
+    let kept = rig.core.translations.lock().unwrap().clone();
+    assert_eq!(kept.len(), 3);
+    assert!(kept.iter().all(|row| row.kind == TranslationKind::Same), "{kept:?}");
+}
+
 /// A fake Claude Code that logs each question and answers its first message with a term after it.
 const TERMING_CLAUDE: &str = r#"#!/bin/bash
 log="$(dirname "$0")/received.log"

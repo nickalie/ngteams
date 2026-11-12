@@ -14,8 +14,13 @@
 //!   once, so a send waits at most for the batch running.
 //! - **As it comes**: a batch's answers are told one message at a time as the tool writes them ([`Outcome::Partial`]),
 //!   so the chat shows each translation when it is ready rather than the batch's all at once.
-//! - **An echo is no answer**: a "translation" that is the message as written (a fast model sometimes hands a batch
-//!   back untranslated) is left out, so the model asks for it again ([`without_echoes`]).
+//! - **An echo is asked again, once**: a fast model sometimes hands a whole batch back untranslated, each message as
+//!   written with the language it was written in. An answer that is its message as written is taken as the message
+//!   being in the language already ([`Answer::Same`]) when that is plainly so: the model named the chat's language,
+//!   the message has no words to translate or a single one ("OK", a name, a product), the same answer translated
+//!   another message, or the model handed it back as written when asked before. Otherwise it is left out, so the
+//!   model asks for it again ([`judge_echoes`]); a second echo is taken, so a message whose translation is its own
+//!   text never ends as one that couldn't be translated.
 //! - **Failures** are told with the job they ended ([`Outcome`]); the process is closed and the next job starts a new
 //!   one. Nothing here logs a message, a translation or the tool's output.
 
@@ -30,6 +35,7 @@ use std::time::Duration;
 use super::prompt::{self, Answer, Brief, Item, Preface, Said, Term};
 pub use crate::local_ai::Failure;
 use crate::local_ai::{Backend, Launch, Model, Tool, Work};
+use crate::translate::TARGET_LANGUAGES;
 
 /// How long a wait for the next job polls before it looks at whether the session was dropped.
 const POLL: Duration = Duration::from_millis(100);
@@ -37,6 +43,8 @@ const POLL: Duration = Duration::from_millis(100);
 /// most characters: it holds the conversation before them.
 pub const WARM_LINES: usize = 15;
 pub const WARM_CHARS: usize = 3000;
+/// The most messages a session remembers were handed back as written.
+const ECHOES_KEPT: usize = 1000;
 
 /// When a session's process is replaced, and how long the tool may take.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,6 +145,7 @@ impl Session {
             stop: Arc::clone(&stop),
             tool: None,
             given: Given::default(),
+            echoed: HashSet::new(),
         };
         let _ = thread::Builder::new()
             .name("chat-translate".into())
@@ -241,6 +250,8 @@ struct Worker {
     stop: Arc<AtomicBool>,
     tool: Option<Tool>,
     given: Given,
+    /// The messages (keys) whose last answer handed them back as written and was left out: a second echo is taken.
+    echoed: HashSet<String>,
 }
 
 impl Worker {
@@ -276,9 +287,12 @@ impl Worker {
     fn batch(&mut self, id: u64, brief: &Brief, context: &[Said], items: &[Item]) -> Outcome {
         let out = self.out.clone();
         let stop = Arc::clone(&self.stop);
+        let reading = self.spec.language;
+        let echoed = self.echoed.clone();
         let mut told = HashMap::new();
         let mut partial = |so_far: &str| {
-            let fresh = without_echoes(fresh_answers(so_far, &mut told), items);
+            let fresh = fresh_answers(so_far, &mut told);
+            let (fresh, _) = judge_echoes(fresh, &told, items, reading, &echoed);
             if !fresh.is_empty() && !stop.load(Ordering::Relaxed) {
                 let _ = out.try_send(Outcome::Partial { id, answers: fresh });
             }
@@ -287,11 +301,22 @@ impl Worker {
             prompt::batch(preface, items)
         });
         match answer {
-            Ok((text, terms)) => Outcome::Batch {
-                id,
-                answers: Ok(without_echoes(prompt::read_batch(&text), items)),
-                terms,
-            },
+            Ok((text, terms)) => {
+                let all = prompt::read_batch(&text);
+                let (answers, held) = judge_echoes(all.clone(), &all, items, reading, &self.echoed);
+                for item in items {
+                    self.echoed.remove(&item.key);
+                }
+                if self.echoed.len() + held.len() > ECHOES_KEPT {
+                    self.echoed.clear();
+                }
+                self.echoed.extend(held);
+                Outcome::Batch {
+                    id,
+                    answers: Ok(answers),
+                    terms,
+                }
+            }
             Err(failure) => Outcome::Batch {
                 id,
                 answers: Err(failure),
@@ -399,13 +424,74 @@ fn fresh_answers(so_far: &str, told: &mut HashMap<usize, Answer>) -> HashMap<usi
     fresh
 }
 
-/// `answers` but those that hand a message of `items` back as it was written.
-fn without_echoes(mut answers: HashMap<usize, Answer>, items: &[Item]) -> HashMap<usize, Answer> {
-    answers.retain(|n, answer| match answer {
-        Answer::Translated { text, .. } => !items.iter().any(|item| item.n == *n && item.text.trim() == text.trim()),
-        Answer::Same { .. } => true,
+/// `answers` (of `all`, the batch's answers so far), each that hands its message of `items` back as written judged:
+/// taken as already in the language (`reading`, its English name) when that is plainly so, or when it was handed back
+/// as written before (`echoed`, by key); else left out. Gives the answers kept and the keys of those left out.
+fn judge_echoes(
+    mut answers: HashMap<usize, Answer>,
+    all: &HashMap<usize, Answer>,
+    items: &[Item],
+    reading: &str,
+    echoed: &HashSet<String>,
+) -> (HashMap<usize, Answer>, Vec<String>) {
+    let echo_of = |n: usize, answer: &Answer| match answer {
+        Answer::Translated { text, .. } => items.iter().find(|item| item.n == n && item.text.trim() == text.trim()),
+        Answer::Same { .. } => None,
+    };
+    // the model was translating, not handing the batch back: an answer it left as written, it meant so
+    let translating = all
+        .iter()
+        .any(|(n, answer)| matches!(answer, Answer::Translated { .. }) && echo_of(*n, answer).is_none());
+    let mut held = Vec::new();
+    answers.retain(|n, answer| {
+        let Some(item) = echo_of(*n, answer) else {
+            return true;
+        };
+        let Answer::Translated { source, .. } = answer else {
+            return true;
+        };
+        let taken = translating
+            || words(&item.text) <= 1
+            || source.as_deref().is_some_and(|code| written_in(reading, code))
+            || echoed.contains(&item.key);
+        if taken {
+            *answer = Answer::Same { source: source.take() };
+        } else {
+            held.push(item.key.clone());
+        }
+        taken
     });
-    answers
+    (answers, held)
+}
+
+/// How many words with letters an encoded message has, its markers aside.
+fn words(text: &str) -> usize {
+    let mut plain = String::with_capacity(text.len());
+    let mut in_marker = false;
+    for c in text.chars() {
+        match c {
+            '<' => in_marker = true,
+            '>' if in_marker => {
+                in_marker = false;
+                plain.push(' ');
+            }
+            _ if !in_marker => plain.push(c),
+            _ => {}
+        }
+    }
+    plain
+        .split_whitespace()
+        .filter(|word| word.chars().any(char::is_alphabetic))
+        .count()
+}
+
+/// Whether the language a tool named (`code`) is the one the chat is read in (`reading`, its English name).
+fn written_in(reading: &str, code: &str) -> bool {
+    let primary = |code: &str| code.split('-').next().unwrap_or_default().to_ascii_lowercase();
+    TARGET_LANGUAGES
+        .iter()
+        .find(|(_, name)| *name == reading)
+        .is_some_and(|(known, _)| primary(known) == primary(code))
 }
 
 /// What an answer that isn't a translation fails with.
