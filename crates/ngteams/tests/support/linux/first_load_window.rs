@@ -549,6 +549,24 @@ fn holds_its_message(run: &AppRun, n: usize) -> SandboxResult {
     Ok(())
 }
 
+fn first_page_hints_are_shown(run: &AppRun) -> SandboxResult {
+    let Response::Chats { chats } = run.ask(Request::Chats {
+        unread_only: false,
+        limit: Some(1000),
+    })?
+    else {
+        return Err("no chat rows for the first page".into());
+    };
+    for n in 0..PAGE {
+        let id = synthetic_chat(n);
+        let row = chats.iter().find(|row| row.id == id).ok_or("first-page chat missing")?;
+        if row.preview.as_deref() != Some(synthetic_text(n).as_str()) || row.unread != 1 {
+            return Err(format!("first-page chat {n} lacks its list-page preview or unread mark: {row:?}").into());
+        }
+    }
+    Ok(())
+}
+
 /// Waits for an event of `kind` on `events`.
 fn wait_event(events: &mpsc::Receiver<EventLine>, kind: &str, within: Duration) -> SandboxResult<EventLine> {
     loop {
@@ -632,6 +650,7 @@ fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxR
         .map_err(|error| run.running.fail(&error))?;
     step("the first page listed while the second is held");
     ctl_lists(&run, &service.first_page)?;
+    first_page_hints_are_shown(&run)?;
     AppRun::shot(sandbox, "first-load-first-page.png")?;
     let early = synthetic_chat(EARLY);
     run.open(&early)?;
@@ -718,6 +737,7 @@ fn a_failed_page_and_a_restart_leave_the_whole_list(sandbox: &Sandbox, service: 
     the_list_never_jumped(&mut run.trace, &service.whole)?;
     ctl_lists(&run, &service.first_page)?;
     step("the failed page left the first page listed");
+    first_page_hints_are_shown(&run)?;
     AppRun::shot(sandbox, "first-load-failed-page.png")?;
     let quitting = thread::spawn(move || {
         // let a retry's held page go once the quit was asked, refused as the first was
@@ -737,6 +757,7 @@ fn a_failed_page_and_a_restart_leave_the_whole_list(sandbox: &Sandbox, service: 
     if !start.wait_entered(WAIT) {
         return Err(run.running.fail(&"the restart didn't read the list"));
     }
+    first_page_hints_are_shown(&run)?;
     if !start.release() {
         return Err("the restart's list read went before the test let it go".into());
     }

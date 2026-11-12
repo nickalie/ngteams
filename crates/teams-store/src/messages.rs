@@ -522,15 +522,21 @@ impl Store {
     /// deleted, that arrived after `me`'s read horizon (all of them without one) and the account's mark-all-read one
     /// ([`Store::app_read_horizon`]). None when the newest message that counts is `me`'s own, as Teams calls such a
     /// chat read whatever its horizon says (`docs/protocol/chat.md`, "Which chats are unread").
+    /// Before history arrives, a list-page preview can supply one unread message.
     ///
     /// # Errors
     ///
     /// [`StoreError::Sqlite`] when the read fails.
     pub fn unread_count(&self, conversation_id: &str, me: &str) -> Result<u64, StoreError> {
         let count: i64 = self.conn.query_row(
-            "WITH counted AS (
-                 SELECT id, sender, arrival_time, delete_time FROM messages
-                 WHERE conversation_id = ?1 AND (message_type = 'Text' OR message_type GLOB 'RichText*')
+            "WITH available AS (
+                 SELECT id, sender, arrival_time, delete_time, message_type FROM messages WHERE conversation_id = ?1
+                 UNION ALL
+                 SELECT id, sender, arrival_time, delete_time, message_type FROM pending_conversation_previews
+                 WHERE conversation_id = ?1 AND sender IS NOT NULL
+             ), counted AS (
+                 SELECT id, sender, arrival_time, delete_time FROM available
+                 WHERE (message_type = 'Text' OR message_type GLOB 'RichText*')
                    AND NOT (?1 GLOB '*meeting*' AND message_type IN
                        ('RichText/Media_CallRecording', 'RichText/Media_LocalRecording',
                         'RichText/Media_CallTranscript'))

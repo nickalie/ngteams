@@ -600,11 +600,16 @@ pub async fn build_row(core: &dyn Core, conversation: &Conversation) -> ChatRow 
 async fn build(core: &dyn Core, conversation: &Conversation) -> (ChatRow, Vec<String>) {
     let id = conversation.id.clone();
     let members = core.members(id.clone()).await.unwrap_or_default();
-    let page = core
+    let mut page = core
         .messages(id.clone(), None, PREVIEW_PAGE)
         .await
         .map(|page| page.messages)
         .unwrap_or_default();
+    if page.is_empty()
+        && let Ok(Some(preview)) = core.conversation_preview(id.clone()).await
+    {
+        page.push(preview);
+    }
     let unread = core.unread_count(id.clone()).await.unwrap_or(0);
     let Naming {
         name,

@@ -72,6 +72,25 @@ fn meeting() -> ConversationKind {
     ConversationKind::Other("thread_type:meeting".to_owned())
 }
 
+#[tokio::test]
+async fn a_list_page_preview_shows_until_stored_history_replaces_it() {
+    let core = FakeCore::default();
+    let conversation = chat(AB, ConversationKind::OneToOne, Some("Synthetic"), 1_000);
+    core.previews
+        .lock()
+        .unwrap()
+        .insert(AB.to_owned(), message(AB, "hint", LAB_B, "<b>List preview</b>", 1_000));
+    let row = teams_ui::chat_list::build_row(&core, &conversation).await;
+    assert_eq!(row.preview.as_ref(), "List preview");
+    assert!(core.messages.lock().unwrap().is_empty());
+    core.messages.lock().unwrap().insert(
+        AB.to_owned(),
+        vec![message(AB, "synced", LAB_A, "Synced message", 1_001)],
+    );
+    let row = teams_ui::chat_list::build_row(&core, &conversation).await;
+    assert_eq!(row.preview.as_ref(), "You: Synced message");
+}
+
 /// a's store: the a–b and a–c chats, a 1:1 with a bot, a group without a topic, a meeting's chat and a meeting nobody
 /// wrote in; a's notes and the a–c chat its favourites (in that order), the quiet meeting and the bot's chat empty.
 fn seed(core: &FakeCore) {

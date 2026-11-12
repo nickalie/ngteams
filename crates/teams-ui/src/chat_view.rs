@@ -3,7 +3,8 @@
 //! - **From the store only.** The view reads the store's newest page when it opens ([`Core::messages`], [`PAGE`]
 //!   messages), and again, down to the oldest message it holds, each time the models say its chat changed (a
 //!   delivery, a catch-up, an outbox row). A message's reactions come from the store too, read again only for a new
-//!   version of it.
+//!   version of it. Store refreshes run while an older service read waits; that read's superseded snapshot is ignored
+//!   so it cannot duplicate rows or restore stale history state.
 //! - **Older pages** load when fewer than a page of rows ([`PAGE`]) is above the view: the store's next page, and once
 //!   the store has none, the service's next older page ([`Core::load_older`]) read into the store first. The view
 //!   never holds more than the pages it was scrolled through. Nothing older from the service is the chat's beginning
@@ -958,6 +959,13 @@ enum Load {
     Older,
 }
 
+#[derive(Default)]
+struct Loading {
+    window: Option<Task<()>>,
+    older: Option<Task<()>>,
+    generation: u64,
+}
+
 /// The chat view (see the module docs).
 pub struct ChatView {
     core: Arc<dyn Core>,
@@ -1008,7 +1016,7 @@ pub struct ChatView {
     parses: u64,
     items: Vec<Item>,
     list: ListState,
-    loading: Option<Task<()>>,
+    loading: Loading,
     window_due: bool,
     older_due: bool,
     /// Loads that ended, and of those the older pages.
@@ -1208,7 +1216,7 @@ impl ChatView {
             parses: 0,
             items: Vec::new(),
             list: Self::following_list(cx),
-            loading: None,
+            loading: Loading::default(),
             window_due: true,
             older_due: false,
             loads: 0,
@@ -1528,7 +1536,7 @@ impl ChatView {
     /// Whether the chat shows no message at all once read (a conversation not started yet).
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.loading.is_none() && self.loads > 0 && self.messages.is_empty() && self.unsettled.is_empty()
+        !self.loading() && self.loads > 0 && self.messages.is_empty() && self.unsettled.is_empty()
     }
 
     /// The rows, the top first.
@@ -1649,7 +1657,7 @@ impl ChatView {
     /// Whether a load is running.
     #[must_use]
     pub fn loading(&self) -> bool {
-        self.loading.is_some()
+        self.loading.window.is_some() || self.loading.older.is_some()
     }
 
     /// How many times rich text was laid out (once per message id and version).
@@ -2340,15 +2348,16 @@ impl ChatView {
         }
     }
 
-    /// Starts the load that is due, unless one runs: the window first, then an older page.
+    /// Starts a due window read even while an older service read waits; older loads run one at a time.
     fn kick(&mut self, cx: &mut Context<Self>) {
-        if self.loading.is_some() {
+        if self.loading.window.is_some() {
             return;
         }
         let load = if self.window_due {
             self.window_due = false;
+            self.loading.generation += 1;
             Load::Window
-        } else if std::mem::take(&mut self.older_due) && self.history == History::More {
+        } else if self.loading.older.is_none() && std::mem::take(&mut self.older_due) && self.history == History::More {
             Load::Older
         } else {
             return;
@@ -2383,7 +2392,8 @@ impl ChatView {
             .map(|(id, (version, _))| (id.clone(), *version))
             .collect();
         let (place, writes_to) = (self.place.clone(), self.writes_to.clone());
-        self.loading = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
+        let generation = self.loading.generation;
+        let task = cx.spawn(async move |this, cx: &mut AsyncApp| {
             let read = match load {
                 Load::Window => {
                     let oldest = thread_oldest(&*core, &conversation, &place, oldest).await;
@@ -2395,13 +2405,26 @@ impl ChatView {
                 Ok(read) if place.in_channel() => Ok(in_channel(&*core, &conversation, &writes_to, read).await),
                 read => read,
             };
-            let _ = this.update(cx, |view, cx| view.loaded(load, read, cx));
-        }));
+            let _ = this.update(cx, |view, cx| view.loaded(load, generation, read, cx));
+        });
+        match load {
+            Load::Window => self.loading.window = Some(task),
+            Load::Older => self.loading.older = Some(task),
+        }
     }
 
     /// A load ended: what it read is held and shown.
-    fn loaded(&mut self, load: Load, read: Result<Read, EngineError>, cx: &mut Context<Self>) {
-        self.loading = None;
+    fn loaded(&mut self, load: Load, generation: u64, read: Result<Read, EngineError>, cx: &mut Context<Self>) {
+        match load {
+            Load::Window => self.loading.window = None,
+            Load::Older => self.loading.older = None,
+        }
+        if load == Load::Older && generation != self.loading.generation {
+            self.older_due = true;
+            self.kick(cx);
+            cx.notify();
+            return;
+        }
         self.loads += 1;
         match (load, read) {
             (_, Ok(read)) => self.take(load, read),
@@ -4295,6 +4318,11 @@ async fn window(
     };
     let (messages, next) = read_window(core, conversation, oldest).await?;
     let reactions = new_reactions(core, conversation, &messages, held).await;
+    let history = if next.is_none() && core.history_complete(conversation.to_owned()).await? == Some(true) {
+        Some(History::Complete)
+    } else {
+        None
+    };
     Ok(Read {
         loaded: Some(Loaded {
             messages,
@@ -4302,7 +4330,7 @@ async fn window(
             next,
         }),
         horizon,
-        history: None,
+        history,
         outbox: Some(outbox),
         roots: None,
     })

@@ -881,6 +881,7 @@ enum Query {
     Conversations(usize, Responder<Vec<Conversation>>),
     /// One stored conversation.
     Conversation(String, Responder<Option<Conversation>>),
+    ConversationPreview(String, Responder<Option<Message>>),
     Messages {
         conversation: String,
         before: Option<PageCursor>,
@@ -1122,6 +1123,11 @@ impl EngineRequests {
     /// a catch-up runs.
     pub fn conversation(&self, id: String) -> Reply<Option<Conversation>> {
         self.query(|reply| Query::Conversation(id, reply))
+    }
+
+    /// A list-page last-message hint before the chat's history has arrived; never part of message history.
+    pub fn conversation_preview(&self, conversation: String) -> Reply<Option<Message>> {
+        self.query(|reply| Query::ConversationPreview(conversation, reply))
     }
 
     /// Up to `limit` stored messages of a conversation older than `before` (from the newest when none), the newest

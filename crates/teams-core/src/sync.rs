@@ -612,6 +612,16 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             {
                 self.store_listing(store, listed, None, Some(0))?;
             }
+            if store.conversation(&listed.id)?.is_some()
+                && store.sync_state(&listed.id)?.is_none()
+                && let Some(message) = listed
+                    .last_message()
+                    .as_ref()
+                    .and_then(|message| message_row(&listed.id, message))
+                && store.upsert_conversation_preview(&message)?
+            {
+                self.changed(|changes| changes.conversation(&listed.id));
+            }
         }
         self.publish_progress(store);
         Ok(())
@@ -902,6 +912,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             updated: (self.clock)(),
         };
         store.set_sync_state(&state)?;
+        self.changed(|changes| changes.conversation(conversation));
         Ok(synced)
     }
 

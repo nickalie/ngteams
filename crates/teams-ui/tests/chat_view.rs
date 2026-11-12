@@ -950,12 +950,44 @@ fn a_chat_never_synced_isn_t_its_beginning_and_loads_older_once_it_is_synced() {
 }
 
 #[test]
-fn a_catch_up_between_the_older_load_and_the_history_read_leaves_the_stored_pages_reachable() {
+fn catch_up_refreshes_an_open_chat_while_its_older_read_waits() {
+    for answer in [
+        Ok(Some(teams_core::sync::Synced::default())),
+        Err(teams_core::EngineError::Stopped),
+    ] {
+        let rig = rig_with(Vec::new());
+        *rig.core.hold_older.lock().unwrap() = true;
+        rig.core.unsynced.lock().unwrap().insert(AB.to_owned());
+        let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+        assert_eq!(rig.core.held_older.lock().unwrap().len(), 1);
+        assert!(ids(&view, cx).is_empty());
+
+        let messages = many(3);
+        rig.core.messages.lock().unwrap().insert(AB.to_owned(), messages);
+        rig.core.unsynced.lock().unwrap().clear();
+        rig.send(Event::ConversationChanged {
+            conversation: AB.to_owned(),
+        });
+        draw(cx);
+        assert_eq!(ids(&view, cx), ["1", "2", "3"]);
+        assert_eq!(cx.update(|_, cx| view.read(cx).history()), History::Complete);
+        assert_eq!(rig.core.held_older.lock().unwrap().len(), 1);
+
+        rig.core.held_older.lock().unwrap().pop().unwrap().send(answer);
+        *rig.core.hold_older.lock().unwrap() = false;
+        draw(cx);
+        assert_eq!(ids(&view, cx), ["1", "2", "3"]);
+        assert_eq!(cx.update(|_, cx| view.read(cx).history()), History::Complete);
+        assert!(!cx.update(|_, cx| view.read(cx).loading()));
+    }
+}
+
+#[test]
+fn a_catch_up_between_the_window_read_and_the_history_read_leaves_the_stored_pages_reachable() {
     let all = many(PAGE * 2 + 20);
     let rig = rig_with(Vec::new());
     rig.core.unsynced.lock().unwrap().insert(AB.to_owned());
-    // the view holds nothing, so its top asks for older: the service has nothing yet, and before the history is read
-    // a catch-up stores the whole chat and marks its history complete
+    // the window read finds nothing; before the history read, catch-up stores the whole chat and completes history
     rig.core
         .catch_up_before_history_complete
         .lock()

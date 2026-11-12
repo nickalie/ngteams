@@ -85,6 +85,11 @@ pub trait Core: Send + Sync + 'static {
     fn conversations(&self, limit: usize) -> Reply<Vec<Conversation>>;
     /// Up to `limit` stored messages of a conversation older than `before`, the newest first.
     fn messages(&self, conversation: String, before: Option<PageCursor>, limit: usize) -> Reply<MessagePage>;
+    /// A list-page hint for the row before the chat's history arrives.
+    fn conversation_preview(&self, conversation: String) -> Reply<Option<Message>> {
+        let _ = conversation;
+        Reply::ready(Ok(None))
+    }
     /// One stored message.
     fn message(&self, conversation: String, id: String) -> Reply<Option<Message>>;
     /// A stored message's reactions.
@@ -773,6 +778,10 @@ impl Core for EngineRequests {
 
     fn messages(&self, conversation: String, before: Option<PageCursor>, limit: usize) -> Reply<MessagePage> {
         EngineRequests::messages(self, conversation, before, limit)
+    }
+
+    fn conversation_preview(&self, conversation: String) -> Reply<Option<Message>> {
+        EngineRequests::conversation_preview(self, conversation)
     }
 
     fn message(&self, conversation: String, id: String) -> Reply<Option<Message>> {

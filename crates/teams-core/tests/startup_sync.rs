@@ -17,6 +17,7 @@ use tokio::sync::{Semaphore, watch};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const ME: &str = "8:orgid:00000000-0000-4000-8000-00000000000a";
+const PEER: &str = "8:orgid:00000000-0000-4000-8000-00000000000b";
 const FIRST: &str = "19:synthetic-0@thread.v2";
 const BASE: &str = teams_mock::CHAT_BASE;
 const WAIT: Duration = Duration::from_secs(5);
@@ -60,7 +61,13 @@ async fn large_tenant() -> MockServer {
             .map(|n| {
                 json!({
                     "id": format!("19:synthetic-{n}@thread.v2"), "version": 7,
-                    "threadProperties": {"threadType": "chat", "topic": format!("Synthetic chat {n}")}
+                    "threadProperties": {"threadType": "chat", "topic": format!("Synthetic chat {n}")},
+                    "lastMessage": {
+                        "id": "1760000010000", "version": "1760000010000",
+                        "messagetype": "RichText/Html", "content": "<p>Synthetic list preview</p>",
+                        "from": format!("{BASE}/v1/users/ME/contacts/{PEER}"),
+                        "originalarrivaltime": "2025-10-09T08:43:20.0000000Z"
+                    }
                 })
             })
             .collect();
@@ -132,6 +139,20 @@ async fn conversation_published(handle: &mut engine::EngineHandle, conversation:
     .expect("the conversation was not published");
 }
 
+async fn first_page_preview_is_not_history(handle: &engine::EngineHandle) {
+    assert_eq!(
+        handle
+            .conversation_preview(FIRST.to_owned())
+            .await
+            .unwrap()
+            .unwrap()
+            .content,
+        "<p>Synthetic list preview</p>"
+    );
+    assert_eq!(handle.unread_count(FIRST).await.unwrap(), 1);
+    assert!(handle.messages(FIRST, None, 10).await.unwrap().messages.is_empty());
+}
+
 #[tokio::test]
 async fn first_list_page_and_messages_are_published_before_the_rest_of_a_large_tenant_finishes() {
     let server = large_tenant().await;
@@ -158,6 +179,7 @@ async fn first_list_page_and_messages_are_published_before_the_rest_of_a_large_t
         Some("Synthetic chat 0")
     );
     conversation_published(&mut handle, FIRST).await;
+    first_page_preview_is_not_history(&handle).await;
 
     credentials.permits.add_permits(1);
     credentials.waiting_at(4).await;
@@ -165,6 +187,8 @@ async fn first_list_page_and_messages_are_published_before_the_rest_of_a_large_t
     credentials.permits.add_permits(2);
     credentials.waiting_at(6).await;
     let messages = handle.messages(FIRST, None, 10).await.unwrap().messages;
+    assert!(handle.conversation_preview(FIRST.to_owned()).await.unwrap().is_none());
+    assert_eq!(handle.unread_count(FIRST).await.unwrap(), 0);
     assert_eq!(
         messages.len(),
         1,
@@ -232,6 +256,12 @@ async fn a_failed_list_page_leaves_staged_chats_to_be_synced_on_the_next_run() {
     assert_eq!(store.conversation_list_sync_link().unwrap(), None);
     assert_eq!(store.conversation(FIRST).unwrap().unwrap().version, 0);
     assert!(store.sync_state(FIRST).unwrap().is_none());
+    assert_eq!(
+        store.conversation_preview(FIRST).unwrap().unwrap().content,
+        "<p>Synthetic list preview</p>"
+    );
+    assert_eq!(store.unread_count(FIRST, ME).unwrap(), 1);
+    assert!(store.messages_before(FIRST, None, 10).unwrap().messages.is_empty());
     drop(store);
 
     Mock::given(wiremock::matchers::method("GET"))

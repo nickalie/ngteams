@@ -272,6 +272,7 @@ impl Inbox {
         match query {
             Query::Conversations(limit, reply) => give(reply, store.conversations_by_activity(limit)),
             Query::Conversation(id, reply) => give(reply, store.conversation(&id)),
+            Query::ConversationPreview(id, reply) => give(reply, store.conversation_preview(&id)),
             Query::Messages {
                 conversation,
                 before,

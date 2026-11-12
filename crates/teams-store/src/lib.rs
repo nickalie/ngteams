@@ -36,6 +36,7 @@ mod file;
 pub mod messages;
 pub mod outbox;
 pub mod pictures;
+mod previews;
 pub mod profiles;
 mod runs;
 pub mod schema;

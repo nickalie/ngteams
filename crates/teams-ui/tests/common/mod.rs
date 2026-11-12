@@ -115,6 +115,9 @@ pub struct FakeCore {
     /// Per conversation, the service's older pages `load_older` brings into `messages`, the next one first (each the
     /// newest first); once none is left it answers `None`. A conversation not named answers `None` at once.
     pub older: Mutex<HashMap<String, Vec<Vec<Message>>>>,
+    pub hold_older: Mutex<bool>,
+    pub held_older: Mutex<Vec<Answer<Option<Synced>>>>,
+    pub previews: Mutex<HashMap<String, Message>>,
     /// Conversations never synced: `history_complete` answers `None` for them; for any other, whether `older` has
     /// no page left.
     pub unsynced: Mutex<HashSet<String>>,
@@ -767,6 +770,11 @@ impl Core for FakeCore {
     }
 
     fn load_older(&self, conversation: String) -> Reply<Option<Synced>> {
+        if *locked(&self.hold_older) {
+            let (answer, reply) = Reply::later();
+            locked(&self.held_older).push(answer);
+            return reply;
+        }
         self.answer("load_older", || {
             let mut older = locked(&self.older);
             let page = older
@@ -780,6 +788,12 @@ impl Core for FakeCore {
             };
             locked(&self.messages).entry(conversation).or_default().extend(page);
             Some(synced)
+        })
+    }
+
+    fn conversation_preview(&self, conversation: String) -> Reply<Option<Message>> {
+        self.answer("conversation_preview", || {
+            locked(&self.previews).get(&conversation).cloned()
         })
     }
 
