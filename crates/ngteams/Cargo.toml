@@ -73,6 +73,8 @@ teams-call = { workspace = true, features = ["test-support"] }
 # the calls on the mock relay through its loopback TURN server (`Relay::Fixed`)
 teams-core = { workspace = true, features = ["test-support"] }
 base64.workspace = true
+# `ngteamsctl`'s own command line, run in-process against the app's socket (`tests/activity_window.rs`)
+clap.workspace = true
 # a stored meeting's start written as the calendar service writes it (`tests/ctl_events.rs`)
 chrono.workspace = true
 gpui-pre = { workspace = true, features = ["test-support"] }
@@ -115,6 +117,10 @@ harness = false
 
 [[test]]
 name = "first_load_window"
+harness = false
+
+[[test]]
+name = "activity_window"
 harness = false
 
 [build-dependencies]
