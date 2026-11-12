@@ -90,6 +90,13 @@ Live runs reach the real tenant, so these stay firm. Commands are in the develop
 - A new or changed endpoint updates its row in `docs/protocol/endpoints.md`.
 - Check a new dependency that logs at `debug` or below against the compile-time log cap (`crates/teams-log`).
 
+## Code comments
+
+- No comments by default: the code explains itself through its names and structure.
+- A comment says why, not what, in one short line, and only where the code can't say it.
+- License headers, lint and tool directives, and the doc comments a public API or docs build needs are exempt, as
+  are the module docs that carry a design invariant's why.
+
 ## Design invariants
 
 Undoing one needs a new reason, not a cleanup; the why is in each path's module docs.
