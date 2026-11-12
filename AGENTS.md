@@ -13,9 +13,9 @@ These protect real people, the user's account and the user's data. They hold for
   Before every live run, list the chats, calls and people it reaches and confirm that all are in that set
   ([docs/lab-rules.md](docs/lab-rules.md)). Check the people on each target and anyone the run adds; if that cannot be
   established, do not run it. Apps and bots aren't people. This is the agent's check, not an application policy.
-- **Agents build `ngteams` only through `scripts/run-lab.sh` (Windows: `scripts/run-lab.ps1`)**, including their
-  build-only modes. Drive lab accounts freely in that runner's UI sandbox, within the lab-contact rule. The personal installer is used only on an explicit
-  user request, as below.
+- **Agents build `ngteams` only through `scripts/run-lab.sh` (Windows: `scripts/run-lab.ps1`; macOS:
+  `scripts/run-lab-macos.py`)**, including their build-only modes. Drive lab accounts freely in that runner's UI
+  sandbox, within the lab-contact rule. The personal installer is used only on an explicit user request, as below.
 - **No live write ever comes from a `cargo test` process**: live tests spawn the normally built lab client.
 - **Captures, tokens and debug logs never enter the repo**, not even sanitized. Committed fixtures are synthetic and
   marked ([development guide](docs/development.md#captures-and-fixtures)). Credentials never reach logs or stdout; print only aud, exp,
@@ -33,6 +33,9 @@ These protect real people, the user's account and the user's data. They hold for
     tokens.
 - **Every lab or test GUI runs in `crates/ui-sandbox`**, never on the user's display, bus or PipeWire. On Windows,
   the explicitly authorized `win11` VM's interactive console is the sandbox, through the PowerShell runners.
+  On macOS, the Mac's logged-in console is the sandbox, only through `scripts/run-lab-macos.py`: lab-marked builds;
+  lab accounts within the lab-contact rule (or a synthetic alias); never the user's own account or its Keychain
+  items; short runs, every window and process closed after.
 - **Protocol notes are written in our own words** in `docs/protocol/`; Microsoft JS never enters the repo.
 
 ## The client builds
