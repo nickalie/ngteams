@@ -1455,6 +1455,9 @@ fn every_sound_can_be_turned_off_changed_and_made_quieter() {
     click(cx, "sound-pack");
     click(cx, "sound-pack-retro");
     assert_eq!(sounds(cx).pack, SoundSource::Builtin("retro"));
+    click(cx, "sound-pack");
+    click(cx, "sound-pack-big-beat");
+    assert_eq!(sounds(cx).pack, SoundSource::Builtin("big-beat"));
     click(cx, "sounds-while-busy");
     assert!(!sounds(cx).while_busy);
     assert!(

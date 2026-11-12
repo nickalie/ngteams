@@ -6,3 +6,5 @@ captures/
 .env*
 .claude/settings.local.json
 .dispatch/
+.agents/skills/sound-pack/
+.claude/skills/sound-pack

@@ -162,14 +162,31 @@ fn frame_at(clip: &[f32], at: usize, gain: f32) -> AudioFrame {
     let mut frame = AudioFrame::silence();
     let part = clip.get(at..).unwrap_or(&[]);
     for (out, sample) in frame.samples_mut().iter_mut().zip(part) {
-        // a file changed behind the app's back may hold anything
-        *out = if sample.is_finite() {
-            (sample * gain).clamp(-1.0, 1.0)
-        } else {
-            0.0
-        };
+        *out = level(*sample, gain);
     }
     frame
+}
+
+/// The frame at `at` of a `cycle` of samples: `clip`, then silence to the cycle's end, over and over. A frame that runs
+/// past the cycle's end goes on from its start, so a loop of any length repeats with no gap: a recording's length is
+/// seldom a whole number of frames.
+fn cycle_frame(clip: &[f32], at: usize, cycle: usize, gain: f32) -> AudioFrame {
+    let mut frame = AudioFrame::silence();
+    for (index, out) in frame.samples_mut().iter_mut().enumerate() {
+        let sample = clip.get((at + index) % cycle.max(1)).copied().unwrap_or(0.0);
+        *out = level(sample, gain);
+    }
+    frame
+}
+
+/// `sample` at `gain`, within `[-1, 1]`.
+fn level(sample: f32, gain: f32) -> f32 {
+    // a file changed behind the app's back may hold anything
+    if sample.is_finite() {
+        (sample * gain).clamp(-1.0, 1.0)
+    } else {
+        0.0
+    }
 }
 
 /// Sleeps until `played` frames since `start`, less [`LEAD`].
@@ -202,7 +219,7 @@ fn run_loop(shared: &Shared, event: SoundEvent, stop: &AtomicBool) {
             playing = next;
         }
         let frame = if playing.on {
-            frame_at(&playing.clip, at, playing.gain)
+            cycle_frame(&playing.clip, at, cycle, playing.gain)
         } else {
             AudioFrame::silence()
         };
@@ -479,6 +496,39 @@ mod tests {
             frames[17],
             frame_at(&clip, 0, 0.5),
             "resuming the same clip at its position"
+        );
+    }
+
+    #[test]
+    fn a_loop_that_isnt_whole_frames_wraps_without_a_gap() {
+        let clip: Vec<f32> = (0..1_000_u16)
+            .map(|index| f32::from(index % 200 + 1) / 1_000.0)
+            .collect();
+        let played: Vec<f32> = (0..6)
+            .flat_map(|frame| {
+                cycle_frame(&clip, frame * FRAME_SAMPLES % clip.len(), clip.len(), 1.0)
+                    .samples()
+                    .to_vec()
+            })
+            .collect();
+        let expected: Vec<f32> = clip.iter().cycle().take(played.len()).copied().collect();
+        assert_eq!(played, expected);
+    }
+
+    #[test]
+    fn a_cycle_longer_than_its_clip_is_silent_after_it() {
+        let clip = vec![0.25; 300];
+        let frame = cycle_frame(&clip, 0, 400, 2.0);
+        assert!(
+            frame.samples()[..300]
+                .iter()
+                .all(|sample| (sample - 0.5).abs() < f32::EPSILON)
+        );
+        assert!(frame.samples()[300..400].iter().all(|sample| *sample == 0.0));
+        assert!(
+            frame.samples()[400..]
+                .iter()
+                .all(|sample| (sample - 0.5).abs() < f32::EPSILON)
         );
     }
 

@@ -1,15 +1,16 @@
-//! The app's own sound packs: every sound made here, by code, from notes on a timbre, so the repository holds no audio
-//! file and nothing of anyone else's. (Teams' sounds are never copied.)
+//! The app's own sound packs: all but one made here, by code, from notes on a timbre, and that one recorded for the app
+//! ([`super::recorded`]). Nothing of anyone else's: Teams' sounds are never copied.
 //!
-//! A sound is a motif ([`motif`]: when each note starts, how long it lasts, and how far above the pack's root it is); a
-//! pack ([`PACKS`]) plays the motifs on its own timbre, root and tempo, its ringtone one of [`RINGS`]. Every pack has
-//! every event, so the default pack can always answer. The default pack's ringtone is the one the app always had.
+//! A played sound is a motif ([`motif`]: when each note starts, how long it lasts, and how far above the pack's root it
+//! is); a played pack ([`PACKS`], [`Voice::Played`]) plays the motifs on its own timbre, root and tempo, its ringtone
+//! one of [`RINGS`]. A recorded pack ([`Voice::Recorded`]) plays its recordings instead. Every pack has every event, so
+//! the default pack, a played one, can always answer. The default pack's ringtone is the one the app always had.
 
 use std::f32::consts::TAU;
 
 use teams_media::devices::SAMPLE_RATE;
 
-use super::SoundEvent;
+use super::{SoundEvent, recorded};
 use crate::ringtone::{RING_FRAMES, RingtoneFrames};
 
 /// The default pack's key.
@@ -31,6 +32,20 @@ enum Timbre {
 pub struct Pack {
     pub key: &'static str,
     pub name: &'static str,
+    voice: Voice,
+}
+
+/// How a pack's sounds are made.
+#[derive(Clone, Copy, Debug)]
+enum Voice {
+    Played(Instrument),
+    /// From its recordings ([`recorded`]).
+    Recorded,
+}
+
+/// What a played pack plays its motifs on.
+#[derive(Clone, Copy, Debug)]
+struct Instrument {
     timbre: Timbre,
     /// Its root note, in Hz.
     root: f32,
@@ -44,22 +59,26 @@ const fn pack(key: &'static str, name: &'static str, timbre: Timbre, root: f32, 
     Pack {
         key,
         name,
-        timbre,
-        root,
-        tempo,
-        ring: Some(ring),
+        voice: Voice::Played(Instrument {
+            timbre,
+            root,
+            tempo,
+            ring: Some(ring),
+        }),
     }
 }
 
 /// The app's packs.
-pub const PACKS: [Pack; 8] = [
+pub const PACKS: [Pack; 9] = [
     Pack {
         key: DEFAULT_PACK,
         name: "Default",
-        timbre: Timbre::Sine,
-        root: 523.25,
-        tempo: 100,
-        ring: None,
+        voice: Voice::Played(Instrument {
+            timbre: Timbre::Sine,
+            root: 523.25,
+            tempo: 100,
+            ring: None,
+        }),
     },
     pack("chimes", "Chimes", Timbre::Bell, 659.25, 180, 0),
     pack("retro", "Retro", Timbre::Square, 392.0, 70, 1),
@@ -68,6 +87,11 @@ pub const PACKS: [Pack; 8] = [
     pack("organ", "Organ", Timbre::Reed, 349.23, 160, 4),
     pack("soft", "Soft", Timbre::Soft, 293.66, 150, 5),
     pack("arcade", "Arcade", Timbre::Square, 783.99, 55, 6),
+    Pack {
+        key: recorded::KEY,
+        name: "Big Beat Riot",
+        voice: Voice::Recorded,
+    },
 ];
 
 /// One note: when it starts and how long it lasts, in milliseconds, and how many semitones above the root it is.
@@ -220,12 +244,25 @@ fn mix(out: &mut [f32], timbre: Timbre, note: Note, hz: f32) {
     }
 }
 
-/// `event`'s sound in the app's pack `key` (the default pack's for a key that isn't one), at the device's rate: a
-/// looping event's is one whole cycle, its pause included.
+/// `event`'s sound in the app's pack `key` (the default pack's for a key that isn't one), at the device's rate: a played
+/// pack's looping event is one whole cycle, its pause included; a recorded pack's is its loop as recorded.
 #[must_use]
 pub fn render(key: &str, event: SoundEvent) -> Vec<f32> {
-    let pack = find(key).unwrap_or(&PACKS[0]);
-    let notes = match (event, pack.ring) {
+    match find(key).unwrap_or(&PACKS[0]).voice {
+        Voice::Played(instrument) => play(instrument, event),
+        Voice::Recorded => recorded::render(event).unwrap_or_else(|| render(DEFAULT_PACK, event)),
+    }
+}
+
+/// `event`'s sound on `instrument` (see [`render`]).
+fn play(instrument: Instrument, event: SoundEvent) -> Vec<f32> {
+    let Instrument {
+        timbre,
+        root,
+        tempo,
+        ring,
+    } = instrument;
+    let notes = match (event, ring) {
         (SoundEvent::IncomingCall, None) => {
             return RingtoneFrames::default()
                 .take(RING_FRAMES)
@@ -235,7 +272,7 @@ pub fn render(key: &str, event: SoundEvent) -> Vec<f32> {
         (SoundEvent::IncomingCall, Some(ring)) => RINGS[ring],
         _ => motif(event),
     };
-    let scale = |ms: u32| ms * pack.tempo / 100;
+    let scale = |ms: u32| ms * tempo / 100;
     let end = notes.iter().map(|note| scale(note.at + note.ms)).max().unwrap_or(0);
     let length = if event.loops() { end.max(CYCLE_MS) } else { end };
     let mut out = vec![0.0; (length * (SAMPLE_RATE / 1_000)) as usize];
@@ -245,8 +282,8 @@ pub fn render(key: &str, event: SoundEvent) -> Vec<f32> {
             ms: scale(note.ms),
             semitones: note.semitones,
         };
-        let hz = pack.root * 2.0_f32.powf(f32_of(note.semitones) / 12.0);
-        mix(&mut out, pack.timbre, stretched, hz);
+        let hz = root * 2.0_f32.powf(f32_of(note.semitones) / 12.0);
+        mix(&mut out, timbre, stretched, hz);
     }
     out
 }
