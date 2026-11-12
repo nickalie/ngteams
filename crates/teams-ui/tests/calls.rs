@@ -21,6 +21,9 @@ mod faces;
 /// The Call health pane, from More → Settings.
 #[path = "calls/health.rs"]
 mod health;
+/// Calls of ten people and more: the stage keeps clear of the call's controls.
+#[path = "calls/large_call.rs"]
+mod large_call;
 #[path = "common/notices.rs"]
 mod notices;
 /// What a call sounds like as it goes along.
@@ -3324,7 +3327,7 @@ fn left_of(window: &mut VisualTestContext, selector: &'static str) -> gpui::Pixe
 
 /// Opens View's More options (a submenu, reached by the keyboard as a user's arrows reach it).
 fn open_view_more_options(window: &mut VisualTestContext) {
-    for downs in 1..=5 {
+    for downs in 1..=7 {
         click(window, "call-view");
         let keys = format!("{} right", vec!["down"; downs].join(" "));
         window.simulate_keystrokes(&keys);

@@ -144,6 +144,12 @@ name = "call_faces_window"
 harness = false
 
 [[test]]
+# calls of 10 to 50 people (the gallery, the speaker view, a share) on a small, a laptop's and a full HD screen over the
+# fake engine in the UI sandbox, screenshotted under `target/ui-shots/call-large-*.png`
+name = "call_large_window"
+harness = false
+
+[[test]]
 # a meeting chat's tabs (its Recap, with two recordings, their transcripts searched, a meeting transcribed only, and its
 # Shared tab) over the fake engine in the UI sandbox, screenshotted under `target/ui-shots/recap-*.png`
 name = "recap_window"

@@ -63,12 +63,24 @@ pub struct Sandbox {
 }
 
 pub fn sandbox_or_skip(name: &str) -> SandboxResult<Option<Sandbox>> {
+    sized_sandbox_or_skip(name, None)
+}
+
+/// A sandbox whose window fills a screen of `screen` (width, height) px; the console's own size on Windows.
+pub fn sized_sandbox_or_skip(name: &str, screen: Option<(u32, u32)>) -> SandboxResult<Option<Sandbox>> {
+    #[cfg(windows)]
+    let _ = screen;
     #[cfg(target_os = "linux")]
     {
-        let options = ui_sandbox::SandboxOptions {
+        let mut options = ui_sandbox::SandboxOptions {
             niri_extra: ui_sandbox::NIRI_FULL_WINDOW,
             ..Default::default()
         };
+        if let Some((width, height)) = screen {
+            options.width = width;
+            options.height = height;
+            options.fill_output = true;
+        }
         Ok(ui_sandbox::sandbox_or_skip(name, &options)?.map(|inner| Sandbox { inner }))
     }
     #[cfg(windows)]

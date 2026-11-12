@@ -493,11 +493,15 @@ it saves synthetic day/work-week shots at 1024px and 1280px in both themes under
 
 Calls open a separate window; closing it leaves the call. Its toolbar follows Teams': Transfer and Hold (1:1 calls;
 Resume while held), Chat (the call's chat beside the stage), People, Raise and React (group calls and meetings), View (Gallery or
-Speaker, Focus on content while a share shows, Show videos first; More options: Turn off other videos, Hide me, Full
-screen), More, camera, microphone, Share (any call with video: "Share content", the screen or window picked at the
+Speaker, Focus on content while a share shows, Show videos first, Max gallery size; More options: Turn off other
+videos, Hide me, Full screen), More, camera, microphone, Share (any call with video: "Share content", the screen or window picked at the
 desktop's screen-cast portal; Stop sharing while shared) and Leave (End meeting, after a confirmation, for a meeting's
 organizer). A 1:1 call the far end holds shows its avatar over "On hold"; the far end's shared screen (in a group call,
-anyone's) takes the stage, the people beside it. People's "Invite someone" adds someone to a chat's call (a 1:1 call becomes a group call in a new
+anyone's) takes the stage, the people beside it. The gallery shows equal 16:9 tiles, the account's own among them in a
+group call, as many to a page as Max gallery size (4, 9, 16 or 49) and the window allow, the rest on pages turned
+with `<` `>`; the strips beside a share and under the speaker page the same way, and nothing on the stage covers the
+toolbar. `GPUI_SMOKE_REQUIRE=1 cargo test -p teams-ui --test call_large_window` saves calls of 10 to 50 people on
+three screen sizes under `target/ui-shots/call-large-*.png`. People's "Invite someone" adds someone to a chat's call (a 1:1 call becomes a group call in a new
 chat of the three); who doesn't answer shows "No response" with Call again. Transfer (1:1 calls) holds the call and
 transfers it to someone picked; a call the far end transfers calls the target at once. More's Record and transcribe starts a recording with its transcript after asking the spoken language (video
 and audio, or the audio alone), or a transcription on its own; Stop recording and Stop transcription, after asking,

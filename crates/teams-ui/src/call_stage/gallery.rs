@@ -1,8 +1,14 @@
-//! The stage of a call that is up, as Teams lays it out: the gallery (a grid of near-square tiles), the speaker view
-//! (the one who speaks, or the one pinned, large over a strip of the others), the self view floating at its bottom
-//! right unless View hid it, and each tile's own menu (Pin for me, Unpin). While the far end shares its screen, the
-//! share fills the stage with the people's tiles (the account's own among them) in a strip on its right, as Teams
-//! shows a share; View's Focus on content shows the share alone.
+//! The stage of a call that is up, as Teams lays it out: the gallery (equal 16:9 tiles, as many to a page as View's
+//! Max gallery size and the stage allow, the account's own tile among them in a group call, the rest on pages turned
+//! with `<` `>` under it: [`pages`]), the speaker view (the one who speaks, or the one pinned, large over a strip of
+//! the others that pages the same way), the self view floating at its bottom right in a 1:1 call and the speaker view
+//! unless View hid it, and each tile's own menu (Pin for me, Unpin). While the far end shares its screen, the share
+//! fills the stage with the people's tiles (the account's own among them) in a strip on its right, paged when they
+//! don't fit, as Teams shows a share; View's Focus on content shows the share alone. Nothing leaves the stage: the
+//! call's controls above it stay in sight and take every click, however many are in the call.
+use gpui_component::Disableable as _;
+
+use super::pages::{self, PAGER_HEIGHT, PAGER_WIDTH, Page, TILE_GAP};
 use super::*;
 
 /// How the stage lays its tiles out: View's Gallery or Speaker, or (while a share shows) Focus on content.
@@ -56,35 +62,19 @@ impl CallStage {
         let lobby = crate::call_lobby::card(active, |mri| faces.picture(mri).cloned(), palette, cx);
         // the far end's share fills the stage, the people beside it (the account's own tile among them)
         let shared = active.remote_share && active.held.is_none() && active.status != CallStatus::Lobby;
+        let area = self.paging.area_or(self.stage_estimate());
+        let in_gallery = !tiles.is_empty() && self.self_in_gallery(active);
         let body = if shared {
-            self.share_stage(active, tiles, title, palette, cx)
+            self.share_stage(active, tiles, (title, area), palette, cx)
         } else if tiles.is_empty() {
             self.nobody_shown(active, title, palette, cx)
         } else {
-            let selector = if active.view.participants.is_empty() {
-                "call-people"
-            } else {
-                "call-grid"
-            };
-            let focus = self.focus_of(&tiles);
-            let menus = tiles.len() > 1;
-            let mut drawn: Vec<AnyElement> = tiles
-                .into_iter()
-                .map(|tile| {
-                    let face = self.face_of(&tile, call, palette, cx);
-                    let pinned = tile.mri.is_some() && tile.mri == self.pinned;
-                    tile_view(tile, face, (pinned, menus), palette, cx)
-                })
-                .collect();
-            match focus {
-                Some(index) if drawn.len() > 1 => {
-                    let main = drawn.remove(index);
-                    speaker(selector, main, drawn, !self.self_hidden)
-                }
-                _ => grid(selector, drawn),
+            match self.focus_of(&tiles) {
+                Some(index) if tiles.len() > 1 => self.speaker_stage(active, (tiles, index), area, palette, cx),
+                _ => self.gallery_stage(active, tiles, (area, in_gallery), palette, cx),
             }
         };
-        let own = if self.self_hidden || shared {
+        let own = if self.self_hidden || shared || in_gallery {
             None
         } else {
             let face = self.own_face(call, palette, cx);
@@ -97,8 +87,10 @@ impl CallStage {
             .min_w_0()
             .h_full()
             .p_3()
+            // whatever the stage holds stays on it, clear of the controls above
+            .overflow_hidden()
             .bg(rgb(palette.background))
-            .child(body)
+            .child(div().relative().size_full().child(self.paging.measure(cx)).child(body))
             .children(own)
             .children(self.reactions_shown(active, palette, cx))
             .children(lobby)
@@ -154,7 +146,7 @@ impl CallStage {
         &mut self,
         active: &ActiveCall,
         tiles: Vec<StageTile>,
-        title: &SharedString,
+        (title, area): (&SharedString, (f32, f32)),
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -180,14 +172,11 @@ impl CallStage {
                 .child(content)
                 .into_any_element();
         }
-        let mut strip: Vec<AnyElement> = tiles
-            .into_iter()
-            .map(|tile| {
-                let face = self.face_of(&tile, call, palette, cx);
-                tile_view(tile, face, (false, false), palette, cx)
-            })
-            .collect();
-        if !self.self_hidden {
+        // the account's own tile ends every page of the strip
+        let own = usize::from(!self.self_hidden);
+        let (page, tile_height) = self.strip_page(tiles.len(), own, (area.1, SHARE_STRIP.1), PAGER_HEIGHT);
+        let mut strip: Vec<AnyElement> = self.page_tiles(tiles, page, (call, false), palette, cx);
+        if own == 1 {
             let face = self.own_face(call, palette, cx);
             strip.push(self_view(active, face, false, palette, cx));
         }
@@ -203,6 +192,7 @@ impl CallStage {
                     .w(px(SHARE_STRIP.0))
                     .flex_none()
                     .h_full()
+                    .overflow_hidden()
                     .flex()
                     .flex_col()
                     .justify_center()
@@ -210,10 +200,147 @@ impl CallStage {
                     .children(
                         strip
                             .into_iter()
-                            .map(|tile| div().w_full().h(px(SHARE_STRIP.1)).flex_none().child(tile)),
-                    ),
+                            .map(|tile| div().w_full().h(px(tile_height)).flex_none().child(tile)),
+                    )
+                    .children(pager("call-strip", page, palette, cx)),
             )
             .into_any_element()
+    }
+
+    /// The gallery: a page of equal 16:9 tiles, as many as View's Max gallery size and `area` (the stage's width and
+    /// height, px) allow, the account's own last on each page while it is `in_gallery`; the pager under them while
+    /// there is more than one page.
+    fn gallery_stage(
+        &mut self,
+        active: &ActiveCall,
+        tiles: Vec<StageTile>,
+        ((width, height), in_gallery): ((f32, f32), bool),
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let call = active.id.get();
+        let selector = if active.view.participants.is_empty() {
+            "call-people"
+        } else {
+            "call-grid"
+        };
+        let own = usize::from(in_gallery);
+        let fits = |height: f32| {
+            pages::page_size(self.paging.size, (width, height))
+                .saturating_sub(own)
+                .max(1)
+        };
+        let all = fits(height);
+        let per = if tiles.len() > all {
+            fits(height - PAGER_HEIGHT)
+        } else {
+            all
+        };
+        let page = pages::page_of(tiles.len(), per, self.paging.gallery);
+        self.paging.gallery = page.index;
+        let menus = tiles.len() > 1;
+        let mut drawn = self.page_tiles(tiles, page, (call, menus), palette, cx);
+        if in_gallery {
+            let face = self.own_face(call, palette, cx);
+            drawn.push(self_view(active, face, false, palette, cx));
+        }
+        let grid_height = if page.pages > 1 { height - PAGER_HEIGHT } else { height };
+        let (columns, tile) = pages::arrange(drawn.len(), (width, grid_height));
+        div()
+            .debug_selector(move || selector.to_owned())
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(grid(drawn, columns, tile))
+            .children(pager("call-gallery", page, palette, cx))
+            .into_any_element()
+    }
+
+    /// The speaker view: the tile at `main` of `tiles` large, the others in a strip under it, as many as fit beside the self
+    /// view, paged when there are more.
+    fn speaker_stage(
+        &mut self,
+        active: &ActiveCall,
+        (mut tiles, main): (Vec<StageTile>, usize),
+        (width, _): (f32, f32),
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let call = active.id.get();
+        let selector = if active.view.participants.is_empty() {
+            "call-people"
+        } else {
+            "call-grid"
+        };
+        let self_shown = !self.self_hidden;
+        let large = tiles.remove(main);
+        let pinned = large.mri.is_some() && large.mri == self.pinned;
+        let face = self.face_of(&large, call, palette, cx);
+        let large = tile_view(large, face, (pinned, true), palette, cx);
+        let room = if self_shown { width - SELF_VIEW.0 - 16.0 } else { width };
+        let (page, tile_width) = self.strip_page(tiles.len(), 0, (room, STRIP_TILE), PAGER_WIDTH);
+        let others = self.page_tiles(tiles, page, (call, true), palette, cx);
+        speaker(
+            selector,
+            large,
+            (others, tile_width),
+            (self_shown, pager("call-strip", page, palette, cx)),
+        )
+    }
+
+    /// The page of a strip `length` px long (its tiles `tile` px along it) the strip shows of `count` tiles, `own`
+    /// more (the account's) on every page: as many as fit, the pager (`pager` px along the strip) taking room while
+    /// there are more pages; and how long each tile is along the strip, shorter than `tile` when a small window
+    /// can't hold even one at it.
+    fn strip_page(&mut self, count: usize, own: usize, (length, tile): (f32, f32), pager: f32) -> (Page, f32) {
+        let fits = |length: f32| pages::strip_size(length, tile).saturating_sub(own).max(1);
+        let all = fits(length);
+        let per = if count > all {
+            fits(length - pager - TILE_GAP)
+        } else {
+            all
+        };
+        let page = pages::page_of(count, per, self.paging.strip);
+        self.paging.strip = page.index;
+        let shown = count.saturating_sub(page.first).min(per) + own;
+        let pager = if page.pages > 1 { pager + TILE_GAP } else { 0.0 };
+        (page, pages::strip_tile(length, tile, shown, pager))
+    }
+
+    /// The tiles of `page`, drawn: their faces, each pinned or not, each with its menu while `menus`.
+    fn page_tiles(
+        &mut self,
+        tiles: Vec<StageTile>,
+        page: Page,
+        (call, menus): (u64, bool),
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        tiles
+            .into_iter()
+            .skip(page.first)
+            .take(page.per)
+            .map(|tile| {
+                let face = self.face_of(&tile, call, palette, cx);
+                let pinned = tile.mri.is_some() && tile.mri == self.pinned;
+                tile_view(tile, face, (pinned, menus), palette, cx)
+            })
+            .collect()
+    }
+
+    /// Whether the account's own tile is one of the gallery's, as Teams has had it since its new gallery: in a group
+    /// call's gallery (not a 1:1 call's, where it floats), unless View hid it.
+    fn self_in_gallery(&self, active: &ActiveCall) -> bool {
+        !self.self_hidden
+            && active.view.participants.len() > 1
+            && self.layout != Layout::Speaker
+            && self.pinned.is_none()
+    }
+
+    /// The stage's size before it was first laid out: the window's, less the header and the sheet's gaps.
+    fn stage_estimate(&self) -> (f32, f32) {
+        let (width, height) = self.paging.window;
+        (width - 48.0, height - HEADER_HEIGHT - 48.0)
     }
 
     /// What `tile` shows: its video when a line shows it (and View didn't turn the others' video off), else its
@@ -344,6 +471,30 @@ impl CallStage {
         cx.notify();
     }
 
+    /// Shows the next page of the gallery or of a strip (`step` 1), or the one before (-1).
+    pub fn turn_page(&mut self, pager: &str, step: isize, cx: &mut Context<Self>) {
+        let page = if pager == "call-gallery" {
+            &mut self.paging.gallery
+        } else {
+            &mut self.paging.strip
+        };
+        *page = page.saturating_add_signed(step);
+        cx.notify();
+    }
+
+    /// Shows at most `size` tiles to a page of the gallery (View's Max gallery size), the first page again.
+    pub fn set_gallery_size(&mut self, size: usize, cx: &mut Context<Self>) {
+        self.paging.size = size.max(1);
+        self.paging.gallery = 0;
+        cx.notify();
+    }
+
+    /// The most tiles a page of the gallery shows (View's Max gallery size).
+    #[must_use]
+    pub fn gallery_size(&self) -> usize {
+        self.paging.size
+    }
+
     /// Leads with the tiles whose camera is on, or keeps the roster's order (View's Show videos first).
     pub fn show_videos_first(&mut self, first: bool, cx: &mut Context<Self>) {
         self.videos_first = first;
@@ -390,11 +541,9 @@ impl CallStage {
     }
 }
 
-/// The tiles in a grid of near-square rows, each tile as wide as a column, a short last row centred: Teams' gallery.
-fn grid(selector: &'static str, tiles: Vec<AnyElement>) -> AnyElement {
-    let count = tiles.len();
-    let columns = (1..=count).find(|columns| columns * columns >= count).unwrap_or(1);
-    let width = 1.0 / f32::from(u16::try_from(columns).unwrap_or(1));
+/// The tiles in rows of `columns`, each `tile` (width, height, px), the rows and a short last row centred: Teams'
+/// gallery.
+fn grid(tiles: Vec<AnyElement>, columns: usize, (width, height): (f32, f32)) -> AnyElement {
     let mut rows: Vec<Vec<AnyElement>> = Vec::new();
     for tile in tiles {
         match rows.last_mut() {
@@ -403,21 +552,30 @@ fn grid(selector: &'static str, tiles: Vec<AnyElement>) -> AnyElement {
         }
     }
     div()
-        .debug_selector(move || selector.to_owned())
-        .size_full()
+        .flex_1()
+        .min_h_0()
+        .w_full()
         .flex()
         .flex_col()
+        .justify_center()
+        .gap(px(TILE_GAP))
         .children(rows.into_iter().map(|row| {
-            div().flex_1().min_h_0().w_full().flex().justify_center().children(
+            div().w_full().flex().justify_center().gap(px(TILE_GAP)).children(
                 row.into_iter()
-                    .map(|tile| div().w(relative(width)).h_full().p_1().child(tile)),
+                    .map(|tile| div().w(px(width)).h(px(height)).flex_none().child(tile)),
             )
         }))
         .into_any_element()
 }
 
-/// The speaker view: `main` large, the others in a strip under it (clear of the self view while it shows).
-fn speaker(selector: &'static str, main: AnyElement, others: Vec<AnyElement>, self_shown: bool) -> AnyElement {
+/// The speaker view: `main` large, the others (each `tile_width` px wide) in a strip under it (clear of the self view while it shows), the strip's
+/// pager at its end while it pages.
+fn speaker(
+    selector: &'static str,
+    main: AnyElement,
+    (others, tile_width): (Vec<AnyElement>, f32),
+    (self_shown, pager): (bool, Option<AnyElement>),
+) -> AnyElement {
     div()
         .debug_selector(move || selector.to_owned())
         .size_full()
@@ -440,6 +598,7 @@ fn speaker(selector: &'static str, main: AnyElement, others: Vec<AnyElement>, se
                 .flex_none()
                 .w_full()
                 .flex()
+                .items_center()
                 .justify_center()
                 .gap_2()
                 .overflow_hidden()
@@ -447,10 +606,59 @@ fn speaker(selector: &'static str, main: AnyElement, others: Vec<AnyElement>, se
                 .children(
                     others
                         .into_iter()
-                        .map(|tile| div().w(px(STRIP_TILE)).flex_none().h_full().child(tile)),
-                ),
+                        .map(|tile| div().w(px(tile_width)).flex_none().h_full().child(tile)),
+                )
+                .children(pager),
         )
         .into_any_element()
+}
+
+/// The `<` `>` that turn `page` of a gallery or a strip (`prefix`: `call-gallery`, `call-strip`), with which page
+/// shows; none while everything fits on one.
+fn pager(prefix: &'static str, page: Page, palette: Palette, cx: &mut Context<CallStage>) -> Option<AnyElement> {
+    if page.pages < 2 {
+        return None;
+    }
+    let stage = cx.weak_entity();
+    let turn = |step: isize| {
+        let stage = stage.clone();
+        move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
+            let _ = stage.update(cx, |stage, cx| stage.turn_page(prefix, step, cx));
+        }
+    };
+    let previous = format!("{prefix}-previous");
+    let next = format!("{prefix}-next");
+    Some(
+        div()
+            .debug_selector(move || format!("{prefix}-pager"))
+            .h(px(PAGER_HEIGHT))
+            .min_w(px(PAGER_WIDTH))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap_1()
+            .child(selected_by(
+                previous.clone(),
+                icon_button(SharedString::from(previous), Glyph::CHEVRON_LEFT, "Previous page")
+                    .disabled(page.index == 0)
+                    .on_click(turn(-1)),
+            ))
+            .child(
+                div()
+                    .debug_selector(move || format!("{prefix}-page"))
+                    .text_xs()
+                    .text_color(rgb(palette.muted_foreground))
+                    .child(format!("{} / {}", page.index + 1, page.pages)),
+            )
+            .child(selected_by(
+                next.clone(),
+                icon_button(SharedString::from(next), Glyph::CHEVRON_RIGHT, "Next page")
+                    .disabled(page.index + 1 >= page.pages)
+                    .on_click(turn(1)),
+            ))
+            .into_any_element(),
+    )
 }
 
 /// One tile: `face` (its video when a line shows it, else its person's picture or initials); its name with its microphone muted and a raised

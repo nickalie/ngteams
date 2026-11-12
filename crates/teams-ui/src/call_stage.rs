@@ -56,6 +56,7 @@ mod health;
 pub use health::HEALTH_REFRESH;
 mod invite;
 mod meeting;
+mod pages;
 mod people_pane;
 mod recording;
 mod share;
@@ -64,6 +65,7 @@ mod transcript;
 mod transfer;
 pub use gallery::Layout;
 pub use meeting::{ATTENDANCE_FILE, TimerChange, attendance_list, timer_after, timer_text};
+pub use pages::{DEFAULT_GALLERY_SIZE, GALLERY_SIZES};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -235,6 +237,8 @@ pub struct CallStage {
     self_hidden: bool,
     /// View's Show videos first: the tiles whose camera is on lead.
     videos_first: bool,
+    /// View's Max gallery size, the pages of the gallery and the strips shown, and the window's and the stage's size.
+    paging: pages::Paging,
     /// View's Turn off other videos: the others' tiles show their pictures (or initials), not their video.
     others_off: bool,
     /// Who has a hand up, in the order they raised it (the account by its own MRI): the People pane numbers them.
@@ -267,8 +271,6 @@ pub struct CallStage {
     join_info_copied: bool,
     /// The live reactions' floating while some show.
     reacting: Option<Task<()>>,
-    /// The window's width as last drawn, px: a narrow one's toolbar shows its controls' icons alone.
-    width: f32,
     /// The devices a test call used, named as it ended.
     results: Option<[String; 3]>,
     /// The grid as last traced.
@@ -368,6 +370,7 @@ impl CallStage {
             last_speaker: None,
             self_hidden: false,
             videos_first: false,
+            paging: pages::Paging::default(),
             others_off: false,
             hands: Vec::new(),
             confirm_end: false,
@@ -385,7 +388,6 @@ impl CallStage {
             controls: controls::ControlsUi::default(),
             join_info_copied: false,
             reacting: None,
-            width: f32::MAX,
             results: None,
             grid_traced: None,
             titled: None,
@@ -1070,7 +1072,8 @@ impl Render for CallStage {
         };
         self.retitle(&title, window);
         self.follow_invite_box(window, cx);
-        self.width = f32::from(window.viewport_size().width);
+        let viewport = window.viewport_size();
+        self.paging.window = (f32::from(viewport.width), f32::from(viewport.height));
         let body = self.body((live.as_ref(), ended.as_ref()), &title, palette, cx);
         let header = self.header(live.as_ref(), title, palette, cx);
         let mut captions = live.as_ref().and_then(|_| self.caption_pane(palette, cx));
@@ -1090,7 +1093,7 @@ impl Render for CallStage {
                     .and_then(|active| gallery::connection_banner(active, palette)),
             )
             .children(if self.caption_top { captions.take() } else { None })
-            .child(div().flex_1().min_h_0().child(body))
+            .child(div().flex_1().min_h_0().overflow_hidden().child(body))
             .children(captions);
         let confirmation = self.end_confirmation(palette, cx);
         let lock = self.lock_confirmation(palette, cx);

@@ -72,7 +72,11 @@ impl CallStage {
     /// A control's caption, as Teams words it under its icon; none in a narrow window, where the icons stand alone
     /// (their tooltips name them).
     pub(super) fn caption(&self, caption: &'static str) -> &'static str {
-        if self.width < COMPACT_BELOW { "" } else { caption }
+        if self.paging.window.0 < COMPACT_BELOW {
+            ""
+        } else {
+            caption
+        }
     }
 
     /// Whether the call takes Hold (and Transfer): a 1:1 call's that is up (Teams offers Hold there, not in a group call or a
@@ -438,11 +442,11 @@ impl CallStage {
     }
 
     /// View, as Teams' has it: Gallery or Speaker (a check on the one shown), Focus on content while a share shows
-    /// (`shared`), Show videos first, and More options (Turn off other videos or Turn on, Hide me or Show me, Full
-    /// screen).
+    /// (`shared`), Show videos first, Max gallery size (4, 9, 16 or 49 to a page), and More options (Turn off other
+    /// videos or Turn on, Hide me or Show me, Full screen).
     fn view_menu(&self, shared: bool, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
         let stage = cx.weak_entity();
-        let (layout, videos_first) = (self.layout, self.videos_first);
+        let (layout, videos_first, size) = (self.layout, self.videos_first, self.paging.size);
         let options = ViewOptions {
             self_hidden: self.self_hidden,
             others_off: self.others_off,
@@ -464,6 +468,7 @@ impl CallStage {
                     };
                     let first = stage.clone();
                     let more = stage.clone();
+                    let sizes = stage.clone();
                     menu.min_w(px(220.0))
                         .item(
                             menu_item("call-view-gallery", Some(Glyph::GALLERY), "Gallery")
@@ -490,6 +495,9 @@ impl CallStage {
                                     let _ = first.update(cx, |stage, cx| stage.show_videos_first(!videos_first, cx));
                                 }),
                         )
+                        .submenu("Max gallery size", window, cx, move |menu, _, _| {
+                            gallery_sizes(menu, &sizes, size)
+                        })
                         .submenu("More options", window, cx, move |menu, window, _| {
                             view_options(menu, &more, options, window.is_fullscreen())
                         })
@@ -679,6 +687,29 @@ pub(super) fn menu_item(selector: &'static str, glyph: Option<Glyph>, label: &'s
             .children(glyph.map(|glyph| glyph.icon().size(px(14.0))))
             .child(label)
     })
+}
+
+/// View's Max gallery size: Teams' choices of how many tiles a page of the gallery shows, a check on `chosen`.
+fn gallery_sizes(menu: PopupMenu, stage: &WeakEntity<CallStage>, chosen: usize) -> PopupMenu {
+    const ITEMS: [(&str, &str); 4] = [
+        ("call-view-gallery-size-4", "4"),
+        ("call-view-gallery-size-9", "9"),
+        ("call-view-gallery-size-16", "16"),
+        ("call-view-gallery-size-49", "49"),
+    ];
+    ITEMS
+        .into_iter()
+        .zip(super::GALLERY_SIZES)
+        .fold(menu.min_w(px(120.0)), |menu, ((selector, label), size)| {
+            let stage = stage.clone();
+            menu.item(
+                menu_item(selector, None, label)
+                    .checked(size == chosen)
+                    .on_click(move |_, _, cx| {
+                        let _ = stage.update(cx, |stage, cx| stage.set_gallery_size(size, cx));
+                    }),
+            )
+        })
 }
 
 /// What View's More options shows as it stands.
