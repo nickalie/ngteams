@@ -3,6 +3,8 @@
 
 #[cfg(unix)]
 mod flows;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(unix)]
 mod parts;
 mod setup;
@@ -81,6 +83,7 @@ fn each_format_takes_the_asset_the_release_workflow_publishes() {
         Format::Rpm,
         Format::Pacman,
         Format::WindowsSetup,
+        Format::MacApp,
     ] {
         assert_eq!(Format::from_marker(&format!("{}\n", format.marker())), Some(format));
     }
@@ -101,11 +104,17 @@ fn a_stage_goes_beside_the_installation_only_where_an_update_renames_it_in() {
         "ngteams-0.1.0.12-windows-x86_64-setup.exe"
     );
     assert_eq!(Format::WindowsSetup.system_package(), None);
+    assert_eq!(
+        Format::MacApp.asset(version("0.1.0.12")),
+        "ngteams-0.1.0.12-macos-arm64.zip"
+    );
+    assert_eq!(Format::MacApp.system_package(), None);
     for (format, own_folder) in [
         (Format::Archive, false),
         (Format::AppImage, false),
         (Format::Deb, true),
         (Format::WindowsSetup, true),
+        (Format::MacApp, false),
     ] {
         assert_eq!(format.stages_in_app_folder(), own_folder, "{format:?}");
     }

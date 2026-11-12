@@ -4,6 +4,8 @@ VM's console is for Windows (AGENTS.md). Lab-marked builds only, one alias per r
 
     scripts/run-lab-macos.py --build-only              lab-marked build of ngteams and ngteams-webview in target/lab
     scripts/run-lab-macos.py <alias> [--timeout 600]   run `ngteams --lab <alias>` until it quits or the deadline
+    scripts/run-lab-macos.py <alias> --app <ngteams.app>   the same from a packaged lab build's bundle, on its own
+                                                       GStreamer runtime (`scripts/package-macos.sh` over target/lab)
     scripts/run-lab-macos.py <alias> --shot <name>     each of the run's windows to <run>/shots/<name>-<n>.png
     scripts/run-lab-macos.py <alias> --status          whether the run is up
     scripts/run-lab-macos.py <alias> --stop            stop the run (TERM, then KILL after 10 s)
@@ -114,17 +116,19 @@ def stopped(process: subprocess.Popen, grace: float) -> None:
         process.wait()
 
 
-def serve(alias: str, timeout: int) -> int:
+def serve(alias: str, timeout: int, bundle: Path | None = None) -> int:
     if holder(alias) is not None:
         print(f"lab alias {alias} is already running: --stop it first", file=sys.stderr)
         return 1
-    app = target() / "ngteams"
-    if not app.is_file() or not (target() / "ngteams-webview").is_file():
+    programs = bundle / "Contents" / "MacOS" if bundle else target()
+    app = programs / "ngteams"
+    if not app.is_file() or not (programs / "ngteams-webview").is_file():
         print("no lab build: run scripts/run-lab-macos.py --build-only", file=sys.stderr)
         return 1
     here = run_dir(alias)
-    # GStreamer's libraries are named `@rpath/...`; a development binary has no rpath to the private prefix
-    libraries = {"DYLD_FALLBACK_LIBRARY_PATH": str(gstreamer() / "lib")}
+    # GStreamer's libraries are named `@rpath/...`; a development binary has no rpath to the private prefix, a bundle
+    # finds its own
+    libraries = {} if bundle else {"DYLD_FALLBACK_LIBRARY_PATH": str(gstreamer() / "lib")}
     broker_end, app_end = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
     with open(here / "broker.log", "wb") as broker_log, open(here / "app.log", "wb") as app_log:
         broker = subprocess.Popen(
@@ -202,6 +206,7 @@ def main() -> int:
     parser.add_argument("--shot")
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--stop", action="store_true")
+    parser.add_argument("--app", type=Path, help="a packaged lab build's ngteams.app to run instead of target/lab")
     args = parser.parse_args()
     if sys.platform != "darwin":
         parser.error("this runner is the macOS one: use scripts/run-lab.sh (Linux) or scripts/run-lab.ps1 (Windows)")
@@ -218,7 +223,7 @@ def main() -> int:
         return 0 if up else 1
     if args.shot:
         return shot(args.alias, args.shot)
-    return serve(args.alias, args.timeout)
+    return serve(args.alias, args.timeout, args.app.resolve() if args.app else None)
 
 
 if __name__ == "__main__":

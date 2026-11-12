@@ -27,6 +27,10 @@
 //!   first checks that nothing else updated the installation since the download started. It gives back what a
 //!   restart runs ([`Restart`]): the app quits as it always does (its engines shut down, its stores closed) and runs
 //!   that.
+//! - **macOS** ([`Format::MacApp`]): the zip holds `ngteams.app`, marker and identity under `Contents/Resources/ngteams/`.
+//!   Its update is unpacked with `ditto` (which keeps the bundle's signature intact) beside the installed bundle,
+//!   checked as an archive is and its code signature verified (`codesign --verify --deep --strict`), and swapped for
+//!   the installed bundle by the same two renames.
 //! - **Windows** ([`Format::WindowsSetup`]): the per-user installer (`packaging/windows/ngteams.iss`) writes the marker
 //!   and identity under `share/ngteams/` beside `bin/`. Its update downloads the next installer into the app's own
 //!   folder and checks it the same way; [`Prepared::install`] checks it again and hands back the installer, with its
@@ -51,11 +55,17 @@ pub use installation::{Installation, Places};
 
 /// The release marker, relative to an installed tree's root (the folder holding `usr/`): how this copy was installed,
 /// one of [`Format::marker`]'s words.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub const MARKER: &str = "usr/share/ngteams/update-format";
 /// The release version an installed tree holds, relative to its root: the one its programs were built as.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 pub const IDENTITY: &str = "usr/share/ngteams/release";
+/// The release marker, relative to the app bundle (`ngteams.app`), written by `scripts/package-macos.sh`.
+#[cfg(target_os = "macos")]
+pub const MARKER: &str = "Contents/Resources/ngteams/update-format";
+/// The release version the app bundle holds, relative to it, written by `scripts/package-macos.sh`.
+#[cfg(target_os = "macos")]
+pub const IDENTITY: &str = "Contents/Resources/ngteams/release";
 /// The release marker, relative to the installed folder (the one holding `bin/`), written by the installer.
 #[cfg(windows)]
 pub const MARKER: &str = "share/ngteams/update-format";
@@ -171,6 +181,8 @@ pub enum Format {
     Pacman,
     /// The Windows per-user installer (`-setup.exe`), installed under `%LOCALAPPDATA%\Programs\ngteams`.
     WindowsSetup,
+    /// The macOS app bundle (`ngteams.app`, from the `-macos-arm64.zip`), wherever the user put it.
+    MacApp,
 }
 
 impl Format {
@@ -184,6 +196,7 @@ impl Format {
             Self::Rpm => format!("ngteams-{version}-1.x86_64.rpm"),
             Self::Pacman => format!("ngteams-{version}-1-x86_64.pkg.tar.zst"),
             Self::WindowsSetup => format!("ngteams-{version}-windows-x86_64-setup.exe"),
+            Self::MacApp => format!("ngteams-{version}-macos-arm64.zip"),
         }
     }
 
@@ -197,6 +210,7 @@ impl Format {
             Self::Rpm => "linux-rpm",
             Self::Pacman => "linux-pacman",
             Self::WindowsSetup => "windows-setup",
+            Self::MacApp => "macos-app",
         }
     }
 
@@ -208,6 +222,7 @@ impl Format {
             "linux-rpm" => Some(Self::Rpm),
             "linux-pacman" => Some(Self::Pacman),
             "windows-setup" => Some(Self::WindowsSetup),
+            "macos-app" => Some(Self::MacApp),
             _ => None,
         }
     }
@@ -218,7 +233,7 @@ impl Format {
             Self::Deb => Some("deb"),
             Self::Rpm => Some("rpm"),
             Self::Pacman => Some("pacman"),
-            Self::Archive | Self::AppImage | Self::WindowsSetup => None,
+            Self::Archive | Self::AppImage | Self::WindowsSetup | Self::MacApp => None,
         }
     }
 

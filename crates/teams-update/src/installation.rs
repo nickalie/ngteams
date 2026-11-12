@@ -76,6 +76,15 @@ impl Installation {
             }
             return Self::made(places, root.clone(), root, Format::AppImage);
         }
+        #[cfg(target_os = "macos")]
+        if let Some(bundle) = app_bundle(&executable) {
+            fs::read_to_string(bundle.join(MARKER))
+                .ok()
+                .and_then(|marker| Format::from_marker(&marker))
+                .filter(|format| *format == Format::MacApp)
+                .ok_or_else(|| error(NOT_A_RELEASE))?;
+            return Self::made(places, bundle, executable, Format::MacApp);
+        }
         let prefix = executable
             .parent()
             .filter(|bin| bin.ends_with("usr/bin"))
@@ -259,6 +268,18 @@ fn plain(path: PathBuf) -> PathBuf {
         Some(rest) if rest.as_bytes().get(1) == Some(&b':') && !rest.contains('?') => PathBuf::from(rest),
         _ => path,
     }
+}
+
+/// The app bundle `executable` runs from (`<name>.app/Contents/MacOS/<program>`), if it does.
+#[cfg(target_os = "macos")]
+fn app_bundle(executable: &Path) -> Option<PathBuf> {
+    executable
+        .parent()
+        .filter(|programs| programs.ends_with("Contents/MacOS"))
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .filter(|bundle| bundle.extension().is_some_and(|extension| extension == "app"))
+        .map(Path::to_path_buf)
 }
 
 /// The executable's path as it is on disk: a package upgrade under a running app leaves `/proc/self/exe` saying

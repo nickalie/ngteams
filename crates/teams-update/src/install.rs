@@ -84,7 +84,7 @@ impl Prepared {
             arguments: None,
         };
         match installation.format {
-            Format::Archive => {
+            Format::Archive | Format::MacApp => {
                 if let Err(error) = swap(&installation.root, &self.candidate, &stage, &mut rename) {
                     // A failed rollback leaves the only previous install here. Detach before returning:
                     // dropping Prepared must never erase it, including when reporting the error in the UI.

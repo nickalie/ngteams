@@ -221,11 +221,13 @@ dir (`scripts/macos-gstreamer.sh`, no admin), then formats, checks and lints eve
 crates compile to nothing there) and runs the offline tests of the crates with macOS code of their own: files, logs,
 stores, authentication with the Keychain store's round trip against the runner's unlocked login keychain
 (`NGTEAMS_KEYCHAIN_TESTS=1`), the control socket and CLI, the runner, updates, the sign-in guard and the native device
-backend's catalog. Builds use `CARGO_INCREMENTAL=0` and no debug info to fit the runner's disk.
+backend's catalog, and the macOS notifications' tags and actions (`teams-ui`'s `desktop::macos`, no notification
+center reached). Builds use `CARGO_INCREMENTAL=0` and no debug info to fit the runner's disk.
 
 Coverage is measured natively as on Windows: `teams-platform` at 90% in lines, functions and regions, `teams-auth` and
 `teams-ctl` at their `coverage.toml` floors with their macOS code included. The macOS-only sources (the Keychain store,
-the sign-in worker) have no Linux LLVM mapping and are listed under `unmapped_sources` with the reason; the sign-in
+the sign-in worker, the notifications and Dock badge, the menu bar and the delegate's terminate) have no Linux LLVM
+mapping and are listed under `unmapped_sources` with the reason; the sign-in
 window itself and the app's windows run on the Mac console through `scripts/run-lab-macos.py`
 ([development guide](development.md#macos-host-runner)).
 
@@ -240,9 +242,12 @@ only the newest commit is published. A successful `main` run makes a GitHub rele
 for package upgrades), marked latest, targeting the pushed commit. Linux x86_64 builds on `ubuntu-24.04` produce
 `.deb`, `.rpm`, Arch `.pkg.tar.zst`, `.AppImage` and a portable `.tar.gz`; `windows-2025` produces
 `ngteams-<version>-windows-x86_64.zip` and the per-user installer `ngteams-<version>-windows-x86_64-setup.exe`, both
-from the same staged, hash-checked folder. `SHA256SUMS` and GitHub build-provenance attestations cover every asset,
+from the same staged, hash-checked folder; `macos-latest` produces `ngteams.app` for Apple silicon as
+`ngteams-<version>-macos-arm64.zip` and `.dmg` (`scripts/package-macos.sh`, GStreamer's runtime inside). `SHA256SUMS` and GitHub build-provenance attestations cover every asset,
 including the runtime below. Publishing requires the tests and both native build jobs and runs only on `main`; a
-manual branch dispatch builds artifacts without publishing.
+manual branch dispatch builds artifacts without publishing. The `macos` job checks the zip's app before it uploads
+it: its code signature, its release marker and version, no link to the build's GStreamer prefix, and the display-free
+`--build-identity` and `ngteamsctl --help`.
 
 Packages carry no web engine: `ngteams-web` picks the system's WPE WebKit (2.54 or newer) or a downloaded runtime when
 it starts. Only `ngteams-web` and the sign-in extension link the engine; `scripts/check-linux-package.py` fails a tree
@@ -265,7 +270,9 @@ The build compiles the release's version into the app (`NGTEAMS_RELEASE_VERSION`
 `linux-appimage`, `linux-deb`, `linux-rpm`, `linux-pacman`). The installed app's updater (`crates/teams-update`) reads
 them to pick the asset of a newer release that replaces it. On Windows the installer writes `share/ngteams/release`
 and `share/ngteams/update-format` (`windows-setup`) under its folder; the zip carries neither, so a copy installed
-from it doesn't update itself.
+from it doesn't update itself. The macOS bundle carries `Contents/Resources/ngteams/release` and `update-format`
+(`macos-app`): its update unpacks the next zip with `ditto` beside the installed bundle, checks its marker, version,
+programs and code signature (`codesign --verify --deep --strict`), and swaps the bundles by two renames.
 
 ### The Windows installer
 
@@ -303,6 +310,21 @@ for the quoted file and `$q` for a quote, for example `signtool.exe sign /fd sha
 the manifest hashes the signed files), and Inno Setup signs the installer and its uninstaller (`SignTool`,
 `SignedUninstaller`). To turn it on, add a step that provides the certificate (an Azure Trusted Signing or HSM-backed
 `signtool`, say) from a secret available only to `main`, and pass `-SignCommand` in the workflow's packaging step.
+
+### macOS signing
+
+Without secrets the `macos` job signs the app ad hoc: macOS asks before it first opens it (right-click → **Open**),
+and the Keychain asks to allow access again after each update, because an ad hoc signature changes with every build.
+With a Developer ID the app is signed with the hardened runtime, a secure timestamp and
+`packaging/macos/ngteams.entitlements` (camera, microphone), then notarized and stapled. The job takes these
+repository secrets; any left unset leaves the ad hoc path:
+
+- `MACOS_DEVELOPER_ID_P12`: the Developer ID Application certificate and its private key, as a base64 `.p12`;
+  `MACOS_DEVELOPER_ID_PASSWORD`: its password. They go into a keychain of the job's own, deleted when it ends, and
+  `scripts/package-macos.sh` signs with that identity (`NGTEAMS_MACOS_SIGN_IDENTITY`).
+- `MACOS_NOTARY_KEY_P8` (the App Store Connect API key's `.p8` text), `MACOS_NOTARY_KEY_ID` and
+  `MACOS_NOTARY_ISSUER`: `xcrun notarytool` submits the app and then the dmg, and `xcrun stapler` staples each ticket.
+  Notarization runs only with a Developer ID.
 
 `build` runs the tests of the packaging scripts, builds, packages and smoke-tests: the build identity in the archive,
 the AppImage and the installed `.deb`, `--install-web-engine` into a private `XDG_DATA_HOME`, `ngteams-web --probe`

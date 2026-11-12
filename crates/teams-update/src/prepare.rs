@@ -125,7 +125,7 @@ fn expect_ok(status: u16) -> Result<(), Error> {
 }
 
 /// The asset readied for its install, checked to be `version` of `format`.
-fn ready(format: Format, asset: &Path, work: &Path, version: Version) -> Result<PathBuf, Error> {
+pub(crate) fn ready(format: Format, asset: &Path, work: &Path, version: Version) -> Result<PathBuf, Error> {
     match format {
         Format::Archive => {
             let unpacked = work.join("unpacked");
@@ -147,9 +147,78 @@ fn ready(format: Format, asset: &Path, work: &Path, version: Version) -> Result<
             }
             Ok(asset.to_path_buf())
         }
+        Format::MacApp => {
+            let unpacked = work.join("unpacked");
+            fs::create_dir(&unpacked)?;
+            unpack_zip(asset, &unpacked)?;
+            fs::remove_file(asset)?;
+            let candidate = unpacked.join(APP_BUNDLE);
+            validate_app(&candidate, version)?;
+            Ok(candidate)
+        }
         // kept as it is: its checksum was verified, and the installer checks the files it holds as it writes them
         Format::Deb | Format::Rpm | Format::Pacman | Format::WindowsSetup => Ok(asset.to_path_buf()),
     }
+}
+
+/// The app bundle a macOS release's zip holds.
+const APP_BUNDLE: &str = "ngteams.app";
+/// The programs a macOS release's bundle holds.
+const APP_PROGRAMS: [&str; 3] = [
+    "Contents/MacOS/ngteams",
+    "Contents/MacOS/ngteams-webview",
+    "Contents/MacOS/ngteamsctl",
+];
+
+/// Unpacks the zip `asset` into `into` with the system's `ditto`, as Finder does (permissions, links and the
+/// bundle's signature kept).
+fn unpack_zip(asset: &Path, into: &Path) -> Result<(), Error> {
+    let unpacked = std::process::Command::new("/usr/bin/ditto")
+        .arg("-x")
+        .arg("-k")
+        .arg(asset)
+        .arg(into)
+        .status()
+        .map_err(|failed| {
+            error(format!(
+                "The download couldn't be unpacked ({failed}). Nothing was changed."
+            ))
+        })?;
+    if !unpacked.success() {
+        return Err(error("The download couldn't be unpacked. Nothing was changed."));
+    }
+    Ok(())
+}
+
+/// An unpacked app bundle is the release it should be: the macOS app's marker, `version` as its identity, its
+/// programs, and a code signature that verifies over the whole bundle.
+fn validate_app(candidate: &Path, version: Version) -> Result<(), Error> {
+    let marker = fs::read_to_string(candidate.join(MARKER)).unwrap_or_default();
+    let identity = fs::read_to_string(candidate.join(IDENTITY)).unwrap_or_default();
+    if marker.trim() != Format::MacApp.marker()
+        || identity.lines().next().map(str::trim) != Some(version.to_string().as_str())
+    {
+        return Err(error(format!(
+            "The download isn't release {version}'s app. Nothing was changed."
+        )));
+    }
+    if let Some(missing) = APP_PROGRAMS.iter().find(|program| !candidate.join(program).is_file()) {
+        return Err(error(format!(
+            "The downloaded app has no {missing}. Nothing was changed."
+        )));
+    }
+    let verified = std::process::Command::new("/usr/bin/codesign")
+        .args(["--verify", "--deep", "--strict"])
+        .arg(candidate)
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if !verified {
+        return Err(error(
+            "The downloaded app's code signature doesn't verify, so it wasn't installed. Nothing was changed.",
+        ));
+    }
+    Ok(())
 }
 
 /// An unpacked archive is the release it should be: an archive's marker, `version` as its identity, and its programs.

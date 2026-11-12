@@ -994,7 +994,12 @@ generic passwords (service `<namespace>: <audience>`, account the UPN; `crates/t
 sign-in window in the `ngteams-webview` worker (`WKWebView` on a non-persistent store whose proxy is the host gate;
 `crates/teams-signin/src/macos/`), devices through GStreamer's `osxaudio` and `avfvideosrc` on the Windows backend
 (`crates/teams-media/src/devices/native.rs`), video through GPUI's image path, and the background-effects model on
-Metal. Linux-only crates (WPE, the UI sandbox) compile to nothing there.
+Metal. Linux-only crates (WPE, the UI sandbox) compile to nothing there. The desktop (`crates/teams-ui/src/desktop/
+macos.rs`, `crates/ngteams/src/mac_app.rs`): notifications through GPUI's `UNUserNotificationCenter` binding (only
+for the app started from `ngteams.app`; a bare binary gets none), the unread total on the Dock badge, the Dock in the
+tray's place (closing the main window keeps the app, a Dock click shows it again), the menu bar (⌘Q, ⌘H, ⌘M, ⌘W) and
+`AppKit`'s terminate (the Dock's Quit, a logout) routed through the app's own quit. Shortcuts bind `secondary-`
+(⌘ on macOS, Ctrl elsewhere); the message box adds macOS's ⌥/⌘ arrow keys.
 
 `scripts/run-lab-macos.py <alias>` runs a lab alias on the console: lab-marked builds only, its broker and app on a
 private socket pair, `--shot <name>` saving the run's own windows (`screencapture -l`, which needs the Screen
@@ -1005,7 +1010,9 @@ macOS (no device sandbox).
 
 `scripts/package-macos.sh --binaries <dir> --gstreamer <prefix> --version <v> --out <dir>` assembles
 `ngteams.app` (the three binaries, the runtime's libraries and the plugins `packaging/macos/gstreamer-plugins.txt`
-names under `Contents/Frameworks/GStreamer.framework`, the Teams-derived icon, `Info.plist` with the camera and
-microphone usage descriptions and the `msteams:` scheme), signs it ad hoc and packs a `.zip` and a `.dmg`.
-Notarization needs an Apple Developer ID certificate and an App Store Connect API key; until then a user opens the
-app the first time with right-click → Open.
+names under `Contents/Frameworks/gstreamer` (a plain folder: codesign takes a `.framework` only in its bundle form), the Teams-derived icon, `Info.plist` with the camera and
+microphone usage descriptions and the `msteams:` scheme, the release marker the updater reads), signs it and packs
+a `.zip` and a `.dmg`: ad hoc, or with `NGTEAMS_MACOS_SIGN_IDENTITY` a Developer ID with the hardened runtime, and
+with the `NGTEAMS_NOTARY_*` key notarized and stapled ([CI guide](ci.md#macos-signing)). Ad hoc, a user opens the app
+the first time with right-click → Open. Build its binaries first (`run-lab-macos.py --build-only`, then
+`cargo build -p teams-ctl --bin ngteamsctl` into the same target dir).

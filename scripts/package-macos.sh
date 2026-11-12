@@ -5,12 +5,20 @@
 #   scripts/package-macos.sh --binaries <dir with ngteams, ngteams-webview, ngteamsctl> --gstreamer <prefix> \
 #       --version <major.minor.patch[.run]> --out <dir>
 #
-# - ngteams.app/Contents/MacOS holds the three binaries; Contents/Frameworks/GStreamer.framework/Versions/1.0 holds
-#   the runtime's libraries, the plugins packaging/macos/gstreamer-plugins.txt names and the plugin scanner, in the
-#   runtime's own layout (GStreamer finds its plugins and scanner relative to its library).
+# - ngteams.app/Contents/MacOS holds the three binaries; Contents/Frameworks/gstreamer holds the runtime's libraries
+#   (lib/), the plugins packaging/macos/gstreamer-plugins.txt names (plugins/) and the plugin scanner (libexec/). No
+#   dotted folder such as gstreamer-1.0: codesign reads one as a bundle. The app names these to GStreamer when it
+#   starts from the bundle (crates/ngteams/src/mac_app.rs); the plugins find the libraries by their @loader_path/../lib.
 # - Every binary's rpath to the build's GStreamer prefix is replaced by the bundle's Frameworks.
-# - The bundle is signed ad hoc (`codesign -s -`): no Apple Developer ID, so macOS asks once before it first opens
-#   (right-click > Open). Notarization needs a Developer ID certificate and an App Store Connect key (docs/ci.md).
+# - Contents/Resources/ngteams/update-format (`macos-app`) and .../release (the version) let a release's app update
+#   itself (crates/teams-update); a build without a release version never asks.
+# - Signing: with NGTEAMS_MACOS_SIGN_IDENTITY (a Developer ID Application identity in the keychain, its name or hash)
+#   every binary is signed with it, the hardened runtime and a secure timestamp, the app's own programs with
+#   packaging/macos/ngteams.entitlements (camera, microphone). Without it the bundle is signed ad hoc (`codesign -s -`):
+#   macOS asks once before it first opens it (right-click > Open), and the Keychain asks again after each update.
+# - Notarization, only with a Developer ID: with NGTEAMS_NOTARY_KEY (an App Store Connect API key's .p8 file),
+#   NGTEAMS_NOTARY_KEY_ID and NGTEAMS_NOTARY_ISSUER, the app and then the dmg go to Apple's notary service and get its
+#   ticket stapled (docs/ci.md, "macOS signing").
 # - Info.plist: id com.nickalie.ngteams, the camera and microphone usage descriptions, the msteams: URL scheme.
 set -euo pipefail
 
@@ -37,8 +45,8 @@ app="$out/ngteams.app"
 short=$(echo "$version" | cut -d. -f1-3)
 
 contents="$app/Contents"
-frameworks="$contents/Frameworks/GStreamer.framework/Versions/1.0"
-mkdir -p "$contents/MacOS" "$contents/Resources" "$frameworks/lib/gstreamer-1.0" "$frameworks/libexec/gstreamer-1.0"
+frameworks="$contents/Frameworks/gstreamer"
+mkdir -p "$contents/MacOS" "$contents/Resources" "$frameworks/lib" "$frameworks/plugins" "$frameworks/libexec"
 for binary in ngteams ngteams-webview ngteamsctl; do
     install -m 0755 "$binaries/$binary" "$contents/MacOS/$binary"
 done
@@ -49,9 +57,9 @@ while read -r plugin; do
     [[ -z $plugin || $plugin == \#* ]] && continue
     source="$gstreamer/lib/gstreamer-1.0/libgst$plugin.dylib"
     [[ -f $source ]] || { echo "the GStreamer runtime has no plugin $plugin" >&2; exit 1; }
-    cp "$source" "$frameworks/lib/gstreamer-1.0/"
+    cp "$source" "$frameworks/plugins/"
 done < "$root/packaging/macos/gstreamer-plugins.txt"
-cp "$gstreamer/libexec/gstreamer-1.0/gst-plugin-scanner" "$frameworks/libexec/gstreamer-1.0/"
+cp "$gstreamer/libexec/gstreamer-1.0/gst-plugin-scanner" "$frameworks/libexec/"
 
 for binary in "$contents/MacOS"/*; do
     while read -r rpath; do
@@ -59,7 +67,7 @@ for binary in "$contents/MacOS"/*; do
     done < <(otool -l "$binary" | awk '/LC_RPATH/ { getline; getline; print $2 }' | grep -F "$gstreamer" || true)
 done
 for binary in ngteams ngteams-webview; do
-    install_name_tool -add_rpath "@executable_path/../Frameworks/GStreamer.framework/Versions/1.0/lib" \
+    install_name_tool -add_rpath "@executable_path/../Frameworks/gstreamer/lib" \
         "$contents/MacOS/$binary" 2>/dev/null || true
 done
 # a link to a library outside the bundle and the system would fail on the user's Mac
@@ -67,6 +75,11 @@ if otool -L "$contents/MacOS"/* | grep -F "$gstreamer"; then
     echo "a binary still names the build's GStreamer prefix" >&2
     exit 1
 fi
+
+# the release marker and identity the updater checks
+mkdir -p "$contents/Resources/ngteams"
+printf 'macos-app\n' > "$contents/Resources/ngteams/update-format"
+printf '%s\n' "$version" > "$contents/Resources/ngteams/release"
 
 iconset="$out/ngteams.iconset"
 rm -rf "$iconset" && mkdir "$iconset"
@@ -112,19 +125,44 @@ cat > "$contents/Info.plist" <<PLIST
 PLIST
 plutil -lint "$contents/Info.plist" >/dev/null
 
-# ad hoc: nested code first, the bundle last
-find "$contents/Frameworks" -type f \( -name '*.dylib' -o -perm -u+x \) -exec codesign --force --sign - {} \;
-for binary in ngteamsctl ngteams-webview; do
-    codesign --force --sign - "$contents/MacOS/$binary"
-done
-codesign --force --sign - --identifier com.nickalie.ngteams "$app"
+# nested code first, the bundle last; a Developer ID signs with the hardened runtime and a timestamp, else ad hoc
+identity=${NGTEAMS_MACOS_SIGN_IDENTITY:-}
+if [[ -n $identity ]]; then
+    sign=(codesign --force --sign "$identity" --timestamp --options runtime)
+else
+    sign=(codesign --force --sign -)
+fi
+entitlements="$root/packaging/macos/ngteams.entitlements"
+find "$contents/Frameworks" -type f \( -name '*.dylib' -o -perm -u+x \) -exec "${sign[@]}" {} \;
+"${sign[@]}" "$contents/MacOS/ngteamsctl"
+"${sign[@]}" --entitlements "$entitlements" "$contents/MacOS/ngteams-webview"
+"${sign[@]}" --entitlements "$entitlements" --identifier com.nickalie.ngteams "$app"
 codesign --verify --strict --deep "$app"
 
 stem="ngteams-$version-macos-arm64"
+notarize() {
+    xcrun notarytool submit "$1" --key "$NGTEAMS_NOTARY_KEY" --key-id "$NGTEAMS_NOTARY_KEY_ID" \
+        --issuer "$NGTEAMS_NOTARY_ISSUER" --wait --timeout 1h
+}
+notary=
+if [[ -n $identity && -n ${NGTEAMS_NOTARY_KEY:-} && -n ${NGTEAMS_NOTARY_KEY_ID:-} && -n ${NGTEAMS_NOTARY_ISSUER:-} ]]; then
+    notary=1
+    ditto -c -k --keepParent "$app" "$out/notarize.zip"
+    notarize "$out/notarize.zip"
+    rm "$out/notarize.zip"
+    xcrun stapler staple "$app"
+fi
 ditto -c -k --keepParent "$app" "$out/$stem.zip"
 staging="$out/dmg"
 rm -rf "$staging" && mkdir "$staging"
 cp -R "$app" "$staging/" && ln -s /Applications "$staging/Applications"
 hdiutil create -quiet -volname ngteams -srcfolder "$staging" -format UDZO "$out/$stem.dmg"
 rm -rf "$staging"
+if [[ -n $identity ]]; then
+    codesign --force --sign "$identity" --timestamp "$out/$stem.dmg"
+fi
+if [[ -n $notary ]]; then
+    notarize "$out/$stem.dmg"
+    xcrun stapler staple "$out/$stem.dmg"
+fi
 (cd "$out" && shasum -a 256 "$stem.zip" "$stem.dmg")

@@ -151,13 +151,16 @@ scripts/install.sh
 
 The app installs into `~/.local`; the first build downloads about 150 MB of call components. Other distributions need the equivalent packages, including WPE WebKit 2.54 or newer. A build from source doesn't update itself: to update, run `git pull && scripts/install.sh` in that folder.
 
-**On a Mac (Apple silicon, macOS 14 or later)** ngteams is a preview: there's no release download yet. It builds into
-`ngteams.app` (with a `.dmg` and a `.zip`) from source, with Xcode's command line tools, the repository's Rust and
-GStreamer's official macOS runtime, which `scripts/macos-gstreamer.sh` puts in a folder of its own (no administrator,
-no Homebrew). The [development guide](docs/development.md#macos-host-runner) has the commands. The app isn't signed
-with an Apple Developer ID, so the first time, open it with right-click → **Open**. It keeps your sign-in in the
-macOS Keychain and its files in `~/Library/Application Support/ngteams`; it asks for the camera and microphone the
-first time a call uses them.
+**On a Mac (Apple silicon, macOS 14 or later)** ngteams is a preview. Download
+`ngteams-<version>-macos-arm64.dmg` from the [latest release](https://github.com/nickalie/ngteams/releases/latest),
+open it and drag **ngteams** to **Applications** (the `.zip` holds the same app). Until releases are signed with an
+Apple Developer ID, open it the first time with right-click → **Open**. It keeps your sign-in in the macOS Keychain
+and its files in `~/Library/Application Support/ngteams`, asks for the camera and microphone the first time a call
+uses them, and updates itself from later releases. Closing the window keeps it in the Dock (the badge
+shows your unread chats), a click on the Dock icon brings the window back, and **⌘Q** quits. It also builds from
+source with Xcode's command line tools, the repository's Rust and GStreamer's official macOS runtime
+(`scripts/macos-gstreamer.sh`, no administrator, no Homebrew); the
+[development guide](docs/development.md#macos-host-runner) has the commands.
 
 ## Getting started
 
