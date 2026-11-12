@@ -708,7 +708,7 @@ pub fn open_link(url: String, cx: &mut App) {
 pub fn quit(cx: &mut App) {
     match cx.try_global::<Held>().map(|held| held.running.clone()) {
         Some(running) => running.update(cx, Running::quit),
-        None => cx.quit(),
+        None => crate::run_end::end(cx),
     }
 }
 
@@ -717,7 +717,7 @@ pub fn quit_after(stopped: Task<()>, cx: &mut App) {
     cx.spawn(async move |cx: &mut AsyncApp| {
         stopped.await;
         log::info!("the engines are shut down: the app quits now");
-        cx.update(|cx| cx.quit());
+        cx.update(crate::run_end::end);
     })
     .detach();
 }

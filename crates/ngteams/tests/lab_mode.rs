@@ -249,3 +249,18 @@ fn the_build_marker_matrix_keeps_lab_builds_in_lab_and_all_test_support_builds_o
         "installed builds may run --lab too"
     );
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_macos_lab_window_needs_the_console_runner() {
+    lab::macos_console_allowed(Some(OsStr::new("1"))).unwrap();
+    for value in [
+        None,
+        Some(OsStr::new("")),
+        Some(OsStr::new("0")),
+        Some(OsStr::new("yes")),
+    ] {
+        let error = lab::macos_console_allowed(value).unwrap_err();
+        assert!(error.contains("scripts/run-lab-macos.py"), "{error}");
+    }
+}

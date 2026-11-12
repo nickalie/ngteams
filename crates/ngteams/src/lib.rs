@@ -25,6 +25,7 @@ pub mod lab;
 pub mod read_only;
 pub mod refusal;
 pub mod restart;
+pub mod run_end;
 pub mod secrets;
 pub mod setup;
 pub mod signin;

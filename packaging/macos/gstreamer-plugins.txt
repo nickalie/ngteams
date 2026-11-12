@@ -1,0 +1,86 @@
+# The plugins scripts/package-macos.sh copies into ngteams.app (the official GStreamer macOS runtime's): the Windows
+# list (packaging/windows/gstreamer-plugins.txt) with its native devices replaced by Core Audio (osxaudio) and
+# AVFoundation (applemedia: avfvideosrc). The runtime uses libav for AAC/HEVC and dav1d/libav for AV1 (rather than
+# faad/de265/aom).
+# Network/adaptive-demux plugins are deliberately absent: the engine supplies all playback bytes through appsrc.
+coreelements
+app
+audioconvert
+audiomixer
+audiorate
+audioresample
+encoding
+ogg
+opus
+playback
+rawparse
+subparse
+theora
+vorbis
+typefindfunctions
+videoconvertscale
+videorate
+deinterlace
+volume
+alaw
+apetag
+audiofx
+audioparsers
+autodetect
+avi
+flac
+flv
+icydemux
+id3demux
+interleave
+isomp4
+lame
+matroska
+mpg123
+mulaw
+speex
+videofilter
+vpx
+wavpack
+wavparse
+aiff
+autoconvert
+closedcaption
+codecalpha
+dav1d
+debugutilsbad
+dtsdec
+inter
+midi
+mpegpsdemux
+mpegtsdemux
+openh264
+opusparse
+sbc
+soundtouch
+subenc
+svtav1
+transcode
+videoparsersbad
+voaacenc
+x265
+libav
+# Other local file/image containers and codecs supported by the Windows SDK.
+asf
+realmedia
+mxf
+jpeg
+jpegformat
+png
+pnm
+openjpeg
+dv
+adpcmdec
+amrnb
+amrwbdec
+a52dec
+# Native devices; synthetic sources let the same runtime exercise the streams without opening real devices.
+osxaudio
+applemedia
+audiotestsrc
+videotestsrc

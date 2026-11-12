@@ -8,7 +8,9 @@
 # app's player and devices use are kept. The runtime's libraries name each other through `@rpath`, and GStreamer finds
 # its plugins and scanner relative to its own library, so the prefix can live anywhere. The runtime package carries
 # no pkg-config files (those come with the devel package, which also hard-codes /Library/Frameworks), so this writes
-# the few the Rust bindings ask for; each adds the prefix's lib to the binary's rpath for development builds.
+# the few the Rust bindings ask for. The libraries are named `@rpath/...`: a development binary finds them through
+# DYLD_FALLBACK_LIBRARY_PATH=<prefix>/lib (scripts/run-lab-macos.py sets it), ngteams.app through its own rpath
+# (scripts/package-macos.sh).
 #
 # Afterwards: export PKG_CONFIG_PATH=<prefix>/lib/pkgconfig
 set -euo pipefail
@@ -64,7 +66,7 @@ Name: $name
 Description: $name from the official GStreamer $version macOS runtime (written by scripts/macos-gstreamer.sh)
 Version: $pc_version
 Requires: $requires
-Libs: -L\${libdir} -l$library -Wl,-rpath,\${libdir}
+Libs: -L\${libdir} -l$library
 Cflags:
 PC
 }

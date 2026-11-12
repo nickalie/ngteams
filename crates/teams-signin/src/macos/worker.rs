@@ -11,7 +11,7 @@ use super::wire::{self, Event, Start};
 use crate::webview_policy::INIT;
 use block2::DynBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject};
+use objc2::runtime::{AnyObject, ProtocolObject, Sel};
 use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSMenu, NSMenuItem, NSWindow, NSWindowDelegate,
@@ -20,7 +20,7 @@ use objc2_app_kit::{
 use objc2_foundation::{
     NSArray, NSError, NSNotification, NSNumber, NSObject, NSObjectNSKeyValueCoding as _, NSObjectProtocol, NSPoint,
     NSRect, NSSize, NSString, NSURL, NSURLAuthenticationChallenge, NSURLAuthenticationMethodServerTrust,
-    NSURLCredential, NSURLRequest, NSURLSessionAuthChallengeDisposition, ns_string,
+    NSURLCredential, NSURLProtectionSpace, NSURLRequest, NSURLSessionAuthChallengeDisposition, ns_string,
 };
 use objc2_web_kit::{
     WKContentWorld, WKNavigation, WKNavigationAction, WKNavigationActionPolicy, WKNavigationDelegate,
@@ -101,6 +101,20 @@ fn described(request: &NSURLRequest) -> (String, String) {
         .HTTPMethod()
         .map_or_else(|| "GET".to_owned(), |method| method.to_string());
     (method, url)
+}
+
+/// The challenge's protection space. `WebKit`'s challenge object answers `protectionSpace` by forwarding it, which
+/// objc2's debug-build check of the receiver's own methods refuses (a panic across `WebKit`'s callback): the message is
+/// sent through `objc_msgSend` itself, as a release build does.
+fn protection_space(challenge: &NSURLAuthenticationChallenge) -> Option<Retained<NSURLProtectionSpace>> {
+    type Getter = unsafe extern "C" fn(*const NSURLAuthenticationChallenge, Sel) -> *mut NSURLProtectionSpace;
+    // SAFETY: `objc_msgSend` called with the receiver, the selector and the getter's own signature (no arguments, an
+    // object returned).
+    let getter: Getter = unsafe { std::mem::transmute(objc2::ffi::objc_msgSend as unsafe extern "C-unwind" fn()) };
+    // SAFETY: `protectionSpace` takes no arguments and returns an autoreleased object or nil.
+    let space = unsafe { getter(challenge, sel!(protectionSpace)) };
+    // SAFETY: the returned object is retained here for its use in this callback.
+    unsafe { Retained::retain(space) }
 }
 
 /// A navigation starts only when the app's navigation rules and its guard both let it.
@@ -187,9 +201,12 @@ define_class!(
         ) {
             // the system checks a server's certificate, with no click-through; ambient HTTP authentication and client
             // certificates are refused
-            let method = challenge.protectionSpace().authenticationMethod();
-            // SAFETY: an immutable framework constant.
-            let trust = method.isEqualToString(unsafe { NSURLAuthenticationMethodServerTrust });
+            let trust = protection_space(challenge).is_some_and(|space| {
+                // SAFETY: an immutable framework constant.
+                space
+                    .authenticationMethod()
+                    .isEqualToString(unsafe { NSURLAuthenticationMethodServerTrust })
+            });
             let disposition = if trust {
                 NSURLSessionAuthChallengeDisposition::PerformDefaultHandling
             } else {

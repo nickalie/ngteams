@@ -4,7 +4,7 @@
 
 # ngteams
 
-**A native Microsoft Teams app for Linux and Windows.**
+**A native Microsoft Teams app for Linux and Windows, with a macOS preview.**
 
 Chats, channels, calendar, calls and meetings for your work account,
 built for your desktop instead of a web page in a wrapper.
@@ -150,6 +150,14 @@ scripts/install.sh
 ```
 
 The app installs into `~/.local`; the first build downloads about 150 MB of call components. Other distributions need the equivalent packages, including WPE WebKit 2.54 or newer. A build from source doesn't update itself: to update, run `git pull && scripts/install.sh` in that folder.
+
+**On a Mac (Apple silicon, macOS 14 or later)** ngteams is a preview: there's no release download yet. It builds into
+`ngteams.app` (with a `.dmg` and a `.zip`) from source, with Xcode's command line tools, the repository's Rust and
+GStreamer's official macOS runtime, which `scripts/macos-gstreamer.sh` puts in a folder of its own (no administrator,
+no Homebrew). The [development guide](docs/development.md#macos-host-runner) has the commands. The app isn't signed
+with an Apple Developer ID, so the first time, open it with right-click → **Open**. It keeps your sign-in in the
+macOS Keychain and its files in `~/Library/Application Support/ngteams`; it asks for the camera and microphone the
+first time a call uses them.
 
 ## Getting started
 

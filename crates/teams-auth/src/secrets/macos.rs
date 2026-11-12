@@ -111,6 +111,37 @@ mod tests {
         );
     }
 
+    /// The real login keychain: opt-in (`NGTEAMS_KEYCHAIN_TESTS=1`), as it needs an unlocked keychain, which an SSH
+    /// session usually doesn't have; CI's macOS runner has one. Its items use a random namespace and are deleted.
+    #[tokio::test]
+    async fn items_are_written_read_replaced_and_deleted_in_the_keychain() {
+        if std::env::var_os("NGTEAMS_KEYCHAIN_TESTS").is_none() {
+            eprintln!("skipped: set NGTEAMS_KEYCHAIN_TESTS=1 where the login keychain is unlocked");
+            return;
+        }
+        let mut random = [0u8; 8];
+        getrandom::fill(&mut random).unwrap();
+        let namespace = random.iter().fold(String::new(), |mut text, byte| {
+            let _ = std::fmt::Write::write_fmt(&mut text, format_args!("{byte:02x}"));
+            text
+        });
+        let store = KeyringSecretStore::new(format!("ngteams-synthetic-{namespace}"))
+            .await
+            .unwrap();
+        let other = KeyringSecretStore::new(format!("ngteams-synthetic-other-{namespace}"))
+            .await
+            .unwrap();
+        let key = SecretKey::new("synthetic@example.test", "https://api.example.test/.default");
+        assert!(store.get(&key).await.unwrap().is_none());
+        store.put(&key, &Secret::new("synthetic-first")).await.unwrap();
+        store.put(&key, &Secret::new("synthetic-second ✓")).await.unwrap();
+        assert_eq!(store.get(&key).await.unwrap().unwrap().expose(), "synthetic-second ✓");
+        assert!(other.get(&key).await.unwrap().is_none(), "namespaces are apart");
+        store.delete(&key).await.unwrap();
+        store.delete(&key).await.unwrap();
+        assert!(store.get(&key).await.unwrap().is_none());
+    }
+
     #[test]
     fn keychain_errors_carry_only_the_status() {
         let error = failed(security_framework::base::Error::from_code(-25293));

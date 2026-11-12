@@ -674,7 +674,7 @@ fn ask_account(setup: Setup, held: Option<String>) -> Result<Outcome, String> {
             Err(error) => {
                 eprintln!("teams: the window can't be opened: {error:#}");
                 failed_in_app.set(true);
-                cx.quit();
+                ngteams::run_end::end(cx);
             }
         }
     });
@@ -740,7 +740,7 @@ fn sign_in_first(setup: Setup, account: PersonalAccount) -> Result<Outcome, Stri
                 }
                 Err(error) => *failure_in_app.borrow_mut() = Some(error),
             }
-            cx.update(|cx| cx.quit());
+            cx.update(ngteams::run_end::end);
         })
         .detach();
     });

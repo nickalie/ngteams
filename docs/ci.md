@@ -213,6 +213,22 @@ atomic job assignment, descendant retention after the original process exits, ex
 Windows-only runner/job sources have hash-checked Linux inventory entries and are measured by the native gate.
 
 
+## macOS portability
+
+The [macOS portability workflow](../.github/workflows/macos.yml) runs on `macos-latest` (Apple silicon) for pushes to
+`main`, pull requests and merge groups. It installs GStreamer's pinned official macOS runtime into the runner's temp
+dir (`scripts/macos-gstreamer.sh`, no admin), then formats, checks and lints every workspace target (the Linux-only
+crates compile to nothing there) and runs the offline tests of the crates with macOS code of their own: files, logs,
+stores, authentication with the Keychain store's round trip against the runner's unlocked login keychain
+(`NGTEAMS_KEYCHAIN_TESTS=1`), the control socket and CLI, the runner, updates, the sign-in guard and the native device
+backend's catalog. Builds use `CARGO_INCREMENTAL=0` and no debug info to fit the runner's disk.
+
+Coverage is measured natively as on Windows: `teams-platform` at 90% in lines, functions and regions, `teams-auth` and
+`teams-ctl` at their `coverage.toml` floors with their macOS code included. The macOS-only sources (the Keychain store,
+the sign-in worker) have no Linux LLVM mapping and are listed under `unmapped_sources` with the reason; the sign-in
+window itself and the app's windows run on the Mac console through `scripts/run-lab-macos.py`
+([development guide](development.md#macos-host-runner)).
+
 ## Releases
 
 The [release workflow](../.github/workflows/release.yml) runs on a push to `main` that changes what ends up in a

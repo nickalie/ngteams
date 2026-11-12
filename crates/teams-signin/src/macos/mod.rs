@@ -107,7 +107,8 @@ impl Windows {
 
     #[must_use]
     pub fn ask(&self, config: WindowConfig) -> SignInAnswer {
-        ask(config, &self.app_id).unwrap_or_else(|_| {
+        ask(config, &self.app_id).unwrap_or_else(|error| {
+            log::warn!("the sign-in worker failed: {error}");
             SignInAnswer::Failed("The sign-in window could not finish. Close it and try again.".into())
         })
     }

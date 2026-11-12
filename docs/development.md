@@ -958,3 +958,54 @@ and verifies its zip, checks build identity and CLI help, and runs `Install.ps1 
 installer execution or tenant access is needed for these checks. Agents can package normally built lab binaries
 with the same scripts and `-Runtime target/windows-media-runtime`; they never install or start them as a personal
 client. The signed-in VM checks and physical device/GPU limits remain separate from package integrity.
+
+### macOS host runner
+
+The macOS port (Apple silicon, macOS 14 or later) is debugged on a Mac over SSH; its logged-in console is the
+authorized GUI place for this port, as the win11 VM's console is for Windows, only through the lab runner below and
+within its limits. Prerequisites there: Xcode's command line tools (the `security`, `codesign`,
+`iconutil` and `hdiutil` tools; GPUI compiles its Metal shaders at run time, so no Metal Toolchain), rustup with the
+repository toolchain, Python 3, and GStreamer's official macOS runtime in a private prefix:
+
+```sh
+scripts/macos-gstreamer.sh ~/ngteams-agent/gstreamer      # pinned in packaging/macos/media-pins.json, no admin
+export PKG_CONFIG_PATH=~/ngteams-agent/gstreamer/lib/pkgconfig
+```
+
+The runtime package has no pkg-config files (GStreamer's devel package, which has them, hard-codes
+`/Library/Frameworks`), so the script writes the few the Rust bindings ask for. Its libraries are named `@rpath/...`:
+a development binary or test finds them with `DYLD_FALLBACK_LIBRARY_PATH=<prefix>/lib` (the lab runner sets it),
+`ngteams.app` through its own rpath; GStreamer finds its plugins beside its library. Bring the branch over as for the Windows VM: a
+`git bundle` copied with `scp` into a directory of your own on the Mac (or `git fetch` from it over SSH), never a push
+to GitHub. Mac disks are small: use one `CARGO_TARGET_DIR`, `CARGO_INCREMENTAL=0` and `CARGO_PROFILE_DEV_DEBUG=0`.
+
+```sh
+cargo check --locked --workspace --all-targets
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked -p teams-platform -p teams-log -p teams-store -p teams-auth -p teams-ctl -p teams-runner \
+    -p teams-update -- --test-threads=1
+NGTEAMS_KEYCHAIN_TESTS=1 cargo test -p teams-auth --lib keychain   # needs an unlocked login keychain (not over SSH)
+scripts/run-lab-macos.py --build-only                     # lab-marked ngteams and ngteams-webview in target/lab
+```
+
+What macOS has of its own: data and config under `~/Library/Application Support/ngteams/{data,config}` (the lab's
+aliases in `ngteams-lab/<alias>/` beside it), the control socket under `$TMPDIR/ngteams/`, credentials as Keychain
+generic passwords (service `<namespace>: <audience>`, account the UPN; `crates/teams-auth/src/secrets/macos.rs`), the
+sign-in window in the `ngteams-webview` worker (`WKWebView` on a non-persistent store whose proxy is the host gate;
+`crates/teams-signin/src/macos/`), devices through GStreamer's `osxaudio` and `avfvideosrc` on the Windows backend
+(`crates/teams-media/src/devices/native.rs`), video through GPUI's image path, and the background-effects model on
+Metal. Linux-only crates (WPE, the UI sandbox) compile to nothing there.
+
+`scripts/run-lab-macos.py <alias>` runs a lab alias on the console: lab-marked builds only, its broker and app on a
+private socket pair, `--shot <name>` saving the run's own windows (`screencapture -l`, which needs the Screen
+Recording permission for the SSH session's process), `--status` and `--stop`; runs are short and every process stops
+with the run. Agents use it only with a synthetic alias (an `example.invalid` account, no tokens) unless a task's
+brief says otherwise: no password is typed, no tenant session opens, nobody is contacted. Lab devices stay refused on
+macOS (no device sandbox).
+
+`scripts/package-macos.sh --binaries <dir> --gstreamer <prefix> --version <v> --out <dir>` assembles
+`ngteams.app` (the three binaries, the runtime's libraries and the plugins `packaging/macos/gstreamer-plugins.txt`
+names under `Contents/Frameworks/GStreamer.framework`, the Teams-derived icon, `Info.plist` with the camera and
+microphone usage descriptions and the `msteams:` scheme), signs it ad hoc and packs a `.zip` and a `.dmg`.
+Notarization needs an Apple Developer ID certificate and an App Store Connect API key; until then a user opens the
+app the first time with right-click → Open.

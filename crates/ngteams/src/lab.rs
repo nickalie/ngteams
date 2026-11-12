@@ -102,6 +102,24 @@ pub fn window_allowed(wayland: Option<&OsStr>, sandbox: Option<&OsStr>, display:
     })
 }
 
+/// The variable `scripts/run-lab-macos.py` sets on the app it starts: on macOS the logged-in console is the lab's
+/// authorized GUI place, as the win11 VM's console is on Windows, only through that runner.
+#[cfg(target_os = "macos")]
+pub const MACOS_CONSOLE_RUNNER: &str = "NGTEAMS_MACOS_CONSOLE_RUNNER";
+
+/// Whether a macOS lab window may open: only when the macOS lab runner started the app (`runner` is its marker).
+///
+/// # Errors
+/// Without the runner's marker.
+#[cfg(target_os = "macos")]
+pub fn macos_console_allowed(runner: Option<&std::ffi::OsStr>) -> Result<(), String> {
+    if runner.is_some_and(|value| value == "1") {
+        Ok(())
+    } else {
+        Err("lab: on macOS a lab window opens only through scripts/run-lab-macos.py".to_owned())
+    }
+}
+
 /// Verifies the current process's platform-specific UI sandbox.
 ///
 /// # Errors
@@ -114,11 +132,7 @@ pub fn window_allowed_here() -> Result<(), String> {
     }
     #[cfg(target_os = "macos")]
     {
-        Err(
-            "lab: macOS has no UI sandbox for agents; a lab window runs only in the Linux UI sandbox \
-             (scripts/run-lab.sh) or the win11 VM console"
-                .to_owned(),
-        )
+        macos_console_allowed(std::env::var_os(MACOS_CONSOLE_RUNNER).as_deref())
     }
     #[cfg(target_os = "linux")]
     window_allowed(

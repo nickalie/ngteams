@@ -60,6 +60,12 @@ teams-wpe-client.workspace = true
 teams-web-engine.workspace = true
 ui-sandbox.workspace = true
 
+# macOS: the app's run ended through AppKit (`run_end`)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 interprocess.workspace = true
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Globalization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Pipes", "Wdk_Foundation", "Win32_System_WindowsProgramming"] }

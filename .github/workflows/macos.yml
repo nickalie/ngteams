@@ -1,0 +1,76 @@
+# The macOS (Apple silicon) port: every target formatted, compiled and linted, and the offline tests of the crates with
+# macOS code of their own. Grow this selection as more of the app's macOS integrations get display-free tests.
+name: macOS portability
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: Build, lints and offline tests (macOS arm64)
+    runs-on: macos-latest
+    timeout-minutes: 120
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      # the workspace's test binaries link GPUI, libwebrtc and Burn: line tables would multiply the runner's disk use
+      CARGO_PROFILE_DEV_DEBUG: 0
+      # the runner's login keychain is unlocked: the Keychain store's round trip runs against it
+      NGTEAMS_KEYCHAIN_TESTS: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the repository toolchain
+        run: rustup show active-toolchain
+      - name: GStreamer's pinned macOS runtime in a private prefix
+        run: |
+          scripts/macos-gstreamer.sh "$RUNNER_TEMP/gstreamer"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/gstreamer/lib/pkgconfig" >> "$GITHUB_ENV"
+          # its libraries are named @rpath/...: test binaries find them here
+          echo "DYLD_FALLBACK_LIBRARY_PATH=$RUNNER_TEMP/gstreamer/lib" >> "$GITHUB_ENV"
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Check every target
+        run: cargo check --locked --workspace --all-targets
+      - name: Lints
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Offline files, Keychain, control socket, runner, update and sign-in guard tests
+        run: >-
+          cargo test --locked -p teams-platform -p teams-log -p teams-store -p teams-auth -p teams-ctl -p teams-runner
+          -p teams-update -- --test-threads=1
+      - name: Sign-in guard and worker protocol, without a window
+        run: cargo test --locked -p teams-signin --lib --test classify --test gate -- --test-threads=1
+      - name: Native device backend's catalog (no device opened)
+        run: cargo test --locked -p teams-media --lib devices:: -- --test-threads=1
+      - name: Coverage tools
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - name: Require the authentication crate's coverage floors natively (the Keychain store included)
+        run: |
+          cargo llvm-cov clean --workspace
+          floors=$(python3 -c "import tomllib; b = tomllib.load(open('coverage.toml', 'rb'))['baselines']['teams-auth']; print(b['lines'], b['functions'], b['regions'])")
+          read -r lines functions regions <<< "$floors"
+          cargo llvm-cov --locked -p teams-auth --fail-under-lines "$lines" --fail-under-functions "$functions" --fail-under-regions "$regions"
+      - name: Require the control crate's coverage floors natively
+        run: |
+          cargo llvm-cov clean --workspace
+          floors=$(python3 -c "import tomllib; b = tomllib.load(open('coverage.toml', 'rb'))['baselines']['teams-ctl']; print(b['lines'], b['functions'], b['regions'])")
+          read -r lines functions regions <<< "$floors"
+          cargo llvm-cov --locked -p teams-ctl --fail-under-lines "$lines" --fail-under-functions "$functions" --fail-under-regions "$regions" -- --test-threads=1
+      - name: Require 90% native filesystem coverage
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov --locked -p teams-platform --fail-under-lines 90 --fail-under-functions 90 --fail-under-regions 90
