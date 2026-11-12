@@ -14,26 +14,43 @@ use crate::{CHAT_BASE, REGION, TENANT};
 const SINCE: &str = "mock-since-";
 /// The mock's backward-page token: the messages before a `sequenceId`, then `-` and its first page's sync time.
 const BEFORE: &str = "mock-before-";
+/// The mock's conversation list page token: the conversations changed after a time, from an offset.
+const LIST_PAGE: &str = "mock-page-";
 /// The largest page a read asks for and gets (the web client asks for 200).
 const MAX_PAGE: usize = 200;
 
 /// `GET v1/users/<owner>/conversations`: the caller's conversations, or with the sync link's `syncState` those
-/// changed since it was handed out; one page (no `forwardLink` was ever seen).
+/// changed since it was handed out; one page (no `forwardLink` was ever seen), unless a test asked for pages
+/// (`startup.rs`): then newest first, each page but the last with a `forwardLink` to the next.
 pub(crate) fn conversations(state: &State, call: &Call<'_>, owner: &str) -> ResponseTemplate {
     if owner != "ME" && owner != call.caller {
         return status(403);
     }
-    let since = match call.query("syncState").map(|token| token_value(token, SINCE)) {
-        None => 0,
-        Some(Some(since)) => since,
-        Some(None) => return status(400),
+    let (since, offset) = match call.query("syncState") {
+        None => (0, 0),
+        Some(token) => match (token_value(token, SINCE), list_page_token(token)) {
+            (Some(since), _) => (since, 0),
+            (None, Some(page)) => page,
+            (None, None) => return status(400),
+        },
     };
-    let entries: Vec<Value> = state
+    let mut listed: Vec<&Conversation> = state
         .conversations
         .iter()
         .filter(|conversation| {
             conversation.listed && conversation.is_member(&call.caller) && conversation.version > since
         })
+        .collect();
+    if state.list_page.is_some() {
+        listed.sort_by_key(|conversation| std::cmp::Reverse(conversation.version));
+    }
+    let end = state
+        .list_page
+        .map_or(listed.len(), |size| offset.saturating_add(size).min(listed.len()));
+    let entries: Vec<Value> = listed
+        .get(offset.min(end)..end)
+        .unwrap_or_default()
+        .iter()
         .map(|conversation| list_entry(conversation, &call.caller))
         .collect();
     let sync = format!(
@@ -41,13 +58,26 @@ pub(crate) fn conversations(state: &State, call: &Call<'_>, owner: &str) -> Resp
         call.caller,
         state.now()
     );
+    let forward = match state.list_page {
+        Some(size) if end < listed.len() => format!(
+            "{CHAT_BASE}/v1/users/{}/conversations?view=msnp24Equivalent&syncState={LIST_PAGE}{since}-{end}&pageSize={size}",
+            call.caller
+        ),
+        _ => String::new(),
+    };
     json(
         200,
         &json!({
             "conversations": entries,
-            "_metadata": {"totalCount": entries.len(), "forwardLink": "", "syncState": sync},
+            "_metadata": {"totalCount": listed.len(), "forwardLink": forward, "syncState": sync},
         }),
     )
+}
+
+/// A list page token's values, `<LIST_PAGE><since>-<offset>`.
+fn list_page_token(token: &str) -> Option<(u64, usize)> {
+    let (since, offset) = token.strip_prefix(LIST_PAGE)?.split_once('-')?;
+    Some((since.parse().ok()?, offset.parse().ok()?))
 }
 
 /// `GET …/conversations/<chat>/messages`: newest first, a page of `pageSize`; with the mock's `syncState` the messages

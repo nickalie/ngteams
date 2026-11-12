@@ -113,6 +113,10 @@ harness = false
 name = "reactors_window"
 harness = false
 
+[[test]]
+name = "first_load_window"
+harness = false
+
 [build-dependencies]
 embed-resource.workspace = true
 

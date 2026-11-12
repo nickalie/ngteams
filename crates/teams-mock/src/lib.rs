@@ -96,6 +96,7 @@ mod channels;
 mod chatsvc;
 mod csa;
 mod fixtures;
+mod front;
 mod loki;
 #[cfg(feature = "media")]
 pub mod media;
@@ -105,6 +106,7 @@ pub mod mixer;
 mod peers;
 mod reads;
 mod roster;
+mod startup;
 mod team_apps;
 mod team_pages;
 mod trouter;
@@ -121,7 +123,9 @@ use wiremock::{Match, Mock, MockServer, Request, Respond, ResponseTemplate};
 pub use calling::{ANSWERED_ELSEWHERE, CallPhase, Leg, MockCall, TIMED_OUT};
 pub use channels::{ChannelWrite, NOT_ADDED};
 pub use fixtures::FixtureError;
+pub use front::Front;
 pub use loki::{LOKI_REGION, LokiCard};
+pub use startup::{Hold, MAX_HOLD, synthetic_chat, synthetic_text, synthetic_topic};
 pub use trouter::{CALLING_APP, MESSAGING_APP, REGIONAL_NAME, Registration, SocketRecord, TrouterMock};
 pub use ups::{AvailabilityChange, OwnAvailability};
 

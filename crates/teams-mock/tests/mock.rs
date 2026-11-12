@@ -307,6 +307,80 @@ async fn the_conversation_lists_sync_link_gives_only_what_changed_since() -> Tes
 }
 
 #[tokio::test]
+async fn a_paged_list_hands_out_the_newest_first_page_by_page_and_a_held_page_waits_for_its_release() -> TestResult {
+    let lab = Lab::start().await?;
+    let whole = ids(&lab.list(LAB_A).await?);
+    let made = lab.mock.add_synthetic_chats(5);
+    assert_eq!(made[0], teams_mock::synthetic_chat(0));
+    lab.mock.page_conversation_list(3);
+    let first = lab.list(LAB_A).await?;
+    assert_eq!(ids(&first), made[..3]);
+    assert!(
+        first["_metadata"]["syncState"]
+            .as_str()
+            .is_some_and(|link| !link.is_empty())
+    );
+    let front = lab.mock.start_front()?;
+    let token = format!("Bearer {}", lab.mock.token(LAB_A).ok_or("no a")?);
+    let headers = [
+        ("Authorization", token.as_str()),
+        ("X-MS-Migration", "True"),
+        ("BehaviorOverride", "redirectAs404"),
+    ];
+    let through_front = |link: &str| link.replace("https://teams.microsoft.com", front.origin());
+    let later_page = |target: &str| target.contains("mock-page-");
+    let mut seen = ids(&first);
+    let mut forward = first["_metadata"]["forwardLink"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    while !forward.is_empty() {
+        let hold = lab.mock.hold(later_page);
+        let link = through_front(&forward);
+        let (page, was_held) = tokio::join!(lab.send_raw(Method::GET, &link, &headers, None), async move {
+            let entered =
+                tokio::task::spawn_blocking(move || (hold.wait_entered(std::time::Duration::from_secs(5)), hold))
+                    .await
+                    .map_err(|error| error.to_string())?;
+            Ok::<bool, String>(entered.0 && entered.1.release())
+        });
+        assert!(was_held?, "the page wasn't held");
+        let page = page?;
+        assert_eq!(page.status, 200, "{}", page.text);
+        let page = page.json()?;
+        seen.extend(ids(&page));
+        forward = page["_metadata"]["forwardLink"].as_str().unwrap_or_default().to_owned();
+    }
+    let mut expected = whole;
+    expected.extend(made);
+    expected.sort();
+    seen.sort();
+    assert_eq!(seen, expected, "every chat once, over the pages");
+
+    // a held page refused; a read the hold doesn't match goes on meanwhile
+    let hold = lab.mock.hold(later_page);
+    let link = through_front(first["_metadata"]["forwardLink"].as_str().ok_or("no forward link")?);
+    let other = through_front(&format!(
+        "{CHAT_BASE}/v1/users/ME/conversations?view=msnp24Equivalent&pageSize=2"
+    ));
+    let (refused, was_held) = tokio::join!(lab.send_raw(Method::GET, &link, &headers, None), async {
+        let entered = tokio::task::spawn_blocking(move || (hold.wait_entered(std::time::Duration::from_secs(5)), hold))
+            .await
+            .map_err(|error| error.to_string())?;
+        let meanwhile = lab
+            .send_raw(Method::GET, &other, &headers, None)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok::<(bool, u16), String>((entered.0 && entered.1.refuse(503), meanwhile.status))
+    });
+    assert_eq!(was_held?, (true, 200));
+    assert_eq!(refused?.status, 503);
+    let again = lab.send_raw(Method::GET, &link, &headers, None).await?;
+    assert_eq!(again.json()?["conversations"].as_array().map(Vec::len), Some(3));
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_read_around_a_time_replays_the_message_fixture() -> TestResult {
     let lab = Lab::start().await?;
     let recorded = fixture("messages.json")?;

@@ -107,6 +107,10 @@ pub(crate) struct State {
     /// The account's own conversation properties it set, by (account MRI, conversation): a channel's
     /// `channelNotificationSettings` and `followAllRc` (`docs/protocol/channels.md`).
     pub(crate) own_properties: BTreeMap<(String, String), serde_json::Map<String, Value>>,
+    /// The conversation list's page size, once a test asked for pages (`startup.rs`).
+    pub(crate) list_page: Option<usize>,
+    /// The requests a test holds (`startup.rs`).
+    pub(crate) holds: Vec<std::sync::Arc<crate::startup::Gate>>,
     clock: u64,
     groups_made: u64,
 }
@@ -143,6 +147,8 @@ impl State {
             peers: crate::peers::Peers::default(),
             changes: watch::Sender::new(0),
             own_properties: BTreeMap::new(),
+            list_page: None,
+            holds: Vec::new(),
             clock: CLOCK_START,
             groups_made: 0,
         })

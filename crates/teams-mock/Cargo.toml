@@ -25,8 +25,9 @@ serde_json.workspace = true
 # the loopback media peer (`media`): a session on the file backend through the loopback TURN server
 teams-media = { workspace = true, features = ["test-support"], optional = true }
 thiserror = { workspace = true, optional = true }
-# the Trouter mock: its own loopback server on a thread of its own, and the wake-up when an event is queued
-tokio = { workspace = true, features = ["macros", "net", "rt", "sync", "time"] }
+# the Trouter mock: its own loopback server on a thread of its own, and the wake-up when an event is queued; the
+# front's relay (`front.rs`) reads and writes its connections
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-tungstenite.workspace = true
 # the local HTTP server: one catch-all responder over the mock's state, with the requests it got recorded
 wiremock.workspace = true
