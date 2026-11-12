@@ -1794,6 +1794,7 @@ fn local_refusal_text(why: &str) -> String {
         "not-ringing" => "no call rings".to_owned(),
         "no-call" => "no call is up".to_owned(),
         "no-chat" => "no chat is open".to_owned(),
+        "no-roster" => "this chat's members are still loading: try again in a moment".to_owned(),
         "another-account" => "another account is in a call".to_owned(),
         "no-meeting" => "this meeting couldn't be found: try again in a moment".to_owned(),
         "no-video" => "calls here carry no video".to_owned(),

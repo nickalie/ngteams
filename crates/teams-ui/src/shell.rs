@@ -769,14 +769,16 @@ impl Shell {
 
     /// The user asks `ask` of the calls (a key, a button, a command).
     pub fn ask_call(&mut self, ask: Ask, cx: &mut Context<Self>) {
-        if let Ask::Call { chat } = &ask
-            && !self.list.read(cx).can_call(chat)
-        {
-            return;
-        }
         let enters = matches!(ask, Ask::Call { .. } | Ask::Join { .. } | Ask::TestCall | Ask::Answer);
         if enters && self.busy_elsewhere(cx) {
             calls::refuse_here(&self.models.calls, &self.trace, &ask, "another-account", cx);
+            return;
+        }
+        if let Ask::Call { chat } = &ask
+            && !self.models.calls.read(cx).busy()
+            && !self.list.read(cx).can_call(chat)
+        {
+            calls::refuse_here(&self.models.calls, &self.trace, &ask, "no-roster", cx);
             return;
         }
         calls::ask(&self.models.calls, &self.core, &self.trace, ask, cx);

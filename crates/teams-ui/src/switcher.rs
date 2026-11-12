@@ -299,6 +299,7 @@ pub struct Switcher {
     channels: Vec<(String, SharedString)>,
     /// The call commands that fit the moment, first of the commands.
     call_commands: Vec<CallCommand>,
+    clear_selection: bool,
     /// The team commands the query matches, the best first, after the app's.
     team_commands: Vec<TeamCommand>,
     /// The read-only mode: nothing that writes is offered.
@@ -337,12 +338,12 @@ impl Switcher {
         let calls_list = list.clone();
         let observing = [
             cx.observe(&list, move |this: &mut Self, list, cx| {
-                this.call_commands = list_fitting(list_calls.read(cx), list.read(cx));
+                this.set_call_commands(list_fitting(list_calls.read(cx), list.read(cx)));
                 this.refilter(cx);
             }),
             cx.observe(&teams, |this: &mut Self, _, cx| this.refilter(cx)),
             cx.observe(&calls, move |this: &mut Self, calls, cx| {
-                this.call_commands = fitting(calls.read(cx), calls_list.read(cx));
+                this.set_call_commands(fitting(calls.read(cx), calls_list.read(cx)));
                 this.refilter(cx);
             }),
         ];
@@ -375,6 +376,7 @@ impl Switcher {
             matches: Vec::new(),
             channels: Vec::new(),
             call_commands,
+            clear_selection: false,
             team_commands: Vec::new(),
             read_only,
             _observing: observing,
@@ -436,6 +438,13 @@ impl Switcher {
             .filter(|command| writes || !matches!(command, PaletteCommand::CreateTeam | PaletteCommand::JoinTeam))
             .filter(|command| fuzzy_score(&self.query, command.name()).is_some())
             .collect()
+    }
+
+    fn set_call_commands(&mut self, commands: Vec<CallCommand>) {
+        if self.call_commands != commands {
+            self.call_commands = commands;
+            self.clear_selection = true;
+        }
     }
 
     fn set_query(&mut self, query: &str, cx: &mut Context<Self>) {
@@ -511,7 +520,11 @@ impl Switcher {
 }
 
 impl Render for Switcher {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.clear_selection) {
+            self.state
+                .update(cx, |state, cx| state.set_selected_index(None, window, cx));
+        }
         let palette = theme::current(cx);
         let on_query = cx.weak_entity();
         let on_confirm = cx.weak_entity();

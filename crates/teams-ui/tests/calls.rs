@@ -334,6 +334,98 @@ fn a_staged_group_chat_offers_call_only_after_its_members_arrive() {
 }
 
 #[test]
+fn a_staged_group_call_tells_why_it_is_refused_and_keeps_the_busy_refusal() {
+    let rig = calling();
+    rig.core.members.lock().unwrap().remove(TRIO);
+    let (trace, written) = trace();
+    let (_shell, cx) = shell_window(&rig, Some(TRIO), trace);
+    registered(&rig);
+    cx.simulate_keystrokes("ctrl-shift-c");
+    cx.run_until_parked();
+    assert!(actions(&rig).is_empty());
+    assert_eq!(kinds(&lines(&written, "call", "asked")[0]), ["call"]);
+    assert_eq!(kinds(&lines(&written, "call", "refused")[0]), ["call", "no-roster"]);
+    let told = rig.cx.read(|cx| calls_of(&rig).read(cx).refused().cloned()).unwrap();
+    assert_eq!(
+        told.text,
+        "this chat's members are still loading: try again in a moment"
+    );
+    assert!(drawn(cx, "call-after"));
+
+    status(&rig, 1, CallStatus::Connected);
+    cx.simulate_keystrokes("ctrl-shift-c");
+    cx.run_until_parked();
+    assert!(actions(&rig).is_empty());
+    assert_eq!(
+        kinds(lines(&written, "call", "refused").last().unwrap()),
+        ["call", "busy"]
+    );
+}
+
+#[test]
+fn roster_arrival_clears_the_switcher_highlight_before_enter_can_call() {
+    let rig = calling();
+    let members = rig.core.members.lock().unwrap().remove(TRIO).unwrap();
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(TRIO), trace);
+    registered(&rig);
+    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_input("Call");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down");
+
+    rig.core.members.lock().unwrap().insert(TRIO.to_owned(), members);
+    rig.send(Event::ConversationChanged {
+        conversation: TRIO.into(),
+    });
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(actions(&rig).is_empty(), "a shifted command needs a new selection");
+    assert!(cx.update(|_, cx| shell.read(cx).switcher().is_some()));
+    cx.simulate_keystrokes("down down enter");
+    cx.run_until_parked();
+    assert_eq!(actions(&rig), [CallAction::TestCall { echo: Mri::new(ECHO) }]);
+}
+
+#[test]
+fn a_call_state_change_clears_the_switcher_highlight_before_enter_can_answer() {
+    let rig = calling();
+    let (trace, _) = trace();
+    let (_shell, cx) = shell_window(&rig, Some(AB), trace);
+    registered(&rig);
+    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_input("Call");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down");
+    rig.send(Event::IncomingCall(invitation(1, Some(CALLER_NAME), None)));
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(actions(&rig).is_empty(), "a changed command needs a new selection");
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    assert_eq!(actions(&rig), [CallAction::Answer { call: call(1) }]);
+}
+
+#[test]
+fn unchanged_call_commands_keep_the_switcher_highlight() {
+    let rig = calling();
+    let (trace, _) = trace();
+    let (_shell, cx) = shell_window(&rig, Some(AB), trace);
+    registered(&rig);
+    cx.simulate_keystrokes("ctrl-k");
+    cx.simulate_input("Call");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("down");
+    rig.send(Event::ConversationChanged {
+        conversation: AB.into(),
+    });
+    registered(&rig);
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(actions(&rig), [CallAction::TestCall { echo: Mri::new(ECHO) }]);
+}
+
+#[test]
 fn a_one_to_one_chat_can_call_before_its_members_arrive() {
     let rig = calling();
     rig.core.members.lock().unwrap().clear();
