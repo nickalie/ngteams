@@ -510,6 +510,14 @@ Camera starts off; only the user's action turns it on.
 Notifications, tray and device access use the session selected at startup: desktop for the user's normal app,
 private sandbox for lab/tests. One call or ring is admitted at a time across the app's accounts.
 
+The diagnostic file is `<data>/logs/teams-app.log` (the retained filename), mode `0600` in a `0700` directory,
+rotated at 8 MiB with four older files. `TEAMS_APP_LOG=<error|warn|info|debug>` overrides the settings' level;
+`trace` is treated as `debug`. Info stays payload-free. Debug includes every API request/response, including token
+auth and authz calls, and both directions of every Trouter frame, with credentials redacted by `teams-log`.
+It still holds message text, names and service answers: **never share a debug log or commit it, even sanitized**.
+Copy diagnostics includes app/build/log details and recent diagnostic lines; any debug content is labelled unsafe
+to paste. There is no separate write-decision log.
+
 #### Translating the message you write
 
 Every message box (a chat's, a channel's post and reply boxes, editing a message, New message) has Translate beside
@@ -523,14 +531,6 @@ setting for every box and account in the app, kept across restarts; it and the t
 Message translation (the tool: Automatic, which is Claude Code when installed and else Codex, or either one; by
 default Claude Sonnet or GPT-6.1-Terra). Only the draft's words and the language go to the tool and its provider,
 never the chat, names or tokens (`crates/teams-ui/src/draft_translate.rs`).
-
-The diagnostic file is `<data>/logs/teams-app.log` (the retained filename), mode `0600` in a `0700` directory,
-rotated at 8 MiB with four older files. `TEAMS_APP_LOG=<error|warn|info|debug>` overrides the settings' level;
-`trace` is treated as `debug`. Info stays payload-free. Debug includes every API request/response, including token
-auth and authz calls, and both directions of every Trouter frame, with credentials redacted by `teams-log`.
-It still holds message text, names and service answers: **never share a debug log or commit it, even sanitized**.
-Copy diagnostics includes app/build/log details and recent diagnostic lines; any debug content is labelled unsafe
-to paste. There is no separate write-decision log.
 
 ## Captures and fixtures
 

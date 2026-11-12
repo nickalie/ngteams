@@ -8,8 +8,8 @@
 //!   its shape ([`crate::message_correct::draft`]): only the words of its text blocks go, between numbered markers;
 //!   mentions, links that show their own address, inline code, line breaks, blocks of code and pictures never do, and
 //!   an answer that doesn't keep every marker is not used.
-//! - **Behind [`Engine`]**: the app's is the local tool ([`LocalTools`]); tests put a fake in its place
-//!   ([`set_engine`]), so no test runs a real tool.
+//! - **Behind [`Engine`]**: the app's is the local tool ([`LocalTools`]); the box's tests and the tour put a fake in
+//!   its place ([`set_engine`]), and the local one's own tests run a made-up CLI, so no test runs a real tool.
 //! - **One run per request** ([`Translating`]), on a thread of its own, each wait on the tool bounded ([`Limits`]).
 //!   Dropping it stops it and ends the tool's process.
 //! - **Private**: no draft, translation or tool output is logged or traced.

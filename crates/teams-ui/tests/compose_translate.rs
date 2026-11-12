@@ -309,6 +309,19 @@ fn the_language_is_one_setting_every_box_shares() {
     let rows = cx.read(|cx| menu.read(cx).rows(cx));
     assert_eq!(rows[0], Row::Typed("Klingon".to_owned()));
     assert_eq!(rows.len(), draft_translate::COMMON_LANGUAGES.len() + 1);
+    // the typed language chosen reads as itself, no longer as an offer
+    draw(cx);
+    assert!(cx.debug_bounds("compose-language-klingon").is_some());
+    assert!(cx.debug_bounds("compose-language-custom").is_none());
+    // Up goes round to the last language and the list scrolls to show it
+    cx.simulate_keystrokes("up");
+    draw(cx);
+    let list = cx.debug_bounds("compose-language-list").unwrap();
+    let zulu = cx.debug_bounds("compose-language-zulu").unwrap();
+    assert!(
+        zulu.top() >= list.top() && zulu.bottom() <= list.bottom(),
+        "{zulu:?} outside {list:?}"
+    );
     cx.update(|window, cx| menu.update(cx, |menu, cx| menu.search("germ", window, cx)));
     cx.update(|window, cx| menu.update(cx, |menu, cx| menu.enter(window, cx)));
     assert_eq!(

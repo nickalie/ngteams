@@ -1,4 +1,4 @@
-//! Units of a draft's translation in its box (synthetic text only, a fake engine: no tool runs).
+//! Units of a draft's translation in its box (synthetic text only, a fake engine or a made-up CLI: no real tool runs).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -377,9 +377,107 @@ fn dropping_the_translation_stops_it_tells_nothing_and_ends_the_tool() {
     assert!(engine.closed.load(Ordering::Relaxed));
 }
 
+/// A made-up Claude Code: each question logged, its pid noted, no answer while a `hold` file lies beside it, then
+/// "hello" translated as "hallo" with every marker kept.
+const FAKE_CLAUDE: &str = r#"dir="$(dirname "$0")"
+printf '%s' "$$" > "$dir/pid"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$dir/received.log"
+  while [ -e "$dir/hold" ]; do sleep 0.02; done
+  t=$(printf '%s' "$line" | sed 's/.*<message>\\n\(.*\)\\n<\/message>.*/\1/')
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"<translated>%s</translated>"}\n' "$(printf '%s' "$t" | sed 's/hello/hallo/g')"
+done
+"#;
+
+/// The app's engine with no other set, over [`FAKE_CLAUDE`] in a directory of its own.
+fn local_tool() -> (tempfile::TempDir, std::path::PathBuf, Arc<dyn Engine>) {
+    let dir = tempfile::tempdir().unwrap();
+    let program = crate::fake_tool::write(dir.path(), "claude", FAKE_CLAUDE);
+    let app = gpui::TestAppContext::single();
+    let engine = app.update(|cx| super::engine(cx));
+    (dir, program, engine)
+}
+
+fn local_request(program: std::path::PathBuf, doc: &Doc) -> Request {
+    Request {
+        program,
+        ..request(doc, "German")
+    }
+}
+
+fn pid(dir: &std::path::Path) -> String {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(pid) = std::fs::read_to_string(dir.join("pid"))
+            && !pid.is_empty()
+        {
+            return pid;
+        }
+        assert!(std::time::Instant::now() < deadline, "the tool never started");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
-fn the_app_engine_is_the_local_tools_until_one_is_set() {
-    let local = super::LocalTools;
+fn the_app_engine_runs_the_local_tool_with_only_the_language_and_the_draft_and_ends_it() {
+    let (dir, program, engine) = local_tool();
+    let doc = Doc::new(vec![Block::new(
+        Kind::Paragraph,
+        0,
+        vec![plain("hello "), mention("Lab Bee")],
+    )]);
+    let translating = Translating::start(local_request(program, &doc), engine);
+    let out = translating.done().recv_blocking().unwrap().unwrap();
+    assert_eq!(out.blocks[0].runs, vec![plain("hallo "), mention("Lab Bee")]);
+    let received = std::fs::read_to_string(dir.path().join("received.log")).unwrap();
+    assert_eq!(received.lines().count(), 1, "{received}");
+    assert!(
+        received.contains(r"<language>German</language>\n<message>\n<x0>hello <x1/></x0>\n</message>"),
+        "{received}"
+    );
+    for private in ["Lab Bee", "8:orgid"] {
+        assert!(!received.contains(private), "{private} went to the tool: {received}");
+    }
+    let pid = pid(dir.path());
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while crate::fake_tool::running(&pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        !crate::fake_tool::running(&pid),
+        "the tool {pid} outlived its translation"
+    );
+}
+
+#[test]
+fn dropping_a_translation_ends_the_local_tools_process() {
+    let (dir, program, engine) = local_tool();
+    std::fs::write(dir.path().join("hold"), "").unwrap();
+    let translating = Translating::start(
+        local_request(program, &Doc::new(vec![Block::paragraph("hello")])),
+        engine,
+    );
+    let done = translating.done();
+    let pid = pid(dir.path());
+    while !dir.path().join("received.log").exists() {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    drop(translating);
+    assert!(done.recv_blocking().is_err(), "a cancelled translation tells nothing");
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while crate::fake_tool::running(&pid) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        !crate::fake_tool::running(&pid),
+        "the tool {pid} survived its cancellation"
+    );
+}
+
+#[test]
+fn the_app_engine_with_no_tool_there_says_it_isnt_installed() {
+    let app = gpui::TestAppContext::single();
+    let engine = app.update(|cx| super::engine(cx));
     let launch = Launch {
         backend: Backend::Claude,
         program: "/made-up/no-such-claude".into(),
@@ -388,6 +486,46 @@ fn the_app_engine_is_the_local_tools_until_one_is_set() {
         instructions: prompt::instructions(),
         first: Duration::from_secs(1),
     };
-    let failure = local.start(&launch, &AtomicBool::new(false)).err();
+    let failure = engine.start(&launch, &AtomicBool::new(false)).err();
     assert_eq!(failure, Some(Failure::NotInstalled(Some(Backend::Claude))));
+}
+
+#[test]
+fn a_link_formatted_in_parts_that_shows_its_address_never_goes_to_the_tool() {
+    let href = "https://example.test/private";
+    let parted = |text: &str, marks| {
+        Run::new(
+            text,
+            Attrs {
+                link: Some(href.to_owned()),
+                marks,
+                ..Attrs::default()
+            },
+        )
+    };
+    let doc = Doc::new(vec![Block::new(
+        Kind::Paragraph,
+        0,
+        vec![
+            plain("see "),
+            parted("https://example.test", Marks::BOLD),
+            parted("/private", Marks::NONE),
+        ],
+    )]);
+    let engine = Fake::new(|_, question| Ok(translated(question, &[("see", "siehe")])));
+    let out = run(&doc, "German", &engine).unwrap();
+    assert_eq!(
+        out.blocks[0].runs,
+        vec![
+            plain("siehe "),
+            parted("https://example.test", Marks::BOLD),
+            parted("/private", Marks::NONE),
+        ]
+    );
+    let asked = engine.asked();
+    assert!(
+        !asked[0].contains("example.test") && !asked[0].contains("private"),
+        "{}",
+        asked[0]
+    );
 }

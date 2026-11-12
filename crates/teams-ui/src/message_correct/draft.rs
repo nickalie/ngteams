@@ -4,7 +4,8 @@
 //! - **Blocks**: every block with words (a paragraph, a heading, a line of a quote, a list item) is `<xN>…</xN>`. A block
 //!   of code, a picture, a rule and a blank line never go to the tool; they stay where they are.
 //! - **Runs**: words with a format (a mark, a colour, a link) are `<xN>…</xN>` inside their block; what must come back
-//!   exactly (a mention, inline code, a link that shows its own address, a line break) is `<xN/>`.
+//!   exactly (a mention, inline code, a link that shows its own address, a line break) is `<xN/>`. A link's address is
+//!   judged on all its runs together, so one formatted in parts never goes out a piece at a time.
 //! - **Strict to read**, unlike a translation's: the answer is used only when it has every marker exactly once, each in
 //!   its own block, and no block lost its words. A correction the user may send must not lose a mention or a link.
 
@@ -69,6 +70,28 @@ fn kept_whole(run: &Run) -> bool {
             .is_some_and(|href| shows_address(&run.text, href))
 }
 
+/// Which of `runs` must come back exactly as they are: each one [`kept_whole`] alone, and every run of a link whose
+/// runs, formatted apart, show its address together.
+fn kept_whole_runs(runs: &[Run]) -> Vec<bool> {
+    let mut whole: Vec<bool> = runs.iter().map(kept_whole).collect();
+    let mut start = 0;
+    while start < runs.len() {
+        let href = runs[start].attrs.link.as_deref();
+        let end = runs[start..]
+            .iter()
+            .position(|run| run.attrs.link.as_deref() != href)
+            .map_or(runs.len(), |len| start + len);
+        if let Some(href) = href {
+            let text: String = runs[start..end].iter().map(|run| run.text.as_str()).collect();
+            if shows_address(&text, href) {
+                whole[start..end].fill(true);
+            }
+        }
+        start = end;
+    }
+    whole
+}
+
 /// Whether a link's text is its own address (with or without its scheme).
 fn shows_address(text: &str, href: &str) -> bool {
     let text = text.trim();
@@ -100,16 +123,17 @@ impl Encoded {
             self.text.push('\n');
         }
         let _ = write!(self.text, "<x{n}>");
-        for run in &block.runs {
-            self.run(index, run);
+        for (run, whole) in block.runs.iter().zip(kept_whole_runs(&block.runs)) {
+            if whole {
+                self.atom(index, run.clone());
+            } else {
+                self.run(index, run);
+            }
         }
         let _ = write!(self.text, "</x{n}>");
     }
 
     fn run(&mut self, block: usize, run: &Run) {
-        if kept_whole(run) {
-            return self.atom(block, run.clone());
-        }
         for (at, line) in run.text.split('\n').enumerate() {
             if at > 0 {
                 self.atom(block, Run::new("\n", run.attrs.clone()));
@@ -160,7 +184,8 @@ impl Encoded {
             let had_words = block
                 .runs
                 .iter()
-                .any(|run| !kept_whole(run) && run.text.chars().any(char::is_alphanumeric));
+                .zip(kept_whole_runs(&block.runs))
+                .any(|(run, whole)| !whole && run.text.chars().any(char::is_alphanumeric));
             if corrected.is_blank() || (had_words && !words) {
                 return None;
             }

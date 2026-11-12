@@ -5,15 +5,16 @@
 //! A search field on top, as the chat header's language menu has it, and the language chosen first; typing filters
 //! the listed languages ([`super::COMMON_LANGUAGES`]) by name or code; a name no listed one starts with is offered
 //! after them as "Use “…”", so any language can be typed. Up and Down move through the rows, Enter picks the one
-//! highlighted (the first when none is), Escape closes it. Test selectors start with the menu's own prefix:
-//! `<prefix>-menu`, `<prefix>-search`, `<prefix>-custom`, and `<prefix>-<language>` for a listed one (its name in lower
-//! case, a dash for anything not a letter or digit).
+//! highlighted (the first when none is, the list scrolled to it), Escape closes it. Test selectors start with the
+//! menu's own prefix: `<prefix>-menu`, `<prefix>-search`, `<prefix>-custom` for the typed one offered, and
+//! `<prefix>-<language>` for a listed one or the one chosen (its name in lower case, a dash for anything not a letter
+//! or digit).
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    Window, div, px, rgb,
+    IntoElement, ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Window, div, px, rgb,
 };
 use gpui_component::Selectable;
 use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
@@ -94,6 +95,7 @@ pub struct LanguageMenu {
     open: bool,
     /// The row the keyboard is on, of those the query leaves.
     highlighted: Option<usize>,
+    scroll: ScrollHandle,
     _input: Subscription,
     _settings: Subscription,
 }
@@ -114,6 +116,7 @@ impl LanguageMenu {
             |this: &mut Self, _, event: &InputEvent, window, cx| match event {
                 InputEvent::Change => {
                     this.highlighted = None;
+                    this.scroll.set_offset(gpui::Point::default());
                     cx.notify();
                 }
                 InputEvent::PressEnter { .. } => this.enter(window, cx),
@@ -127,6 +130,7 @@ impl LanguageMenu {
             input,
             open: false,
             highlighted: None,
+            scroll: ScrollHandle::new(),
             _input: events,
             _settings: observing,
         }
@@ -164,6 +168,7 @@ impl LanguageMenu {
         }
         self.open = open;
         self.highlighted = None;
+        self.scroll.set_offset(gpui::Point::default());
         self.input.update(cx, |input, cx| {
             input.set_value("", window, cx);
             if open {
@@ -189,6 +194,9 @@ impl LanguageMenu {
             None => 0,
             Some(at) => at.saturating_add_signed(step).min(count - 1),
         });
+        if let Some(at) = self.highlighted {
+            self.scroll.scroll_to_item(at);
+        }
         cx.notify();
     }
 
@@ -214,15 +222,18 @@ impl LanguageMenu {
     }
 
     fn row(&self, at: usize, row: &Row, chosen: &str, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
+        let checked = row.language() == chosen;
         let (selector, label): (String, SharedString) = match row {
-            Row::Typed(name) => (
+            Row::Typed(name) if !checked => (
                 format!("{}-custom", self.prefix),
                 format!("Use \u{201c}{name}\u{201d}").into(),
             ),
-            Row::Listed(name) => (format!("{}-{}", self.prefix, key_of(name)), (*name).into()),
+            row => (
+                format!("{}-{}", self.prefix, key_of(row.language())),
+                row.language().to_owned().into(),
+            ),
         };
         let highlighted = self.highlighted == Some(at);
-        let checked = row.language() == chosen;
         let language = row.language().to_owned();
         let id = selector.clone();
         div()
@@ -321,6 +332,7 @@ impl Render for LanguageMenu {
             .debug_selector(move || format!("{prefix}-list"))
             .max_h(px(320.0))
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .flex()
             .flex_col()
             .children(rows)
