@@ -16,8 +16,7 @@ The run starts the alias's credential broker (`ngteams secrets --lab <alias>`) a
 private socket pair, as `ui-sandbox-run serve` does on Linux; the app's window is allowed on macOS only with the
 runner's marker (`NGTEAMS_MACOS_CONSOLE_RUNNER`). The alias's files are `~/Library/Application Support/ngteams-lab/
 <alias>/`; the run's logs and shots are in its `.runs/<alias>/` beside them. The app serves `ngteamsctl`'s control
-socket where `ngteamsctl --lab <alias>` looks for it (`~/.local/state/ngteams-lab/<alias>/ctl.sock`). Builds need
-GStreamer's runtime
+socket where `ngteamsctl --lab <alias>` looks for it (`<alias>/ctl.sock` there). Builds need GStreamer's runtime
 (`scripts/macos-gstreamer.sh`): `NGTEAMS_GSTREAMER` names its prefix (default `~/ngteams-agent/gstreamer`);
 `NGTEAMS_LAB_TARGET` the target dir (default `target/lab`).
 
@@ -69,12 +68,10 @@ def run_dir(alias: str) -> Path:
 
 
 def ctl_socket(alias: str) -> Path:
-    """Where the app serves `ngteamsctl`'s control socket: the path `ngteamsctl --lab <alias>` looks for
-    (`teams_ctl::Mode::Lab`, under `$XDG_STATE_HOME`, else `~/.local/state`), as `scripts/run-lab.sh` hands it on
-    Linux."""
-    state = os.environ.get("XDG_STATE_HOME", "")
-    home = Path(state) if os.path.isabs(state) else Path.home() / ".local" / "state"
-    path = home / "ngteams-lab" / alias / "ctl.sock"
+    """Where the app serves `ngteamsctl`'s control socket: the path `ngteamsctl --lab <alias>` looks for on macOS
+    (`teams_ctl::Mode::Lab` under `~/Library/Application Support`: the alias's own directory), as `scripts/run-lab.sh`
+    hands its app the Linux one."""
+    path = LAB_HOME / alias / "ctl.sock"
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     return path
 

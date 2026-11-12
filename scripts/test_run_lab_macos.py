@@ -55,14 +55,13 @@ class LabBundleTests(unittest.TestCase):
         for name in ("ngteams", "ngteams-webview"):
             (programs / name).touch()
         ended = mock.Mock(**{"poll.return_value": 0, "returncode": 0})
-        state = self.root / "state"
         with mock.patch.object(RUNNER, "LAB_HOME", self.root / "lab"), \
-                mock.patch.dict(RUNNER.os.environ, {"XDG_STATE_HOME": str(state)}), \
                 mock.patch.object(RUNNER.subprocess, "Popen", return_value=ended) as popen, \
                 mock.patch.object(RUNNER.subprocess, "run"):
             self.assertEqual(RUNNER.serve("synthetic", 1, self.root / "ngteams.app"), 0)
         app = popen.call_args_list[1].args[0]
-        socket = state / "ngteams-lab" / "synthetic" / "ctl.sock"
+        # teams_ctl's macOS lab path: ~/Library/Application Support/ngteams-lab/<alias>/ctl.sock
+        socket = self.root / "lab" / "synthetic" / "ctl.sock"
         self.assertEqual(app[app.index("--ctl-socket") + 1], str(socket))
         self.assertEqual(socket.parent.stat().st_mode & 0o777, 0o700)
         broker = popen.call_args_list[0].args[0]
