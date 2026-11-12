@@ -206,7 +206,7 @@ impl CallStage {
         }
         let open = self.controls.open;
         let button = toolbar::tool(
-            ("call-controls", Glyph::SHIELD, self.caption_of("Controls")),
+            ("call-controls", Glyph::SHIELD, self.caption("Controls")),
             ("Meeting controls", None),
             open,
             palette,

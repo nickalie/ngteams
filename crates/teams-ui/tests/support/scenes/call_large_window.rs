@@ -1,8 +1,8 @@
 //! Calls of ten people and more, drawn on the real platform in the UI sandbox (`harness = false`: GPUI runs on the
 //! process's main thread), for their screenshots: the call window over the fake engine (`common`), a group call of
 //! 10, 16, 25 and 50 made-up participants, some with their camera on (a test pattern), the rest showing their
-//! initials; in the gallery, in the speaker view and with someone's screen shared; on a small, a laptop's and a full
-//! HD screen. The test runs itself again inside the sandbox per scene; the parent screenshots each window into
+//! initials; in the gallery, in the speaker view (alone and beside the People pane) and with someone's screen shared;
+//! on a small, a laptop's and a full HD screen. The test runs itself again inside the sandbox per scene; the parent screenshots each window into
 //! `target/ui-shots/call-large-<scene>.png`.
 //!
 //! Without weston 15, niri or `dbus-daemon` it says so and passes, unless `GPUI_SMOKE_REQUIRE=1`.
@@ -61,12 +61,13 @@ const SCREENS: [(&str, (u32, u32)); 3] = [("small", (800, 560)), ("laptop", (128
 
 /// The scenes, each screenshotted on each screen as `call-large-<scene>-<screen>.png`: how the stage is laid out and
 /// how many are in the call.
-const SCENES: [&str; 8] = [
+const SCENES: [&str; 9] = [
     "gallery-10",
     "gallery-16",
     "gallery-25",
     "gallery-50",
     "speaker-25",
+    "speaker+people-25",
     "share-10",
     "share-25",
     "share-50",
@@ -329,10 +330,16 @@ fn ready(windows: &gpui::Entity<CallWindows>, layout: &str, cx: &mut App) {
         cx.quit();
         return;
     };
-    let speaker = layout == "speaker";
+    let speaker = layout.starts_with("speaker");
+    let people = layout.ends_with("+people");
     let _ = window.update(cx, move |kit: &mut KitRoot, window, cx| {
-        if speaker && let Ok(stage) = kit.view().clone().downcast::<CallStage>() {
-            stage.update(cx, |stage, cx| stage.set_layout(Layout::Speaker, cx));
+        if let Ok(stage) = kit.view().clone().downcast::<CallStage>() {
+            stage.update(cx, |stage, cx| {
+                if speaker {
+                    stage.set_layout(Layout::Speaker, cx);
+                }
+                stage.show_roster(people, cx);
+            });
         }
         window.refresh();
         after_frames(window, READY_FRAMES, |_, _| say("ready"));

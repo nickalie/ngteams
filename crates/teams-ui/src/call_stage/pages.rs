@@ -15,7 +15,8 @@ use super::CallStage;
 pub(super) const TILE_RATIO: f32 = 16.0 / 9.0;
 /// The smallest tile the gallery lays out, px: below it Teams shows fewer to a page.
 pub(super) const MIN_TILE_WIDTH: f32 = 160.0;
-/// The shortest a strip's tile gets along the strip in a small window, px.
+/// The shortest the speaker view's strip lets its tiles get beside the floating self view, px: a stage too narrow for
+/// one of them and the pager besides takes the self view into the strip.
 pub(super) const MIN_STRIP_TILE: f32 = 64.0;
 /// The space between tiles, px.
 pub(super) const TILE_GAP: f32 = 8.0;
@@ -24,9 +25,9 @@ pub(super) const PAGER_HEIGHT: f32 = 36.0;
 /// The width of the pager, px: its `<`, which page shows, and its `>`.
 pub(super) const PAGER_WIDTH: f32 = 120.0;
 /// View's "Max gallery size" choices, as Teams' desktop offers them.
-pub const GALLERY_SIZES: [usize; 4] = [4, 9, 16, 49];
+pub(super) const GALLERY_SIZES: [usize; 4] = [4, 9, 16, 49];
 /// The gallery size until the user picks one: Teams' largest on the desktop.
-pub const DEFAULT_GALLERY_SIZE: usize = 49;
+const DEFAULT_GALLERY_SIZE: usize = 49;
 
 /// `count` tiles of 16:9 laid out in `area` (width, height, px): the columns, and the tiles' width and height, the
 /// columns picked so the tiles come out largest.
@@ -76,13 +77,13 @@ pub(super) fn strip_size(length: f32, tile: f32) -> usize {
 }
 
 /// How long each of `shown` tiles of a strip `length` px long is along it, at most `tile` px: shorter when even the
-/// fewest a page shows wouldn't fit at `tile` (a small window), with `pager` px for the pager besides, never below
-/// [`MIN_STRIP_TILE`].
+/// fewest a page shows wouldn't fit at `tile` (a small window), the `pager` px for the pager kept first, so the tiles
+/// and the pager never run past the strip.
 #[must_use]
 pub(super) fn strip_tile(length: f32, tile: f32, shown: usize, pager: f32) -> f32 {
     let shown = as_f32(shown.max(1));
     let room = length - pager - TILE_GAP * (shown - 1.0);
-    (room / shown).clamp(MIN_STRIP_TILE, tile.max(MIN_STRIP_TILE))
+    (room / shown).min(tile).max(0.0)
 }
 
 /// The page `asked` of `count` items `per` to a page, kept in range: its first item's index, the page, and how many
@@ -113,6 +114,15 @@ pub(super) struct Page {
     pub(super) pages: usize,
 }
 
+/// A strip of tiles that pages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Strip {
+    /// The people beside a share.
+    Share,
+    /// The others under the speaker view's large tile.
+    Speaker,
+}
+
 /// View's Max gallery size, which page of the gallery and of a strip shows, and the window's and the stage's size.
 pub(super) struct Paging {
     /// The most tiles a page of the gallery shows (View's Max gallery size).
@@ -124,6 +134,8 @@ pub(super) struct Paging {
     pub(super) gallery: usize,
     /// The strip's page (beside a share, under the speaker), from 0.
     pub(super) strip: usize,
+    /// Which strip `strip` is a page of: another strip starts on its first page.
+    pub(super) strip_of: Option<Strip>,
     /// The stage's width and height as last laid out, px.
     area: Rc<Cell<Option<(f32, f32)>>>,
 }
@@ -135,6 +147,7 @@ impl Default for Paging {
             window: (f32::MAX, f32::MAX),
             gallery: 0,
             strip: 0,
+            strip_of: None,
             area: Rc::default(),
         }
     }
@@ -214,8 +227,10 @@ mod tests {
         assert!((strip_tile(280.0, 184.0, 1, 128.0) - 152.0).abs() < 0.01);
         // two tiles and a gap in 200 px
         assert!((strip_tile(200.0, 132.0, 2, 0.0) - 96.0).abs() < 0.01);
-        // never below the floor
-        assert!((strip_tile(50.0, 184.0, 2, 128.0) - MIN_STRIP_TILE).abs() < 0.01);
+        // a strip too short for two at the floor: the pager keeps its room, the tiles share what is left
+        assert!((strip_tile(180.0, 132.0, 2, 44.0) - 64.0).abs() < 0.01);
+        assert!((strip_tile(68.0, 132.0, 2, 44.0) - 8.0).abs() < 0.01);
+        assert!(strip_tile(50.0, 184.0, 2, 128.0).abs() < 0.01);
     }
 
     #[test]

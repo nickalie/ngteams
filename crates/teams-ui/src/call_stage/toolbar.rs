@@ -699,7 +699,7 @@ fn gallery_sizes(menu: PopupMenu, stage: &WeakEntity<CallStage>, chosen: usize) 
     ];
     ITEMS
         .into_iter()
-        .zip(super::GALLERY_SIZES)
+        .zip(super::pages::GALLERY_SIZES)
         .fold(menu.min_w(px(120.0)), |menu, ((selector, label), size)| {
             let stage = stage.clone();
             menu.item(

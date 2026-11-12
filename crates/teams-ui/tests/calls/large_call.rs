@@ -223,26 +223,117 @@ fn the_strips_page_with_the_account_s_own_tile_beside_the_share() {
     let rig = super::calling();
     let stage = large_call(&rig, 25);
     resize(stage, (1280.0, 800.0));
+    // the gallery on its second page of 8 others and the account
+    pick_gallery_size(stage, 9);
+    click(stage, "call-gallery-next");
+    let gallery = shown(stage, 25);
+    assert_eq!(gallery, (8..16).collect::<Vec<_>>());
     rig.send(Event::CallRemoteShare {
         call: call(1),
         on: true,
     });
     rig.cx.run_until_parked();
     let first = shown(stage, 25);
-    assert!(!first.is_empty() && first.len() < 25, "{first:?}");
+    assert!(
+        first.first() == Some(&0) && first.len() < 25,
+        "the strip's first page: {first:?}"
+    );
     assert!(drawn(stage, "call-strip-pager") && drawn(stage, "call-participant-self"));
     click(stage, "call-strip-next");
     let second = shown(stage, 25);
     assert_eq!(second.first(), Some(&first.len()), "the next ones");
     assert!(drawn(stage, "call-participant-self"));
-    // the share ends: the gallery again, on its own first page
+    // the share ends: the gallery again, on the page it was on
     rig.send(Event::CallRemoteShare {
         call: call(1),
         on: false,
     });
     rig.cx.run_until_parked();
     assert!(!drawn(stage, "call-strip-pager"));
-    assert_eq!(shown(stage, 25), (0..25).collect::<Vec<_>>());
+    assert_eq!(shown(stage, 25), gallery);
+    // the speaker view's strip is another strip: its own first page, not the share strip's second
+    click(stage, "call-view");
+    click(stage, "call-view-speaker");
+    let strip = shown(stage, 25);
+    assert!(strip.contains(&0) && strip.contains(&1), "{strip:?}");
+}
+
+/// Whether `inner` and `outer` share any pixels.
+fn overlap(inner: Bounds<Pixels>, outer: Bounds<Pixels>) -> bool {
+    inner.right() > outer.origin.x + px(0.5)
+        && outer.right() > inner.origin.x + px(0.5)
+        && inner.bottom() > outer.origin.y + px(0.5)
+        && outer.bottom() > inner.origin.y + px(0.5)
+}
+
+/// The strip's pager and tiles (all those shown but `large`) sit in `strip`, the account's own tile covers none of
+/// them, and `>` turns the page.
+fn strip_clear(stage: &mut VisualTestContext, (strip, large): (&str, Option<usize>), count: usize, case: &str) {
+    draw(stage);
+    let area = bounds(stage, strip).expect("the strip");
+    let pager = bounds(stage, "call-strip-pager").expect("the strip pages");
+    let own = bounds(stage, "call-participant-self").expect("the account's own tile");
+    assert!(
+        within(pager, area),
+        "{case}: the pager {pager:?} leaves the strip {area:?}"
+    );
+    assert!(
+        !overlap(pager, own),
+        "{case}: the self view {own:?} covers the pager {pager:?}"
+    );
+    let first = shown(stage, count);
+    for index in first.iter().filter(|index| Some(**index) != large) {
+        let tile = bounds(stage, &format!("call-participant-{index}")).unwrap();
+        assert!(
+            within(tile, area),
+            "{case}: tile {index} {tile:?} leaves the strip {area:?}"
+        );
+        assert!(!overlap(tile, own), "{case}: the self view covers tile {index}");
+    }
+    click(stage, "call-strip-next");
+    assert_ne!(shown(stage, count), first, "{case}: > shows the next page");
+    click(stage, "call-strip-previous");
+}
+
+#[test]
+fn the_speaker_strip_s_pager_stays_clear_of_the_self_view_with_a_pane_open() {
+    let rig = super::calling();
+    let stage = large_call(&rig, 25);
+    click(stage, "call-view");
+    click(stage, "call-view-speaker");
+    click(stage, "call-roster");
+    assert!(drawn(stage, "call-roster-pane"));
+    for window in [(560.0, 400.0), (700.0, 560.0), (800.0, 560.0), (1280.0, 800.0)] {
+        resize(stage, window);
+        strip_clear(
+            stage,
+            ("call-speaker-strip", Some(0)),
+            25,
+            &format!("speaker view with People at {window:?}"),
+        );
+    }
+}
+
+#[test]
+fn the_share_strip_s_pager_stays_in_a_short_window_with_captions_open() {
+    let rig = super::calling();
+    let stage = large_call(&rig, 25);
+    rig.send(Event::CallRemoteShare {
+        call: call(1),
+        on: true,
+    });
+    super::caption_state(&rig, teams_core::CaptionPhase::On, None);
+    rig.cx.run_until_parked();
+    for window in [(560.0, 400.0), (800.0, 440.0), (800.0, 512.0), (1280.0, 800.0)] {
+        resize(stage, window);
+        assert!(drawn(stage, "call-captions"), "captions show at {window:?}");
+        strip_clear(
+            stage,
+            ("call-share-strip", None),
+            25,
+            &format!("share with captions at {window:?}"),
+        );
+    }
 }
 
 #[test]

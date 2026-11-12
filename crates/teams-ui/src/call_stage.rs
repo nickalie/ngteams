@@ -5,8 +5,8 @@
 //!   call) and its state (calling, ringing, connecting, connected with its duration, reconnecting, taken by
 //!   voicemail); on its right Teams' call controls in Teams' order: Chat (the call's chat), People (the participants'
 //!   pane, with how many are in the call), Raise and React (a group call's and a meeting's, as Teams offers them), View
-//!   (Gallery or Speaker, Focus on content while a share shows, Show videos first; More options: Turn off other videos,
-//!   Hide me, Full screen), More (Language and speech, Video effects and settings, Audio settings: the main window's
+//!   (Gallery or Speaker, Focus on content while a share shows, Show videos first, Max gallery size: 4, 9, 16 or 49;
+//!   More options: Turn off other videos, Hide me, Full screen), More (Language and speech, Video effects and settings, Audio settings: the main window's
 //!   settings on their Calls page), the camera (a build that shows video) and the microphone, each with a menu of the
 //!   devices the settings list, Share (a 1:1 call's, [`share`]: "Share content", its screen picked at the desktop;
 //!   a red Stop sharing while it shares), and Leave in Teams' red (a meeting's organizer's with End meeting beside it,
@@ -15,11 +15,14 @@
 //!   with the call's state, as Teams shows it while it rings; once the call's roster told who is in it, a tile per
 //!   participant (its video when a line shows it, else its person's picture, or their initials, centred and sized to
 //!   the tile: [`faces`]; its name with its microphone muted and its hand raised; a border in the brand colour
-//!   while it speaks, Teams' gold while its hand is up) in the gallery, or the one who speaks (or the one pinned) large
-//!   over a strip of the others; each tile's More options pins it for the account alone. The account's own tile floats
-//!   at the stage's bottom right, as Teams' self view does (the account's own picture while its camera is off), unless
-//!   View hid it; live reactions float up from the stage's bottom. The far end's shared screen takes the stage, the
-//!   people's tiles in a strip on its right (View's Focus on content: the share alone).
+//!   while it speaks, Teams' gold while its hand is up) in the gallery, as many to a page as Max gallery size and the
+//!   stage allow, or the one who speaks (or the one pinned) large over a strip of the others; more than fit go on
+//!   further pages, turned with the `<` `>` under the gallery or at the strip's end ([`pages`]); each tile's More
+//!   options pins it for the account alone. The account's own tile (its own picture while its camera is off) is the
+//!   last tile on each gallery page in a group call; in a 1:1 call and the speaker view it floats at the stage's
+//!   bottom right, as Teams' self view does; View can hide it. Live reactions float up from the stage's bottom. The
+//!   far end's shared screen takes the stage, the people's tiles (the account's own last) in a strip on its right
+//!   (View's Focus on content: the share alone). Nothing on the stage covers the controls above it.
 //! - **The People pane** ([`people_pane`]): a meeting's Share invite (its link copied), who waits in its lobby (Admit
 //!   all, Admit and Deny each), and who is in the call, the account first, with whether they speak, are muted or have
 //!   their hand up (numbered in the order the hands went up, the avatar ringed in gold), and "Organizer" under the
@@ -65,7 +68,6 @@ mod transcript;
 mod transfer;
 pub use gallery::Layout;
 pub use meeting::{ATTENDANCE_FILE, TimerChange, attendance_list, timer_after, timer_text};
-pub use pages::{DEFAULT_GALLERY_SIZE, GALLERY_SIZES};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;

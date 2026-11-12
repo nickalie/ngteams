@@ -787,15 +787,6 @@ impl CallStage {
             .into_any_element(),
         )
     }
-
-    /// A toolbar control's caption, as [`toolbar`] words it (none in a narrow window).
-    pub(super) fn caption_of(&self, caption: &'static str) -> &'static str {
-        if self.paging.window.0 < COMPACT_BELOW {
-            ""
-        } else {
-            caption
-        }
-    }
 }
 
 /// More's first entries per call kind (see [`MoreTools`]): Meeting info, Timer.
