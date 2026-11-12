@@ -140,3 +140,30 @@ fn synced_history_replaces_a_preview_even_when_empty_and_never_counts_it_twice()
     assert!(store.conversation_preview(CHAT).unwrap().is_none());
     assert_eq!(store.unread_count(CHAT, ME).unwrap(), 0);
 }
+
+#[test]
+fn schema_23_previews_survive_the_activity_bookmark_migration() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = open(&dir);
+    let preview = hint("before-activity", 3, 100);
+    store.upsert_conversation_preview(&preview).unwrap();
+    drop(store);
+
+    // Main's schema 23 already has list-page previews, but no Activity bookmarks.
+    let raw = rusqlite::Connection::open(dir.path().join("store.sqlite")).unwrap();
+    raw.execute_batch("DROP TABLE horizon_bookmarks; PRAGMA user_version = 23;")
+        .unwrap();
+    drop(raw);
+
+    let mut store = Store::open(&dir.path().join("store.sqlite")).unwrap();
+    assert_eq!(store.schema_version().unwrap(), teams_store::SCHEMA_VERSION);
+    assert_eq!(store.conversation_preview(CHAT).unwrap(), Some(preview.clone()));
+    assert_eq!(store.horizon_bookmark(CHAT).unwrap(), None);
+    store.set_horizon_bookmark(CHAT, 200).unwrap();
+    drop(store);
+
+    let store = Store::open(&dir.path().join("store.sqlite")).unwrap();
+    assert_eq!(store.horizon_bookmark(CHAT).unwrap(), Some(200));
+    assert_eq!(store.conversation_preview(CHAT).unwrap(), Some(preview));
+    assert!(store.messages_before(CHAT, None, 10).unwrap().messages.is_empty());
+}
