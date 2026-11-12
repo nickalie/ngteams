@@ -1985,9 +1985,6 @@ struct Core<C, T> {
     /// A read of the teams changed the favourites: the account's own notes may be due a sync
     /// ([`Core::sync_favourite_notes`]).
     notes_due: bool,
-    /// The conversations the reads and deliveries brought since the last tick: a team's thread the stored teams don't
-    /// name reads the teams again ([`Teams::note_conversation`](crate::teams)).
-    noticed: std::cell::RefCell<Vec<String>>,
     /// When the next poll's catch-up is due, while there is no push channel and the engine polls
     /// ([`EngineOptions::poll`]).
     poll_at: Option<Instant>,
@@ -2073,7 +2070,6 @@ where
             retry_at: None,
             poll_at: None,
             notes_due: false,
-            noticed: std::cell::RefCell::default(),
             losses: Vec::new(),
             backfill: Some(Backfill::new(parts.options.index_batch)),
             calling,
@@ -2188,46 +2184,18 @@ where
     /// message stored new or newer as [`Event::Message`] from `source`, as now stored, then each conversation changed
     /// as [`Event::ConversationChanged`].
     fn brought(&self, source: Source) {
-        let changes = self.catch_up.take_changes();
-        for stored in changes.messages {
-            let message = match self.store.message(&stored.conversation, &stored.id) {
-                Ok(message) => message.map(Box::new),
-                Err(error) => {
-                    self.failed("reading a synced message back", error);
-                    None
-                }
-            };
-            let change = if stored.applied == Applied::Inserted {
-                MessageChange::New
-            } else {
-                MessageChange::Other
-            };
-            self.emit(Event::Message {
-                conversation: stored.conversation,
-                id: stored.id,
-                change,
-                applied: stored.applied,
-                message,
-                source,
-            });
-        }
-        for conversation in changes.conversations {
-            self.notice(&conversation);
-            self.emit(Event::ConversationChanged { conversation });
-        }
+        self.inbox.brought(&self.store, self.catch_up.take_changes(), source);
     }
 
     /// Keeps `conversation` for the next tick's look at the teams ([`Self::note_noticed`]).
     fn notice(&self, conversation: &str) {
-        if teams_proto::is_team_thread_id(conversation) {
-            self.noticed.borrow_mut().push(conversation.to_owned());
-        }
+        self.inbox.notice(conversation);
     }
 
     /// The team threads noticed since the last tick, each looked at against the stored teams: one they don't name
     /// (the account was added to a team, or a channel was made in one) reads the teams again.
     fn note_noticed(&mut self) {
-        let noticed = std::mem::take(&mut *self.noticed.borrow_mut());
+        let noticed = self.inbox.take_noticed();
         for conversation in noticed {
             if let Err(error) = self.teams.note_conversation(&self.store, &conversation) {
                 self.failed("reading the stored teams", error);

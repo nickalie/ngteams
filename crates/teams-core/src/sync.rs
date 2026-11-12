@@ -10,6 +10,9 @@
 //!   members) whether or not the list brings it, until it syncs, so no conversation holds the list back. A conversation the
 //!   service refuses ([`ConversationFailed::is_refused`]) keeps no catch-up due ([`CatchUpReport::caught_up`]); the
 //!   account's drafts ([`DRAFTS`]), whose messages the service won't give, are never read.
+//!   New conversation rows are stored as each list page arrives, at version 0 until their messages are synced;
+//!   list pages and completed conversation syncs publish through [`Meanwhile::progress`] so the first usable list
+//!   and messages do not wait for the rest of the account. The list's sync link still waits for every conversation.
 //! - **Threads the account can't read** ([`Unreadable`]): the list still brings threads the account left or was removed
 //!   from (their reads answer 403 `AclCheckFailed`) and threads deleted for good (404 `ThreadNotFound`). Such a
 //!   conversation isn't kept to be synced again: reading it again changes nothing, and if the account is added back the
@@ -390,6 +393,10 @@ pub trait Meanwhile: Send + Sync {
     /// Uses `store` until the read is over, when the future is dropped wherever it waits: only at an `.await` that
     /// loses nothing when dropped there. A future that ends gives the store back early; the read is waited for then.
     fn serve<'a>(&'a self, store: &'a mut Store) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+
+    /// Publishes a completed part of a catch-up before the rest is read. An owner that takes the changes removes
+    /// them from `changes`, so the final publication does not tell them twice. The default keeps them for the owner.
+    fn progress(&self, _store: &Store, _changes: &mut Changes) {}
 }
 
 /// The catch-up sync of one account (see the module docs): reads through `client`, stores what comes in through
@@ -449,6 +456,12 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             }
         }
         read.await
+    }
+
+    fn publish_progress(&self, store: &Store) {
+        if let Some(meanwhile) = &self.meanwhile {
+            meanwhile.progress(store, &mut self.changes.lock().unwrap_or_else(PoisonError::into_inner));
+        }
     }
 
     /// What the reads changed in the store since the last call ([`Changes`]): the engine takes it after every read it
@@ -574,6 +587,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             skipped: list.unreadable.len(),
             ..CatchUpReport::default()
         };
+        self.stage_listed(store, &conversations)?;
         let mut pages = 1;
         while let Some(next) = list.forward_link().map(str::to_owned) {
             if pages == MAX_PAGES {
@@ -581,11 +595,23 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             }
             list = self.waiting(store, reads.conversations_from(&next)).await?;
             pages += 1;
+            self.stage_listed(store, &list.conversations)?;
             conversations.append(&mut list.conversations);
             report.skipped += list.unreadable.len();
         }
         report.conversations = conversations.len();
         Ok((sync_link, conversations, report))
+    }
+
+    fn stage_listed(&self, store: &mut Store, conversations: &[chat::Conversation]) -> Result<(), CatchUpError> {
+        for listed in conversations {
+            if store.conversation(&listed.id)?.is_none() && !still_forgotten(store, listed, known_i64(&listed.version))?
+            {
+                self.store_listing(store, listed, None, Some(0))?;
+            }
+        }
+        self.publish_progress(store);
+        Ok(())
     }
 
     /// Syncs every conversation the list brought, then every one an earlier catch-up kept to be synced again that it
@@ -603,6 +629,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         for conversation in conversations {
             let result = self.catch_up_conversation(store, conversation).await;
             kept &= self.settle(store, &conversation.id, result, report);
+            self.publish_progress(store);
         }
         for id in unsynced {
             if conversations.iter().any(|listed| listed.id == id) {
@@ -610,6 +637,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             }
             let result = self.resync(store, &id).await;
             kept &= self.settle(store, &id, result, report);
+            self.publish_progress(store);
         }
         Ok(kept)
     }

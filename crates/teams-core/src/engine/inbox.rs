@@ -24,16 +24,16 @@
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{OnceLock, PoisonError};
 
 use teams_store::{Applied, OutboxEntry, ReadHorizon, Store, StoreError};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
-use super::{Action, EngineError, Event, Query, Request, Responder};
+use super::{Action, EngineError, Event, MessageChange, Query, Request, Responder, Source};
 use crate::calling::CallActions;
 use crate::outbox::{Command, enqueue};
-use crate::sync::Meanwhile;
+use crate::sync::{Changes, Meanwhile};
 use crate::{profiles, teams};
 
 /// See the module docs.
@@ -49,6 +49,8 @@ pub(super) struct Inbox {
     calls: OnceLock<CallActions>,
     /// A shutdown was kept: the engine stops once the read is over, and starts no call meanwhile.
     stopping: AtomicBool,
+    /// Team threads the reads and deliveries brought since the last tick.
+    noticed: std::sync::Mutex<Vec<String>>,
 }
 
 /// The requests not taken yet: those kept while a read waited first, then the channel's.
@@ -72,10 +74,62 @@ impl Inbox {
             read_only,
             calls: OnceLock::new(),
             stopping: AtomicBool::new(false),
+            noticed: std::sync::Mutex::default(),
             requests: Mutex::new(Requests {
                 received,
                 kept: VecDeque::new(),
             }),
+        }
+    }
+
+    pub(super) fn notice(&self, conversation: &str) {
+        if teams_proto::is_team_thread_id(conversation) {
+            self.noticed
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(conversation.to_owned());
+        }
+    }
+
+    pub(super) fn take_noticed(&self) -> Vec<String> {
+        std::mem::take(&mut *self.noticed.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    pub(super) fn brought(&self, store: &Store, changes: Changes, source: Source) {
+        for stored in changes.messages {
+            let message = match store.message(&stored.conversation, &stored.id) {
+                Ok(message) => message.map(Box::new),
+                Err(error) => {
+                    super::emit_to(
+                        &self.events,
+                        Event::Failed {
+                            during: "reading a synced message back",
+                            error: error.into(),
+                        },
+                    );
+                    None
+                }
+            };
+            let change = if stored.applied == Applied::Inserted {
+                MessageChange::New
+            } else {
+                MessageChange::Other
+            };
+            super::emit_to(
+                &self.events,
+                Event::Message {
+                    conversation: stored.conversation,
+                    id: stored.id,
+                    change,
+                    applied: stored.applied,
+                    message,
+                    source,
+                },
+            );
+        }
+        for conversation in changes.conversations {
+            self.notice(&conversation);
+            super::emit_to(&self.events, Event::ConversationChanged { conversation });
         }
     }
 
@@ -288,6 +342,10 @@ impl Inbox {
 }
 
 impl Meanwhile for Inbox {
+    fn progress(&self, store: &Store, changes: &mut Changes) {
+        self.brought(store, std::mem::take(changes), Source::CatchUp);
+    }
+
     /// Answers what comes while a read waits, and keeps the rest for the loop (see the module docs). Ends at once
     /// when the loop is taking a request (it never is while the catch-up runs, which the loop awaits), and once every
     /// request handle is gone. `recv` loses nothing when dropped, and an answer is given whole before the next wait.

@@ -2166,7 +2166,7 @@ async fn a_row_an_earlier_run_left_goes_out_only_by_an_explicit_resend_which_loo
 }
 
 #[tokio::test]
-async fn a_catch_up_tells_what_it_stored_and_changed_once_marked_as_its_own() {
+async fn a_catch_up_tells_each_stored_message_once_and_publishes_conversation_changes() {
     let lab = Lab::start().await;
     let a = native(&lab, LAB_A, QUIET);
     let mut b = native(&lab, LAB_B, QUIET);
@@ -2195,10 +2195,6 @@ async fn a_catch_up_tells_what_it_stored_and_changed_once_marked_as_its_own() {
     );
     let changed = conversations_changed(&told);
     assert!(changed.contains(&AB_CHAT.to_owned()), "{changed:?}");
-    let mut once = changed.clone();
-    once.sort();
-    once.dedup();
-    assert_eq!(once.len(), changed.len(), "each conversation once: {changed:?}");
 
     // nothing changed: nothing told
     b.handle.sync().await.unwrap();
