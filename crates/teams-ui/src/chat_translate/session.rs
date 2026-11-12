@@ -184,16 +184,15 @@ impl Given {
         let mut lines = Vec::new();
         let (mut count, mut chars) = (0, 0);
         for said in context.iter().rev() {
-            if said.label.is_none() {
-                if !said.key.is_empty() && self.seen.contains(&said.key) {
+            let replied_to = said.label.is_some();
+            if !replied_to && !said.key.is_empty() && self.seen.contains(&said.key) {
+                continue;
+            }
+            if !replied_to && self.warm {
+                count += 1;
+                chars += said.text.len();
+                if count > WARM_LINES || chars > WARM_CHARS {
                     continue;
-                }
-                if self.warm {
-                    count += 1;
-                    chars += said.text.len();
-                    if count > WARM_LINES || chars > WARM_CHARS {
-                        continue;
-                    }
                 }
             }
             lines.push(said);
@@ -351,22 +350,21 @@ impl Worker {
         {
             tool.close();
         }
-        let mut tool = match self.tool.take() {
-            Some(tool) => tool,
-            None => {
-                self.given = Given::default();
-                Tool::start(
-                    &Launch {
-                        backend: self.spec.backend,
-                        program: self.spec.program.clone(),
-                        work: Work::Chat,
-                        model: self.spec.model.clone(),
-                        instructions: prompt::instructions(self.spec.language),
-                        first: limits.first,
-                    },
-                    &self.stop,
-                )?
-            }
+        let mut tool = if let Some(tool) = self.tool.take() {
+            tool
+        } else {
+            self.given = Given::default();
+            Tool::start(
+                &Launch {
+                    backend: self.spec.backend,
+                    program: self.spec.program.clone(),
+                    work: Work::Chat,
+                    model: self.spec.model.clone(),
+                    instructions: prompt::instructions(self.spec.language),
+                    first: limits.first,
+                },
+                &self.stop,
+            )?
         };
         let preface = self.given.preface(brief, context);
         let wait = if tool.answered() { limits.turn } else { limits.first };

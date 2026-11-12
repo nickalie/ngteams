@@ -60,7 +60,7 @@ struct Chat {
     /// The reader's language's English name.
     language: &'static str,
     /// The chat's language's code (for an outgoing message).
-    chat_language: &'static str,
+    written_in: &'static str,
     messages: Vec<Said0>,
     check: Check,
 }
@@ -110,209 +110,229 @@ fn german_filler(count: usize) -> Vec<Said0> {
 
 fn chats() -> Vec<Chat> {
     vec![
-        Chat {
-            name: "gender (en→ru): Robin is she, Sam is he, said only early on",
-            title: "Northwind onboarding",
-            you: "Dana Whitfield",
-            members: vec!["Dana Whitfield", "Chris Ortega", "Robin Park", "Sam Lee"],
-            language: "Russian",
-            chat_language: "en",
-            messages: vec![
-                said(
-                    "Chris Ortega",
-                    "Morning all! Kicking off the Northwind onboarding thread here.",
-                ),
-                said("Dana Whitfield", "Thanks Chris. I'll keep the tracker updated."),
-                said(
-                    "Chris Ortega",
-                    "Robin has the client relationship, so she'll run the weekly calls with them.",
-                ),
-                said("Robin Park", "Yes, I'll send the invite today."),
-                said("Chris Ortega", "Sam is out until Wednesday, he's got the flu."),
-                said("Dana Whitfield", "Get well soon, Sam!"),
-                said("Robin Park", "Invite is out for Thursday 10:00."),
-                said("Chris Ortega", "Can someone check the SSO config?"),
-                said("Dana Whitfield", "On it."),
-                said("Dana Whitfield", "SSO works in staging, prod tomorrow."),
-                said("Chris Ortega", "Great. What about the data import?"),
-                said("Robin Park", "The CSV export from their old system is still missing."),
-                said("Chris Ortega", "Ok, let's chase it on Thursday."),
-                said("Dana Whitfield", "Tracker updated."),
-                said("Chris Ortega", "Reminder: no deploys on Friday."),
-                said("Robin Park", "Noted."),
-                said("Dana Whitfield", "Prod SSO is live."),
-                said("Chris Ortega", "Nice work!"),
-                said("Robin Park", "The CSV arrived, 12k rows."),
-                said("Dana Whitfield", "I'll run the import tonight."),
-                said("Chris Ortega", "Any errors?"),
-                said("Dana Whitfield", "Only 14 rows with bad dates, fixed by hand."),
-                said("Chris Ortega", "Perfect."),
-                said("Sam Lee", "I'm back! Thanks for covering for me."),
-                said("Chris Ortega", "Welcome back Sam."),
-                said("Dana Whitfield", "Sam, quick catch-up later?"),
-                said("Sam Lee", "Sure, after lunch."),
-                said("Chris Ortega", "How did the client visit go yesterday?"),
-                said(
-                    "Robin Park",
-                    "I was at their office for three hours, we walked through the whole rollout.",
-                ),
-                said("Chris Ortega", "And the contract?"),
-                said("Robin Park", "Signed. I brought the original back with me."),
-                said(
-                    "Sam Lee",
-                    "I was still sick yesterday, otherwise I would have come along.",
-                ),
-                said("Chris Ortega", "No worries. Robin, did they ask about training?"),
-                said("Robin Park", "They did. I promised them two sessions next week."),
-                said("Dana Whitfield", "I can run one of them."),
-                said(
-                    "Sam Lee",
-                    "I'll take the other one, I wrote the training material anyway.",
-                ),
-                said("Chris Ortega", "Great, thanks both."),
-                said("Robin Park", "I'll tell their team lead, she was asking about it."),
-                said("Chris Ortega", "Let's wrap up the week then."),
-            ],
-            check: Check::Batch(vec![28, 30, 31, 35]),
-        },
-        Chat {
-            name: "topic (ru→en): кран and ключ in a plumbing chat",
-            title: "Ремонт сантехники, 3 этаж",
-            you: "Alex Turner",
-            members: vec!["Alex Turner", "Игорь Петров", "Марина Соколова"],
-            language: "English",
-            chat_language: "ru",
-            messages: vec![
-                said("Игорь Петров", "Всем привет, по третьему этажу начинаем в понедельник."),
-                said("Марина Соколова", "Хорошо. Доступ в помещение через охрану."),
-                said("Игорь Петров", "Пропуска заказал на троих."),
-                said("Alex Turner", "Спасибо!"),
-                said("Марина Соколова", "Кран привезут в пятницу, раньше не получается."),
-                said("Игорь Петров", "Тогда старый пока не снимаем."),
-                said("Марина Соколова", "Ключ кто-нибудь брал? Не могу найти."),
-                said("Игорь Петров", "Ключ у меня, верну завтра."),
-                said("Марина Соколова", "Счёт за кран пришлю отдельно."),
-                said("Игорь Петров", "Хорошо, жду."),
-            ],
-            check: Check::Batch(vec![4, 6, 7, 8]),
-        },
-        Chat {
-            name: "reply (de→en): 'Die nehmen wir' answers a question 40+ messages back",
-            title: "Offsite im März",
-            you: "Alex Turner",
-            members: vec!["Alex Turner", "Lena Brandt", "Jonas Weber", "Mia Schulz"],
-            language: "English",
-            chat_language: "de",
-            messages: {
-                let mut messages = vec![said(
-                    "Lena Brandt",
-                    "Für das Offsite im März haben wir zwei Angebote: das Hotel am See (teurer, aber mit eigenem \
-                     Tagungsraum) oder die Jugendherberge in der Altstadt. Welches nehmen wir?",
-                )];
-                messages.extend(german_filler(44));
-                messages.push(reply(
-                    "Jonas Weber",
-                    0,
-                    "Für das Offsite im März haben wir zwei Angebote: das Hotel am See (teurer, aber mit…",
-                    "Die nehmen wir. Ist eh näher am Bahnhof.",
-                ));
-                messages.push(said("Mia Schulz", "Einverstanden."));
-                messages
-            },
-            check: Check::Batch(vec![45]),
-        },
-        Chat {
-            name: "terms across a new process (de→en): Abnahme, Lastenheft",
-            title: "Projekt Falke",
-            you: "Alex Turner",
-            members: vec![
-                "Alex Turner",
-                "Katrin Roth",
-                "Tobias Klein",
-                "Mia Schulz",
-                "Jonas Weber",
-                "Lena Brandt",
-            ],
-            language: "English",
-            chat_language: "de",
-            messages: {
-                let mut messages = vec![
-                    said(
-                        "Katrin Roth",
-                        "Kurzes Update zu Falke: die Abnahme mit dem Kunden ist für den 14. geplant.",
-                    ),
-                    said("Tobias Klein", "Ist das Lastenheft final?"),
-                    said(
-                        "Katrin Roth",
-                        "Fast, im Lastenheft fehlt noch das Kapitel zur Datenmigration.",
-                    ),
-                    said(
-                        "Tobias Klein",
-                        "Ohne vollständiges Lastenheft keine Abnahme, das hat der Kunde klar gesagt.",
-                    ),
-                    said("Katrin Roth", "Ich kümmere mich drum."),
-                ];
-                messages.extend(german_filler(44));
-                messages.push(said(
-                    "Katrin Roth",
-                    "Die Abnahme rutscht auf Donnerstag, das überarbeitete Lastenheft geht morgen raus.",
-                ));
-                messages
-            },
-            check: Check::NewProcess(5),
-        },
-        Chat {
-            name: "outgoing (en→de): a client chat that says Sie, said only early on",
-            title: "Kundenprojekt Hartmann GmbH – Abstimmung",
-            you: "Jamie Fox",
-            members: vec!["Jamie Fox", "Klaus Hartmann", "Petra Vogel"],
-            language: "English",
-            chat_language: "de",
-            messages: {
-                let mut messages = vec![
-                    said(
-                        "Klaus Hartmann",
-                        "Sehr geehrter Herr Fox, vielen Dank für Ihr Angebot. Wir würden gern mit Ihnen starten.",
-                    ),
-                    said(
-                        "Jamie Fox",
-                        "Vielen Dank, Herr Hartmann! Ich freue mich auf die Zusammenarbeit.",
-                    ),
-                    said(
-                        "Petra Vogel",
-                        "Guten Tag Herr Fox, ich bin Ihre Ansprechpartnerin für die Technik.",
-                    ),
-                ];
-                for (from, text) in [
-                    ("Klaus Hartmann", "Anbei die Unterlagen."),
-                    ("Jamie Fox", "Danke, ist angekommen."),
-                    ("Petra Vogel", "Die Zugänge sind eingerichtet."),
-                    ("Klaus Hartmann", "Termin am Dienstag passt."),
-                    ("Jamie Fox", "Prima."),
-                    ("Petra Vogel", "Der Testserver ist ab morgen erreichbar."),
-                    ("Klaus Hartmann", "Danke!"),
-                    ("Petra Vogel", "Die Logs liegen im geteilten Ordner."),
-                    ("Jamie Fox", "Gefunden."),
-                    ("Klaus Hartmann", "Bis Dienstag."),
-                    ("Petra Vogel", "Kleine Änderung: Beginn 9:30 statt 9:00."),
-                    ("Jamie Fox", "Passt."),
-                    ("Klaus Hartmann", "Protokoll folgt."),
-                    ("Petra Vogel", "VPN-Zugang ist erneuert."),
-                    ("Klaus Hartmann", "Rechnung ist raus."),
-                    ("Petra Vogel", "Backup läuft wieder."),
-                    ("Klaus Hartmann", "Danke für den schnellen Support."),
-                    ("Jamie Fox", "Gern."),
-                ] {
-                    messages.push(said(from, text));
-                }
-                messages
-            },
-            check: Check::Outgoing(vec![
-                "Could you send me the signed contract by Friday? Thanks a lot!",
-                "Petra, can you check the VPN access again? It drops every hour.",
-            ]),
-        },
+        gender_chat(),
+        topic_chat(),
+        reply_chat(),
+        new_process_chat(),
+        outgoing_chat(),
     ]
+}
+
+fn gender_chat() -> Chat {
+    Chat {
+        name: "gender (en→ru): Robin is she, Sam is he, said only early on",
+        title: "Northwind onboarding",
+        you: "Dana Whitfield",
+        members: vec!["Dana Whitfield", "Chris Ortega", "Robin Park", "Sam Lee"],
+        language: "Russian",
+        written_in: "en",
+        messages: vec![
+            said(
+                "Chris Ortega",
+                "Morning all! Kicking off the Northwind onboarding thread here.",
+            ),
+            said("Dana Whitfield", "Thanks Chris. I'll keep the tracker updated."),
+            said(
+                "Chris Ortega",
+                "Robin has the client relationship, so she'll run the weekly calls with them.",
+            ),
+            said("Robin Park", "Yes, I'll send the invite today."),
+            said("Chris Ortega", "Sam is out until Wednesday, he's got the flu."),
+            said("Dana Whitfield", "Get well soon, Sam!"),
+            said("Robin Park", "Invite is out for Thursday 10:00."),
+            said("Chris Ortega", "Can someone check the SSO config?"),
+            said("Dana Whitfield", "On it."),
+            said("Dana Whitfield", "SSO works in staging, prod tomorrow."),
+            said("Chris Ortega", "Great. What about the data import?"),
+            said("Robin Park", "The CSV export from their old system is still missing."),
+            said("Chris Ortega", "Ok, let's chase it on Thursday."),
+            said("Dana Whitfield", "Tracker updated."),
+            said("Chris Ortega", "Reminder: no deploys on Friday."),
+            said("Robin Park", "Noted."),
+            said("Dana Whitfield", "Prod SSO is live."),
+            said("Chris Ortega", "Nice work!"),
+            said("Robin Park", "The CSV arrived, 12k rows."),
+            said("Dana Whitfield", "I'll run the import tonight."),
+            said("Chris Ortega", "Any errors?"),
+            said("Dana Whitfield", "Only 14 rows with bad dates, fixed by hand."),
+            said("Chris Ortega", "Perfect."),
+            said("Sam Lee", "I'm back! Thanks for covering for me."),
+            said("Chris Ortega", "Welcome back Sam."),
+            said("Dana Whitfield", "Sam, quick catch-up later?"),
+            said("Sam Lee", "Sure, after lunch."),
+            said("Chris Ortega", "How did the client visit go yesterday?"),
+            said(
+                "Robin Park",
+                "I was at their office for three hours, we walked through the whole rollout.",
+            ),
+            said("Chris Ortega", "And the contract?"),
+            said("Robin Park", "Signed. I brought the original back with me."),
+            said(
+                "Sam Lee",
+                "I was still sick yesterday, otherwise I would have come along.",
+            ),
+            said("Chris Ortega", "No worries. Robin, did they ask about training?"),
+            said("Robin Park", "They did. I promised them two sessions next week."),
+            said("Dana Whitfield", "I can run one of them."),
+            said(
+                "Sam Lee",
+                "I'll take the other one, I wrote the training material anyway.",
+            ),
+            said("Chris Ortega", "Great, thanks both."),
+            said("Robin Park", "I'll tell their team lead, she was asking about it."),
+            said("Chris Ortega", "Let's wrap up the week then."),
+        ],
+        check: Check::Batch(vec![28, 30, 31, 35]),
+    }
+}
+
+fn topic_chat() -> Chat {
+    Chat {
+        name: "topic (ru→en): кран and ключ in a plumbing chat",
+        title: "Ремонт сантехники, 3 этаж",
+        you: "Alex Turner",
+        members: vec!["Alex Turner", "Игорь Петров", "Марина Соколова"],
+        language: "English",
+        written_in: "ru",
+        messages: vec![
+            said("Игорь Петров", "Всем привет, по третьему этажу начинаем в понедельник."),
+            said("Марина Соколова", "Хорошо. Доступ в помещение через охрану."),
+            said("Игорь Петров", "Пропуска заказал на троих."),
+            said("Alex Turner", "Спасибо!"),
+            said("Марина Соколова", "Кран привезут в пятницу, раньше не получается."),
+            said("Игорь Петров", "Тогда старый пока не снимаем."),
+            said("Марина Соколова", "Ключ кто-нибудь брал? Не могу найти."),
+            said("Игорь Петров", "Ключ у меня, верну завтра."),
+            said("Марина Соколова", "Счёт за кран пришлю отдельно."),
+            said("Игорь Петров", "Хорошо, жду."),
+        ],
+        check: Check::Batch(vec![4, 6, 7, 8]),
+    }
+}
+
+fn reply_chat() -> Chat {
+    Chat {
+        name: "reply (de→en): 'Die nehmen wir' answers a question 40+ messages back",
+        title: "Offsite im März",
+        you: "Alex Turner",
+        members: vec!["Alex Turner", "Lena Brandt", "Jonas Weber", "Mia Schulz"],
+        language: "English",
+        written_in: "de",
+        messages: {
+            let mut messages = vec![said(
+                "Lena Brandt",
+                "Für das Offsite im März haben wir zwei Angebote: das Hotel am See (teurer, aber mit eigenem \
+                 Tagungsraum) oder die Jugendherberge in der Altstadt. Welches nehmen wir?",
+            )];
+            messages.extend(german_filler(44));
+            messages.push(reply(
+                "Jonas Weber",
+                0,
+                "Für das Offsite im März haben wir zwei Angebote: das Hotel am See (teurer, aber mit…",
+                "Die nehmen wir. Ist eh näher am Bahnhof.",
+            ));
+            messages.push(said("Mia Schulz", "Einverstanden."));
+            messages
+        },
+        check: Check::Batch(vec![45]),
+    }
+}
+
+fn new_process_chat() -> Chat {
+    Chat {
+        name: "terms across a new process (de→en): Abnahme, Lastenheft",
+        title: "Projekt Falke",
+        you: "Alex Turner",
+        members: vec![
+            "Alex Turner",
+            "Katrin Roth",
+            "Tobias Klein",
+            "Mia Schulz",
+            "Jonas Weber",
+            "Lena Brandt",
+        ],
+        language: "English",
+        written_in: "de",
+        messages: {
+            let mut messages = vec![
+                said(
+                    "Katrin Roth",
+                    "Kurzes Update zu Falke: die Abnahme mit dem Kunden ist für den 14. geplant.",
+                ),
+                said("Tobias Klein", "Ist das Lastenheft final?"),
+                said(
+                    "Katrin Roth",
+                    "Fast, im Lastenheft fehlt noch das Kapitel zur Datenmigration.",
+                ),
+                said(
+                    "Tobias Klein",
+                    "Ohne vollständiges Lastenheft keine Abnahme, das hat der Kunde klar gesagt.",
+                ),
+                said("Katrin Roth", "Ich kümmere mich drum."),
+            ];
+            messages.extend(german_filler(44));
+            messages.push(said(
+                "Katrin Roth",
+                "Die Abnahme rutscht auf Donnerstag, das überarbeitete Lastenheft geht morgen raus.",
+            ));
+            messages
+        },
+        check: Check::NewProcess(5),
+    }
+}
+
+fn outgoing_chat() -> Chat {
+    Chat {
+        name: "outgoing (en→de): a client chat that says Sie, said only early on",
+        title: "Kundenprojekt Hartmann GmbH – Abstimmung",
+        you: "Jamie Fox",
+        members: vec!["Jamie Fox", "Klaus Hartmann", "Petra Vogel"],
+        language: "English",
+        written_in: "de",
+        messages: {
+            let mut messages = vec![
+                said(
+                    "Klaus Hartmann",
+                    "Sehr geehrter Herr Fox, vielen Dank für Ihr Angebot. Wir würden gern mit Ihnen starten.",
+                ),
+                said(
+                    "Jamie Fox",
+                    "Vielen Dank, Herr Hartmann! Ich freue mich auf die Zusammenarbeit.",
+                ),
+                said(
+                    "Petra Vogel",
+                    "Guten Tag Herr Fox, ich bin Ihre Ansprechpartnerin für die Technik.",
+                ),
+            ];
+            for (from, text) in [
+                ("Klaus Hartmann", "Anbei die Unterlagen."),
+                ("Jamie Fox", "Danke, ist angekommen."),
+                ("Petra Vogel", "Die Zugänge sind eingerichtet."),
+                ("Klaus Hartmann", "Termin am Dienstag passt."),
+                ("Jamie Fox", "Prima."),
+                ("Petra Vogel", "Der Testserver ist ab morgen erreichbar."),
+                ("Klaus Hartmann", "Danke!"),
+                ("Petra Vogel", "Die Logs liegen im geteilten Ordner."),
+                ("Jamie Fox", "Gefunden."),
+                ("Klaus Hartmann", "Bis Dienstag."),
+                ("Petra Vogel", "Kleine Änderung: Beginn 9:30 statt 9:00."),
+                ("Jamie Fox", "Passt."),
+                ("Klaus Hartmann", "Protokoll folgt."),
+                ("Petra Vogel", "VPN-Zugang ist erneuert."),
+                ("Klaus Hartmann", "Rechnung ist raus."),
+                ("Petra Vogel", "Backup läuft wieder."),
+                ("Klaus Hartmann", "Danke für den schnellen Support."),
+                ("Jamie Fox", "Gern."),
+            ] {
+                messages.push(said(from, text));
+            }
+            messages
+        },
+        check: Check::Outgoing(vec![
+            "Could you send me the signed contract by Friday? Thanks a lot!",
+            "Petra, can you check the VPN access again? It drops every hour.",
+        ]),
+    }
 }
 
 /// What one run of a chat found.
@@ -516,12 +536,12 @@ fn run(chat: &Chat) -> Found {
                 let (context, _) = window(&held, &[], &[], held.len());
                 let (encoded, shells) = encode(&RichText::plain(text));
                 let preface = given.preface(&brief, &context);
-                let prompt = prompt::outgoing(&preface, Some(chat.chat_language), None, &encoded);
+                let prompt = prompt::outgoing(&preface, Some(chat.written_in), None, &encoded);
                 session.send(Job::Outgoing {
                     id: n as u64 + 1,
                     brief: Arc::clone(&brief),
                     context: context.clone(),
-                    to: Some(chat.chat_language.to_owned()),
+                    to: Some(chat.written_in.to_owned()),
                     re: None,
                     text: encoded,
                 });

@@ -806,6 +806,22 @@ impl ChatTranslation {
             self.status = Status::Failed(failure);
             return cx.notify();
         }
+        let (id, job, running) = self.batch_of(chosen);
+        if let Some(session) = &self.session {
+            session.send(job);
+            self.batches += 1;
+            self.running = Some(Running {
+                id,
+                items: running,
+                applied: HashMap::new(),
+            });
+        }
+    }
+
+    /// The job asking about the messages `chosen` (their places among the sources, oldest first, with their encoded
+    /// texts and markers), numbered anew: what the tool is told of the chat, their context and each one's item; and
+    /// how their answers are read back, and its number.
+    fn batch_of(&mut self, chosen: Vec<(usize, String, Shells)>) -> (u64, session::Job, Vec<RunningItem>) {
         let picked: Vec<usize> = chosen.iter().map(|(at, _, _)| *at).collect();
         let last = chosen.last().map_or(0, |(at, _, _)| *at);
         let replies: Vec<Vec<String>> = picked
@@ -833,20 +849,13 @@ impl ChatTranslation {
             });
             running.push((n + 1, source.id.clone(), source.version, shells));
         }
-        if let Some(session) = &self.session {
-            session.send(session::Job::Batch {
-                id,
-                brief,
-                context,
-                items,
-            });
-            self.batches += 1;
-            self.running = Some(Running {
-                id,
-                items: running,
-                applied: HashMap::new(),
-            });
-        }
+        let job = session::Job::Batch {
+            id,
+            brief,
+            context,
+            items,
+        };
+        (id, job, running)
     }
 
     /// Where the message a context line's `key` names is among the sources.

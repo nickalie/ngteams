@@ -751,17 +751,16 @@ while IFS= read -r line; do
 done
 "#;
 
-#[test]
-fn the_tool_is_told_the_chat_who_is_who_its_glossary_and_what_a_reply_answers() {
-    let mut rig = Rig::new(TERMING_CLAUDE);
-    rig.core.conversations.lock().unwrap().push(teams_store::Conversation {
+/// The chat as the store knows it: its topic, its members and their names, and a term of its German glossary.
+fn seed_chat(core: &FakeCore) {
+    core.conversations.lock().unwrap().push(teams_store::Conversation {
         id: CHAT.to_owned(),
         kind: teams_store::ConversationKind::Group,
         topic: Some("Synthetic project".to_owned()),
         version: 1,
         last_activity: None,
     });
-    rig.core.members.lock().unwrap().insert(
+    core.members.lock().unwrap().insert(
         CHAT.to_owned(),
         vec![
             teams_store::Member::new(LAB_A, None),
@@ -769,15 +768,21 @@ fn the_tool_is_told_the_chat_who_is_who_its_glossary_and_what_a_reply_answers() 
         ],
     );
     for (mri, name) in [(LAB_A, "Lab A"), (LAB_B, "Lab B")] {
-        rig.core.names.lock().unwrap().insert(mri.to_owned(), name.to_owned());
+        core.names.lock().unwrap().insert(mri.to_owned(), name.to_owned());
     }
-    rig.core.glossary.lock().unwrap().push(teams_store::GlossaryTerm {
+    core.glossary.lock().unwrap().push(teams_store::GlossaryTerm {
         conversation_id: CHAT.to_owned(),
         language: "de".to_owned(),
         term: "Lastenheft".to_owned(),
         rendering: "Lastenheft (spec)".to_owned(),
         used_at: 1,
     });
+}
+
+#[test]
+fn the_tool_is_told_the_chat_who_is_who_its_glossary_and_what_a_reply_answers() {
+    let mut rig = Rig::new(TERMING_CLAUDE);
+    seed_chat(&rig.core);
     // the question was translated before; its reply wasn't
     let question = message("1", 1, LAB_B, "Which one?");
     let mut reply = message(

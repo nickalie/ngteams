@@ -112,7 +112,10 @@ fn an_answer_s_terms_are_read_leniently_and_bounded() {
             },
         ]
     );
-    let many: String = (0..9).map(|n| format!("<term from=\"t{n}\" to=\"r{n}\"/>")).collect();
+    let many = (0..9)
+        .map(|n| format!("<term from=\"t{n}\" to=\"r{n}\"/>"))
+        .collect::<Vec<_>>()
+        .concat();
     assert_eq!(read_terms(&many).len(), 5);
     let long = format!("<term from=\"{}\" to=\"r\"/>", "w".repeat(81));
     assert!(read_terms(&long).is_empty());

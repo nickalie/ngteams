@@ -882,10 +882,30 @@ async fn prepare(
         context.push((message.id.as_str(), said));
     }
     context.reverse();
-    // what is replied to: labelled where it is, else read and put first (it is older)
+    let quoted = with_replied_to(core, conversation, labels, context, &mut items, &mut names).await;
+    add_senders(
+        &mut brief,
+        items
+            .iter()
+            .map(|item| item.from.as_str())
+            .chain(quoted.iter().map(|said| said.from.as_str())),
+    );
+    (Arc::unwrap_or_clone(brief), quoted, items)
+}
+
+/// `context` (oldest first, by the messages' ids) with each message `labels` names labelled where it is, else read
+/// and put first (it is older); a reply whose message isn't held names nothing (its preview is all there is).
+async fn with_replied_to(
+    core: &dyn Core,
+    conversation: &str,
+    labels: Vec<(String, String)>,
+    mut context: Vec<(&str, Said)>,
+    items: &mut [Item],
+    names: &mut HashMap<String, String>,
+) -> Vec<Said> {
     let mut quoted = Vec::new();
     for (id, label) in labels {
-        if let Some((_, said)) = context.iter_mut().find(|(held, _)| *held == id) {
+        if let Some((_, said)) = context.iter_mut().find(|(held, _)| *held == id.as_str()) {
             said.label = Some(label);
             continue;
         }
@@ -903,19 +923,12 @@ async fn prepare(
                 .for_each(|item| item.re = None);
             continue;
         };
-        let mut said = said_of(core, &message, &mut names).await;
+        let mut said = said_of(core, &message, names).await;
         said.label = Some(label);
         quoted.push(said);
     }
     quoted.extend(context.into_iter().map(|(_, said)| said));
-    add_senders(
-        &mut brief,
-        items
-            .iter()
-            .map(|item| item.from.as_str())
-            .chain(quoted.iter().map(|said| said.from.as_str())),
-    );
-    (Arc::unwrap_or_clone(brief), quoted, items)
+    quoted
 }
 
 /// `message` as a context line.

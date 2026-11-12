@@ -2543,8 +2543,9 @@ fn show_ai_tools(shell: &Entity<Shell>, cx: &mut App) {
     shell.read(cx).settings_view().read(cx).scroll_to_end();
 }
 
-/// A made-up Claude Code translating a chat: each message of a batch with "Übersetzt:" before its words, kept in its
-/// language (English); an outgoing message, after a moment, with "(in English)" after it.
+/// A made-up Claude Code translating a chat: each message of a batch (a reply's too, its `re` read past) with
+/// "Übersetzt:" before its words, kept in its language (English); an outgoing message, after a moment, with
+/// "(in English)" after it.
 const FAKE_CHAT_CLAUDE: &str = r#"#!/bin/bash
 while IFS= read -r line; do
   echo '{"type":"system","subtype":"init"}'
@@ -2552,11 +2553,11 @@ while IFS= read -r line; do
   case "$line" in
     *'<translate>'*)
       body=$(printf '%s' "$line" | sed 's/.*<translate>\\n//; s/\\n<\/translate>.*//')
-      body=$(printf '%s' "$body" | sed 's/\(<m id=\\"[0-9]*\\"\) from=\\"[^\\]*\\">\(<x[0-9]*>\)\{0,1\}/\1 lang=\\"en\\">\2Übersetzt: /g')
+      body=$(printf '%s' "$body" | sed 's/\(<m id=\\"[0-9]*\\"\) from=\\"[^\\]*\\"\( re=\\"[^\\]*\\"\)\{0,1\}>\(<x[0-9]*>\)\{0,1\}/\1 lang=\\"en\\">\3Übersetzt: /g')
       ;;
     *'<outgoing'*)
       sleep 2
-      text=$(printf '%s' "$line" | sed 's/.*<outgoing to=\\"[a-z]*\\">\(.*\)<\/outgoing>.*/\1/')
+      text=$(printf '%s' "$line" | sed 's/.*<outgoing to=\\"[a-z]*\\"\( re=\\"[^\\]*\\"\)\{0,1\}>\(.*\)<\/outgoing>.*/\2/')
       body="<out lang=\\\"en\\\">$text (in English)</out>"
       ;;
   esac
@@ -2578,7 +2579,7 @@ while IFS= read -r line; do
   case "$line" in
     *'<translate>'*)
       body=$(printf '%s' "$line" | sed 's/.*<translate>\\n//; s/\\n<\/translate>.*//')
-      body=$(printf '%s' "$body" | sed 's/\(<m id=\\"[0-9]*\\"\) from=\\"[^\\]*\\">\(<x[0-9]*>\)\{0,1\}/\1 lang=\\"en\\">\2Übersetzt: /g')
+      body=$(printf '%s' "$body" | sed 's/\(<m id=\\"[0-9]*\\"\) from=\\"[^\\]*\\"\( re=\\"[^\\]*\\"\)\{0,1\}>\(<x[0-9]*>\)\{0,1\}/\1 lang=\\"en\\">\3Übersetzt: /g')
       mapfile -t answers < <(printf '%s\n' "$body" | sed 's/\\n/\n/g' | tac)
       half=$(( (${#answers[@]} + 1) / 2 ))
       echo '{"type":"stream_event","event":{"type":"message_start"}}'
