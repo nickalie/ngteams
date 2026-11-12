@@ -961,9 +961,9 @@ client. The signed-in VM checks and physical device/GPU limits remain separate f
 
 ### macOS host runner
 
-The macOS port (Apple silicon, macOS 14 or later) is debugged on a Mac over SSH; its logged-in console is the
-authorized GUI place for this port, as the win11 VM's console is for Windows, only through the lab runner below and
-within its limits. Prerequisites there: Xcode's command line tools (the `security`, `codesign`,
+The macOS port (Apple silicon, macOS 14 or later) is debugged on a Mac over SSH; its logged-in console is this port's
+GUI place, as the win11 VM's console is Windows', only through the lab runner below and within its limits. This is the
+user's allowance and is pending in [AGENTS.md](../AGENTS.md): its sandbox rule doesn't name the Mac console yet. Prerequisites there: Xcode's command line tools (the `security`, `codesign`,
 `iconutil` and `hdiutil` tools; GPUI compiles its Metal shaders at run time, so no Metal Toolchain), rustup with the
 repository toolchain, Python 3, and GStreamer's official macOS runtime in a private prefix:
 

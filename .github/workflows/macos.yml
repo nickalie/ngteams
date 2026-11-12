@@ -50,6 +50,9 @@ jobs:
         run: >-
           cargo test --locked -p teams-platform -p teams-log -p teams-store -p teams-auth -p teams-ctl -p teams-runner
           -p teams-update -- --test-threads=1
+      - name: The app's own files and the lab's beside them (paths, symlink and case-only overlaps, the console runner)
+        run: >-
+          cargo test --locked -p ngteams --lib accounts_file::paths && cargo test --locked -p ngteams --test lab_mode
       - name: Sign-in guard and worker protocol, without a window
         run: cargo test --locked -p teams-signin --lib --test classify --test gate -- --test-threads=1
       - name: Notifications' tags and actions, and the Dock's badge server (no notification center reached)

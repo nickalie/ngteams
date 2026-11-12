@@ -89,7 +89,7 @@ reason = "module declarations and documentation only; no executable bodies"
 
 [unmapped_sources."crates/teams-core/src/lib.rs"]
 sha256 = "1aa217edee9d5728e2cffbb31d221bb819c3817673ba699bea053b69436efcb1"
-reason = "module declarations, re-exports, documentation and the `ctrl!` hint macro (a string literal per platform) only; no executable bodies"
+reason = "module declarations, re-exports and documentation only; no executable bodies"
 
 [unmapped_sources."crates/teams-media/src/lib.rs"]
 sha256 = "9c9c6cf673eaa941f3c88cd7f4b48eac44b827eedbdc7ebe58e09f06cc86dc86"
@@ -101,7 +101,7 @@ reason = "module declarations, documentation and an integer constant only; no ex
 
 [unmapped_sources."crates/teams-ui/src/lib.rs"]
 sha256 = "f3a5540d2a68b3b0e6b88acd03fac3e3106babfd97fb2f3ffff037a0d6c181cb"
-reason = "module declarations, re-exports and documentation only; no executable bodies"
+reason = "module declarations, re-exports, documentation and the `ctrl!` hint macro (a string literal per platform) only; no executable bodies"
 
 [unmapped_sources."crates/teams-wpe-client/src/event.rs"]
 sha256 = "d8512708340bfb250e4405fc6654775b3d3f612c29e56e2029956cb1013867c9"
@@ -221,7 +221,7 @@ sha256 = "e94bca6fba4c7d26e0be6644dbfea59704bcd251907ec75af7bac6f2efa4949e"
 reason = "Windows-only native sign-in worker, COM request/response restrictions, private IPC, policy checks and profile cleanup; no Linux LLVM mapping. Exercised by the authorized VM synthetic HTTPS channel/redirect/proxy/cleanup harness and offline native unit tests; native whole-task coverage is a final port gate."
 
 [unmapped_sources."crates/teams-signin/src/native/mod.rs"]
-sha256 = "caf46521f627c51592ea8d5b2c8f3c98486ae30e3334b93bdebafb0b719ad95e"
+sha256 = "5d08de78189de66d08e26df67e3bb4bee75eb25f02556b913a9d6a5a1449f379"
 reason = "Windows-only native sign-in worker, COM request/response restrictions, private IPC, policy checks and profile cleanup; no Linux LLVM mapping. Exercised by the authorized VM synthetic HTTPS channel/redirect/proxy/cleanup harness and offline native unit tests; native whole-task coverage is a final port gate."
 
 [unmapped_sources."crates/teams-signin/src/native/policy.rs"]
@@ -235,6 +235,10 @@ reason = "Windows-only native sign-in worker, COM request/response restrictions,
 [unmapped_sources."crates/teams-signin/src/native/refusals.rs"]
 sha256 = "8fe598cd65385a7aad4a60ab6c908e7ce80bdea1a2bffb0d7a4a0d1d0b532d18"
 reason = "Windows-only native sign-in worker, COM request/response restrictions, private IPC, policy checks and profile cleanup; no Linux LLVM mapping. Exercised by the authorized VM synthetic HTTPS channel/redirect/proxy/cleanup harness and offline native unit tests; native whole-task coverage is a final port gate."
+
+[unmapped_sources."crates/teams-signin/src/native/session.rs"]
+sha256 = "42be5a5ecd0e9c6b5286ec31bbc10ad08b91d8cf4781655da51c780427349133"
+reason = "Windows and macOS only: the native sign-in service, its config and the guard's loop over the worker's private pipe, shared by the WebView2 and WKWebView modules; no Linux LLVM mapping. Exercised by the authorized VM synthetic HTTPS channel/redirect/proxy/cleanup harness and on the Mac console"
 
 [unmapped_sources."crates/teams-signin/src/native/wire.rs"]
 sha256 = "9605f6f0a4656e5a9696ee415cd716b3f8c54e11890c9d9e01d5376781521d91"
@@ -540,7 +544,7 @@ context = { "crates/teams-media/src/devices.rs" = "5fed11f313cc1cbd20c29a3c847a5
 
 [unmapped_sources_windows."crates/teams-signin/src/engine.rs"]
 sha256 = "4770ca42f017d9a03fe9782ba5b624a7eef7f67d8831178a0a3eb6cd0fd22c8b"
-reason = "Unix-only WPE/GPUI sign-in source selected by the cfg(unix) module roots; absent from native Windows compilation and still required by the Linux source inventory."
+reason = "Linux-only WPE/GPUI sign-in source selected by the cfg(target_os = \"linux\") module roots; absent from native Windows compilation and still required by the Linux source inventory."
 context = { "crates/teams-signin/src/lib.rs" = "a7b946e05829938c67d8c83c2f95877bbe47a5351f68ba7e8bd036149f3132ab" }
 
 [unmapped_sources_windows."crates/teams-signin/src/guard/server.rs"]
@@ -550,27 +554,27 @@ context = { "crates/teams-signin/src/lib.rs" = "a7b946e05829938c67d8c83c2f95877b
 
 [unmapped_sources_windows."crates/teams-signin/src/input.rs"]
 sha256 = "93e5aeb74455a46851ba5ad692f32f342a46f8d9c419205891ba13cb0918a601"
-reason = "Unix-only WPE/GPUI sign-in source selected by the cfg(unix) module roots; absent from native Windows compilation and still required by the Linux source inventory."
+reason = "Linux-only WPE/GPUI sign-in source selected by the cfg(target_os = \"linux\") module roots; absent from native Windows compilation and still required by the Linux source inventory."
 context = { "crates/teams-signin/src/lib.rs" = "a7b946e05829938c67d8c83c2f95877bbe47a5351f68ba7e8bd036149f3132ab" }
 
 [unmapped_sources_windows."crates/teams-signin/src/view.rs"]
 sha256 = "6ac61fc211890f72da605cc4ad161ba01e5637623f0cc5d3fa3ceff6669fb2a3"
-reason = "Unix-only WPE/GPUI sign-in source selected by the cfg(unix) module roots; absent from native Windows compilation and still required by the Linux source inventory."
+reason = "Linux-only WPE/GPUI sign-in source selected by the cfg(target_os = \"linux\") module roots; absent from native Windows compilation and still required by the Linux source inventory."
 context = { "crates/teams-signin/src/lib.rs" = "a7b946e05829938c67d8c83c2f95877bbe47a5351f68ba7e8bd036149f3132ab" }
 
 [unmapped_sources_windows."crates/teams-signin/src/window.rs"]
 sha256 = "92f8e8f9180cf0eedc7496093005a4bd9708c8430fa5494d3224fbe2734207f4"
-reason = "Unix-only WPE/GPUI sign-in source selected by the cfg(unix) module roots; absent from native Windows compilation and still required by the Linux source inventory."
+reason = "Linux-only WPE/GPUI sign-in source selected by the cfg(target_os = \"linux\") module roots; absent from native Windows compilation and still required by the Linux source inventory."
 context = { "crates/teams-signin/src/lib.rs" = "a7b946e05829938c67d8c83c2f95877bbe47a5351f68ba7e8bd036149f3132ab" }
 
 [unmapped_sources_windows."crates/teams-ui/src/notify/linux.rs"]
 sha256 = "75e4b9c21cbc5bd38e1650aa1ebda84806b8369b8486de59304a9ad3557fc41f"
-reason = "Unix-only freedesktop notification D-Bus transport; notify.rs selects this module only under cfg(unix), so it is absent from native Windows compilation and remains required on Linux"
+reason = "Linux-only freedesktop notification D-Bus transport; notify.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
 context = { "crates/teams-ui/src/lib.rs" = "f3a5540d2a68b3b0e6b88acd03fac3e3106babfd97fb2f3ffff037a0d6c181cb", "crates/teams-ui/src/notify.rs" = "97b20cd97a527d5d67963924ab6ca7756092ea28340038e7820bbc4784212d94" }
 
 [unmapped_sources_windows."crates/teams-ui/src/tray/linux.rs"]
 sha256 = "ceed6565f30d059be5e8b6c0901fcba714248fe4ba0998e40c912d90db539ade"
-reason = "Unix-only StatusNotifierItem, D-Bus menu and launcher unread transport; tray.rs selects this module only under cfg(unix), so it is absent from native Windows compilation and remains required on Linux"
+reason = "Linux-only StatusNotifierItem, D-Bus menu and launcher unread transport; tray.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
 context = { "crates/teams-ui/src/lib.rs" = "f3a5540d2a68b3b0e6b88acd03fac3e3106babfd97fb2f3ffff037a0d6c181cb", "crates/teams-ui/src/tray.rs" = "761e00a9301f59539a3edca854dfd467ac83a8f68dcd509ef18e4eaa07d7a1ab" }
 
 [unmapped_sources_windows."crates/ngteams/src/ctl/socket/unix.rs"]
@@ -594,15 +598,15 @@ reason = "Unix-only domain socket transport, selected by cfg(unix) in transport.
 context = { "crates/teams-ctl/src/transport.rs" = "b82f8babf1f6097107ebd061f21f4d48281a45b2ab89f62ad5c78c9b5303c562" }
 
 [unmapped_sources."crates/teams-auth/src/secrets/macos.rs"]
-sha256 = "125dbfe688e2e5ad98e7878d9fc34284793883bcb129e8562ad9fb2ccc72d521"
+sha256 = "86032032664bb01c61935f7a9c053efa05977d0e39a3bf55721c9407f41fc2fa"
 reason = "macOS-only Keychain store; no Linux LLVM mapping. Measured natively by the macOS portability workflow (teams-auth's floors), its Keychain round trip against the runner's login keychain"
 
 [unmapped_sources."crates/teams-signin/src/macos/mod.rs"]
-sha256 = "7a9a8fe418a18509238b1a036cda32a7315dc8e687b361347b2d7515ff2d4229"
+sha256 = "999f212093b641938a6760ecaad5f550d11fc8535ab299090a908d7d5349b249"
 reason = "macOS-only sign-in worker host (WKWebView worker on the shared guard and host gate); no Linux LLVM mapping; compiled and linted by the macOS portability workflow, run on the Mac console"
 
 [unmapped_sources."crates/teams-signin/src/macos/worker.rs"]
-sha256 = "20254e30cd8ff334fa0cd4589aa3a411b17a1cf1a957827ad01ed7841d8d06bd"
+sha256 = "f8695424981879c878659211b5b8b47c7cec742923f8ef5a61bc44e04f6a7fef"
 reason = "macOS-only AppKit/WebKit sign-in window; no Linux LLVM mapping; compiled and linted by the macOS portability workflow, run on the Mac console"
 
 [unmapped_sources."crates/teams-ui/src/desktop/macos.rs"]
@@ -610,5 +614,5 @@ sha256 = "18a0f45452dbc1e3a55869fdb7f18d2b41858e04fdc09ca3b862f1449b710c10"
 reason = "macOS-only notifications (GPUI's notification center binding) and Dock badge; no Linux LLVM mapping; its tags and actions are tested natively by the macOS portability workflow, the notification center and the Dock on the Mac console"
 
 [unmapped_sources."crates/ngteams/src/mac_app.rs"]
-sha256 = "df50bbbcd68a9f1c49b5140ca853c7ffdc7d97a0a14abfca7477656156602340"
+sha256 = "f803856dff5b280142cc3ec9342e22e7417720e8f53435a891d237d040a619ad"
 reason = "macOS-only menu bar, Dock reopen and AppKit terminate routing; no Linux LLVM mapping; compiled and linted by the macOS portability workflow, run on the Mac console"

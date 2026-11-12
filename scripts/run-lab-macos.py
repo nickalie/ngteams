@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""The macOS lab runner: the Mac's logged-in console is the authorized GUI place for the macOS port, as the win11
-VM's console is for Windows (AGENTS.md). Lab-marked builds only, one alias per run, short runs.
+"""The macOS lab runner: the Mac's logged-in console is the macOS port's GUI place, as the win11 VM's console is
+Windows', by the user's allowance (not yet written into AGENTS.md's sandbox rule, which names only the UI sandbox and
+win11). Lab-marked builds only, one alias per run, short runs.
 
     scripts/run-lab-macos.py --build-only              lab-marked build of ngteams and ngteams-webview in target/lab
     scripts/run-lab-macos.py <alias> [--timeout 600]   run `ngteams --lab <alias>` until it quits or the deadline

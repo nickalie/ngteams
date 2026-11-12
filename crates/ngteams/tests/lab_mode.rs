@@ -16,7 +16,7 @@ fn parse(args: &[&str]) -> Cli {
     Cli::try_parse_from(std::iter::once("ngteams").chain(args.iter().copied())).unwrap()
 }
 
-#[cfg(unix)]
+#[cfg(not(any(windows, target_os = "macos")))]
 #[test]
 fn lab_files_follow_the_xdg_data_home_and_use_one_alias_directory() {
     let mine = PersonalLocations::resolve(None, None, Some("/synthetic/home".into())).unwrap();
@@ -31,6 +31,19 @@ fn lab_files_follow_the_xdg_data_home_and_use_one_alias_directory() {
         lab::paths_for("b_2-test", &mine).unwrap().data_dir(),
         Path::new("/d/ngteams-lab/b_2-test")
     );
+    assert_ne!(lab::paths_for("b", &mine).unwrap(), lab::paths_for("c", &mine).unwrap());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn lab_files_use_one_alias_beside_the_personal_application_support_directory() {
+    let mine = PersonalLocations::macos(Some("/synthetic/home".into())).unwrap();
+    let paths = lab::paths_for("a", &mine).unwrap();
+    let root = Path::new("/synthetic/home/Library/Application Support/ngteams-lab/a");
+    assert_eq!(paths.data_dir(), root);
+    assert_eq!(paths.config_dir(), root);
+    assert_eq!(paths.accounts_file(), root.join("accounts.toml"));
+    assert_eq!(lab::LAB_KEYRING_APPLICATION, "ngteams-lab");
     assert_ne!(lab::paths_for("b", &mine).unwrap(), lab::paths_for("c", &mine).unwrap());
 }
 
@@ -80,9 +93,10 @@ fn lab_paths_require_a_resolvable_data_home_parent() {
 #[test]
 fn lab_refuses_overlapping_personal_config_or_data_even_through_symlinks() {
     let dir = tempfile::tempdir().unwrap();
-    #[cfg(unix)]
+    // the platform's layout: XDG's `config/ngteams` and `data/ngteams`, or one `ngteams` directory holding both
+    #[cfg(not(any(windows, target_os = "macos")))]
     let mine = PersonalPaths::new(dir.path().join("config/ngteams"), dir.path().join("data/ngteams"));
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let mine = PersonalPaths::new(dir.path().join("ngteams/config"), dir.path().join("ngteams/data"));
     std::fs::create_dir_all(mine.config_dir()).unwrap();
     std::fs::create_dir_all(mine.data_dir()).unwrap();
@@ -98,9 +112,10 @@ fn lab_refuses_overlapping_personal_config_or_data_even_through_symlinks() {
             assert!(lab::check_apart(&lab, &mine).is_err());
         }
     }
-    #[cfg(unix)]
+    // where the lab's alias directory goes: a link there to the user's own data must be refused
+    #[cfg(not(any(windows, target_os = "macos")))]
     let link = dir.path().join("data/ngteams-lab");
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let link = dir.path().join("ngteams-lab");
     #[cfg(unix)]
     std::os::unix::fs::symlink(mine.data_dir(), &link).unwrap();

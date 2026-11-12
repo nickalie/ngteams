@@ -119,9 +119,11 @@ Undoing one needs a new reason, not a cleanup; the why is in each path's module 
 - Call media is libwebrtc's (`crates/teams-media/src/rtc.rs`): relay-only ICE, SDP only in Teams' dialect.
 - The sign-in window (`crates/teams-signin`) is Microsoft's page in an isolated worker: WPE WebKit on Linux
   (`ngteams-web`, `crates/teams-wpe`), using the system's `wpewebkit` or a release's pinned, hash-verified runtime
-  (`crates/teams-web-engine`); WebView2 on Windows (`ngteams-webview`), using Microsoft's installed runtime.
-  `ngteams` itself links no WebKit. Every page request is decided and logged by the guard, and the egress proxy is
-  the page's only way out.
+  (`crates/teams-web-engine`); WebView2 on Windows (`ngteams-webview`), using Microsoft's installed runtime;
+  WKWebView on macOS (`ngteams-webview`, `crates/teams-signin/src/macos`), where the guard decides navigations and the
+  page's fetch/XHR and other subresource loads reach only the host gate's hosts (WKWebView has no per-request hook).
+  `ngteams` itself links no WebKit. Every page request (on macOS, every navigation and fetch/XHR) is decided and
+  logged by the guard, and the egress proxy is the page's only way out.
 
 ## Where things live
 

@@ -221,8 +221,9 @@ dir (`scripts/macos-gstreamer.sh`, no admin), then formats, checks and lints eve
 crates compile to nothing there) and runs the offline tests of the crates with macOS code of their own: files, logs,
 stores, authentication with the Keychain store's round trip against the runner's unlocked login keychain
 (`NGTEAMS_KEYCHAIN_TESTS=1`), the control socket and CLI, the runner, updates, the sign-in guard and the native device
-backend's catalog, and the macOS notifications' tags and actions (`teams-ui`'s `desktop::macos`, no notification
-center reached). Builds use `CARGO_INCREMENTAL=0` and no debug info to fit the runner's disk.
+backend's catalog, the app's own and the lab's files (`ngteams`'s `accounts_file::paths` and `lab_mode` tests: the
+Application Support layout, case-only spellings, the console runner's marker), and the macOS notifications' tags and
+actions (`teams-ui`'s `desktop::macos`, no notification center reached). Builds use `CARGO_INCREMENTAL=0` and no debug info to fit the runner's disk.
 
 Coverage is measured natively as on Windows: `teams-platform` at 90% in lines, functions and regions, `teams-auth` and
 `teams-ctl` at their `coverage.toml` floors with their macOS code included. The macOS-only sources (the Keychain store,
@@ -244,7 +245,8 @@ for package upgrades), marked latest, targeting the pushed commit. Linux x86_64 
 `ngteams-<version>-windows-x86_64.zip` and the per-user installer `ngteams-<version>-windows-x86_64-setup.exe`, both
 from the same staged, hash-checked folder; `macos-latest` produces `ngteams.app` for Apple silicon as
 `ngteams-<version>-macos-arm64.zip` and `.dmg` (`scripts/package-macos.sh`, GStreamer's runtime inside). `SHA256SUMS` and GitHub build-provenance attestations cover every asset,
-including the runtime below. Publishing requires the tests and both native build jobs and runs only on `main`; a
+including the runtime below. Publishing requires the tests and the three native build jobs (Linux, Windows, macOS), so a failing one holds
+every platform's release, and runs only on `main`; a
 manual branch dispatch builds artifacts without publishing. The `macos` job checks the zip's app before it uploads
 it: its code signature, its release marker and version, no link to the build's GStreamer prefix, and the display-free
 `--build-identity` and `ngteamsctl --help`.

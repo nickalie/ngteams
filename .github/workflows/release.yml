@@ -337,7 +337,8 @@ jobs:
           export NGTEAMS_RELEASE_VERSION="$VERSION"
           cargo build --locked --release -p ngteams -p teams-signin --bin ngteams --bin ngteams-webview
           cargo build --locked --release -p teams-ctl --bin ngteamsctl
-      # The secrets reach only this step, in a keychain of its own deleted after it.
+      # The Developer ID secrets reach only this step. The keychain they go into lives through the packaging and its
+      # checks, until "Remove the signing keychain" deletes it (that step runs whatever happened).
       - name: Signing keychain (only with the Developer ID secrets)
         env:
           CERTIFICATE: ${{ secrets.MACOS_DEVELOPER_ID_P12 }}
