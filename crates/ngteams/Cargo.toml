@@ -109,6 +109,10 @@ harness = false
 name = "ui_tour"
 harness = false
 
+[[test]]
+name = "reactors_window"
+harness = false
+
 [build-dependencies]
 embed-resource.workspace = true
 
