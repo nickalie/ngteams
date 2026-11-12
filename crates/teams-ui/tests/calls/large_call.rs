@@ -315,7 +315,7 @@ fn the_speaker_strip_s_pager_stays_clear_of_the_self_view_with_a_pane_open() {
 }
 
 #[test]
-fn the_share_strip_s_pager_stays_in_a_short_window_with_captions_open() {
+fn the_share_strip_s_pager_stays_in_a_short_window_with_captions_and_the_timer_open() {
     let rig = super::calling();
     let stage = large_call(&rig, 25);
     rig.send(Event::CallRemoteShare {
@@ -324,9 +324,12 @@ fn the_share_strip_s_pager_stays_in_a_short_window_with_captions_open() {
     });
     super::caption_state(&rig, teams_core::CaptionPhase::On, None);
     rig.cx.run_until_parked();
+    click(stage, "call-more");
+    click(stage, "call-more-timer");
     for window in [(560.0, 400.0), (800.0, 440.0), (800.0, 512.0), (1280.0, 800.0)] {
         resize(stage, window);
         assert!(drawn(stage, "call-captions"), "captions show at {window:?}");
+        assert!(drawn(stage, "call-timer"), "the timer shows at {window:?}");
         strip_clear(
             stage,
             ("call-share-strip", None),

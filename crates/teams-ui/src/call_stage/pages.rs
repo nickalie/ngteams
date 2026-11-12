@@ -15,8 +15,7 @@ use super::CallStage;
 pub(super) const TILE_RATIO: f32 = 16.0 / 9.0;
 /// The smallest tile the gallery lays out, px: below it Teams shows fewer to a page.
 pub(super) const MIN_TILE_WIDTH: f32 = 160.0;
-/// The shortest the speaker view's strip lets its tiles get beside the floating self view, px: a stage too narrow for
-/// one of them and the pager besides takes the self view into the strip.
+/// Below it beside the floating self view, the self view joins the speaker view's strip, px.
 pub(super) const MIN_STRIP_TILE: f32 = 64.0;
 /// The space between tiles, px.
 pub(super) const TILE_GAP: f32 = 8.0;
@@ -76,9 +75,7 @@ pub(super) fn strip_size(length: f32, tile: f32) -> usize {
     }
 }
 
-/// How long each of `shown` tiles of a strip `length` px long is along it, at most `tile` px: shorter when even the
-/// fewest a page shows wouldn't fit at `tile` (a small window), the `pager` px for the pager kept first, so the tiles
-/// and the pager never run past the strip.
+/// The pager's room comes first, so the tiles and the pager never run past the strip.
 #[must_use]
 pub(super) fn strip_tile(length: f32, tile: f32, shown: usize, pager: f32) -> f32 {
     let shown = as_f32(shown.max(1));
@@ -114,12 +111,9 @@ pub(super) struct Page {
     pub(super) pages: usize,
 }
 
-/// A strip of tiles that pages.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Strip {
-    /// The people beside a share.
     Share,
-    /// The others under the speaker view's large tile.
     Speaker,
 }
 
@@ -134,7 +128,6 @@ pub(super) struct Paging {
     pub(super) gallery: usize,
     /// The strip's page (beside a share, under the speaker), from 0.
     pub(super) strip: usize,
-    /// Which strip `strip` is a page of: another strip starts on its first page.
     pub(super) strip_of: Option<Strip>,
     /// The stage's width and height as last laid out, px.
     area: Rc<Cell<Option<(f32, f32)>>>,

@@ -99,7 +99,8 @@ These are minor at most, and only worth reporting when the fix is small.
   check.
 - `test-support` features exist only under `[dev-dependencies]`. A lab binary refuses to run with them, and live
   runs use `cargo build -p`.
-- Doc comments are full sentences explaining why and are dense by design; a long doc comment isn't a finding.
+- Comments follow AGENTS.md's Code comments rule, which wins over this profile; long doc comments already in the tree
+  aren't a finding.
 - Our own CDP client, not `chromiumoxide`, since that one resumes held targets by itself.
 
 ## Languages a change may touch

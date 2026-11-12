@@ -78,7 +78,8 @@ impl CallStage {
         Some(
             div()
                 .debug_selector(|| "call-captions".to_owned())
-                .flex_none()
+                // shrinks before the stage goes below MIN_STAGE_HEIGHT in a short window
+                .flex_initial()
                 .h(px(if confirmation.is_some() { 380.0 } else { 244.0 }))
                 .min_h(px(150.0))
                 .flex()

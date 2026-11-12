@@ -20,7 +20,8 @@
 //!   further pages, turned with the `<` `>` under the gallery or at the strip's end ([`pages`]); each tile's More
 //!   options pins it for the account alone. The account's own tile (its own picture while its camera is off) is the
 //!   last tile on each gallery page in a group call; in a 1:1 call and the speaker view it floats at the stage's
-//!   bottom right, as Teams' self view does; View can hide it. Live reactions float up from the stage's bottom. The
+//!   bottom right, as Teams' self view does (the last tile of the speaker view's strip in a stage too narrow for it
+//!   beside the strip); View can hide it. Live reactions float up from the stage's bottom. The
 //!   far end's shared screen takes the stage, the people's tiles (the account's own last) in a strip on its right
 //!   (View's Focus on content: the share alone). Nothing on the stage covers the controls above it.
 //! - **The People pane** ([`people_pane`]): a meeting's Share invite (its link copied), who waits in its lobby (Admit
@@ -108,6 +109,8 @@ pub const CONTEXT: &str = "CallStage";
 
 /// The header's height, px.
 const HEADER_HEIGHT: f32 = 56.0;
+/// The shortest the stage gets beside captions, px: room for the timer, its padding, two strip tiles and the pager.
+const MIN_STAGE_HEIGHT: f32 = 180.0;
 /// The self view's size, px.
 const SELF_VIEW: (f32, f32) = (224.0, 126.0);
 /// A side pane's width (People, Video effects), px.
@@ -1095,7 +1098,7 @@ impl Render for CallStage {
                     .and_then(|active| gallery::connection_banner(active, palette)),
             )
             .children(if self.caption_top { captions.take() } else { None })
-            .child(div().flex_1().min_h_0().overflow_hidden().child(body))
+            .child(div().flex_1().min_h(px(MIN_STAGE_HEIGHT)).overflow_hidden().child(body))
             .children(captions);
         let confirmation = self.end_confirmation(palette, cx);
         let lock = self.lock_confirmation(palette, cx);

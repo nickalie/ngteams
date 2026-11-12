@@ -2,8 +2,8 @@
 //! Max gallery size and the stage allow, the account's own tile among them in a group call, the rest on pages turned
 //! with `<` `>` under it: [`pages`]), the speaker view (the one who speaks, or the one pinned, large over a strip of
 //! the others that pages the same way), the self view floating at its bottom right in a 1:1 call and the speaker view
-//! (in a stage too narrow to float beside the speaker view's strip, the strip's last tile) unless View hid it, and each tile's own menu (Pin for me, Unpin). While the far end shares its screen, the share
-//! fills the stage with the people's tiles (the account's own among them) in a strip on its right, paged when they
+//! (in a stage too narrow to float beside the speaker view's strip, the strip's last tile) unless View hid it, and
+//! each tile's own menu (Pin for me, Unpin). While the far end shares its screen, the share fills the stage with the people's tiles (the account's own among them) in a strip on its right, paged when they
 //! don't fit, as Teams shows a share; View's Focus on content shows the share alone. Nothing leaves the stage: the
 //! call's controls above it stay in sight and take every click, however many are in the call.
 use gpui_component::Disableable as _;
@@ -35,16 +35,13 @@ impl Layout {
 
 /// The height of the speaker view's strip of the others, px.
 const STRIP_HEIGHT: f32 = 112.0;
-/// The width of a tile in the speaker view's strip at the most, px: narrower in a small window.
+/// The widest a tile in the speaker view's strip gets, px.
 const STRIP_TILE: f32 = 184.0;
-/// The width of the people's strip beside a share, and the height of a tile in it at the most (Teams' 16:9 tiles;
-/// shorter in a short window), px.
+/// The width of the people's strip beside a share, and the tallest a tile in it gets, px (Teams' 16:9 tiles).
 const SHARE_STRIP: (f32, f32) = (236.0, 132.0);
 
 impl CallStage {
-    /// The stage of the call up: who rings while nobody is in it, else the tiles as View lays them out, with the self
-    /// view floating over them, or among them (the last of a group call's gallery page, of a share's strip, or of the
-    /// speaker view's strip in a stage too narrow for it to float beside the strip).
+    /// The stage of the call up: who rings while nobody is in it, else the tiles as View lays them out.
     pub(super) fn stage(
         &mut self,
         active: &ActiveCall,
@@ -260,9 +257,7 @@ impl CallStage {
             .into_any_element()
     }
 
-    /// The speaker view: the tile at `main` of `tiles` large, the others in a strip under it, as many as fit beside the self
-    /// view (in a stage `width` px wide), paged when there are more; the account's own tile last on each page of the
-    /// strip while it is `in_strip`.
+    /// The speaker view: the tile at `main` large over a paged strip of the others.
     fn speaker_stage(
         &mut self,
         active: &ActiveCall,
@@ -298,10 +293,7 @@ impl CallStage {
         )
     }
 
-    /// The page of `strip`, `length` px long (its tiles `tile` px along it), the strip shows of `count` tiles, `own`
-    /// more (the account's) on every page: as many as fit, the pager (`pager` px along the strip) taking room while
-    /// there are more pages; and how long each tile is along the strip, shorter than `tile` when a small window
-    /// can't hold even one at it. Another strip than the one last paged starts on its first page.
+    /// The page of `strip` that shows and its tiles' length; `own` (the account's tile) is added to every page.
     fn strip_page(
         &mut self,
         strip: Strip,
@@ -309,6 +301,7 @@ impl CallStage {
         (length, tile): (f32, f32),
         pager: f32,
     ) -> (Page, f32) {
+        // a strip other than the one last paged starts on its first page, as Teams' does
         if self.paging.strip_of.replace(strip) != Some(strip) {
             self.paging.strip = 0;
         }
@@ -581,14 +574,12 @@ fn grid(tiles: Vec<AnyElement>, columns: usize, (width, height): (f32, f32)) -> 
         .into_any_element()
 }
 
-/// Whether the self view floats beside the speaker view's strip in a stage `width` px wide: only while the strip keeps
-/// room clear of it for a tile and the pager.
+/// Floating, the self view must leave the strip room for a tile and the pager.
 fn floats_beside_strip(width: f32) -> bool {
     width - SELF_VIEW.0 - 16.0 >= pages::MIN_STRIP_TILE + TILE_GAP + PAGER_WIDTH
 }
 
-/// The speaker view: `main` large, the others (each `tile_width` px wide) in a strip under it (clear of the self view
-/// while it floats), the strip's pager at its end while it pages.
+/// The speaker view: `main` large over the strip of the others.
 fn speaker(
     selector: &'static str,
     main: AnyElement,
