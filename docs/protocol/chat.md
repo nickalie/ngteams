@@ -1046,7 +1046,8 @@ in browser Teams (team-manage, 2026-11-12), and in a lab store's synced feed.
   known; no dialog asks first.
 - **Opening the pane** in the web client also opened its newest item (a missed call: the Calls page).
 - **A chat on screen**: an item whose chat was open when it arrived was marked read at once (see "Seen beside it");
-  the native client marks the unread items of the conversation it shows read.
+  the native client marks unread items on entry and new arrivals while that conversation is shown in the selected
+  account's active window. A manual unread mark survives reloads until the conversation is opened again.
 
 The native client: [`teams_core::activity`](../../crates/teams-core/src/activity.rs).
 

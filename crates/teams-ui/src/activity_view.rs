@@ -2,8 +2,8 @@
 //! ([`teams_core::activity`] tells where its items come from and when they read as read).
 //!
 //! - **Header**: "Activity", then "More options" (its menu: "Mark all as read", Shift+Esc as in Teams) and "Filter"
-//!   (the search's box, "Filter by name or group name", which keeps the items whose title, preview or place has every
-//!   word typed; Esc closes it).
+//!   (the search's box, "Filter by name or group name", which keeps the items whose title, preview or place contains
+//!   what was typed (case and spaces folded); Esc closes it).
 //! - **Filter chips** ([`ActivityFilter::CHIPS`]): Unread, @Mentions, Reactions, Missed calls, Replies, Voicemail and
 //!   Apps; one is chosen at a time, chosen again it lets go. Ctrl+Alt+U and Ctrl+Alt+M toggle the first two, as Teams'.
 //! - **An item**: the person's avatar (their picture, else initials; an app's tile) with a badge for its kind (the
@@ -19,7 +19,8 @@
 //!   clears the rail's count ([`ActivityView::unseen`]).
 //! - **A chat on screen**: the conversation the main view shows ([`ActivityView::set_on_screen`]) has its unread items
 //!   marked read, at once and as new ones come while it stays there, as Teams marks a feed item read once its chat is
-//!   open (a reaction that came while the chat was open was marked read at once, `docs/protocol/chat.md`).
+//!   open. Automatic marks require the selected account in the active window; explicit unread marks last until the
+//!   conversation is opened again (a reaction that came while the chat was open was marked read at once, `docs/protocol/chat.md`).
 //! - **Live**: the pane reads the feed again whenever the engine tells a change to it (a new item, a read state that
 //!   synced, the horizon), shown or not, so the rail's count stays current.
 //! - **Read-only** ([`Core::read_only`]): nothing is marked, removed or seen; items still open.
@@ -27,7 +28,7 @@
 //! Traced: `activity opened` (the item's kind), `activity filter` (the chip's key), `activity marked` (read or
 //! unread), `activity removed`, `activity all-read`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Datelike as _, TimeZone};
@@ -35,13 +36,14 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, ParentElement as _, Render, ScrollHandle,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity, Window, actions,
-    deferred, div, px, rgb,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity, Window, actions, deferred, div, px,
+    rgb,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Selectable as _, Sizable as _};
 use teams_core::activity::{ActivityFeed, ActivityFilter, ActivityItem, ActivityKind, FEED};
 use teams_core::{Action, EngineError};
+use teams_store::OutboxState;
 
 use crate::bridge::Core;
 use crate::chat_list::ChatList;
@@ -102,7 +104,7 @@ pub enum ActivityViewEvent {
     /// Call someone back (a missed call's Call).
     CallBack(String),
     /// Show a short note (a toast).
-    Toast(SharedString),
+    Toast(&'static str),
     /// Show the notification settings (an item's "Notification settings").
     NotificationSettings,
 }
@@ -110,7 +112,7 @@ pub enum ActivityViewEvent {
 /// The pane (see the module docs).
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "a read pending again, the search's box, the header's menu and being shown are separate states"
+    reason = "loading, search, menu, pane visibility and window activation are separate states"
 )]
 pub struct ActivityView {
     core: Arc<dyn Core>,
@@ -142,6 +144,17 @@ pub struct ActivityView {
     shown: bool,
     /// The conversation the main view shows.
     on_screen: Option<String>,
+    /// Only the selected account in an active window can mark activity seen or read automatically.
+    active: bool,
+    /// Members already considered during this visit to the conversation (updates are not new arrivals).
+    considered: HashSet<String>,
+    /// Explicit unread marks survive reloads and activation until the conversation is opened again.
+    explicit_unread: HashSet<String>,
+    /// Optimistic operation generations prevent an old reply undoing a newer user action.
+    operations: HashMap<String, u64>,
+    next_operation: u64,
+    /// Pending outbox replies whose terminal outcome still needs observing.
+    writes: HashMap<i64, (String, u64)>,
     focus: FocusHandle,
     scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
@@ -174,6 +187,7 @@ impl ActivityView {
             }
         });
         let changed = cx.observe(&parts.models.chats, |this: &mut Self, chats, cx| {
+            this.settled_writes(cx);
             let at = chats.read(cx).changed_at(FEED);
             if this.read_at != Some(at) {
                 this.reload(cx);
@@ -204,6 +218,12 @@ impl ActivityView {
             header_menu: false,
             shown: false,
             on_screen: None,
+            active: window.is_window_active(),
+            considered: HashSet::new(),
+            explicit_unread: HashSet::new(),
+            operations: HashMap::new(),
+            next_operation: 0,
+            writes: HashMap::new(),
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             _subscriptions: vec![searched, changed, named, teamed],
@@ -227,7 +247,7 @@ impl ActivityView {
     /// How many unread items came since the pane was last shown: the rail's count.
     #[must_use]
     pub fn unseen(&self) -> usize {
-        if self.shown {
+        if self.shown && self.active {
             return 0;
         }
         self.feed.unseen()
@@ -325,6 +345,8 @@ impl ActivityView {
             return;
         }
         self.on_screen = conversation.map(str::to_owned);
+        self.considered.clear();
+        self.explicit_unread.clear();
         self.read_on_screen(cx);
     }
 
@@ -334,20 +356,42 @@ impl ActivityView {
         self.on_screen.as_deref()
     }
 
-    /// Marks read every unread item of the conversation on screen.
+    /// Updates whether this account is visible in the active window, including while another account is shown.
+    pub fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
+        if self.active == active {
+            return;
+        }
+        self.active = active;
+        if active {
+            if self.shown {
+                self.mark_seen(cx);
+            }
+            self.read_on_screen(cx);
+        }
+        cx.notify();
+    }
+
+    /// Marks items on entry and new arrivals during the visit; a version update is not an arrival.
     fn read_on_screen(&mut self, cx: &mut Context<Self>) {
+        if !self.active {
+            return;
+        }
         let Some(conversation) = self.on_screen.as_deref() else {
             return;
         };
-        let unread: Vec<String> = self
+        let items: Vec<ActivityItem> = self
             .feed
             .items
             .iter()
-            .filter(|item| item.thread.as_deref() == Some(conversation) && !self.is_read(item))
-            .map(|item| item.id.clone())
+            .filter(|item| item.thread.as_deref() == Some(conversation))
+            .cloned()
             .collect();
-        for id in unread {
-            self.mark_item(&id, true, cx);
+        for item in items {
+            let arrived = item.ids.iter().any(|id| !self.considered.contains(id));
+            self.considered.extend(item.ids.iter().cloned());
+            if arrived && !self.is_read(&item) && !item.ids.iter().any(|id| self.explicit_unread.contains(id)) {
+                self.mark_item(&item.id, true, cx);
+            }
         }
     }
 
@@ -359,7 +403,7 @@ impl ActivityView {
 
     /// Moves the feed's horizon to its newest item, when it isn't there.
     fn mark_seen(&mut self, cx: &mut Context<Self>) {
-        if self.core.read_only() || self.feed.seen_horizon().is_none() {
+        if !self.active || self.core.read_only() || self.feed.seen_horizon().is_none() {
             return;
         }
         // shown at once; the store's horizon follows as the engine queues it
@@ -367,12 +411,70 @@ impl ActivityView {
         self.write(Action::ActivitySeen, cx);
     }
 
-    fn write(&self, action: Action, cx: &mut Context<Self>) {
+    fn write(&mut self, action: Action, cx: &mut Context<Self>) {
+        self.write_item(action, None, cx);
+    }
+
+    fn operation(&mut self, id: &str) -> (String, u64) {
+        self.next_operation += 1;
+        self.operations.insert(id.to_owned(), self.next_operation);
+        (id.to_owned(), self.next_operation)
+    }
+
+    fn write_item(&mut self, action: Action, operation: Option<(String, u64)>, cx: &mut Context<Self>) {
         let reply = self.core.write(action);
-        cx.background_spawn(async move {
-            let _ = reply.await;
+        cx.spawn(async move |this, cx| {
+            let result = reply.await;
+            let _ = this.update(cx, |view, cx| {
+                let Some(operation) = operation else {
+                    // Horizons are applied by the engine and reconciled through its feed events.
+                    return;
+                };
+                match result {
+                    Err(_) => view.failed_write(&operation, cx),
+                    Ok(row) if matches!(row.state, OutboxState::Denied | OutboxState::Failed) => {
+                        view.failed_write(&operation, cx);
+                    }
+                    Ok(row) if row.state != OutboxState::Sent => {
+                        view.writes.insert(row.id, operation);
+                        // A terminal event can arrive before this reply.
+                        view.settled_writes(cx);
+                    }
+                    Ok(_) => {}
+                }
+            });
         })
         .detach();
+    }
+
+    fn settled_writes(&mut self, cx: &mut Context<Self>) {
+        let done: Vec<_> = self
+            .writes
+            .iter()
+            .filter_map(|(id, operation)| {
+                let row = self.models.chats.read(cx).outbox_row(*id)?;
+                matches!(row.state, OutboxState::Sent | OutboxState::Denied | OutboxState::Failed)
+                    .then(|| (*id, operation.clone(), row.state != OutboxState::Sent))
+            })
+            .collect();
+        for (id, operation, failed) in done {
+            self.writes.remove(&id);
+            if failed {
+                self.failed_write(&operation, cx);
+            }
+        }
+    }
+
+    fn failed_write(&mut self, (id, generation): &(String, u64), cx: &mut Context<Self>) {
+        if self.operations.get(id) != Some(generation) {
+            return;
+        }
+        self.operations.remove(id);
+        self.pending.remove(id);
+        self.removed.retain(|removed| removed != id);
+        cx.emit(ActivityViewEvent::Toast("Couldn't update activity. Try again."));
+        self.reload(cx);
+        cx.notify();
     }
 
     /// Chooses a chip; the chosen one again lets it go.
@@ -435,6 +537,15 @@ impl ActivityView {
     /// Marks an item read or unread (every feed message a folded item stands for).
     pub fn mark(&mut self, id: &str, read: bool, cx: &mut Context<Self>) {
         self.item_menu = None;
+        if let Some(item) = self.feed.item(id) {
+            if read {
+                for own in &item.ids {
+                    self.explicit_unread.remove(own);
+                }
+            } else {
+                self.explicit_unread.extend(item.ids.iter().cloned());
+            }
+        }
         self.mark_item(id, read, cx);
     }
 
@@ -448,8 +559,9 @@ impl ActivityView {
         self.pending.insert(item.id.clone(), (read, item.version));
         self.trace
             .record(&TraceLine::new("activity", "marked").kind(if read { "read" } else { "unread" }));
+        let operation = self.operation(&item.id);
         for own in item.ids {
-            self.write(Action::ActivityRead { item: own, read }, cx);
+            self.write_item(Action::ActivityRead { item: own, read }, Some(operation.clone()), cx);
         }
         cx.notify();
     }
@@ -465,16 +577,18 @@ impl ActivityView {
         }
         self.removed.push(item.id.clone());
         self.trace.record(&TraceLine::new("activity", "removed"));
+        let operation = self.operation(&item.id);
         for own in item.ids {
-            self.write(
+            self.write_item(
                 Action::Delete {
                     conversation: FEED.to_owned(),
                     message_id: own,
                 },
+                Some(operation.clone()),
                 cx,
             );
         }
-        cx.emit(ActivityViewEvent::Toast(REMOVED.into()));
+        cx.emit(ActivityViewEvent::Toast(REMOVED));
         cx.notify();
     }
 
@@ -488,6 +602,7 @@ impl ActivityView {
         let now = chrono::Utc::now().timestamp_millis();
         self.feed.bookmark_ms = Some(self.feed.bookmark_ms.map_or(now, |bookmark| bookmark.max(now)));
         self.pending.clear();
+        self.explicit_unread.clear();
         self.trace.record(&TraceLine::new("activity", "all-read"));
         self.write(Action::ActivityAllRead, cx);
         cx.notify();
@@ -602,7 +717,7 @@ impl ActivityView {
 /// Whether a place's name holds the search's words, case and spaces folded (none: no).
 #[must_use]
 pub fn place_matches(place: &str, words: &str) -> bool {
-    let fold = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    use teams_core::activity::fold;
     let words = fold(words);
     !words.is_empty() && fold(place).contains(&words)
 }
@@ -660,20 +775,6 @@ where
         start.format(&format!("{day}{}", cycle.time_of_day())),
         end.format(&end_format)
     )
-}
-
-/// A reaction's emoji as text, by Teams' keys (another key shows a like's): where a picture can't go, such as a
-/// line of `ngteamsctl`.
-#[must_use]
-pub fn reaction_emoji(key: &str) -> &'static str {
-    match key {
-        "heart" => "❤️",
-        "laugh" => "😆",
-        "surprised" => "😮",
-        "sad" => "😢",
-        "angry" => "😡",
-        _ => "👍",
-    }
 }
 
 /// An item's date: the time of day today, else the month and day (and the year, if not this one), as Teams' feed.

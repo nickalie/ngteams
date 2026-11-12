@@ -3193,3 +3193,42 @@ async fn a_feed_item_marked_read_unread_or_removed_syncs_back_from_the_service()
     assert!(feed.item(&newer).is_none() && feed.item(&older).is_some(), "{feed:?}");
     a.shutdown();
 }
+
+#[tokio::test]
+async fn the_feed_bookmark_syncs_into_a_fresh_store_and_from_a_conversation_delivery() {
+    let lab = Lab::start().await;
+    let (a, older, _) = feed_of_a(&lab).await;
+    let all = a.handle.write(Action::ActivityAllRead).await.unwrap();
+    assert_eq!(all.state, OutboxState::Sent);
+    a.shutdown();
+
+    let mut fresh = native(&lab, LAB_A, How::default());
+    fresh.ready().await;
+    let feed = fresh.handle.activity().await.unwrap();
+    assert_eq!(feed.bookmark_ms, Some(all.created_at));
+    assert!(
+        feed.is_read(feed.item(&older).unwrap()),
+        "bookmark came from the listing"
+    );
+
+    fresh.drain().await;
+    let bookmark = all.created_at + 1000;
+    lab.trouter.deliver_chat(
+        LAB_A,
+        &json!({
+            "type": "EventMessage", "resourceType": "ConversationUpdate",
+            "resource": {"id": teams_mock::NOTIFICATIONS, "properties": {
+                "consumptionHorizonBookmark": format!("0;{bookmark};0")
+            }, "propertiesUpdated": ["consumptionHorizonBookmark"]}
+        }),
+    );
+    fresh
+        .event(|event| {
+            matches!(event, Event::ConversationChanged { conversation }
+        if conversation == teams_mock::NOTIFICATIONS)
+            .then_some(())
+        })
+        .await;
+    assert_eq!(fresh.handle.activity().await.unwrap().bookmark_ms, Some(bookmark));
+    fresh.shutdown();
+}

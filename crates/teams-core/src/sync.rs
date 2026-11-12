@@ -1225,8 +1225,12 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         Ok(())
     }
 
-    /// The account's own read horizon from the list, when both its parts can be read.
-    fn store_horizon(&self, store: &mut Store, listed: &chat::Conversation) -> Result<(), CatchUpError> {
+    /// The account's seen horizon and all-read bookmark, from a listing or conversation delivery.
+    pub(crate) fn store_horizon(&self, store: &mut Store, listed: &chat::Conversation) -> Result<(), CatchUpError> {
+        if let Some(bookmark) = listed.horizon_bookmark().and_then(|ms| i64::try_from(ms).ok()) {
+            let applied = store.set_horizon_bookmark(&listed.id, bookmark)?;
+            self.conversation_changed(&listed.id, applied);
+        }
         if let Some(horizon) = listed.consumption_horizon()
             && let Some(applied) = self.receive_horizon(store, &listed.id, &horizon)?
         {

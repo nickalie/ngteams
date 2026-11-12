@@ -369,7 +369,7 @@ pub struct Shell {
     people: chat_people::State,
     /// The window's profile card, while one is open, and the pointer's way over faces and names.
     cards: profile_card::State,
-    _subscriptions: [Subscription; 12],
+    _subscriptions: [Subscription; 13],
 }
 
 /// What the chat's header shows, as the trace tells it: the chat, its other member's presence (a 1:1 chat's), and
@@ -463,6 +463,7 @@ impl Shell {
             new_chat: None,
             people: chat_people::State::default(),
             _subscriptions: [
+                cx.observe_window_activation(window, Self::sync_activity_active),
                 opened,
                 channel_opened,
                 kept_channel,
@@ -508,7 +509,7 @@ impl Shell {
                     this.call_chat(cx);
                 }
             }
-            ActivityViewEvent::Toast(_) => this.show_toast(crate::activity_view::REMOVED, cx),
+            ActivityViewEvent::Toast(words) => this.show_toast(words, cx),
             ActivityViewEvent::NotificationSettings => {
                 this.open_settings_page(crate::settings_view::Page::Notifications, window, cx);
             }
@@ -555,6 +556,24 @@ impl Shell {
         }
         self.sync_activity_shown(window, cx);
         cx.notify();
+    }
+
+    /// Automatic activity writes require this account in the active window.
+    fn sync_activity_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = self
+            .accounts
+            .as_ref()
+            .is_none_or(|(accounts, _)| accounts.read(cx).active_key() == Some(self.account()));
+        let active = selected && window.is_window_active();
+        if !active {
+            self.activity.0.update(cx, |view, cx| view.set_active(false, cx));
+        }
+        // Update the destination and pane before activation can issue automatic writes.
+        self.sync_activity_shown(window, cx);
+        self.sync_activity_on_screen(cx);
+        if active {
+            self.activity.0.update(cx, |view, cx| view.set_active(true, cx));
+        }
     }
 
     /// Tells the Activity pane whether it is on screen: the list pane shows it and nothing covers both panes.
@@ -985,10 +1004,16 @@ impl Shell {
     /// Hands in the app's accounts: the rail shows their avatars in place of the status button, and no call is offered
     /// while another account has one ([`Accounts::busy_elsewhere`]).
     pub fn set_accounts(&mut self, accounts: Entity<Accounts>, cx: &mut Context<Self>) {
-        let observing = cx.observe(&accounts, |this: &mut Self, _, cx| {
+        let observing = cx.observe(&accounts, |this: &mut Self, accounts, cx| {
+            if accounts.read(cx).active_key() != Some(this.account()) {
+                this.activity.0.update(cx, |view, cx| view.set_active(false, cx));
+            }
             this.trace_call_button(cx);
             cx.notify();
         });
+        if accounts.read(cx).active_key() != Some(self.account()) {
+            self.activity.0.update(cx, |view, cx| view.set_active(false, cx));
+        }
         self.accounts = Some((accounts, observing));
         cx.notify();
     }
@@ -3144,8 +3169,7 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = theme::current(cx);
-        self.sync_activity_shown(window, cx);
-        self.sync_activity_on_screen(cx);
+        self.sync_activity_active(window, cx);
         self.sync_new_message_row(cx);
         self.history.note(&self.main);
         let suggestions = self.search_suggestions(palette, window, cx);

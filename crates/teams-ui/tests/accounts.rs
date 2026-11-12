@@ -537,3 +537,58 @@ fn a_signed_out_first_account_removed_leaves_the_other_shown() {
     assert_eq!(account, LAB_B);
     assert_ne!(shown, teams_ui::view::Shown::SignedOut);
 }
+
+#[test]
+fn switching_accounts_stops_the_hidden_accounts_automatic_activity_writes() {
+    use teams_core::activity::{ActivityFeed, FEED};
+    let d = TwoAccounts::start();
+    let window = d.open();
+    let shell = d
+        .rig
+        .cx
+        .update(|cx| window::content(window, cx).unwrap().read(cx).shell().unwrap().clone());
+    let pane = d.rig.cx.update(|cx| shell.read(cx).activity_view().clone());
+    d.rig.cx.update(|cx| {
+        window
+            .update(cx, |_, window, cx| {
+                window.activate_window();
+                shell.update(cx, |shell, cx| {
+                    shell.open_chat(AC.to_owned(), window, cx);
+                    shell.show_activity(window, cx);
+                });
+            })
+            .unwrap();
+    });
+    d.rig.cx.run_until_parked();
+    d.switch(LAB_B);
+    d.rig.core.actions.lock().unwrap().clear();
+    let mut activity = message(FEED, "4000", LAB_C, "", 4000);
+    activity.properties = Some(
+        serde_json::json!({"activity": {
+        "activityType": "mentionInChat", "activitySubtype": "person", "activityId": 4000,
+        "sourceThreadId": AC, "sourceMessageId": 4000, "sourceUserId": LAB_C
+    }, "isread": false})
+        .to_string(),
+    );
+    *d.rig.core.activity.lock().unwrap() = ActivityFeed::new(&[activity], None, None);
+    d.rig
+        .cx
+        .update(|cx| pane.update(cx, teams_ui::activity_view::ActivityView::reload));
+    d.rig.cx.run_until_parked();
+    assert!(
+        d.rig.core.actions.lock().unwrap().is_empty(),
+        "the hidden account marks nothing"
+    );
+    d.switch(LAB_A);
+    let mut visual = VisualTestContext::from_window(window.into(), &d.rig.cx);
+    visual.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+    d.rig.cx.run_until_parked();
+    let actions = d.rig.core.actions.lock().unwrap();
+    assert!(actions.contains(&teams_core::Action::ActivitySeen));
+    assert!(actions.contains(&teams_core::Action::ActivityRead {
+        item: "4000".to_owned(),
+        read: true
+    }));
+}

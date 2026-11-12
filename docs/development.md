@@ -470,6 +470,9 @@ the lab and the read-only mode never hand off. The installed desktop entry runs 
 
 ### UI and diagnostics
 
+The Activity pane opens with Ctrl+1. Shift+Esc marks all activity as read; Ctrl+Alt+U toggles Unread and
+Ctrl+Alt+M toggles @Mentions.
+
 The three-pane window provides chats, teams/channels, a rich-text compose box, search and calendar. Ctrl+K opens
 the chat/command switcher, Ctrl+E searches, Ctrl+2 focuses the chat list, and Ctrl+4 opens Calendar. Message-list
 keys include `r` reply, `a` react, `e` edit own message, Delete own message, Ctrl+C copy and Escape clear selection.

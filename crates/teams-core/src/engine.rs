@@ -2762,8 +2762,14 @@ where
                 self.standing(activity::FEED, &item)?;
                 Command::ActivityRead { item, read }
             }
-            Action::ActivitySeen => self.activity_seen()?.0,
-            Action::ActivityAllRead => Command::FeedRead,
+            // `write` handles these store-changing actions through `activity_write` before command conversion.
+            Action::ActivitySeen | Action::ActivityAllRead => {
+                return Err(EngineError::Unknown {
+                    message: activity::FEED.to_owned(),
+                    missing: "activity write handling",
+                    action: "converted to a generic command",
+                });
+            }
         })
     }
 
@@ -3130,7 +3136,13 @@ where
                 Ok(()) => self.brought(source),
                 Err(error) => self.missed("storing the account's mark-all-read horizon", error),
             },
-            ChatEvent::ConversationUpdate { conversation } => self.on_conversation(conversation.id.clone()).await,
+            ChatEvent::ConversationUpdate { conversation } => {
+                self.on_conversation(conversation.id.clone()).await;
+                if let Err(error) = self.catch_up.store_horizon(&mut self.store, &conversation) {
+                    self.missed("storing a conversation's horizons", error);
+                }
+                self.brought(source);
+            }
             // logged by its kind where it was read
             ChatEvent::Unknown { .. } => {}
         }

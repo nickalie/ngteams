@@ -657,3 +657,25 @@ fn message_loss_is_all_or_nothing_and_preserves_empty_and_ordered_reports() {
         ])
     );
 }
+
+#[test]
+fn a_conversation_update_keeps_the_bookmark_beside_its_seen_horizon() {
+    let event = ChatEvent::from_body(
+        &json!({
+            "resourceType": "ConversationUpdate",
+            "resource": {"id": "48:notifications", "properties": {
+                "consumptionhorizon": "1000;2000;1",
+                "consumptionHorizonBookmark": "0;3000;0"
+            }, "propertiesUpdated": ["consumptionhorizon", "consumptionHorizonBookmark"]}
+        })
+        .to_string(),
+    );
+    let ChatEvent::ConversationUpdate { conversation } = event else {
+        panic!("both properties must survive");
+    };
+    assert_eq!(conversation.horizon_bookmark(), Some(3000));
+    assert_eq!(
+        conversation.consumption_horizon().unwrap().last_read_arrival,
+        Some(1000)
+    );
+}

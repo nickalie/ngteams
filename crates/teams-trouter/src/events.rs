@@ -173,7 +173,11 @@ fn conversation_update(resource: &Value) -> Option<ChatEvent> {
     let horizon_updated = resource["propertiesUpdated"]
         .as_array()
         .is_some_and(|names| names.iter().any(|name| name == "consumptionhorizon"));
-    if horizon_updated && let Some(horizon) = conversation.consumption_horizon() {
+    // Preserve both properties when a single update carries the feed's bookmark and its seen horizon.
+    if horizon_updated
+        && conversation.horizon_bookmark().is_none()
+        && let Some(horizon) = conversation.consumption_horizon()
+    {
         return Some(ChatEvent::ReadHorizon {
             conversation: conversation.id.clone(),
             horizon,

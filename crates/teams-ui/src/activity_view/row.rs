@@ -245,7 +245,7 @@ impl ActivityView {
             )
     }
 
-    /// An item's menu: Mark as read or unread, Remove (none of them in the read-only mode).
+    /// An item's menu: Mark as read or unread and Remove (not in read-only mode), then Notification settings.
     fn item_menu_view(
         &self,
         item: &ActivityItem,

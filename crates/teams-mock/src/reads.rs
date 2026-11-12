@@ -51,7 +51,7 @@ pub(crate) fn conversations(state: &State, call: &Call<'_>, owner: &str) -> Resp
         .get(offset.min(end)..end)
         .unwrap_or_default()
         .iter()
-        .map(|conversation| list_entry(conversation, &call.caller))
+        .map(|conversation| list_entry(state, conversation, &call.caller))
         .collect();
     let sync = format!(
         "{CHAT_BASE}/v1/users/{}/conversations?view=msnp24Equivalent&syncState={SINCE}{}&pageSize=200",
@@ -292,7 +292,7 @@ fn member_entry(template: &Value, mri: &str, range_start: Option<u64>) -> Value 
 }
 
 /// `conversation`'s entry in `caller`'s conversation list: its fixture entry with what changes filled in.
-fn list_entry(conversation: &Conversation, caller: &str) -> Value {
+fn list_entry(state: &State, conversation: &Conversation, caller: &str) -> Value {
     let mut entry = conversation.entry.clone();
     let last = conversation.messages.last();
     let id = &conversation.id;
@@ -317,6 +317,9 @@ fn list_entry(conversation: &Conversation, caller: &str) -> Value {
         last.map_or_else(|| json!({}), without_properties),
     );
     let properties = object(fields.entry("properties").or_insert(Value::Null));
+    if let Some(own) = state.own_properties.get(&(caller.to_owned(), id.to_owned())) {
+        properties.extend(own.clone());
+    }
     match conversation.horizons.get(caller) {
         Some(horizon) => properties.insert("consumptionhorizon".to_owned(), json!(horizon)),
         None => properties.remove("consumptionhorizon"),

@@ -14,7 +14,7 @@ use teams_core::Action;
 use teams_core::activity::{ActivityFeed, ActivityFilter, FEED};
 use teams_store::Message;
 use teams_ui::ViewTrace;
-use teams_ui::activity_view::{ActivityView, activity_time, meeting_span, reaction_emoji};
+use teams_ui::activity_view::{ActivityView, activity_time, meeting_span};
 use teams_ui::settings::{Settings, SettingsModel};
 use teams_ui::shell::{ListPlace, Main, Shell, ShellParts};
 
@@ -64,6 +64,7 @@ fn shell_window(rig: &Rig) -> (Entity<Shell>, &'static mut VisualTestContext) {
     };
     let app: &'static mut TestAppContext = Box::leak(Box::new(rig.cx.clone()));
     let (shell, cx) = app.add_window_view(|window, cx| Shell::new(parts, window, cx));
+    cx.update(|window, _| window.activate_window());
     cx.run_until_parked();
     (shell, cx)
 }
@@ -298,7 +299,7 @@ fn the_keyboard_walks_the_items_and_opens_one() {
 }
 
 #[test]
-fn dates_and_emoji_read_as_teams_shows_them() {
+fn dates_read_as_teams_shows_them() {
     use chrono::TimeZone as _;
     let now = chrono::Utc.with_ymd_and_hms(2026, 11, 12, 15, 0, 0).unwrap();
     let today = now.timestamp_millis() - 3_600_000;
@@ -314,8 +315,6 @@ fn dates_and_emoji_read_as_teams_shows_them() {
     assert_eq!(activity_time(earlier, &now, cycle), "11/11");
     assert_eq!(activity_time(last_year, &now, cycle), "3/4/25");
     assert!(activity_time(today, &now, cycle).contains("2:00"));
-    assert_eq!(reaction_emoji("heart"), "❤️");
-    assert_eq!(reaction_emoji("made-up"), "👍");
 }
 
 #[test]
@@ -344,4 +343,111 @@ fn a_meeting_s_time_reads_as_its_item_s_third_line() {
         "Nov 11, 11:00 PM - Nov 12, 1:00 AM"
     );
     assert_eq!(meeting_span(i64::MAX, 0, &chrono::Utc, twelve), "");
+}
+
+#[test]
+fn explicit_unread_survives_reloads_and_only_new_items_are_read_automatically() {
+    let rig = rig();
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_chat(GROUP.to_owned(), window, cx)));
+    assert!(drawn(cx, "rail-activity"));
+    cx.update(|_, cx| pane.update(cx, |pane, cx| pane.mark("2000", false, cx)));
+    rig.core.actions.lock().unwrap().clear();
+    let mut messages = [
+        item(2000, "reactionInChat", "heart", (LAB_C, "Lab C"), 600, false),
+        item(4000, "mentionInChat", "person", (LAB_B, "Lab B"), 700, false),
+    ];
+    messages[0].version = 5000; // the explicit unread write returned with a new version
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(&messages, None, None);
+    cx.update(|_, cx| pane.update(cx, ActivityView::reload));
+    cx.run_until_parked();
+    assert_eq!(
+        writes(&rig),
+        [Action::ActivityRead {
+            item: "4000".to_owned(),
+            read: true
+        }]
+    );
+    assert!(!cx.update(|_, cx| {
+        let pane = pane.read(cx);
+        pane.is_read(pane.feed().item("2000").unwrap())
+    }));
+    // Leaving and opening the conversation again makes that unread item seen.
+    cx.update(|_, cx| {
+        pane.update(cx, |pane, cx| {
+            pane.set_on_screen(None, cx);
+            pane.set_on_screen(Some(GROUP), cx);
+        });
+    });
+    assert!(writes(&rig).contains(&Action::ActivityRead {
+        item: "2000".to_owned(),
+        read: true
+    }));
+}
+
+#[test]
+fn an_inactive_window_does_not_read_new_activity_until_activation() {
+    let rig = rig();
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_chat(GROUP.to_owned(), window, cx)));
+    assert!(drawn(cx, "rail-activity"));
+    cx.deactivate_window();
+    cx.run_until_parked();
+    rig.core.actions.lock().unwrap().clear();
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(
+        &[item(4000, "mentionInChat", "person", (LAB_B, "Lab B"), 700, false)],
+        None,
+        None,
+    );
+    cx.update(|_, cx| pane.update(cx, ActivityView::reload));
+    cx.run_until_parked();
+    assert!(writes(&rig).is_empty());
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    assert_eq!(
+        writes(&rig),
+        [Action::ActivityRead {
+            item: "4000".to_owned(),
+            read: true
+        }]
+    );
+}
+
+#[test]
+fn refused_and_terminal_failed_writes_restore_the_stored_item() {
+    use common::outbox_row;
+    use teams_store::{OutboxKind, OutboxState};
+    let rig = rig();
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    *rig.core.stopped.lock().unwrap() = true;
+    cx.update(|_, cx| pane.update(cx, |pane, cx| pane.mark("2000", true, cx)));
+    cx.run_until_parked();
+    assert!(!cx.update(|_, cx| {
+        let pane = pane.read(cx);
+        pane.is_read(pane.feed().item("2000").unwrap())
+    }));
+    *rig.core.stopped.lock().unwrap() = false;
+    rig.core
+        .write_answers
+        .lock()
+        .unwrap()
+        .push_back(outbox_row(500, OutboxKind::Delete, OutboxState::Pending));
+    cx.update(|_, cx| pane.update(cx, |pane, cx| pane.remove("2000", cx)));
+    cx.run_until_parked();
+    assert!(!cx.update(|_, cx| pane.read(cx).shown_items(cx).iter().any(|item| item.id == "2000")));
+    rig.cx.update(|cx| {
+        rig.models.apply(
+            teams_core::Event::Outbox(outbox_row(500, OutboxKind::Delete, OutboxState::Failed)),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| pane.read(cx).shown_items(cx).iter().any(|item| item.id == "2000")));
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).toast().cloned()),
+        Some("Couldn't update activity. Try again.".into())
+    );
 }

@@ -128,12 +128,14 @@ pub struct ActivityItem {
     pub meeting_time: Option<(i64, i64)>,
     /// When it happened (`activityTimestamp`), else when it arrived, ms.
     pub at_ms: i64,
-    /// When it arrived in the feed, ms.
-    pub arrival_ms: i64,
     /// The feed message's version: moved by every change of its read state.
     pub version: i64,
     /// What the item's own `isread` says.
     pub read_flag: bool,
+    /// Distinct known reactors; unknown identities do not establish an extra person.
+    actors: Vec<String>,
+    /// Each member's own read state and version, kept separately for the mutable all-read bookmark.
+    read_states: Vec<(bool, i64)>,
 }
 
 impl ActivityItem {
@@ -174,6 +176,7 @@ impl ActivityItem {
             activity_id: id_of(activity.get("activityId")),
             ids: vec![message.id.clone()],
             kind,
+            actors: actor.iter().cloned().collect(),
             actor,
             actor_name,
             others: 0,
@@ -188,9 +191,9 @@ impl ActivityItem {
             custom_title: context.and_then(custom_title),
             meeting_time: context.and_then(meeting_time),
             at_ms,
-            arrival_ms: message.arrival_time,
             version: message.version,
             read_flag: read_flag(properties.get("isread")),
+            read_states: vec![(read_flag(properties.get("isread")), message.version)],
         })
     }
 
@@ -223,12 +226,6 @@ impl ActivityItem {
             ActivityKind::Meeting(MeetingChange::Forwarded) => format!("{who} forwarded a meeting"),
             ActivityKind::App | ActivityKind::Other => self.custom_title.clone().unwrap_or(who),
         }
-    }
-
-    /// Whether the item opens a conversation: it names its thread.
-    #[must_use]
-    pub fn opens(&self) -> Option<&str> {
-        self.thread.as_deref()
     }
 
     /// Whether it happened in a team's channel (`space`: a general channel, `topic`: another).
@@ -376,10 +373,13 @@ impl ActivityFeed {
             self.items.push(item);
             return;
         };
-        let counted = item.actor.is_none() || item.actor != kept.actor;
-        if counted && !kept.ids.is_empty() {
-            kept.others += 1;
+        for actor in item.actors {
+            if !kept.actors.contains(&actor) {
+                kept.actors.push(actor);
+            }
         }
+        kept.others = kept.actors.len().saturating_sub(1);
+        kept.read_states.extend(item.read_states);
         kept.ids.push(item.id);
         // the folded item stays unread while any of its own is
         kept.read_flag &= item.read_flag;
@@ -389,7 +389,9 @@ impl ActivityFeed {
     /// Whether `item` reads as read (see the module docs).
     #[must_use]
     pub fn is_read(&self, item: &ActivityItem) -> bool {
-        item.read_flag || self.bookmark_ms.is_some_and(|bookmark| item.version <= bookmark)
+        item.read_states
+            .iter()
+            .all(|(read, version)| *read || self.bookmark_ms.is_some_and(|bookmark| *version <= bookmark))
     }
 
     /// How many unread items are newer than the feed's horizon: what the rail's badge counts.
@@ -408,13 +410,6 @@ impl ActivityFeed {
         self.items
             .first()
             .filter(|newest| self.seen_ms.is_none_or(|seen| newest.at_ms > seen))
-    }
-
-    /// The items a filter and a search's words keep, in order.
-    pub fn shown(&self, filter: ActivityFilter, words: &str) -> impl Iterator<Item = &ActivityItem> {
-        self.items
-            .iter()
-            .filter(move |item| self.keeps(filter, item) && item.matches(words))
     }
 
     /// Whether a filter keeps `item`.
@@ -493,8 +488,9 @@ fn id_of(value: Option<&Value>) -> Option<String> {
     (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) && id != "0" && id != "1").then_some(id)
 }
 
-/// Text lower-cased, its runs of white space one space, trimmed.
-fn fold(text: &str) -> String {
+/// Search text lower-cased, trimmed and with whitespace runs folded to one space, for content and places.
+#[must_use]
+pub fn fold(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 

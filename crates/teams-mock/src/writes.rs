@@ -304,6 +304,13 @@ pub(crate) fn own_property(state: &mut State, call: &Call<'_>, chat: &str) -> Re
     else {
         return status(400);
     };
+    // A bookmark is returned by the changed-conversation listing as well as the direct read.
+    if name == "consumptionHorizonBookmark" {
+        let version = state.tick();
+        if let Some(conversation) = state.conversation_mut(chat) {
+            conversation.version = version;
+        }
+    }
     state
         .own_properties
         .entry((call.caller.clone(), chat.to_owned()))

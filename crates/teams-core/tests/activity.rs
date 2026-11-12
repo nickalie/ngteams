@@ -59,10 +59,8 @@ fn an_item_reads_who_what_and_where() {
     assert_eq!(item.reply_chain.as_deref(), Some("999"));
     assert_eq!(item.activity_id.as_deref(), Some("1900"));
     assert_eq!(item.at_ms, 1_767_225_600_500);
-    assert_eq!(item.arrival_ms, 2000);
     assert!(!item.read_flag);
     assert!(!item.in_channel());
-    assert_eq!(item.opens(), Some(GROUP));
 }
 
 #[test]
@@ -139,7 +137,6 @@ fn an_app_item_takes_its_own_title_and_a_team_add_its_teams_name() {
     nameless["sourceUserImDisplayName"] = Value::Null;
     let nameless = ActivityItem::from_message(&item(1, &nameless, false)).expect("an item");
     assert_eq!(nameless.title(), "Missed call from Someone");
-    assert_eq!(nameless.opens(), None);
 }
 
 #[test]
@@ -334,7 +331,11 @@ fn each_chip_keeps_its_kind_and_the_words_narrow_it() {
     ];
     let feed = ActivityFeed::new(&messages, None, None);
     let shown = |filter: ActivityFilter, words: &str| -> Vec<String> {
-        feed.shown(filter, words).map(|item| item.id.clone()).collect()
+        feed.items
+            .iter()
+            .filter(|item| feed.keeps(filter, item) && item.matches(words))
+            .map(|item| item.id.clone())
+            .collect()
     };
     assert_eq!(shown(ActivityFilter::All, "").len(), 6);
     assert_eq!(shown(ActivityFilter::Unread, ""), ["5", "1"]);
@@ -394,4 +395,33 @@ fn the_feed_is_read_from_the_store_with_its_horizon_and_bookmark() {
     assert_eq!(feed.seen_ms, Some(1000));
     assert_eq!(feed.bookmark_ms, Some(1500));
     assert_eq!(feed.unseen(), 1);
+}
+
+#[test]
+fn repeated_older_reactors_count_once_and_each_members_read_state_uses_the_bookmark() {
+    let messages = [
+        item(
+            1000,
+            &activity("reactionInChat", "like", B, "Lab B", ONE_TO_ONE, 50),
+            false,
+        ),
+        item(
+            2000,
+            &activity("reactionInChat", "heart", B, "Lab B", ONE_TO_ONE, 50),
+            false,
+        ),
+        item(
+            3000,
+            &activity("reactionInChat", "like", C, "Lab C", ONE_TO_ONE, 50),
+            true,
+        ),
+    ];
+    let mut feed = ActivityFeed::new(&messages, None, Some(2000));
+    assert_eq!(feed.items.len(), 1);
+    assert_eq!(feed.items[0].others, 1);
+    assert!(feed.is_read(&feed.items[0]));
+    feed.bookmark_ms = Some(1500);
+    assert!(!feed.is_read(&feed.items[0]), "one member is beyond the bookmark");
+    feed.bookmark_ms = Some(3000);
+    assert!(feed.is_read(&feed.items[0]));
 }
