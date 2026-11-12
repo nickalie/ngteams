@@ -381,12 +381,13 @@ ngteamsctl messages <chat> [--limit N] [--before <message-id>]
 ngteamsctl unread                           # the badge's counts, per chat and total
 ngteamsctl search <words…> [--limit N]
 ngteamsctl members <chat>
+ngteamsctl activity [--filter unread|mentions|reactions|missed-calls|replies|voicemail|apps] [--search <words>] [--limit N]
 ngteamsctl calendar [--today | --from YYYY-MM-DD [--to YYYY-MM-DD]]
 ngteamsctl calendar show <event-id>
 
 ngteamsctl window show|hide|toggle|focus    # hide needs a tray item (no_tray)
 ngteamsctl activate
-ngteamsctl open chat <chat> | channel <channel> | calendar | settings [page] | search <words…>
+ngteamsctl open chat <chat> | channel <channel> | calendar | activity | settings [page] | search <words…>
 ngteamsctl account switch <account>
 ngteamsctl ui state
 ngteamsctl action list

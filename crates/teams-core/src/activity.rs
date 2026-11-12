@@ -60,6 +60,31 @@ pub enum ActivityKind {
     Other,
 }
 
+impl ActivityKind {
+    /// Its key, for `ngteamsctl`: `mention`, `everyone`, `reaction`, `missed-call`, `meeting-updated`, …
+    #[must_use]
+    pub fn key(&self) -> &'static str {
+        match self {
+            Self::Mention(Mention::You) => "mention",
+            Self::Mention(Mention::Everyone) => "everyone",
+            Self::Mention(Mention::Team) => "team-mention",
+            Self::Mention(Mention::Channel) => "channel-mention",
+            Self::Mention(Mention::Tag) => "tag-mention",
+            Self::Reaction(_) => "reaction",
+            Self::Reply => "reply",
+            Self::MissedCall => "missed-call",
+            Self::Voicemail => "voicemail",
+            Self::AddedToTeam => "added-to-team",
+            Self::Meeting(MeetingChange::Invited) => "meeting-invited",
+            Self::Meeting(MeetingChange::Updated) => "meeting-updated",
+            Self::Meeting(MeetingChange::Canceled) => "meeting-canceled",
+            Self::Meeting(MeetingChange::Forwarded) => "meeting-forwarded",
+            Self::App => "app",
+            Self::Other => "other",
+        }
+    }
+}
+
 /// What happened to a meeting, by the Meet app's activity types.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MeetingChange {

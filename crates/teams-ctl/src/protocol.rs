@@ -110,6 +110,18 @@ pub enum Request {
     },
     /// A chat's members.
     Members { chat: String },
+    /// The account's activity feed, the newest first, as the Activity pane lists it.
+    Activity {
+        /// Only the items one of the pane's chips keeps, by its key (`unread`, `mentions`, `reactions`,
+        /// `missed-calls`, `replies`, `voicemail`, `apps`); all of them without it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filter: Option<String>,
+        /// Only the items whose title, preview or place holds these words, as the pane's search finds them.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        search: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
     /// Show, hide (to the tray), toggle or focus the main window.
     Window { op: WindowOp },
     /// Open a view in the window.
@@ -311,6 +323,8 @@ pub enum OpenTarget {
         channel: String,
     },
     Calendar,
+    /// The Activity pane.
+    Activity,
     /// The settings, at a page of them.
     Settings {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -390,6 +404,9 @@ pub enum Response {
     },
     Members {
         members: Vec<MemberRow>,
+    },
+    Activity {
+        items: Vec<ActivityRow>,
     },
     UiState(UiState),
     /// The action was handed to the window; GPUI runs it later.
@@ -538,6 +555,33 @@ pub struct MemberRow {
     pub role: Option<String>,
 }
 
+/// An item of the activity feed, as the Activity pane shows it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActivityRow {
+    /// The feed message's id (the newest one's, for reactions folded into one item).
+    pub id: String,
+    /// What it tells (`mention`, `everyone`, `reaction`, `reply`, `missed-call`, `meeting-updated`, `app`, …), as the
+    /// app names it.
+    pub kind: String,
+    /// As the pane titles it: "Lab B +1 reacted to your message".
+    pub title: String,
+    /// The message's text as the service previews it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    /// Where it happened, as the pane's third line says it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
+    /// The chat or channel it opens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat: Option<String>,
+    /// The message it opens at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// When it happened (ms).
+    pub at: i64,
+    pub read: bool,
+}
+
 /// What the window shows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UiState {
@@ -552,6 +596,9 @@ pub struct UiState {
     pub chat_title: Option<String>,
     pub window: WindowState,
     pub call_window: bool,
+    /// The list pane shows the Activity pane (left of the main view).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub activity: bool,
 }
 
 /// The window's main view.

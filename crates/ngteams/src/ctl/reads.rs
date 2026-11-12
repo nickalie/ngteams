@@ -10,6 +10,9 @@
 //! - `search`: the store's own search over the listed chats, as the window's search box searches; its hits also stop
 //!   where the line is full.
 //! - `members`: a chat's stored members with their names.
+//! - `activity`: the account's activity feed as the Activity pane lists it (the newest first, reactions to one message
+//!   folded), each item with its kind, title, preview, place and read state; `filter` keeps what one of the pane's
+//!   chips keeps, `search` what its search box finds.
 //! - `unread`: the badge's own counts, from the account's [`teams_ui::Tray`]: each unread chat's count of unread
 //!   messages, and the total of unread chats the badge shows. Before the badge's first count (a moment after the tile
 //!   is built) there is nothing to tell yet: the answer waits for it, up to [`FIRST_COUNT`], then says `timeout`
@@ -21,12 +24,15 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui::{AsyncApp, Entity};
+use teams_core::activity::{ActivityFilter, ActivityItem, ActivityKind};
 use teams_ctl::codec::{self, MAX_LINE};
 use teams_ctl::protocol::{
-    ChatRow, CtlError, ErrorCode, MemberRow, MessageRow, Outcome, Request, Response, ResponseLine, Unread, UnreadRow,
+    ActivityRow, ChatRow, CtlError, ErrorCode, MemberRow, MessageRow, Outcome, Request, Response, ResponseLine, Unread,
+    UnreadRow,
 };
 use teams_proto::chat::parse_html;
 use teams_store::{Conversation, Message, PageCursor};
+use teams_ui::activity_view;
 use teams_ui::card_view::SENT_A_CARD;
 use teams_ui::chat_list;
 use teams_ui::rich_text::Mentions;
@@ -55,6 +61,9 @@ pub async fn answer(request: &Request, account: &Addressed, cx: &mut AsyncApp) -
         Request::Search { query, limit } => found(core, query, *limit).await,
         Request::Members { chat } => members(core, chat).await,
         Request::Unread => unread(account, cx).await,
+        Request::Activity { filter, search, limit } => {
+            activity(core, filter.as_deref(), search.as_deref(), *limit).await
+        }
         _ => Err(CtlError::new(ErrorCode::BadRequest, "not a read")),
     }
 }
@@ -245,6 +254,76 @@ async fn members(core: &dyn Core, chat: &str) -> Result<Response, CtlError> {
         });
     }
     Ok(Response::Members { members })
+}
+
+async fn activity(
+    core: &dyn Core,
+    filter: Option<&str>,
+    search: Option<&str>,
+    limit: Option<u32>,
+) -> Result<Response, CtlError> {
+    let filter = match filter.map(str::trim) {
+        None | Some("") => ActivityFilter::All,
+        Some(key) => ActivityFilter::of_key(key).ok_or_else(|| {
+            let keys: Vec<&str> = ActivityFilter::CHIPS.iter().map(|chip| chip.key()).collect();
+            CtlError::new(
+                ErrorCode::BadRequest,
+                format!("no activity filter is {key}: one of all, {}", keys.join(", ")),
+            )
+        })?,
+    };
+    let words = search.unwrap_or_default();
+    let limit = count(limit, usize::MAX, usize::MAX);
+    let feed = core.activity().await.map_err(|error| engine_error(&error))?;
+    let mut places = HashMap::new();
+    let mut items = Vec::new();
+    for item in feed.items.iter().filter(|item| feed.keeps(filter, item)) {
+        if items.len() >= limit {
+            break;
+        }
+        let place = place(core, item, &mut places).await;
+        if !item.matches(words)
+            && !place
+                .as_deref()
+                .is_some_and(|place| activity_view::place_matches(place, words))
+        {
+            continue;
+        }
+        items.push(ActivityRow {
+            id: item.id.clone(),
+            kind: item.kind.key().to_owned(),
+            title: item.title(),
+            preview: Some(item.preview.clone()).filter(|preview| !preview.is_empty()),
+            place,
+            chat: item.thread.clone(),
+            message: item.message.clone().or_else(|| item.reply_chain.clone()),
+            at: item.at_ms,
+            read: feed.is_read(item),
+        });
+    }
+    Ok(Response::Activity { items })
+}
+
+/// Where an item happened, as the pane's third line says it ([`activity_view::ActivityView::place`]): a channel by the name the item
+/// carries, a group chat by the chat list's name of it (`places` keeps each one found).
+async fn place(core: &dyn Core, item: &ActivityItem, places: &mut HashMap<String, Option<String>>) -> Option<String> {
+    if matches!(item.kind, ActivityKind::MissedCall | ActivityKind::Voicemail) {
+        return Some(activity_view::TEAMS_CALL.to_owned());
+    }
+    let Some(thread) = item.thread.as_deref().filter(|_| !item.in_channel()) else {
+        return item.topic.clone();
+    };
+    if thread.ends_with("@unq.gbl.spaces") {
+        return Some(activity_view::IN_CHAT_WITH_YOU.to_owned());
+    }
+    if !places.contains_key(thread) {
+        let name = match core.conversation(thread.to_owned()).await {
+            Ok(Some(conversation)) => Some(chat_list::build_row(core, &conversation).await.name.to_string()),
+            _ => None,
+        };
+        places.insert(thread.to_owned(), name.filter(|name| !name.is_empty()));
+    }
+    places.get(thread).cloned().flatten().or_else(|| item.topic.clone())
 }
 
 async fn unread(account: &Addressed, cx: &mut AsyncApp) -> Result<Response, CtlError> {

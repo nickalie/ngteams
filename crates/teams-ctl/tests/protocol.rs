@@ -59,9 +59,10 @@ fn request_index(request: &Request) -> usize {
         Request::CalendarEvent { .. } => 36,
         Request::JoinMeeting { .. } => 37,
         Request::OpenLink { .. } => 38,
+        Request::Activity { .. } => 39,
     }
 }
-const REQUESTS: usize = 39;
+const REQUESTS: usize = 40;
 
 /// One line of each request (and of each value of their enums).
 const REQUEST_LINES: &[&str] = &[
@@ -122,6 +123,9 @@ const REQUEST_LINES: &[&str] = &[
     r#"{"id":55,"cmd":"join_meeting","event":"AAMk-synthetic","now":true}"#,
     r#"{"id":56,"cmd":"join_meeting","event":"AAMk-synthetic","now":false}"#,
     r#"{"id":57,"cmd":"open_link","url":"msteams:/l/meetup-join/19%3ameeting_synthetic%40thread.v2/0"}"#,
+    r#"{"id":58,"cmd":"activity","filter":"unread","search":"lab b","limit":10}"#,
+    r#"{"id":59,"cmd":"activity"}"#,
+    r#"{"id":60,"cmd":"open","target":{"view":"activity"}}"#,
 ];
 
 /// `text` read as a `T` and written again: the same JSON.
@@ -246,9 +250,10 @@ fn response_index(response: &Response) -> usize {
         Response::Call(_) => 17,
         Response::Calendar { .. } => 18,
         Response::CalendarEvent(_) => 19,
+        Response::Activity { .. } => 20,
     }
 }
-const RESPONSES: usize = 20;
+const RESPONSES: usize = 21;
 
 /// One `ok` answer of each kind (and of each value of their enums).
 const RESPONSE_LINES: &[&str] = &[
@@ -287,6 +292,8 @@ const RESPONSE_LINES: &[&str] = &[
     r#"{"id":33,"ok":{"kind":"call","id":"call-1","account":"a@lab.invalid","state":"connecting","ringing":false,"muted":false,"camera":true}}"#,
     r#"{"id":34,"ok":{"kind":"calendar","events":[{"id":"AAMk-synthetic","subject":"Standup","start":1700000000000,"end":1700000900000,"all_day":false,"cancelled":false,"online":true,"joinable":true,"location":"Room 1","organizer":"Lab A"}]}}"#,
     r#"{"id":35,"ok":{"kind":"calendar_event","id":"AAMk-synthetic","subject":"","start":1,"end":2,"all_day":true,"cancelled":true,"online":false,"joinable":false}}"#,
+    r#"{"id":36,"ok":{"kind":"activity","items":[{"id":"1700000000001","kind":"reaction","title":"Lab B +1 reacted to your message","preview":"hello","place":"In chat with you","chat":"19:x@unq.gbl.spaces","message":"1700000000000","at":1700000000002,"read":false},{"id":"2","kind":"missed-call","title":"Missed call from Lab C","at":2,"read":true}]}}"#,
+    r#"{"id":37,"ok":{"kind":"ui_state","view":"chat","window":"shown","call_window":false,"activity":true}}"#,
 ];
 
 #[test]

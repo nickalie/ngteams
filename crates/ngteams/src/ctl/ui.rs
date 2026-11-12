@@ -4,10 +4,10 @@
 //! - `window show|focus`: the window brought to the front, opened again if it was closed (as the tray's "Open").
 //!   `hide` closes it into the tray, refused ([`ErrorCode::NoTray`]) without a tray item, since closing would quit the
 //!   app; `toggle` hides a window shown and shows one that isn't. `activate` (a second launch's hand-off) shows it.
-//! - `open chat|channel|calendar|settings|search`: the account addressed shown (`--account`, else the one shown), the
-//!   window first, and the view opened as its list, its rail or its search box opens it. A chat is named as the reads
-//!   name it ([`address::chat`]); a channel by its id, its name or `<team>/<channel>`, in any case, from the account's
-//!   teams; a settings page by its key or title.
+//! - `open chat|channel|calendar|activity|settings|search`: the account addressed shown (`--account`, else the one
+//!   shown), the window first, and the view opened as its list, its rail or its search box opens it. A chat is named
+//!   as the reads name it ([`address::chat`]); a channel by its id, its name or `<team>/<channel>`, in any case, from
+//!   the account's teams; a settings page by its key or title.
 //! - `account switch <account>`: that account shown in the window, signed out or not.
 //! - `ui state`: what the window shows ([`watch::ui_state`], the `ui` event's).
 //! - `action list`: the registered `teams_ui::` actions; `action <name>`: one of them, by its full name or its short
@@ -138,10 +138,11 @@ fn window(desktop: &Entity<Desktop>, op: WindowOp, cx: &mut App) -> Result<(), C
     Ok(())
 }
 
-/// The calendar, the settings or the search's results of account `mri` opened in the window.
+/// The calendar, the Activity pane, the settings or the search's results of account `mri` opened in the window.
 fn open(desktop: &Entity<Desktop>, mri: &str, target: &OpenTarget, cx: &mut App) -> Result<(), CtlError> {
     match target {
         OpenTarget::Calendar => desktop.update(cx, |desktop, cx| desktop.show_calendar_of(mri, cx)),
+        OpenTarget::Activity => desktop.update(cx, |desktop, cx| desktop.show_activity_of(mri, cx)),
         OpenTarget::Settings { page } => {
             let page = page.as_deref().map(settings_page).transpose()?;
             desktop.update(cx, |desktop, cx| desktop.open_settings_of(mri, page, cx));

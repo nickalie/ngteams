@@ -66,7 +66,7 @@ use crate::notify::{DEFAULT_ACTION, NotificationServer, Notifier, NotifierEvent}
 use crate::own_presence::OwnPresence;
 use crate::ringtone::Ringer;
 use crate::settings_view::Page;
-use crate::shell::{Main, Shell, ShellParts};
+use crate::shell::{ListPlace, Main, Shell, ShellParts};
 use crate::trace::{TraceLine, ViewTrace};
 #[cfg(unix)]
 use crate::tray::{BusTray, Hosted};
@@ -132,6 +132,8 @@ pub struct UiShown {
     pub window: WindowShown,
     /// A call's window is open.
     pub call_window: bool,
+    /// The list pane shows the Activity pane.
+    pub activity: bool,
 }
 
 /// One account's part of the desktop: its shell's parts, its notifications, its incoming calls' alert and its own
@@ -572,14 +574,14 @@ impl Desktop {
             let root = window.read(cx).ok()?.view().clone().downcast::<Root>().ok()?;
             root.read(cx).shell_in(cx).cloned()
         });
-        let (main, title) = shell.map_or((None, None), |shell| {
+        let (main, title, activity) = shell.map_or((None, None, false), |shell| {
             let shell = shell.read(cx);
             let main = shell.main().clone();
             let title = match &main {
                 Main::Chat(id) => shell.list().read(cx).row(id).map(|row| row.name.to_string()),
                 _ => None,
             };
-            (Some(main), title)
+            (Some(main), title, shell.list_place() == ListPlace::Activity)
         });
         let window = match (self.window, self.in_tray) {
             (Some(_), _) => WindowShown::Shown,
@@ -592,6 +594,7 @@ impl Desktop {
             title,
             window,
             call_window: self.call_windows.read(cx).window().is_some(),
+            activity,
         }
     }
 
@@ -688,6 +691,12 @@ impl Desktop {
     pub fn show_calendar_of(&mut self, key: &str, cx: &mut Context<Self>) {
         self.switch(key, cx);
         self.in_shell(cx, Shell::show_calendar);
+    }
+
+    /// Shows account `key`'s Activity pane in the window, that account shown, as the rail's Activity shows it.
+    pub fn show_activity_of(&mut self, key: &str, cx: &mut Context<Self>) {
+        self.switch(key, cx);
+        self.in_shell(cx, Shell::show_activity);
     }
 
     /// Shows account `key`'s settings in the window on `page`, or where they were left without one, that account shown,

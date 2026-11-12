@@ -18,8 +18,9 @@ use gpui::{Entity, TestAppContext};
 use ngteams::app::Launched;
 use serde_json::json;
 use teams_core::EngineRequests;
+use teams_core::activity::FEED;
 use teams_ctl::ClientError;
-use teams_ctl::protocol::{ErrorCode, MessageRow, Request, Response, Unread};
+use teams_ctl::protocol::{ActivityRow, ErrorCode, MessageRow, Request, Response, Unread};
 use teams_proto::chat::parse_html;
 use teams_store::{Conversation, ConversationKind, Member, Message, NameSource, PictureState, Profile, Store};
 use teams_ui::Tray;
@@ -159,6 +160,70 @@ fn seed_long(store: &mut Store) {
     }
 }
 
+/// One feed item at `at` (its id and version too): `kind`/`sub` by `from`, about message `message` of `thread`.
+fn feed_item(store: &mut Store, at: i64, (kind, sub): (&str, &str), from: (&str, &str), thread: &str, read: bool) {
+    let activity = json!({
+        "activityType": kind, "activitySubtype": sub, "activityId": at + 1,
+        "sourceThreadId": thread, "sourceMessageId": at - 7, "sourceUserId": from.0,
+        "sourceUserImDisplayName": from.1, "messagePreview": format!("preview {at}"),
+    });
+    let message = Message {
+        conversation_id: FEED.to_owned(),
+        id: at.to_string(),
+        version: at,
+        client_message_id: None,
+        sender: None,
+        sender_name: None,
+        message_type: "Text".to_owned(),
+        content: String::new(),
+        properties: Some(json!({ "activity": activity, "isread": read }).to_string()),
+        arrival_time: at,
+        compose_time: Some(at),
+        edit_time: None,
+        delete_time: None,
+    };
+    store.upsert_message(&message, None).unwrap();
+}
+
+/// The seeded store with a feed: Cee's mention in "Project" (unread), Bee's reaction in the 1:1 chat (read), Bee's
+/// missed call (unread), the newest first in that order.
+fn seed_activity(store: &mut Store) {
+    seed(store);
+    store
+        .upsert_conversation(&Conversation {
+            id: FEED.to_owned(),
+            kind: ConversationKind::Other("notifications".to_owned()),
+            topic: None,
+            version: 1,
+            last_activity: None,
+        })
+        .unwrap();
+    feed_item(
+        store,
+        9000,
+        ("mentionInChat", "person"),
+        (CEE, "Cee Example"),
+        PROJECT,
+        false,
+    );
+    feed_item(
+        store,
+        8000,
+        ("reactionInChat", "heart"),
+        (BEE, "Bee Example"),
+        ONE_TO_ONE,
+        true,
+    );
+    feed_item(
+        store,
+        7000,
+        ("call", "missedCall"),
+        (BEE, "Bee Example"),
+        ONE_TO_ONE,
+        false,
+    );
+}
+
 struct App {
     cx: TestAppContext,
     socket: std::path::PathBuf,
@@ -209,6 +274,18 @@ impl App {
         match self.ask(None, request) {
             Ok(Response::Messages { messages }) => messages,
             other => panic!("not messages: {other:?}"),
+        }
+    }
+
+    fn activity(&self, filter: Option<&str>, search: Option<&str>, limit: Option<u32>) -> Vec<ActivityRow> {
+        let request = Request::Activity {
+            filter: filter.map(str::to_owned),
+            search: search.map(str::to_owned),
+            limit,
+        };
+        match self.ask(None, request) {
+            Ok(Response::Activity { items }) => items,
+            other => panic!("not activity: {other:?}"),
         }
     }
 
@@ -486,6 +563,85 @@ fn search_finds_the_listed_chats_messages_and_members_are_named() {
             (ME, Some("Someone")),
         ]
     );
+    app.quit();
+}
+
+/// An activity row's id, kind, title, place, chat and read state.
+type Row<'a> = (&'a str, &'a str, &'a str, Option<&'a str>, Option<&'a str>, bool);
+
+#[test]
+fn activity_lists_the_feed_as_the_pane_does_and_its_chips_and_search_narrow_it() {
+    let app = App::seeded(seed_activity);
+    let items = app.activity(None, None, None);
+    let rows: Vec<Row> = items
+        .iter()
+        .map(|item| {
+            (
+                item.id.as_str(),
+                item.kind.as_str(),
+                item.title.as_str(),
+                item.place.as_deref(),
+                item.chat.as_deref(),
+                item.read,
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                "9000",
+                "mention",
+                "Cee Example mentioned you",
+                Some("Project"),
+                Some(PROJECT),
+                false
+            ),
+            (
+                "8000",
+                "reaction",
+                "Bee Example reacted to your message",
+                Some("In chat with you"),
+                Some(ONE_TO_ONE),
+                true
+            ),
+            (
+                "7000",
+                "missed-call",
+                "Missed call from Bee Example",
+                Some("Teams call"),
+                Some(ONE_TO_ONE),
+                false
+            ),
+        ],
+        "the newest first"
+    );
+    assert_eq!(items[0].message.as_deref(), Some("8993"));
+    assert_eq!(items[0].preview.as_deref(), Some("preview 9000"));
+    assert_eq!(items[0].at, 9000);
+
+    let ids = |items: Vec<ActivityRow>| items.into_iter().map(|item| item.id).collect::<Vec<_>>();
+    assert_eq!(ids(app.activity(Some("unread"), None, None)), ["9000", "7000"]);
+    assert_eq!(ids(app.activity(Some("reactions"), None, None)), ["8000"]);
+    assert_eq!(ids(app.activity(Some("all"), None, Some(1))), ["9000"]);
+    assert_eq!(ids(app.activity(None, Some("bee"), None)), ["8000", "7000"], "by title");
+    assert_eq!(ids(app.activity(None, Some("project"), None)), ["9000"], "by place");
+    assert_eq!(
+        ids(app.activity(None, Some("preview 8000"), None)),
+        ["8000"],
+        "by preview"
+    );
+
+    let error = app.refused(
+        None,
+        Request::Activity {
+            filter: Some("nothing".to_owned()),
+            search: None,
+            limit: None,
+        },
+    );
+    assert_eq!(error.code, ErrorCode::BadRequest);
+    assert!(error.message.contains("unread"), "{error:?}");
     app.quit();
 }
 

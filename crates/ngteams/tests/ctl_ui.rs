@@ -356,6 +356,22 @@ fn an_open_naming_nothing_or_too_much_is_refused() {
 }
 
 #[test]
+fn the_activity_pane_opens_in_the_list_s_place() {
+    let app = App::start();
+    assert!(!app.state().activity, "the chats listed at first");
+    let calendar = app.open(None, OpenTarget::Calendar);
+    assert!(!calendar.activity);
+    let activity = app.open(None, OpenTarget::Activity);
+    assert!(activity.activity, "{activity:?}");
+    assert_ne!(activity.view, View::Calendar, "the calendar left for what it hid");
+    assert_eq!(app.state(), activity);
+
+    let other = app.open(Some(OTHER_UPN), OpenTarget::Activity);
+    assert_eq!((other.shown.as_deref(), other.activity), (Some(OTHER_UPN), true));
+    quit(&app.cx);
+}
+
+#[test]
 fn a_search_shows_its_results() {
     let app = App::start();
     let found = app.open(

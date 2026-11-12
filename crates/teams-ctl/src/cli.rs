@@ -119,6 +119,19 @@ pub enum Command {
         /// The chat's id or title.
         chat: String,
     },
+    /// The account's activity feed, the newest first, as the Activity pane lists it.
+    Activity {
+        /// Only the items one of the pane's chips keeps.
+        #[arg(long, value_name = "CHIP", value_parser = [
+            "all", "unread", "mentions", "reactions", "missed-calls", "replies", "voicemail", "apps",
+        ])]
+        filter: Option<String>,
+        /// Only the items whose title, preview or place holds these words, as the pane's search finds them.
+        #[arg(long, value_name = "WORDS")]
+        search: Option<String>,
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+    },
     /// Show, hide (to the tray), toggle or focus the main window.
     Window {
         #[arg(value_enum)]
@@ -438,6 +451,8 @@ pub enum OpenArg {
     Channel { channel: String },
     /// The calendar.
     Calendar,
+    /// The Activity pane.
+    Activity,
     /// The settings, at a page of them.
     Settings { page: Option<String> },
     /// The search results of a query.
@@ -703,6 +718,11 @@ fn request(command: &Command, stdin: &mut dyn FnMut() -> io::Result<String>) -> 
             limit: *limit,
         },
         Command::Members { chat } => Request::Members { chat: chat.clone() },
+        Command::Activity { filter, search, limit } => Request::Activity {
+            filter: filter.clone(),
+            search: search.clone(),
+            limit: *limit,
+        },
         Command::Window { op } => Request::Window { op: window_op(*op) },
         Command::Open { target } => Request::Open {
             target: open_target(target),
@@ -857,6 +877,7 @@ fn open_target(target: &OpenArg) -> OpenTarget {
             channel: channel.clone(),
         },
         OpenArg::Calendar => OpenTarget::Calendar,
+        OpenArg::Activity => OpenTarget::Activity,
         OpenArg::Settings { page } => OpenTarget::Settings { page: page.clone() },
         OpenArg::Search { query } => OpenTarget::Search { query: query.join(" ") },
     }

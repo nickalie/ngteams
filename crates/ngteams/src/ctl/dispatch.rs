@@ -102,7 +102,8 @@ async fn ask(
             | Request::Messages { .. }
             | Request::Unread
             | Request::Search { .. }
-            | Request::Members { .. } => Step::Read(address::account(running, account, cx)?),
+            | Request::Members { .. }
+            | Request::Activity { .. } => Step::Read(address::account(running, account, cx)?),
             _ if writes::serves(request) => Step::Write(address::account(running, account, cx)?),
             Request::Sync => Step::Sync(address::account(running, account, cx)?),
             _ => Step::Answered(Err(CtlError::new(

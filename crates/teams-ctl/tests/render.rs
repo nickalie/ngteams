@@ -365,6 +365,7 @@ fn app_samples() -> Vec<(CtlEvent, &'static str)> {
         chat_title: None,
         window: WindowState::Shown,
         call_window: true,
+        activity: false,
     };
     vec![
         (
@@ -506,6 +507,7 @@ fn control_characters_from_the_app_are_shown_escaped() {
         chat_title: Some(s("x\u{1b}[31mred")),
         window: WindowState::Shown,
         call_window: false,
+        activity: false,
     }));
     assert!(state.contains("title:       x\\u{1b}[31mred\n"), "{state}");
 
@@ -622,6 +624,7 @@ fn rarer_answers_read_plainly() {
         chat_title: None,
         window: WindowState::Closed,
         call_window: true,
+        activity: false,
     };
     let calling = text(&Response::UiState(calling));
     assert!(
@@ -648,17 +651,23 @@ fn each_view_and_window_reads_as_its_word() {
             chat_title: None,
             window: WindowState::Tray,
             call_window: false,
+            activity: false,
         };
         assert_eq!(
             text(&Response::UiState(state.clone())),
             format!(
-                "account:     -\nview:        {word}\nchat:        -\ntitle:       -\nwindow:      tray\ncall window: closed\n"
+                "account:     -\nview:        {word}\nlist:        chats\nchat:        -\ntitle:       -\nwindow:      tray\ncall window: closed\n"
             )
         );
         assert_eq!(
-            untimed(&event(&line(CtlEvent::Ui { state }))),
+            untimed(&event(&line(CtlEvent::Ui { state: state.clone() }))),
             format!("a@lab.invalid ui - {word} - window=tray")
         );
+        let activity = UiState {
+            activity: true,
+            ..state
+        };
+        assert!(text(&Response::UiState(activity)).contains("list:        activity\n"));
     }
 }
 

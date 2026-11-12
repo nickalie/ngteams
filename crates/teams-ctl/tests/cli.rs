@@ -26,8 +26,8 @@ use teams_ctl::client::Timeouts;
 use teams_ctl::codec::{LineReader, decode_request};
 use teams_ctl::path::Env;
 use teams_ctl::protocol::{
-    AccountRow, AppStatus, CALENDAR_ANSWER, CALL_ANSWER, CalendarRow, CallRow, ChatRef, ChatRow, CtlError, CtlEvent,
-    ErrorCode, EventFilter, EventLine, Hello, ManualStatus, MemberRow, MessageRow, MessageSource, OpenTarget,
+    AccountRow, ActivityRow, AppStatus, CALENDAR_ANSWER, CALL_ANSWER, CalendarRow, CallRow, ChatRef, ChatRow, CtlError,
+    CtlEvent, ErrorCode, EventFilter, EventLine, Hello, ManualStatus, MemberRow, MessageRow, MessageSource, OpenTarget,
     OutboxRow, OutboxState, Outcome, OwnStatus, PROTOCOL_VERSION, Request, RequestLine, Response, ResponseLine,
     SYNC_ANSWER, StatusChoice, SyncReport, Toggle, UiState, Unread, UnreadRow, View, WRITE_ANSWER, WRITE_WAIT,
     WindowOp, WindowState,
@@ -370,6 +370,85 @@ fn list_cases() -> Vec<Case> {
     ]
 }
 
+fn activity_cases() -> Vec<Case> {
+    vec![
+        Case {
+            args: &["activity", "--filter", "unread", "--search", "lab b", "--limit", "4"],
+            account: None,
+            request: Request::Activity {
+                filter: Some(s("unread")),
+                search: Some(s("lab b")),
+                limit: Some(4),
+            },
+            response: Response::Activity {
+                items: vec![
+                    ActivityRow {
+                        id: s("7"),
+                        kind: s("reaction"),
+                        title: s("Lab B +1 reacted to your message"),
+                        preview: Some(s("two\nlines")),
+                        place: Some(s("In chat with you")),
+                        chat: Some(s("19:lab@unq.gbl.spaces")),
+                        message: Some(s("6")),
+                        at: 1_700_000_000_000,
+                        read: false,
+                    },
+                    ActivityRow {
+                        id: s("5"),
+                        kind: s("missed-call"),
+                        title: s("Missed call from Lab B"),
+                        preview: None,
+                        place: None,
+                        chat: None,
+                        message: None,
+                        at: 1_700_000_000_000,
+                        read: true,
+                    },
+                ],
+            },
+            shows: &[
+                "ID  STATE   TIME              KIND         TITLE                             PLACE             PREVIEW",
+                "7   unread  2023-11-14 22:13  reaction     Lab B +1 reacted to your message  In chat with you  two ↵ lines",
+                "5           2023-11-14 22:13  missed-call  Missed call from Lab B",
+            ],
+        },
+        Case {
+            args: &["activity"],
+            account: None,
+            request: Request::Activity {
+                filter: None,
+                search: None,
+                limit: None,
+            },
+            response: Response::Activity { items: Vec::new() },
+            shows: &["ID  STATE  TIME  KIND  TITLE  PLACE  PREVIEW"],
+        },
+        Case {
+            args: &["ui", "state"],
+            account: None,
+            request: Request::UiState,
+            response: Response::UiState(UiState {
+                shown: Some(s("a@lab.invalid")),
+                view: View::Chat,
+                chat: Some(s("19:lab@thread.v2")),
+                chat_title: Some(s("Lab chat")),
+                window: WindowState::Shown,
+                call_window: false,
+                activity: true,
+            }),
+            shows: &[
+                "account:     a@lab.invalid",
+                "view:        chat",
+                "list:        activity",
+                "chat:        19:lab@thread.v2",
+                "title:       Lab chat",
+                "window:      shown",
+                "call window: closed",
+            ],
+        },
+    ]
+}
+
 fn ui_cases() -> Vec<Case> {
     let open = |target| Request::Open { target };
     let done = |args, request| Case {
@@ -393,6 +472,7 @@ fn ui_cases() -> Vec<Case> {
             open(OpenTarget::Channel { channel: s("General") }),
         ),
         done(&["open", "calendar"], open(OpenTarget::Calendar)),
+        done(&["open", "activity"], open(OpenTarget::Activity)),
         done(&["open", "settings"], open(OpenTarget::Settings { page: None })),
         done(
             &["open", "settings", "appearance"],
@@ -409,27 +489,6 @@ fn ui_cases() -> Vec<Case> {
             Request::SwitchAccount { to: s("b@lab.invalid") },
         ),
         done(&["activate"], Request::Activate),
-        Case {
-            args: &["ui", "state"],
-            account: None,
-            request: Request::UiState,
-            response: Response::UiState(UiState {
-                shown: Some(s("a@lab.invalid")),
-                view: View::Chat,
-                chat: Some(s("19:lab@thread.v2")),
-                chat_title: Some(s("Lab chat")),
-                window: WindowState::Shown,
-                call_window: false,
-            }),
-            shows: &[
-                "account:     a@lab.invalid",
-                "view:        chat",
-                "chat:        19:lab@thread.v2",
-                "title:       Lab chat",
-                "window:      shown",
-                "call window: closed",
-            ],
-        },
         Case {
             args: &["action", "list"],
             account: None,
@@ -1049,6 +1108,7 @@ fn each_command_asks_its_request_and_prints_its_answer() {
     for case in read_cases()
         .into_iter()
         .chain(list_cases())
+        .chain(activity_cases())
         .chain(ui_cases())
         .chain(message_write_cases())
         .chain(chat_write_cases())

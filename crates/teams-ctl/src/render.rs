@@ -11,8 +11,8 @@ use std::io::{self, Write};
 use chrono::{DateTime, Local};
 
 use crate::protocol::{
-    AccountRow, AppStatus, CalendarRow, CallRow, ChatRow, CtlError, CtlEvent, EventLine, MemberRow, MessageRow,
-    OutboxRow, OutboxState, OwnStatus, PersonRow, ReactionRow, Response, SyncReport, UiState, Unread, View,
+    AccountRow, ActivityRow, AppStatus, CalendarRow, CallRow, ChatRow, CtlError, CtlEvent, EventLine, MemberRow,
+    MessageRow, OutboxRow, OutboxState, OwnStatus, PersonRow, ReactionRow, Response, SyncReport, UiState, Unread, View,
     WindowState,
 };
 
@@ -41,6 +41,7 @@ fn unescaped(response: &Response) -> String {
         Response::Search { messages } => message_table(messages, true),
         Response::Unread(unread) => unread_table(unread),
         Response::Members { members } => member_table(members),
+        Response::Activity { items } => activity_table(items),
         Response::UiState(state) => ui_state(state),
         Response::Dispatched { action } => format!("dispatched {action}\n"),
         Response::Actions { actions } => actions.iter().fold(String::new(), |mut text, action| {
@@ -349,10 +350,26 @@ fn member_table(members: &[MemberRow]) -> String {
     table(&["MRI", "ROLE", "NAME"], rows)
 }
 
+fn activity_table(items: &[ActivityRow]) -> String {
+    let rows = items.iter().map(|item| {
+        vec![
+            item.id.clone(),
+            if item.read { "" } else { "unread" }.to_owned(),
+            stamp(item.at),
+            item.kind.clone(),
+            one_line(&item.title),
+            item.place.clone().unwrap_or_default(),
+            one_line(item.preview.as_deref().unwrap_or_default()),
+        ]
+    });
+    table(&["ID", "STATE", "TIME", "KIND", "TITLE", "PLACE", "PREVIEW"], rows)
+}
+
 fn ui_state(state: &UiState) -> String {
     record(&[
         ("account", state.shown.clone().unwrap_or_else(|| "-".to_owned())),
         ("view", view(state.view).to_owned()),
+        ("list", if state.activity { "activity" } else { "chats" }.to_owned()),
         ("chat", state.chat.clone().unwrap_or_else(|| "-".to_owned())),
         ("title", state.chat_title.clone().unwrap_or_else(|| "-".to_owned())),
         ("window", window(state.window).to_owned()),

@@ -143,6 +143,33 @@ fn an_app_item_takes_its_own_title_and_a_team_add_its_teams_name() {
 }
 
 #[test]
+fn each_kind_has_its_own_key() {
+    let kinds = [
+        (ActivityKind::Mention(Mention::You), "mention"),
+        (ActivityKind::Mention(Mention::Everyone), "everyone"),
+        (ActivityKind::Mention(Mention::Team), "team-mention"),
+        (ActivityKind::Mention(Mention::Channel), "channel-mention"),
+        (ActivityKind::Mention(Mention::Tag), "tag-mention"),
+        (ActivityKind::Reaction("heart".to_owned()), "reaction"),
+        (ActivityKind::Reply, "reply"),
+        (ActivityKind::MissedCall, "missed-call"),
+        (ActivityKind::Voicemail, "voicemail"),
+        (ActivityKind::AddedToTeam, "added-to-team"),
+        (ActivityKind::Meeting(MeetingChange::Invited), "meeting-invited"),
+        (ActivityKind::Meeting(MeetingChange::Updated), "meeting-updated"),
+        (ActivityKind::Meeting(MeetingChange::Canceled), "meeting-canceled"),
+        (ActivityKind::Meeting(MeetingChange::Forwarded), "meeting-forwarded"),
+        (ActivityKind::App, "app"),
+        (ActivityKind::Other, "other"),
+    ];
+    for (kind, key) in &kinds {
+        assert_eq!(kind.key(), *key);
+    }
+    let keys: std::collections::BTreeSet<&str> = kinds.iter().map(|(kind, _)| kind.key()).collect();
+    assert_eq!(keys.len(), kinds.len(), "no two kinds share a key");
+}
+
+#[test]
 fn a_message_with_no_activity_or_removed_is_no_item() {
     assert_eq!(
         ActivityItem::from_message(&message(1, 1, &json!({"isread": false}))),

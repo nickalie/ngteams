@@ -72,6 +72,8 @@ pub const FILTER_HINT: &str = "Filter by name or group name";
 pub const REMOVED: &str = "Removed";
 /// A 1:1 chat's place, Teams' words.
 pub const IN_CHAT_WITH_YOU: &str = "In chat with you";
+/// Where a missed call or a voicemail happened, as its third line says it.
+pub const TEAMS_CALL: &str = "Teams call";
 /// An item's avatar, px.
 const AVATAR: f32 = 32.0;
 /// Its kind's badge, px.
@@ -469,7 +471,7 @@ impl ActivityView {
     #[must_use]
     pub fn place(&self, item: &ActivityItem, cx: &App) -> String {
         if matches!(item.kind, ActivityKind::MissedCall | ActivityKind::Voicemail) {
-            return "Teams call".to_owned();
+            return TEAMS_CALL.to_owned();
         }
         let Some(thread) = item.thread.as_deref() else {
             return item.topic.clone().unwrap_or_default();
@@ -548,8 +550,9 @@ impl ActivityView {
     }
 }
 
-/// Whether a place's name holds the search's words, case and spaces folded.
-fn place_matches(place: &str, words: &str) -> bool {
+/// Whether a place's name holds the search's words, case and spaces folded (none: no).
+#[must_use]
+pub fn place_matches(place: &str, words: &str) -> bool {
     let fold = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
     let words = fold(words);
     !words.is_empty() && fold(place).contains(&words)

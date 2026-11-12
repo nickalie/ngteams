@@ -210,6 +210,7 @@ pub fn ui_state<S: BuildHasher>(shown: &UiShown, upns: &HashMap<String, String, 
             WindowShown::Closed => WindowState::Closed,
         },
         call_window: shown.call_window,
+        activity: shown.activity,
     }
 }
 

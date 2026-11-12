@@ -1196,6 +1196,7 @@ fn navigation_is_told_as_what_the_window_shows() {
         chat_title: Some("Project".to_owned()),
         window: WindowState::Shown,
         call_window: false,
+        activity: false,
     };
     assert_eq!(shown(&read).last(), Some(&(Some(UPN.to_owned()), project.clone())));
 
