@@ -32,9 +32,10 @@
 //! top of the chats (`Main::NewChat`); a chat it names opens in its place.
 //!
 //! Calls (M3 Task 17), in a build that shows them (in one that doesn't, the call keys do nothing here): the chat's
-//! header has Call (or Join, when an invitation named a running call in that group chat) while the calling endpoint is
-//! registered and no call is up, ringing or being set up; the [`CallBar`] above the panes shows the incoming call's
-//! banner (Answer, Decline) and, while the call runs in its own window ([`crate::call_window`]), the in-call strip
+//! header offers Call once the chat identifies whom it calls, or Join when an invitation named a running group call.
+//! Both wait until the calling endpoint is registered and no call is up, ringing or being set up; the [`CallBar`]
+//! above the panes shows the incoming call's banner (Answer, Decline) and, while the call runs in its own window
+//! ([`crate::call_window`]), the in-call strip
 //! (Return to call, Mute, the camera, Leave). The keys: Ctrl+Shift+C calls the chat shown,
 //! Ctrl+Shift+J joins its running call, Ctrl+Shift+S answers and Ctrl+Shift+D declines the call that rings,
 //! Ctrl+Shift+M mutes or unmutes, Ctrl+Shift+O turns the camera on or off (a build that shows video) and Ctrl+Shift+H
@@ -726,7 +727,7 @@ impl Shell {
 
     /// The call button the chat shown has: `call`, `join` (a running call there, from an invitation), `meeting` (a
     /// meeting's chat: its Join, started or not, as Teams' header has it), or `none` (no chat shown, calls not shown,
-    /// the calling endpoint not registered, or a call up or ringing).
+    /// the calling endpoint not registered, a group roster not yet stored, or a call up or ringing).
     #[must_use]
     pub fn call_button(&self, cx: &App) -> &'static str {
         let Main::Chat(id) = &self.main else {
@@ -739,8 +740,10 @@ impl Shell {
             "meeting"
         } else if calls.joinable(id) {
             "join"
-        } else {
+        } else if self.list.read(cx).can_call(id) {
             "call"
+        } else {
+            "none"
         }
     }
 
@@ -766,6 +769,11 @@ impl Shell {
 
     /// The user asks `ask` of the calls (a key, a button, a command).
     pub fn ask_call(&mut self, ask: Ask, cx: &mut Context<Self>) {
+        if let Ask::Call { chat } = &ask
+            && !self.list.read(cx).can_call(chat)
+        {
+            return;
+        }
         let enters = matches!(ask, Ask::Call { .. } | Ask::Join { .. } | Ask::TestCall | Ask::Answer);
         if enters && self.busy_elsewhere(cx) {
             calls::refuse_here(&self.models.calls, &self.trace, &ask, "another-account", cx);
@@ -1229,6 +1237,7 @@ impl Shell {
     /// The chat list changed: the header and the chat view's title follow it.
     fn list_changed(&mut self, cx: &mut Context<Self>) {
         self.trace_header(cx);
+        self.trace_call_button(cx);
         self.give_title(cx);
     }
 

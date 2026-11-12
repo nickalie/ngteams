@@ -822,6 +822,12 @@ impl ChatList {
         self.findable_rows().find(|row| row.id == id)
     }
 
+    /// Whether the stored chat identifies whom a call would ring, even while catch-up is still reading its roster.
+    #[must_use]
+    pub fn can_call(&self, id: &str) -> bool {
+        one_to_one_partner(id, self.core.me()).is_some() || self.row(id).is_some_and(|row| row.members > 1)
+    }
+
     #[must_use]
     pub fn selected(&self) -> Option<&str> {
         self.selected.as_deref()

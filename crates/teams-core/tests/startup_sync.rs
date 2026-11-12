@@ -119,6 +119,19 @@ fn start(server: &MockServer, credentials: &Arc<Stepped>, directory: &std::path:
     .unwrap()
 }
 
+async fn conversation_published(handle: &mut engine::EngineHandle, conversation: &str) {
+    tokio::time::timeout(WAIT, async {
+        while let Some(event) = handle.next_event().await {
+            if matches!(event, Event::ConversationChanged { conversation: changed } if changed == conversation) {
+                return;
+            }
+        }
+        panic!("the engine stopped before publishing the conversation");
+    })
+    .await
+    .expect("the conversation was not published");
+}
+
 #[tokio::test]
 async fn first_list_page_and_messages_are_published_before_the_rest_of_a_large_tenant_finishes() {
     let server = large_tenant().await;
@@ -144,11 +157,7 @@ async fn first_list_page_and_messages_are_published_before_the_rest_of_a_large_t
         first_page.iter().find(|c| c.id == FIRST).unwrap().topic.as_deref(),
         Some("Synthetic chat 0")
     );
-    let first_change = tokio::time::timeout(WAIT, handle.next_event()).await.unwrap().unwrap();
-    assert!(
-        matches!(first_change, Event::ConversationChanged { .. }),
-        "{first_change:?}"
-    );
+    conversation_published(&mut handle, FIRST).await;
 
     credentials.permits.add_permits(1);
     credentials.waiting_at(4).await;

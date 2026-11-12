@@ -10,8 +10,9 @@
 //!   members) whether or not the list brings it, until it syncs, so no conversation holds the list back. A conversation the
 //!   service refuses ([`ConversationFailed::is_refused`]) keeps no catch-up due ([`CatchUpReport::caught_up`]); the
 //!   account's drafts ([`DRAFTS`]), whose messages the service won't give, are never read.
-//!   New conversation rows are stored as each list page arrives, at version 0 until their messages are synced;
-//!   list pages and completed conversation syncs publish through [`Meanwhile::progress`] so the first usable list
+//!   New conversation rows are stored as each list page arrives, at version 0 until their own sync runs. It stores
+//!   the listed version even if messages fail; [`Store::set_unsynced`] keeps a failed chat due for another sync.
+//!   List pages and completed conversation syncs publish through [`Meanwhile::progress`] so the first usable list
 //!   and messages do not wait for the rest of the account. The list's sync link still waits for every conversation.
 //! - **Threads the account can't read** ([`Unreadable`]): the list still brings threads the account left or was removed
 //!   from (their reads answer 403 `AclCheckFailed`) and threads deleted for good (404 `ThreadNotFound`). Such a
@@ -76,7 +77,8 @@
 //!
 //! - **What the reads changed** ([`CatchUp::take_changes`]): every message a sync page stored new or newer, and every
 //!   conversation a read added or changed (its version, its read horizon, its roster, its messages), is kept until
-//!   the engine takes it after its read and tells its owner; a message the store had as new or newer is not, so a
+//!   the engine takes it and tells its owner: during catch-up after each list page and each conversation's sync
+//!   ([`Meanwhile::progress`]), otherwise after the read. A message the store had as new or newer is not kept, so a
 //!   delivery the catch-up meets again changes nothing and is told once.
 //! - **Meanwhile** ([`Meanwhile`]): while a read waits on the service, the store is handed to its owner's
 //!   [`Meanwhile::serve`] (the engine answers its queries from it), and taken back the moment the read is over. A
@@ -301,9 +303,9 @@ impl Unreadable {
     }
 }
 
-/// What the reads of the service changed in the store since the last [`CatchUp::take_changes`]: every read alike (a
-/// catch-up, a conversation's sync, older history, the outbox's check), never a delivery's message, which its
-/// receiver tells of itself ([`CatchUp::receive_message`]).
+/// What the reads of the service changed in the store since the last [`CatchUp::take_changes`] or drain by
+/// [`Meanwhile::progress`]: every read alike (a catch-up, a conversation's sync, older history, the outbox's check),
+/// never a delivery's message, which its receiver tells of itself ([`CatchUp::receive_message`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Changes {
     /// Messages a sync page stored new ([`Applied::Inserted`]) or newer ([`Applied::Updated`]), in the order stored;
@@ -408,7 +410,7 @@ pub struct CatchUp<C, T> {
     me: Mri,
     page_size: u32,
     clock: Clock,
-    /// What the reads changed, until taken ([`CatchUp::take_changes`]).
+    /// What the reads changed, until taken by [`Self::take_changes`] or [`Meanwhile::progress`].
     changes: Mutex<Changes>,
     /// What the store is used for while a read waits ([`CatchUp::with_meanwhile`]).
     meanwhile: Option<Arc<dyn Meanwhile>>,
@@ -464,8 +466,9 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         }
     }
 
-    /// What the reads changed in the store since the last call ([`Changes`]): the engine takes it after every read it
-    /// makes and tells its owner. Kept until taken, whether or not the read ran to its end.
+    /// What the reads changed in the store since the last take ([`Changes`]). The engine takes this after a read;
+    /// its [`Meanwhile::progress`] may already have drained changes after each list page and each conversation's
+    /// sync during catch-up. Kept until taken, whether or not the read ran to its end.
     pub fn take_changes(&self) -> Changes {
         std::mem::take(&mut *self.changes.lock().unwrap_or_else(PoisonError::into_inner))
     }

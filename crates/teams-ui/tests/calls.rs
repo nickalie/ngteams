@@ -300,6 +300,52 @@ fn no_name_in(written: &Written) {
 }
 
 #[test]
+fn a_staged_group_chat_offers_call_only_after_its_members_arrive() {
+    let rig = calling();
+    let members = rig.core.members.lock().unwrap().remove(TRIO).unwrap();
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(TRIO), trace);
+    registered(&rig);
+    assert_eq!(cx.update(|_, cx| shell.read(cx).call_button(cx)), "none");
+    assert!(!drawn(cx, "chat-call"));
+    cx.simulate_keystrokes("ctrl-shift-c");
+    cx.run_until_parked();
+    assert!(actions(&rig).is_empty());
+    cx.simulate_keystrokes("ctrl-k");
+    cx.run_until_parked();
+    let switcher = cx.update(|_, cx| shell.read(cx).switcher().unwrap().clone());
+    cx.simulate_input("Call");
+    cx.run_until_parked();
+    assert_eq!(cx.update(|_, cx| switcher.read(cx).commands()), ["Make a test call"]);
+
+    rig.core.members.lock().unwrap().insert(TRIO.to_owned(), members);
+    rig.send(Event::ConversationChanged {
+        conversation: TRIO.into(),
+    });
+    assert_eq!(
+        cx.update(|_, cx| switcher.read(cx).commands()),
+        ["Call", "Make a test call"]
+    );
+    cx.simulate_keystrokes("escape");
+    assert_eq!(cx.update(|_, cx| shell.read(cx).call_button(cx)), "call");
+    assert!(drawn(cx, "chat-call"));
+    click(cx, "chat-call");
+    assert_eq!(actions(&rig), [CallAction::Call { chat: TRIO.into() }]);
+}
+
+#[test]
+fn a_one_to_one_chat_can_call_before_its_members_arrive() {
+    let rig = calling();
+    rig.core.members.lock().unwrap().clear();
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), trace);
+    registered(&rig);
+    assert_eq!(cx.update(|_, cx| shell.read(cx).call_button(cx)), "call");
+    click(cx, "chat-call");
+    assert_eq!(actions(&rig), [CallAction::Call { chat: AB.into() }]);
+}
+
+#[test]
 fn a_chat_s_header_has_call_once_calling_is_registered_and_the_call_shows_until_it_ends() {
     let rig = calling();
     let (trace, written) = trace();
@@ -376,7 +422,7 @@ fn hang_up_and_dismiss(rig: &Rig, cx: &mut VisualTestContext, written: &Written)
     assert!(!drawn(cx, "call-after"));
     assert_eq!(lines(written, "in-call", "hidden").len(), 1);
     let buttons: Vec<Vec<String>> = lines(written, "call-button", "shown").iter().map(kinds).collect();
-    assert_eq!(buttons, [["call"], ["none"], ["call"]]);
+    assert_eq!(buttons, [["none"], ["call"], ["none"], ["call"]]);
 }
 
 #[test]

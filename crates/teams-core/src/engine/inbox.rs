@@ -18,6 +18,9 @@
 //!   Once a shutdown is kept, none goes any more: each is answered [`EngineError::Stopped`]. A call's health (no
 //!   action: it reads the call's media) goes to the calling at once the same way.
 //! - **Kept**: everything else (another write, older history, a sync, presence, the shutdown).
+//! - **Catch-up publication**: stored changes are published as each list page and conversation finishes
+//!   ([`Meanwhile::progress`]), and any remainder at the end ([`Inbox::brought`]), so views can query what is ready
+//!   while the rest loads. Noticed team threads are kept for the loop's next tick.
 //! - Such an answer comes before a request made earlier that is kept (a write's row isn't in it yet); what that request
 //!   changes is told by its events, as always.
 

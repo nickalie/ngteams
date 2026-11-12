@@ -323,13 +323,26 @@ impl Switcher {
         cx: &mut Context<Self>,
     ) -> Self {
         let state = cx.new(|cx| CommandState::new(window, cx));
-        let fitting = move |calls: &Calls| CallCommand::fitting(calls, chat.as_deref());
-        let call_commands = fitting(calls.read(cx));
+        let fitting = move |calls: &Calls, list: &ChatList| {
+            CallCommand::fitting(calls, chat.as_deref())
+                .into_iter()
+                .filter(|command| {
+                    *command != CallCommand::CallChat || chat.as_ref().is_some_and(|id| list.can_call(id))
+                })
+                .collect()
+        };
+        let call_commands = fitting(calls.read(cx), list.read(cx));
+        let list_fitting = fitting.clone();
+        let list_calls = calls.clone();
+        let calls_list = list.clone();
         let observing = [
-            cx.observe(&list, |this: &mut Self, _, cx| this.refilter(cx)),
+            cx.observe(&list, move |this: &mut Self, list, cx| {
+                this.call_commands = list_fitting(list_calls.read(cx), list.read(cx));
+                this.refilter(cx);
+            }),
             cx.observe(&teams, |this: &mut Self, _, cx| this.refilter(cx)),
             cx.observe(&calls, move |this: &mut Self, calls, cx| {
-                this.call_commands = fitting(calls.read(cx));
+                this.call_commands = fitting(calls.read(cx), calls_list.read(cx));
                 this.refilter(cx);
             }),
         ];
