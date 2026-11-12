@@ -765,8 +765,9 @@ impl Desktop {
     }
 
     /// Asks the app to quit, every account's own presence stopped first: nothing more is reported (and nothing is
-    /// sent for the quit: no captured request reports Offline, M2 Task 20).
-    fn quit(&mut self, cx: &mut Context<Self>) {
+    /// sent for the quit: no captured request reports Offline, M2 Task 20). On macOS this run's notifications are
+    /// withdrawn too; the app's own Quit (its menu, ⌘Q, the Dock's) comes here as the tray's Quit does.
+    pub fn quit(&mut self, cx: &mut Context<Self>) {
         #[cfg(target_os = "macos")]
         if let Some(notifications) = &self.mac_notifications {
             notifications.withdraw_all(cx);

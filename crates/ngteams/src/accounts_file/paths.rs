@@ -244,6 +244,40 @@ mod tests {
     }
 }
 
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests {
+    use super::*;
+
+    #[test]
+    fn the_personal_dirs_are_in_application_support_never_xdg() {
+        let locations = PersonalLocations::macos(Some("/Users/synthetic".into())).unwrap();
+        assert_eq!(
+            locations.config_dir,
+            Path::new("/Users/synthetic/Library/Application Support/ngteams/config")
+        );
+        assert_eq!(
+            locations.data_dir,
+            Path::new("/Users/synthetic/Library/Application Support/ngteams/data")
+        );
+        assert!(PersonalLocations::macos(Some("relative".into())).is_none());
+        assert!(PersonalLocations::macos(None).is_none());
+    }
+
+    #[test]
+    fn a_spelling_that_differs_only_in_case_still_overlaps() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("ngteams/data");
+        std::fs::create_dir_all(&real).unwrap();
+        // existing and not made yet, each way round
+        assert!(overlapping(&dir.path().join("NGTEAMS/data"), &real));
+        assert!(overlapping(&real, &dir.path().join("NgTeams/DATA/sub")));
+        assert!(overlapping(&dir.path().join("Absent/x"), &dir.path().join("absent")));
+        assert!(contains(Path::new("/A/b/C"), Path::new("/a/B")));
+        assert!(!contains(Path::new("/a"), Path::new("/a/b")));
+        assert!(!overlapping(&dir.path().join("ngteams-lab"), &real));
+    }
+}
+
 #[cfg(all(test, windows))]
 mod windows_tests {
     use super::*;

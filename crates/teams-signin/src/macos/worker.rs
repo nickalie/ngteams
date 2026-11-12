@@ -5,8 +5,8 @@
 //!
 //! The document-start script, in every frame: the Windows script's removal of the unguarded network constructors
 //! (`WebRTC`, `WebTransport`, `WebSocket`, workers, `sendBeacon`), and `fetch` and `XMLHttpRequest` wrapped to ask the
-//! guard (method and absolute URL) through a script message with a reply before the request is made; a refused one
-//! fails as a network error would.
+//! guard (method and absolute URL) through a script message with a reply before the request is made: a refused
+//! `fetch` fails as a network error would, a refused `XMLHttpRequest` is aborted.
 use super::wire::{self, Event, Start};
 use crate::webview_policy::INIT;
 use block2::DynBlock;
@@ -43,25 +43,38 @@ const ASK: &str = r"(() => {
         return handler.postMessage(JSON.stringify({ method: String(method || 'GET').toUpperCase(), url: absolute }))
             .then((answer) => answer === true, () => false);
     };
+    // the request is built once, before the guard is asked: what is asked is what is sent, whatever the page changes
+    // on its own objects meanwhile; the getters are this page's originals, taken before any page script ran
     const originalFetch = window.fetch;
+    const OriginalRequest = window.Request;
+    const methodOf = Object.getOwnPropertyDescriptor(OriginalRequest.prototype, 'method').get;
+    const urlOf = Object.getOwnPropertyDescriptor(OriginalRequest.prototype, 'url').get;
     const guardedFetch = function (input, init) {
-        const request = input instanceof Request ? input : null;
-        const method = (init && init.method) || (request ? request.method : 'GET');
-        const url = request ? request.url : input;
-        return ask(method, url).then((allowed) => allowed
-            ? originalFetch.call(this, input, init)
+        let request;
+        try { request = new OriginalRequest(input, init); } catch (error) { return Promise.reject(error); }
+        return ask(methodOf.call(request), urlOf.call(request)).then((allowed) => allowed
+            ? originalFetch.call(this, request)
             : Promise.reject(new TypeError('Refused by the sign-in guard')));
     };
     Object.defineProperty(window, 'fetch', { value: guardedFetch, writable: false, configurable: false });
+    // each `open` is remembered as it was made (its method and URL as strings, once); a request opened again before
+    // the guard answered is not sent: its own `send` asks for it
     const open = XMLHttpRequest.prototype.open;
     const send = XMLHttpRequest.prototype.send;
-    const asked = new WeakMap();
+    const opened = new WeakMap();
     Object.defineProperty(XMLHttpRequest.prototype, 'open', { writable: false, configurable: false,
-        value: function (method, url, ...rest) { asked.set(this, [method, url]); return open.call(this, method, url, ...rest); } });
+        value: function (method, url, ...rest) {
+            const made = { method: String(method), url: String(url) };
+            opened.set(this, made);
+            return open.call(this, made.method, made.url, ...rest);
+        } });
     Object.defineProperty(XMLHttpRequest.prototype, 'send', { writable: false, configurable: false,
         value: function (body) {
-            const [method, url] = asked.get(this) || ['GET', ''];
-            ask(method, url).then((allowed) => {
+            const made = opened.get(this);
+            // never opened: the browser's own send refuses it
+            if (!made) { return send.call(this, body); }
+            ask(made.method, made.url).then((allowed) => {
+                if (opened.get(this) !== made) { return; }
                 if (allowed) { send.call(this, body); } else { this.abort(); }
             });
         } });

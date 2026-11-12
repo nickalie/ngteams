@@ -46,7 +46,7 @@ impl KeyringSecretStore {
             operation()
         })
         .await
-        .map_err(|_| SecretError::Keychain(0))?
+        .map_err(|_| SecretError::KeychainWorker)?
     }
 }
 
@@ -147,5 +147,13 @@ mod tests {
         let error = failed(security_framework::base::Error::from_code(-25293));
         assert!(matches!(error, SecretError::Keychain(-25293)));
         assert_eq!(error.to_string(), "macOS Keychain: OSStatus -25293");
+    }
+
+    #[test]
+    fn a_failed_worker_is_not_reported_as_a_status() {
+        assert_eq!(
+            SecretError::KeychainWorker.to_string(),
+            "macOS Keychain: its worker failed"
+        );
     }
 }

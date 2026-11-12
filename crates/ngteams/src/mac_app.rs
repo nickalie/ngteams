@@ -3,8 +3,9 @@
 //! - **The menu bar** has the app's menu (Hide ngteams ⌘H, Hide Others ⌥⌘H, Show All, Quit ngteams ⌘Q) and a Window
 //!   menu (Minimize ⌘M, Close Window ⌘W). Close and Minimize act on the key window as its own buttons do, so a call's
 //!   window asks before it closes as it does when its close button is clicked.
-//! - **Quit, from anywhere, is the app's quit** ([`crate::app::quit`]: every account's engine shut down first): ⌘Q and
-//!   the menu's Quit ask it directly; the Dock's Quit and a logout or shutdown, which `AppKit` asks of the app's
+//! - **Quit, from anywhere, is the app's quit** ([`quit`]: the desktop's, as the tray's Quit is elsewhere, so this
+//!   run's notifications are withdrawn and every account's engine shut down first): ⌘Q and the menu's Quit ask it
+//!   directly; the Dock's Quit and a logout or shutdown, which `AppKit` asks of the app's
 //!   delegate (`applicationShouldTerminate:`), are answered "later" and the app's quit begins; once it has ended,
 //!   [`crate::run_end::end`] lets `AppKit` terminate the process ([`answer_terminate`]).
 //! - **The bundle's `GStreamer`** ([`bundled_gstreamer`]): `ngteams.app` carries `GStreamer`'s runtime in
@@ -12,9 +13,12 @@
 //!   reads as a bundle to `codesign`), so the app names its plugins, scanner and registry to `GStreamer` itself.
 //! - **The Dock** shows the main window again when its icon is clicked while the app has no window open
 //!   ([`reopened`]: closing the window keeps the app in the Dock, `teams_ui::desktop`).
+//! - **Links**: `ngteams.app` claims the `msteams:` scheme, and macOS hands a clicked link to the running app's
+//!   delegate (`application:openURLs:`), never in its arguments: [`links_given`] keeps each one and
+//!   [`open_given_links`] opens them as a link on the command line is opened ([`crate::app::open_link`]).
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, Mutex};
 
 use gpui::{App, AsyncApp, KeyBinding, Menu, MenuItem, actions};
 use objc2::MainThreadMarker;
@@ -32,6 +36,10 @@ const TERMINATE_LATER: usize = 2;
 static ASK_QUIT: Mutex<Option<async_channel::Sender<()>>> = Mutex::new(None);
 /// `AppKit` waits for the answer to its terminate.
 static TERMINATING: AtomicBool = AtomicBool::new(false);
+/// The links macOS handed the app, kept until the running app opens them (a link clicked to launch the app arrives
+/// before its accounts run).
+static LINKS: LazyLock<(async_channel::Sender<String>, async_channel::Receiver<String>)> =
+    LazyLock::new(async_channel::unbounded);
 
 /// The menu bar, its keys and the delegate's terminate, for the app that runs now.
 pub fn install(cx: &mut App) {
@@ -42,7 +50,7 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("cmd-m", Minimize, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
     ]);
-    cx.on_action(|_: &Quit, cx| crate::app::quit(cx));
+    cx.on_action(|_: &Quit, cx| quit(cx));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
@@ -103,11 +111,44 @@ pub fn bundled_gstreamer() {
     }
 }
 
+/// The app's quit asked from macOS's own places (the menu, ⌘Q, the Dock, a logout): the desktop's quit, which
+/// withdraws this run's notifications and stops every account's presence before the engines shut down
+/// ([`crate::app::quit`]); before the launch, the app's quit at once.
+fn quit(cx: &mut App) {
+    match crate::app::desktop(cx) {
+        Some(desktop) => desktop.update(cx, teams_ui::desktop::Desktop::quit),
+        None => crate::app::quit(cx),
+    }
+}
+
 /// The Dock's icon was clicked with no window open: the main window is shown again (opened over the same models).
 pub fn reopened(cx: &mut App) {
     if let Some(desktop) = crate::app::desktop(cx) {
         desktop.update(cx, teams_ui::desktop::Desktop::show);
     }
+}
+
+/// macOS handed the app `urls` (`application:openURLs:`, a clicked `msteams:` link): each is kept for
+/// [`open_given_links`].
+pub fn links_given(urls: Vec<String>) {
+    for url in urls {
+        if LINKS.0.try_send(url).is_err() {
+            log::warn!("a link macOS handed the app isn't opened: its queue is closed");
+        }
+    }
+}
+
+/// Opens each link macOS handed the app, from now on, as a link on the command line is opened. Only the personal
+/// app does: the lab and read-only modes open no link they are given.
+pub fn open_given_links(cx: &mut App) {
+    let links = LINKS.1.clone();
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        while let Ok(url) = links.recv().await {
+            log::info!("macOS handed the app a link: it is opened");
+            cx.update(|cx| crate::app::open_link(url, cx));
+        }
+    })
+    .detach();
 }
 
 /// Does `then` with the key window, if there is one.
@@ -127,7 +168,7 @@ fn route_terminate(cx: &mut App) {
     cx.spawn(async move |cx: &mut AsyncApp| {
         while asked.recv().await.is_ok() {
             log::info!("the app quits: macOS asked it to (the Dock's Quit, a logout)");
-            cx.update(crate::app::quit);
+            cx.update(quit);
         }
     })
     .detach();

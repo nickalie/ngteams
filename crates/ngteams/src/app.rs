@@ -689,7 +689,7 @@ pub fn ctl_listening(cx: &App) -> bool {
 }
 
 /// Opens the Teams link `url` the app was started with (`ngteams <link>` with no app running to hand it to,
-/// [`crate::handoff`]) as `open-link` opens it ([`crate::ctl::links`]); what keeps it from opening is said on stderr.
+/// [`crate::handoff`]), or one macOS handed it (a clicked `msteams:` link, `mac_app`), as `open-link` opens it ([`crate::ctl::links`]); what keeps it from opening is said on stderr.
 /// Nothing before the launch.
 pub fn open_link(url: String, cx: &mut App) {
     let Some(running) = cx.try_global::<Held>().map(|held| held.running.downgrade()) else {
@@ -699,7 +699,7 @@ pub fn open_link(url: String, cx: &mut App) {
         let request = teams_ctl::protocol::Request::OpenLink { url };
         if let Err(error) = crate::ctl::links::answer(&running, None, &request, cx).await {
             eprintln!("teams: the link isn't opened: {}", error.message);
-            log::warn!("the link the app started with isn't opened ({:?})", error.code);
+            log::warn!("a link the app was given isn't opened ({:?})", error.code);
         }
     })
     .detach();

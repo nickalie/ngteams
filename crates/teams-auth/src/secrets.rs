@@ -78,10 +78,14 @@ pub enum SecretError {
     #[cfg(windows)]
     #[error("Windows Credential Manager: {0}")]
     WindowsKeyring(&'static str),
-    /// The macOS Keychain's `OSStatus` (0: its worker failed).
+    /// The macOS Keychain's `OSStatus`.
     #[cfg(target_os = "macos")]
     #[error("macOS Keychain: OSStatus {0}")]
     Keychain(i32),
+    /// The macOS Keychain's call never answered: the worker running it panicked or was cancelled.
+    #[cfg(target_os = "macos")]
+    #[error("macOS Keychain: its worker failed")]
+    KeychainWorker,
     #[error("the stored secret is not UTF-8")]
     NotUtf8,
     /// The credential broker's store ([`crate::broker::BrokerSecretStore`]) didn't do it.

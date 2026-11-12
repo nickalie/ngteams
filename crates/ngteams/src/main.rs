@@ -66,6 +66,8 @@ mod platform {
             let application = gpui_platform::application();
             // the Dock's icon clicked with no window open shows the main window again
             application.on_reopen(ngteams::mac_app::reopened);
+            // a clicked `msteams:` link reaches the app here, never in its arguments
+            application.on_open_urls(ngteams::mac_app::links_given);
             application
         }
     }
@@ -383,6 +385,8 @@ fn run_setup(
         if let Some(url) = link {
             app::open_link(url, cx);
         }
+        #[cfg(all(target_os = "macos", not(test)))]
+        ngteams::mac_app::open_given_links(cx);
         // an account a sign-in named that can't start without one: its sign-in window, once the others run
         if let Some(account) = unready.into_iter().next() {
             sign_in_again(setup, account, restart_in_app)(cx);
