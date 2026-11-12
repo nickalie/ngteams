@@ -13,8 +13,8 @@
 //!    persisted to `<data dir>/auth/<alias>.json` ([`save_region`]) for native HTTP probes and to the native client's
 //!    `ngteams-lab/<alias>/regions/<oid>.json`. Its verified identity is provisioned in that alias's `accounts.toml`.
 //!
-//! The CLI keeps secrets in Linux Secret Service or Windows Credential Manager under `ngteams-lab`
-//! ([`KEYRING_APPLICATION`]);
+//! The CLI keeps secrets in Linux Secret Service, Windows Credential Manager or the macOS lab keychain under
+//! `ngteams-lab` ([`KEYRING_APPLICATION`]);
 //! tests pass a memory store. Nothing prints or logs a token, a code or the redirect URL: the report
 //! ([`AuthReport::lines`]) shows only each token's audience, expiry, scopes and tenant, and the skypetoken's expiry and
 //! region, or the refusal.

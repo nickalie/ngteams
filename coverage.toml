@@ -343,7 +343,7 @@ reason = "Unix-only lab command/scenario subtree, excluded by the cfg-selected m
 context = { "crates/proto-lab/src/lib.rs" = "8d3871c865c472e3b5bcd76d93027c67ff8e8b7d7bece89c91673280a166e3d8", "crates/proto-lab/src/main.rs" = "66c96952c1c552b94f1cc1938cc7f595f9b1e1967f7d5c8e5ef5f48f58a90f2d", "crates/proto-lab/src/commands.rs" = "eac1126557b554aae9c187daa89a44640a3a08fae132c60468def9156fd01f70", "crates/proto-lab/src/scenario/windows.rs" = "9a5966754730f2bd844f6ba5f094948287af7ab896b6030c33b2a104f16af126" }
 
 [unmapped_sources_windows."crates/proto-lab/src/commands/chrome.rs"]
-sha256 = "2380049a9574078298357cb7336ba90a6d07d6ae066e07236e6edad2051af5c1"
+sha256 = "4472d4df4934c090aba71aeac2b8cffd829d02c596af1bfca4c89b4c19d1c741"
 reason = "Unix-only lab command/scenario subtree, excluded by the cfg-selected module roots on Windows; remains in the Linux source inventory and coverage gate."
 context = { "crates/proto-lab/src/lib.rs" = "8d3871c865c472e3b5bcd76d93027c67ff8e8b7d7bece89c91673280a166e3d8", "crates/proto-lab/src/main.rs" = "66c96952c1c552b94f1cc1938cc7f595f9b1e1967f7d5c8e5ef5f48f58a90f2d", "crates/proto-lab/src/commands.rs" = "eac1126557b554aae9c187daa89a44640a3a08fae132c60468def9156fd01f70", "crates/proto-lab/src/scenario/windows.rs" = "9a5966754730f2bd844f6ba5f094948287af7ab896b6030c33b2a104f16af126" }
 
@@ -598,8 +598,12 @@ reason = "Unix-only domain socket transport, selected by cfg(unix) in transport.
 context = { "crates/teams-ctl/src/transport.rs" = "b82f8babf1f6097107ebd061f21f4d48281a45b2ab89f62ad5c78c9b5303c562" }
 
 [unmapped_sources."crates/teams-auth/src/secrets/macos.rs"]
-sha256 = "86032032664bb01c61935f7a9c053efa05977d0e39a3bf55721c9407f41fc2fa"
+sha256 = "16567d5d2542516f7e22cff100a28da238e36f5fadea33d4266375ed372b5b32"
 reason = "macOS-only Keychain store; no Linux LLVM mapping. Measured natively by the macOS portability workflow (teams-auth's floors), its Keychain round trip against the runner's login keychain"
+
+[unmapped_sources."crates/teams-auth/src/secrets/macos_lab.rs"]
+sha256 = "b145f1f47c64b4623b80ae53931ede2ee29160da284ec0eca16aac5ba3b0a35e"
+reason = "macOS-only lab keychain (the ngteams-lab items outside the login keychain); no Linux LLVM mapping. Measured natively by the macOS portability workflow (teams-auth's floors): a temporary lab keychain's round trip, read back by another program"
 
 [unmapped_sources."crates/teams-signin/src/macos/mod.rs"]
 sha256 = "999f212093b641938a6760ecaad5f550d11fc8535ab299090a908d7d5349b249"
@@ -614,5 +618,5 @@ sha256 = "18a0f45452dbc1e3a55869fdb7f18d2b41858e04fdc09ca3b862f1449b710c10"
 reason = "macOS-only notifications (GPUI's notification center binding) and Dock badge; no Linux LLVM mapping; its tags and actions are tested natively by the macOS portability workflow, the notification center and the Dock on the Mac console"
 
 [unmapped_sources."crates/ngteams/src/mac_app.rs"]
-sha256 = "f803856dff5b280142cc3ec9342e22e7417720e8f53435a891d237d040a619ad"
+sha256 = "f628603547e10947867d75d9b13b8034b8be79c513286a00c85fc21a587d7cf4"
 reason = "macOS-only menu bar, Dock reopen and AppKit terminate routing; no Linux LLVM mapping; compiled and linted by the macOS portability workflow, run on the Mac console"

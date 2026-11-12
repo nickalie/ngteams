@@ -14,14 +14,20 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-/// The pinned build: Chrome for Testing Stable for linux64 on 2026-10-19.
+/// The pinned build: Chrome for Testing Stable 155.0.8059.84 (2026-10-19), for linux64 and for mac-arm64 (the macOS
+/// port's lab sign-in on Apple silicon).
 pub const PINNED_VERSION: &str = "155.0.8059.84";
 pub const PINNED_URL: &str =
     "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.84/linux64/chrome-linux64.zip";
 pub const PINNED_SHA256: &str = "cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc";
+pub const PINNED_MAC_ARM64_URL: &str =
+    "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.84/mac-arm64/chrome-mac-arm64.zip";
+pub const PINNED_MAC_ARM64_SHA256: &str = "13b9e98ce56f5ce18e100a009f455c9285f399e7c9dc8a76fdf2f3a9755bb5f2";
 
-/// The top directory inside the Chrome for Testing zip.
-const ZIP_ROOT: &str = "chrome-linux64";
+/// The browser binary inside each zip.
+const LINUX64_BINARY: &str = "chrome-linux64/chrome";
+const MAC_ARM64_BINARY: &str =
+    "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing";
 /// Written last into a finished install; holds the zip's SHA-256.
 const MARKER: &str = ".verified";
 
@@ -32,15 +38,38 @@ pub struct ChromeBuild {
     pub url: String,
     /// The SHA-256 of the zip, in hex.
     pub sha256: String,
+    /// The browser binary's path inside the zip, `/`-separated.
+    pub binary: String,
 }
 
 impl ChromeBuild {
+    /// The pinned build for this computer: mac-arm64 on macOS, linux64 elsewhere.
     #[must_use]
     pub fn pinned() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::mac_arm64()
+        } else {
+            Self::linux64()
+        }
+    }
+
+    #[must_use]
+    pub fn linux64() -> Self {
         Self {
             version: PINNED_VERSION.to_owned(),
             url: PINNED_URL.to_owned(),
             sha256: PINNED_SHA256.to_owned(),
+            binary: LINUX64_BINARY.to_owned(),
+        }
+    }
+
+    #[must_use]
+    pub fn mac_arm64() -> Self {
+        Self {
+            version: PINNED_VERSION.to_owned(),
+            url: PINNED_MAC_ARM64_URL.to_owned(),
+            sha256: PINNED_MAC_ARM64_SHA256.to_owned(),
+            binary: MAC_ARM64_BINARY.to_owned(),
         }
     }
 
@@ -53,7 +82,7 @@ impl ChromeBuild {
     /// The browser binary of this build under `chrome_dir`.
     #[must_use]
     pub fn executable(&self, chrome_dir: &Path) -> PathBuf {
-        self.install_dir(chrome_dir).join(ZIP_ROOT).join("chrome")
+        self.install_dir(chrome_dir).join(&self.binary)
     }
 }
 
@@ -185,12 +214,12 @@ async fn fetch_and_unpack(
     client: &reqwest::Client,
 ) -> Result<(), InstallError> {
     download(&build.url, zip, client).await?;
-    let (zip, sha256) = (zip.to_path_buf(), build.sha256.clone());
+    let (zip, sha256, binary) = (zip.to_path_buf(), build.sha256.clone(), build.binary.clone());
     let staging = chrome_dir.join(format!("{}.staging", build.version));
     let unpacked = staging.clone();
     let checked = tokio::task::spawn_blocking(move || -> Result<(), InstallError> {
         verify_sha256(&zip, &sha256)?;
-        unpack(&zip, &unpacked)
+        unpack(&zip, &unpacked, &binary)
     })
     .await?;
     if let Err(error) = checked {
@@ -216,18 +245,17 @@ async fn download(url: &str, path: &Path, client: &reqwest::Client) -> Result<()
 }
 
 /// Unpacks the zip into a fresh `staging` dir; it must hold the browser binary.
-fn unpack(zip: &Path, staging: &Path) -> Result<(), InstallError> {
+fn unpack(zip: &Path, staging: &Path, binary: &str) -> Result<(), InstallError> {
     match std::fs::remove_dir_all(staging) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(io_at(staging)(error)),
         _ => {}
     }
     let file = std::fs::File::open(zip).map_err(io_at(zip))?;
     zip::ZipArchive::new(file)?.extract(staging)?;
-    let binary = Path::new(ZIP_ROOT).join("chrome");
-    if staging.join(&binary).is_file() {
+    if staging.join(binary).is_file() {
         Ok(())
     } else {
-        Err(InstallError::MissingExecutable(binary.display().to_string()))
+        Err(InstallError::MissingExecutable(binary.to_owned()))
     }
 }
 

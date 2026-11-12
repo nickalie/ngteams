@@ -103,6 +103,27 @@ fn native_target_uses_xdg_data_and_rejects_personal_overlap_before_writing() {
     assert!(std::fs::read_dir(config.join("ngteams")).unwrap().next().is_none());
 }
 
+#[test]
+fn native_target_on_macos_is_where_the_mac_lab_build_reads_and_rejects_personal_overlap() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let support = home.join("Library/Application Support");
+    let target = || NativeTarget::macos(Alias::A, Some(home.as_os_str().to_owned()));
+    assert_eq!(target().unwrap().root(), support.join("ngteams-lab/a"));
+    assert!(NativeTarget::macos(Alias::A, Some("relative".into())).is_err());
+    assert!(NativeTarget::macos(Alias::A, None).is_err());
+    std::fs::create_dir_all(support.join("ngteams-lab")).unwrap();
+    std::fs::create_dir_all(support.join("ngteams/data")).unwrap();
+    directory_link::create(&support.join("ngteams/data"), &support.join("ngteams-lab/a"));
+    assert!(target().is_err());
+    assert!(
+        std::fs::read_dir(support.join("ngteams/data"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn native_alias_requires_exactly_one_matching_account_with_verified_guid_fields() {

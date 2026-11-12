@@ -11,7 +11,8 @@ pub(super) const PERSONAL_DIR: &str = "ngteams";
 #[must_use]
 pub(crate) fn overlapping(one: &Path, other: &Path) -> bool {
     let (one, other) = (resolved(one), resolved(other));
-    #[cfg(windows)]
+    // Windows and macOS volumes ignore case by default: two spellings of one directory overlap
+    #[cfg(any(windows, target_os = "macos"))]
     let (one, other) = (
         PathBuf::from(one.to_string_lossy().to_lowercase()),
         PathBuf::from(other.to_string_lossy().to_lowercase()),

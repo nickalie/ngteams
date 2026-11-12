@@ -11156,6 +11156,7 @@ name = "teams-auth"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "core-foundation 0.10.1",
  "getrandom 0.4.3",
  "httpdate",
  "interprocess",
@@ -11166,6 +11167,7 @@ dependencies = [
  "reqwest 0.13.5",
  "rustix 1.1.5",
  "security-framework",
+ "security-framework-sys",
  "serde_json",
  "sha2 0.11.1",
  "teams-log",

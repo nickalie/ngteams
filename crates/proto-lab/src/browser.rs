@@ -23,7 +23,8 @@ use crate::config::{Alias, LabPaths};
 
 /// Flags every lab browser gets: no first-run UI, no Google background traffic (sync, component and field-trial
 /// downloads), no extensions, no crash reporter, and the plain password store. The lab profiles were created with
-/// `--password-store=basic` (Playwright's default), and that keeps Chrome away from the user's keyring.
+/// `--password-store=basic` (Playwright's default), and that keeps Chrome away from the user's keyring; on macOS
+/// `--use-mock-keychain` does the same for the login keychain (other platforms ignore it).
 ///
 /// The Reporting API and Network Error Logging are off: the network service uploads their reports (CSP `report-to`,
 /// deprecations, interventions, NEL) itself, and those POSTs never pause in `Fetch`, so capture holds cannot stop them
@@ -41,6 +42,7 @@ pub const BASE_ARGS: &[&str] = &[
     "--no-first-run",
     "--no-default-browser-check",
     "--password-store=basic",
+    "--use-mock-keychain",
     "--disable-background-networking",
     "--disable-component-update",
     "--disable-default-apps",

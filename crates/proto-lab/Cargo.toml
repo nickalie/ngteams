@@ -23,7 +23,8 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
-# `proto-lab auth`: PKCE, the code exchange and refresh, the skypetoken, kept in Secret Service on Linux or Credential Manager on Windows
+# `proto-lab auth`: PKCE, the code exchange and refresh, the skypetoken, kept in Secret Service on Linux, Credential
+# Manager on Windows or the lab keychain on macOS
 teams-auth.workspace = true
 teams-platform.workspace = true
 # Shared pure identity/conversation parsing; no runtime lab policy.

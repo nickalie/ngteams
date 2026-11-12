@@ -288,7 +288,10 @@ objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3.2"
 objc2-web-kit = "0.3.2"
 # The macOS Keychain (generic password items): the version rustls-platform-verifier already links on macOS; no logging.
+# Its -sys crate and core-foundation (the versions it links) for the lab keychain's item access rules.
+core-foundation = "0.10.1"
 security-framework = "3.7.0"
+security-framework-sys = "2.17.0"
 # the virtual keyboard's keymap and its text-to-key table: the version GPUI already links, without its features
 xkbcommon = { version = "0.8.0", default-features = false }
 # D-Bus for the app's notifications and tray item (M2 Task 14), the personal build's camera portal (M3 Task 20) and the

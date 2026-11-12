@@ -25,14 +25,17 @@ pub struct NativeTarget {
 }
 
 impl NativeTarget {
-    /// Resolves the native target from this process's XDG environment.
+    /// Resolves the native target from this process's environment: XDG on Linux, `~/Library/Application Support` on
+    /// macOS, Local `AppData` on Windows.
     ///
     /// # Errors
     /// The environment cannot resolve absolute paths, or the target overlaps personal app files.
     pub fn from_env(alias: Alias) -> io::Result<Self> {
         #[cfg(windows)]
         return Self::windows_alias(alias.as_str());
-        #[cfg(unix)]
+        #[cfg(target_os = "macos")]
+        return Self::macos(alias, std::env::var_os("HOME"));
+        #[cfg(all(unix, not(target_os = "macos")))]
         Self::resolve(
             alias,
             std::env::var_os("XDG_DATA_HOME"),
@@ -119,6 +122,24 @@ impl NativeTarget {
             tenant: id("tid")?,
             display_name: entry.get("name").and_then(toml::Value::as_str).map(str::to_owned),
         })
+    }
+
+    /// The macOS alias, where the Mac app's lab build reads it: `~/Library/Application Support/ngteams-lab/<alias>`,
+    /// beside the personal app's `ngteams` directory there.
+    ///
+    /// # Errors
+    /// No absolute home, or the native target overlaps the personal app's directory after symlinks resolve.
+    pub fn macos(alias: Alias, home: Option<OsString>) -> io::Result<Self> {
+        let support = home
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .ok_or_else(|| invalid("HOME must be absolute"))?
+            .join("Library/Application Support");
+        let root = support.join(KEYRING_APPLICATION).join(alias.as_str());
+        if overlapping(&root, &support.join(PERSONAL_DIR)) {
+            return Err(invalid("native lab target overlaps personal Teams files"));
+        }
+        Ok(Self { root })
     }
 
     /// The XDG resolution on explicit values, for offline provisioning tests.

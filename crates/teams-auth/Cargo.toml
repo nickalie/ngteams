@@ -30,9 +30,12 @@ zeroize.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 oo7.workspace = true
 
-# the macOS Keychain's generic password items (the version rustls-platform-verifier already links there)
+# the macOS Keychain's generic password items (the version rustls-platform-verifier already links there); the lab
+# keychain's item access rules through its -sys crate and core-foundation
 [target.'cfg(target_os = "macos")'.dependencies]
+core-foundation.workspace = true
 security-framework.workspace = true
+security-framework-sys.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 interprocess = { workspace = true, features = ["tokio"] }

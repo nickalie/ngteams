@@ -65,6 +65,7 @@ fn a_profile_launches_headless_on_an_automatic_port_in_its_own_user_data_dir() {
 fn every_lab_browser_keeps_off_the_keyring_and_google_background_traffic() {
     for flag in [
         "--password-store=basic",
+        "--use-mock-keychain",
         "--disable-background-networking",
         "--disable-sync",
         "--no-first-run",
@@ -360,29 +361,42 @@ fn a_malformed_expected_hash_or_missing_file_is_an_error() {
 }
 
 #[test]
-#[cfg(unix)]
-fn the_pinned_build_is_a_chrome_for_testing_linux64_zip_no_older_than_the_profiles() {
-    let build = ChromeBuild::pinned();
+fn the_pinned_builds_are_chrome_for_testing_zips_no_older_than_the_profiles() {
     let chrome_dir = Path::new("/lab/data/chrome");
-
-    assert!(
-        build
-            .url
-            .starts_with("https://storage.googleapis.com/chrome-for-testing-public/")
-    );
-    assert!(
-        build
-            .url
-            .ends_with(&format!("/{}/linux64/chrome-linux64.zip", build.version))
-    );
-    assert_eq!(build.sha256.len(), 64);
-    let major: u32 = build.version.split('.').next().unwrap().parse().unwrap();
-    // the lab profiles were created by Chrome for Testing 151 (Playwright 1.62.1)
-    assert!(major >= 151);
-    assert_eq!(
-        build.executable(chrome_dir),
-        chrome_dir.join(&build.version).join("chrome-linux64/chrome")
-    );
+    for (build, platform, binary) in [
+        (ChromeBuild::linux64(), "linux64", "chrome-linux64/chrome"),
+        (
+            ChromeBuild::mac_arm64(),
+            "mac-arm64",
+            "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+        ),
+    ] {
+        assert!(
+            build
+                .url
+                .starts_with("https://storage.googleapis.com/chrome-for-testing-public/")
+        );
+        assert!(
+            build
+                .url
+                .ends_with(&format!("/{}/{platform}/chrome-{platform}.zip", build.version))
+        );
+        assert_eq!(build.sha256.len(), 64);
+        let major: u32 = build.version.split('.').next().unwrap().parse().unwrap();
+        // the lab profiles were created by Chrome for Testing 151 (Playwright 1.62.1)
+        assert!(major >= 151);
+        assert_eq!(
+            build.executable(chrome_dir),
+            chrome_dir.join(&build.version).join(binary)
+        );
+    }
+    assert_ne!(ChromeBuild::linux64().sha256, ChromeBuild::mac_arm64().sha256);
+    let here = if cfg!(target_os = "macos") {
+        ChromeBuild::mac_arm64()
+    } else {
+        ChromeBuild::linux64()
+    };
+    assert_eq!(ChromeBuild::pinned(), here);
 }
 
 /// A zip shaped like Chrome for Testing's: `chrome-linux64/chrome` (executable) and one data file.
@@ -420,6 +434,7 @@ fn build_at(server: &MockServer, sha256: String) -> ChromeBuild {
         version: "999.0.0.1".to_owned(),
         url: format!("{}/cft/chrome-linux64.zip", server.uri()),
         sha256,
+        binary: "chrome-linux64/chrome".to_owned(),
     }
 }
 
