@@ -501,9 +501,11 @@ impl Shell {
         let view = cx.new(|cx| ActivityView::new(parts, window, cx));
         // the rail's count follows the feed
         let events = cx.subscribe_in(&view, window, |this: &mut Self, _, event, window, cx| match event {
-            // a chat left or deleted isn't opened as an empty one to write in
+            // Only a finished initial load can establish absence: it publishes its first 50 rows early.
+            // A chat left or deleted isn't opened as an empty one to write in.
             ActivityViewEvent::Open(target)
                 if !teams_proto::is_team_thread_id(&target.conversation)
+                    && this.list.read(cx).loads() > 0
                     && this.list.read(cx).row(&target.conversation).is_none() =>
             {
                 this.show_toast(crate::activity_view::CHAT_GONE, cx);

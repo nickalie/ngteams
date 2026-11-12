@@ -707,6 +707,57 @@ fn an_item_read_on_arrival_in_the_chat_on_screen_is_never_counted() {
 }
 
 #[test]
+fn an_item_opens_its_chat_while_the_first_chat_list_load_is_unfinished() {
+    for first_rows in [0, 50] {
+        let rig = rig();
+        rig.core
+            .conversations
+            .lock()
+            .unwrap()
+            .extend((0..first_rows).map(|index| Conversation {
+                id: format!("19:made-up-older-{index}@thread.v2"),
+                kind: ConversationKind::Group,
+                topic: Some(format!("Made-up chat {index}")),
+                version: 1,
+                last_activity: Some(2),
+            }));
+        // Hold the target's name read so the initial load pauses before publishing its row.
+        rig.core.hold_people.lock().unwrap().insert(LAB_B.to_owned());
+        let (shell, cx) = shell_window(&rig);
+        let list = cx.update(|_, cx| shell.read(cx).list().clone());
+        cx.update(|_, cx| {
+            let list = list.read(cx);
+            assert!(list.loading());
+            assert_eq!(list.loads(), 0);
+            assert_eq!(list.all_rows().count(), first_rows);
+            assert!(list.row(GROUP).is_none());
+        });
+        click(cx, "rail-activity");
+        click(cx, "activity-item-2000");
+        assert_eq!(
+            cx.update(|_, cx| shell.read(cx).main().clone()),
+            Main::Chat(GROUP.to_owned()),
+            "the target exists even before the list has its row"
+        );
+        assert_eq!(cx.update(|_, cx| shell.read(cx).toast().cloned()), None);
+        assert!(read(&view(&shell, cx), "2000", cx));
+
+        rig.core.hold_people.lock().unwrap().clear();
+        let held: Vec<_> = rig.core.held.lock().unwrap().drain(..).collect();
+        assert!(!held.is_empty(), "the initial load was paused");
+        for (answer, person) in held {
+            answer.send(Ok(person));
+        }
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let list = list.read(cx);
+            assert!(list.loads() > 0);
+            assert!(list.row(GROUP).is_some());
+        });
+    }
+}
+
+#[test]
 fn an_item_whose_chat_is_gone_is_read_and_says_so_without_opening_a_chat() {
     let rig = rig();
     let mut messages = vec![in_chat(
