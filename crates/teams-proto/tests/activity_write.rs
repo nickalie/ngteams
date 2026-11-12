@@ -63,7 +63,7 @@ fn mark_all_read_puts_the_feeds_bookmark() {
     );
 }
 
-fn listed(properties: Value) -> TestResult<Conversation> {
+fn listed(properties: &Value) -> TestResult<Conversation> {
     Ok(serde_json::from_value(json!({
         "id": ACTIVITY_FEED,
         "version": 1,
@@ -74,20 +74,20 @@ fn listed(properties: Value) -> TestResult<Conversation> {
 
 #[test]
 fn the_bookmark_is_read_from_the_listed_feed() -> TestResult {
-    let feed = listed(json!({
+    let feed = listed(&json!({
         "consumptionhorizon": "1794315245771;1794491895849;297781463309",
         "consumptionHorizonBookmark": "0;1794491924391;0",
     }))?;
     assert_eq!(feed.horizon_bookmark(), Some(1_794_491_924_391));
     let horizon = feed.consumption_horizon().ok_or("no horizon")?;
     assert_eq!(horizon.last_read_arrival, Some(1_794_315_245_771));
-    assert_eq!(listed(json!({}))?.horizon_bookmark(), None);
+    assert_eq!(listed(&json!({}))?.horizon_bookmark(), None);
     assert_eq!(
-        listed(json!({"consumptionHorizonBookmark": "garbled"}))?.horizon_bookmark(),
+        listed(&json!({"consumptionHorizonBookmark": "garbled"}))?.horizon_bookmark(),
         None
     );
     assert_eq!(
-        listed(json!({"consumptionHorizonBookmark": 5}))?.horizon_bookmark(),
+        listed(&json!({"consumptionHorizonBookmark": 5}))?.horizon_bookmark(),
         None
     );
     Ok(())

@@ -385,7 +385,7 @@ impl ChatServiceMock {
     /// by the test: `activityType`, `sourceUserId`, …), read or not, stored as the feed's newest entry and queued for
     /// `owner`, as a new item reaches the feed live. Its id, or `None` when the mock has no feed.
     #[must_use = "None says no item was added"]
-    pub fn add_activity(&self, owner: &str, activity: serde_json::Value, read: bool) -> Option<String> {
+    pub fn add_activity(&self, owner: &str, activity: &serde_json::Value, read: bool) -> Option<String> {
         let mut world = self.lock();
         let arrival = world.tick();
         let sequence = world.conversation(NOTIFICATIONS)?.next_sequence();

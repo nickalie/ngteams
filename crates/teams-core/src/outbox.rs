@@ -984,6 +984,15 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
                 Some(request) => self.deliver(request).await,
                 None => Tried::NotSent("the chat's members don't make a chat".to_owned()),
             },
+            command @ (Command::AddMembers { .. } | Command::ActivityRead { .. } | Command::FeedRead) => {
+                self.attempt_more(command, at).await
+            }
+        }
+    }
+
+    /// [`Outbox::attempt`]'s people added to a chat and the activity feed's writes.
+    async fn attempt_more(&self, command: Command, at: i64) -> Tried {
+        match command {
             Command::AddMembers {
                 conversation,
                 members,
@@ -1001,6 +1010,7 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
                 None => Tried::NotSent("the activity item's id can't be read".to_owned()),
             },
             Command::FeedRead => self.deliver(MarkFeedRead::at(at)).await,
+            _ => Tried::NotSent("not a command of this kind".to_owned()),
         }
     }
 

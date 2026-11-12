@@ -4,9 +4,7 @@
 #![cfg(test)]
 
 use serde_json::{Value, json};
-use teams_core::activity::{
-    ActivityFeed, ActivityFilter, ActivityItem, ActivityKind, FEED, FEED_LIMIT, MeetingChange, Mention,
-};
+use teams_core::activity::{ActivityFeed, ActivityFilter, ActivityItem, ActivityKind, FEED, MeetingChange, Mention};
 use teams_store::{Conversation, ConversationKind, Message, ReadHorizon, Store};
 
 const ME: &str = "8:orgid:00000000-0000-4000-8000-00000000000a";
@@ -42,7 +40,7 @@ fn message(id: i64, version: i64, properties: &Value) -> Message {
     }
 }
 
-fn item(id: i64, activity: Value, read: bool) -> Message {
+fn item(id: i64, activity: &Value, read: bool) -> Message {
     message(id, id, &json!({"activity": activity, "isread": read}))
 }
 
@@ -52,7 +50,7 @@ fn an_item_reads_who_what_and_where() {
     properties["activityTimestamp"] = json!("2026-01-01T00:00:00.500Z");
     properties["sourceThreadType"] = json!("chat");
     properties["sourceReplyChainId"] = json!("999");
-    let item = ActivityItem::from_message(&item(2000, properties, false)).expect("an item");
+    let item = ActivityItem::from_message(&item(2000, &properties, false)).expect("an item");
     assert_eq!(item.kind, ActivityKind::Mention(Mention::You));
     assert_eq!(item.title(), "Lab C mentioned you");
     assert_eq!(item.preview, "a made-up preview");
@@ -68,10 +66,11 @@ fn an_item_reads_who_what_and_where() {
 }
 
 #[test]
+#[expect(clippy::cognitive_complexity, reason = "one assertion per kind of item")]
 fn each_kind_has_teams_title() {
     let titled = |kind: &str, sub: &str| {
         let item =
-            ActivityItem::from_message(&item(1, activity(kind, sub, B, "Lab B", GROUP, 5), false)).expect("an item");
+            ActivityItem::from_message(&item(1, &activity(kind, sub, B, "Lab B", GROUP, 5), false)).expect("an item");
         (item.kind.clone(), item.title())
     };
     assert_eq!(
@@ -121,24 +120,24 @@ fn an_app_item_takes_its_own_title_and_a_team_add_its_teams_name() {
     let mut app = activity("msGraph", "customNotification", "28:app", "", CHANNEL, 1);
     app["sourceAppDisplayName"] = json!("Workflows");
     app["activityContext"] = json!({"templateParameters": "{\"customMessage\":\"Follow up on a message (AI)\"}"});
-    let app = ActivityItem::from_message(&item(1, app, false)).expect("an item");
+    let app = ActivityItem::from_message(&item(1, &app, false)).expect("an item");
     assert_eq!(app.title(), "Follow up on a message (AI)");
     assert_eq!(app.actor_name, "Workflows");
     assert_eq!(app.message, None, "1 is the service's placeholder");
     assert!(app.in_channel());
     let mut object = activity("msGraph", "customNotification", "28:app", "", CHANNEL, 1);
     object["activityContext"] = json!({"templateParameters": {"customMessage": " Made-up "}});
-    let object = ActivityItem::from_message(&item(1, object, false)).expect("an item");
+    let object = ActivityItem::from_message(&item(1, &object, false)).expect("an item");
     assert_eq!(object.custom_title.as_deref(), Some("Made-up"));
     let mut team = activity("teamMembershipChange", "addedToTeam", "28:app", "", CHANNEL, 1);
     team["sourceThreadTopic"] = json!("Made-up team");
     team["sourceThreadType"] = json!("space");
-    let team = ActivityItem::from_message(&item(1, team, true)).expect("an item");
+    let team = ActivityItem::from_message(&item(1, &team, true)).expect("an item");
     assert_eq!(team.title(), "A team owner added you to Made-up team");
     assert!(team.read_flag);
     let mut nameless = activity("call", "missedCall", B, "", "", 1);
     nameless["sourceUserImDisplayName"] = Value::Null;
-    let nameless = ActivityItem::from_message(&item(1, nameless, false)).expect("an item");
+    let nameless = ActivityItem::from_message(&item(1, &nameless, false)).expect("an item");
     assert_eq!(nameless.title(), "Missed call from Someone");
     assert_eq!(nameless.opens(), None);
 }
@@ -149,7 +148,7 @@ fn a_message_with_no_activity_or_removed_is_no_item() {
         ActivityItem::from_message(&message(1, 1, &json!({"isread": false}))),
         None
     );
-    let mut removed = item(1, activity("mention", "person", B, "Lab B", GROUP, 5), false);
+    let mut removed = item(1, &activity("mention", "person", B, "Lab B", GROUP, 5), false);
     removed.delete_time = Some(2);
     assert_eq!(ActivityItem::from_message(&removed), None);
     let mut unreadable = removed.clone();
@@ -163,7 +162,7 @@ fn a_message_with_no_activity_or_removed_is_no_item() {
 #[test]
 fn isread_reads_as_a_boolean_or_its_text() {
     let flag = |value: Value| {
-        let mut message = item(1, activity("mention", "person", B, "Lab B", GROUP, 5), false);
+        let mut message = item(1, &activity("mention", "person", B, "Lab B", GROUP, 5), false);
         message.properties =
             Some(json!({"activity": activity("mention", "person", B, "Lab B", GROUP, 5), "isread": value}).to_string());
         ActivityItem::from_message(&message).expect("an item").read_flag
@@ -179,22 +178,22 @@ fn reactions_to_one_message_fold_into_the_newest() {
     let messages = [
         item(
             1000,
-            activity("reactionInChat", "like", B, "Lab B", ONE_TO_ONE, 50),
+            &activity("reactionInChat", "like", B, "Lab B", ONE_TO_ONE, 50),
             true,
         ),
         item(
             2000,
-            activity("reactionInChat", "heart", C, "Lab C", ONE_TO_ONE, 50),
+            &activity("reactionInChat", "heart", C, "Lab C", ONE_TO_ONE, 50),
             false,
         ),
         item(
             3000,
-            activity("reactionInChat", "like", C, "Lab C", ONE_TO_ONE, 51),
+            &activity("reactionInChat", "like", C, "Lab C", ONE_TO_ONE, 51),
             true,
         ),
         item(
             4000,
-            activity("mentionInChat", "person", B, "Lab B", ONE_TO_ONE, 50),
+            &activity("mentionInChat", "person", B, "Lab B", ONE_TO_ONE, 50),
             true,
         ),
     ];
@@ -214,12 +213,12 @@ fn the_same_person_reacting_twice_is_not_counted_again() {
     let messages = [
         item(
             1000,
-            activity("reactionInChat", "like", B, "Lab B", ONE_TO_ONE, 50),
+            &activity("reactionInChat", "like", B, "Lab B", ONE_TO_ONE, 50),
             true,
         ),
         item(
             2000,
-            activity("reactionInChat", "heart", B, "Lab B", ONE_TO_ONE, 50),
+            &activity("reactionInChat", "heart", B, "Lab B", ONE_TO_ONE, 50),
             true,
         ),
     ];
@@ -232,14 +231,14 @@ fn the_same_person_reacting_twice_is_not_counted_again() {
 #[test]
 fn the_bookmark_reads_older_versions_read_and_unread_marks_stay_unread() {
     let messages = [
-        item(1000, activity("mention", "person", B, "Lab B", GROUP, 5), false),
+        item(1000, &activity("mention", "person", B, "Lab B", GROUP, 5), false),
         // marked unread after the bookmark: its version moved past it
         message(
             2000,
             9000,
             &json!({"activity": activity("mention", "person", C, "Lab C", GROUP, 6), "isread": false}),
         ),
-        item(8500, activity("call", "missedCall", B, "Lab B", "", 1), true),
+        item(8500, &activity("call", "missedCall", B, "Lab B", "", 1), true),
     ];
     let feed = ActivityFeed::new(&messages, Some(1500), Some(8000));
     let read: Vec<bool> = feed.items.iter().map(|item| feed.is_read(item)).collect();
@@ -254,8 +253,8 @@ fn the_bookmark_reads_older_versions_read_and_unread_marks_stay_unread() {
 #[test]
 fn the_horizon_to_put_is_the_newest_items_until_it_is_there() {
     let messages = [
-        item(1000, activity("mention", "person", B, "Lab B", GROUP, 5), false),
-        item(2000, activity("mention", "person", C, "Lab C", GROUP, 6), false),
+        item(1000, &activity("mention", "person", B, "Lab B", GROUP, 5), false),
+        item(2000, &activity("mention", "person", C, "Lab C", GROUP, 6), false),
     ];
     let feed = ActivityFeed::new(&messages, Some(1000), None);
     assert_eq!(feed.seen_horizon().map(|item| item.id.as_str()), Some("2000"));
@@ -266,14 +265,14 @@ fn the_horizon_to_put_is_the_newest_items_until_it_is_there() {
 #[test]
 fn each_chip_keeps_its_kind_and_the_words_narrow_it() {
     let messages = [
-        item(1, activity("mentionInChat", "person", B, "Lab B", GROUP, 5), false),
-        item(2, activity("reactionInChat", "like", C, "Lab C", GROUP, 6), true),
-        item(3, activity("call", "missedCall", B, "Lab B", "", 1), true),
-        item(4, activity("reply", "", C, "Lab C", CHANNEL, 7), true),
-        item(5, activity("call", "voicemail", B, "Lab B", "", 1), false),
+        item(1, &activity("mentionInChat", "person", B, "Lab B", GROUP, 5), false),
+        item(2, &activity("reactionInChat", "like", C, "Lab C", GROUP, 6), true),
+        item(3, &activity("call", "missedCall", B, "Lab B", "", 1), true),
+        item(4, &activity("reply", "", C, "Lab C", CHANNEL, 7), true),
+        item(5, &activity("call", "voicemail", B, "Lab B", "", 1), false),
         item(
             6,
-            activity("msGraph", "customNotification", "28:app", "Workflows", CHANNEL, 1),
+            &activity("msGraph", "customNotification", "28:app", "Workflows", CHANNEL, 1),
             true,
         ),
     ];
@@ -319,8 +318,8 @@ fn the_feed_is_read_from_the_store_with_its_horizon_and_bookmark() {
         })
         .expect("feed");
     for message in [
-        item(1000, activity("mention", "person", B, "Lab B", GROUP, 5), false),
-        item(2000, activity("mention", "person", C, "Lab C", GROUP, 6), false),
+        item(1000, &activity("mention", "person", B, "Lab B", GROUP, 5), false),
+        item(2000, &activity("mention", "person", C, "Lab C", GROUP, 6), false),
     ] {
         store.upsert_message(&message, None).expect("item");
     }
@@ -339,5 +338,4 @@ fn the_feed_is_read_from_the_store_with_its_horizon_and_bookmark() {
     assert_eq!(feed.seen_ms, Some(1000));
     assert_eq!(feed.bookmark_ms, Some(1500));
     assert_eq!(feed.unseen(), 1);
-    assert!(FEED_LIMIT >= 100);
 }

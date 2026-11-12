@@ -70,7 +70,7 @@ impl ActivityView {
             .children(unread.then(|| unread_dot(palette)))
             .child(self.face(item, palette))
             .child(self.body(item, unread, palette, cx))
-            .child(self.corner(item, &group, menu_open, palette, cx))
+            .child(Self::corner(item, &group, menu_open, palette, cx))
             .children(menu_open.then(|| self.item_menu_view(item, unread, palette, cx)))
             .into_any_element()
     }
@@ -187,7 +187,6 @@ impl ActivityView {
 
     /// The date, which gives way to "More options" while the row is hovered or its menu open.
     fn corner(
-        &self,
         item: &ActivityItem,
         group: &SharedString,
         menu_open: bool,
@@ -225,7 +224,7 @@ impl ActivityView {
                 div()
                     .text_xs()
                     .text_color(rgb(palette.muted_foreground))
-                    .when(menu_open, |date| date.invisible())
+                    .when(menu_open, gpui::Styled::invisible)
                     .when(!menu_open, |date| {
                         date.group_hover(group.clone(), gpui::Styled::invisible)
                     })

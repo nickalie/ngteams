@@ -389,6 +389,10 @@ impl Shell {
     }
 
     /// The shell over `parts`, focused; the chat the settings kept is opened again.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "each part is made by a helper of its own; what is left is the struct literal that lists them"
+    )]
     pub fn new(parts: ShellParts, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let chat_parts = parts.clone();
         let ShellParts {
@@ -517,16 +521,12 @@ impl Shell {
             .findable_rows()
             .find(|row| row.partner.as_deref() == Some(mri) && row.id.ends_with("@unq.gbl.spaces"))
             .map(|row| row.id.clone());
-        match found {
-            Some(id) => {
-                self.open_chat(id, window, cx);
-                true
-            }
-            None => {
-                self.show_toast("There's no chat with them yet", cx);
-                false
-            }
-        }
+        let Some(id) = found else {
+            self.show_toast("There's no chat with them yet", cx);
+            return false;
+        };
+        self.open_chat(id, window, cx);
+        true
     }
 
     /// The Activity pane.

@@ -205,7 +205,7 @@ const STEPS: [Step; 5 + 284] = [
     }),
     // the rail's Activity: the feed in the list pane, unread items bold with a dot, the rail's count gone once shown
     ("activity", |shell, window, cx| {
-        shell.update(cx, |shell, cx| shell.show_activity(window, cx))
+        shell.update(cx, |shell, cx| shell.show_activity(window, cx));
     }),
     // an item's "More options" (Mark as read or unread, Remove), shown in place of its date
     ("activity-item-menu", |shell, _, cx| {
@@ -2414,22 +2414,9 @@ fn with_activity(
     view.update(cx, change);
 }
 
-/// a's activity feed, made up for the tour: reactions of b and c to one of a's messages (folded into one item),
-/// mentions in the group chat, a missed call from b, a meeting c updated, an app's notification and a team a was
-/// added to; some read, some not.
-fn seed_activity(mock: &ChatServiceMock) -> SandboxResult {
-    let mine = mock
-        .post_as(LAB_A, AB_CHAT, "<p>The made-up report is ready for a look</p>")
-        .ok_or("a's post refused")?;
-    let theirs = mock
-        .post_as(
-            LAB_C,
-            ABC_CHAT,
-            "<p>Lab A can you check the made-up numbers before noon?</p>",
-        )
-        .ok_or("c's post refused")?;
-    let mine_number: u64 = mine.parse()?;
-    let theirs_number: u64 = theirs.parse()?;
+/// The tour's feed items, oldest first, each read or not: `mine` is a's message in the 1:1 chat, `theirs` c's in the
+/// group chat.
+fn activity_items(mine_number: u64, theirs_number: u64) -> [(serde_json::Value, bool); 8] {
     let item = |kind: &str, sub: &str, (from, name): (&str, &str), (thread, message): (&str, u64), preview: &str| {
         serde_json::json!({
             "activityType": kind, "activitySubtype": sub, "activityId": 100_000 + message,
@@ -2438,7 +2425,7 @@ fn seed_activity(mock: &ChatServiceMock) -> SandboxResult {
             "sourceThreadType": if thread.ends_with("tacv2") { "space" } else { "chat" },
         })
     };
-    let added = [
+    [
         (
             item("teamMembershipChange", "addedToTeam", (LAB_B, "Lab B"), (TEAM, 1), ""),
             true,
@@ -2503,9 +2490,27 @@ fn seed_activity(mock: &ChatServiceMock) -> SandboxResult {
             ),
             false,
         ),
-    ];
-    for (activity, read) in added {
-        mock.add_activity(LAB_A, activity, read).ok_or("no feed")?;
+    ]
+}
+
+/// a's activity feed, made up for the tour: reactions of b and c to one of a's messages (folded into one item),
+/// mentions in the group chat, a missed call from b, a meeting c updated, an app's notification and a team a was
+/// added to; some read, some not.
+fn seed_activity(mock: &ChatServiceMock) -> SandboxResult {
+    let mine = mock
+        .post_as(LAB_A, AB_CHAT, "<p>The made-up report is ready for a look</p>")
+        .ok_or("a's post refused")?;
+    let theirs = mock
+        .post_as(
+            LAB_C,
+            ABC_CHAT,
+            "<p>Lab A can you check the made-up numbers before noon?</p>",
+        )
+        .ok_or("c's post refused")?;
+    let mine_number: u64 = mine.parse()?;
+    let theirs_number: u64 = theirs.parse()?;
+    for (activity, read) in activity_items(mine_number, theirs_number) {
+        mock.add_activity(LAB_A, &activity, read).ok_or("no feed")?;
     }
     Ok(())
 }

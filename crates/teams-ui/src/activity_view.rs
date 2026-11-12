@@ -100,6 +100,10 @@ pub enum ActivityViewEvent {
 }
 
 /// The pane (see the module docs).
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "a read pending again, the search's box, the header's menu and being shown are separate states"
+)]
 pub struct ActivityView {
     core: Arc<dyn Core>,
     models: Models,
