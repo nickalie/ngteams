@@ -470,7 +470,10 @@ fn a_restart_leaves_out_only_the_link_it_opened() {
 #[test]
 fn a_restart_carries_a_given_link_it_did_not_open() {
     let given = |links: &[&str]| links.iter().map(|link| (*link).to_owned()).collect::<Vec<_>>();
-    let (first, second) = ("msteams:/l/meetup-join/synthetic-1", "msteams:/l/meetup-join/synthetic-2");
+    let (first, second) = (
+        "msteams:/l/meetup-join/synthetic-1",
+        "msteams:/l/meetup-join/synthetic-2",
+    );
     assert_eq!(super::carried_link(None, None, given(&[first])).as_deref(), Some(first));
     assert_eq!(
         super::carried_link(None, None, given(&[first, second])).as_deref(),
@@ -485,7 +488,9 @@ fn a_restart_carries_a_given_link_it_did_not_open() {
     );
     assert_eq!(
         super::restart_args(
-            ["--ctl-socket", "/run/synthetic.sock"].map(std::ffi::OsString::from).into_iter(),
+            ["--ctl-socket", "/run/synthetic.sock"]
+                .map(std::ffi::OsString::from)
+                .into_iter(),
             None,
             Some(first)
         ),

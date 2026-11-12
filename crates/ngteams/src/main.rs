@@ -219,8 +219,9 @@ fn restarted(exec: &mut dyn FnMut(&mut Command) -> std::io::Error) -> ExitCode {
 }
 
 /// What `restart` names run by `exec` once an update is in: the new version with this run's arguments (the link it
-/// `opened` left out, a link macOS handed it and it didn't open, `given`, added), without the AppImage runtime's variables (the new AppImage's runtime sets them again), or the
-/// Windows installer with its own; `exec` returns only when it couldn't.
+/// `opened` left out, a link macOS handed it and it didn't open, `given`, added), without the AppImage runtime's
+/// variables (the new AppImage's runtime sets them again), or the Windows installer with its own; `exec` returns only
+/// when it couldn't.
 fn updated(
     restart: Restart,
     opened: Option<&str>,
