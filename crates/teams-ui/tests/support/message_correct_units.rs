@@ -108,6 +108,34 @@ fn mentions_inline_code_line_breaks_and_links_showing_their_address_never_reach_
 }
 
 #[test]
+fn a_link_showing_its_address_in_parts_goes_as_one_marker_and_comes_back_in_order() {
+    let href = "https://example.test/private";
+    let part = |text: &str, marks| {
+        Run::new(
+            text,
+            Attrs {
+                link: Some(href.to_owned()),
+                marks,
+                ..Attrs::default()
+            },
+        )
+    };
+    let split = vec![part("https://example.test", Marks::BOLD), part("/private", Marks::NONE)];
+    let mut first = vec![plain("teh ")];
+    first.extend(split.clone());
+    // The second paragraph is only the link: it has no word of its own to lose.
+    let doc = Doc::new(vec![paragraph(first), paragraph(split.clone())]);
+    let encoded = encode(&doc);
+    assert_eq!(encoded.text, "<x0>teh <x1/></x0>\n<x2><x3/></x2>");
+    let mut fixed_first = vec![plain("the ")];
+    fixed_first.extend(split.clone());
+    assert_eq!(
+        corrected(&doc, "teh", "the"),
+        Doc::new(vec![paragraph(fixed_first), paragraph(split)])
+    );
+}
+
+#[test]
 fn formatted_words_are_corrected_inside_their_format() {
     let doc = Doc::new(vec![paragraph(vec![
         plain("see "),

@@ -295,7 +295,16 @@ fn a_translation_keeps_mentions_links_formats_line_breaks_and_emoji() {
         !launched[0].instructions.contains("German"),
         "the language goes in the question only"
     );
-    assert!(engine.closed.load(Ordering::Relaxed));
+    drop(launched);
+    // the outcome is told before the tool is closed, so the box doesn't wait for it
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while !engine.closed.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        engine.closed.load(Ordering::Relaxed),
+        "the tool outlived its translation"
+    );
 }
 
 #[test]
@@ -459,7 +468,9 @@ fn dropping_a_translation_ends_the_local_tools_process() {
     );
     let done = translating.done();
     let pid = pid(dir.path());
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !dir.path().join("received.log").exists() {
+        assert!(std::time::Instant::now() < deadline, "the tool never got the question");
         std::thread::sleep(Duration::from_millis(10));
     }
     drop(translating);

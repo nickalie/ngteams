@@ -5,7 +5,7 @@
 //!   of code, a picture, a rule and a blank line never go to the tool; they stay where they are.
 //! - **Runs**: words with a format (a mark, a colour, a link) are `<xN>…</xN>` inside their block; what must come back
 //!   exactly (a mention, inline code, a link that shows its own address, a line break) is `<xN/>`. A link's address is
-//!   judged on all its runs together, so one formatted in parts never goes out a piece at a time.
+//!   judged on all its runs together, so one formatted in parts goes out as one `<xN/>` and comes back in order.
 //! - **Strict to read**, unlike a translation's: the answer is used only when it has every marker exactly once, each in
 //!   its own block, and no block lost its words. A correction the user may send must not lose a mention or a link.
 
@@ -23,8 +23,8 @@ enum Slot {
     Block(usize),
     /// Words with these attributes.
     Styled(usize, Attrs),
-    /// A run put back as it was.
-    Atom(usize, Run),
+    /// Runs put back as they were, in order.
+    Atom(usize, Vec<Run>),
 }
 
 /// A draft encoded for the tool.
@@ -123,12 +123,23 @@ impl Encoded {
             self.text.push('\n');
         }
         let _ = write!(self.text, "<x{n}>");
-        for (run, whole) in block.runs.iter().zip(kept_whole_runs(&block.runs)) {
-            if whole {
-                self.atom(index, run.clone());
-            } else {
-                self.run(index, run);
+        let whole = kept_whole_runs(&block.runs);
+        let mut at = 0;
+        while at < block.runs.len() {
+            if !whole[at] {
+                self.run(index, &block.runs[at]);
+                at += 1;
+                continue;
             }
+            // The kept runs of one link go as one atom, so an answer can't reorder or split its text.
+            let link = block.runs[at].attrs.link.as_deref();
+            let len = block.runs[at + 1..]
+                .iter()
+                .zip(&whole[at + 1..])
+                .take_while(|(run, whole)| **whole && link.is_some() && run.attrs.link.as_deref() == link)
+                .count();
+            self.atom(index, block.runs[at..=at + len].to_vec());
+            at += len + 1;
         }
         let _ = write!(self.text, "</x{n}>");
     }
@@ -136,14 +147,14 @@ impl Encoded {
     fn run(&mut self, block: usize, run: &Run) {
         for (at, line) in run.text.split('\n').enumerate() {
             if at > 0 {
-                self.atom(block, Run::new("\n", run.attrs.clone()));
+                self.atom(block, vec![Run::new("\n", run.attrs.clone())]);
             }
             self.line(block, line, &run.attrs);
         }
     }
 
-    fn atom(&mut self, block: usize, run: Run) {
-        let n = self.add(Slot::Atom(block, run));
+    fn atom(&mut self, block: usize, runs: Vec<Run>) {
+        let n = self.add(Slot::Atom(block, runs));
         let _ = write!(self.text, "<x{n}/>");
     }
 
@@ -285,14 +296,14 @@ impl Reading<'_> {
 
     fn atom(&mut self, n: usize) -> Option<()> {
         self.first_time(n)?;
-        let Slot::Atom(block, run) = self.slots.get(n)? else {
+        let Slot::Atom(block, runs) = self.slots.get(n)? else {
             return None;
         };
         let open = self
             .block
             .as_mut()
             .filter(|open| open.index == *block && self.styled.is_none())?;
-        open.runs.push(run.clone());
+        open.runs.extend(runs.iter().cloned());
         Some(())
     }
 }
