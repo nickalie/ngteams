@@ -114,6 +114,10 @@ name = "call_window"
 harness = false
 
 [[test]]
+name = "deferred_devices_window"
+harness = false
+
+[[test]]
 name = "ui_tour"
 harness = false
 
