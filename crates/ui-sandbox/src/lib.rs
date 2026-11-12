@@ -91,6 +91,9 @@ pub struct SandboxOptions {
     pub niri_extra: &'static str,
     /// A private PipeWire ([`pipewire`]) with these sounds and camera; `None` runs none.
     pub pipewire: Option<PipeWireOptions>,
+    /// Whether niri fills weston's output (weston's kiosk shell) rather than opening at its own size: a screen other
+    /// than the default's 1280×800.
+    pub fill_output: bool,
 }
 
 impl Default for SandboxOptions {
@@ -101,6 +104,7 @@ impl Default for SandboxOptions {
             refresh_mhz: None,
             niri_extra: "",
             pipewire: None,
+            fill_output: false,
         }
     }
 }
@@ -483,6 +487,7 @@ impl Sandbox {
                 "--socket=wayland-0",
                 "--fake-seat",
             ])
+            .args(options.fill_output.then_some("--shell=kiosk-shell.so"))
             .arg(format!("--width={}", options.width))
             .arg(format!("--height={}", options.height))
             .args(options.refresh_mhz.map(|rate| format!("--refresh-rate={rate}")))
