@@ -6,6 +6,7 @@
 //!
 //! The download sends no credentials and goes over HTTPS only, with no proxy, as the app's own transport does. Redirects
 //! are followed (a GitHub release asset is served from another host); the pinned hash is what's trusted.
+#![cfg(target_os = "linux")]
 
 mod archive;
 mod cache;

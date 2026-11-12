@@ -14,6 +14,7 @@
 //!
 //! The FFI is by hand: no Rust binding has `WebKit`'s web process extension API. Only the three `WebKit` functions
 //! below and two signals are used; they live in `libWPEWebKit-2.0`, which `build.rs` links.
+#![cfg(target_os = "linux")]
 
 pub mod client;
 pub use teams_signin_protocol::{ENTRY_POINT, protocol};

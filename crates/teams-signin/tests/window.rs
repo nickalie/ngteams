@@ -1,10 +1,10 @@
-#[cfg(windows)]
+#[cfg(not(target_os = "linux"))]
 fn main() {}
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[path = "support/window.rs"]
 mod linux;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn main() -> std::process::ExitCode {
     linux::main()
 }

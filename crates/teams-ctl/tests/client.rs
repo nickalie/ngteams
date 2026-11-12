@@ -16,7 +16,7 @@ use teams_ctl::transport::Listener as UnixListener;
 use teams_ctl::transport::Stream as UnixStream;
 
 #[cfg(unix)]
-use rustix::net::{AddressFamily, SocketAddrUnix, SocketFlags, SocketType};
+use rustix::net::{AddressFamily, SocketAddrUnix, SocketType};
 use teams_ctl::client::{Client, ClientError, Timeouts};
 use teams_ctl::codec::{self, LineReader, decode_request};
 use teams_ctl::protocol::{
@@ -366,7 +366,8 @@ fn nothing_listening_is_not_running() {
 /// A listener with a backlog of nothing, which never accepts: the first connect fills its queue.
 #[cfg(unix)]
 fn full_listener(path: &Path) -> rustix::fd::OwnedFd {
-    let socket = rustix::net::socket_with(AddressFamily::UNIX, SocketType::STREAM, SocketFlags::CLOEXEC, None).unwrap();
+    let socket = rustix::net::socket(AddressFamily::UNIX, SocketType::STREAM, None).unwrap();
+    rustix::io::fcntl_setfd(&socket, rustix::io::FdFlags::CLOEXEC).unwrap();
     rustix::net::bind(&socket, &SocketAddrUnix::new(path).unwrap()).unwrap();
     rustix::net::listen(&socket, 0).unwrap();
     socket

@@ -3,7 +3,7 @@
 // from soup3-rs
 // from wpewebkit-2.54.1
 // DO NOT EDIT
-
+#![cfg(target_os = "linux")]
 #![allow(non_camel_case_types, non_upper_case_globals, non_snake_case)]
 #![allow(
     clippy::approx_constant,

@@ -72,12 +72,16 @@ impl SecretKey {
 /// Why a store operation failed. Never carries a secret value.
 #[derive(Debug, thiserror::Error)]
 pub enum SecretError {
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[error("Secret Service: {0}")]
     Keyring(Box<oo7::Error>),
     #[cfg(windows)]
     #[error("Windows Credential Manager: {0}")]
     WindowsKeyring(&'static str),
+    /// The macOS Keychain's `OSStatus` (0: its worker failed).
+    #[cfg(target_os = "macos")]
+    #[error("macOS Keychain: OSStatus {0}")]
+    Keychain(i32),
     #[error("the stored secret is not UTF-8")]
     NotUtf8,
     /// The credential broker's store ([`crate::broker::BrokerSecretStore`]) didn't do it.
@@ -85,7 +89,7 @@ pub enum SecretError {
     Broker(#[from] crate::broker::BrokerError),
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 impl From<oo7::Error> for SecretError {
     fn from(error: oo7::Error) -> Self {
         Self::Keyring(Box::new(error))
@@ -203,8 +207,11 @@ impl<S: SecretStore> SecretStore for OverlaySecretStore<S> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[path = "secrets/unix.rs"]
+mod platform;
+#[cfg(target_os = "macos")]
+#[path = "secrets/macos.rs"]
 mod platform;
 #[cfg(windows)]
 #[path = "secrets/windows.rs"]

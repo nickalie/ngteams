@@ -908,7 +908,7 @@ pub fn mute_in_call(muted: bool, cx: &mut App) {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 mod linux;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub use linux::BusNotifications;

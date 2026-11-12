@@ -2,23 +2,23 @@
 //! before the answer, the redirect caught and never let through, an unarmed page denied; and
 //! the guard's socket, as the extension talks to it.
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::io::{BufRead as _, BufReader, Write as _};
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::os::unix::net::UnixStream;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::sync::Arc;
 use std::sync::mpsc;
 
 use teams_auth::redirect::RedirectUri;
 use teams_auth::token::NATIVE_CLIENT_REDIRECT;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use teams_signin::guard::GuardServer;
 use teams_signin::guard::{Decision, Guard, GuardEvent};
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use teams_signin_extension::client::GuardClient;
 use teams_signin_protocol::protocol::OK;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use teams_signin_protocol::protocol::{ALLOW, DENY};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -242,7 +242,7 @@ fn a_loopback_only_guard_denies_everything_off_loopback() -> TestResult {
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn the_socket_answers_the_extension_line_by_line() -> TestResult {
     let lab = lab()?;
     let dir = tempfile::tempdir()?;

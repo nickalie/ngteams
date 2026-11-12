@@ -7,7 +7,7 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
-[dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 # the probe window (src/bin/ui-sandbox-probe.rs) the sandbox's own tests drive
 gpui-pre.workspace = true
 gpui-pre-platform.workspace = true
@@ -28,7 +28,7 @@ wayland-protocols-wlr.workspace = true
 xkbcommon.workspace = true
 zbus.workspace = true
 
-[dev-dependencies]
+[target.'cfg(target_os = "linux")'.dev-dependencies]
 rustix.workspace = true
 
 [lints]

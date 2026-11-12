@@ -171,10 +171,10 @@ harness = false
 name = "workflows_app_window"
 harness = false
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 zbus.workspace = true
 
-[target.'cfg(unix)'.dev-dependencies]
+[target.'cfg(target_os = "linux")'.dev-dependencies]
 # Linux compositor, private bus and virtual keyboard; Windows uses the authorized VM console.
 ui-sandbox.workspace = true
 

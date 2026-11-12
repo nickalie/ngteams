@@ -8,9 +8,9 @@
 
 use std::ffi::OsStr;
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use zbus::Connection;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use zbus::address::Address;
 
 /// The variable the address is read from.
@@ -23,7 +23,7 @@ pub enum BusError {
     NotGiven,
     #[error("the session bus address given isn't one this app takes: {0}")]
     Address(String),
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[error("the session bus given can't be reached: {0}")]
     Connect(#[source] zbus::Error),
 }
@@ -45,7 +45,7 @@ pub fn given_address(value: Option<&OsStr>) -> Result<String, BusError> {
     if text.contains(';') {
         return Err(BusError::Address("a list of addresses".to_owned()));
     }
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     Address::try_from(text).map_err(|error| BusError::Address(error.to_string()))?;
     Ok(text.to_owned())
 }
@@ -54,7 +54,7 @@ pub fn given_address(value: Option<&OsStr>) -> Result<String, BusError> {
 ///
 /// # Errors
 /// See [`given_address`].
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub fn address_from_env() -> Result<String, BusError> {
     given_address(std::env::var_os(ADDRESS_ENV).as_deref())
 }
@@ -63,7 +63,7 @@ pub fn address_from_env() -> Result<String, BusError> {
 ///
 /// # Errors
 /// [`BusError::Connect`] when that bus can't be reached or refuses the connection.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub async fn connect(address: &str) -> Result<Connection, BusError> {
     zbus::connection::Builder::address(address)
         .map_err(BusError::Connect)?
@@ -78,12 +78,12 @@ pub async fn connect(address: &str) -> Result<Connection, BusError> {
 ///
 /// # Errors
 /// The address's own error, or [`connect`]'s.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub async fn connect_given(address: Result<String, BusError>) -> Result<Connection, BusError> {
     connect(&address?).await
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt as _;
@@ -111,11 +111,11 @@ mod tests {
     }
 }
 
-/// Windows uses its native shell, with no session bus address to read.
+/// Windows and macOS use their native shells, with no session bus address to read.
 ///
 /// # Errors
-/// Always returns `NotGiven`; the Windows desktop connects directly to its native session.
-#[cfg(windows)]
+/// Always returns `NotGiven`; the Windows and macOS desktops connect directly to their native sessions.
+#[cfg(not(target_os = "linux"))]
 pub fn address_from_env() -> Result<String, BusError> {
     Err(BusError::NotGiven)
 }

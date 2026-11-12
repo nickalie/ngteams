@@ -18,7 +18,7 @@
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
-#![cfg(unix)]
+#![cfg(target_os = "linux")]
 
 use std::collections::HashMap;
 use std::os::unix::net::UnixListener;

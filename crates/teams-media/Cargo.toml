@@ -50,6 +50,13 @@ cubecl.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
 teams-platform.workspace = true
 
+# The model's GPU API: Vulkan where the drivers have it, Metal on macOS
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+burn = { workspace = true, features = ["vulkan"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+burn = { workspace = true, features = ["metal"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-capture.workspace = true
 windows-sys = { workspace = true, features = ["Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }

@@ -4,6 +4,8 @@
 //!
 //! Without weston 15, niri or `dbus-daemon` the tests that need them say so and pass, unless `GPUI_SMOKE_REQUIRE=1`.
 
+#![cfg(target_os = "linux")]
+
 use std::{
     collections::HashMap,
     ffi::OsStr,

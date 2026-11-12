@@ -3,6 +3,10 @@
 //! `webkit_uri_request_get_*`), which the web process that loads it has already loaded.
 
 fn main() {
+    // Linux only: the crate is empty on other targets (macOS signs in through WKWebView, Windows through WebView2).
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
+        return;
+    }
     println!("cargo::rerun-if-env-changed=PKG_CONFIG_PATH");
     println!("cargo::rerun-if-env-changed=PKG_CONFIG");
     if let Err(error) = pkg_config::Config::new()

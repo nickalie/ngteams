@@ -8,6 +8,7 @@
 //! Without `pipewire` and `wireplumber` the tests say so and pass, unless `GPUI_SMOKE_REQUIRE=1`. Nothing here plays
 //! aloud or records a real device: the server is a private one with no device plugin to open.
 
+#![cfg(target_os = "linux")]
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
 

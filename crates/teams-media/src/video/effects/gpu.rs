@@ -1,5 +1,5 @@
 //! The person segmentation on the GPU: the same model as the CPU's ([`super::segment`]), as Burn code generated from
-//! its ONNX at build time (`build.rs`), run by Burn's wgpu backend (Vulkan, kernels fused). On a GPU a run takes a few
+//! its ONNX at build time (`build.rs`), run by Burn's wgpu backend (Vulkan; Metal on macOS; kernels fused). On a GPU a run takes a few
 //! milliseconds and leaves the CPU to the call.
 //!
 //! - **Which GPU**: an integrated one, else a discrete one ([`KINDS`]). The model is small enough for any GPU, and

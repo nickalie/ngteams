@@ -4,6 +4,10 @@
 // Probes the system's WPE WebKit through pkg-config and, when there is none, says which package brings it.
 
 fn main() {
+    // Linux only: the crate is empty on other targets (macOS signs in through WKWebView, Windows through WebView2).
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
+        return;
+    }
     if std::env::var("DOCS_RS").is_ok() {
         // prevent linking libraries to avoid documentation failure
         return;

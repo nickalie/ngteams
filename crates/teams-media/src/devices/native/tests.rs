@@ -240,7 +240,16 @@ fn system_audio_loopbacks_cannot_be_selected_as_microphones() {
         .build();
     assert_eq!(
         device_kind("wasapi2src", Some(&microphone)),
-        Some((DeviceKind::Microphone, "device"))
+        Some((DeviceKind::Microphone, Some("device")))
     );
-    assert_eq!(device_kind("wasapi2sink", None), Some((DeviceKind::Speaker, "device")));
+    assert_eq!(
+        device_kind("wasapi2sink", None),
+        Some((DeviceKind::Speaker, Some("device")))
+    );
+    assert_eq!(
+        device_kind("osxaudiosrc", None),
+        Some((DeviceKind::Microphone, Some("unique-id")))
+    );
+    assert_eq!(device_kind("avfvideosrc", None), Some((DeviceKind::Camera, None)));
+    assert_eq!(device_kind("pulsesrc", None), None);
 }

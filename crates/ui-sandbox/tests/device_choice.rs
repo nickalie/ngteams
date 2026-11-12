@@ -12,6 +12,7 @@
 //! pass, unless `GPUI_SMOKE_REQUIRE=1`. Nothing here plays aloud or opens a real device: the server is a private one
 //! with no device plugin to open, and the portal is the sandbox's fake.
 
+#![cfg(target_os = "linux")]
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
 

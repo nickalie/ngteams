@@ -7,6 +7,7 @@
 //! - [`Host::start_worker`] starts it on an [`EngineSource`]: the system's engine adds nothing to its command, a
 //!   downloaded runtime sets the library, GIO, `GStreamer` and injected-bundle paths on the worker's command alone.
 //! - `AppArmor`: the worker inherits the profile attached to `ngteams` and needs no entry of its own.
+#![cfg(target_os = "linux")]
 
 /// `from_raw` and `raw` on the engine's id types: a consumer's stand-in for the engine in its own tests makes ids
 /// with them, and logs read them; the engine itself never takes an id it did not hand out.

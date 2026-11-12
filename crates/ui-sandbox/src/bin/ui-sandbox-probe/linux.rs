@@ -278,7 +278,7 @@ impl log::Log for StderrLogger {
 
 static LOGGER: StderrLogger = StderrLogger;
 
-fn main() -> ExitCode {
+pub(super) fn main() -> ExitCode {
     let _ = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Info);
     let options = match parse_options(std::env::args().skip(1)) {

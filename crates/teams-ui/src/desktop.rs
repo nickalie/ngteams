@@ -43,25 +43,27 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use futures_util::StreamExt as _;
+#[cfg(not(target_os = "macos"))]
+use gpui::AsyncApp;
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task, WeakEntity,
-    Window, WindowHandle, WindowId,
+    App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription, Task, WeakEntity, Window,
+    WindowHandle, WindowId,
 };
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use tokio::sync::mpsc;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use zbus::Connection;
 
 use crate::accounts::{AccountParts, Accounts, AccountsEvent};
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use crate::bus;
 use crate::bus::BusError;
 use crate::call_alert::{CallAlert, CallAlertEvent};
 use crate::call_sounds::CallSounds;
 use crate::call_window::{AccountNamer, CallWindows, CallWindowsEvent};
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use crate::notify::BusNotifications;
 use crate::notify::{DEFAULT_ACTION, NotificationServer, Notifier, NotifierEvent};
 use crate::own_presence::OwnPresence;
@@ -69,7 +71,7 @@ use crate::ringtone::Ringer;
 use crate::settings_view::Page;
 use crate::shell::{ListPlace, Main, Shell, ShellParts};
 use crate::trace::{TraceLine, ViewTrace};
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use crate::tray::{BusTray, Hosted};
 use crate::tray::{Tray, TrayEvent};
 
@@ -164,7 +166,7 @@ pub struct Desktop {
     tray: Entity<Tray>,
     in_tray: bool,
     /// The connection to the bus the app is given, kept for the notifications and the tray item on it.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     bus: Option<Connection>,
     #[cfg(windows)]
     native_tray: Option<Arc<windows::tray::NativeTray>>,
@@ -253,7 +255,7 @@ impl Desktop {
             accounts,
             tray,
             in_tray: false,
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             bus: None,
             #[cfg(windows)]
             native_tray: None,
@@ -783,7 +785,7 @@ impl Desktop {
     /// Connects to the bus at `address` (the one the app is given, [`bus::address_from_env`]) and puts the
     /// notifications and the tray item on it. The task ends once both are up or have failed, with what failed (the
     /// app reports it); without an address nothing is connected to.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     pub fn connect(&mut self, address: Result<String, BusError>, cx: &mut Context<Self>) -> Task<Vec<String>> {
         let app_id = self.parts.app_id;
         let app_name = self.parts.app_name.to_string();
@@ -823,6 +825,13 @@ impl Desktop {
         cx.spawn(async move |this, cx: &mut AsyncApp| windows::connect(this, app_id, app_name, with_tray, cx).await)
     }
 
+    /// macOS: no native notifications or menu bar item yet.
+    #[cfg(target_os = "macos")]
+    pub fn connect(&mut self, address: Result<String, BusError>, cx: &mut Context<Self>) -> Task<Vec<String>> {
+        drop(address);
+        cx.spawn(async move |_, _| vec!["no notifications or menu bar item on macOS yet".to_owned()])
+    }
+
     /// Keep the native taskbar target current when closing to tray and opening a new GPUI window.
     #[cfg(windows)]
     fn sync_native_window(&self, cx: &mut App) {
@@ -853,6 +862,10 @@ impl Desktop {
     }
 
     /// Notification `id` had `action` invoked: the call alert's it is, else (its body) the notifier's it is.
+    #[cfg_attr(
+        target_os = "macos",
+        expect(dead_code, reason = "macOS notifications aren't wired yet")
+    )]
     fn activated(&mut self, id: u32, action: &str, cx: &mut Context<Self>) {
         for slot in &self.slots {
             if slot.call_alert.update(cx, |alert, cx| alert.activated(id, action, cx)) {
@@ -879,7 +892,7 @@ fn hand_server(slot: &Slot, server: &Arc<dyn NotificationServer>, cx: &mut App) 
 
 /// The notifications on `connection`: the server handed to every account's notifier and call alert, each activation
 /// to the call alert whose it is, else (its body's) to the notifier whose it is.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 async fn notifications(
     this: &WeakEntity<Desktop>,
     connection: &Connection,
@@ -905,7 +918,7 @@ async fn notifications(
 }
 
 /// The tray item on `connection`: shown the unread total, its asks handed to the desktop.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 async fn tray(
     this: &WeakEntity<Desktop>,
     connection: &Connection,

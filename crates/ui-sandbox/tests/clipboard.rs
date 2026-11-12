@@ -4,6 +4,8 @@
 //!
 //! Without weston 15, niri or `dbus-daemon` the test says so and passes, unless `GPUI_SMOKE_REQUIRE=1`.
 
+#![cfg(target_os = "linux")]
+
 use std::{io::Cursor, path::Path, time::Duration};
 
 use image::{ImageFormat, Rgb, RgbImage};

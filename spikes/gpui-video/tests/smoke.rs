@@ -11,6 +11,7 @@
 //!
 //! Without a weston that takes `--fake-seat` (15.0 or later), a niri or a `dbus-daemon` on `PATH`, the compositor
 //! tests say so on stderr and pass, unless `GPUI_SMOKE_REQUIRE=1`, which makes them fail instead.
+#![cfg(target_os = "linux")]
 
 use std::{
     ffi::{OsStr, OsString},

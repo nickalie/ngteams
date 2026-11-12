@@ -1,6 +1,6 @@
 [package]
 name = "teams-signin"
-description = "Microsoft sign-in behind a shared request guard and egress proxy, using WPE WebKit on Linux and WebView2 on Windows"
+description = "Microsoft sign-in behind a shared request guard and egress proxy, using WPE WebKit on Linux, WebView2 on Windows and WKWebView on macOS"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -30,7 +30,7 @@ tempfile.workspace = true
 thiserror.workspace = true
 url.workspace = true
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 # Linux offscreen page worker and system/pinned WebKit runtime.
 teams-wpe-client.workspace = true
 teams-web-engine.workspace = true
@@ -43,6 +43,14 @@ windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Com"
 wry.workspace = true
 raw-window-handle.workspace = true
 
+# the macOS worker's window and page: AppKit and WebKit through objc2 (the versions GPUI and the tree already link)
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
+objc2-web-kit.workspace = true
+
 [[bin]]
 name = "ngteams-webview"
 path = "src/bin/ngteams-webview.rs"
@@ -52,7 +60,7 @@ rcgen.workspace = true
 tokio-rustls.workspace = true
 windows-core.workspace = true
 
-[target.'cfg(unix)'.dev-dependencies]
+[target.'cfg(target_os = "linux")'.dev-dependencies]
 # Retained Linux offscreen engine and compositor tests.
 teams-signin-extension.workspace = true
 teams-wpe.workspace = true

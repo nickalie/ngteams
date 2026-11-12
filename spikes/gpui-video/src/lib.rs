@@ -3,6 +3,7 @@
 //! The library holds what the `gpui-video` binary and its tests share: the synthetic video source ([`frames`]), the
 //! video grid view and its source threads ([`grid`]), the benchmark's statistics and parsers ([`bench`]), and the
 //! private headless weston + nested niri the tests and the benchmark run in ([`sandbox`]).
+#![cfg(target_os = "linux")]
 
 pub mod bench;
 pub mod frames;

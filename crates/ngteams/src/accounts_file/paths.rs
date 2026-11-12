@@ -25,7 +25,11 @@ impl PersonalLocations {
         {
             Self::windows(std::env::var_os("LOCALAPPDATA"), std::env::var_os("USERPROFILE"))
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        {
+            Self::macos(std::env::var_os("HOME"))
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         Self::resolve(
             std::env::var_os("XDG_CONFIG_HOME"),
             std::env::var_os("XDG_DATA_HOME"),
@@ -46,6 +50,21 @@ impl PersonalLocations {
                     .filter(|path| path.is_absolute())
                     .map(|path| path.join("AppData/Local"))
             })?
+            .join(PERSONAL_DIR);
+        Some(Self {
+            config_dir: base.join("config"),
+            data_dir: base.join("data"),
+        })
+    }
+
+    /// macOS keeps both under `~/Library/Application Support/ngteams`, as Windows does under Local `AppData`: the
+    /// store, cookies and logs are this Mac's, never synced. `None` when `HOME` is unset or relative.
+    #[must_use]
+    pub fn macos(home: Option<OsString>) -> Option<Self> {
+        let base = home
+            .map(PathBuf::from)
+            .filter(|home| home.is_absolute())?
+            .join("Library/Application Support")
             .join(PERSONAL_DIR);
         Some(Self {
             config_dir: base.join("config"),
@@ -81,9 +100,21 @@ pub fn overlapping(one: &Path, other: &Path) -> bool {
     contains(&one, &other) || contains(&other, &one)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn contains(path: &Path, parent: &Path) -> bool {
     path.starts_with(parent)
+}
+
+/// macOS volumes are case-insensitive by default and a path not made yet keeps the spelling it was given, so names
+/// are compared ignoring case: two spellings of one directory count as overlapping (the safe answer).
+#[cfg(target_os = "macos")]
+fn contains(path: &Path, parent: &Path) -> bool {
+    let mut path = path.components();
+    parent.components().all(|component| {
+        path.next().is_some_and(|next| {
+            next.as_os_str().to_string_lossy().to_lowercase() == component.as_os_str().to_string_lossy().to_lowercase()
+        })
+    })
 }
 
 #[cfg(windows)]

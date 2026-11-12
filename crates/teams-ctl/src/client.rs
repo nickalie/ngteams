@@ -179,7 +179,13 @@ impl Client {
             Outcome::Ok(other) => return Err(ClientError::Protocol(format!("{other:?} for subscribe"))),
             Outcome::Error(error) => return Ok(Err(Refused { id, error })),
         }
-        self.writer.set_read_timeout(None)?;
+        if let Err(error) = self.writer.set_read_timeout(None) {
+            // macOS refuses a socket option once the app has closed its end (`EINVAL`): what it sent before is read
+            // to its end all the same
+            if !(cfg!(target_vendor = "apple") && error.kind() == std::io::ErrorKind::InvalidInput) {
+                return Err(error.into());
+            }
+        }
         Ok(Ok(Events { reader: self.reader }))
     }
 

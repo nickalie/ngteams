@@ -57,9 +57,13 @@ mod platform {
             }
             gpui_platform::application()
         }
-        #[cfg(unix)]
+        #[cfg(target_os = "linux")]
         {
             gpui_platform::linux(gpui::WindowingModes::WAYLAND)
+        }
+        #[cfg(target_os = "macos")]
+        {
+            gpui_platform::application()
         }
     }
 }
@@ -94,11 +98,11 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     // the sign-in window's engine worker, held from here so an update replacing the files can't swap it under this run
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     if let Err(error) = teams_wpe_client::worker::pin_worker() {
         eprintln!("teams: {error}");
     }
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     if let Err(error) = teams_signin::window::pin_worker() {
         eprintln!("teams: {error}");
     }
@@ -153,7 +157,7 @@ fn main() -> ExitCode {
 }
 
 /// Installs a sign-in engine runtime from a file, under the same checks a download gets.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn install_web_engine(archive: &std::path::Path) -> ExitCode {
     let installed = (|| {
         let pins = teams_web_engine::Pins::compiled()
@@ -170,6 +174,14 @@ fn install_web_engine(archive: &std::path::Path) -> ExitCode {
         }
         Err(error) => failed("install-web-engine", &error),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn install_web_engine(_archive: &std::path::Path) -> ExitCode {
+    failed(
+        "install-web-engine",
+        &"macOS signs in with the system's WebKit; there is no engine to install",
+    )
 }
 
 #[cfg(windows)]

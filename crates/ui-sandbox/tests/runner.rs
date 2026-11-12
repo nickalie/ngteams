@@ -1,5 +1,7 @@
 //! The runner's command line and private control socket, using synthetic cat processes only.
 
+#![cfg(target_os = "linux")]
+
 #[cfg(test)]
 mod tests {
     use std::fs::{self, File};

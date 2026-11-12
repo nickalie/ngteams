@@ -15,6 +15,8 @@
 //! On Windows these are logical endpoint identities: the native transport hashes each absolute path and the user
 //! SID into a local pipe name. `from_process` uses LOCALAPPDATA for state/runtime and USERPROFILE for the fallback
 //! home; no filesystem socket is created.
+//! On macOS, which has no `XDG_RUNTIME_DIR`, the personal socket is under the per-user `$TMPDIR` (private to the user
+//! and cleared at boot, as a runtime dir is) and the state home is `~/Library/Application Support`.
 
 use std::ffi::OsString;
 use std::io;
@@ -57,9 +59,9 @@ pub enum PathError {
 pub struct Env {
     /// `$NGTEAMS_CTL_SOCKET`.
     pub socket: Option<OsString>,
-    /// Unix `$XDG_RUNTIME_DIR`, or Windows local profile runtime directory.
+    /// Unix `$XDG_RUNTIME_DIR`, macOS `$TMPDIR`, or Windows local profile runtime directory.
     pub runtime_dir: Option<OsString>,
-    /// Unix `$XDG_STATE_HOME`, or Windows `$LOCALAPPDATA`.
+    /// Unix `$XDG_STATE_HOME`, macOS `~/Library/Application Support`, or Windows `$LOCALAPPDATA`.
     pub state_home: Option<OsString>,
     /// Unix `$HOME`, or Windows `$USERPROFILE`.
     pub home: Option<OsString>,
@@ -68,13 +70,29 @@ pub struct Env {
 impl Env {
     /// The process's own environment.
     #[must_use]
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub fn from_process() -> Self {
         Self {
             socket: std::env::var_os(ENV_SOCKET),
             runtime_dir: std::env::var_os("XDG_RUNTIME_DIR"),
             state_home: std::env::var_os("XDG_STATE_HOME"),
             home: std::env::var_os("HOME"),
+        }
+    }
+
+    /// macOS: the per-user `$TMPDIR` as the runtime dir, `~/Library/Application Support` as the state home.
+    #[cfg(target_os = "macos")]
+    #[must_use]
+    pub fn from_process() -> Self {
+        let home = std::env::var_os("HOME");
+        Self {
+            socket: std::env::var_os(ENV_SOCKET),
+            runtime_dir: std::env::var_os("TMPDIR"),
+            state_home: home
+                .as_ref()
+                .filter(|home| Path::new(home).is_absolute())
+                .map(|home| Path::new(home).join("Library/Application Support").into_os_string()),
+            home,
         }
     }
 

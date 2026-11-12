@@ -20,6 +20,7 @@
 //! callback, GPUI on niri's. So draws are capped at 60 per second and a frame's latency includes waiting for the next
 //! callback (up to 16.7 ms), as on a 60 Hz display; what the headless setup can't show is scan-out and a real
 //! display's vblank jitter.
+#![cfg(target_os = "linux")]
 
 use std::{
     collections::{BTreeMap, HashSet},

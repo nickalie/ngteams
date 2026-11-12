@@ -1,8 +1,10 @@
 //! Native response restrictions are parsed before a paused response is released to the renderer.
+#[cfg(any(windows, test))]
 use serde_json::{Value, json};
 
+#[cfg(any(windows, test))]
 const CSP: &str = "connect-src https:; worker-src 'none'; object-src 'none'; frame-src https:";
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub(crate) const INIT: &str = r"(() => {
     for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCDataChannel', 'WebTransport',
                         'WebSocket', 'WebSocketStream', 'Worker', 'SharedWorker']) {
@@ -14,6 +16,7 @@ pub(crate) const INIT: &str = r"(() => {
     Object.defineProperty(Navigator.prototype, 'sendBeacon', { value: undefined, writable: false, configurable: false });
 })()";
 
+#[cfg(any(windows, test))]
 pub(crate) fn response_parameters(event: &Value) -> Option<(&'static str, Value)> {
     let id = event.get("requestId")?.as_str()?;
     let Some(status) = event.get("responseStatusCode").and_then(Value::as_i64) else {

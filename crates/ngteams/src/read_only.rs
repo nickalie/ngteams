@@ -33,7 +33,7 @@ use crate::accounts_file::PersonalPaths;
 use crate::accounts_file::overlapping;
 use teams_auth::broker::{BrokerScope, BrokerSecretStore, Note, Outcome, ServeError, serve};
 use teams_auth::secrets::{OverlaySecretStore, SecretStore};
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use ui_sandbox::{SANDBOX_ENV, in_sandbox, names_wayland_display};
 
 use crate::KEYRING_APPLICATION;
@@ -56,7 +56,7 @@ pub fn asked(flag: bool, env: Option<&OsStr>) -> bool {
 ///
 /// # Errors
 /// Why not, as the message to print.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub fn window_allowed(wayland: Option<&OsStr>, sandbox: Option<&OsStr>, display: Option<&OsStr>) -> Result<(), String> {
     if display.is_some_and(|display| !display.is_empty()) {
         return Err(
@@ -85,7 +85,15 @@ pub fn window_allowed_here() -> Result<(), String> {
         teams_platform::windows_sandbox::window_allowed_here()
             .map_err(|error| format!("read-only: {error}; run scripts/run-personal-read-only.ps1"))
     }
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
+    {
+        Err(
+            "read-only: macOS has no UI sandbox for agents; a read-only window runs only in the Linux UI sandbox \
+             (scripts/run-personal-read-only.sh) or the win11 VM console"
+                .to_owned(),
+        )
+    }
+    #[cfg(target_os = "linux")]
     window_allowed(
         std::env::var_os("WAYLAND_DISPLAY").as_deref(),
         std::env::var_os(SANDBOX_ENV).as_deref(),

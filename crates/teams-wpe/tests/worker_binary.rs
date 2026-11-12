@@ -1,6 +1,8 @@
 //! The real `ngteams-web` binary: what the app asks it at startup, that it serves only an app, and how it talks to
 //! one (the worker protocol, driven by hand off the user's session).
 
+#![cfg(target_os = "linux")]
+
 use std::process::Command;
 
 const WORKER: &str = env!("CARGO_BIN_EXE_ngteams-web");

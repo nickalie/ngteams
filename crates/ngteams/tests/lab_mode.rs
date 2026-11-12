@@ -122,7 +122,7 @@ fn lab_refuses_overlapping_personal_config_or_data_even_through_symlinks() {
     lab::check_apart(&apart, &mine).unwrap();
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn a_lab_window_requires_the_sandbox_without_x11_fallback() {
     let socket = OsStr::new("/synthetic/sandbox/wayland-1");

@@ -63,6 +63,8 @@ fn an_installation_reads_its_format_version_and_restart_program() {
     assert_eq!(Installation::detect(&where_).unwrap().format(), Format::Archive);
 }
 
+// an AppImage is Linux's
+#[cfg(target_os = "linux")]
 #[test]
 fn an_appimage_that_is_gone_is_no_installation() {
     let home = tempfile::tempdir().unwrap();

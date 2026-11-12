@@ -1,5 +1,7 @@
 //! Synthetic credentials in a private session bus and temporary keyring; no desktop services are inherited.
 
+#![cfg(target_os = "linux")]
+
 #[cfg(unix)]
 #[cfg(test)]
 mod tests {

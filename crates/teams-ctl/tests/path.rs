@@ -128,9 +128,22 @@ fn the_override_wins_for_a_client_but_not_for_the_modes_own_path() {
 fn the_process_environment_is_read_as_its_variables_say() {
     let env = Env::from_process();
     assert_eq!(env.socket, std::env::var_os(ENV_SOCKET));
-    assert_eq!(env.runtime_dir, std::env::var_os("XDG_RUNTIME_DIR"));
-    assert_eq!(env.state_home, std::env::var_os("XDG_STATE_HOME"));
     assert_eq!(env.home, std::env::var_os("HOME"));
+    #[cfg(not(target_os = "macos"))]
+    {
+        assert_eq!(env.runtime_dir, std::env::var_os("XDG_RUNTIME_DIR"));
+        assert_eq!(env.state_home, std::env::var_os("XDG_STATE_HOME"));
+    }
+    // macOS: the per-user temporary dir and Application Support
+    #[cfg(target_os = "macos")]
+    {
+        assert_eq!(env.runtime_dir, std::env::var_os("TMPDIR"));
+        let home = std::path::Path::new(env.home.as_ref().unwrap());
+        assert_eq!(
+            env.state_home,
+            Some(home.join("Library/Application Support").into_os_string())
+        );
+    }
     assert_eq!(socket_path(&Mode::ReadOnly), env.socket_path(&Mode::ReadOnly));
 }
 

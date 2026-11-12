@@ -54,7 +54,7 @@ tokio = { workspace = true, features = ["net", "rt", "sync"] }
 # the installed app's updates from its GitHub releases (`ngteams::update`)
 teams-update.workspace = true
 # the read-only mode opens its window only on the UI sandbox's compositor (`ui_sandbox::in_sandbox`)
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 # Linux page-worker client and the system/pinned runtime used by `--install-web-engine`.
 teams-wpe-client.workspace = true
 teams-web-engine.workspace = true

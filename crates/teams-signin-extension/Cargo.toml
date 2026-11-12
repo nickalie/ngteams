@@ -13,7 +13,7 @@ build = "build.rs"
 # module too, and the tests
 crate-type = ["cdylib", "rlib"]
 
-[dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 teams-signin-protocol.workspace = true
 # `g_variant_*` (the initialization data) and `g_signal_connect_data` (`page-created`, `send-request`): hand FFI on
 # the -sys crates, since no Rust binding has WebKit's web process extension API
@@ -24,7 +24,7 @@ gobject-sys.workspace = true
 # where WPE WebKit's library is (`wpe-web-process-extension-2.0`, through pkg-config)
 pkg-config.workspace = true
 
-[dev-dependencies]
+[target.'cfg(target_os = "linux")'.dev-dependencies]
 # Drive the actual module in WebKit using the sign-in window's existing offline sandbox scenarios.
 gpui-pre.workspace = true
 gpui-pre-platform.workspace = true

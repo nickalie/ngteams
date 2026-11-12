@@ -21,7 +21,7 @@ use std::time::Duration;
 
 pub mod catalog;
 pub mod file;
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 mod native;
 pub mod pattern;
 #[cfg(target_os = "linux")]
@@ -33,13 +33,16 @@ pub use native::WindowsDevices;
 
 #[cfg(windows)]
 pub use native::WindowsDevices as SystemDevices;
+/// macOS's devices: the same `GStreamer` backend as Windows, over Core Audio and `AVFoundation`.
+#[cfg(target_os = "macos")]
+pub use native::WindowsDevices as SystemDevices;
 /// The native device backend selected at compile time; call sites share the same reach and device contracts.
 #[cfg(target_os = "linux")]
 pub use pipewire::{PipeWireDevices as SystemDevices, Reach};
-#[cfg(windows)]
+#[cfg(not(target_os = "linux"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reach {
-    /// Only the explicitly authorized VM console.
+    /// Only the explicitly authorized VM console (Windows); refused on macOS, which has no device sandbox.
     Sandbox,
     /// The current user's desktop.
     Desktop,

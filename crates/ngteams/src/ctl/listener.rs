@@ -300,7 +300,7 @@ fn write_events(events: &async_channel::Receiver<EventLine>, writer: &UnixStream
 /// Waits until `stream` is hung up (`true`): the client closed it (or shut it down both ways), or it was shut down
 /// here. A client that only stops writing hasn't hung up, and what it writes is never read. `false`: the watch failed,
 /// and the stream ends at its next event, as without one.
-#[cfg(unix)]
+#[cfg(all(unix, not(target_vendor = "apple")))]
 fn hung_up(stream: &UnixStream) -> bool {
     use rustix::event::{PollFd, PollFlags, poll};
 
@@ -311,6 +311,34 @@ fn hung_up(stream: &UnixStream) -> bool {
             Ok(_) if watched[0].revents().is_empty() => {}
             Ok(_) => return true,
             Err(rustix::io::Errno::INTR) => {}
+            Err(error) => {
+                log::warn!("a subscriber's hang-up isn't watched: its stream ends at its next event: {error}");
+                return false;
+            }
+        }
+    }
+}
+
+/// macOS's `poll` reports no hang-up on a Unix socket unless reading is asked about too: the stream is watched for
+/// reading, and what a client writes is taken off and dropped (never read as a request), until its end.
+#[cfg(target_vendor = "apple")]
+fn hung_up(stream: &UnixStream) -> bool {
+    use rustix::event::{PollFd, PollFlags, poll};
+    use rustix::net::{RecvFlags, recv};
+
+    let mut dropped = [0u8; 4096];
+    loop {
+        let mut watched = [PollFd::new(stream, PollFlags::IN)];
+        match poll(&mut watched, None) {
+            Ok(_) if watched[0].revents().intersects(PollFlags::HUP | PollFlags::ERR) => return true,
+            Ok(_) if watched[0].revents().contains(PollFlags::IN) => {
+                match recv(stream, &mut dropped, RecvFlags::DONTWAIT) {
+                    Ok((0, _)) => return true,
+                    Ok(_) | Err(rustix::io::Errno::AGAIN | rustix::io::Errno::INTR) => {}
+                    Err(_) => return true,
+                }
+            }
+            Ok(_) | Err(rustix::io::Errno::INTR) => {}
             Err(error) => {
                 log::warn!("a subscriber's hang-up isn't watched: its stream ends at its next event: {error}");
                 return false;

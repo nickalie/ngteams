@@ -27,8 +27,12 @@ tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync"
 url.workspace = true
 zeroize.workspace = true
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 oo7.workspace = true
+
+# the macOS Keychain's generic password items (the version rustls-platform-verifier already links there)
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 interprocess = { workspace = true, features = ["tokio"] }

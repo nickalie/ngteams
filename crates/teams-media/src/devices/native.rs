@@ -1,7 +1,8 @@
-//! Windows devices through `GStreamer`'s WASAPI2 and Media Foundation providers. Device monitor events refresh the
-//! catalog; each active stream follows the current choice (or the system default) on its own thread. Opening a
-//! backend only enumerates devices: it never starts a microphone or camera. Screen sharing separately invokes the
-//! Windows picker and captures only its result. Queues remain bounded across a device switch.
+//! The desktop's devices through `GStreamer`'s native providers: WASAPI2 and Media Foundation on Windows, Core Audio
+//! (`osxaudio`) and `AVFoundation` (`avfvideosrc`) on macOS. Device monitor events refresh the catalog; each active
+//! stream follows the current choice (or the system default) on its own thread. Opening a backend only enumerates
+//! devices: it never starts a microphone or camera. Screen sharing separately invokes the Windows picker and captures
+//! only its result. Queues remain bounded across a device switch.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -179,11 +180,30 @@ fn sandbox_allowed() -> Result<(), DeviceError> {
     teams_platform::windows_sandbox::window_allowed_here().map_err(|e| DeviceError::Refused(e.to_string()))
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn sandbox_allowed() -> Result<(), DeviceError> {
+    Err(DeviceError::Refused(
+        "macOS has no device sandbox: lab devices run in the Linux UI sandbox or the Windows VM console".into(),
+    ))
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn sandbox_allowed() -> Result<(), DeviceError> {
     Err(DeviceError::Refused(
         "Windows devices require the Windows VM console".into(),
     ))
+}
+
+/// The element a device of `kind` is opened with when the system's default is wanted.
+fn factory(kind: DeviceKind) -> &'static str {
+    match (cfg!(target_os = "macos"), kind) {
+        (false, DeviceKind::Microphone) => "wasapi2src",
+        (false, DeviceKind::Speaker) => "wasapi2sink",
+        (false, DeviceKind::Camera) => "mfvideosrc",
+        (true, DeviceKind::Microphone) => "osxaudiosrc",
+        (true, DeviceKind::Speaker) => "osxaudiosink",
+        (true, DeviceKind::Camera) => "avfvideosrc",
+    }
 }
 
 fn entries(monitor: &gst::DeviceMonitor) -> Vec<Entry> {
@@ -195,7 +215,11 @@ fn entry(device: &gst::Device) -> Option<Entry> {
     let factory = element.factory()?.name();
     let properties = device.properties();
     let (kind, property) = device_kind(factory.as_str(), properties.as_deref())?;
-    let name = element.property::<Option<String>>(property)?;
+    // `AVFoundation`'s cameras have no persistent id property on their element: their name stands in
+    let name = match property {
+        Some(property) => element.property::<Option<String>>(property)?,
+        None => device.display_name().to_string(),
+    };
     let default = device
         .properties()
         .and_then(|p| p.get::<bool>("device.default").ok())
@@ -217,7 +241,7 @@ fn entry(device: &gst::Device) -> Option<Entry> {
 
 // WASAPI2 also exposes render endpoints as loopback sources. They are system audio, never microphones; admitting
 // their virtual default could capture the speaker instead of the user's microphone.
-fn device_kind(factory: &str, properties: Option<&gst::StructureRef>) -> Option<(DeviceKind, &'static str)> {
+fn device_kind(factory: &str, properties: Option<&gst::StructureRef>) -> Option<(DeviceKind, Option<&'static str>)> {
     if properties
         .and_then(|p| p.get::<bool>("wasapi2.device.loopback").ok())
         .unwrap_or(false)
@@ -225,9 +249,12 @@ fn device_kind(factory: &str, properties: Option<&gst::StructureRef>) -> Option<
         return None;
     }
     match factory {
-        "wasapi2src" => Some((DeviceKind::Microphone, "device")),
-        "wasapi2sink" => Some((DeviceKind::Speaker, "device")),
-        "mfvideosrc" => Some((DeviceKind::Camera, "device-path")),
+        "wasapi2src" => Some((DeviceKind::Microphone, Some("device"))),
+        "wasapi2sink" => Some((DeviceKind::Speaker, Some("device"))),
+        "mfvideosrc" => Some((DeviceKind::Camera, Some("device-path"))),
+        "osxaudiosrc" => Some((DeviceKind::Microphone, Some("unique-id"))),
+        "osxaudiosink" => Some((DeviceKind::Speaker, Some("unique-id"))),
+        "avfvideosrc" => Some((DeviceKind::Camera, None)),
         _ => None,
     }
 }

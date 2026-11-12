@@ -1,4 +1,5 @@
 //! M0 Task 16: the synthetic video source and the benchmark's statistics, without a compositor.
+#![cfg(target_os = "linux")]
 
 use std::time::Duration;
 

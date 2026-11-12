@@ -127,12 +127,7 @@ fn changed_after_removal(devices: &WindowsDevices, kind: DeviceKind, current: Op
 }
 
 fn default_element(kind: DeviceKind) -> Result<gst::Element, DeviceError> {
-    let factory = match kind {
-        DeviceKind::Microphone => "wasapi2src",
-        DeviceKind::Speaker => "wasapi2sink",
-        DeviceKind::Camera => "mfvideosrc",
-    };
-    gst::ElementFactory::make(factory).build().map_err(error)
+    gst::ElementFactory::make(super::factory(kind)).build().map_err(error)
 }
 
 fn audio_caps() -> gst::Caps {

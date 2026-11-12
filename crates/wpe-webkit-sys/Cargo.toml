@@ -12,7 +12,7 @@ license = "MIT"
 name = "wpe-webkit-2.0"
 version = "2.54"
 
-[dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
 glib-sys.workspace = true
 gobject-sys.workspace = true

@@ -64,7 +64,13 @@ fn cloexec(owned: &OwnedFd, fd: RawFd) -> Result<(), AdoptError> {
 /// See [`AdoptError`].
 pub fn adopt_socket(fd: RawFd) -> Result<UnixStream, AdoptError> {
     let owned = adopt(fd)?;
+    #[cfg(not(target_vendor = "apple"))]
     let domain = sockopt::socket_domain(&owned).map_err(|_| AdoptError::NotAUnixStream { fd })?;
+    // macOS has no `SO_DOMAIN`: the socket's own address says its family
+    #[cfg(target_vendor = "apple")]
+    let domain = rustix::net::getsockname(&owned)
+        .map_err(|_| AdoptError::NotAUnixStream { fd })?
+        .address_family();
     let kind = sockopt::socket_type(&owned).map_err(|_| AdoptError::NotAUnixStream { fd })?;
     if domain != AddressFamily::UNIX || kind != SocketType::STREAM {
         return Err(AdoptError::NotAUnixStream { fd });

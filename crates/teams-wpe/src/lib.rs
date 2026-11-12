@@ -39,6 +39,7 @@
 //!   commits and reports the caret's area).
 //!
 //! Not here: accessibility (an offscreen page has no AT-SPI bridge into the consumer's tree).
+#![cfg(target_os = "linux")]
 
 mod engine;
 mod host;

@@ -4,6 +4,8 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _, PermissionsExt as _};
 use std::os::unix::net::UnixListener;
+#[cfg(target_vendor = "apple")]
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use teams_ctl::{ClientError, CodecError, connect_stream};
@@ -76,6 +78,10 @@ impl Socket {
 
     pub fn wake(&self) {
         let _ = rustix::net::shutdown(&self.listener, rustix::net::Shutdown::Both);
+        // macOS doesn't let a listening socket be shut down, so its blocked `accept` stays: a connection of this
+        // process's own returns it, and the stopped loop closes that connection and ends
+        #[cfg(target_vendor = "apple")]
+        let _ = UnixStream::connect(&self.path);
     }
 
     pub fn cleanup(&self) {

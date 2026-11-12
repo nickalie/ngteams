@@ -26,6 +26,7 @@
 //! Frame pacing: weston's headless output repaints on a timer at its refresh rate (60 Hz unless set), the nested niri
 //! draws when weston's frame callback arrives, and GPUI draws when niri's frame callback arrives. Nothing scans out
 //! to a display, so there's no vblank: the cadence is weston's timer.
+#![cfg(target_os = "linux")]
 
 pub mod bus;
 pub mod clipboard;

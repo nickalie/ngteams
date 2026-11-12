@@ -12,7 +12,7 @@ license = "MIT"
 name = "ngteams-web"
 path = "src/bin/ngteams-web.rs"
 
-[dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 teams-wpe-client.workspace = true
 # built with the worker: the module WebKit loads into the sign-in window's web processes
 teams-signin-extension.workspace = true
@@ -28,7 +28,7 @@ log.workspace = true
 rustix = { workspace = true, features = ["event", "fs", "net"] }
 serde_json.workspace = true
 
-[dev-dependencies]
+[target.'cfg(target_os = "linux")'.dev-dependencies]
 tempfile.workspace = true
 ui-sandbox.workspace = true
 

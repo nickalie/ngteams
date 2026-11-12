@@ -322,6 +322,8 @@ fn a_swap_that_cant_finish_puts_the_installed_version_back() {
     );
 }
 
+// an AppImage is Linux's
+#[cfg(target_os = "linux")]
 #[test]
 fn an_appimage_is_replaced_by_its_newer_file() {
     let home = tempfile::tempdir().unwrap();

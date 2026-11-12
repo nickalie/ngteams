@@ -1,32 +1,33 @@
 //! Video painting without exposing platform textures to call tiles or inline players. Linux keeps its persistent
-//! external texture and GPU completion. Windows uses GPUI's BGRA image path, with one uploaded image per visible
-//! surface, evicted on replacement and when the element disappears. Windows traces submission, not GPU completion:
-//! GPUI's image API cannot report the latter. A hidden or failed paint never counts as submitted.
+//! external texture and GPU completion (the vendored GPUI's Linux renderer). Windows and macOS use GPUI's BGRA image
+//! path (`images.rs`), with one uploaded image per visible surface, evicted on replacement and when the element
+//! disappears. They trace submission, not GPU completion: GPUI's image API cannot report the latter. A hidden or failed
+//! paint never counts as submitted.
 
 use gpui::{App, Bounds, Pixels, Window};
 use std::sync::Arc;
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub(crate) use gpui::{PixelFrame as Frame, PixelSurface as Surface};
-#[cfg(windows)]
-#[path = "video_surface/windows.rs"]
-mod windows;
-#[cfg(windows)]
-pub(crate) use windows::{Frame, Surface};
+#[cfg(not(target_os = "linux"))]
+#[path = "video_surface/images.rs"]
+mod images;
+#[cfg(not(target_os = "linux"))]
+pub(crate) use images::{Frame, Surface};
 
 pub(crate) enum Outcome {
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     Presented,
-    #[cfg(windows)]
+    #[cfg(not(target_os = "linux"))]
     Submitted,
 }
 
 impl Outcome {
     pub(crate) fn change(&self) -> &'static str {
         match self {
-            #[cfg(unix)]
+            #[cfg(target_os = "linux")]
             Self::Presented => "presented",
-            #[cfg(windows)]
+            #[cfg(not(target_os = "linux"))]
             Self::Submitted => "submitted",
         }
     }
@@ -39,7 +40,7 @@ pub(crate) fn frame(
     pixels: &Arc<Vec<u8>>,
     complete: impl FnOnce(Outcome) + Send + 'static,
 ) -> Arc<Frame> {
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
         Arc::new(Frame {
             surface: Arc::clone(surface),
@@ -60,20 +61,20 @@ pub(crate) fn frame(
             }),
         })
     }
-    #[cfg(windows)]
+    #[cfg(not(target_os = "linux"))]
     {
-        windows::frame(surface, serial, (width, height), pixels, complete)
+        images::frame(surface, serial, (width, height), pixels, complete)
     }
 }
 
 pub(crate) fn paint(frame: &Arc<Frame>, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
         let _ = cx;
         window.paint_external_surface(bounds, gpui::ExternalSurface::Pixels(Arc::clone(frame)));
     }
-    #[cfg(windows)]
-    windows::paint(frame, bounds, window, cx);
+    #[cfg(not(target_os = "linux"))]
+    images::paint(frame, bounds, window, cx);
 }
 
 /// Fit a frame inside its bounds without stretching it.

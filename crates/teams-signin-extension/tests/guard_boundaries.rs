@@ -1,6 +1,7 @@
 //! Synthetic guard replies on private Unix sockets; no `WebKit` process or tenant requests.
 
 #![cfg(test)]
+#![cfg(target_os = "linux")]
 
 use std::io::{BufRead as _, BufReader, Write as _};
 use std::os::unix::net::UnixListener;

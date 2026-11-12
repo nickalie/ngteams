@@ -296,7 +296,7 @@ mod tests {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 mod linux;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub use linux::{BusTray, launcher_properties, launcher_uri};

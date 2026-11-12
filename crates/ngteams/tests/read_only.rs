@@ -22,7 +22,7 @@ use clap::Parser as _;
 use ngteams::accounts_file::PersonalPaths;
 use ngteams::cli::{Cli, ReadOnlyMode};
 use ngteams::read_only;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use ngteams::read_only::window_allowed;
 use ngteams::snapshot;
 use serde_json::{Value, json};
@@ -306,7 +306,7 @@ fn a_read_only_account_opens_no_push_channel_and_no_calling() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn the_window_refuses_anywhere_but_the_ui_sandbox() {
     let sandbox = Some(OsStr::new("/tmp/ui-sandbox-made-up"));

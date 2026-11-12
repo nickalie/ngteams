@@ -52,7 +52,7 @@ extern "C" fn stop_asked(_: libc::c_int) {
     STOP.store(true, Ordering::SeqCst);
 }
 
-fn main() -> ExitCode {
+pub(super) fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some((command, rest)) = args.split_first() else {
         eprintln!("{USAGE}");

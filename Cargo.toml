@@ -150,7 +150,9 @@ getrandom = "0.4.3"
 # GPUI as agterm-rs takes it: the crates.io `gpui-pre` snapshot, pinned exactly so agterm-rs's patches apply as they
 # are. Wayland only: without `x11`, GPUI's Linux platform has no X11 backend to fall back to.
 gpui-pre = { version = "=0.3.9", default-features = false, features = ["wayland"] }
-gpui-pre-platform = { version = "=0.3.9", default-features = false, features = ["wayland"] }
+# `runtime_shaders` acts on macOS only: Metal compiles GPUI's shaders when the app starts instead of at build time,
+# so a build needs no separately downloaded Metal Toolchain (Xcode 26 and later leave it out).
+gpui-pre-platform = { version = "=0.3.9", default-features = false, features = ["wayland", "runtime_shaders"] }
 # The sign-in window's engine (`teams-wpe`) and its web process extension: GLib and GIO as WPE WebKit 2.54 links
 # them, through gtk-rs; the extension calls `g_variant_*` and `g_signal_connect_data` by hand on the -sys crates
 gio = "0.22.10"
@@ -243,9 +245,10 @@ tract-onnx = { version = "0.23.9", default-features = false }
 # ... and the same model on the GPU where there is one: Burn (Tracel; MIT/Apache-2.0), pure Rust, its wgpu backend
 # (Vulkan; kernel fusion, no autotune: autotuning a model this small costs a minute of GPU on its first run) through
 # CubeCL. The model's code and weights are generated from the ONNX at build time by burn-onnx (teams-media's build
-# script). wgpu here is its own version, beside GPUI's. Their logs under the `debug` cap (crates/teams-log) name the
+# script). wgpu here is its own version, beside GPUI's. The graphics API is chosen per target in teams-media: Vulkan on
+# Linux and Windows, Metal on macOS (Vulkan there would need the Vulkan SDK at build time). Their logs under the `debug` cap (crates/teams-log) name the
 # adapter's features and the kernels compiled; the kernels' sources are `trace`, compiled out: no frame data.
-burn = { version = "0.22.0", default-features = false, features = ["std", "wgpu", "vulkan", "fusion"] }
+burn = { version = "0.22.0", default-features = false, features = ["std", "wgpu", "fusion"] }
 burn-onnx = { version = "0.22.0", default-features = false, features = ["import"] }
 burn-store = { version = "0.22.1", default-features = false, features = ["std"] }
 cubecl = { version = "0.11.3", default-features = false, features = ["wgpu"] }
@@ -277,6 +280,15 @@ interprocess = { version = "2.4.6", default-features = false }
 # Native Windows Credential Manager, selected explicitly without a process-wide default keyring.
 keyring-core = "1.0.1"
 windows-native-keyring-store = { version = "1.1.0", default-features = false }
+# macOS's AppKit, Foundation and WebKit (the sign-in worker's window and page, the desktop's dock and menu bar items):
+# objc2's bindings at the versions GPUI's macOS platform already links (MIT); no logging of their own
+block2 = "0.6.2"
+objc2 = "0.6.5"
+objc2-app-kit = "0.3.2"
+objc2-foundation = "0.3.2"
+objc2-web-kit = "0.3.2"
+# The macOS Keychain (generic password items): the version rustls-platform-verifier already links on macOS; no logging.
+security-framework = "3.7.0"
 # the virtual keyboard's keymap and its text-to-key table: the version GPUI already links, without its features
 xkbcommon = { version = "0.8.0", default-features = false }
 # D-Bus for the app's notifications and tray item (M2 Task 14), the personal build's camera portal (M3 Task 20) and the

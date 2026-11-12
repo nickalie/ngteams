@@ -1,6 +1,7 @@
-//! GPUI's native Windows renderer uploads BGRA images to its sprite atlas. Element-owned state holds the latest
-//! image and a release observer evicts its atlas allocation even when the tile/player disappears without another
-//! paint. Repeated draws of one serial reuse the same image, rather than allocating on every layout or repaint.
+//! GPUI's Windows (DirectX) and macOS (Metal) renderers upload BGRA images to their sprite atlas. Element-owned state
+//! holds the latest image and a release observer evicts its atlas allocation even when the tile/player disappears
+//! without another paint. Repeated draws of one serial reuse the same image, rather than allocating on every layout or
+//! repaint.
 
 use super::Outcome;
 use gpui::{App, AppContext as _, Bounds, Corners, ElementId, Entity, Pixels, RenderImage, Window};
