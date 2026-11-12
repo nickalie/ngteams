@@ -363,6 +363,57 @@ fn a_staged_group_call_tells_why_it_is_refused_and_keeps_the_busy_refusal() {
 }
 
 #[test]
+fn notes_and_self_only_chats_keep_the_engines_permanent_call_refusal() {
+    for chat in [teams_ui::chat_list::NOTES, TRIO, "19:unknown@thread.v2"] {
+        let rig = calling();
+        rig.core.listing.lock().unwrap().favorites = Some(vec![teams_ui::chat_list::NOTES.to_owned()]);
+        rig.core
+            .members
+            .lock()
+            .unwrap()
+            .insert(TRIO.to_owned(), vec![Member::new(LAB_A, None)]);
+        rig.core
+            .call_answers
+            .lock()
+            .unwrap()
+            .push_back(Err(EngineError::Call(CallActionError::NotAChat)));
+        let (trace, written) = trace();
+        let (_shell, cx) = shell_window(&rig, Some(chat), trace);
+        registered(&rig);
+        assert!(!drawn(cx, "chat-call"));
+        cx.simulate_keystrokes("ctrl-shift-c");
+        cx.run_until_parked();
+        assert_eq!(actions(&rig), [CallAction::Call { chat: chat.into() }]);
+        assert_eq!(kinds(&lines(&written, "call", "asked")[0]), ["call"]);
+        assert_eq!(kinds(&lines(&written, "call", "refused")[0]), ["call", "not-a-chat"]);
+        let told = rig.cx.read(|cx| calls_of(&rig).read(cx).refused().cloned()).unwrap();
+        assert_eq!(told.text, EngineError::Call(CallActionError::NotAChat).to_string());
+        assert!(drawn(cx, "call-after"));
+    }
+}
+
+#[test]
+fn a_staged_meeting_call_waits_for_its_members() {
+    let rig = calling();
+    rig.core
+        .conversations
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|chat| chat.id == TRIO)
+        .unwrap()
+        .kind = ConversationKind::Meeting;
+    rig.core.members.lock().unwrap().remove(TRIO);
+    let (trace, written) = trace();
+    let (shell, cx) = shell_window(&rig, Some(TRIO), trace);
+    registered(&rig);
+    cx.update(|_, cx| shell.update(cx, |shell, cx| shell.ask_call(Ask::Call { chat: TRIO.into() }, cx)));
+    cx.run_until_parked();
+    assert!(actions(&rig).is_empty());
+    assert_eq!(kinds(&lines(&written, "call", "refused")[0]), ["call", "no-roster"]);
+}
+
+#[test]
 fn roster_arrival_clears_the_switcher_highlight_before_enter_can_call() {
     let rig = calling();
     let members = rig.core.members.lock().unwrap().remove(TRIO).unwrap();

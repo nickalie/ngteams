@@ -69,7 +69,7 @@ use crate::call_view::CallBar;
 use crate::calls::{self, Ask, MeetingToJoin};
 use crate::channel_dialog::{ChannelDialog, ChannelDialogEvent};
 use crate::channel_view::{ChannelView, ChannelViewEvent};
-use crate::chat_list::{ChatList, ChatListEvent};
+use crate::chat_list::{ChatList, ChatListEvent, RowKind};
 use crate::chat_view::{self, ChatView, ChatViewEvent};
 use crate::create_team_more::{CreateTeamMore, CreateTeamMoreEvent};
 use crate::first_run::FirstRun;
@@ -776,7 +776,11 @@ impl Shell {
         }
         if let Ask::Call { chat } = &ask
             && !self.models.calls.read(cx).busy()
-            && !self.list.read(cx).can_call(chat)
+            && self
+                .list
+                .read(cx)
+                .row(chat)
+                .is_some_and(|row| matches!(row.kind, RowKind::Group | RowKind::Meeting) && row.members == 0)
         {
             calls::refuse_here(&self.models.calls, &self.trace, &ask, "no-roster", cx);
             return;
