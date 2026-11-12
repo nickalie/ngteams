@@ -181,6 +181,9 @@ pub struct ChatRow {
     /// How many people the store lists in the chat, the account among them (0 when it lists none: a channel, the
     /// account's notes); a group chat's header counts them.
     pub members: usize,
+    /// A group chat without a topic: its other members' first names as Teams' Activity says where an item happened
+    /// ("Chat with Dmitry, Nikita"); none for any other chat.
+    pub chat_with: Option<SharedString>,
     /// A channel's team's name, whose initial its avatar shows (none for a chat).
     pub team: Option<SharedString>,
     /// The last message's first line.
@@ -329,6 +332,8 @@ struct Naming {
     faces: Vec<HalfFace>,
     /// The members whose names the name or the avatar read.
     people: Vec<String>,
+    /// A group chat without a topic: its members' first names, comma-joined ([`ChatRow::chat_with`]).
+    chat_with: Option<SharedString>,
 }
 
 /// What someone without a name is called: never their MRI.
@@ -384,6 +389,7 @@ async fn name_of(core: &dyn Core, conversation: &Conversation, members: &[Member
             partner: None,
             faces: Vec::new(),
             people: Vec::new(),
+            chat_with: None,
         };
     }
     if others.is_empty() {
@@ -394,6 +400,7 @@ async fn name_of(core: &dyn Core, conversation: &Conversation, members: &[Member
             partner: None,
             faces: Vec::new(),
             people: Vec::new(),
+            chat_with: None,
         };
     }
     let mut shown: Vec<(String, Option<Shown>)> = Vec::new();
@@ -412,22 +419,16 @@ async fn name_of(core: &dyn Core, conversation: &Conversation, members: &[Member
             partner: has_presence(&mri).then_some(mri),
             faces: Vec::new(),
             people,
+            chat_with: None,
         };
     }
     let faces = if kind == RowKind::Group && others.len() > 1 {
-        shown
-            .iter()
-            .take(2)
-            .map(|(_, person)| HalfFace {
-                name: person.as_ref().and_then(|person| person.name.clone()),
-                picture: person.as_ref().and_then(|person| person.picture.clone()),
-            })
-            .collect()
+        half_faces(&shown)
     } else {
         Vec::new()
     };
-    let (name, named) = match topic {
-        Some(topic) => (topic.to_owned(), true),
+    let (name, named, chat_with) = match topic {
+        Some(topic) => (topic.to_owned(), true, None),
         None => members_named(&shown, others.len().saturating_sub(NAMED_MEMBERS)),
     };
     Naming {
@@ -437,12 +438,26 @@ async fn name_of(core: &dyn Core, conversation: &Conversation, members: &[Member
         partner: None,
         faces,
         people,
+        chat_with,
     }
 }
 
+/// A group chat's avatar: its first two members `shown`, half each.
+fn half_faces(shown: &[(String, Option<Shown>)]) -> Vec<HalfFace> {
+    shown
+        .iter()
+        .take(2)
+        .map(|(_, person)| HalfFace {
+            name: person.as_ref().and_then(|person| person.name.clone()),
+            picture: person.as_ref().and_then(|person| person.picture.clone()),
+        })
+        .collect()
+}
+
 /// A group chat without a topic by the first names of the members `shown` (alphabetically, `more` others counted),
-/// and whether every one of them had a name.
-fn members_named(shown: &[(String, Option<Shown>)], more: usize) -> (String, bool) {
+/// whether every one of them had a name, and the names as an activity item's place lists them
+/// ([`ChatRow::chat_with`]: "Dmitry, Nikita").
+fn members_named(shown: &[(String, Option<Shown>)], more: usize) -> (String, bool, Option<SharedString>) {
     let all_named = shown
         .iter()
         .all(|(_, person)| person.as_ref().is_some_and(|p| p.name.is_some()));
@@ -456,7 +471,12 @@ fn members_named(shown: &[(String, Option<Shown>)], more: usize) -> (String, boo
         )
         .collect();
     names.sort_by_key(|name| name.to_lowercase());
-    (joined(&names, more), all_named)
+    let listed = if more > 0 {
+        joined(&names, more)
+    } else {
+        names.join(", ")
+    };
+    (joined(&names, more), all_named, Some(listed.into()))
 }
 
 /// The account's own notes' row ([`NOTES`]): "<name> (You)" with its own picture and presence, its preview from the
@@ -480,6 +500,7 @@ pub async fn notes_row(core: &dyn Core) -> ChatRow {
         partner: Some(me.clone()),
         faces: Vec::new(),
         members: 0,
+        chat_with: None,
         team: None,
         preview,
         previewed,
@@ -507,6 +528,7 @@ pub async fn channel_row(core: &dyn Core, team: &Team, channel: &TeamChannel, la
         partner: None,
         faces: Vec::new(),
         members: 0,
+        chat_with: None,
         team: Some(team.name.clone().into()),
         preview,
         previewed,
@@ -618,6 +640,7 @@ async fn build(core: &dyn Core, conversation: &Conversation) -> (ChatRow, Vec<St
         partner,
         faces,
         people,
+        chat_with,
     } = name_of(core, conversation, &members).await;
     let (preview, previewed) = previewing(&page, core.me());
     let row = ChatRow {
@@ -628,6 +651,7 @@ async fn build(core: &dyn Core, conversation: &Conversation) -> (ChatRow, Vec<St
         partner,
         faces,
         members: members.len(),
+        chat_with,
         team: None,
         preview,
         previewed,

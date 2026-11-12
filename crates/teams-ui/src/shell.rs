@@ -480,8 +480,9 @@ impl Shell {
         }
     }
 
-    /// The Activity pane, and what it tells followed: an item opens its conversation at its message, a missed call's
-    /// Chat and Call reach the caller's 1:1 chat.
+    /// The Activity pane, and what it tells followed: an item opens its conversation at its message (a toast says a
+    /// chat the list doesn't have, left or deleted, isn't available), a missed call's Chat and Call reach the caller's
+    /// 1:1 chat.
     fn activity_pane(
         core: &Arc<dyn Core>,
         models: &Models,
@@ -500,6 +501,13 @@ impl Shell {
         let view = cx.new(|cx| ActivityView::new(parts, window, cx));
         // the rail's count follows the feed
         let events = cx.subscribe_in(&view, window, |this: &mut Self, _, event, window, cx| match event {
+            // a chat left or deleted isn't opened as an empty one to write in
+            ActivityViewEvent::Open(target)
+                if !teams_proto::is_team_thread_id(&target.conversation)
+                    && this.list.read(cx).row(&target.conversation).is_none() =>
+            {
+                this.show_toast(crate::activity_view::CHAT_GONE, cx);
+            }
             ActivityViewEvent::Open(target) => this.open_message(target.clone(), window, cx),
             ActivityViewEvent::ChatWith(mri) => {
                 this.chat_with(mri, window, cx);

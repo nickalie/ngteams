@@ -275,13 +275,13 @@ async fn activity(
     let words = search.unwrap_or_default();
     let limit = count(limit, usize::MAX, usize::MAX);
     let feed = core.activity().await.map_err(|error| engine_error(&error))?;
-    let mut places = HashMap::new();
+    let mut rows = HashMap::new();
     let mut items = Vec::new();
     for item in feed.items.iter().filter(|item| feed.keeps(filter, item)) {
         if items.len() >= limit {
             break;
         }
-        let place = place(core, item, &mut places).await;
+        let place = place(core, item, &mut rows).await;
         if !item.matches(words)
             && !place
                 .as_deref()
@@ -304,26 +304,29 @@ async fn activity(
     Ok(Response::Activity { items })
 }
 
-/// Where an item happened, as the pane's third line says it ([`activity_view::ActivityView::place`]): a channel by the name the item
-/// carries, a group chat by the chat list's name of it (`places` keeps each one found).
-async fn place(core: &dyn Core, item: &ActivityItem, places: &mut HashMap<String, Option<String>>) -> Option<String> {
+/// Where an item happened, as the pane's third line says it ([`activity_view::ActivityView::place`]): a channel by the
+/// name the item carries, a chat as [`activity_view::chat_place`] says it from the chat list's row of it (`rows`
+/// keeps each one built).
+async fn place(
+    core: &dyn Core,
+    item: &ActivityItem,
+    rows: &mut HashMap<String, Option<chat_list::ChatRow>>,
+) -> Option<String> {
     if matches!(item.kind, ActivityKind::MissedCall | ActivityKind::Voicemail) {
         return Some(activity_view::TEAMS_CALL.to_owned());
     }
     let Some(thread) = item.thread.as_deref().filter(|_| !item.in_channel()) else {
         return item.topic.clone();
     };
-    if thread.ends_with("@unq.gbl.spaces") {
-        return Some(activity_view::IN_CHAT_WITH_YOU.to_owned());
-    }
-    if !places.contains_key(thread) {
-        let name = match core.conversation(thread.to_owned()).await {
-            Ok(Some(conversation)) => Some(chat_list::build_row(core, &conversation).await.name.to_string()),
+    if !rows.contains_key(thread) && !thread.ends_with("@unq.gbl.spaces") {
+        let row = match core.conversation(thread.to_owned()).await {
+            Ok(Some(conversation)) => Some(chat_list::build_row(core, &conversation).await),
             _ => None,
         };
-        places.insert(thread.to_owned(), name.filter(|name| !name.is_empty()));
+        rows.insert(thread.to_owned(), row);
     }
-    places.get(thread).cloned().flatten().or_else(|| item.topic.clone())
+    let place = activity_view::chat_place(item, rows.get(thread).and_then(Option::as_ref));
+    Some(place).filter(|place| !place.is_empty())
 }
 
 async fn unread(account: &Addressed, cx: &mut AsyncApp) -> Result<Response, CtlError> {

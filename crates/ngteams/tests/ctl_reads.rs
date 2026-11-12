@@ -32,6 +32,8 @@ const ONE_TO_ONE: &str = "19:00000000-0000-4000-8000-0000000000b1_00000000-0000-
 const PROJECT: &str = "19:00000000000000000000000000project@thread.v2";
 const TRIO_ONE: &str = "19:0000000000000000000000000000trio1@thread.v2";
 const TRIO_TWO: &str = "19:0000000000000000000000000000trio2@thread.v2";
+/// A chat the feed names that the store doesn't have.
+const GONE: &str = "19:00000000000000000000000000000gone@thread.v2";
 
 fn now_ms() -> i64 {
     i64::try_from(
@@ -186,7 +188,8 @@ fn feed_item(store: &mut Store, at: i64, (kind, sub): (&str, &str), from: (&str,
 }
 
 /// The seeded store with a feed: Cee's mention in "Project" (unread), Bee's reaction in the 1:1 chat (read), Bee's
-/// missed call (unread), the newest first in that order.
+/// missed call (unread), Cee's reply in the trio without a topic (read) and Cee's mention in a chat the store doesn't
+/// have (left or deleted; read), the newest first in that order.
 fn seed_activity(store: &mut Store) {
     seed(store);
     store
@@ -221,6 +224,15 @@ fn seed_activity(store: &mut Store) {
         (BEE, "Bee Example"),
         ONE_TO_ONE,
         false,
+    );
+    feed_item(store, 6000, ("reply", ""), (CEE, "Cee Example"), TRIO_ONE, true);
+    feed_item(
+        store,
+        5500,
+        ("mentionInChat", "person"),
+        (CEE, "Cee Example"),
+        GONE,
+        true,
     );
 }
 
@@ -570,10 +582,29 @@ fn search_finds_the_listed_chats_messages_and_members_are_named() {
 type Row<'a> = (&'a str, &'a str, &'a str, Option<&'a str>, Option<&'a str>, bool);
 
 #[test]
+fn activity_places_a_group_without_a_topic_by_its_members_and_a_gone_chat_by_who_wrote() {
+    let app = App::seeded(seed_activity);
+    let places: Vec<(String, Option<String>)> = app
+        .activity(None, None, None)
+        .into_iter()
+        .skip(3)
+        .map(|item| (item.id, item.place))
+        .collect();
+    assert_eq!(
+        places,
+        [
+            ("6000".to_owned(), Some("Chat with Bee, Cee".to_owned())),
+            ("5500".to_owned(), Some("Chat with Cee".to_owned())),
+        ],
+        "as Teams' Activity says them, not the chat list's \"Bee and Cee\""
+    );
+}
+
+#[test]
 fn activity_lists_the_feed_as_the_pane_does_and_its_chips_and_search_narrow_it() {
     let app = App::seeded(seed_activity);
     let items = app.activity(None, None, None);
-    let rows: Vec<Row> = items
+    let rows: Vec<Row> = items[..3]
         .iter()
         .map(|item| {
             (
@@ -624,7 +655,11 @@ fn activity_lists_the_feed_as_the_pane_does_and_its_chips_and_search_narrow_it()
     assert_eq!(ids(app.activity(Some("unread"), None, None)), ["9000", "7000"]);
     assert_eq!(ids(app.activity(Some("reactions"), None, None)), ["8000"]);
     assert_eq!(ids(app.activity(Some("all"), None, Some(1))), ["9000"]);
-    assert_eq!(ids(app.activity(None, Some("bee"), None)), ["8000", "7000"], "by title");
+    assert_eq!(
+        ids(app.activity(None, Some("bee"), None)),
+        ["8000", "7000", "6000"],
+        "by title, and the trio's by place"
+    );
     assert_eq!(ids(app.activity(None, Some("project"), None)), ["9000"], "by place");
     assert_eq!(
         ids(app.activity(None, Some("preview 8000"), None)),

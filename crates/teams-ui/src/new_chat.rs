@@ -368,6 +368,7 @@ impl NewChat {
             partner: None,
             faces,
             members: self.people.len() + 1,
+            chat_with: None,
             team: None,
             preview: SharedString::default(),
             previewed: None,

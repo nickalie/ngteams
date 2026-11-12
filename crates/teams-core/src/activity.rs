@@ -392,9 +392,16 @@ impl ActivityFeed {
     /// How many unread items are newer than the feed's horizon: what the rail's badge counts.
     #[must_use]
     pub fn unseen(&self) -> usize {
+        self.unseen_by(|item| self.is_read(item))
+    }
+
+    /// How many items newer than the feed's horizon `read` doesn't call read: [`Self::unseen`] for a view that also
+    /// knows the marks it made and the items it removed, before the store has them.
+    #[must_use]
+    pub fn unseen_by(&self, read: impl Fn(&ActivityItem) -> bool) -> usize {
         self.items
             .iter()
-            .filter(|item| !self.is_read(item) && self.seen_ms.is_none_or(|seen| item.at_ms > seen))
+            .filter(|item| !read(item) && self.seen_ms.is_none_or(|seen| item.at_ms > seen))
             .count()
     }
 

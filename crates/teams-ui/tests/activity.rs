@@ -7,19 +7,23 @@ mod common;
 
 use std::sync::Arc;
 
-use common::{LAB_B, Rig};
+use common::{LAB_A, LAB_B, Rig};
 use gpui::{AppContext as _, Entity, Modifiers, TestAppContext, VisualTestContext};
 use serde_json::json;
 use teams_core::Action;
 use teams_core::activity::{ActivityFeed, ActivityFilter, FEED};
-use teams_store::Message;
+use teams_store::{Conversation, ConversationKind, Member, Message};
 use teams_ui::ViewTrace;
-use teams_ui::activity_view::{ActivityView, activity_time, meeting_span};
+use teams_ui::activity_view::{ActivityView, CHAT_GONE, activity_time, meeting_span};
 use teams_ui::settings::{Settings, SettingsModel};
 use teams_ui::shell::{ListPlace, Main, Shell, ShellParts};
 
 const LAB_C: &str = "8:orgid:00000000-0000-4000-8000-00000000000c";
 const GROUP: &str = "19:made-up-group@thread.v2";
+/// The 1:1 chat of a (the account) and b.
+const AB: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-8000-00000000000b@unq.gbl.spaces";
+/// A chat the account left (or deleted): the feed still names it, the store doesn't have it.
+const GONE: &str = "19:made-up-gone@thread.v2";
 
 fn item(id: i64, kind: &str, sub: &str, (from, name): (&str, &str), message: u64, read: bool) -> Message {
     let activity = json!({
@@ -69,11 +73,53 @@ fn shell_window(rig: &Rig) -> (Entity<Shell>, &'static mut VisualTestContext) {
     (shell, cx)
 }
 
+/// a's store: the group chat without a topic (a, b and c, made-up names) and the 1:1 chat with b.
 fn rig() -> Rig {
     let rig = Rig::start();
     rig.cx.update(teams_ui::window::init);
     *rig.core.activity.lock().unwrap() = feed();
+    let chat = |id: &str, kind| Conversation {
+        id: id.to_owned(),
+        kind,
+        topic: None,
+        version: 1,
+        last_activity: Some(1),
+    };
+    rig.core.conversations.lock().unwrap().extend([
+        chat(GROUP, ConversationKind::Group),
+        chat(AB, ConversationKind::OneToOne),
+    ]);
+    let members = |mris: &[&str]| mris.iter().map(|mri| Member::new(mri, None)).collect::<Vec<_>>();
+    let mut stored = rig.core.members.lock().unwrap();
+    stored.insert(GROUP.to_owned(), members(&[LAB_A, LAB_B, LAB_C]));
+    stored.insert(AB.to_owned(), members(&[LAB_A, LAB_B]));
+    drop(stored);
+    let mut names = rig.core.names.lock().unwrap();
+    names.insert(LAB_B.to_owned(), "Nikita Gavrilin".to_owned());
+    names.insert(LAB_C.to_owned(), "Dmitry Zolin".to_owned());
+    drop(names);
     rig
+}
+
+fn in_chat(mut message: Message, chat: &str) -> Message {
+    let mut properties: serde_json::Value = serde_json::from_str(message.properties.as_deref().unwrap()).unwrap();
+    properties["activity"]["sourceThreadId"] = json!(chat);
+    message.properties = Some(properties.to_string());
+    message
+}
+
+fn place(pane: &Entity<ActivityView>, id: &str, cx: &mut VisualTestContext) -> String {
+    cx.update(|_, cx| {
+        let pane = pane.read(cx);
+        pane.place(pane.feed().item(id).expect("the item"), cx)
+    })
+}
+
+fn read(pane: &Entity<ActivityView>, id: &str, cx: &mut VisualTestContext) -> bool {
+    cx.update(|_, cx| {
+        let pane = pane.read(cx);
+        pane.is_read(pane.feed().item(id).expect("the item"))
+    })
 }
 
 fn drawn(cx: &mut VisualTestContext, selector: &str) -> bool {
@@ -617,4 +663,134 @@ fn a_seen_horizon_already_advanced_elsewhere_reloads_without_a_failure_toast() {
     assert_eq!(cx.update(|_, cx| pane.read(cx).feed().seen_ms), Some(3000));
     assert_eq!(cx.update(|_, cx| shell.read(cx).toast().cloned()), None);
     assert_eq!(writes(&rig), [Action::ActivitySeen]);
+}
+
+#[test]
+fn an_item_read_on_arrival_in_the_chat_on_screen_is_never_counted() {
+    let rig = rig();
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_chat(GROUP.to_owned(), window, cx)));
+    assert!(drawn(cx, "rail-activity"));
+    assert_eq!(cx.update(|_, cx| pane.read(cx).unseen()), 0);
+    // a mention arrives for the chat on screen: read at once, its change not back yet (the feed still says unread)
+    let mut messages = vec![item(4000, "mentionInChat", "person", (LAB_B, "Lab B"), 700, false)];
+    messages.extend([
+        item(1000, "mentionInChat", "person", (LAB_B, "Lab B"), 500, true),
+        item(2000, "reactionInChat", "heart", (LAB_C, "Lab C"), 600, true),
+        item(3000, "call", "missedCall", (LAB_B, "Lab B"), 1, true),
+    ]);
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(&messages, Some(1500), None);
+    cx.update(|_, cx| pane.update(cx, ActivityView::reload));
+    cx.run_until_parked();
+    assert!(writes(&rig).contains(&Action::ActivityRead {
+        item: "4000".to_owned(),
+        read: true
+    }));
+    assert!(read(&pane, "4000", cx));
+    assert_eq!(cx.update(|_, cx| pane.read(cx).unseen()), 0);
+    assert!(!drawn(cx, "rail-activity-count"));
+    // a removed item isn't counted either
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(
+        &[in_chat(
+            item(5000, "mentionInChat", "person", (LAB_B, "Lab B"), 800, false),
+            GONE,
+        )],
+        Some(1500),
+        None,
+    );
+    cx.update(|_, cx| pane.update(cx, ActivityView::reload));
+    cx.run_until_parked();
+    assert_eq!(cx.update(|_, cx| pane.read(cx).unseen()), 1);
+    cx.update(|_, cx| pane.update(cx, |pane, cx| pane.remove("5000", cx)));
+    assert_eq!(cx.update(|_, cx| pane.read(cx).unseen()), 0);
+}
+
+#[test]
+fn an_item_whose_chat_is_gone_is_read_and_says_so_without_opening_a_chat() {
+    let rig = rig();
+    let mut messages = vec![in_chat(
+        item(4000, "mentionInChat", "person", (LAB_B, "Nikita Gavrilin"), 700, false),
+        GONE,
+    )];
+    messages.extend([item(2000, "reactionInChat", "heart", (LAB_C, "Lab C"), 600, false)]);
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(&messages, None, None);
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    click(cx, "rail-activity");
+    // its third line: the person behind it, as a chat with them
+    assert_eq!(place(&pane, "4000", cx), "Chat with Nikita");
+    click(cx, "activity-item-4000");
+    assert!(writes(&rig).contains(&Action::ActivityRead {
+        item: "4000".to_owned(),
+        read: true
+    }));
+    assert!(read(&pane, "4000", cx));
+    assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), Main::Nothing);
+    assert!(
+        cx.update(|_, cx| shell.read(cx).chat().is_none()),
+        "no chat view to write in"
+    );
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).toast().cloned()),
+        Some(CHAT_GONE.into())
+    );
+    // a chat that is there still opens
+    click(cx, "activity-item-2000");
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).main().clone()),
+        Main::Chat(GROUP.to_owned())
+    );
+}
+
+#[test]
+fn a_group_chat_without_a_topic_is_named_by_its_members_first_names() {
+    let rig = rig();
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    click(cx, "rail-activity");
+    // as Teams' Activity says it, not the chat list's "Dmitry and Nikita"
+    assert_eq!(place(&pane, "2000", cx), "Chat with Dmitry, Nikita");
+    assert_eq!(place(&pane, "3000", cx), "Teams call");
+    // the search finds it by those words
+    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.search_for("chat with dmitry", window, cx)));
+    let shown: Vec<String> = cx.update(|_, cx| {
+        pane.read(cx)
+            .shown_items(cx)
+            .iter()
+            .map(|item| item.id.clone())
+            .collect()
+    });
+    assert_eq!(shown, ["2000", "1000"]);
+}
+
+#[test]
+fn a_missed_call_s_chat_and_call_read_it() {
+    let rig = rig();
+    let missed = [item(3000, "call", "missedCall", (LAB_B, "Lab B"), 1, false)];
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(&missed, None, None);
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    click(cx, "rail-activity");
+    click(cx, "activity-chat-3000");
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).main().clone()),
+        Main::Chat(AB.to_owned())
+    );
+    assert!(writes(&rig).contains(&Action::ActivityRead {
+        item: "3000".to_owned(),
+        read: true
+    }));
+    assert!(read(&pane, "3000", cx));
+    // unread again, then Call: read again
+    cx.update(|_, cx| pane.update(cx, |pane, cx| pane.mark("3000", false, cx)));
+    assert!(!read(&pane, "3000", cx));
+    click(cx, "rail-activity");
+    rig.core.actions.lock().unwrap().clear();
+    click(cx, "activity-call-3000");
+    assert!(writes(&rig).contains(&Action::ActivityRead {
+        item: "3000".to_owned(),
+        read: true
+    }));
+    assert!(read(&pane, "3000", cx));
 }

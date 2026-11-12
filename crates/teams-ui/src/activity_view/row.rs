@@ -159,21 +159,22 @@ impl ActivityView {
         let actor = item.actor.clone().filter(|_| item.kind == ActivityKind::MissedCall)?;
         let (call, chat) = (actor.clone(), actor);
         let id = &item.id;
+        let (call_item, chat_item) = (id.clone(), id.clone());
         let call_button = Button::new(ElementId::Name(format!("activity-call-{id}").into()))
             .label("Call")
             .small()
             .outline()
-            .on_click(cx.listener(move |_, _, _, cx| {
+            .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
-                cx.emit(ActivityViewEvent::CallBack(call.clone()));
+                this.act_on(&call_item, Some(ActivityViewEvent::CallBack(call.clone())), cx);
             }));
         let chat_button = Button::new(ElementId::Name(format!("activity-chat-{id}").into()))
             .label("Chat")
             .small()
             .outline()
-            .on_click(cx.listener(move |_, _, _, cx| {
+            .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
-                cx.emit(ActivityViewEvent::ChatWith(chat.clone()));
+                this.act_on(&chat_item, Some(ActivityViewEvent::ChatWith(chat.clone())), cx);
             }));
         Some(
             div()

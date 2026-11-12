@@ -219,6 +219,9 @@ fn the_favourites_come_first_in_their_order_and_not_again_under_chats() {
         ]
     );
     assert_eq!(rows[1].faces.len(), 2, "a group's avatar is split between two members");
+    // as an activity item says where it happened: "Chat with Evgenia, Sean"; a chat with a name or a 1:1 has none
+    assert_eq!(rows[1].chat_with.as_deref(), Some("Evgenia, Sean"));
+    assert!(rows[0].chat_with.is_none() && rows[2].chat_with.is_none());
     assert!(
         rows[2].faces.is_empty() && rows[2].partner.is_none(),
         "a meeting shows its calendar"
@@ -505,6 +508,7 @@ fn arranging_keeps_a_chat_called_empty_once_it_has_text_or_unread() {
         partner: None,
         faces: Vec::new(),
         members: 0,
+        chat_with: None,
         team: None,
         preview: preview.to_owned().into(),
         previewed: None,
@@ -540,6 +544,7 @@ fn an_empty_chat_opened_is_listed_after_the_others_in_the_order_they_were_opened
         partner: None,
         faces: Vec::new(),
         members: 0,
+        chat_with: None,
         team: None,
         preview: if id.starts_with("text") { "hi" } else { "" }.into(),
         previewed: None,
@@ -802,6 +807,7 @@ fn plain_row(id: &str) -> ChatRow {
         partner: None,
         faces: Vec::new(),
         members: 0,
+        chat_with: None,
         team: None,
         preview: "done".into(),
         previewed: None,

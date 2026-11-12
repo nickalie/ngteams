@@ -9,14 +9,16 @@
 //! - **An item**: the person's avatar (their picture, else initials; an app's tile) with a badge for its kind (the
 //!   reaction's emoji, "@" for a mention, people for a group mention or a team, a missed call's phone, a meeting's
 //!   calendar), its title (semibold while unread, a dot at the left edge), its date (the time today), the preview and
-//!   where it happened (a channel's team and name, a chat's name, "In chat with you" for a 1:1 chat). Hovered, the
+//!   where it happened (a channel's team and name, a group chat's topic, else "Chat with" its members' first names,
+//!   "In chat with you" for a 1:1 chat: [`chat_place`]). Hovered, the
 //!   date gives way to "More options": Mark as read or unread, Remove (a toast says "Removed"), and Notification
 //!   settings (the settings' Notifications page). A missed call
-//!   offers Call and Chat with the caller.
+//!   offers Call and Chat with the caller; either marks it read, as opening it does.
 //! - **Opening an item** (a click, or Enter on the item the keyboard is on) marks it read and opens its conversation
-//!   at its message ([`ActivityViewEvent::Open`]).
+//!   at its message ([`ActivityViewEvent::Open`]; the shell says so in a toast when the chat is gone).
 //! - **Seen**: while the pane is shown, the feed's horizon follows its newest item ([`Action::ActivitySeen`]), which
-//!   clears the rail's count ([`ActivityView::unseen`]).
+//!   clears the rail's count ([`ActivityView::unseen`]), which never counts an item read here (on arrival in the chat
+//!   on screen, say) while its change syncs back.
 //! - **A chat on screen**: the conversation the main view shows ([`ActivityView::set_on_screen`]) has its unread items
 //!   marked read, at once and as new ones come while it stays there, as Teams marks a feed item read once its chat is
 //!   open. Automatic marks require the selected account in the active window; explicit unread marks last until the
@@ -46,7 +48,7 @@ use teams_core::{Action, EngineError};
 use teams_store::OutboxState;
 
 use crate::bridge::Core;
-use crate::chat_list::ChatList;
+use crate::chat_list::{ChatList, ChatRow};
 use crate::clock::HourCycle;
 use crate::icons::{Glyph, icon_button, selected_by};
 use crate::models::Models;
@@ -80,6 +82,10 @@ pub const REMOVED: &str = "Removed";
 pub const IN_CHAT_WITH_YOU: &str = "In chat with you";
 /// Where a missed call or a voicemail happened, as its third line says it.
 pub const TEAMS_CALL: &str = "Teams call";
+/// The toast an item whose chat is gone (left or deleted) shows instead of opening it.
+pub const CHAT_GONE: &str = "This chat isn't available";
+/// How a group chat's item names its chat before its members' first names ("Chat with Dmitry, Nikita").
+pub const CHAT_WITH: &str = "Chat with";
 /// An item's avatar, px.
 const AVATAR: f32 = 32.0;
 /// Its kind's badge, px.
@@ -266,7 +272,9 @@ impl ActivityView {
         if self.shown && self.active {
             return 0;
         }
-        self.feed.unseen()
+        // an item marked read here (on arrival in the chat on screen, say) isn't counted while its change syncs back
+        self.feed
+            .unseen_by(|item| self.removed.contains(&item.id) || self.is_read(item))
     }
 
     /// The filter chosen.
@@ -658,17 +666,31 @@ impl ActivityView {
         let Some(item) = self.feed.item(id).cloned() else {
             return;
         };
-        self.selected = Some(item.id.clone());
-        self.item_menu = None;
         self.trace
             .record(&TraceLine::new("activity", "opened").kind(kind_key(&item.kind)));
+        let event = target(&item)
+            .map(ActivityViewEvent::Open)
+            .or_else(|| match (&item.kind, &item.actor) {
+                (ActivityKind::MissedCall | ActivityKind::Voicemail, Some(actor)) => {
+                    Some(ActivityViewEvent::ChatWith(actor.clone()))
+                }
+                _ => None,
+            });
+        self.act_on(&item.id, event, cx);
+    }
+
+    /// Acts on an item (opens it, or a missed call's Call or Chat): selected and marked read, then `event` told.
+    pub fn act_on(&mut self, id: &str, event: Option<ActivityViewEvent>, cx: &mut Context<Self>) {
+        let Some(item) = self.feed.item(id).cloned() else {
+            return;
+        };
+        self.selected = Some(item.id.clone());
+        self.item_menu = None;
         if !self.is_read(&item) {
             self.mark(&item.id, true, cx);
         }
-        if let Some(target) = target(&item) {
-            cx.emit(ActivityViewEvent::Open(target));
-        } else if let (ActivityKind::MissedCall | ActivityKind::Voicemail, Some(actor)) = (&item.kind, &item.actor) {
-            cx.emit(ActivityViewEvent::ChatWith(actor.clone()));
+        if let Some(event) = event {
+            cx.emit(event);
         }
         cx.notify();
     }
@@ -695,15 +717,7 @@ impl ActivityView {
             }
             return item.topic.clone().unwrap_or_default();
         }
-        if thread.ends_with("@unq.gbl.spaces") {
-            return IN_CHAT_WITH_YOU.to_owned();
-        }
-        self.chats
-            .read(cx)
-            .row(thread)
-            .map(|row| row.name.to_string())
-            .or_else(|| item.topic.clone())
-            .unwrap_or_default()
+        chat_place(item, self.chats.read(cx).row(thread))
     }
 
     /// Asks for the pictures of the people the items name, once each.
@@ -757,6 +771,35 @@ impl ActivityView {
             cx.notify();
         }
     }
+}
+
+/// Where an item in a chat happened, its third line, from the chat list's `row` of its chat: a 1:1 chat "In chat with
+/// you"; a group chat by its topic, else "Chat with" its members' first names, as Teams says it ("Chat with Dmitry,
+/// Nikita"); a chat the list doesn't have (left or deleted) by the item's topic, else "Chat with" the person behind it.
+#[must_use]
+pub fn chat_place(item: &ActivityItem, row: Option<&ChatRow>) -> String {
+    if item
+        .thread
+        .as_deref()
+        .is_some_and(|thread| thread.ends_with("@unq.gbl.spaces"))
+    {
+        return IN_CHAT_WITH_YOU.to_owned();
+    }
+    if let Some(row) = row {
+        if let Some(names) = &row.chat_with {
+            return format!("{CHAT_WITH} {names}");
+        }
+        if !row.name.is_empty() {
+            return row.name.to_string();
+        }
+    }
+    if let Some(topic) = &item.topic {
+        return topic.clone();
+    }
+    if item.actor_name.is_empty() {
+        return String::new();
+    }
+    format!("{CHAT_WITH} {}", crate::chat_list::first_name(&item.actor_name))
 }
 
 /// Whether a place's name holds the search's words, case and spaces folded (none: no).

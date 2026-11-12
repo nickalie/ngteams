@@ -791,9 +791,9 @@ fn search_filters(qa: &mut Qa<'_>) -> SandboxResult {
     qa.shot("search-light")?;
     qa.click(HEADER_FILTER)?;
     qa.box_open = false;
-    // the group chat's name, as the reply's third line says it
+    // the group chat (no topic) by its members' first names, as the reply's third line says it in Teams' form
     let group = text(&item_with(&qa.state()?, "Made-up reply about")?, "place");
-    ensure(!group.is_empty() && group != "In chat with you", || {
+    ensure(group.starts_with("Chat with Lab, ") && !group.contains(" and "), || {
         format!("the group's place: {group}")
     })?;
     let state = qa.search(&group)?;
@@ -930,13 +930,22 @@ fn missed_call_buttons(qa: &mut Qa<'_>) -> SandboxResult {
     ensure(text(&first(&state)?, "kind") == "missed-call", || format!("{state}"))?;
     qa.hover_listed(ROW)?;
     qa.shot("missed-call-light")?;
+    let first_read = |state: &Value| items(state).first().is_some_and(|item| item["read"] == true);
     qa.click_listed(ROW_CHAT)?;
-    qa.state_until("Chat: the 1:1 chat with b", |state| state["chat"] == AB_CHAT)?;
+    qa.state_until("Chat: the 1:1 chat with b, the missed call read", |state| {
+        state["chat"] == AB_CHAT && first_read(state)
+    })?;
     qa.ctl_json(&["open", "chat", ABC_CHAT])?;
     qa.chord(&[Modifier::Ctrl], '1')?;
+    // unread again, as a user would, to see Call read it too
+    qa.open_row_menu()?;
+    qa.click_listed(ITEM_MENU_MARK)?;
+    qa.state_until("the missed call unread", |state| !first_read(state))?;
     qa.trace.drain();
     qa.click_listed(ROW_CALL)?;
-    qa.state_until("Call: the 1:1 chat with b", |state| state["chat"] == AB_CHAT)?;
+    qa.state_until("Call: the 1:1 chat with b, the missed call read", |state| {
+        state["chat"] == AB_CHAT && first_read(state)
+    })?;
     let asked = qa.trace.next_where("a call asked in the 1:1 chat", |line| {
         line["view"] == "call" && line["change"] == "asked" && line.to_string().contains(AB_CHAT)
     })?;
@@ -944,11 +953,6 @@ fn missed_call_buttons(qa: &mut Qa<'_>) -> SandboxResult {
     // the test engine has no calling: the banner saying so pushes the panes down until it is closed
     qa.shot("missed-call-called-light")?;
     qa.click(BANNER_CLOSE)?;
-    let state = qa.state()?;
-    say(&format!(
-        "missed call after Call and Chat: read {}",
-        items(&state).first().map_or(Value::Null, |item| item["read"].clone())
-    ));
     Ok(())
 }
 
@@ -1005,13 +1009,10 @@ fn chat_on_screen(qa: &mut Qa<'_>) -> SandboxResult {
             .iter()
             .any(|item| text(item, "id") == new && item["read"] == true)
     })?;
-    // the pane draws it read at once; the rail's count follows once the stored feed has it read (said when it lags)
-    if state["unseen"] != 0 {
-        say(&format!(
-            "rail count while the new item already shows read: {}",
-            state["unseen"]
-        ));
-    }
+    // read on arrival: the rail never counts it, not even while its change syncs back
+    ensure(state["unseen"] == 0, || {
+        format!("rail count while the new item already shows read: {}", state["unseen"])
+    })?;
     qa.server_until(&new, "the new item read on the service", |held| held["isread"] == true)?;
     qa.state_until("no count on the rail for it", |state| state["unseen"] == 0)?;
     Ok(())
@@ -1046,6 +1047,8 @@ fn live_activity_counts(qa: &mut Qa<'_>) -> SandboxResult {
 /// "Mark all as read" asks the same. (Once the feed's all-read bookmark is set, no later mock item can be unread: the
 /// mock's clock is in October 2025 while the bookmark is the computer's time, so the menu's run is seen in the trace.)
 fn mark_all_read(qa: &mut Qa<'_>) -> SandboxResult {
+    // the mention comes in the a–b–c chat: another chat on screen, so it isn't read on arrival
+    qa.ctl_json(&["open", "chat", AB_CHAT])?;
     let pushed = qa.ask("push-mention")?;
     let new = text(&pushed, "id");
     qa.plain_pane()?;
@@ -1111,10 +1114,14 @@ fn many_items_scroll(qa: &mut Qa<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// An item whose chat is gone: clicking it reads it and leaves the app working.
+/// An item whose chat is gone: its third line names the person behind it; clicking it reads it and a toast says the
+/// chat isn't available, no empty chat opened to write in; the app keeps working.
 fn gone_chat_item(qa: &mut Qa<'_>) -> SandboxResult {
     let state = qa.search("the chat that is gone")?;
     let row = item_with(&state, "the chat that is gone")?;
+    ensure(text(&row, "place") == "Chat with Lab", || {
+        format!("its third line: {row}")
+    })?;
     let id = text(&row, "id");
     qa.click_listed(ROW)?;
     let state = qa.state_until("the gone chat's item read", |state| {
@@ -1122,10 +1129,15 @@ fn gone_chat_item(qa: &mut Qa<'_>) -> SandboxResult {
             .iter()
             .any(|item| text(item, "id") == id && item["read"] == true)
     })?;
-    say(&format!(
-        "gone chat clicked: main {} chat {} toast {}",
-        state["main"], state["chat"], state["toast"]
-    ));
+    ensure(
+        state["chat"] != GONE_CHAT && state["toast"] == teams_ui::activity_view::CHAT_GONE,
+        || {
+            format!(
+                "gone chat clicked: main {} chat {} toast {}",
+                state["main"], state["chat"], state["toast"]
+            )
+        },
+    )?;
     qa.shot("gone-chat-light")?;
     let (exit, out, err) = qa.ctl(&["status"])?;
     ensure(exit == Exit::Ok, || format!("the app after it: {out}{err}"))?;
