@@ -176,3 +176,49 @@ fn shown_on_request_at_once_and_none_for_a_key_nobody_set() {
     draw(cx);
     assert_eq!(shown(&view, cx), None);
 }
+
+#[test]
+fn space_sets_nothing_on_a_pill_gone_since_the_keys_reached_it() {
+    let rig = varied_chat();
+    let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    cx.update(|window, cx| view.read(cx).focus_handle().clone().focus(window, cx));
+    view.update(cx, |view, cx| view.select(Some("101".to_owned()), cx));
+    draw(cx);
+    press(cx, "right");
+    press(cx, "right");
+    assert_eq!(focus(&view, cx).as_deref(), Some("heart"));
+    // b takes back the only heart: its pill goes
+    rig.core.reactions.lock().unwrap().insert(
+        "101".to_owned(),
+        vec![
+            super::reaction("like", LAB_B, super::NOON + 10_000),
+            super::reaction("like", LAB_A, super::NOON + 20_000),
+        ],
+    );
+    let changed = {
+        let mut messages = rig.core.messages.lock().unwrap();
+        let stored = messages
+            .get_mut(super::AB)
+            .unwrap()
+            .iter_mut()
+            .find(|message| message.id == "101")
+            .unwrap();
+        stored.version = 2;
+        stored.clone()
+    };
+    rig.send(teams_core::Event::Message {
+        conversation: super::AB.to_owned(),
+        id: changed.id.clone(),
+        change: teams_core::MessageChange::Reaction,
+        applied: teams_store::Applied::Updated,
+        message: Some(Box::new(changed)),
+        source: teams_core::Source::Delivery,
+    });
+    draw(cx);
+    assert!(bounds(cx, "reaction-heart").is_none(), "the heart's pill has gone");
+    press(cx, "space");
+    assert!(
+        rig.core.actions.lock().unwrap().is_empty(),
+        "no reaction set on a pill no longer shown"
+    );
+}

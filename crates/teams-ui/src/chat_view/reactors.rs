@@ -158,13 +158,20 @@ impl ChatView {
         cx.notify();
     }
 
+    /// Space sets or takes back the account's own reaction on the pill under the keys: only one still shown on the
+    /// message selected. A pill whose last reaction was taken back since has gone, so Space sets nothing the user
+    /// can't see.
     fn press_reaction(&mut self, cx: &mut Context<Self>) {
         let Some((message, key)) = self
             .reaction_focus()
+            .filter(|(message, _)| self.selected.as_deref() == Some(*message))
             .map(|(message, key)| (message.to_owned(), key.to_owned()))
         else {
             return;
         };
+        if self.reactors_of(&message, &key).is_empty() {
+            return;
+        }
         self.toggle_reaction(&message, &key, cx);
     }
 
