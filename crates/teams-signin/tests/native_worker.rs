@@ -1,4 +1,5 @@
-//! Native worker entry point rejects invocations without a private parent protocol, before opening a browser.
+//! Native worker entry point (`WebView2` on Windows, `WKWebView` on macOS) rejects invocations without a private parent
+//! protocol, before opening a browser.
 use std::process::{Command, Stdio};
 
 #[test]
@@ -7,13 +8,15 @@ fn native_worker_rejects_an_unconnected_invocation_without_opening_a_browser() {
         .stdin(Stdio::null())
         .output()
         .unwrap();
-    #[cfg(unix)]
+    // Linux has no such worker (WPE's is `ngteams-web`): the program only says what it is
+    #[cfg(target_os = "linux")]
     {
         assert_eq!(output.status.code(), Some(2));
         assert!(output.stdout.is_empty());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("Windows sign-in worker"));
+        assert!(String::from_utf8_lossy(&output.stderr).contains("the Windows and macOS sign-in worker"));
     }
-    #[cfg(windows)]
+    // WebView2's and WKWebView's worker answer on their protocol's stdout
+    #[cfg(any(windows, target_os = "macos"))]
     {
         assert!(output.stderr.is_empty());
         let failure: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
