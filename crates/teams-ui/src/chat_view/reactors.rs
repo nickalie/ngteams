@@ -155,7 +155,8 @@ fn card_measure(drawn: &Rc<Drawn>) -> AnyElement {
                 drawn.pill.set(None);
             }
             if gone || drawn.content.replace(Some(bounds.size.height)) != Some(bounds.size.height) {
-                window.refresh();
+                // a refresh while drawing asks for no frame: ask for the next one, which draws or hides the card
+                window.on_next_frame(|window, _| window.refresh());
             }
         },
         |_, (), _, _| {},

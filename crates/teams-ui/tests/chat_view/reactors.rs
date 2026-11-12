@@ -315,3 +315,42 @@ fn a_card_goes_with_its_pill_scrolled_out_of_the_list_and_comes_back_with_it() {
         "by its pill: {card:?}, {like:?}"
     );
 }
+
+/// Like the platform: a test window draws when it is dirty; this delivers the frames asked for after that, and
+/// nothing else (a refresh while drawing asks for none).
+fn frames_on_demand(cx: &mut VisualTestContext) {
+    for _ in 0..8 {
+        cx.run_until_parked();
+        let asked = cx.update(gpui::Window::simulate_next_frame);
+        if asked == 0 {
+            return;
+        }
+    }
+}
+
+#[test]
+fn the_card_asks_for_the_frames_that_show_it_by_its_pill_and_take_it_away() {
+    let rig = liked_by_many();
+    let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    cx.update(|window, cx| view.read(cx).focus_handle().clone().focus(window, cx));
+    view.update(cx, |view, cx| view.select(Some("40".to_owned()), cx));
+    draw(cx);
+    cx.simulate_keystrokes("right");
+    frames_on_demand(cx);
+    let like = bounds(cx, "reaction-like").unwrap();
+    let card = bounds(cx, "reactors-like").expect("shown at once");
+    assert!(
+        card.bottom() <= like.top(),
+        "measured, the card moved over its pill: {card:?} over {like:?}"
+    );
+    let list = bounds(cx, "chat-messages").unwrap();
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: list.center(),
+        delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(1_000.0))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    frames_on_demand(cx);
+    assert!(bounds(cx, "reaction-like").is_none(), "the pill is out of the list");
+    assert!(bounds(cx, "reactors-like").is_none(), "its card went with it");
+}
