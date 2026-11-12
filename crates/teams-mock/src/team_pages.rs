@@ -38,7 +38,7 @@ pub(crate) fn serve(request: &Request) -> Option<ResponseTemplate> {
         ("GET", [.., "analytics", "teams", _, "channels", _, "summary-timeseries"]) => {
             Some(json(200, &json!({ "channels": analytics() })))
         }
-        _ => crate::team_apps::serve(method, &segments),
+        _ => crate::team_apps::serve(method, &segments, &request.body),
     }
 }
 

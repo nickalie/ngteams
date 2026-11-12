@@ -1920,3 +1920,39 @@ async fn made_up_people_join_share_and_leave_only_a_group_call() -> TestResult {
 
 #[path = "support/helpers.rs"]
 mod helpers;
+
+#[tokio::test]
+async fn activity_settings_are_json_text_owned_by_the_caller() -> TestResult {
+    let lab = Lab::start().await?;
+    let route = "users/ME/properties?name=userGraphSettings";
+    let settings = json!({"made-up-app": {"toastSettings": {"systemDefault": false}}});
+    let answer = lab
+        .send(
+            LAB_A,
+            Method::PUT,
+            route,
+            Some(&json!({"userGraphSettings": settings.to_string()})),
+        )
+        .await?;
+    assert_eq!(answer.status, 200);
+    assert_eq!(
+        lab.get(LAB_A, "users/ME/properties").await?["userGraphSettings"],
+        settings.to_string()
+    );
+    assert_eq!(
+        lab.send(LAB_B, Method::GET, "users/ME/properties", None).await?.status,
+        404
+    );
+    for body in [
+        json!({"userGraphSettings": {}}),
+        json!({"userGraphSettings": "[]"}),
+        json!({"userGraphSettings": "broken"}),
+    ] {
+        assert_eq!(lab.send(LAB_A, Method::PUT, route, Some(&body)).await?.status, 400);
+    }
+    assert_eq!(
+        lab.get(LAB_A, "users/ME/properties").await?["userGraphSettings"],
+        settings.to_string()
+    );
+    Ok(())
+}

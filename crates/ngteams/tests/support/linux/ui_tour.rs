@@ -189,7 +189,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 294] = [
+const STEPS: [Step; 5 + 298] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -214,9 +214,46 @@ const STEPS: [Step; 5 + 294] = [
             view.show_item_menu(first, cx);
         });
     }),
+    ("activity-app-menu-light", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        with_activity(shell, cx, |view, cx| {
+            view.choose_filter(teams_core::activity::ActivityFilter::Apps, cx);
+            let app = view
+                .feed()
+                .items
+                .iter()
+                .find(|item| item.teams_app_id.is_some())
+                .map(|item| item.id.clone());
+            view.show_item_menu(app, cx);
+        });
+    }),
+    ("activity-app-menu-dark", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    ("activity-app-off", |shell, _, cx| {
+        with_activity(shell, cx, |view, cx| {
+            if let Some(id) = view
+                .feed()
+                .items
+                .iter()
+                .find(|item| item.teams_app_id.is_some())
+                .map(|item| item.id.clone())
+            {
+                view.turn_off_app(&id, cx);
+            }
+        });
+    }),
+    ("activity-app-undo", |shell, _, cx| {
+        shell.update(cx, Shell::undo_activity_app);
+    }),
     // the header's "More options": Mark all as read
     ("activity-header-menu", |shell, _, cx| {
-        with_activity(shell, cx, |view, cx| view.show_header_menu(true, cx));
+        fixed_theme(shell, None, cx);
+        with_activity(shell, cx, |view, cx| {
+            view.choose_filter(teams_core::activity::ActivityFilter::Apps, cx);
+            view.show_item_menu(None, cx);
+            view.show_header_menu(true, cx);
+        });
     }),
     // the Unread chip chosen
     ("activity-unread", |shell, _, cx| {
@@ -2489,8 +2526,9 @@ fn activity_items(mine_number: u64, theirs_number: u64) -> [(serde_json::Value, 
             serde_json::json!({
                 "activityType": "msGraph", "activitySubtype": "customNotification", "activityId": 7,
                 "sourceThreadId": TEAM, "sourceMessageId": CHANNEL_POST, "sourceUserImDisplayName": "Workflows",
+                "sourceAppDisplayName": "Workflows",
                 "messagePreview": "Made-up reminder to follow up", "sourceThreadType": "space",
-                "activityContext": {"templateParameters": "{\"customMessage\":\"Follow up on a message\"}"},
+                "activityContext": {"teamsAppId": "00000000-0000-4000-8000-00000000a002", "templateParameters": "{\"customMessage\":\"Follow up on a message\"}"},
             }),
             true,
         ),

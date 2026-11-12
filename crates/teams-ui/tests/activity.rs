@@ -350,6 +350,7 @@ fn the_read_only_mode_marks_and_removes_nothing() {
             view.mark("2000", true, cx);
             view.remove("2000", cx);
             view.mark_all_read(cx);
+            view.turn_off_app("2000", cx);
         });
     });
     cx.run_until_parked();
@@ -1251,4 +1252,87 @@ fn the_newest_item_waits_for_an_active_window_to_open() {
         Main::Chat(AB.to_owned())
     );
     assert!(read(&pane, "3000", cx));
+}
+
+fn rig_with_app() -> Rig {
+    let rig = rig();
+    let mut message = item(
+        4000,
+        "msGraph",
+        "customNotification",
+        ("28:made-up-app", "Lab B"),
+        1,
+        false,
+    );
+    let mut properties: serde_json::Value = serde_json::from_str(message.properties.as_deref().unwrap()).unwrap();
+    properties["activity"]["sourceAppDisplayName"] = json!("Made-up Updates");
+    properties["activity"]["activityContext"] = json!({"teamsAppId": "made-up-app"});
+    message.properties = Some(properties.to_string());
+    rig.core
+        .activity
+        .lock()
+        .unwrap()
+        .items
+        .push(teams_core::activity::ActivityItem::from_message(&message).unwrap());
+    rig
+}
+
+#[test]
+fn only_app_item_menus_offer_turn_off_and_it_preserves_the_feed() {
+    let rig = rig_with_app();
+    let (shell, cx) = shell_window(&rig);
+    click(cx, "rail-activity");
+    let view = view(&shell, cx);
+    cx.update(|_, cx| view.update(cx, |view, cx| view.show_item_menu(Some("1000".to_owned()), cx)));
+    assert!(!drawn(cx, "activity-item-turn-off-app"));
+    cx.update(|_, cx| view.update(cx, |view, cx| view.show_item_menu(Some("4000".to_owned()), cx)));
+    rig.core.write_answers.lock().unwrap().push_back(common::outbox_row(
+        500,
+        teams_store::OutboxKind::ActivityTurnOffApp,
+        teams_store::OutboxState::Pending,
+    ));
+    click(cx, "activity-item-turn-off-app");
+    assert!(writes(&rig).contains(&Action::ActivityTurnOffApp {
+        item: "4000".to_owned()
+    }));
+    assert!(cx.update(|_, cx| view.read(cx).feed().item("4000").is_some()));
+    assert_eq!(cx.update(|_, cx| view.read(cx).menus().1.map(str::to_owned)), None);
+    assert_eq!(cx.update(|_, cx| shell.read(cx).toast().cloned()), None);
+    rig.cx.update(|cx| {
+        rig.models.apply(
+            teams_core::Event::Outbox(common::outbox_row(
+                500,
+                teams_store::OutboxKind::ActivityTurnOffApp,
+                teams_store::OutboxState::Sent,
+            )),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).toast().cloned()),
+        Some("Successfully turned-off setting".into())
+    );
+    click(cx, "activity-undo-app");
+    assert!(
+        writes(&rig)
+            .iter()
+            .any(|action| matches!(action, Action::ActivityUndoTurnOffApp { .. }))
+    );
+    let before = writes(&rig)
+        .iter()
+        .filter(|action| matches!(action, Action::ActivityTurnOffApp { .. }))
+        .count();
+    cx.simulate_keystrokes("end ctrl-alt-shift-o");
+    cx.run_until_parked();
+    assert_eq!(
+        writes(&rig)
+            .iter()
+            .filter(|action| matches!(action, Action::ActivityTurnOffApp { .. }))
+            .count(),
+        before + 1
+    );
+    *rig.core.read_only.lock().unwrap() = true;
+    cx.update(|_, cx| view.update(cx, |view, cx| view.show_item_menu(Some("4000".to_owned()), cx)));
+    assert!(!drawn(cx, "activity-item-turn-off-app"));
 }

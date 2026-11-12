@@ -24,6 +24,7 @@ pub use channel_own::ChannelOwn;
 pub use channel_sections::{ChannelSection, ChannelSectionAction, ChannelSectionWrite, ChannelSections};
 pub use write::{ChannelChange, ChannelData, ChannelRead, ChannelTarget, ChannelWrite};
 pub use write::{CreatePicture, MAX_SENT_PICTURE, UploadPicture};
+mod activity_settings;
 pub mod chat;
 mod client;
 mod emoticon;
@@ -45,6 +46,9 @@ mod request;
 mod schedule;
 mod search;
 mod team_apps;
+pub use activity_settings::{
+    AppNotificationPreference, UserGraphSettings, UserGraphSettingsError, UserGraphSettingsRead,
+};
 mod team_read;
 mod thumbnail;
 pub mod transcript;
@@ -146,10 +150,10 @@ pub use write::{
     KeepAliveCall, LeaveCall, LeaveReason, Links, ManualAvailability, MarkFeedRead, MediaContent, MediaDescription,
     MediaDescriptions, MeetingInfo, MemberUpdate, NewTeam, Original, PublishState, RAISE_HANDS, RawBody, ReadReceipt,
     RemoveReaction, RemoveState, RenegotiateMedia, ReportRinging, ResumeCall, SendCallReaction, SendMessage,
-    SetActivityRead, SetEndpointAvailability, SetMeetingTitle, SetReaction, SharedHistory, StartCall, StartParts,
-    TEAMS_ECHO_BOT_MRI, TEST_CALL_SCENARIO, TeamCopy, TeamRole, TeamWrite, TemplateTeam, TransferCall, Transferor,
-    Typing, UpdateEndpointMetadata, UpdateEndpointState, UpdateMediaDescriptions, UpdateParticipantProperties,
-    VoiceConsent, Wire, team_created, team_error_code,
+    SetActivityRead, SetEndpointAvailability, SetMeetingTitle, SetReaction, SetUserGraphSettings, SharedHistory,
+    StartCall, StartParts, TEAMS_ECHO_BOT_MRI, TEST_CALL_SCENARIO, TeamCopy, TeamRole, TeamWrite, TemplateTeam,
+    TransferCall, Transferor, Typing, UpdateEndpointMetadata, UpdateEndpointState, UpdateMediaDescriptions,
+    UpdateParticipantProperties, VoiceConsent, Wire, team_created, team_error_code,
 };
 pub use write::{
     AddChannelMembers, ChannelCreated, ChannelLayout, CreateChannel, NewChannel, NewChannelKind, ShowChannelByDefault,

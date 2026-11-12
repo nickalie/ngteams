@@ -290,6 +290,10 @@ pub enum Action {
     ActivitySeen,
     /// Every item of the feed marked read ("Mark all as read").
     ActivityAllRead,
+    /// Turns off notifications for the app named by this feed item.
+    ActivityTurnOffApp { item: String },
+    /// Undo a confirmed app notification change from this run.
+    ActivityUndoTurnOffApp { row: i64 },
 }
 
 /// How much of a group chat's history people added to it see, as Teams' "Add" offers it.
@@ -545,6 +549,8 @@ pub enum EngineError {
     UnknownMessage { conversation: String, message: String },
     #[error("the activity feed holds nothing newer than what was seen")]
     NothingNewInActivity,
+    #[error("the activity app definition could not be read; try again")]
+    ActivityAppUnavailable,
     #[error("message {message} isn't the account's own, so it can't be {action}")]
     NotOwn { message: String, action: &'static str },
     #[error("message {message} is deleted")]
@@ -635,6 +641,7 @@ impl EngineError {
             Self::CatchUp(_) => "catch-up",
             Self::Teams(_) => "teams",
             Self::UnknownMessage { .. } => "unknown message",
+            Self::ActivityAppUnavailable => "activity app unavailable",
             Self::NothingNewInActivity => "nothing new in activity",
             Self::NotOwn { .. } => "not the account's own",
             Self::Deleted { .. } => "deleted",
@@ -1539,6 +1546,11 @@ impl EngineRequests {
     pub fn team_apps(&self, team: impl Into<String>) -> Reply<Vec<InstalledApp>> {
         let team = team.into();
         self.ask(|reply| Request::TeamApps(Box::new(TeamAppsAsk::Apps { team, reply })))
+    }
+
+    /// An app definition, cached for this account by `teamsAppId` and shared with Activity writes.
+    pub fn app_definition(&self, id: String) -> Reply<Option<teams_proto::AppDefinition>> {
+        self.ask(|reply| Request::TeamApps(Box::new(TeamAppsAsk::Definition { id, reply })))
     }
 
     /// The apps the store offers to add to a team, with their definitions, read now.
@@ -2607,7 +2619,11 @@ where
             let row = self.inbox.queue_read(&mut self.store, conversation, message_id)?;
             return self.send_row(row.id).await;
         }
-        let command = self.command(action)?;
+        let command = if let Action::ActivityTurnOffApp { item } = action {
+            self.activity_app_command(&item).await?
+        } else {
+            self.command(action)?
+        };
         if let Command::Send { conversation, text } = &command {
             let mut sharing = std::pin::pin!(self.uploads.share(conversation, text.files()));
             tokio::select! {
@@ -2760,18 +2776,53 @@ where
                 members,
                 history,
             } => self.add_members(conversation, &members, history)?,
+            Action::ActivityUndoTurnOffApp { row } => self.activity_undo_command(row)?,
             Action::ActivityRead { item, read } => {
                 self.standing(activity::FEED, &item)?;
                 Command::ActivityRead { item, read }
             }
-            // `write` handles these store-changing actions through `activity_write` before command conversion.
-            Action::ActivitySeen | Action::ActivityAllRead => {
+            Action::ActivitySeen | Action::ActivityAllRead | Action::ActivityTurnOffApp { .. } => {
                 return Err(EngineError::Unknown {
                     message: activity::FEED.to_owned(),
                     missing: "activity write handling",
                     action: "converted to a generic command",
                 });
             }
+        })
+    }
+
+    fn activity_undo_command(&self, row: i64) -> Result<Command, EngineError> {
+        if !self
+            .store
+            .outbox_entry(row)?
+            .is_some_and(|entry| entry.kind == OutboxKind::ActivityTurnOffApp && entry.state == OutboxState::Sent)
+        {
+            return Err(EngineError::ActivityAppUnavailable);
+        }
+        self.outbox
+            .activity_app_undo(row)
+            .ok_or(EngineError::ActivityAppUnavailable)
+    }
+
+    async fn activity_app_command(&mut self, item: &str) -> Result<Command, EngineError> {
+        self.standing(activity::FEED, item)?;
+        let feed = ActivityFeed::from_store(&self.store, self.me())?;
+        let id = feed
+            .item(item)
+            .and_then(|item| item.teams_app_id.as_deref())
+            .ok_or(EngineError::ActivityAppUnavailable)?;
+        let client = Arc::clone(&self.channels.client);
+        let cache = Arc::clone(&self.channels.app_definitions);
+        let mut reading = std::pin::pin!(crate::team_apps::definition(&client, &cache, id));
+        let definition = tokio::select! {
+            result = &mut reading => result,
+            () = self.inbox.serve(&mut self.store) => reading.await,
+        }
+        .ok_or(EngineError::ActivityAppUnavailable)?;
+        let activity_types = definition.activity_types().ok_or(EngineError::ActivityAppUnavailable)?;
+        Ok(Command::ActivityTurnOffApp {
+            app: id.to_owned(),
+            activity_types,
         })
     }
 

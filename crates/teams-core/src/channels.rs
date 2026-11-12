@@ -121,6 +121,7 @@ pub(crate) struct Channels<C, T> {
     pub(crate) client: Arc<Client<HttpTransport<C>>>,
     pub(crate) outbox: Arc<Outbox<T>>,
     pub(crate) running: JoinSet<Finished>,
+    pub(crate) app_definitions: crate::team_apps::AppDefinitionsCache,
 }
 
 impl<C, T> Channels<C, T>
@@ -133,6 +134,7 @@ where
             client,
             outbox,
             running: JoinSet::new(),
+            app_definitions: Arc::default(),
         }
     }
 

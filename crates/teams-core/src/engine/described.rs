@@ -42,6 +42,8 @@ pub(super) fn action(action: &Action) -> String {
         Action::ActivityRead { item, read: true } => format!("activity item {item} marked read"),
         Action::ActivityRead { item, read: false } => format!("activity item {item} marked unread"),
         Action::ActivitySeen => "activity seen".to_owned(),
+        Action::ActivityUndoTurnOffApp { row } => format!("activity app setting restored from row {row}"),
+        Action::ActivityTurnOffApp { item } => format!("activity app turned off for item {item}"),
         Action::ActivityAllRead => "all activity marked read".to_owned(),
     }
 }

@@ -412,7 +412,7 @@ fn conversation_of(action: &Action) -> Option<String> {
         Action::ActivityRead { .. } | Action::ActivitySeen | Action::ActivityAllRead => {
             Some(teams_core::activity::FEED.to_owned())
         }
-        Action::CreateChat { .. } => None,
+        Action::CreateChat { .. } | Action::ActivityTurnOffApp { .. } | Action::ActivityUndoTurnOffApp { .. } => None,
     }
 }
 

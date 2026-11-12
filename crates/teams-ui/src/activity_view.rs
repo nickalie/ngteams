@@ -72,7 +72,9 @@ actions!(
         /// Teams' Ctrl+Alt+U: the Unread chip.
         ToggleUnread,
         /// Teams' Ctrl+Alt+M: the @Mentions chip.
-        ToggleMentions
+        ToggleMentions,
+        /// Turns off notifications for the selected item's app.
+        TurnOffApp
     ]
 );
 
@@ -103,6 +105,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("shift-escape", MarkAllRead, Some(CONTEXT)),
         KeyBinding::new("ctrl-alt-u", ToggleUnread, Some(CONTEXT)),
         KeyBinding::new("ctrl-alt-m", ToggleMentions, Some(CONTEXT)),
+        KeyBinding::new("ctrl-alt-shift-o", TurnOffApp, Some(CONTEXT)),
     ]);
 }
 
@@ -119,6 +122,8 @@ pub enum ActivityViewEvent {
     CallBack(String),
     /// Show a short note (a toast).
     Toast(&'static str),
+    /// A confirmed app preference change, with the outbox row Undo restores.
+    AppTurnedOff(i64),
     /// Show the notification settings (an item's "Notification settings").
     NotificationSettings,
     /// What the newest item opens, as the pane opened from the rail opens it: quietly (nothing said when it can't).
@@ -131,6 +136,8 @@ enum Operation {
     Item(String),
     Seen,
     AllRead,
+    App(String),
+    UndoApp(i64),
 }
 
 /// The pane (see the module docs).
@@ -166,6 +173,7 @@ pub struct ActivityView {
     pictures: HashMap<String, Option<Picture>>,
     /// An item's "More options" menu, while open.
     item_menu: Option<String>,
+    app_names: HashMap<String, String>,
     /// The header's "More options" menu, while open.
     header_menu: bool,
     shown: bool,
@@ -251,6 +259,7 @@ impl ActivityView {
             removed: Vec::new(),
             pictures: HashMap::new(),
             item_menu: None,
+            app_names: HashMap::new(),
             header_menu: false,
             shown: false,
             open_newest: false,
@@ -494,7 +503,7 @@ impl ActivityView {
             let _ = this.update(cx, |view, cx| match result {
                 // Another window or a service update may already have advanced the seen horizon.
                 Err(EngineError::NothingNewInActivity) if operation.0 == Operation::Seen => {
-                    view.succeeded_write(&operation, cx);
+                    view.succeeded_write(&operation, 0, cx);
                 }
                 Err(_) => view.failed_write(&operation, cx),
                 Ok(row) if matches!(row.state, OutboxState::Denied | OutboxState::Failed) => {
@@ -505,15 +514,18 @@ impl ActivityView {
                     // A terminal event can arrive before this reply.
                     view.settled_writes(cx);
                 }
-                Ok(_) => view.succeeded_write(&operation, cx),
+                Ok(row) => view.succeeded_write(&operation, row.id, cx),
             });
         })
         .detach();
     }
 
-    fn succeeded_write(&mut self, (key, generation): &(Operation, u64), cx: &mut Context<Self>) {
+    fn succeeded_write(&mut self, (key, generation): &(Operation, u64), row: i64, cx: &mut Context<Self>) {
         if !matches!(key, Operation::Item(_)) && self.operations.get(key) == Some(generation) {
             self.operations.remove(key);
+            if matches!(key, Operation::App(_)) {
+                cx.emit(ActivityViewEvent::AppTurnedOff(row));
+            }
             self.reload(cx);
         }
     }
@@ -533,7 +545,7 @@ impl ActivityView {
             if failed {
                 self.failed_write(&operation, cx);
             } else {
-                self.succeeded_write(&operation, cx);
+                self.succeeded_write(&operation, id, cx);
             }
         }
     }
@@ -550,9 +562,37 @@ impl ActivityView {
             }
             Operation::Seen => self.feed.seen_ms = self.stored_seen,
             Operation::AllRead => self.feed.bookmark_ms = self.stored_bookmark,
+            Operation::App(_) | Operation::UndoApp(_) => {}
         }
         cx.emit(ActivityViewEvent::Toast("Couldn't update activity. Try again."));
         self.reload(cx);
+        cx.notify();
+    }
+
+    pub fn undo_turn_off_app(&mut self, row: i64, cx: &mut Context<Self>) {
+        if self.core.read_only() {
+            return;
+        }
+        self.write(Action::ActivityUndoTurnOffApp { row }, Operation::UndoApp(row), cx);
+    }
+
+    pub fn turn_off_app(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.core.read_only() {
+            return;
+        }
+        let Some(app) = self.feed.item(id).and_then(|item| item.teams_app_id.clone()) else {
+            return;
+        };
+        if self.operations.contains_key(&Operation::App(app.clone())) {
+            return;
+        }
+        self.item_menu = None;
+        self.trace.record(&TraceLine::new("activity", "app-off"));
+        self.write(
+            Action::ActivityTurnOffApp { item: id.to_owned() },
+            Operation::App(app),
+            cx,
+        );
         cx.notify();
     }
 
@@ -585,7 +625,32 @@ impl ActivityView {
     pub fn show_item_menu(&mut self, id: Option<String>, cx: &mut Context<Self>) {
         self.item_menu = id;
         self.header_menu = false;
+        self.load_app_name(cx);
         cx.notify();
+    }
+
+    fn load_app_name(&mut self, cx: &mut Context<Self>) {
+        let Some(item) = self.item_menu.as_deref().and_then(|id| self.feed.item(id)) else {
+            return;
+        };
+        let Some(id) = item.teams_app_id.clone().filter(|id| !self.app_names.contains_key(id)) else {
+            return;
+        };
+        if item.app_name.is_some() {
+            return;
+        }
+        let reply = self.core.app_definition(id.clone());
+        cx.spawn(async move |this, cx| {
+            if let Ok(Some(definition)) = reply.await
+                && let Some(name) = definition.name().map(str::to_owned)
+            {
+                let _ = this.update(cx, |view, cx| {
+                    view.app_names.insert(id, name);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
     }
 
     /// Opens or closes the header's "More options" menu, as its button does.
@@ -1165,6 +1230,11 @@ impl Render for ActivityView {
             .on_action(cx.listener(|this, _: &ToggleUnread, _, cx| this.choose_filter(ActivityFilter::Unread, cx)))
             .on_action(cx.listener(|this, _: &ToggleMentions, _, cx| {
                 this.choose_filter(ActivityFilter::Mentions, cx);
+            }))
+            .on_action(cx.listener(|this, _: &TurnOffApp, _, cx| {
+                if let Some(id) = this.item_menu.clone().or_else(|| this.selected.clone()) {
+                    this.turn_off_app(&id, cx);
+                }
             }))
             .size_full()
             .flex()

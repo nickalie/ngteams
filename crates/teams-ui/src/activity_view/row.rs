@@ -208,12 +208,8 @@ impl ActivityView {
             .xsmall()
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.stop_propagation();
-                this.item_menu = if this.item_menu.as_deref() == Some(id.as_str()) {
-                    None
-                } else {
-                    Some(id.clone())
-                };
-                cx.notify();
+                let open = (this.item_menu.as_deref() != Some(id.as_str())).then(|| id.clone());
+                this.show_item_menu(open, cx);
             })),
         );
         div()
@@ -275,7 +271,6 @@ impl ActivityView {
                 cx.stop_propagation();
                 this.remove(&removed, cx);
             }));
-        // Teams' second group: the account's notification settings (Settings, "Notifications and activity")
         let settings = crate::shell::menu_row("activity-item-settings", palette)
             .child(Glyph::SETTINGS.icon().size(px(14.0)))
             .child("Notification settings")
@@ -306,8 +301,37 @@ impl ActivityView {
             })
             .when(!read_only, |menu| menu.child(mark).child(remove))
             .child(divider)
-            .child(settings);
+            .child(settings)
+            .when(!read_only && item.teams_app_id.is_some(), |menu| {
+                menu.child(self.turn_off_app_row(item, palette, cx))
+            });
         deferred(menu).with_priority(1).into_any_element()
+    }
+    fn turn_off_app_row(&self, item: &ActivityItem, palette: Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let id = item.id.clone();
+        let name = item
+            .app_name
+            .as_deref()
+            .or_else(|| {
+                item.teams_app_id
+                    .as_ref()
+                    .and_then(|id| self.app_names.get(id))
+                    .map(String::as_str)
+            })
+            .unwrap_or("app");
+        crate::shell::menu_row("activity-item-turn-off-app", palette)
+            .text_color(rgb(crate::theme::DANGER))
+            .child(Glyph::BAN.icon().size(px(14.0)))
+            .child(format!("Turn off {name}"))
+            .tooltip(|window, cx| {
+                Tooltip::new("Turn off app notifications")
+                    .action(&super::TurnOffApp, None)
+                    .build(window, cx)
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.turn_off_app(&id, cx);
+            }))
     }
 }
 

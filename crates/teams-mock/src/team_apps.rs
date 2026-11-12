@@ -8,16 +8,29 @@ use wiremock::ResponseTemplate;
 use crate::chatsvc::json;
 
 /// The answer to `method` on `segments` when it is one of these; `None` for any other path.
-pub(crate) fn serve(method: &str, segments: &[&str]) -> Option<ResponseTemplate> {
+pub(crate) fn serve(method: &str, segments: &[&str], body: &[u8]) -> Option<ResponseTemplate> {
     match (method, segments) {
         ("POST", [.., "teams", "apps", "aggregatedEntitlements"]) => Some(json(200, &entitlements())),
         ("POST", [.., "users", "apps", "store"]) => Some(json(200, &store())),
-        ("POST", [.., "users", "apps", "batchedDefinitions"]) => Some(json(200, &json!(definitions()))),
+        ("POST", [.., "users", "apps", "batchedDefinitions"]) => Some(json(200, &json!(requested_definitions(body)))),
         ("GET", [.., "teamtemplates", "v1.0", "en-us"]) => Some(json(200, &templates())),
         ("GET", [.., "teamtemplates", "v1.0", _, "Public", _]) => Some(json(200, &template())),
         ("GET", [.., "teams", "usergroups"]) => Some(json(200, &json!([]))),
         _ => None,
     }
+}
+
+fn requested_definitions(body: &[u8]) -> Vec<Value> {
+    let ids: Vec<String> = serde_json::from_slice(body).unwrap_or_default();
+    definitions()
+        .into_iter()
+        .filter(|definition| {
+            definition
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| ids.iter().any(|asked| asked == id))
+        })
+        .collect()
 }
 
 /// Made-up apps: a tab app, one with a bot, one Teams keeps for itself.
@@ -27,6 +40,8 @@ fn definitions() -> Vec<Value> {
                 "shortDescription": "Plans made up", "accentColor": "#6264A7", "staticTabs": [] }),
         json!({ "id": "00000000-0000-4000-8000-00000000a002", "name": "Made-up Updates", "developerName": "Made-up Maker",
                 "shortDescription": "Updates made up", "accentColor": "#5B5FC7",
+                "largeImageUrl": "https://res.cdn.office.net/teamsappdata/evergreen-assets/apps/made-up-updates_largeImage.png?v=1",
+                "activities": {"activityTypes": [{"type": "messageNotify"}, {"type": "customNotification"}]},
                 "bots": [{ "id": "00000000-0000-4000-8000-00000000b002", "scopes": ["Team"] }] }),
         json!({ "id": "00000000-0000-4000-8000-00000000a003", "name": "Made-up Pages", "developerName": "Made-up Maker",
                 "shortDescription": "Pages made up", "accentColor": "#133a3c" }),

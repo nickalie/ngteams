@@ -193,6 +193,42 @@ impl AppDefinition {
         self.0.get("id").and_then(Value::as_str).unwrap_or_default()
     }
 
+    /// The name shown by the app catalogue.
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.0
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty())
+    }
+
+    /// The app's icon URL, for the caller's picture transport.
+    #[must_use]
+    pub fn large_image_url(&self) -> Option<&str> {
+        self.0
+            .get("largeImageUrl")
+            .and_then(Value::as_str)
+            .filter(|url| !url.is_empty())
+    }
+
+    /// Every activity type declared by the app; unknown shapes cannot establish the full set.
+    #[must_use]
+    pub fn activity_types(&self) -> Option<Vec<String>> {
+        self.0
+            .get("activities")?
+            .get("activityTypes")?
+            .as_array()?
+            .iter()
+            .map(|entry| {
+                entry
+                    .get("type")?
+                    .as_str()
+                    .filter(|kind| !kind.is_empty())
+                    .map(str::to_owned)
+            })
+            .collect()
+    }
+
     /// The bots it brings onto a team, as MRIs.
     #[must_use]
     pub fn bots(&self) -> Vec<Mri> {

@@ -1750,3 +1750,76 @@ fn sending_is_a_future_the_engine_can_spawn() {
     spawnable(&sending);
     drop(sending);
 }
+
+#[tokio::test]
+async fn activity_turn_off_app_never_repeats_an_unknown_write() {
+    let setup = setup().await;
+    let mut store = setup.open_store();
+    let properties = "/api/chatsvc/amer/v1/users/ME/properties";
+    Mock::given(method("GET"))
+        .and(path(properties))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .mount(&setup.server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path(properties))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&setup.server)
+        .await;
+    setup.fault(Fault::LoseAnswer);
+    let command = Command::ActivityTurnOffApp {
+        app: "made-up-app".into(),
+        activity_types: vec!["customNotification".into()],
+    };
+    let queued = enqueue(&mut store, &command).unwrap();
+    let row = setup.outbox.send(&mut store, &setup.sync, queued.id).await.unwrap();
+    assert_eq!(row.state, OutboxState::Failed);
+    setup.outbox.send_due(&mut store, &setup.sync).await.unwrap();
+    let requests = setup.server.received_requests().await.unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.method.as_str() == "PUT")
+            .count(),
+        1
+    );
+    assert!(setup.sync.calls().is_empty());
+}
+
+#[tokio::test]
+async fn activity_turn_off_app_does_not_overwrite_unreadable_preferences() {
+    for answer in [
+        ResponseTemplate::new(403),
+        ResponseTemplate::new(404),
+        ResponseTemplate::new(404)
+            .set_body_json(json!({"errorCode": 404, "standardizedError": {"errorCode": 404, "errorSubCode": 2}})),
+        ResponseTemplate::new(200).set_body_json(json!({"userGraphSettings": "[]"})),
+    ] {
+        let setup = setup().await;
+        let mut store = setup.open_store();
+        Mock::given(method("GET"))
+            .and(path("/api/chatsvc/amer/v1/users/ME/properties"))
+            .respond_with(answer)
+            .mount(&setup.server)
+            .await;
+        let row = enqueue(
+            &mut store,
+            &Command::ActivityTurnOffApp {
+                app: "made-up-app".into(),
+                activity_types: vec![],
+            },
+        )
+        .unwrap();
+        let row = setup.outbox.send(&mut store, &setup.sync, row.id).await.unwrap();
+        assert_eq!(row.state, OutboxState::Failed);
+        assert!(
+            setup
+                .server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .all(|request| request.method.as_str() == "GET")
+        );
+    }
+}

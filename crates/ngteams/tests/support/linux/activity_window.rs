@@ -1664,9 +1664,9 @@ fn meeting_update() -> Value {
 fn app_note() -> Value {
     json!({
         "activityType": "msGraph", "activitySubtype": "customNotification", "activityId": 7,
-        "sourceThreadId": TEAM, "sourceMessageId": 1, "sourceUserImDisplayName": "Workflows",
+        "sourceThreadId": TEAM, "sourceMessageId": 1, "sourceUserImDisplayName": "Workflows", "sourceAppDisplayName": "Workflows",
         "messagePreview": "Made-up reminder to follow up", "sourceThreadType": "space",
-        "activityContext": {"templateParameters": "{\"customMessage\":\"Follow up on a message\"}"},
+        "activityContext": {"teamsAppId": "00000000-0000-4000-8000-00000000a002", "templateParameters": "{\"customMessage\":\"Follow up on a message\"}"},
     })
 }
 

@@ -189,7 +189,9 @@ impl Note {
             | OutboxKind::CreateChat
             | OutboxKind::AddMembers
             | OutboxKind::ActivityRead
-            | OutboxKind::FeedRead => {
+            | OutboxKind::FeedRead
+            | OutboxKind::ActivityTurnOffApp
+            | OutboxKind::ActivityRestoreApp => {
                 return self.state.label().to_owned();
             }
         };

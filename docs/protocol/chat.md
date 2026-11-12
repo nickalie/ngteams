@@ -1044,8 +1044,23 @@ in browser Teams (team-manage, 2026-11-12), and in a lab store's synced feed.
   v1/users/ME/properties?name=userGraphSettings` with `{"userGraphSettings": "<JSON text>"}`: `{"<teamsAppId>":
   {"activityGenerationSettings": {<each activity type of the app>: false, "systemDefault": false}, "emailSettings": {},
   "toastSettings": {…the same…}}}`, Workflows' types being `messageNotify` and `customNotification` (the app
-  manifest's `activities.activityTypes`). The run held it, so its answer and what the pane does after it are not
-  known; no dialog asks first.
+  manifest's `activities.activityTypes`). An unheld run on 2026-11-12 (task 27, account a) answered 200: the menu
+  closed, existing app items stayed, and a toast said "Successfully turned-off setting" with Undo; no dialog asks
+  first. In Notifications and activity → Apps, all three Workflows categories then read Off. The run restored the
+  app with its switch: its declared activity types and `systemDefault` were true under generation settings, and
+  toast settings stayed false (Show in Activity). All three setting writes answered 200. The native row is offered only when `activityContext.teamsAppId` is present, outside
+  read-only mode (Ctrl+Alt+Shift+O acts on the selected item). It reads that id's definition (cached per account) and the current own properties (`GET
+  v1/users/ME/properties`), then merges the declared types and `systemDefault: false` into the existing app's
+  generation and toast settings. Other apps, email settings and unknown fields survive. Teams' preferences sync
+  reads the own-properties endpoint and caches the categories, with later user-property deltas updating that cache
+  (client preferences manager and preferences-sync job, inspected 2026-11-12). The native write reads it fresh:
+  an absent property, or 404 with error code 404 and standardized error code 404/subcode 1, starts an empty setting;
+  other errors or a malformed setting send nothing. The outbox retains the app and declared
+  types, rereads preferences before each permitted attempt, and never automatically resends an unknown outcome.
+  On confirmation the native pane keeps the items and shows the captured toast with Undo; a failure shows the
+  existing error toast. Undo restores this app's exact saved preference (including absence) into a fresh whole
+  setting, preserving changes to other apps since Turn off. The snapshot lasts for the engine's run; the toast is
+  transient.
 - **Opening the pane opens its newest item** (team-manage, 2026-11-13, account a): each time the rail's Activity is
   chosen from elsewhere (Chat, say), the chip lets go and the newest item is selected (`aria-selected`) and opened
   beside the pane, whichever item was chosen last time; a chip chosen opens nothing. The newest was a missed call: the

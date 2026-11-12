@@ -321,7 +321,10 @@ fn try_native_in(lab: &Lab, me: &'static str, how: How, dir: Arc<tempfile::TempD
         held: Arc::clone(&reads_held),
     });
     let client = Arc::new(Client::new(
-        HttpTransport::with_mock_origin(reads, CHAT_BASE, &origin).unwrap(),
+        HttpTransport::with_mock_origin(reads, CHAT_BASE, &origin)
+            .unwrap()
+            .with_middle_tier(teams_mock::MIDDLE_TIER_BASE)
+            .unwrap(),
     ));
     let push = how.push.then(|| {
         let trouter = Trouter::with_mock_origin(Arc::clone(&transport), Arc::clone(&tokens), lab.trouter.origin())
@@ -3274,5 +3277,195 @@ async fn failed_feed_horizons_leave_the_store_unchanged_and_resends_apply_only_a
             assert_eq!(feed.unseen(), 0);
         }
     }
+    a.shutdown();
+}
+
+/// Synthetic app item: app id is separate from its bot or attributed person's identity.
+fn app_activity(app: &str) -> serde_json::Value {
+    serde_json::json!({"activityType": "msGraph", "activitySubtype": "customNotification", "activityId": 1234,
+        "sourceUserId": "28:made-up-bot", "sourceAppDisplayName": "Made-up Updates", "sourceThreadId": "", "sourceMessageId": 1,
+        "activityContext": {"teamsAppId": app, "templateParameters": "{\"customMessage\":\"Made-up update\"}"}})
+}
+
+#[tokio::test]
+async fn activity_turn_off_app_merges_current_preferences_and_reuses_its_definition() {
+    let lab = Lab::start().await;
+    let app = "00000000-0000-4000-8000-00000000a002";
+    let id = lab.mock.add_activity(LAB_A, &app_activity(app), false).unwrap();
+    let mut a = native(&lab, LAB_A, How::default());
+    a.ready().await;
+    let item = a.handle.activity().await.unwrap().item(&id).unwrap().clone();
+    assert_eq!(item.teams_app_id.as_deref(), Some(app));
+    let definition = a.handle.app_definition(app.to_owned()).await.unwrap().unwrap();
+    assert_eq!(
+        definition.activity_types().unwrap(),
+        ["messageNotify", "customNotification"]
+    );
+    assert_eq!(
+        a.handle.app_definition(app.to_owned()).await.unwrap().unwrap(),
+        definition
+    );
+    let first = a.write(Action::ActivityTurnOffApp { item: id.clone() }).await;
+    assert_eq!(
+        first.state,
+        OutboxState::Sent,
+        "an account with no own properties can turn off an app"
+    );
+    let http = HttpTransport::with_mock_origin(Tokens::of(&lab.mock, LAB_A), CHAT_BASE, &lab.mock.origin()).unwrap();
+    let original =
+        serde_json::json!({"other-app": {"unknown": "keep"}, app: {"emailSettings": {"digest": true}, "future": 42}});
+    let settings = teams_proto::UserGraphSettings::read_answer(
+        serde_json::json!({"userGraphSettings": original.to_string()})
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+    assert_eq!(
+        http.deliver(teams_proto::SetUserGraphSettings(settings))
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    let row = a.write(Action::ActivityTurnOffApp { item: id.clone() }).await;
+    assert_eq!(row.state, OutboxState::Sent, "{row:?}");
+    assert_eq!(row.kind, OutboxKind::ActivityTurnOffApp);
+    let answer = http.read(&teams_proto::UserGraphSettingsRead).await.unwrap();
+    let settings = teams_proto::UserGraphSettings::read_answer(answer.body()).unwrap();
+    let merged: serde_json::Value = serde_json::from_str(&settings.json_text()).unwrap();
+    assert_eq!(merged["other-app"], original["other-app"]);
+    assert_eq!(merged[app]["emailSettings"], original[app]["emailSettings"]);
+    assert_eq!(merged[app]["future"], 42);
+    for category in ["activityGenerationSettings", "toastSettings"] {
+        assert_eq!(
+            merged[app][category],
+            serde_json::json!({"messageNotify": false, "customNotification": false, "systemDefault": false})
+        );
+    }
+    assert!(
+        a.handle.activity().await.unwrap().item(&id).is_some(),
+        "existing feed items remain"
+    );
+    let requests = lab.mock.received_requests().await;
+    let definitions: Vec<_> = requests
+        .iter()
+        .filter(|request| request.url.path().ends_with("/batchedDefinitions"))
+        .collect();
+    assert_eq!(definitions.len(), 1, "the icon reader and write share the cache");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&definitions[0].body).unwrap(),
+        serde_json::json!([app])
+    );
+    let b = HttpTransport::with_mock_origin(Tokens::of(&lab.mock, LAB_B), CHAT_BASE, &lab.mock.origin()).unwrap();
+    assert!(matches!(b.read(&teams_proto::UserGraphSettingsRead).await,
+        Err(HttpError::Status(answer)) if answer.status() == 404));
+    a.shutdown();
+}
+
+#[tokio::test]
+async fn activity_turn_off_app_refuses_an_unknown_definition_or_non_app_item() {
+    let lab = Lab::start().await;
+    let id = lab
+        .mock
+        .add_activity(LAB_A, &app_activity("made-up-unknown-app"), false)
+        .unwrap();
+    let (a, plain, _) = feed_of_a(&lab).await;
+    for item in [id, plain] {
+        assert!(matches!(
+            a.handle.write(Action::ActivityTurnOffApp { item }).await,
+            Err(EngineError::ActivityAppUnavailable)
+        ));
+    }
+    assert!(!lab.mock.received_requests().await.iter().any(|request| {
+        request.method.as_str() == "PUT"
+            && request
+                .url
+                .query_pairs()
+                .any(|(key, value)| key == "name" && value == "userGraphSettings")
+    }));
+    a.shutdown();
+}
+
+#[tokio::test]
+async fn activity_undo_turn_off_restores_the_app_without_reverting_other_apps() {
+    let lab = Lab::start().await;
+    let app = "00000000-0000-4000-8000-00000000a002";
+    let id = lab.mock.add_activity(LAB_A, &app_activity(app), false).unwrap();
+    let mut a = native(&lab, LAB_A, How::default());
+    a.ready().await;
+    let http = HttpTransport::with_mock_origin(Tokens::of(&lab.mock, LAB_A), CHAT_BASE, &lab.mock.origin()).unwrap();
+    let original = json!({app: {"activityGenerationSettings": {"customNotification": true}, "toastSettings": {"customNotification": false}, "emailSettings": {"digest": true}}});
+    let preferences = teams_proto::UserGraphSettings::read_answer(
+        json!({"userGraphSettings": original.to_string()})
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+    http.deliver(teams_proto::SetUserGraphSettings(preferences))
+        .await
+        .unwrap();
+    let row = a.write(Action::ActivityTurnOffApp { item: id }).await;
+    assert_eq!(row.state, OutboxState::Sent);
+    let answer = http.read(&teams_proto::UserGraphSettingsRead).await.unwrap();
+    let mut preferences = teams_proto::UserGraphSettings::read_answer(answer.body()).unwrap();
+    preferences
+        .turn_off("another-app", &["another-type".to_owned()])
+        .unwrap();
+    http.deliver(teams_proto::SetUserGraphSettings(preferences))
+        .await
+        .unwrap();
+    let undo = a.write(Action::ActivityUndoTurnOffApp { row: row.id }).await;
+    assert_eq!(undo.state, OutboxState::Sent);
+    assert_eq!(undo.kind, OutboxKind::ActivityRestoreApp);
+    let answer = http.read(&teams_proto::UserGraphSettingsRead).await.unwrap();
+    let restored = teams_proto::UserGraphSettings::read_answer(answer.body()).unwrap();
+    let restored: Value = serde_json::from_str(&restored.json_text()).unwrap();
+    assert_eq!(restored[app], original[app]);
+    assert_eq!(
+        restored["another-app"]["activityGenerationSettings"]["another-type"],
+        false
+    );
+    assert!(matches!(
+        a.handle.write(Action::ActivityUndoTurnOffApp { row: undo.id }).await,
+        Err(EngineError::ActivityAppUnavailable)
+    ));
+    a.shutdown();
+}
+
+#[tokio::test]
+async fn activity_turn_off_keeps_queries_responsive_while_reading_the_definition() {
+    let lab = Lab::start().await;
+    let id = lab
+        .mock
+        .add_activity(LAB_A, &app_activity("00000000-0000-4000-8000-00000000a002"), false)
+        .unwrap();
+    let mut a = native(&lab, LAB_A, How::default());
+    a.ready().await;
+    lab.mock
+        .answer_next_after("POST", "batchedDefinitions", Duration::from_secs(3))
+        .await;
+    let write = a.handle.write(Action::ActivityTurnOffApp { item: id.clone() });
+    tokio::time::timeout(WAIT, async {
+        loop {
+            if lab
+                .mock
+                .received_requests()
+                .await
+                .iter()
+                .any(|request| request.url.path().ends_with("/batchedDefinitions"))
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let feed = tokio::time::timeout(Duration::from_secs(1), a.handle.activity())
+        .await
+        .expect("local activity reads stay available during the definition request")
+        .unwrap();
+    assert!(feed.item(&id).is_some());
+    assert_eq!(write.await.unwrap().state, OutboxState::Sent);
     a.shutdown();
 }

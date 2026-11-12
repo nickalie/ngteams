@@ -45,6 +45,10 @@ pub enum OutboxKind {
     ActivityRead,
     /// The whole activity feed marked read.
     FeedRead,
+    /// An app's activity notifications turned off.
+    ActivityTurnOffApp,
+    /// Undo an app notification change.
+    ActivityRestoreApp,
 }
 
 /// Where a row stands.
@@ -102,6 +106,8 @@ text_enum!(OutboxKind {
     AddMembers => "add_members",
     ActivityRead => "activity_read",
     FeedRead => "feed_read",
+    ActivityTurnOffApp => "activity_turn_off_app",
+    ActivityRestoreApp => "activity_restore_app",
 });
 
 text_enum!(OutboxState {

@@ -96,3 +96,20 @@ impl Prepared for MarkFeedRead {
 fn digits(id: &str) -> bool {
     !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())
 }
+
+/// Replaces the account's complete app notification setting, encoded as JSON text as Teams sends it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SetUserGraphSettings(pub crate::UserGraphSettings);
+
+impl Prepared for SetUserGraphSettings {
+    fn wire(&self) -> Option<Wire> {
+        Some(Wire {
+            raw: None,
+            service: Service::ChatService,
+            headers: Vec::new(),
+            method: Method::Put,
+            endpoint: Endpoint::new(["v1", "users", "ME", "properties"]).with_query("name", "userGraphSettings"),
+            body: Some(json!({"userGraphSettings": self.0.json_text()})),
+        })
+    }
+}

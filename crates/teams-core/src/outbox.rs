@@ -145,6 +145,13 @@ pub enum Command {
     ActivityRead { item: String, read: bool },
     /// Marks the whole activity feed read as of the row's time ("Mark all as read").
     FeedRead,
+    /// Turns off the app's activity types, merged with a fresh own-properties read on each attempt.
+    ActivityTurnOffApp { app: String, activity_types: Vec<String> },
+    /// Restores the app preference saved for a confirmed Turn off.
+    ActivityRestoreApp {
+        app: String,
+        preference: teams_proto::AppNotificationPreference,
+    },
 }
 
 /// What commands go out in the order they were asked for on: a later one of this run waits while an earlier one on
@@ -152,6 +159,8 @@ pub enum Command {
 /// its take-back, an older edit over a newer one, the read horizon moving back).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lane<'a> {
+    /// The complete account app notification setting.
+    ActivitySettings,
     /// A message's edits, its delete, and the account's reactions on it.
     Message { conversation: &'a str, message_id: &'a str },
     /// The account's read horizon in a conversation.
@@ -201,6 +210,8 @@ impl Command {
             Self::AddMembers { .. } => OutboxKind::AddMembers,
             Self::ActivityRead { .. } => OutboxKind::ActivityRead,
             Self::FeedRead => OutboxKind::FeedRead,
+            Self::ActivityTurnOffApp { .. } => OutboxKind::ActivityTurnOffApp,
+            Self::ActivityRestoreApp { .. } => OutboxKind::ActivityRestoreApp,
         }
     }
 
@@ -215,7 +226,7 @@ impl Command {
             | Self::ReadReceipt { conversation, .. }
             | Self::AddMembers { conversation, .. } => Some(conversation),
             Self::ActivityRead { .. } | Self::FeedRead => Some(ACTIVITY_FEED),
-            Self::CreateChat { .. } => None,
+            Self::CreateChat { .. } | Self::ActivityTurnOffApp { .. } | Self::ActivityRestoreApp { .. } => None,
         }
     }
 
@@ -246,6 +257,7 @@ impl Command {
                 conversation: ACTIVITY_FEED,
                 message_id: item,
             }),
+            Self::ActivityTurnOffApp { .. } | Self::ActivityRestoreApp { .. } => Some(Lane::ActivitySettings),
             Self::FeedRead => Some(Lane::ReadHorizon {
                 conversation: ACTIVITY_FEED,
             }),
@@ -262,7 +274,12 @@ impl Command {
             | Self::React { message_id, .. }
             | Self::ReadReceipt { message_id, .. } => Some(message_id),
             Self::ActivityRead { item, .. } => Some(item),
-            Self::Send { .. } | Self::CreateChat { .. } | Self::AddMembers { .. } | Self::FeedRead => None,
+            Self::Send { .. }
+            | Self::CreateChat { .. }
+            | Self::AddMembers { .. }
+            | Self::FeedRead
+            | Self::ActivityTurnOffApp { .. }
+            | Self::ActivityRestoreApp { .. } => None,
         }
     }
 }
@@ -481,6 +498,7 @@ pub struct Outbox<T> {
     /// The transients waiting for their `Retry-After`, one of each kind and target ([`Transient::replaces`]); kept
     /// in memory only.
     waiting: Mutex<Vec<transient::Waiting>>,
+    activity_undo: Mutex<BTreeMap<i64, (String, teams_proto::AppNotificationPreference)>>,
 }
 
 impl<T: Transport<Error = HttpError>> Outbox<T> {
@@ -495,6 +513,7 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
             arrived: Mutex::new(Vec::new()),
             refreshed: Mutex::new(BTreeMap::new()),
             waiting: Mutex::new(Vec::new()),
+            activity_undo: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -984,14 +1003,16 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
                 Some(request) => self.deliver(request).await,
                 None => Tried::NotSent("the chat's members don't make a chat".to_owned()),
             },
-            command @ (Command::AddMembers { .. } | Command::ActivityRead { .. } | Command::FeedRead) => {
-                self.attempt_more(command, at).await
-            }
+            command @ (Command::AddMembers { .. }
+            | Command::ActivityRead { .. }
+            | Command::FeedRead
+            | Command::ActivityTurnOffApp { .. }
+            | Command::ActivityRestoreApp { .. }) => self.attempt_more(command, at, row.id).await,
         }
     }
 
     /// [`Outbox::attempt`]'s people added to a chat and the activity feed's writes.
-    async fn attempt_more(&self, command: Command, at: i64) -> Tried {
+    async fn attempt_more(&self, command: Command, at: i64, row: i64) -> Tried {
         match command {
             Command::AddMembers {
                 conversation,
@@ -1010,7 +1031,67 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
                 None => Tried::NotSent("the activity item's id can't be read".to_owned()),
             },
             Command::FeedRead => self.deliver(MarkFeedRead::at(at)).await,
+            Command::ActivityTurnOffApp { app, activity_types } => self.turn_off_app(row, &app, &activity_types).await,
+            Command::ActivityRestoreApp { app, preference } => {
+                let mut settings = match self.app_settings().await {
+                    Ok(settings) => settings,
+                    Err(error) => return Tried::NotSent(error),
+                };
+                settings.restore_app(&app, &preference);
+                self.deliver(teams_proto::SetUserGraphSettings(settings)).await
+            }
             _ => Tried::NotSent("not a command of this kind".to_owned()),
+        }
+    }
+
+    pub(crate) fn activity_app_undo(&self, row: i64) -> Option<Command> {
+        let saved = self.activity_undo.lock().unwrap_or_else(PoisonError::into_inner);
+        let (app, preference) = saved.get(&row)?;
+        Some(Command::ActivityRestoreApp {
+            app: app.clone(),
+            preference: preference.clone(),
+        })
+    }
+
+    async fn turn_off_app(&self, row: i64, app: &str, activity_types: &[String]) -> Tried {
+        let mut settings = match self.app_settings().await {
+            Ok(settings) => settings,
+            Err(error) => return Tried::NotSent(error),
+        };
+        let original = match settings.app_preference(app) {
+            Ok(original) => original,
+            Err(error) => return Tried::NotSent(error.to_string()),
+        };
+        if let Err(error) = settings.turn_off(app, activity_types) {
+            return Tried::NotSent(error.to_string());
+        }
+        self.activity_undo
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(row)
+            .or_insert_with(|| (app.to_owned(), original));
+        self.deliver(teams_proto::SetUserGraphSettings(settings)).await
+    }
+
+    async fn app_settings(&self) -> Result<teams_proto::UserGraphSettings, String> {
+        if self.is_read_only() {
+            return Err("app notification settings are read-only".to_owned());
+        }
+        match self.transport.read(&teams_proto::UserGraphSettingsRead).await {
+            Ok(answer)
+                if answer.status() == 404 && teams_proto::UserGraphSettingsRead::is_absent_answer(answer.body()) =>
+            {
+                Ok(teams_proto::UserGraphSettings::default())
+            }
+            Err(HttpError::Status(answer))
+                if answer.status() == 404 && teams_proto::UserGraphSettingsRead::is_absent_answer(answer.body()) =>
+            {
+                Ok(teams_proto::UserGraphSettings::default())
+            }
+            Ok(answer) if (200..300).contains(&answer.status()) => {
+                teams_proto::UserGraphSettings::read_answer(answer.body()).map_err(|error| error.to_string())
+            }
+            _ => Err("app notification settings could not be read; nothing was changed".to_owned()),
         }
     }
 
@@ -1176,7 +1257,11 @@ fn from_transport(error: HttpError) -> Tried {
 fn answered_id(row: &OutboxEntry, answer: &Response) -> Option<String> {
     match row.kind {
         OutboxKind::Send | OutboxKind::CreateChat => message_id(answer),
-        OutboxKind::ReadReceipt | OutboxKind::AddMembers | OutboxKind::FeedRead => None,
+        OutboxKind::ReadReceipt
+        | OutboxKind::AddMembers
+        | OutboxKind::FeedRead
+        | OutboxKind::ActivityTurnOffApp
+        | OutboxKind::ActivityRestoreApp => None,
         OutboxKind::Edit
         | OutboxKind::Delete
         | OutboxKind::AddReaction

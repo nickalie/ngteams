@@ -1,8 +1,12 @@
 //! What Manage team's Apps tab, Change picture, Analytics' "Select a channel" and "More create team options" read
-//! (`docs/protocol/teams.md`), each read when the page asks and kept nowhere: a team's installed apps, the store's apps
+//! (`docs/protocol/teams.md`), each read when the page asks: a team's installed apps, the store's apps
 //! with their definitions, a channel's analytics, Teams' templates and one template's channels and apps, how many
-//! Microsoft 365 groups the account could make a team of, and the picture Teams makes for a team from its name. The
-//! writes these pages send go as every team write does ([`crate::team_admin`]).
+//! Microsoft 365 groups the account could make a team of, and the picture Teams makes for a team from its name.
+//! App definitions are cached per account by id for Activity preferences and icons. The writes these pages send go
+//! as every team write does ([`crate::team_admin`]).
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use teams_proto::{
     AnalyticsPeriod, AppDefinitions, AppStore, ChannelAnalyticsRead, Credentials, DEFINITIONS_PAGE, DefaultTeamPicture,
@@ -16,6 +20,10 @@ use crate::team_admin::{read_body, send_body};
 
 /// What these pages ask (see the module docs).
 pub(crate) enum TeamAppsAsk {
+    Definition {
+        id: String,
+        reply: Responder<Option<teams_proto::AppDefinition>>,
+    },
     Apps {
         team: String,
         reply: Responder<Vec<InstalledApp>>,
@@ -53,6 +61,10 @@ where
     /// Answers `ask`.
     pub(crate) fn team_apps_ask(&mut self, ask: TeamAppsAsk) {
         match ask {
+            TeamAppsAsk::Definition { id, reply } => {
+                let cache = Arc::clone(&self.app_definitions);
+                self.spawn_read(reply, async move |client| definition(client, &cache, &id).await);
+            }
             TeamAppsAsk::Apps { team, reply } => self.spawn_read(reply, async move |client| {
                 let read = TeamApps { team };
                 send_body(client, &read)
@@ -104,4 +116,31 @@ where
             }),
         }
     }
+}
+
+/// Account-scoped definitions shared by Activity writes and readers such as app icons.
+pub(crate) type AppDefinitionsCache = Arc<tokio::sync::Mutex<BTreeMap<String, teams_proto::AppDefinition>>>;
+
+pub(crate) async fn definition<C: Credentials + 'static>(
+    client: &teams_proto::Client<teams_proto::HttpTransport<C>>,
+    cache: &AppDefinitionsCache,
+    id: &str,
+) -> Option<teams_proto::AppDefinition> {
+    let mut definitions = cache.lock().await;
+    if let Some(definition) = definitions.get(id) {
+        return Some(definition.clone());
+    }
+    let body = send_body(
+        client,
+        &AppDefinitions {
+            ids: vec![id.to_owned()],
+        },
+    )
+    .await?;
+    let definition = AppDefinitions::read_answer(&body)
+        .into_iter()
+        .find(|app| app.definition.id() == id)?
+        .definition;
+    definitions.insert(id.to_owned(), definition.clone());
+    Some(definition)
 }

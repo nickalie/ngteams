@@ -104,6 +104,10 @@ pub struct ActivityItem {
     /// Every feed message the item stands for, the newest first.
     pub ids: Vec<String>,
     pub kind: ActivityKind,
+    /// The app behind the item (`activityContext.teamsAppId`).
+    pub teams_app_id: Option<String>,
+    /// The app name, independent of the person attributed to its activity.
+    pub app_name: Option<String>,
     /// The person or app behind it (`sourceUserId`), when it names one.
     pub actor: Option<String>,
     /// Their name as the item carries it (`sourceUserImDisplayName`, else the app's name).
@@ -176,6 +180,8 @@ impl ActivityItem {
             activity_id: id_of(activity.get("activityId")),
             ids: vec![message.id.clone()],
             kind,
+            teams_app_id: context.and_then(|context| context_text(context, "teamsAppId")),
+            app_name: text("sourceAppDisplayName"),
             actors: actor.iter().cloned().collect(),
             actor,
             actor_name,

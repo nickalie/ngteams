@@ -53,6 +53,7 @@ use gpui::{
     Render, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
     WeakEntity, Window, actions, div, prelude::FluentBuilder as _, px, rgb,
 };
+use gpui_component::Sizable as _;
 use gpui_component::avatar::Avatar;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::kbd::Kbd;
@@ -334,6 +335,7 @@ pub struct Shell {
     dialog_return: crate::keyboard::Return,
     /// A toast, while one shows.
     toast: Option<(SharedString, Task<()>)>,
+    activity_undo: Option<i64>,
     /// The title bar's search: its box, its suggestions and its results.
     search_box: Entity<GlobalSearch>,
     /// The places shown, for Back and Forward.
@@ -444,6 +446,7 @@ impl Shell {
             team_dialog: None,
             dialog_return: crate::keyboard::Return::default(),
             toast: None,
+            activity_undo: None,
             search_box,
             history: History::default(),
             list_shown: true,
@@ -520,6 +523,10 @@ impl Shell {
                 }
             }
             ActivityViewEvent::Toast(words) => this.show_toast(words, cx),
+            ActivityViewEvent::AppTurnedOff(row) => {
+                this.show_toast("Successfully turned-off setting", cx);
+                this.activity_undo = Some(*row);
+            }
             ActivityViewEvent::NotificationSettings => {
                 this.open_settings_page(crate::settings_view::Page::Notifications, window, cx);
             }
@@ -1898,15 +1905,25 @@ impl Shell {
         if words.is_empty() {
             return;
         }
+        self.activity_undo = None;
         let task = cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             cx.background_executor().timer(std::time::Duration::from_secs(4)).await;
             let _ = this.update(cx, |this, cx| {
                 this.toast = None;
+                this.activity_undo = None;
                 cx.notify();
             });
         });
         self.toast = Some((words.into(), task));
         cx.notify();
+    }
+
+    pub fn undo_activity_app(&mut self, cx: &mut Context<Self>) {
+        if let Some(row) = self.activity_undo.take() {
+            self.toast = None;
+            self.activity.0.update(cx, |view, cx| view.undo_turn_off_app(row, cx));
+            cx.notify();
+        }
     }
 
     /// Shows `dialog` over everything; what it tells is acted on here.
@@ -1987,8 +2004,11 @@ impl Shell {
     }
 
     /// The toast, at the bottom of the window.
-    fn toast_view(&self, palette: Palette) -> Option<gpui::Div> {
+    fn toast_view(&self, palette: Palette, cx: &mut Context<Self>) -> Option<gpui::Div> {
         self.toast.as_ref().map(|(words, _)| {
+            if self.activity_undo.is_some() {
+                return Self::activity_app_toast(words.clone(), palette, cx);
+            }
             div()
                 .absolute()
                 .bottom(px(24.0))
@@ -2010,6 +2030,65 @@ impl Shell {
                         .child(words.clone()),
                 )
         })
+    }
+
+    fn activity_app_toast(words: SharedString, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
+        let close = selected_by(
+            "activity-dismiss-app-toast",
+            icon_button("activity-dismiss-app-toast", Glyph::X, "Dismiss")
+                .xsmall()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.toast = None;
+                    this.activity_undo = None;
+                    cx.notify();
+                })),
+        );
+        let undo = selected_by(
+            "activity-undo-app",
+            Button::new("activity-undo-app")
+                .ghost()
+                .label("Undo")
+                .text_color(rgb(palette.brand))
+                .on_click(cx.listener(|this, _, _, cx| this.undo_activity_app(cx))),
+        );
+        div()
+            .absolute()
+            .left(px(82.0))
+            .bottom(px(16.0))
+            .w(px(288.0))
+            .occlude()
+            .debug_selector(|| "toast".to_owned())
+            .p_3()
+            .rounded_md()
+            .border_1()
+            .border_color(rgb(palette.border))
+            .bg(rgb(palette.surface))
+            .text_color(rgb(palette.foreground))
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .items_start()
+                    .child(
+                        Glyph::CIRCLE_CHECK
+                            .icon()
+                            .size(px(16.0))
+                            .text_color(rgb(theme::SUCCESS)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(words),
+                    )
+                    .child(close),
+            )
+            .child(div().ml_6().child(undo))
     }
 
     /// Opens the team's "Create a channel" dialog over everything; it tells when it closes, and on which channel.
@@ -3239,7 +3318,7 @@ impl Render for Shell {
         let status_menu = self.status_menu.then(|| self.status_menu_view(palette, cx));
         let channel_dialog = self.channel_dialog_view();
         let team_dialog = self.team_dialog_view();
-        let toast = self.toast_view(palette);
+        let toast = self.toast_view(palette, cx);
         let more_apps = self.more_apps_view(palette, cx);
         let card = self.card_layer(window, cx);
         let first_run = self.settings.read(cx).awaiting_first_run().then(|| {

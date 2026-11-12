@@ -428,6 +428,11 @@ pub trait Core: Send + Sync + 'static {
         Reply::ready(Ok(Vec::new()))
     }
     /// The apps the store offers to add to a team. A fake core offers none.
+    /// The account's cached app definition, shared with Activity notification writes.
+    fn app_definition(&self, _id: String) -> Reply<Option<teams_proto::AppDefinition>> {
+        Reply::ready(Ok(None))
+    }
+
     fn app_store(&self) -> Reply<Vec<StoreApp>> {
         Reply::ready(Ok(Vec::new()))
     }
@@ -691,6 +696,10 @@ impl Core for EngineRequests {
 
     fn team_apps(&self, team: String) -> Reply<Vec<InstalledApp>> {
         EngineRequests::team_apps(self, team)
+    }
+
+    fn app_definition(&self, id: String) -> Reply<Option<teams_proto::AppDefinition>> {
+        EngineRequests::app_definition(self, id)
     }
 
     fn app_store(&self) -> Reply<Vec<StoreApp>> {

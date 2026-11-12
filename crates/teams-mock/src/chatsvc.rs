@@ -72,6 +72,9 @@ enum Route {
     Filtered {
         id: String,
     },
+    UserProperties {
+        write: bool,
+    },
     CreateChat,
     AddMembers {
         id: String,
@@ -84,6 +87,7 @@ impl Route {
         let path: Vec<&str> = path.iter().map(String::as_str).collect();
         let text = |text: &str| text.to_owned();
         let route = match (method, path.as_slice()) {
+            ("GET" | "PUT", ["users", "ME", "properties"]) => Self::UserProperties { write: method == "PUT" },
             ("GET", ["users", owner, "conversations"]) => Self::Conversations { owner: text(owner) },
             ("GET", ["threads", id]) => Self::Thread { id: text(id) },
             ("GET", ["threads", id, "members"]) => Self::Members { id: text(id) },
@@ -217,9 +221,40 @@ fn dispatch(state: &mut State, route: Route, call: &Call<'_>) -> ResponseTemplat
             _ => writes::read_horizon(state, call, &chat),
         },
         Route::OwnConversation { chat } => reads::own_conversation(state, call, &chat),
+        Route::UserProperties { write } => user_properties(state, call, write),
         Route::CreateChat => writes::create_chat(state, call),
         Route::AddMembers { id } => writes::add_members(state, call, &id),
     }
+}
+
+fn user_properties(state: &mut State, call: &Call<'_>, write: bool) -> ResponseTemplate {
+    if !write {
+        return state.user_graph_settings.get(&call.caller).map_or_else(
+            || {
+                json(
+                    404,
+                    &serde_json::json!({"errorCode": 404, "standardizedError": {"errorCode": 404, "errorSubCode": 1}}),
+                )
+            },
+            |settings| json(200, &serde_json::json!({"userGraphSettings": settings})),
+        );
+    }
+    let Some(body) = call.object().filter(|body| body.len() == 1) else {
+        return status(400);
+    };
+    if call.query("name") != Some("userGraphSettings") {
+        return status(400);
+    }
+    let Some(settings) = body.get("userGraphSettings").and_then(Value::as_str) else {
+        return status(400);
+    };
+    if serde_json::from_str::<serde_json::Map<String, Value>>(settings).is_err() {
+        return status(400);
+    }
+    state
+        .user_graph_settings
+        .insert(call.caller.clone(), settings.to_owned());
+    status(200)
 }
 
 /// The path's segments after `/api/chatsvc/<region>/v1/`, percent-decoded; `None` for any other path.
@@ -302,7 +337,6 @@ mod tests {
             })
         );
         for (method, path) in [
-            ("GET", "users/ME/properties"),
             ("PATCH", "users/ME/conversations/19:x@thread.v2/messages/1"),
             ("POST", "users/someone/conversations/19:x@thread.v2/messages"),
             ("POST", "agents/28:bot/invoke"),

@@ -17,7 +17,7 @@ mod picture;
 pub use picture::{CreatePicture, MAX_SENT_PICTURE, UploadPicture};
 mod team;
 
-pub use activity::{ACTIVITY_FEED, MarkFeedRead, SetActivityRead};
+pub use activity::{ACTIVITY_FEED, MarkFeedRead, SetActivityRead, SetUserGraphSettings};
 pub use availability::{ForceAvailability, ManualAvailability, SetEndpointAvailability};
 pub use calendar::{
     CancelChannelEvent, CancelEvent, CreateChannelEvent, CreateEvent, CreateOnlineMeeting, DeleteEvent, EventAttendee,
