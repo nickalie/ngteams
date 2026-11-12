@@ -266,10 +266,7 @@ impl Compose {
             .map(|model| model.read(cx).recent_context())
             .unwrap_or_default();
         if let Mode::Reply(quoted) = &self.mode {
-            context.push(Said {
-                from: quoted.sender_name.clone(),
-                text: quoted.preview.clone(),
-            });
+            context.push(Said::new(quoted.sender_name.clone(), quoted.preview.clone()));
         }
         context
     }

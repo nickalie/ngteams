@@ -39,8 +39,8 @@ use teams_proto::{
     TeamAnalytics, TeamPerson, TeamPicture, TeamTemplateCard, TeamTemplateDetails, TeamWrite,
 };
 use teams_store::{
-    CallTranscript, Conversation, Member, Message, MessagePage, OutboxEntry, PageCursor, Reaction, ReadHorizon,
-    SearchHit, SentOriginal, StoredTranslation, Team, TranscriptLine,
+    CallTranscript, Conversation, GlossaryTerm, Member, Message, MessagePage, OutboxEntry, PageCursor, Reaction,
+    ReadHorizon, SearchHit, SentOriginal, StoredTranslation, Team, TranscriptLine,
 };
 use tokio::sync::oneshot;
 
@@ -194,6 +194,21 @@ pub trait Core: Send + Sync + 'static {
     /// Keeps the account's own message as written, sent translated: no service write. A fake keeps nothing.
     fn keep_sent_original(&self, original: SentOriginal) -> Reply<()> {
         let _ = original;
+        Reply::ready(Ok(()))
+    }
+    /// The stored conversation `id` (a translated chat's topic), when the store holds it. A fake holds none.
+    fn conversation(&self, id: String) -> Reply<Option<Conversation>> {
+        let _ = id;
+        Reply::ready(Ok(None))
+    }
+    /// The glossary of `conversation` translated into `language`, the newest named first. A fake keeps none.
+    fn glossary(&self, conversation: String, language: String) -> Reply<Vec<GlossaryTerm>> {
+        let _ = (conversation, language);
+        Reply::ready(Ok(Vec::new()))
+    }
+    /// Keeps terms of translated chats' glossaries in the store: no service write. A fake keeps nothing.
+    fn keep_glossary(&self, terms: Vec<GlossaryTerm>) -> Reply<()> {
+        let _ = terms;
         Reply::ready(Ok(()))
     }
     /// Changes the calls' captions saved on this computer ([`crate::call_transcript`]): only the store changes, nothing
@@ -520,6 +535,18 @@ impl Core for EngineRequests {
 
     fn keep_sent_original(&self, original: SentOriginal) -> Reply<()> {
         EngineRequests::keep_sent_original(self, original)
+    }
+
+    fn conversation(&self, id: String) -> Reply<Option<Conversation>> {
+        EngineRequests::conversation(self, id)
+    }
+
+    fn glossary(&self, conversation: String, language: String) -> Reply<Vec<GlossaryTerm>> {
+        EngineRequests::glossary(self, conversation, language)
+    }
+
+    fn keep_glossary(&self, terms: Vec<GlossaryTerm>) -> Reply<()> {
+        EngineRequests::keep_glossary(self, terms)
     }
 
     fn transcript(&self, write: TranscriptWrite) -> Reply<i64> {

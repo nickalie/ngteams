@@ -1,7 +1,8 @@
 //! A translated chat's text outside its open view: the chat list's last-message preview, a new message's desktop
 //! notification and the search's message cards show it in the chat's language too, through the same pipeline as the
 //! chat's view ([`super::ChatTranslation`]): the same store, the same tool and the same prompts, a message's
-//! translation asked with the messages before it as context.
+//! translation asked with what the tool is told of its chat ([`super::brief`]: its title, who is who, its glossary),
+//! the messages before it and the whole of each message it replies to as context.
 //!
 //! - **One per account** ([`Previews::of`]), shared by the list, the notifications, the search and every open chat's
 //!   translation.
@@ -31,12 +32,13 @@ use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, Su
 use teams_proto::chat::RichText;
 use teams_store::{Message, PageCursor, SentOriginal, StoredTranslation, TranslationKind};
 
+use super::brief::{self, add_senders, brief_of, replied_to};
 use super::codec::{Shells, decode, encode, one_line};
-use super::prompt::{Answer, Item, Said};
+use super::prompt::{Answer, Brief, Item, Said, Term};
 use super::session::{Job, Limits, Outcome, Session, Spec};
 use super::{
     BATCH_CHARS, BATCH_ITEMS, CONTEXT_CHARS, CONTEXT_LINE, CONTEXT_LINES, Entry, MAX_MESSAGE, Source, entry_of_row,
-    original_row, stored_original, translatable,
+    key_of, original_row, stored_original, translatable,
 };
 use crate::bridge::Core;
 use crate::local_ai::{AiChoice, Failure, Tools};
@@ -636,21 +638,20 @@ impl Previews {
         let core = Arc::clone(&self.core);
         self.idle = None;
         self.preparing = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let (context, items) = prepare(&*core, &conversation, &chosen).await;
+            let (brief, context, items) = prepare(&*core, &conversation, language, &chosen).await;
             let keys = chosen.into_iter().map(|(key, _, _, shells)| (key, shells)).collect();
-            let _ = this.update(cx, |this, cx| this.start(language, context, items, keys, cx));
+            let job = Job::Batch {
+                id: 0,
+                brief: Arc::new(brief),
+                context,
+                items,
+            };
+            let _ = this.update(cx, |this, cx| this.start(language, job, keys, cx));
         }));
     }
 
-    /// Hands a prepared batch to the language's tool.
-    fn start(
-        &mut self,
-        language: &'static str,
-        context: Vec<Said>,
-        items: Vec<Item>,
-        keys: Vec<(Key, Shells)>,
-        cx: &mut Context<Self>,
-    ) {
+    /// Hands a prepared batch to the language's tool, numbered here.
+    fn start(&mut self, language: &'static str, mut job: Job, keys: Vec<(Key, Shells)>, cx: &mut Context<Self>) {
         self.preparing = None;
         if self.ensure_session(language, cx).is_err() {
             self.failed(keys.into_iter().map(|(key, _)| key).collect(), cx);
@@ -663,8 +664,11 @@ impl Previews {
             .enumerate()
             .map(|(n, (key, shells))| (n + 1, key, shells))
             .collect();
+        if let Job::Batch { id: numbered, .. } = &mut job {
+            *numbered = id;
+        }
         if let Some((session, _)) = self.sessions.get(language) {
-            session.send(Job::Batch { id, context, items });
+            session.send(job);
             self.batches += 1;
             self.running = Some(Running { id, items: running });
         }
@@ -697,13 +701,14 @@ impl Previews {
     }
 
     fn received(&mut self, outcome: Outcome, cx: &mut Context<Self>) {
-        let Outcome::Batch { id, answers } = outcome else {
+        let Outcome::Batch { id, answers, terms } = outcome else {
             return;
         };
         let Some(running) = self.running.take_if(|running| running.id == id) else {
             return;
         };
         if let Ok(answers) = answers {
+            self.keep_terms(&running, &terms);
             self.answered(running, &answers);
         } else {
             let keys = running.items.into_iter().map(|(_, key, _)| key).collect();
@@ -711,6 +716,19 @@ impl Previews {
         }
         self.pump(cx);
         cx.notify();
+    }
+
+    /// Terms a batch's answer added to its chat's glossary, kept in the store: its next batch is told them.
+    fn keep_terms(&self, running: &Running, terms: &[Term]) {
+        let Some((_, key, _)) = running.items.first() else {
+            return;
+        };
+        if !terms.is_empty() {
+            drop(
+                self.core
+                    .keep_glossary(brief::rows(&key.conversation, key.language, terms)),
+            );
+        }
     }
 
     /// A batch's answers, each known and kept in the store; one left out shows as written.
@@ -804,24 +822,44 @@ fn row_of(key: &Key, kind: TranslationKind, content: String, source_language: Op
     }
 }
 
-/// A batch's context (the messages before its oldest, oldest first, at most [`CONTEXT_LINES`] and [`CONTEXT_CHARS`])
-/// and its items, each named by its sender.
+/// What a batch is told of its chat ([`brief_of`], its senders among its members), its context (the messages before
+/// its oldest, oldest first, at most [`CONTEXT_LINES`] and [`CONTEXT_CHARS`], and, labelled, each message one of its
+/// messages replies to) and its items, each named by its sender and with what it replies to.
 async fn prepare(
     core: &dyn Core,
     conversation: &str,
+    language: &'static str,
     chosen: &[(Key, Message, String, Shells)],
-) -> (Vec<Said>, Vec<Item>) {
+) -> (Brief, Vec<Said>, Vec<Item>) {
+    let mut brief = Arc::new(brief_of(core, conversation, language).await);
     let mut names: HashMap<String, String> = HashMap::new();
     let mut items = Vec::with_capacity(chosen.len());
+    let mut labels: Vec<(String, String)> = Vec::new();
     for (n, (_, message, text, _)) in chosen.iter().enumerate() {
+        let re = replied_to(&crate::compose::rich_text_of(message))
+            .into_iter()
+            .next()
+            .map(|id| {
+                if let Some(at) = chosen.iter().position(|(_, other, _, _)| other.id == id) {
+                    return (at + 1).to_string();
+                }
+                if let Some((_, label)) = labels.iter().find(|(known, _)| *known == id) {
+                    return label.clone();
+                }
+                let label = format!("q{}", labels.len() + 1);
+                labels.push((id, label.clone()));
+                label
+            });
         items.push(Item {
             n: n + 1,
+            key: key_of(&source_of(message)),
             from: name_of(core, message, &mut names).await,
             text: text.clone(),
+            re,
         });
     }
     let Some((_, oldest, _, _)) = chosen.first() else {
-        return (Vec::new(), items);
+        return (Arc::unwrap_or_clone(brief), Vec::new(), items);
     };
     let cursor = PageCursor {
         arrival_time: oldest.arrival_time,
@@ -832,22 +870,63 @@ async fn prepare(
         .await
         .map(|page| page.messages)
         .unwrap_or_default();
-    let mut context = Vec::new();
+    let mut context: Vec<(&str, Said)> = Vec::new();
     let mut chars = 0;
     // the page is the newest first
     for message in before.iter().filter(|message| translatable(message)) {
-        let text = one_line(&crate::compose::rich_text_of(message), CONTEXT_LINE);
-        chars += text.len();
+        let said = said_of(core, message, &mut names).await;
+        chars += said.text.len();
         if chars > CONTEXT_CHARS {
             break;
         }
-        context.push(Said {
-            from: name_of(core, message, &mut names).await,
-            text,
-        });
+        context.push((message.id.as_str(), said));
     }
     context.reverse();
-    (context, items)
+    // what is replied to: labelled where it is, else read and put first (it is older)
+    let mut quoted = Vec::new();
+    for (id, label) in labels {
+        if let Some((_, said)) = context.iter_mut().find(|(held, _)| *held == id) {
+            said.label = Some(label);
+            continue;
+        }
+        let Some(message) = core
+            .message(conversation.to_owned(), id)
+            .await
+            .ok()
+            .flatten()
+            .filter(translatable)
+        else {
+            // not held: its preview in the reply is all there is
+            items
+                .iter_mut()
+                .filter(|item| item.re.as_ref() == Some(&label))
+                .for_each(|item| item.re = None);
+            continue;
+        };
+        let mut said = said_of(core, &message, &mut names).await;
+        said.label = Some(label);
+        quoted.push(said);
+    }
+    quoted.extend(context.into_iter().map(|(_, said)| said));
+    add_senders(
+        &mut brief,
+        items
+            .iter()
+            .map(|item| item.from.as_str())
+            .chain(quoted.iter().map(|said| said.from.as_str())),
+    );
+    (Arc::unwrap_or_clone(brief), quoted, items)
+}
+
+/// `message` as a context line.
+async fn said_of(core: &dyn Core, message: &Message, names: &mut HashMap<String, String>) -> Said {
+    let source = source_of(message);
+    Said {
+        key: key_of(&source),
+        from: name_of(core, message, names).await,
+        text: one_line(&source.text, CONTEXT_LINE),
+        label: None,
+    }
 }
 
 /// A sender's name as the engine has it, else as the message carried it.

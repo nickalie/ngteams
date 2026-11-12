@@ -214,6 +214,7 @@ impl Inbox {
         let me = self.me.as_str();
         match query {
             Query::Conversations(limit, reply) => give(reply, store.conversations_by_activity(limit)),
+            Query::Conversation(id, reply) => give(reply, store.conversation(&id)),
             Query::Messages {
                 conversation,
                 before,
@@ -253,6 +254,11 @@ impl Inbox {
                 ids,
                 reply,
             } => give(reply, store.translations(&conversation, &language, &ids)),
+            Query::Glossary {
+                conversation,
+                language,
+                reply,
+            } => give(reply, store.glossary(&conversation, &language)),
             Query::SentOriginals {
                 conversation,
                 keys,

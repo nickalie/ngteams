@@ -349,7 +349,12 @@ fn sent_in_german(rig: &mut Rig) -> (Entity<ChatTranslation>, Vec<Message>, Rich
         last.contains("<outgoing to=\\\"en\\\">Hallo zusammen</outgoing>"),
         "{last}"
     );
-    assert!(last.contains("Name of 1: Hello"), "the chat as context: {last}");
+    // the process translated the chat's message a question before: it holds it, so it isn't given again
+    assert!(
+        asked[..asked.len() - 1].iter().any(|asked| asked.contains("Hello")),
+        "{asked:?}"
+    );
+    assert!(!last.contains("<context>"), "nothing it holds given twice: {last}");
 
     // sent: shown as written while it goes, and once it is stored
     translation.update(&mut rig.app, |translation, cx| {
@@ -735,4 +740,101 @@ fn a_failure_ends_the_busy_state_and_says_how_to_try_again() {
         assert_eq!(translation.shown().mark_of(&messages[0]), None);
         assert_eq!(tip_of(translation), "Translating into German stopped");
     });
+}
+
+/// A fake Claude Code that logs each question and answers its first message with a term after it.
+const TERMING_CLAUDE: &str = r#"#!/bin/bash
+log="$(dirname "$0")/received.log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}\n' '<m id=\"1\" lang=\"en\">Die da</m><term from=\"Abnahme\" to=\"Abnahme (sign-off)\"/>'
+done
+"#;
+
+#[test]
+fn the_tool_is_told_the_chat_who_is_who_its_glossary_and_what_a_reply_answers() {
+    let mut rig = Rig::new(TERMING_CLAUDE);
+    rig.core.conversations.lock().unwrap().push(teams_store::Conversation {
+        id: CHAT.to_owned(),
+        kind: teams_store::ConversationKind::Group,
+        topic: Some("Synthetic project".to_owned()),
+        version: 1,
+        last_activity: None,
+    });
+    rig.core.members.lock().unwrap().insert(
+        CHAT.to_owned(),
+        vec![
+            teams_store::Member::new(LAB_A, None),
+            teams_store::Member::new(LAB_B, None),
+        ],
+    );
+    for (mri, name) in [(LAB_A, "Lab A"), (LAB_B, "Lab B")] {
+        rig.core.names.lock().unwrap().insert(mri.to_owned(), name.to_owned());
+    }
+    rig.core.glossary.lock().unwrap().push(teams_store::GlossaryTerm {
+        conversation_id: CHAT.to_owned(),
+        language: "de".to_owned(),
+        term: "Lastenheft".to_owned(),
+        rendering: "Lastenheft (spec)".to_owned(),
+        used_at: 1,
+    });
+    // the question was translated before; its reply wasn't
+    let question = message("1", 1, LAB_B, "Which one?");
+    let mut reply = message(
+        "2",
+        2,
+        LAB_B,
+        "<blockquote itemscope=\"\" itemtype=\"http://schema.skype.com/Reply\" itemid=\"1\"><strong \
+         itemprop=\"mri\" itemid=\"8:orgid:synthetic-b\">Lab B</strong><p itemprop=\"preview\">Which…</p>\
+         </blockquote><p>That one</p>",
+    );
+    reply.message_type = "RichText/Html".to_owned();
+    rig.core
+        .translations
+        .lock()
+        .unwrap()
+        .push(teams_store::StoredTranslation {
+            conversation_id: CHAT.to_owned(),
+            message_id: "1".to_owned(),
+            version: 1,
+            language: "de".to_owned(),
+            kind: TranslationKind::Translated,
+            content: serde_json::to_string(&RichText::plain("Welche?")).unwrap(),
+            source_language: Some("en".to_owned()),
+        });
+    let messages = vec![question, reply.clone()];
+    let translation = rig.open();
+    rig.follow(&translation, &messages);
+    translation.update(&mut rig.app, |translation, cx| translation.set_language(Some("de"), cx));
+    rig.until(&translation, |translation| shown_text(translation, &reply).is_some());
+    let asked = questions(rig.dir.path());
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    for told in [
+        "<chat>",
+        "Title: Synthetic project",
+        "You: Lab A",
+        "Members: Lab B",
+        "<terms>",
+        "Lastenheft = Lastenheft (spec)",
+        "[q1] Name of 1: Which one?",
+        "re=\\\"q1\\\"",
+    ] {
+        assert!(asked[0].contains(told), "{told}: {}", asked[0]);
+    }
+    // the term the answer named is kept for the chat and its language
+    for _ in 0..500 {
+        rig.app.run_until_parked();
+        if rig.core.glossary.lock().unwrap().len() == 2 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let kept = rig.core.glossary.lock().unwrap().clone();
+    assert!(
+        kept.iter().any(|kept| kept.conversation_id == CHAT
+            && kept.language == "de"
+            && kept.term == "Abnahme"
+            && kept.rendering == "Abnahme (sign-off)"),
+        "{kept:?}"
+    );
 }

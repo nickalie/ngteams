@@ -444,3 +444,77 @@ fn a_reply_s_quote_shows_translated_and_is_sent_as_written() {
     assert!(kept.contains("DE Hello there"), "{kept}");
     assert_eq!(plain.as_shown_in(&reply), reply);
 }
+
+/// A fake Claude Code that logs each question and answers its first message with a term after it.
+const TERMING_CLAUDE: &str = r#"#!/bin/bash
+log="$(dirname "$0")/received.log"
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}\n' '<m id=\"1\" lang=\"en\">Die da</m><term from=\"Abnahme\" to=\"Abnahme (sign-off)\"/>'
+done
+"#;
+
+#[test]
+fn a_preview_s_reply_goes_with_what_it_answers_and_its_chat_s_terms_are_kept() {
+    let mut rig = Rigged::new(TERMING_CLAUDE);
+    rig.core.conversations.lock().unwrap().push(Conversation {
+        id: CHAT.to_owned(),
+        kind: ConversationKind::OneToOne,
+        topic: Some("Synthetic topic".to_owned()),
+        version: 1,
+        last_activity: None,
+    });
+    rig.core.members.lock().unwrap().insert(
+        CHAT.to_owned(),
+        vec![Member::new(LAB_A, None), Member::new(LAB_B, None)],
+    );
+    rig.core
+        .names
+        .lock()
+        .unwrap()
+        .insert(LAB_B.to_owned(), "Lab B".to_owned());
+    // the question far back, out of the page of context before the reply
+    let mut held = vec![message(CHAT, "1", 1, LAB_B, "Which one?")];
+    held.extend((2..60).map(|at| message(CHAT, &at.to_string(), at, LAB_A, "Filler")));
+    let mut reply = message(
+        CHAT,
+        "60",
+        60,
+        LAB_B,
+        "<blockquote itemscope=\"\" itemtype=\"http://schema.skype.com/Reply\" itemid=\"1\"><strong \
+         itemprop=\"mri\" itemid=\"8:orgid:synthetic-b\">Lab B</strong><p itemprop=\"preview\">Which…</p>\
+         </blockquote><p>That one</p>",
+    );
+    reply.message_type = "RichText/Html".to_owned();
+    held.push(reply.clone());
+    held.reverse();
+    rig.core.messages.lock().unwrap().insert(CHAT.to_owned(), held);
+    let previews = rig.previews();
+    rig.translate(CHAT, Some("de"));
+    rig.want(&previews, vec![reply.clone()]);
+    let shown = rig.until_known(&previews, &reply);
+    assert!(text_of(&shown).is_some_and(|text| text.contains("Die da")), "{shown:?}");
+    let asked = questions(rig.dir.path());
+    assert_eq!(asked.len(), 1);
+    for told in [
+        "Title: Synthetic topic",
+        "Members: Lab B",
+        "[q1] Lab B: Which one?",
+        "re=\\\"q1\\\"",
+    ] {
+        assert!(asked[0].contains(told), "{told}: {}", asked[0]);
+    }
+    for _ in 0..500 {
+        rig.app.run_until_parked();
+        if !rig.core.glossary.lock().unwrap().is_empty() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let kept = rig.core.glossary.lock().unwrap().clone();
+    assert!(
+        kept.iter()
+            .any(|kept| kept.conversation_id == CHAT && kept.language == "de" && kept.term == "Abnahme"),
+        "{kept:?}"
+    );
+}

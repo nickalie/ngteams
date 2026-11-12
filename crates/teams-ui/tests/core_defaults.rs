@@ -249,6 +249,9 @@ fn kept_things_are_none_and_keeping_them_keeps_nothing() {
             empty(core.translations(CHAT.into(), "de".into(), vec!["1".into()])),
         ),
         ("keep_translations", now(core.keep_translations(Vec::new())).is_ok()),
+        ("conversation", none(core.conversation(CHAT.into()))),
+        ("glossary", empty(core.glossary(CHAT.into(), "de".into()))),
+        ("keep_glossary", now(core.keep_glossary(Vec::new())).is_ok()),
         (
             "sent_originals",
             empty(core.sent_originals(CHAT.into(), vec!["key".into()])),

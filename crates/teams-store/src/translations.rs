@@ -1,5 +1,6 @@
 //! Chats translated on this computer (schema 20): each message's translation by its id, version and target language,
-//! and the account's own messages as written when they were sent translated. The app translates (`teams-ui`'s chat
+//! and the account's own messages as written when they were sent translated; and each chat's glossary (schema 22),
+//! the renderings the translator chose for its terms, so a later translation keeps them. The app translates (`teams-ui`'s chat
 //! translation); the store keeps what it made, so a later run shows it without asking the translator again. The rich
 //! text is kept as the text the app hands in; the store never reads it. `Debug` leaves the text out.
 
@@ -102,6 +103,38 @@ impl fmt::Debug for SentOriginal {
             .field("created_at", &self.created_at)
             .finish_non_exhaustive()
     }
+}
+
+/// A term of a translated chat as it writes it, and the rendering chosen for it in a language.
+#[derive(Clone, PartialEq, Eq)]
+pub struct GlossaryTerm {
+    pub conversation_id: String,
+    /// The language the chat is read in (the app's code).
+    pub language: String,
+    /// The term as the chat writes it.
+    pub term: String,
+    /// Its rendering in `language`.
+    pub rendering: String,
+    /// When the translator last named it, ms since the epoch.
+    pub used_at: i64,
+}
+
+impl fmt::Debug for GlossaryTerm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GlossaryTerm")
+            .field("conversation_id", &self.conversation_id)
+            .field("language", &self.language)
+            .field("used_at", &self.used_at)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The most terms a chat's glossary keeps per language: the newest named.
+pub const GLOSSARY_TERMS: usize = 40;
+
+/// [`GLOSSARY_TERMS`] as SQLite takes a limit.
+fn glossary_limit() -> i64 {
+    i64::try_from(GLOSSARY_TERMS).unwrap_or(i64::MAX)
 }
 
 /// The most ids one read takes at a time (SQLite's bound parameters).
@@ -246,6 +279,75 @@ impl Store {
                 original.created_at,
             ],
         )?;
+        Ok(())
+    }
+
+    /// The glossary of `conversation_id` in `language`: at most [`GLOSSARY_TERMS`], the newest named first.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlite`] when the read fails.
+    pub fn glossary(&self, conversation_id: &str, language: &str) -> Result<Vec<GlossaryTerm>, StoreError> {
+        let rows = self
+            .conn
+            .prepare_cached(
+                "SELECT term, rendering, used_at FROM translation_glossary
+                 WHERE conversation_id = ?1 AND language = ?2 ORDER BY used_at DESC, term LIMIT ?3",
+            )?
+            .query_map(params![conversation_id, language, glossary_limit()], |row| {
+                Ok(GlossaryTerm {
+                    conversation_id: conversation_id.to_owned(),
+                    language: language.to_owned(),
+                    term: row.get(0)?,
+                    rendering: row.get(1)?,
+                    used_at: row.get(2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Keeps `terms`, in one transaction: each replaces what its chat and language kept for the term, and each chat's
+    /// glossary in each language is trimmed to its newest [`GLOSSARY_TERMS`]. One of a conversation the store doesn't
+    /// hold is left out.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlite`] when the write fails; nothing changed then.
+    pub fn put_glossary(&mut self, terms: &[GlossaryTerm]) -> Result<(), StoreError> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut row = tx.prepare_cached(
+                "INSERT INTO translation_glossary (conversation_id, language, term, rendering, used_at)
+                 SELECT ?1, ?2, ?3, ?4, ?5 WHERE EXISTS (SELECT 1 FROM conversations WHERE id = ?1)
+                 ON CONFLICT (conversation_id, language, term) DO UPDATE SET
+                     rendering = excluded.rendering, used_at = excluded.used_at",
+            )?;
+            let mut trim = tx.prepare_cached(
+                "DELETE FROM translation_glossary WHERE conversation_id = ?1 AND language = ?2 AND term NOT IN (
+                     SELECT term FROM translation_glossary WHERE conversation_id = ?1 AND language = ?2
+                     ORDER BY used_at DESC, term LIMIT ?3)",
+            )?;
+            for term in terms {
+                row.execute(params![
+                    term.conversation_id,
+                    term.language,
+                    term.term,
+                    term.rendering,
+                    term.used_at,
+                ])?;
+            }
+            let mut chats: Vec<(&str, &str)> = terms
+                .iter()
+                .map(|term| (term.conversation_id.as_str(), term.language.as_str()))
+                .collect();
+            chats.sort_unstable();
+            chats.dedup();
+            for (conversation_id, language) in chats {
+                trim.execute(params![conversation_id, language, glossary_limit()])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 }

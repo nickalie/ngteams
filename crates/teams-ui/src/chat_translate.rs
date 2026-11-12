@@ -18,9 +18,14 @@
 //! - **The chat as context, a batch at a time** ([`session`], [`prompt`]): the tool's process stays up for the chat and
 //!   keeps the conversation; the messages without a translation go in batches of up to [`BATCH_ITEMS`] messages or
 //!   [`BATCH_CHARS`] characters, the newest first (what the view shows), each with the messages before it (who said
-//!   what) as context. Formatting, mentions, links, emoji and code are kept as markers the tool must keep
-//!   ([`codec`]): the translation is put back together as the message's own rich text, drawn only through the
-//!   sanitized [`RichText`].
+//!   what, up to [`CONTEXT_LINES`] and [`CONTEXT_CHARS`]: the session gives a process each line once, and a running
+//!   one only what is new to it) and the whole of each message one of them replies to, wherever it is in the chat
+//!   ([`window`]). Formatting, mentions, links, emoji and code are kept as markers the tool must keep ([`codec`]): the
+//!   translation is put back together as the message's own rich text, drawn only through the sanitized [`RichText`].
+//! - **What the tool is told of the chat** ([`brief`]): its title, who is who (the account is the member translated
+//!   for, the others by name), and its glossary: the renderings the tool chose for the chat's terms, kept in the store
+//!   per chat and language and grown from each batch's answer, so a new process, or a later run, keeps them. Gender
+//!   and forms of address are the tool's to read from the chat itself; nothing here guesses them.
 //! - **Sending** ([`ChatTranslation::outgoing`]): the user writes in the chat's chosen language; the message (a post,
 //!   a reply, an edit) is translated into the chat's language, the one the others write in (the source the tool named
 //!   for their messages, the most frequent; else the tool judges it from the context), before it goes to the outbox,
@@ -41,6 +46,7 @@
 //! - **The picker** ([`header_button`], [`picker`]): the header's menu of languages, with a search field that filters it.
 //! - **Private**: no message, translation or tool output is logged or traced.
 
+pub mod brief;
 pub mod codec;
 pub mod picker;
 pub mod previews;
@@ -69,15 +75,16 @@ use crate::settings::SettingsModel;
 use crate::theme::{self, Palette};
 use crate::translate::{TARGET_LANGUAGES, language, same_language};
 use codec::{Shells, decode, encode, one_line};
-use prompt::{Answer, Item, Said};
+use prompt::{Answer, Brief, Item, Said, Term};
 
 /// The most messages a batch holds.
 pub const BATCH_ITEMS: usize = 12;
 /// The most characters of messages a batch holds (a longer message goes alone).
 pub const BATCH_CHARS: usize = 6000;
-/// The most messages before a batch given as its context, and their most characters.
-pub const CONTEXT_LINES: usize = 15;
-pub const CONTEXT_CHARS: usize = 3000;
+/// The most messages before a batch given as its context, and their most characters: what a new tool process is
+/// given; a running one is given only what is new to it, at most [`session::WARM_LINES`].
+pub const CONTEXT_LINES: usize = 40;
+pub const CONTEXT_CHARS: usize = 8000;
 /// The longest a context line is.
 const CONTEXT_LINE: usize = 400;
 /// How many times a message the tool's answer left out is asked again before it shows as written for good.
@@ -313,6 +320,9 @@ pub struct ChatTranslation {
     originals: Arc<HashSet<String>>,
     sent: Arc<Vec<Sent>>,
     session: Option<Session>,
+    /// What the tool is told of the chat, once read ([`brief::brief_of`]); nothing goes to the tool before.
+    brief: Option<Arc<Brief>>,
+    briefing: Option<Task<()>>,
     running: Option<Running>,
     outgoing: HashMap<u64, (Shells, async_channel::Sender<Outgoing>)>,
     next_id: u64,
@@ -364,6 +374,8 @@ impl ChatTranslation {
             originals: Arc::default(),
             sent: Arc::default(),
             session: None,
+            brief: None,
+            briefing: None,
             running: None,
             outgoing: HashMap::new(),
             next_id: 1,
@@ -581,12 +593,51 @@ impl ChatTranslation {
         self.asked.clear();
         self.attempts.clear();
         self.originals = Arc::default();
+        self.brief = None;
+        self.briefing = None;
         self.status = if language.is_some() { Status::On } else { Status::Off };
-        if language.is_some() {
+        if let Some(language) = language {
+            self.read_brief(language, cx);
             self.read_store(cx);
         }
         self.share(cx);
         cx.notify();
+    }
+
+    /// Reads what the tool is told of the chat, then hands the tool what waits.
+    fn read_brief(&mut self, language: &'static str, cx: &mut Context<Self>) {
+        let core = Arc::clone(&self.core);
+        let chat = self.chat.clone();
+        self.briefing = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let read = brief::brief_of(&*core, &chat, language).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.language == Some(language) {
+                    this.briefing = None;
+                    this.brief = Some(Arc::new(read));
+                    this.pump(cx);
+                }
+            });
+        }));
+    }
+
+    /// What the tool is told of the chat now: the brief read, with the senders of the messages at `around` among its
+    /// members (a large chat's); the chat alone until it is read.
+    fn brief_with(&mut self, around: &[usize]) -> Arc<Brief> {
+        let chat = self.chat.clone();
+        let brief = self.brief.get_or_insert_with(|| {
+            Arc::new(Brief {
+                conversation: chat,
+                ..Brief::default()
+            })
+        });
+        brief::add_senders(
+            brief,
+            around
+                .iter()
+                .filter_map(|at| self.sources.get(*at))
+                .map(|source| source.from.as_str()),
+        );
+        Arc::clone(brief)
     }
 
     /// Stops the tool's session: a send waiting on it is told it stopped.
@@ -708,7 +759,7 @@ impl ChatTranslation {
 
     /// Hands the tool the next batch, when none runs and there is one: the newest messages the store had nothing for.
     fn pump(&mut self, cx: &mut Context<Self>) {
-        if self.running.is_some() || self.reading.is_some() || self.status != Status::On {
+        if self.running.is_some() || self.reading.is_some() || self.briefing.is_some() || self.status != Status::On {
             return;
         }
         let Some(language) = self.language else { return };
@@ -755,23 +806,40 @@ impl ChatTranslation {
             self.status = Status::Failed(failure);
             return cx.notify();
         }
-        let picked: HashSet<usize> = chosen.iter().map(|(at, _, _)| *at).collect();
+        let picked: Vec<usize> = chosen.iter().map(|(at, _, _)| *at).collect();
         let last = chosen.last().map_or(0, |(at, _, _)| *at);
-        let context = self.context_before(last, &picked);
+        let replies: Vec<Vec<String>> = picked
+            .iter()
+            .map(|at| brief::replied_to(&self.sources[*at].text))
+            .collect();
+        let (context, re) = window(&self.sources, &picked, &replies, last);
+        let around: Vec<usize> = picked
+            .iter()
+            .copied()
+            .chain(context.iter().filter_map(|said| self.at_key(&said.key)))
+            .collect();
+        let brief = self.brief_with(&around);
         let id = self.next_job_id();
         let mut items = Vec::new();
         let mut running = Vec::new();
-        for (n, (at, text, shells)) in chosen.into_iter().enumerate() {
+        for (n, ((at, text, shells), re)) in chosen.into_iter().zip(re).enumerate() {
             let source = &self.sources[at];
             items.push(Item {
                 n: n + 1,
+                key: key_of(source),
                 from: source.from.clone(),
                 text,
+                re,
             });
             running.push((n + 1, source.id.clone(), source.version, shells));
         }
         if let Some(session) = &self.session {
-            session.send(session::Job::Batch { id, context, items });
+            session.send(session::Job::Batch {
+                id,
+                brief,
+                context,
+                items,
+            });
             self.batches += 1;
             self.running = Some(Running {
                 id,
@@ -781,36 +849,16 @@ impl ChatTranslation {
         }
     }
 
-    /// The messages before the one at `at` but those `left_out` (the batch's own), oldest first, as context: at most
-    /// [`CONTEXT_LINES`] and [`CONTEXT_CHARS`].
-    fn context_before(&self, at: usize, left_out: &HashSet<usize>) -> Vec<Said> {
-        let mut context = Vec::new();
-        let mut chars = 0;
-        let before = self.sources[..at]
-            .iter()
-            .enumerate()
-            .rev()
-            .filter(|(index, _)| !left_out.contains(index))
-            .take(CONTEXT_LINES);
-        for (_, source) in before {
-            chars += source.line.len();
-            if chars > CONTEXT_CHARS {
-                break;
-            }
-            context.push(Said {
-                from: source.from.clone(),
-                text: source.line.clone(),
-            });
-        }
-        context.reverse();
-        context
+    /// Where the message a context line's `key` names is among the sources.
+    fn at_key(&self, key: &str) -> Option<usize> {
+        self.sources.iter().position(|source| key_of(source) == key)
     }
 
     /// The chat's latest messages, oldest first, as context for something new written in it: at most
     /// [`CONTEXT_LINES`] and [`CONTEXT_CHARS`].
     #[must_use]
     pub fn recent_context(&self) -> Vec<Said> {
-        self.context_before(self.sources.len(), &HashSet::new())
+        window(&self.sources, &[], &[], self.sources.len()).0
     }
 
     fn next_job_id(&mut self) -> u64 {
@@ -854,7 +902,7 @@ impl ChatTranslation {
                 self.answered(&mut running, &answers);
                 self.running = Some(running);
             }
-            Outcome::Batch { id, answers } => {
+            Outcome::Batch { id, answers, terms } => {
                 let Some(mut running) = self.running.take_if(|running| running.id == id) else {
                     return;
                 };
@@ -862,6 +910,7 @@ impl ChatTranslation {
                     Ok(answers) => {
                         self.answered(&mut running, &answers);
                         self.left_out(&running);
+                        self.learn_terms(&terms);
                     }
                     Err(failure) => self.status = Status::Failed(failure),
                 }
@@ -902,6 +951,18 @@ impl ChatTranslation {
         if !kept.is_empty() {
             self.keep(kept);
         }
+    }
+
+    /// Terms a batch's answer added to the chat's glossary: told from now on, and kept in the store.
+    fn learn_terms(&mut self, terms: &[Term]) {
+        let (Some(language), Some(brief)) = (self.language, self.brief.as_mut()) else {
+            return;
+        };
+        if terms.is_empty() {
+            return;
+        }
+        brief::learn(brief, terms);
+        drop(self.core.keep_glossary(brief::rows(&self.chat, language, terms)));
     }
 
     /// The batch `running` is done: a message its answer left out is asked again, up to [`ATTEMPTS`], then shows as
@@ -1009,7 +1070,8 @@ impl ChatTranslation {
         if target.as_deref().is_some_and(|target| same_language(language, target)) {
             return Some(Task::ready(Ok(None)));
         }
-        let context = self.context_before(self.sources.len(), &HashSet::new());
+        let replies = vec![brief::replied_to(text)];
+        let (context, mut re) = window(&self.sources, &[], &replies, self.sources.len());
         if target.is_none() && !self.sources.iter().any(|source| !source.own) {
             return Some(Task::ready(Err(SendFailure::Unknown)));
         }
@@ -1017,14 +1079,18 @@ impl ChatTranslation {
             return Some(Task::ready(Err(SendFailure::Tool(failure))));
         }
         let (encoded, shells) = encode(text);
+        let around: Vec<usize> = context.iter().filter_map(|said| self.at_key(&said.key)).collect();
+        let brief = self.brief_with(&around);
         let id = self.next_job_id();
         let (reply, answer) = async_channel::bounded(1);
         self.outgoing.insert(id, (shells, reply));
         if let Some(session) = &self.session {
             session.send(session::Job::Outgoing {
                 id,
+                brief,
                 context,
                 to: target,
+                re: re.pop().flatten(),
                 text: encoded,
             });
         }
@@ -1121,6 +1187,73 @@ impl ChatTranslation {
                 .into_any_element(),
         )
     }
+}
+
+/// A message's key in what the tool is given: its conversation, id and version, so an edit is given anew.
+pub(crate) fn key_of(source: &Source) -> String {
+    format!("{} {} {}", source.conversation_id, source.id, source.version)
+}
+
+/// The context of what is asked about `sources`' messages at `picked` (oldest first), which reply to the messages
+/// `replies` names (each picked one's, or what an outgoing message replies to): the messages before the one at
+/// `before` but the picked, the nearest first, at most [`CONTEXT_LINES`] and [`CONTEXT_CHARS`], and every message
+/// replied to that isn't picked, wherever it is, labelled (`q1`); oldest first. With it, what each of `replies`
+/// replies to: a context line's label, or a picked message's number in the batch.
+pub(crate) fn window(
+    sources: &[Source],
+    picked: &[usize],
+    replies: &[Vec<String>],
+    before: usize,
+) -> (Vec<Said>, Vec<Option<String>>) {
+    let mut labels: Vec<(usize, String)> = Vec::new();
+    let re = replies
+        .iter()
+        .map(|ids| {
+            ids.iter().find_map(|id| {
+                if let Some(n) = picked.iter().position(|at| sources[*at].id == *id) {
+                    return Some((n + 1).to_string());
+                }
+                let index = sources.iter().position(|source| source.id == *id)?;
+                if let Some((_, label)) = labels.iter().find(|(at, _)| *at == index) {
+                    return Some(label.clone());
+                }
+                let label = format!("q{}", labels.len() + 1);
+                labels.push((index, label.clone()));
+                Some(label)
+            })
+        })
+        .collect();
+    let mut chosen: Vec<usize> = Vec::new();
+    let mut chars = 0;
+    for index in (0..before.min(sources.len()))
+        .rev()
+        .filter(|index| !picked.contains(index))
+    {
+        chars += sources[index].line.len();
+        if chosen.len() >= CONTEXT_LINES || chars > CONTEXT_CHARS {
+            break;
+        }
+        chosen.push(index);
+    }
+    chosen.extend(labels.iter().map(|(at, _)| *at).filter(|at| !picked.contains(at)));
+    chosen.sort_unstable();
+    chosen.dedup();
+    let context = chosen
+        .into_iter()
+        .map(|index| {
+            let source = &sources[index];
+            Said {
+                key: key_of(source),
+                from: source.from.clone(),
+                text: source.line.clone(),
+                label: labels
+                    .iter()
+                    .find(|(at, _)| *at == index)
+                    .map(|(_, label)| label.clone()),
+            }
+        })
+        .collect();
+    (context, re)
 }
 
 /// Whether `message` is one a chat's translation reads: a text message with something in it, not deleted.
@@ -1223,3 +1356,7 @@ pub const SETTINGS_NOTE: &str =
 #[cfg(test)]
 #[path = "../tests/support/chat_translate_units.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../tests/support/chat_translate_eval.rs"]
+mod eval;

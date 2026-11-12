@@ -188,3 +188,57 @@ fn what_the_view_shows_follows_the_entries() {
     assert_eq!(shown.mark_of(&message), None);
     assert_eq!(shown.original_of_sent(&RichText::plain("x")), None);
 }
+
+/// A source replying to `to` (its id), with the preview Teams quotes.
+fn reply_source(id: &str, to: &str, text: &str) -> Source {
+    let text = Arc::new(parse_html(&format!(
+        "<blockquote itemscope=\"\" itemtype=\"http://schema.skype.com/Reply\" itemid=\"{to}\"><strong \
+         itemprop=\"mri\" itemid=\"8:orgid:synthetic-b\">Lab B</strong><p itemprop=\"preview\">Which…</p>\
+         </blockquote><p>{text}</p>"
+    )));
+    Source {
+        line: one_line(&text, CONTEXT_LINE),
+        text,
+        ..source(id, None, None, "")
+    }
+}
+
+#[test]
+fn a_window_holds_the_nearest_lines_and_every_message_replied_to() {
+    let mut sources: Vec<Source> = (0..CONTEXT_LINES + 20)
+        .map(|n| source(&format!("m{n}"), None, None, &format!("line {n}")))
+        .collect();
+    let last = sources.len();
+    // the newest replies to the very first message (far out of the window), the one before to the newest
+    sources.push(reply_source("r1", "m0", "That one"));
+    sources.push(reply_source("r2", "r1", "Agreed"));
+    let picked = [last, last + 1];
+    let replies: Vec<Vec<String>> = picked.iter().map(|at| brief::replied_to(&sources[*at].text)).collect();
+    assert_eq!(replies, [vec!["m0".to_owned()], vec!["r1".to_owned()]]);
+    let (context, re) = window(&sources, &picked, &replies, last + 1);
+    assert_eq!(re, [Some("q1".to_owned()), Some("1".to_owned())]);
+    assert_eq!(context.len(), CONTEXT_LINES + 1);
+    assert_eq!(context[0].text, "line 0");
+    assert_eq!(context[0].label.as_deref(), Some("q1"));
+    assert_eq!(context[1].text, format!("line {}", last - CONTEXT_LINES));
+    assert_eq!(
+        context.last().map(|said| said.text.as_str()),
+        Some(&*format!("line {}", last - 1))
+    );
+    assert!(context.iter().skip(1).all(|said| said.label.is_none()));
+    assert_eq!(context[0].key, key_of(&sources[0]));
+    // a reply to a message not held names nothing; the same one twice has one label
+    let replies = vec![vec!["gone".to_owned()], vec!["m0".to_owned()], vec!["m0".to_owned()]];
+    let (context, re) = window(&sources, &[], &replies, 2);
+    assert_eq!(re, [None, Some("q1".to_owned()), Some("q1".to_owned())]);
+    assert_eq!(context.len(), 2);
+    // the characters bound the window too
+    let long: Vec<Source> = (0..3)
+        .map(|n| source(&format!("l{n}"), None, None, &"w".repeat(CONTEXT_LINE)))
+        .map(|mut long| {
+            long.line = "w".repeat(CONTEXT_CHARS / 2);
+            long
+        })
+        .collect();
+    assert_eq!(window(&long, &[], &[], 3).0.len(), 2);
+}

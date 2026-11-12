@@ -121,9 +121,9 @@ use teams_proto::{
     TeamPicture, TeamTemplateCard, TeamTemplateDetails, TeamWrite, Transport,
 };
 use teams_store::{
-    Applied, CallTranscript, Conversation, ConversationKind, Member, Message, MessagePage, OutboxEntry, OutboxKind,
-    OutboxState, PageCursor, Reaction, ReadHorizon, SearchHit, SentOriginal, Store, StoreError, StoredTranslation,
-    Team, TranscriptLine,
+    Applied, CallTranscript, Conversation, ConversationKind, GlossaryTerm, Member, Message, MessagePage, OutboxEntry,
+    OutboxKind, OutboxState, PageCursor, Reaction, ReadHorizon, SearchHit, SentOriginal, Store, StoreError,
+    StoredTranslation, Team, TranscriptLine,
 };
 use teams_trouter::{
     Change, ChatEvent, Delivery, Down, MessageLoss, PushEvent, RegistrationReport, Stop, Trouter, TrouterCredentials,
@@ -760,6 +760,8 @@ enum Request {
     KeepTranslations(Vec<StoredTranslation>, Responder<()>),
     /// The account's own message as written, kept when it was sent translated: no service write.
     KeepSentOriginal(SentOriginal, Responder<()>),
+    /// A translated chat's glossary, kept in the store: no service write.
+    KeepGlossary(Vec<GlossaryTerm>, Responder<()>),
     /// A call's saved captions ([`TranscriptWrite`]), kept in the store: no service write.
     Transcript(TranscriptWrite, Responder<i64>),
     Person(String, Responder<Person>),
@@ -877,6 +879,8 @@ enum Request {
 /// A request answered from the store alone.
 enum Query {
     Conversations(usize, Responder<Vec<Conversation>>),
+    /// One stored conversation.
+    Conversation(String, Responder<Option<Conversation>>),
     Messages {
         conversation: String,
         before: Option<PageCursor>,
@@ -911,6 +915,12 @@ enum Query {
         language: String,
         ids: Vec<String>,
         reply: Responder<Vec<StoredTranslation>>,
+    },
+    /// A translated chat's glossary in a language.
+    Glossary {
+        conversation: String,
+        language: String,
+        reply: Responder<Vec<GlossaryTerm>>,
     },
     /// The account's own messages of a conversation as written, by their keys.
     SentOriginals {
@@ -1108,6 +1118,12 @@ impl EngineRequests {
         self.query(|reply| Query::Conversations(limit, reply))
     }
 
+    /// The stored conversation `id`, when the store holds it ([`Store::conversation`]). Answered meanwhile too, while
+    /// a catch-up runs.
+    pub fn conversation(&self, id: String) -> Reply<Option<Conversation>> {
+        self.query(|reply| Query::Conversation(id, reply))
+    }
+
     /// Up to `limit` stored messages of a conversation older than `before` (from the newest when none), the newest
     /// first.
     pub fn messages(
@@ -1272,6 +1288,21 @@ impl EngineRequests {
     /// changes.
     pub fn keep_sent_original(&self, original: SentOriginal) -> Reply<()> {
         self.ask(|reply| Request::KeepSentOriginal(original, reply))
+    }
+
+    /// The glossary of `conversation` translated into `language` (the app's code), the newest named first
+    /// ([`Store::glossary`]). Answered meanwhile too.
+    pub fn glossary(&self, conversation: String, language: String) -> Reply<Vec<GlossaryTerm>> {
+        self.query(|reply| Query::Glossary {
+            conversation,
+            language,
+            reply,
+        })
+    }
+
+    /// Keeps terms of translated chats' glossaries ([`Store::put_glossary`]): only the store changes.
+    pub fn keep_glossary(&self, terms: Vec<GlossaryTerm>) -> Reply<()> {
+        self.ask(|reply| Request::KeepGlossary(terms, reply))
     }
 
     /// Changes the calls' captions saved on this computer ([`TranscriptWrite`]): only the store changes. Answers the
@@ -2285,6 +2316,9 @@ where
             }
             Request::KeepSentOriginal(original, reply) => {
                 let _ = reply.send(self.store.put_sent_original(&original).map_err(EngineError::from));
+            }
+            Request::KeepGlossary(terms, reply) => {
+                let _ = reply.send(self.store.put_glossary(&terms).map_err(EngineError::from));
             }
             Request::Transcript(write, reply) => {
                 let _ = reply.send(transcript(&mut self.store, write).map_err(EngineError::from));

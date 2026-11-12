@@ -13,8 +13,8 @@ use teams_core::{
     PictureBytes, Reply, SearchAnswer, SearchScope, Strip, Transient, TransientSent,
 };
 use teams_store::{
-    CallTranscript, Conversation, Member, Message, MessagePage, OutboxEntry, OutboxKind, OutboxState, PageCursor,
-    Reaction, ReadHorizon, SearchHit, SentOriginal, StoredTranslation, Team, TranscriptLine,
+    CallTranscript, Conversation, GlossaryTerm, Member, Message, MessagePage, OutboxEntry, OutboxKind, OutboxState,
+    PageCursor, Reaction, ReadHorizon, SearchHit, SentOriginal, StoredTranslation, Team, TranscriptLine,
 };
 use teams_ui::{Bridge, Core, EventSource, Models};
 use tokio::sync::mpsc;
@@ -241,6 +241,8 @@ pub struct FakeCore {
     pub translations: Mutex<Vec<StoredTranslation>>,
     /// The account's own messages as written, kept when they were sent translated.
     pub sent_originals: Mutex<Vec<SentOriginal>>,
+    /// Translated chats' glossaries, as the store keeps them (the newest named last).
+    pub glossary: Mutex<Vec<GlossaryTerm>>,
     /// The calls' captions saved on this computer, as the store keeps them.
     pub saved_calls: Mutex<SavedCalls>,
 }
@@ -1038,6 +1040,40 @@ impl Core for FakeCore {
             let mut kept = locked(&self.sent_originals);
             kept.retain(|old| !(old.conversation_id == original.conversation_id && old.key == original.key));
             kept.push(original);
+        })
+    }
+
+    fn conversation(&self, id: String) -> Reply<Option<Conversation>> {
+        self.answer("conversation", || {
+            locked(&self.conversations)
+                .iter()
+                .find(|conversation| conversation.id == id)
+                .cloned()
+        })
+    }
+
+    fn glossary(&self, conversation: String, language: String) -> Reply<Vec<GlossaryTerm>> {
+        self.answer("glossary", || {
+            locked(&self.glossary)
+                .iter()
+                .rev()
+                .filter(|kept| kept.conversation_id == conversation && kept.language == language)
+                .cloned()
+                .collect()
+        })
+    }
+
+    fn keep_glossary(&self, terms: Vec<GlossaryTerm>) -> Reply<()> {
+        self.answer("keep_glossary", || {
+            let mut kept = locked(&self.glossary);
+            for term in terms {
+                kept.retain(|old| {
+                    !(old.conversation_id == term.conversation_id
+                        && old.language == term.language
+                        && old.term == term.term)
+                });
+                kept.push(term);
+            }
         })
     }
 

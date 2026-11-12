@@ -18,7 +18,8 @@
 //! - [`calendar`]: the account's calendar events as the calendar view last read them, each window's read replacing
 //!   the events it overlaps (schema 16);
 //! - [`translations`]: chats translated on this computer, each message's translation by its id, version and language,
-//!   and the account's own messages as written when they were sent translated (schema 20);
+//!   the account's own messages as written when they were sent translated (schema 20), and each translated chat's
+//!   glossary of chosen renderings (schema 22);
 //! - [`call_transcripts`]: calls' live captions saved on this computer, a transcript per call by its chat (schema 21);
 //! - [`schema`]: the migrations, applied in order on open.
 //!
@@ -61,7 +62,7 @@ pub use schema::SCHEMA_VERSION;
 pub use search::{IndexCursor, IndexText, SearchHit};
 pub use state::{AppReadHorizon, ReadHorizon, SyncState};
 pub use teams::{ChannelAbout, ChannelKind, Team, TeamAbout, TeamChannel};
-pub use translations::{SentOriginal, StoredTranslation, TranslationKind};
+pub use translations::{GLOSSARY_TERMS, GlossaryTerm, SentOriginal, StoredTranslation, TranslationKind};
 
 /// How long a write waits for another connection's lock (a second process on the same account) before it fails.
 /// Every transaction takes the write lock when it begins (`BEGIN IMMEDIATE`), so one that reads before it writes

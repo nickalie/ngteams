@@ -170,6 +170,9 @@ fn the_app_s_core_answers_the_views_from_the_engine_s_store() {
             .is_empty()
     );
     answer(core.keep_translations(Vec::new())).unwrap();
+    assert!(answer(core.glossary(AB_CHAT.into(), "de".into())).unwrap().is_empty());
+    answer(core.keep_glossary(Vec::new())).unwrap();
+    answer(core.conversation(AB_CHAT.into())).unwrap();
     lab.handle.shutdown();
 }
 
@@ -276,6 +279,9 @@ fn ask_chat(core: &dyn Core) {
     stopped(core.translations(chat(), "de".into(), vec!["1".into()]));
     stopped(core.keep_translations(Vec::new()));
     stopped(core.sent_originals(chat(), vec!["key".into()]));
+    stopped(core.glossary(chat(), "de".into()));
+    stopped(core.keep_glossary(Vec::new()));
+    stopped(core.conversation(chat()));
     stopped(core.workflow_request(WorkflowRequest::Catalog));
 }
 

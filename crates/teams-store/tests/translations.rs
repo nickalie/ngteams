@@ -1,13 +1,13 @@
 //! Chats translated on this computer in the store (schema 20), on a real file in a temporary directory: a message's
 //! translation kept by its id, version and language across a reopen, an older version's dropped when a newer one is
-//! kept, the account's own messages as written by their key, and both gone with their conversation. Every id and text
-//! here is made up.
+//! kept, the account's own messages as written by their key, a chat's glossary by its terms, newest first and trimmed,
+//! and all of them gone with their conversation. Every id and text here is made up.
 
 use std::path::PathBuf;
 
 use teams_store::{
-    Conversation, ConversationKind, Message, SCHEMA_VERSION, SentOriginal, Store, StoreError, StoredTranslation,
-    TranslationKind,
+    Conversation, ConversationKind, GLOSSARY_TERMS, GlossaryTerm, Message, SCHEMA_VERSION, SentOriginal, Store,
+    StoreError, StoredTranslation, TranslationKind,
 };
 
 const CHAT: &str = "19:synthetic-translated@unq.gbl.spaces";
@@ -194,12 +194,12 @@ fn the_translations_migration_starts_with_none() -> Result<(), StoreError> {
     drop(with_chats(&dir)?);
     // the store as schema 19 left it
     let raw = rusqlite::Connection::open(store_path(&dir)).expect("open directly");
-    raw.execute_batch("DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; PRAGMA user_version = 19;")
+    raw.execute_batch("DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; DROP TABLE translation_glossary; PRAGMA user_version = 19;")
         .expect("back to schema 19");
     drop(raw);
     let store = Store::open(&store_path(&dir))?;
     assert_eq!(store.schema_version()?, SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 21);
+    assert_eq!(SCHEMA_VERSION, 22);
     assert!(store.translations(CHAT, "de", &["1".to_owned()])?.is_empty());
     assert!(store.sent_originals(CHAT, &["client-1".to_owned()])?.is_empty());
     Ok(())
@@ -244,5 +244,91 @@ fn the_translations_gone_answer_an_error_never_a_panic() -> Result<(), StoreErro
         created_at: 1,
     };
     assert!(refused(store.put_sent_original(&original)));
+    Ok(())
+}
+
+fn term(conversation: &str, language: &str, term: &str, rendering: &str, used_at: i64) -> GlossaryTerm {
+    GlossaryTerm {
+        conversation_id: conversation.to_owned(),
+        language: language.to_owned(),
+        term: term.to_owned(),
+        rendering: rendering.to_owned(),
+        used_at,
+    }
+}
+
+fn renderings(found: &[GlossaryTerm]) -> Vec<(&str, &str)> {
+    found
+        .iter()
+        .map(|kept| (kept.term.as_str(), kept.rendering.as_str()))
+        .collect()
+}
+
+#[test]
+fn a_chat_s_glossary_is_kept_by_term_newest_first_and_trimmed() -> Result<(), StoreError> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    {
+        let mut store = with_chats(&dir)?;
+        store.put_glossary(&[
+            term(CHAT, "en", "Abnahme", "acceptance", 1),
+            term(CHAT, "en", "Lastenheft", "requirements spec", 2),
+            term(CHAT, "fr", "Abnahme", "recette", 3),
+            term(OTHER, "en", "Abnahme", "decrease", 4),
+            term("19:synthetic-unknown@unq.gbl.spaces", "en", "Ignored", "ignored", 5),
+        ])?;
+        // a term named again replaces its rendering and comes first
+        store.put_glossary(&[term(CHAT, "en", "Abnahme", "sign-off", 6)])?;
+        let debug = format!("{:?}", store.glossary(CHAT, "en")?);
+        assert!(!debug.contains("sign-off"), "Debug leaves the words out: {debug}");
+    }
+    let mut store = Store::open(&store_path(&dir))?;
+    assert_eq!(
+        renderings(&store.glossary(CHAT, "en")?),
+        [("Abnahme", "sign-off"), ("Lastenheft", "requirements spec")]
+    );
+    assert_eq!(renderings(&store.glossary(CHAT, "fr")?), [("Abnahme", "recette")]);
+    assert_eq!(renderings(&store.glossary(OTHER, "en")?), [("Abnahme", "decrease")]);
+    assert!(store.glossary("19:synthetic-unknown@unq.gbl.spaces", "en")?.is_empty());
+
+    // only the newest are kept
+    let many: Vec<GlossaryTerm> = (0..GLOSSARY_TERMS + 5)
+        .map(|n| {
+            term(
+                CHAT,
+                "en",
+                &format!("term {n}"),
+                "rendering",
+                100 + i64::try_from(n).unwrap_or(0),
+            )
+        })
+        .collect();
+    store.put_glossary(&many)?;
+    let kept = store.glossary(CHAT, "en")?;
+    assert_eq!(kept.len(), GLOSSARY_TERMS);
+    assert_eq!(kept[0].term, format!("term {}", GLOSSARY_TERMS + 4));
+    assert!(!kept.iter().any(|kept| kept.term == "Abnahme"));
+    assert_eq!(renderings(&store.glossary(CHAT, "fr")?), [("Abnahme", "recette")]);
+
+    // forgetting the chat forgets its glossary
+    store.forget_conversation(CHAT)?;
+    assert!(store.glossary(CHAT, "fr")?.is_empty());
+    assert_eq!(store.glossary(OTHER, "en")?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn the_glossary_gone_answers_an_error_never_a_panic() -> Result<(), StoreError> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    drop(with_chats(&dir)?);
+    let raw = rusqlite::Connection::open(store_path(&dir)).expect("open directly");
+    raw.execute_batch("DROP TABLE translation_glossary;")
+        .expect("drop the table");
+    drop(raw);
+    let mut store = Store::open(&store_path(&dir))?;
+    assert!(matches!(store.glossary(CHAT, "en"), Err(StoreError::Sqlite(_))));
+    assert!(matches!(
+        store.put_glossary(&[term(CHAT, "en", "a", "b", 1)]),
+        Err(StoreError::Sqlite(_))
+    ));
     Ok(())
 }

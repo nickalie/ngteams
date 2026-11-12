@@ -195,7 +195,7 @@ fn the_migration_starts_the_channels_syncs_again_and_keeps_the_chats() -> Result
          ALTER TABLE conversation_sync DROP COLUMN gap_until;
          DROP TABLE reply_roots; DROP TABLE team_channels; DROP TABLE teams; DROP TABLE teams_read;
          DROP TABLE favorites; DROP TABLE favorites_read; ALTER TABLE conversations DROP COLUMN empty;
-         DROP TABLE app_read_horizon; DROP TABLE calendar_events; DROP TABLE forgotten_conversations; DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; PRAGMA user_version = 8;",
+         DROP TABLE app_read_horizon; DROP TABLE calendar_events; DROP TABLE forgotten_conversations; DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; DROP TABLE translation_glossary; PRAGMA user_version = 8;",
     )
     .expect("back to schema 8");
     drop(raw);
@@ -274,7 +274,7 @@ fn the_favourites_migration_keeps_the_teams_but_has_them_read_again() -> Result<
          ALTER TABLE teams DROP COLUMN tenant_wide; ALTER TABLE teams DROP COLUMN channel_only; ALTER TABLE teams DROP COLUMN hidden;
          ALTER TABLE teams DROP COLUMN picture_etag; ALTER TABLE teams DROP COLUMN site; ALTER TABLE team_channels DROP COLUMN shown; ALTER TABLE team_channels DROP COLUMN kind; ALTER TABLE team_channels DROP COLUMN description; ALTER TABLE team_channels DROP COLUMN archived; ALTER TABLE team_channels DROP COLUMN owner; ALTER TABLE team_channels DROP COLUMN can_edit; ALTER TABLE team_channels DROP COLUMN can_delete; ALTER TABLE team_channels DROP COLUMN channel_group;
          DROP TABLE app_read_horizon; DROP TABLE calendar_events; DROP TABLE forgotten_conversations;
-         DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts;
+         DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; DROP TABLE translation_glossary;
          PRAGMA user_version = 10;",
     )
     .expect("back to schema 10");

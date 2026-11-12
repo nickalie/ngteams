@@ -3,9 +3,13 @@
 use super::*;
 
 fn said(from: &str, text: &str) -> Said {
-    Said {
-        from: from.to_owned(),
-        text: text.to_owned(),
+    Said::new(from, text)
+}
+
+fn context(lines: &[Said]) -> Preface<'_> {
+    Preface {
+        context: lines.iter().collect(),
+        ..Preface::default()
     }
 }
 
@@ -22,22 +26,119 @@ fn the_instructions_name_the_language_and_the_answers_asked_for() {
         "{told}"
     );
     assert!(!told.contains("in order:"), "{told}");
+    // what it is told of the chat, and how it reads it
+    for needed in [
+        "<chat> names the chat",
+        "<terms> lists renderings",
+        "[qN] labels",
+        "Never infer gender from a name alone",
+        "forms of address",
+        "<term from=\"as written\" to=\"your rendering\"/>",
+        "in the form of address the chat uses",
+        "answers <m id=\"1\" from=\"Ana\">Guten Morgen!</m> with <m id=\"1\" lang=\"de\">Good morning!</m>",
+    ] {
+        assert!(told.contains(needed), "{needed}: {told}");
+    }
+}
+
+#[test]
+fn a_preface_tells_the_chat_its_terms_and_its_context() {
+    let brief = Brief {
+        conversation: "chat".to_owned(),
+        topic: Some("Plan <b>  A".to_owned()),
+        you: Some("Lab A".to_owned()),
+        members: vec!["Lab B".to_owned(), "Lab <C>".to_owned()],
+        terms: vec![Term {
+            term: "Abnahme".to_owned(),
+            rendering: "sign-off & approval".to_owned(),
+        }],
+    };
+    let mut quoted = said("Lab B", "Which one?");
+    quoted.label = Some("q1".to_owned());
+    let lines = [quoted, said("Lab C", "hi")];
+    let preface = Preface {
+        chat: Some(&brief),
+        terms: brief.terms.iter().collect(),
+        context: lines.iter().collect(),
+    };
+    let item = Item {
+        n: 1,
+        key: "k".to_owned(),
+        from: "Lab A".to_owned(),
+        text: "That one".to_owned(),
+        re: Some("q1".to_owned()),
+    };
+    assert_eq!(
+        batch(&preface, &[item]),
+        "<chat>\nTitle: Plan &lt;b&gt; A\nYou: Lab A\nMembers: Lab B, Lab &lt;C&gt;\n</chat>\n\
+         <terms>\nAbnahme = sign-off &amp; approval\n</terms>\n\
+         <context>\n[q1] Lab B: Which one?\nLab C: hi\n</context>\n\
+         <translate>\n<m id=\"1\" from=\"Lab A\" re=\"q1\">That one</m>\n</translate>"
+    );
+    // a chat with nothing known isn't told; an outgoing reply names what it answers
+    let bare = Brief::default();
+    let only_chat = Preface {
+        chat: Some(&bare),
+        ..Preface::default()
+    };
+    assert_eq!(
+        outgoing(&only_chat, Some("de"), Some("q2"), "Ja"),
+        "<outgoing to=\"de\" re=\"q2\">Ja</outgoing>"
+    );
+    assert!(brief.same_chat(&Brief {
+        terms: Vec::new(),
+        ..brief.clone()
+    }));
+    assert!(!brief.same_chat(&bare));
+}
+
+#[test]
+fn an_answer_s_terms_are_read_leniently_and_bounded() {
+    let terms = read_terms(
+        "<m id=\"1\" lang=\"de\">x</m>\n<term from=\" Abnahme \" to=\"sign-off &amp; more\"/>\
+         <term from=\"Abnahme\" to=\"again\"/><term from=\"\" to=\"empty\"/><term to=\"no from\"/>\
+         <term from='Lastenheft' to='spec'/>",
+    );
+    assert_eq!(
+        terms,
+        [
+            Term {
+                term: "Abnahme".to_owned(),
+                rendering: "sign-off & more".to_owned(),
+            },
+            Term {
+                term: "Lastenheft".to_owned(),
+                rendering: "spec".to_owned(),
+            },
+        ]
+    );
+    let many: String = (0..9).map(|n| format!("<term from=\"t{n}\" to=\"r{n}\"/>")).collect();
+    assert_eq!(read_terms(&many).len(), 5);
+    let long = format!("<term from=\"{}\" to=\"r\"/>", "w".repeat(81));
+    assert!(read_terms(&long).is_empty());
+    assert!(read_terms("<term from=\"a\" to=\"b\"").is_empty());
+    assert!(read_terms("no terms").is_empty());
 }
 
 #[test]
 fn a_batch_carries_its_context_and_its_messages() {
+    let lines = [said("Lab  B", "Is <this> on?"), said("", "yes")];
     let message = batch(
-        &[said("Lab  B", "Is <this> on?"), said("", "yes")],
+        &context(&lines),
         &[
             Item {
                 n: 1,
+                key: String::new(),
                 from: "Lab \"B\" <b>".to_owned(),
                 text: "<x0>Hello</x0>".to_owned(),
+                re: None,
             },
             Item {
                 n: 2,
+                key: String::new(),
                 from: "Lab A".to_owned(),
                 text: "Bye".to_owned(),
+                re: None,
             },
         ],
     );
@@ -46,17 +147,17 @@ fn a_batch_carries_its_context_and_its_messages() {
         "<context>\nLab B: Is &lt;this&gt; on?\nSomeone: yes\n</context>\n<translate>\n\
          <m id=\"1\" from=\"Lab 'B' b\"><x0>Hello</x0></m>\n<m id=\"2\" from=\"Lab A\">Bye</m>\n</translate>"
     );
-    assert_eq!(batch(&[], &[]), "<translate>\n</translate>");
+    assert_eq!(batch(&Preface::default(), &[]), "<translate>\n</translate>");
 }
 
 #[test]
 fn an_outgoing_message_names_its_target_or_asks_for_it() {
     assert_eq!(
-        outgoing(&[], Some("en"), "Hallo"),
+        outgoing(&Preface::default(), Some("en"), None, "Hallo"),
         "<outgoing to=\"en\">Hallo</outgoing>"
     );
     assert_eq!(
-        outgoing(&[said("B", "hi")], None, "Hallo"),
+        outgoing(&context(&[said("B", "hi")]), None, None, "Hallo"),
         "<context>\nB: hi\n</context>\n<outgoing to=\"auto\">Hallo</outgoing>"
     );
 }

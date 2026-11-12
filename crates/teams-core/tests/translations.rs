@@ -14,7 +14,9 @@ use teams_core::Outbox;
 use teams_core::engine::{self, EngineHandle, EngineOptions, Parts};
 use teams_mock::{CHAT_BASE, LAB_A, LAB_B};
 use teams_proto::{Author, Client, Credentials, HttpTransport, Mri};
-use teams_store::{Conversation, ConversationKind, Message, SentOriginal, Store, StoredTranslation, TranslationKind};
+use teams_store::{
+    Conversation, ConversationKind, GlossaryTerm, Message, SentOriginal, Store, StoredTranslation, TranslationKind,
+};
 use wiremock::MockServer;
 
 const CHAT: &str = "19:synthetic-translated@unq.gbl.spaces";
@@ -38,7 +40,7 @@ fn seeded(path: &Path) {
         .upsert_conversation(&Conversation {
             id: CHAT.to_owned(),
             kind: ConversationKind::OneToOne,
-            topic: None,
+            topic: Some("Synthetic topic".to_owned()),
             version: 1,
             last_activity: None,
         })
@@ -122,6 +124,16 @@ async fn kept_translations_are_read_back_by_a_later_engine() {
             })
             .await
             .unwrap();
+        handle
+            .keep_glossary(vec![GlossaryTerm {
+                conversation_id: CHAT.to_owned(),
+                language: "de".to_owned(),
+                term: "synthetic term".to_owned(),
+                rendering: "synthetic rendering".to_owned(),
+                used_at: 9,
+            }])
+            .await
+            .unwrap();
         handle.shutdown();
     }
     let handle = engine_on(&server, &path);
@@ -138,6 +150,18 @@ async fn kept_translations_are_read_back_by_a_later_engine() {
         .unwrap();
     assert_eq!(originals.len(), 1);
     assert_eq!(originals[0].content, "synthetic original");
+    let glossary = handle.glossary(CHAT.to_owned(), "de".to_owned()).await.unwrap();
+    assert_eq!(glossary.len(), 1);
+    assert_eq!(glossary[0].rendering, "synthetic rendering");
+    let chat = handle.conversation(CHAT.to_owned()).await.unwrap();
+    assert_eq!(chat.and_then(|chat| chat.topic).as_deref(), Some("Synthetic topic"));
+    assert!(
+        handle
+            .conversation("19:synthetic-unknown@unq.gbl.spaces".to_owned())
+            .await
+            .unwrap()
+            .is_none()
+    );
     handle.shutdown();
     // nothing of it went to the service
     assert!(server.received_requests().await.unwrap_or_default().is_empty());
