@@ -353,3 +353,57 @@ fn the_speaker_view_s_strip_pages() {
     assert_ne!(first, second);
     assert!(second.contains(&0), "the speaker stays large: {second:?}");
 }
+
+#[test]
+fn the_captions_and_the_stage_stay_in_the_smallest_window_while_reconnecting() {
+    let rig = super::calling();
+    let stage = large_call(&rig, 25);
+    super::caption_state(&rig, teams_core::CaptionPhase::On, None);
+    super::status(&rig, 1, teams_core::CallStatus::Reconnecting);
+    rig.cx.run_until_parked();
+    for top in [false, true] {
+        if top {
+            // the menu's submenus open to the left in a wider window
+            resize(stage, (1280.0, 800.0));
+            click(stage, "call-caption-settings");
+            stage.simulate_keystrokes("down down down down left down enter");
+        }
+        resize(stage, (560.0, 400.0));
+        assert!(drawn(stage, "call-reconnecting"));
+        let window = bounds(stage, "call-window").unwrap();
+        let captions = bounds(stage, "call-captions").expect("the captions");
+        let area = bounds(stage, "call-stage").expect("the stage");
+        let pager = bounds(stage, "call-gallery-pager").expect("the gallery pages");
+        assert!((captions.origin.y < area.origin.y) == top, "captions on top: {top}");
+        for (what, inner) in [("captions", captions), ("stage", area), ("pager", pager)] {
+            assert!(
+                within(inner, window),
+                "captions on top {top}: the {what} {inner:?} leaves the window {window:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_caption_language_confirmation_s_actions_stay_in_a_short_window() {
+    let rig = super::calling();
+    let stage = large_call(&rig, 25);
+    super::caption_state(&rig, teams_core::CaptionPhase::On, None);
+    rig.cx.run_until_parked();
+    resize(stage, (560.0, 448.0));
+    super::caption_language_menu(stage);
+    click(stage, "call-caption-language-sq-al");
+    draw(stage);
+    let window = bounds(stage, "call-window").unwrap();
+    let confirm = bounds(stage, "call-caption-language-confirm").expect("the confirmation");
+    let captions = bounds(stage, "call-captions").unwrap();
+    assert!(
+        within(confirm, captions) && within(captions, window),
+        "the confirmation {confirm:?} in the captions {captions:?} in the window {window:?}"
+    );
+    super::click_caption_confirmation(stage, true);
+    assert!(
+        matches!(actions(&rig).last(), Some(CallAction::CaptionLanguage { language, .. }) if language == "sq-al"),
+        "Update took the click"
+    );
+}

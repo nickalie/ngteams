@@ -6,6 +6,11 @@ use crate::translate::{self, CaptionTranslation, Shown, Status};
 use teams_core::CaptionPhase;
 use teams_proto::captions::SPOKEN_LANGUAGES;
 
+/// The shortest the captions pane gets in a short window, px: its header and one caption line.
+const MIN_CAPTIONS_HEIGHT: f32 = 100.0;
+/// The shortest the language confirmation gets, px: its Cancel and Update row.
+const CONFIRM_ACTIONS_HEIGHT: f32 = 49.0;
+
 pub(super) fn more(
     menu: PopupMenu,
     stage: WeakEntity<CallStage>,
@@ -75,25 +80,34 @@ impl CallStage {
                     .text_color(rgb(theme::DANGER))
                     .child(error)
             });
+        // scrolls when a short window leaves the pane less than its content
+        let body = div()
+            .id("call-caption-body")
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .overflow_y_scroll()
+            .children(translation_failed.filter(|_| state.phase == CaptionPhase::On))
+            .children(status)
+            .when(state.phase != CaptionPhase::Failed && !state.lines.is_empty(), |view| {
+                view.child(transcript)
+            })
+            .children(language_error);
         Some(
             div()
                 .debug_selector(|| "call-captions".to_owned())
                 // shrinks before the stage goes below MIN_STAGE_HEIGHT in a short window
                 .flex_initial()
                 .h(px(if confirmation.is_some() { 380.0 } else { 244.0 }))
-                .min_h(px(150.0))
+                .min_h(px(MIN_CAPTIONS_HEIGHT))
                 .flex()
                 .flex_col()
                 .bg(rgb(palette.surface))
                 .border_t_1()
                 .border_color(rgb(palette.border))
-                .child(header)
-                .children(translation_failed.filter(|_| state.phase == CaptionPhase::On))
-                .children(status)
-                .when(state.phase != CaptionPhase::Failed && !state.lines.is_empty(), |view| {
-                    view.child(transcript)
-                })
-                .children(language_error)
+                .child(header.flex_none())
+                .child(body)
                 .children(confirmation)
                 .into_any_element(),
         )
@@ -279,22 +293,39 @@ impl CallStage {
                 .map_or(code.as_str(), |(_, label)| *label);
             div()
                 .debug_selector(|| "call-caption-language-confirm".to_owned())
-                .p_4()
+                .flex_initial()
+                .min_h(px(CONFIRM_ACTIONS_HEIGHT))
                 .flex()
                 .flex_col()
-                .gap_3()
                 .border_t_1()
                 .border_color(rgb(palette.border))
+                // the question scrolls in a short window, the actions stay under it
                 .child(
                     div()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .child("Is this the language that everyone is speaking?"),
+                        .id("call-caption-language-question")
+                        .flex_initial()
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .px_4()
+                        .pt_4()
+                        .pb_3()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child("Is this the language that everyone is speaking?"),
+                        )
+                        .child(SharedString::from(format!(
+                            "The spoken language that everyone is speaking will change to {label} for this meeting."
+                        ))),
                 )
-                .child(SharedString::from(format!(
-                    "The spoken language that everyone is speaking will change to {label} for this meeting."
-                )))
                 .child(
                     div()
+                        .flex_none()
+                        .px_4()
+                        .pb_4()
                         .flex()
                         .justify_end()
                         .gap_2()
