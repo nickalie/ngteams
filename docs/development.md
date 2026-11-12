@@ -1005,8 +1005,8 @@ tray's place (closing the main window keeps the app, a Dock click shows it again
 
 `scripts/run-lab-macos.py <alias>` runs a lab alias on the console: lab-marked builds only, its broker and app on a
 private socket pair, `--shot <name>` saving the run's own windows (`screencapture -l`, which needs the Screen
-Recording permission for the SSH session's process), `--status` and `--stop`; runs are short and every process stops
-with the run. State the lab-contact check before a run of a lab account; a synthetic alias (an `example.invalid`
+Recording permission for the SSH session's process), `--status` and `--stop`; the app serves its control socket where
+`ngteamsctl --lab <alias>` looks for it; runs are short and every process stops with the run. State the lab-contact check before a run of a lab account; a synthetic alias (an `example.invalid`
 account, no tokens) stops at the sign-in window and reaches nobody. Lab devices stay refused on macOS (no device
 sandbox). With `--app`, the runner takes only a lab bundle (below) and takes it out of LaunchServices after the run.
 

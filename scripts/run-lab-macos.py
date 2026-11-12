@@ -15,7 +15,9 @@ Windows' (AGENTS.md's sandbox rule). Lab-marked builds only, one alias per run, 
 The run starts the alias's credential broker (`ngteams secrets --lab <alias>`) and the app, each with its end of one
 private socket pair, as `ui-sandbox-run serve` does on Linux; the app's window is allowed on macOS only with the
 runner's marker (`NGTEAMS_MACOS_CONSOLE_RUNNER`). The alias's files are `~/Library/Application Support/ngteams-lab/
-<alias>/`; the run's logs and shots are in its `.runs/<alias>/` beside them. Builds need GStreamer's runtime
+<alias>/`; the run's logs and shots are in its `.runs/<alias>/` beside them. The app serves `ngteamsctl`'s control
+socket where `ngteamsctl --lab <alias>` looks for it (`~/.local/state/ngteams-lab/<alias>/ctl.sock`). Builds need
+GStreamer's runtime
 (`scripts/macos-gstreamer.sh`): `NGTEAMS_GSTREAMER` names its prefix (default `~/ngteams-agent/gstreamer`);
 `NGTEAMS_LAB_TARGET` the target dir (default `target/lab`).
 
@@ -63,6 +65,17 @@ def alias_ok(alias: str) -> bool:
 def run_dir(alias: str) -> Path:
     path = LAB_HOME / ".runs" / alias
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return path
+
+
+def ctl_socket(alias: str) -> Path:
+    """Where the app serves `ngteamsctl`'s control socket: the path `ngteamsctl --lab <alias>` looks for
+    (`teams_ctl::Mode::Lab`, under `$XDG_STATE_HOME`, else `~/.local/state`), as `scripts/run-lab.sh` hands it on
+    Linux."""
+    state = os.environ.get("XDG_STATE_HOME", "")
+    home = Path(state) if os.path.isabs(state) else Path.home() / ".local" / "state"
+    path = home / "ngteams-lab" / alias / "ctl.sock"
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     return path
 
 
@@ -163,7 +176,8 @@ def serve(alias: str, timeout: int, bundle: Path | None = None) -> int:
         broker_end.close()
         env = dict(os.environ, **libraries, **{MARKER: "1"})
         child = subprocess.Popen(
-            [str(app), "--lab", alias, "--secrets-fd", str(app_end.fileno())],
+            [str(app), "--lab", alias, "--secrets-fd", str(app_end.fileno()),
+             "--ctl-socket", str(ctl_socket(alias))],
             pass_fds=[app_end.fileno()], env=env, stdin=subprocess.DEVNULL, stdout=app_log, stderr=app_log)
         app_end.close()
     (here / "holder.pid").write_text(f"{os.getpid()} {child.pid} {broker.pid}\n")
