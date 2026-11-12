@@ -15,7 +15,8 @@
 //!   ([`reopened`]: closing the window keeps the app in the Dock, `teams_ui::desktop`).
 //! - **Links**: `ngteams.app` claims the `msteams:` scheme, and macOS hands a clicked link to the running app's
 //!   delegate (`application:openURLs:`), never in its arguments: [`links_given`] keeps each one and
-//!   [`open_given_links`] opens them as a link on the command line is opened ([`crate::app::open_link`]).
+//!   [`open_given_links`] opens them as a link on the command line is opened ([`crate::app::open_link`]); a restart
+//!   before they are opened (the first sign-in's) carries one in the next run's arguments ([`take_given_links`]).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
@@ -139,7 +140,7 @@ pub fn links_given(urls: Vec<String>) {
 }
 
 /// Opens each link macOS handed the app, from now on, as a link on the command line is opened. Only the personal
-/// app does: the lab and read-only modes open no link they are given.
+/// app calls it: the lab and read-only modes open no link they are given, and theirs stay in the queue.
 pub fn open_given_links(cx: &mut App) {
     let links = LINKS.1.clone();
     cx.spawn(async move |cx: &mut AsyncApp| {
@@ -149,6 +150,14 @@ pub fn open_given_links(cx: &mut App) {
         }
     })
     .detach();
+}
+
+/// The links macOS handed the app that aren't opened yet, taken from the queue: a restart's `exec` would lose them,
+/// so it carries one to the next run's arguments (a link clicked to launch the app while no account is ready waits
+/// through the first sign-in).
+#[must_use]
+pub fn take_given_links() -> Vec<String> {
+    std::iter::from_fn(|| LINKS.1.try_recv().ok()).collect()
 }
 
 /// Does `then` with the key window, if there is one.

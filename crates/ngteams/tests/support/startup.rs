@@ -458,10 +458,38 @@ fn a_restart_leaves_out_only_the_link_it_opened() {
         ]
         .map(std::ffi::OsString::from)
     };
-    assert_eq!(super::restart_args(args().into_iter(), None), args());
+    assert_eq!(super::restart_args(args().into_iter(), None, None), args());
     assert_eq!(
-        super::restart_args(args().into_iter(), Some("msteams:/l/meetup-join/synthetic")),
+        super::restart_args(args().into_iter(), Some("msteams:/l/meetup-join/synthetic"), None),
         ["--ctl-socket", "/run/synthetic.sock"].map(std::ffi::OsString::from)
+    );
+}
+
+/// A link macOS handed the app and it didn't open (one that launched it before the first sign-in) goes to the next
+/// run's arguments, unless those keep a link of their own: a run takes one.
+#[test]
+fn a_restart_carries_a_given_link_it_did_not_open() {
+    let given = |links: &[&str]| links.iter().map(|link| (*link).to_owned()).collect::<Vec<_>>();
+    let (first, second) = ("msteams:/l/meetup-join/synthetic-1", "msteams:/l/meetup-join/synthetic-2");
+    assert_eq!(super::carried_link(None, None, given(&[first])).as_deref(), Some(first));
+    assert_eq!(
+        super::carried_link(None, None, given(&[first, second])).as_deref(),
+        Some(second),
+        "the most recent click"
+    );
+    assert_eq!(super::carried_link(None, None, Vec::new()), None);
+    assert_eq!(super::carried_link(Some(first), None, given(&[second])), None);
+    assert_eq!(
+        super::carried_link(Some(first), Some(first), given(&[second])).as_deref(),
+        Some(second)
+    );
+    assert_eq!(
+        super::restart_args(
+            ["--ctl-socket", "/run/synthetic.sock"].map(std::ffi::OsString::from).into_iter(),
+            None,
+            Some(first)
+        ),
+        ["--ctl-socket", "/run/synthetic.sock", first].map(std::ffi::OsString::from)
     );
 }
 

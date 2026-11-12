@@ -148,12 +148,22 @@ fn main() -> ExitCode {
     };
     match outcome {
         Ok(Outcome::Quit) => ExitCode::SUCCESS,
-        Ok(Outcome::Restart { opened }) => restarted(&mut |command| {
-            ngteams::restart::exec(command.args(restart_args(std::env::args_os().skip(1), opened.as_deref())))
-        }),
-        Ok(Outcome::Update { restart, opened }) => updated(restart, opened.as_deref(), &mut |command| {
-            ngteams::restart::exec(command)
-        }),
+        Ok(Outcome::Restart { opened }) => {
+            let given = given_link(&cli, opened.as_deref());
+            restarted(&mut |command| {
+                ngteams::restart::exec(command.args(restart_args(
+                    std::env::args_os().skip(1),
+                    opened.as_deref(),
+                    given.as_deref(),
+                )))
+            })
+        }
+        Ok(Outcome::Update { restart, opened }) => {
+            let given = given_link(&cli, opened.as_deref());
+            updated(restart, opened.as_deref(), given.as_deref(), &mut |command| {
+                ngteams::restart::exec(command)
+            })
+        }
         Ok(Outcome::LabRestart(descriptors)) => {
             restarted(&mut |command| descriptors.exec(command.args(std::env::args_os().skip(1))))
         }
@@ -209,13 +219,18 @@ fn restarted(exec: &mut dyn FnMut(&mut Command) -> std::io::Error) -> ExitCode {
 }
 
 /// What `restart` names run by `exec` once an update is in: the new version with this run's arguments (the link it
-/// `opened` left out), without the AppImage runtime's variables (the new AppImage's runtime sets them again), or the
+/// `opened` left out, a link macOS handed it and it didn't open, `given`, added), without the AppImage runtime's variables (the new AppImage's runtime sets them again), or the
 /// Windows installer with its own; `exec` returns only when it couldn't.
-fn updated(restart: Restart, opened: Option<&str>, exec: &mut dyn FnMut(&mut Command) -> std::io::Error) -> ExitCode {
+fn updated(
+    restart: Restart,
+    opened: Option<&str>,
+    given: Option<&str>,
+    exec: &mut dyn FnMut(&mut Command) -> std::io::Error,
+) -> ExitCode {
     let mut command = Command::new(&restart.program);
     match restart.arguments {
         Some(arguments) => command.args(arguments),
-        None => command.args(restart_args(std::env::args_os().skip(1), opened)),
+        None => command.args(restart_args(std::env::args_os().skip(1), opened, given)),
     };
     #[cfg(unix)]
     for variable in ngteams::update::APPIMAGE_ENV {
@@ -229,10 +244,38 @@ fn updated(restart: Restart, opened: Option<&str>, exec: &mut dyn FnMut(&mut Com
     ExitCode::FAILURE
 }
 
-/// The arguments a restart runs with: this run's (`args`), the link it `opened` left out.
-fn restart_args(args: impl Iterator<Item = OsString>, opened: Option<&str>) -> Vec<OsString> {
+/// The arguments a restart runs with: this run's (`args`), the link it `opened` left out and the link it was `given`
+/// and didn't open ([`given_link`]) added.
+fn restart_args(args: impl Iterator<Item = OsString>, opened: Option<&str>, given: Option<&str>) -> Vec<OsString> {
     args.filter(|arg| opened.is_none_or(|link| arg.as_os_str() != link))
+        .chain(given.map(OsString::from))
         .collect()
+}
+
+/// The link a restart carries to its next run besides this run's arguments: on macOS, one macOS handed this run that
+/// it didn't open (a link clicked to launch an app with no account ready waits through the first sign-in, and `exec`
+/// would lose it). Elsewhere a clicked link is in the arguments already.
+fn given_link(cli: &Cli, opened: Option<&str>) -> Option<String> {
+    #[cfg(all(target_os = "macos", not(test)))]
+    let given = ngteams::mac_app::take_given_links();
+    #[cfg(not(all(target_os = "macos", not(test))))]
+    let given = Vec::new();
+    carried_link(cli.url.as_deref(), opened, given)
+}
+
+/// Of the links `given` and not opened, the one the next run's arguments carry: the last (the one clicked most
+/// recently), and none when those arguments keep a link of their own (`url`, unless this run `opened` it), as a run
+/// takes one link.
+fn carried_link(url: Option<&str>, opened: Option<&str>, mut given: Vec<String>) -> Option<String> {
+    let kept = url.is_some_and(|url| opened != Some(url));
+    let carried = if kept { None } else { given.pop() };
+    if !given.is_empty() {
+        log::warn!(
+            "{} link(s) macOS handed the app aren't opened: a restart carries one link",
+            given.len()
+        );
+    }
+    carried
 }
 
 /// How long a launch whose accounts another app holds waits for that app's control socket, and how often it asks:
@@ -385,8 +428,11 @@ fn run_setup(
         if let Some(url) = link {
             app::open_link(url, cx);
         }
+        // the links macOS hands the app: the personal app's alone, as a link on the command line is (`Cli::lab_mode`)
         #[cfg(all(target_os = "macos", not(test)))]
-        ngteams::mac_app::open_given_links(cx);
+        if setup.secrets().application() != lab::LAB_KEYRING_APPLICATION {
+            ngteams::mac_app::open_given_links(cx);
+        }
         // an account a sign-in named that can't start without one: its sign-in window, once the others run
         if let Some(account) = unready.into_iter().next() {
             sign_in_again(setup, account, restart_in_app)(cx);

@@ -149,11 +149,16 @@ mod tests {
         assert_eq!(error.to_string(), "macOS Keychain: OSStatus -25293");
     }
 
-    #[test]
-    fn a_failed_worker_is_not_reported_as_a_status() {
-        assert_eq!(
-            SecretError::KeychainWorker.to_string(),
-            "macOS Keychain: its worker failed"
-        );
+    /// A worker that panics (or is cancelled) is said as the worker's failure, never as a Keychain status. The
+    /// operation panics before it reaches the keychain.
+    #[tokio::test]
+    async fn a_failed_worker_is_not_reported_as_a_status() {
+        let store = KeyringSecretStore::new("ngteams-synthetic").await.unwrap();
+        let result = store
+            .execute(|| -> Result<(), SecretError> { panic!("synthetic worker failure") })
+            .await;
+        let error = result.unwrap_err();
+        assert!(matches!(error, SecretError::KeychainWorker), "{error:?}");
+        assert_eq!(error.to_string(), "macOS Keychain: its worker failed");
     }
 }
