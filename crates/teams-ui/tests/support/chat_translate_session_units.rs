@@ -542,6 +542,7 @@ fn a_batch_s_terms_are_told_and_a_new_process_is_told_the_chat_again() {
                 id: answered,
                 answers: Ok(answers),
                 terms,
+                ..
             } => {
                 assert_eq!(answered, id);
                 assert_eq!(answers.len(), 1);
@@ -595,11 +596,22 @@ fn same(source: &str) -> Answer {
     }
 }
 
-/// `answers` to `items` judged in a chat read in German, nothing handed back before but `echoed`.
-fn judged(items: &[Item], answers: &[(usize, Answer)], echoed: &[&str]) -> (HashMap<usize, Answer>, Vec<String>) {
+/// `answers` to `items` judged in a chat read in `reading`, nothing handed back before but `echoed`; the keys held.
+fn judged_in(
+    reading: &str,
+    items: &[Item],
+    answers: &[(usize, Answer)],
+    echoed: &[&str],
+) -> (HashMap<usize, Answer>, Vec<String>) {
     let all: HashMap<usize, Answer> = answers.iter().cloned().collect();
     let echoed = echoed.iter().map(|key| (*key).to_owned()).collect();
-    judge_echoes(all.clone(), &all, items, "German", &echoed)
+    let (kept, held) = judge_echoes(all.clone(), &all, items, reading, &echoed);
+    (kept, held.into_iter().map(|item| item.key.clone()).collect())
+}
+
+/// `answers` to `items` judged in a chat read in German, nothing handed back before but `echoed`; the keys held.
+fn judged(items: &[Item], answers: &[(usize, Answer)], echoed: &[&str]) -> (HashMap<usize, Answer>, Vec<String>) {
+    judged_in("German", items, answers, echoed)
 }
 
 #[test]
@@ -687,4 +699,75 @@ fn words_count_only_words_with_letters_markers_aside() {
     assert_eq!(words("<x3>OK</x3> <x7/>"), 1);
     assert_eq!(words("12:30 — 5 €"), 0);
     assert_eq!(words("Guten <x2>Morgen</x2>!"), 2);
+}
+
+#[test]
+fn a_batch_of_unspaced_sentences_handed_back_as_written_is_asked_again() {
+    // Japanese, Chinese and Thai sentences hold no spaces: they aren't one word each
+    let items = [
+        said(1, "明日の会議は午後三時からです。"),
+        said(2, "明天的会议下午三点开始。"),
+        said(3, "พรุ่งนี้ประชุมบ่ายสามโมง"),
+    ];
+    let (kept, mut held) = judged_in(
+        "English",
+        &items,
+        &[
+            (1, translated("明日の会議は午後三時からです。", "ja")),
+            (2, translated("明天的会议下午三点开始。", "zh")),
+            (3, translated("พรุ่งนี้ประชุมบ่ายสามโมง", "th")),
+        ],
+        &[],
+    );
+    assert!(kept.is_empty(), "{kept:?}");
+    held.sort();
+    assert_eq!(held, ["key 1", "key 2", "key 3"]);
+    // asked again and handed back again: taken as written
+    let (kept, held) = judged_in(
+        "English",
+        &items[..1],
+        &[(1, translated("明日の会議は午後三時からです。", "ja"))],
+        &["key 1"],
+    );
+    assert_eq!(kept, HashMap::from([(1, same("ja"))]));
+    assert!(held.is_empty());
+}
+
+#[test]
+fn a_single_unspaced_word_handed_back_is_taken() {
+    let items = [
+        said(1, "会議"),
+        said(2, "ありがとう"),
+        said(3, "コンピューター"),
+        said(4, "<x1>東京</x1>"),
+    ];
+    let (kept, held) = judged_in(
+        "English",
+        &items,
+        &[
+            (1, translated("会議", "ja")),
+            (2, translated("ありがとう", "ja")),
+            (3, translated("コンピューター", "ja")),
+            (4, translated("<x1>東京</x1>", "ja")),
+        ],
+        &[],
+    );
+    assert!(held.is_empty(), "{held:?}");
+    assert_eq!(
+        kept,
+        HashMap::from([(1, same("ja")), (2, same("ja")), (3, same("ja")), (4, same("ja"))])
+    );
+}
+
+#[test]
+fn letters_of_unspaced_scripts_count_a_word_per_run_of_them() {
+    assert_eq!(words("会議"), 1);
+    assert_eq!(words("コンピューター"), 1);
+    assert_eq!(words("iPhone用"), 1);
+    assert_eq!(words("明日の会議は午後三時からです。"), 2);
+    assert_eq!(words("พรุ่งนี้ประชุมบ่ายสามโมง"), 3);
+    assert_eq!(words("<x1>会議</x1> 三時"), 2);
+    assert_eq!(words("15:00。"), 0);
+    // Korean is written with spaces
+    assert_eq!(words("내일 회의는 세 시에 시작합니다"), 5);
 }

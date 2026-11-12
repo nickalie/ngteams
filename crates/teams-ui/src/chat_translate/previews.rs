@@ -704,7 +704,7 @@ impl Previews {
     }
 
     fn received(&mut self, outcome: Outcome, cx: &mut Context<Self>) {
-        let Outcome::Batch { id, answers, terms } = outcome else {
+        let Outcome::Batch { id, answers, terms, .. } = outcome else {
             return;
         };
         let Some(running) = self.running.take_if(|running| running.id == id) else {

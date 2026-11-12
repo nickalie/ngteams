@@ -827,6 +827,80 @@ fn a_message_whose_answer_is_its_own_text_never_ends_as_untranslatable() {
     assert!(kept.iter().all(|row| row.kind == TranslationKind::Same), "{kept:?}");
 }
 
+/// A fake Claude Code that logs each question and answers each by the word of `@PLAN@` at its number (the last one
+/// after): `echo` hands every message back as written, `omit` translates each as `DE <text>` but leaves out
+/// "Visual Studio Code".
+const PLANNED_CLAUDE: &str = r#"#!/bin/bash
+log="$(dirname "$0")/received.log"
+plan=(@PLAN@)
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$log"
+  asked=$(wc -l < "$log")
+  step=${plan[$(( asked <= ${#plan[@]} ? asked - 1 : ${#plan[@]} - 1 ))]}
+  ans=""
+  while IFS= read -r m; do
+    n=$(printf '%s' "$m" | sed 's/^<m id=\\"\([0-9]*\)\\".*/\1/')
+    t=$(printf '%s' "$m" | sed 's/^.*\\">\(.*\)<\/m>$/\1/')
+    if [ "$step" = echo ]; then
+      ans="$ans<m id=\\\"$n\\\" lang=\\\"en\\\">$t</m>"
+    elif [ "$t" != "Visual Studio Code" ]; then
+      ans="$ans<m id=\\\"$n\\\" lang=\\\"en\\\">DE $t</m>"
+    fi
+  done < <(printf '%s' "$line" | grep -o '<m id=\\"[0-9]*\\" from=\\"[^\\]*\\">[^<]*</m>')
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}\n' "$ans"
+done
+"#;
+
+/// A sentence, and a product whose German is its own name.
+fn with_a_product() -> Vec<Message> {
+    vec![
+        message("1", 1, LAB_B, "See you at the station"),
+        message("2", 2, LAB_B, "Visual Studio Code"),
+    ]
+}
+
+/// `with_a_product` read in German by a tool answering by `plan`: the product ends kept as written, never marked as
+/// one that couldn't be translated, after `asks` questions.
+fn product_ends_as_written(plan: &str, asks: usize) {
+    let messages = with_a_product();
+    let mut rig = Rig::new(&PLANNED_CLAUDE.replace("@PLAN@", plan));
+    let translation = rig.open();
+    rig.follow(&translation, &messages);
+    translation.update(&mut rig.app, |translation, cx| translation.set_language(Some("de"), cx));
+    rig.until(&translation, |translation| !translation.busy());
+    let asked = questions(rig.dir.path());
+    assert_eq!(asked.len(), asks, "{asked:?}");
+    assert!(
+        !asked[asks - 1].contains("See you at the station"),
+        "{}",
+        asked[asks - 1]
+    );
+    translation.read_with(&rig.app, |translation, _| {
+        assert_eq!(translation.status(), &Status::On);
+        assert_eq!(
+            shown_text(translation, &messages[0]).as_deref(),
+            Some("DE See you at the station")
+        );
+        assert_eq!(translation.shown().mark_of(&messages[1]), None);
+        assert_eq!(shown_text(translation, &messages[1]), None);
+    });
+    let kept = rig.core.translations.lock().unwrap().clone();
+    let product = kept.iter().find(|row| row.message_id == "2").map(|row| row.kind);
+    assert_eq!(product, Some(TranslationKind::Same), "{kept:?}");
+}
+
+#[test]
+fn a_message_left_out_then_handed_back_as_written_is_taken_as_written() {
+    // left out once, then echoed on its retry: the echo is asked again once, not counted as left out
+    product_ends_as_written("omit echo", 3);
+}
+
+#[test]
+fn a_message_echoed_then_left_out_takes_its_next_echo() {
+    // the whole batch echoed, then the product alone left out: its echo is still remembered
+    product_ends_as_written("echo omit echo", 3);
+}
+
 /// A fake Claude Code that logs each question and answers its first message with a term after it.
 const TERMING_CLAUDE: &str = r#"#!/bin/bash
 log="$(dirname "$0")/received.log"

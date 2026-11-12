@@ -94,7 +94,8 @@ const QUOTE_LINE: usize = 2000;
 /// ([`ChatTranslation::recent_context`]): it starts a process anew for each draft, so it is given less than a batch.
 pub const CORRECTION_LINES: usize = 15;
 pub const CORRECTION_CHARS: usize = 3000;
-/// How many times a message the tool's answer left out is asked again before it shows as written for good.
+/// How many times a message the tool's answer left out is asked again before it shows as written for good (one held
+/// back as an echo isn't counted: the session takes its next echo).
 const ATTEMPTS: u8 = 2;
 /// The longest a message's text sent to the tool may be (its encoded text); a longer one shows as written.
 pub const MAX_MESSAGE: usize = 24_000;
@@ -980,14 +981,19 @@ impl ChatTranslation {
                 self.answered(&mut running, &answers);
                 self.running = Some(running);
             }
-            Outcome::Batch { id, answers, terms } => {
+            Outcome::Batch {
+                id,
+                answers,
+                terms,
+                held,
+            } => {
                 let Some(mut running) = self.running.take_if(|running| running.id == id) else {
                     return;
                 };
                 match answers {
                     Ok(answers) => {
                         self.answered(&mut running, &answers);
-                        self.left_out(&running);
+                        self.left_out(&running, &held);
                         self.learn_terms(&terms);
                     }
                     Err(failure) => self.status = Status::Failed(failure),
@@ -1043,11 +1049,11 @@ impl ChatTranslation {
         drop(self.core.keep_glossary(brief::rows(&self.chat, language, terms)));
     }
 
-    /// The batch `running` is done: a message its answer left out is asked again, up to [`ATTEMPTS`], then shows as
-    /// written.
-    fn left_out(&mut self, running: &Running) {
+    /// The batch `running` is done: a message its answer left out is asked again, up to [`ATTEMPTS`], then marked as
+    /// one that couldn't be translated. One `held` back as an echo isn't counted: asked again, its next echo is taken.
+    fn left_out(&mut self, running: &Running, held: &[usize]) {
         for (n, id, version, _) in &running.items {
-            if running.applied.contains_key(n) {
+            if running.applied.contains_key(n) || held.contains(n) {
                 continue;
             }
             let tries = self.attempts.entry((id.clone(), *version)).or_default();

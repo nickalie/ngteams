@@ -18,10 +18,12 @@
 //! - **An echo is asked again, once**: a fast model sometimes hands a whole batch back untranslated, each message as
 //!   written with the language it was written in. An answer that is its message as written is taken as the message
 //!   being in the language already ([`Answer::Same`]) when that is plainly so: the model named the chat's language,
-//!   the message has no words to translate or a single one ("OK", a name, a product), the same answer translated
-//!   another message, or the model handed it back as written when asked before. Otherwise it is left out, so the
-//!   model asks for it again ([`judge_echoes`]); a second echo is taken, so a message whose translation is its own
-//!   text never ends as one that couldn't be translated.
+//!   the message has no words to translate or a single one ("OK", a name, a product; in a script written without
+//!   spaces, a run of at most [`UNSPACED_WORD`] letters), the same answer translated another message, or the model
+//!   handed it back as written when asked before. Otherwise it is held back ([`judge_echoes`]): the batch's answer
+//!   names it (`held` of [`Outcome::Batch`]), so the view asks for it again without counting it as left out, and a
+//!   second echo is taken. So a message whose translation is its own text never ends as one that couldn't be
+//!   translated.
 //! - **Failures** are told with the job they ended ([`Outcome`]); the process is closed and the next job starts a new
 //!   one. Nothing here logs a message, a translation or the tool's output.
 
@@ -46,6 +48,10 @@ pub const WARM_LINES: usize = 15;
 pub const WARM_CHARS: usize = 3000;
 /// The most messages a session remembers were handed back as written.
 const ECHOES_KEPT: usize = 1000;
+/// The most letters of a script written without spaces between words (Chinese, Japanese, Thai, …) that count as one
+/// word: a single word ("会議", "ありがとう", "コンピューター") is within it, a sentence ("明日の会議は午後三時からです")
+/// is not.
+const UNSPACED_WORD: usize = 8;
 
 /// When a session's process is replaced, and how long the tool may take.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,12 +116,14 @@ pub enum Outcome {
     /// Answers of a batch still running, as the tool writes them: each message's once (again only when a later agent
     /// message answers it otherwise), before the batch's [`Outcome::Batch`] (which holds them again).
     Partial { id: u64, answers: HashMap<usize, Answer> },
-    /// A batch's answers, by the messages' numbers, and the terms the answer added to the chat's glossary; or why it
-    /// failed.
+    /// A batch's answers, by the messages' numbers, the terms the answer added to the chat's glossary and the
+    /// messages (numbers) whose answer handed them back as written and was held back: asked again, they aren't left
+    /// out, as the next echo of each is taken. Or why it failed.
     Batch {
         id: u64,
         answers: Result<HashMap<usize, Answer>, Failure>,
         terms: Vec<Term>,
+        held: Vec<usize>,
     },
     /// An outgoing message's translation (`None`: already in the chat's language) and the language it named; or why
     /// it failed.
@@ -257,7 +265,8 @@ struct Worker {
     stop: Arc<AtomicBool>,
     tool: Option<Tool>,
     given: Given,
-    /// The messages (keys) whose last answer handed them back as written and was left out: a second echo is taken.
+    /// The messages (keys) an answer handed back as written and held back, until one is answered: a second echo is
+    /// taken.
     echoed: HashSet<String>,
 }
 
@@ -311,23 +320,26 @@ impl Worker {
             Ok((text, terms)) => {
                 let all = prompt::read_batch(&text);
                 let (answers, held) = judge_echoes(all.clone(), &all, items, reading, &self.echoed);
-                for item in items {
+                // one left out keeps its echo: asked again, its next echo is taken
+                for item in items.iter().filter(|item| answers.contains_key(&item.n)) {
                     self.echoed.remove(&item.key);
                 }
                 if self.echoed.len() + held.len() > ECHOES_KEPT {
                     self.echoed.clear();
                 }
-                self.echoed.extend(held);
+                self.echoed.extend(held.iter().map(|item| item.key.clone()));
                 Outcome::Batch {
                     id,
                     answers: Ok(answers),
                     terms,
+                    held: held.iter().map(|item| item.n).collect(),
                 }
             }
             Err(failure) => Outcome::Batch {
                 id,
                 answers: Err(failure),
                 terms: Vec::new(),
+                held: Vec::new(),
             },
         }
     }
@@ -433,14 +445,14 @@ fn fresh_answers(so_far: &str, told: &mut HashMap<usize, Answer>) -> HashMap<usi
 
 /// `answers` (of `all`, the batch's answers so far), each that hands its message of `items` back as written judged:
 /// taken as already in the language (`reading`, its English name) when that is plainly so, or when it was handed back
-/// as written before (`echoed`, by key); else left out. Gives the answers kept and the keys of those left out.
-fn judge_echoes(
+/// as written before (`echoed`, by key); else held back. Gives the answers kept and the messages held back.
+fn judge_echoes<'a>(
     mut answers: HashMap<usize, Answer>,
     all: &HashMap<usize, Answer>,
-    items: &[Item],
+    items: &'a [Item],
     reading: &str,
     echoed: &HashSet<String>,
-) -> (HashMap<usize, Answer>, Vec<String>) {
+) -> (HashMap<usize, Answer>, Vec<&'a Item>) {
     let echo_of = |n: usize, answer: &Answer| match answer {
         Answer::Translated { text, .. } => items.iter().find(|item| item.n == n && item.text.trim() == text.trim()),
         Answer::Same { .. } => None,
@@ -464,14 +476,15 @@ fn judge_echoes(
         if taken {
             *answer = Answer::Same { source: source.take() };
         } else {
-            held.push(item.key.clone());
+            held.push(item);
         }
         taken
     });
     (answers, held)
 }
 
-/// How many words with letters an encoded message has, its markers aside.
+/// How many words with letters an encoded message has, its markers aside. Letters of a script written without spaces
+/// count a word per [`UNSPACED_WORD`] of them begun, so an unspaced sentence isn't taken for one word.
 fn words(text: &str) -> usize {
     let mut plain = String::with_capacity(text.len());
     let mut in_marker = false;
@@ -489,7 +502,38 @@ fn words(text: &str) -> usize {
     plain
         .split_whitespace()
         .filter(|word| word.chars().any(char::is_alphabetic))
-        .count()
+        .map(|word| {
+            let unspaced = word.chars().filter(|c| c.is_alphabetic() && unspaced(*c)).count();
+            unspaced.div_ceil(UNSPACED_WORD).max(1)
+        })
+        .sum()
+}
+
+/// Whether `c` is of a script written without spaces between words: Han, kana, Yi, Thai, Lao, Tibetan, Myanmar,
+/// Khmer, the Tai scripts, Javanese, Balinese.
+fn unspaced(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x0E00..=0x0FFF            // Thai, Lao, Tibetan
+            | 0x1000..=0x109F      // Myanmar
+            | 0x1780..=0x17FF      // Khmer
+            | 0x1950..=0x1AAF      // Tai Le, New Tai Lue, Khmer symbols, Buginese, Tai Tham
+            | 0x1B00..=0x1B7F      // Balinese
+            | 0x2E80..=0x2FDF      // CJK radicals
+            | 0x3005..=0x3007      // 々 〆 〇
+            | 0x3021..=0x3029
+            | 0x3038..=0x303B
+            | 0x3040..=0x30FF      // Hiragana, Katakana
+            | 0x31F0..=0x31FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xA000..=0xA4CF      // Yi
+            | 0xA980..=0xA9FF      // Javanese, Myanmar extended B
+            | 0xAA60..=0xAA7F      // Myanmar extended A
+            | 0xF900..=0xFAFF
+            | 0xFF66..=0xFF9F      // halfwidth Katakana
+            | 0x2_0000..=0x3_FFFF  // CJK extensions
+    )
 }
 
 /// Whether the language a tool named (`code`) is the one the chat is read in (`reading`, its English name).
