@@ -131,6 +131,7 @@ pub struct FakeCore {
     /// The activity feed `activity` answers.
     pub activity: Mutex<teams_core::activity::ActivityFeed>,
     pub write_answers: Mutex<std::collections::VecDeque<OutboxEntry>>,
+    pub write_errors: Mutex<VecDeque<EngineError>>,
     pub outbox_answers: Mutex<std::collections::VecDeque<OutboxEntry>>,
     /// Every transient asked for, in order; each is answered sent.
     pub transients: Mutex<Vec<Transient>>,
@@ -746,6 +747,9 @@ impl Core for FakeCore {
         actions.push(action.clone());
         let id = i64::try_from(actions.len()).unwrap();
         drop(actions);
+        if let Some(error) = locked(&self.write_errors).pop_front() {
+            return Reply::ready(Err(error));
+        }
         self.answer("write", || {
             if let Some(row) = locked(&self.write_answers).pop_front() {
                 return row;

@@ -59,7 +59,7 @@ fn an_item_reads_who_what_and_where() {
     assert_eq!(item.reply_chain.as_deref(), Some("999"));
     assert_eq!(item.activity_id.as_deref(), Some("1900"));
     assert_eq!(item.at_ms, 1_767_225_600_500);
-    assert!(!item.read_flag);
+    assert!(!ActivityFeed::default().is_read(&item));
     assert!(!item.in_channel());
 }
 
@@ -132,7 +132,7 @@ fn an_app_item_takes_its_own_title_and_a_team_add_its_teams_name() {
     team["sourceThreadType"] = json!("space");
     let team = ActivityItem::from_message(&item(1, &team, true)).expect("an item");
     assert_eq!(team.title(), "A team owner added you to Made-up team");
-    assert!(team.read_flag);
+    assert!(ActivityFeed::default().is_read(&team));
     let mut nameless = activity("call", "missedCall", B, "", "", 1);
     nameless["sourceUserImDisplayName"] = Value::Null;
     let nameless = ActivityItem::from_message(&item(1, &nameless, false)).expect("an item");
@@ -218,7 +218,8 @@ fn isread_reads_as_a_boolean_or_its_text() {
         let mut message = item(1, &activity("mention", "person", B, "Lab B", GROUP, 5), false);
         message.properties =
             Some(json!({"activity": activity("mention", "person", B, "Lab B", GROUP, 5), "isread": value}).to_string());
-        ActivityItem::from_message(&message).expect("an item").read_flag
+        let feed = ActivityFeed::new(&[message], None, None);
+        feed.is_read(&feed.items[0])
     };
     assert!(flag(json!(true)));
     assert!(flag(json!("True")));
@@ -257,7 +258,7 @@ fn reactions_to_one_message_fold_into_the_newest() {
     assert_eq!(folded.ids, ["2000", "1000"]);
     assert_eq!(folded.others, 1);
     assert_eq!(folded.title(), "Lab C +1 reacted to your message");
-    assert!(!folded.read_flag, "unread while any of its own is");
+    assert!(!feed.is_read(folded), "unread while any of its own is");
     assert_eq!(feed.items[0].id, "4000", "the newest first");
 }
 

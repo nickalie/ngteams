@@ -3102,8 +3102,8 @@ async fn feed_of_a(lab: &Lab) -> (Native, String, String) {
 }
 
 /// Seen (`docs/protocol/chat.md`, "The activity feed"): the feed's horizon put at its newest item, the store's horizon
-/// there at once, the rail's count gone; seen again with nothing newer is refused. All read: the bookmark put, every
-/// item read at once.
+/// advanced after the send, the rail's count gone; seen again with nothing newer is refused. All read: the bookmark
+/// stored after confirmation, every item read.
 #[tokio::test]
 async fn the_feed_seen_and_all_read_put_its_horizon_and_its_bookmark() {
     let lab = Lab::start().await;
@@ -3173,7 +3173,7 @@ async fn a_feed_item_marked_read_unread_or_removed_syncs_back_from_the_service()
         a.message_event(teams_mock::NOTIFICATIONS, &older).await;
         let feed = a.handle.activity().await.unwrap();
         let item = feed.item(&older).unwrap();
-        assert_eq!((item.read_flag, feed.is_read(item)), (read, read), "{item:?}");
+        assert_eq!(feed.is_read(item), read, "{item:?}");
     }
     let unknown = Action::ActivityRead {
         item: "1".to_owned(),
@@ -3231,4 +3231,48 @@ async fn the_feed_bookmark_syncs_into_a_fresh_store_and_from_a_conversation_deli
         .await;
     assert_eq!(fresh.handle.activity().await.unwrap().bookmark_ms, Some(bookmark));
     fresh.shutdown();
+}
+
+#[tokio::test]
+async fn failed_feed_horizons_leave_the_store_unchanged_and_resends_apply_only_after_confirmation() {
+    let lab = Lab::start().await;
+    let (mut a, _, _) = feed_of_a(&lab).await;
+    for action in [Action::ActivitySeen, Action::ActivityAllRead] {
+        let before = a.handle.activity().await.unwrap();
+        a.next_write.store(429, Ordering::SeqCst);
+        let pending = a.write(action).await;
+        assert_eq!(pending.state, OutboxState::Pending);
+        a.next_write.store(403, Ordering::SeqCst);
+        let feed = a.handle.activity().await.unwrap();
+        assert_eq!((feed.seen_ms, feed.bookmark_ms), (before.seen_ms, before.bookmark_ms));
+        a.event(|event| match event {
+            Event::Outbox(row) if row.id == pending.id && row.state == OutboxState::Failed => Some(()),
+            _ => None,
+        })
+        .await;
+        let feed = a.handle.activity().await.unwrap();
+        assert_eq!((feed.seen_ms, feed.bookmark_ms), (before.seen_ms, before.bookmark_ms));
+        // A full service sync cannot legitimize the failed local advance either.
+        a.handle.sync().await.unwrap();
+        let feed = a.handle.activity().await.unwrap();
+        assert_eq!((feed.seen_ms, feed.bookmark_ms), (before.seen_ms, before.bookmark_ms));
+        a.next_write.store(429, Ordering::SeqCst);
+        let resent = a.handle.resend(pending.id).await.unwrap();
+        assert_eq!(resent.state, OutboxState::Pending);
+        let sent = a
+            .event(|event| match event {
+                Event::Outbox(row) if row.id == pending.id && row.state == OutboxState::Sent => Some(row.clone()),
+                _ => None,
+            })
+            .await;
+        let feed = a.handle.activity().await.unwrap();
+        if sent.kind == OutboxKind::FeedRead {
+            assert_eq!(feed.bookmark_ms, Some(sent.created_at));
+            assert!(feed.items.iter().all(|item| feed.is_read(item)));
+        } else {
+            assert_eq!(feed.seen_ms, feed.items.first().map(|item| item.at_ms));
+            assert_eq!(feed.unseen(), 0);
+        }
+    }
+    a.shutdown();
 }

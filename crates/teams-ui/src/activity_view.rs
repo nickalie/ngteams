@@ -109,6 +109,14 @@ pub enum ActivityViewEvent {
     NotificationSettings,
 }
 
+/// The optimistic state a write owns; horizon operations are independent of item ids.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Operation {
+    Item(String),
+    Seen,
+    AllRead,
+}
+
 /// The pane (see the module docs).
 #[expect(
     clippy::struct_excessive_bools,
@@ -121,6 +129,9 @@ pub struct ActivityView {
     teams: Entity<TeamsList>,
     trace: Arc<ViewTrace>,
     feed: ActivityFeed,
+    /// Last confirmed horizons, also used to roll back if reloading after a refusal fails.
+    stored_seen: Option<i64>,
+    stored_bookmark: Option<i64>,
     /// The feed's change the shown items were read at.
     read_at: Option<u64>,
     loading: Option<Task<()>>,
@@ -151,10 +162,12 @@ pub struct ActivityView {
     /// Explicit unread marks survive reloads and activation until the conversation is opened again.
     explicit_unread: HashSet<String>,
     /// Optimistic operation generations prevent an old reply undoing a newer user action.
-    operations: HashMap<String, u64>,
+    operations: HashMap<Operation, u64>,
     next_operation: u64,
+    /// Do not automatically retry a refused seen mark on every reload; opening the pane retries it.
+    attempted_seen: Option<i64>,
     /// Pending outbox replies whose terminal outcome still needs observing.
-    writes: HashMap<i64, (String, u64)>,
+    writes: HashMap<i64, (Operation, u64)>,
     focus: FocusHandle,
     scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
@@ -203,6 +216,8 @@ impl ActivityView {
             teams: parts.teams,
             trace: parts.trace,
             feed: ActivityFeed::default(),
+            stored_seen: None,
+            stored_bookmark: None,
             read_at: None,
             loading: None,
             dirty: false,
@@ -223,6 +238,7 @@ impl ActivityView {
             explicit_unread: HashSet::new(),
             operations: HashMap::new(),
             next_operation: 0,
+            attempted_seen: None,
             writes: HashMap::new(),
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
@@ -306,7 +322,16 @@ impl ActivityView {
     fn loaded(&mut self, feed: Result<ActivityFeed, EngineError>, cx: &mut Context<Self>) {
         self.loading = None;
         self.loads += 1;
-        if let Ok(feed) = feed {
+        if let Ok(mut feed) = feed {
+            self.stored_seen = feed.seen_ms;
+            self.stored_bookmark = feed.bookmark_ms;
+            // Keep only the pane optimistic while a horizon write waits; the store holds confirmed horizons.
+            if self.operations.contains_key(&Operation::Seen) {
+                feed.seen_ms = feed.seen_ms.max(self.feed.seen_ms);
+            }
+            if self.operations.contains_key(&Operation::AllRead) {
+                feed.bookmark_ms = feed.bookmark_ms.max(self.feed.bookmark_ms);
+            }
             // a change that came back replaces what was marked here
             self.pending
                 .retain(|id, (_, version)| feed.item(id).is_some_and(|item| item.version == *version));
@@ -333,6 +358,7 @@ impl ActivityView {
         self.item_menu = None;
         self.header_menu = false;
         if shown {
+            self.attempted_seen = None;
             self.mark_seen(cx);
             self.focus.focus(window, cx);
         }
@@ -383,6 +409,7 @@ impl ActivityView {
             .feed
             .items
             .iter()
+            .filter(|item| !self.removed.contains(&item.id))
             .filter(|item| item.thread.as_deref() == Some(conversation))
             .cloned()
             .collect();
@@ -406,45 +433,55 @@ impl ActivityView {
         if !self.active || self.core.read_only() || self.feed.seen_horizon().is_none() {
             return;
         }
-        // shown at once; the store's horizon follows as the engine queues it
-        self.feed.seen_ms = self.feed.items.first().map(|newest| newest.at_ms);
-        self.write(Action::ActivitySeen, cx);
+        let at = self.feed.items.first().map(|newest| newest.at_ms);
+        if at <= self.attempted_seen {
+            return;
+        }
+        self.attempted_seen = at;
+        self.feed.seen_ms = at;
+        self.write(Action::ActivitySeen, Operation::Seen, cx);
     }
 
-    fn write(&mut self, action: Action, cx: &mut Context<Self>) {
-        self.write_item(action, None, cx);
+    fn write(&mut self, action: Action, key: Operation, cx: &mut Context<Self>) {
+        let operation = self.operation(key);
+        self.write_item(action, operation, cx);
     }
 
-    fn operation(&mut self, id: &str) -> (String, u64) {
+    fn operation(&mut self, key: Operation) -> (Operation, u64) {
         self.next_operation += 1;
-        self.operations.insert(id.to_owned(), self.next_operation);
-        (id.to_owned(), self.next_operation)
+        self.operations.insert(key.clone(), self.next_operation);
+        (key, self.next_operation)
     }
 
-    fn write_item(&mut self, action: Action, operation: Option<(String, u64)>, cx: &mut Context<Self>) {
+    fn write_item(&mut self, action: Action, operation: (Operation, u64), cx: &mut Context<Self>) {
         let reply = self.core.write(action);
         cx.spawn(async move |this, cx| {
             let result = reply.await;
-            let _ = this.update(cx, |view, cx| {
-                let Some(operation) = operation else {
-                    // Horizons are applied by the engine and reconciled through its feed events.
-                    return;
-                };
-                match result {
-                    Err(_) => view.failed_write(&operation, cx),
-                    Ok(row) if matches!(row.state, OutboxState::Denied | OutboxState::Failed) => {
-                        view.failed_write(&operation, cx);
-                    }
-                    Ok(row) if row.state != OutboxState::Sent => {
-                        view.writes.insert(row.id, operation);
-                        // A terminal event can arrive before this reply.
-                        view.settled_writes(cx);
-                    }
-                    Ok(_) => {}
+            let _ = this.update(cx, |view, cx| match result {
+                // Another window or a service update may already have advanced the seen horizon.
+                Err(EngineError::NothingNewInActivity) if operation.0 == Operation::Seen => {
+                    view.succeeded_write(&operation, cx);
                 }
+                Err(_) => view.failed_write(&operation, cx),
+                Ok(row) if matches!(row.state, OutboxState::Denied | OutboxState::Failed) => {
+                    view.failed_write(&operation, cx);
+                }
+                Ok(row) if row.state != OutboxState::Sent => {
+                    view.writes.insert(row.id, operation);
+                    // A terminal event can arrive before this reply.
+                    view.settled_writes(cx);
+                }
+                Ok(_) => view.succeeded_write(&operation, cx),
             });
         })
         .detach();
+    }
+
+    fn succeeded_write(&mut self, (key, generation): &(Operation, u64), cx: &mut Context<Self>) {
+        if !matches!(key, Operation::Item(_)) && self.operations.get(key) == Some(generation) {
+            self.operations.remove(key);
+            self.reload(cx);
+        }
     }
 
     fn settled_writes(&mut self, cx: &mut Context<Self>) {
@@ -461,17 +498,25 @@ impl ActivityView {
             self.writes.remove(&id);
             if failed {
                 self.failed_write(&operation, cx);
+            } else {
+                self.succeeded_write(&operation, cx);
             }
         }
     }
 
-    fn failed_write(&mut self, (id, generation): &(String, u64), cx: &mut Context<Self>) {
-        if self.operations.get(id) != Some(generation) {
+    fn failed_write(&mut self, (key, generation): &(Operation, u64), cx: &mut Context<Self>) {
+        if self.operations.get(key) != Some(generation) {
             return;
         }
-        self.operations.remove(id);
-        self.pending.remove(id);
-        self.removed.retain(|removed| removed != id);
+        self.operations.remove(key);
+        match key {
+            Operation::Item(id) => {
+                self.pending.remove(id);
+                self.removed.retain(|removed| removed != id);
+            }
+            Operation::Seen => self.feed.seen_ms = self.stored_seen,
+            Operation::AllRead => self.feed.bookmark_ms = self.stored_bookmark,
+        }
         cx.emit(ActivityViewEvent::Toast("Couldn't update activity. Try again."));
         self.reload(cx);
         cx.notify();
@@ -559,9 +604,9 @@ impl ActivityView {
         self.pending.insert(item.id.clone(), (read, item.version));
         self.trace
             .record(&TraceLine::new("activity", "marked").kind(if read { "read" } else { "unread" }));
-        let operation = self.operation(&item.id);
+        let operation = self.operation(Operation::Item(item.id.clone()));
         for own in item.ids {
-            self.write_item(Action::ActivityRead { item: own, read }, Some(operation.clone()), cx);
+            self.write_item(Action::ActivityRead { item: own, read }, operation.clone(), cx);
         }
         cx.notify();
     }
@@ -577,14 +622,14 @@ impl ActivityView {
         }
         self.removed.push(item.id.clone());
         self.trace.record(&TraceLine::new("activity", "removed"));
-        let operation = self.operation(&item.id);
+        let operation = self.operation(Operation::Item(item.id.clone()));
         for own in item.ids {
             self.write_item(
                 Action::Delete {
                     conversation: FEED.to_owned(),
                     message_id: own,
                 },
-                Some(operation.clone()),
+                operation.clone(),
                 cx,
             );
         }
@@ -604,7 +649,7 @@ impl ActivityView {
         self.pending.clear();
         self.explicit_unread.clear();
         self.trace.record(&TraceLine::new("activity", "all-read"));
-        self.write(Action::ActivityAllRead, cx);
+        self.write(Action::ActivityAllRead, Operation::AllRead, cx);
         cx.notify();
     }
 

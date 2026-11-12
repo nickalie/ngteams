@@ -10,9 +10,9 @@
 //! - **Folded reactions**: several reactions to the same message are one item, as Teams shows "Sean Hopkins +1 reacted
 //!   to your message": the newest one's, counting the other people ([`ActivityItem::others`]) and carrying every
 //!   item's id ([`ActivityItem::ids`]) so marking it marks them all.
-//! - **Read or not** ([`ActivityFeed::is_read`]): an item is read when its own `isread` says so, or when its `version`
-//!   is no later than the feed's all-read bookmark (`consumptionHorizonBookmark`, set by "Mark all as read"). Marking
-//!   an item unread moves its version past the bookmark, so it reads unread again.
+//! - **Read or not** ([`ActivityFeed::is_read`]): an item is read when each folded member either has `isread` set or
+//!   has a `version` no later than the feed's all-read bookmark (`consumptionHorizonBookmark`, set by "Mark all as
+//!   read"). Marking a member unread moves its version past the bookmark, so the item reads unread again.
 //! - **New** ([`ActivityFeed::unseen`], the rail's badge): unread items newer than the feed's own read horizon, which
 //!   Teams moves to the newest item whenever the Activity pane is opened ([`ActivityFeed::seen_horizon`]).
 
@@ -130,8 +130,6 @@ pub struct ActivityItem {
     pub at_ms: i64,
     /// The feed message's version: moved by every change of its read state.
     pub version: i64,
-    /// What the item's own `isread` says.
-    pub read_flag: bool,
     /// Distinct known reactors; unknown identities do not establish an extra person.
     actors: Vec<String>,
     /// Each member's own read state and version, kept separately for the mutable all-read bookmark.
@@ -192,7 +190,6 @@ impl ActivityItem {
             meeting_time: context.and_then(meeting_time),
             at_ms,
             version: message.version,
-            read_flag: read_flag(properties.get("isread")),
             read_states: vec![(read_flag(properties.get("isread")), message.version)],
         })
     }
@@ -381,8 +378,6 @@ impl ActivityFeed {
         kept.others = kept.actors.len().saturating_sub(1);
         kept.read_states.extend(item.read_states);
         kept.ids.push(item.id);
-        // the folded item stays unread while any of its own is
-        kept.read_flag &= item.read_flag;
         kept.version = kept.version.max(item.version);
     }
 

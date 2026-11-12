@@ -2774,56 +2774,63 @@ where
     }
 
     /// The feed's horizon moved to its newest item: the read receipt Teams puts on the feed
-    /// (`<activityTimestamp>;<now>;<activityId>`) and the time it names; `NothingNewInActivity` when the stored horizon
+    /// (`<activityTimestamp>;<now>;<activityId>`); `NothingNewInActivity` when the stored horizon
     /// is there already.
-    fn activity_seen(&self) -> Result<(Command, i64), EngineError> {
+    fn activity_seen(&self) -> Result<Command, EngineError> {
         let feed = ActivityFeed::from_store(&self.store, self.outbox.me().mri().as_str())?;
         let newest = feed.seen_horizon().ok_or(EngineError::NothingNewInActivity)?;
-        let command = Command::ReadReceipt {
+        Ok(Command::ReadReceipt {
             conversation: activity::FEED.to_owned(),
             message_id: newest.at_ms.to_string(),
             client_message_id: newest.activity_id.clone().unwrap_or_default(),
-        };
-        Ok((command, newest.at_ms))
+        })
     }
 
-    /// Seen or all read: the row queued, the store changed at once as the service will have it (the feed's horizon,
-    /// or its all-read bookmark at the row's time), the change told, then the row sent.
+    /// Seen or all read: queue and send the row. Only a confirmed send advances the durable horizon;
+    /// forward-only service horizons cannot reconcile a failed optimistic advance.
     async fn activity_write(&mut self, action: &Action) -> Result<OutboxEntry, EngineError> {
-        let me = self.outbox.me().mri().as_str().to_owned();
-        let (command, seen) = match action {
-            Action::ActivitySeen => {
-                let (command, at) = self.activity_seen()?;
-                (command, Some(at))
-            }
-            _ => (Command::FeedRead, None),
+        let command = match action {
+            Action::ActivitySeen => self.activity_seen()?,
+            _ => Command::FeedRead,
         };
         let row = enqueue(&mut self.store, &command)?;
         self.emit(Event::Queued(row.clone()));
-        let applied = match seen {
-            Some(at) => {
-                let updated = self
-                    .store
-                    .read_horizon(activity::FEED, &me)?
-                    .map_or(row.created_at, |before| {
-                        row.created_at.max(before.updated.saturating_add(1))
-                    });
+        self.send_row(row.id).await
+    }
+
+    /// Apply confirmed feed horizons from the durable command, including sends retried by the tick or a resend.
+    fn activity_sent(&mut self, row: &OutboxEntry) -> Result<(), EngineError> {
+        if row.state != OutboxState::Sent
+            || row.conversation_id.as_deref() != Some(activity::FEED)
+            || !matches!(row.kind, OutboxKind::ReadReceipt | OutboxKind::FeedRead)
+        {
+            return Ok(());
+        }
+        let command = serde_json::from_str(&row.payload).map_err(OutboxError::Payload)?;
+        let applied = match command {
+            Command::FeedRead => self.store.set_horizon_bookmark(activity::FEED, row.created_at)?,
+            Command::ReadReceipt { message_id, .. } => {
+                let at = message_id.parse().map_err(|_| EngineError::Unknown {
+                    message: row.id.to_string(),
+                    missing: "valid activity horizon",
+                    action: "stored after delivery",
+                })?;
                 self.store.set_read_horizon(&ReadHorizon {
                     conversation_id: activity::FEED.to_owned(),
-                    user: me,
+                    user: self.outbox.me().mri().as_str().to_owned(),
                     last_read_arrival: at,
-                    updated,
+                    updated: row.created_at,
                     raw: None,
                 })?
             }
-            None => self.store.set_horizon_bookmark(activity::FEED, row.created_at)?,
+            _ => Applied::Ignored,
         };
         if applied != Applied::Ignored {
             self.emit(Event::ConversationChanged {
                 conversation: activity::FEED.to_owned(),
             });
         }
-        self.send_row(row.id).await
+        Ok(())
     }
 
     /// The command adding `members` to the stored group chat `conversation`: nobody already in it, not the account,
@@ -2906,6 +2913,9 @@ where
     /// added to, its members too), so the account's own change is in the store; then told to the owner. Told after the sync, not before: the store answers queries
     /// while the sync waits on the service, so an owner told first could look for the change and not find it yet.
     async fn settled(&mut self, row: &OutboxEntry) {
+        if let Err(error) = self.activity_sent(row) {
+            self.missed("storing a confirmed activity horizon", error);
+        }
         let conversation = match row.kind {
             _ if row.state != OutboxState::Sent => None,
             OutboxKind::ReadReceipt | OutboxKind::FeedRead => None,

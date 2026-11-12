@@ -102,6 +102,29 @@ fn writes(rig: &Rig) -> Vec<Action> {
     rig.core.actions.lock().unwrap().clone()
 }
 
+fn write_horizon(pane: &Entity<ActivityView>, seen: bool, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        pane.update(cx, |pane, cx| {
+            if seen {
+                pane.set_shown(true, window, cx);
+            } else {
+                pane.mark_all_read(cx);
+            }
+        });
+    });
+    cx.run_until_parked();
+}
+
+fn reopen_activity(pane: &Entity<ActivityView>, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        pane.update(cx, |pane, cx| {
+            pane.set_shown(false, window, cx);
+            pane.set_shown(true, window, cx);
+        });
+    });
+    cx.run_until_parked();
+}
+
 #[test]
 fn the_rail_counts_new_activity_until_the_pane_is_shown() {
     let rig = rig();
@@ -450,4 +473,148 @@ fn refused_and_terminal_failed_writes_restore_the_stored_item() {
         cx.update(|_, cx| shell.read(cx).toast().cloned()),
         Some("Couldn't update activity. Try again.".into())
     );
+}
+
+#[test]
+fn opening_a_conversation_does_not_supersede_a_pending_removal() {
+    use common::outbox_row;
+    use teams_store::{OutboxKind, OutboxState};
+    let rig = rig();
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    rig.core
+        .write_answers
+        .lock()
+        .unwrap()
+        .push_back(outbox_row(500, OutboxKind::Delete, OutboxState::Pending));
+    cx.update(|_, cx| pane.update(cx, |pane, cx| pane.remove("2000", cx)));
+    cx.run_until_parked();
+    cx.update(|_, cx| pane.update(cx, |pane, cx| pane.set_on_screen(Some(GROUP), cx)));
+    cx.run_until_parked();
+    assert!(
+        !writes(&rig).contains(&Action::ActivityRead {
+            item: "2000".to_owned(),
+            read: true,
+        }),
+        "the removed item is not automatically marked read"
+    );
+    rig.cx.update(|cx| {
+        rig.models.apply(
+            teams_core::Event::Outbox(outbox_row(500, OutboxKind::Delete, OutboxState::Failed)),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| pane.read(cx).shown_items(cx).iter().any(|item| item.id == "2000")));
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).toast().cloned()),
+        Some("Couldn't update activity. Try again.".into())
+    );
+}
+
+#[test]
+fn failed_horizon_writes_restore_the_feed_and_do_not_retry_on_reload() {
+    use common::outbox_row;
+    use teams_store::{OutboxKind, OutboxState};
+    for seen in [false, true] {
+        for state in [None, Some(OutboxState::Denied), Some(OutboxState::Failed)] {
+            let rig = rig();
+            let (shell, cx) = shell_window(&rig);
+            let pane = view(&shell, cx);
+            if let Some(state) = state {
+                let kind = if seen {
+                    OutboxKind::ReadReceipt
+                } else {
+                    OutboxKind::FeedRead
+                };
+                rig.core
+                    .write_answers
+                    .lock()
+                    .unwrap()
+                    .push_back(outbox_row(500, kind, state));
+            } else {
+                *rig.core.stopped.lock().unwrap() = true;
+            }
+            write_horizon(&pane, seen, cx);
+            assert_eq!(
+                cx.update(|_, cx| pane.read(cx).feed().clone()),
+                feed(),
+                "{seen} {state:?}"
+            );
+            assert_eq!(
+                cx.update(|_, cx| shell.read(cx).toast().cloned()),
+                Some("Couldn't update activity. Try again.".into())
+            );
+            cx.update(|_, cx| pane.update(cx, ActivityView::reload));
+            cx.run_until_parked();
+            assert_eq!(
+                writes(&rig).len(),
+                1,
+                "a reload must not retry a failed automatic seen mark"
+            );
+            if seen {
+                reopen_activity(&pane, cx);
+                assert_eq!(writes(&rig).len(), 2, "opening the pane again retries the seen mark");
+            }
+        }
+    }
+}
+
+#[test]
+fn pending_horizons_survive_reload_and_terminal_failures_restore_the_feed() {
+    use common::outbox_row;
+    use teams_store::{OutboxKind, OutboxState};
+    for seen in [false, true] {
+        let rig = rig();
+        let (shell, cx) = shell_window(&rig);
+        let pane = view(&shell, cx);
+        let kind = if seen {
+            OutboxKind::ReadReceipt
+        } else {
+            OutboxKind::FeedRead
+        };
+        rig.core
+            .write_answers
+            .lock()
+            .unwrap()
+            .push_back(outbox_row(500, kind, OutboxState::Pending));
+        write_horizon(&pane, seen, cx);
+        cx.update(|_, cx| pane.update(cx, ActivityView::reload));
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            let pane = pane.read(cx);
+            assert_eq!(pane.feed().seen_ms, Some(if seen { 3000 } else { 1500 }));
+            assert_eq!(pane.feed().bookmark_ms.is_some(), !seen);
+        });
+        rig.cx.update(|cx| {
+            rig.models.apply(
+                teams_core::Event::Outbox(outbox_row(500, kind, OutboxState::Failed)),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.update(|_, cx| pane.read(cx).feed().clone()), feed());
+        assert_eq!(writes(&rig).len(), 1);
+        assert_eq!(
+            cx.update(|_, cx| shell.read(cx).toast().cloned()),
+            Some("Couldn't update activity. Try again.".into())
+        );
+    }
+}
+
+#[test]
+fn a_seen_horizon_already_advanced_elsewhere_reloads_without_a_failure_toast() {
+    let rig = rig();
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    rig.core.activity.lock().unwrap().seen_ms = Some(3000);
+    rig.core
+        .write_errors
+        .lock()
+        .unwrap()
+        .push_back(teams_core::EngineError::NothingNewInActivity);
+    write_horizon(&pane, true, cx);
+    assert_eq!(cx.update(|_, cx| pane.read(cx).feed().seen_ms), Some(3000));
+    assert_eq!(cx.update(|_, cx| shell.read(cx).toast().cloned()), None);
+    assert_eq!(writes(&rig), [Action::ActivitySeen]);
 }

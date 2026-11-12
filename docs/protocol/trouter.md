@@ -255,7 +255,9 @@ compared, none printed): an
 edit's `edittime` equals its new `version` (6 of 6), a delete's `deletetime` does (3 of 3), and a reaction change
 carries `emotions` with neither (14 of 14: an edited message keeps its old `edittime`). A `ConversationUpdate` whose
 `propertiesUpdated` names `consumptionhorizon` is the account's own read horizon (4 of 4, the last row above, in
-`deliveries.json` as the eighth delivery); any other one is the chat's update. A `CustomUserProperties`
+`deliveries.json` as the eighth delivery), unless it also carries `consumptionHorizonBookmark`: it then stays a
+`ConversationUpdate` so the engine stores both properties. The engine stores a carried bookmark even when
+`propertiesUpdated` does not name the horizon. Any other delivery is the chat's update. A `CustomUserProperties`
 (`resourceLink` `/v1/users/ME/properties`, seen in a personal build's debug log with `recentReactions` and
 `inQuarantine`) carries the account's own properties that changed; it is read only when it names
 `appConsumptionHorizon` ([chat.md](chat.md#which-chats-are-unread)). Any other `resourceType` is kept as `Unknown` by

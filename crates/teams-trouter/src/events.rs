@@ -9,7 +9,9 @@
 //!   captures showed: a delete's `deletetime` is its `version`, an edit's `edittime` is its `version`, a reaction
 //!   change carries `emotions` (the whole set) and neither.
 //! - `ConversationUpdate`: the chat ([`ChatEvent::ConversationUpdate`]), or the account's own read horizon when its
-//!   `propertiesUpdated` names `consumptionhorizon` ([`ChatEvent::ReadHorizon`]).
+//!   `propertiesUpdated` names `consumptionhorizon` ([`ChatEvent::ReadHorizon`]). A delivery also carrying
+//!   `consumptionHorizonBookmark` stays a `ConversationUpdate` so the engine stores both properties. The engine
+//!   stores a carried bookmark even when `propertiesUpdated` does not name the horizon.
 //! - `CustomUserProperties`: the account's own properties that changed; its mark-all-read horizon when they name one
 //!   ([`ChatEvent::AppReadHorizon`], `docs/protocol/chat.md`), else [`ChatEvent::Unknown`].
 //! - anything else is [`ChatEvent::Unknown`] with its `resourceType`, and logged by that kind only.
