@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{fs, future, io, thread};
 
 use clap::Parser as _;
@@ -297,6 +297,7 @@ fn run_checks(sandbox: &Sandbox) -> SandboxResult<usize> {
     }
     // then the same pane in Teams Dark, its hover and menus
     qa.check("dark_theme_pane_hover_and_menus", dark_theme);
+    qa.check("dark_theme_gone_chat_group_place_missed_call", dark_fixed_states);
     let failed = qa.failed.len();
     for (name, error) in &qa.failed {
         say(&format!("FAILED {name}: {error}"));
@@ -801,6 +802,8 @@ fn search_filters(qa: &mut Qa<'_>) -> SandboxResult {
         items(&state).len() > 1 && items(&state).iter().all(|item| text(item, "place") == group),
         || format!("the group's name {group}: {state}"),
     )?;
+    qa.hover(AWAY)?;
+    qa.shot("group-place-light")?;
     qa.input.type_text(" nothing has this")?;
     qa.state_until("no item has the words", |state| items(state).is_empty())?;
     qa.shot("search-empty-light")?;
@@ -935,6 +938,8 @@ fn missed_call_buttons(qa: &mut Qa<'_>) -> SandboxResult {
     qa.state_until("Chat: the 1:1 chat with b, the missed call read", |state| {
         state["chat"] == AB_CHAT && first_read(state)
     })?;
+    qa.hover(AWAY)?;
+    qa.shot("missed-call-read-light")?;
     qa.ctl_json(&["open", "chat", ABC_CHAT])?;
     qa.chord(&[Modifier::Ctrl], '1')?;
     // unread again, as a user would, to see Call read it too
@@ -1002,20 +1007,52 @@ fn chat_on_screen(qa: &mut Qa<'_>) -> SandboxResult {
                 .any(|item| text(item, "id") == id && item["read"] == true)
     })?;
     qa.server_until(&id, "isread true on the service", |held| held["isread"] == true)?;
+    let before = qa.state_until("no count on the rail", |state| state["unseen"] == 0)?;
     let pushed = qa.ask("push-reaction")?;
     let new = text(&pushed, "id");
-    let state = qa.state_until("the new item for the chat on screen, read", |state| {
-        items(state)
-            .iter()
-            .any(|item| text(item, "id") == new && item["read"] == true)
+    read_on_arrival_never_counted(qa, &new)?;
+    qa.shot("read-on-arrival-light")?;
+    let after = qa.state()?;
+    ensure(after["unseen"] == before["unseen"], || {
+        format!("rail count after it synced back: {}", after["unseen"])
     })?;
-    // read on arrival: the rail never counts it, not even while its change syncs back
-    ensure(state["unseen"] == 0, || {
-        format!("rail count while the new item already shows read: {}", state["unseen"])
-    })?;
-    qa.server_until(&new, "the new item read on the service", |held| held["isread"] == true)?;
-    qa.state_until("no count on the rail for it", |state| state["unseen"] == 0)?;
     Ok(())
+}
+
+/// Samples the window from the push of `new` (for the chat on screen) until the service has it read and a while
+/// after, as its read syncs back: it is never drawn unread and the rail never counts it.
+fn read_on_arrival_never_counted(qa: &mut Qa<'_>, new: &str) -> SandboxResult {
+    let deadline = Instant::now() + WAIT;
+    let mut synced: Option<Instant> = None;
+    let mut samples = 0_u32;
+    loop {
+        let state = qa.state()?;
+        samples += 1;
+        ensure(state["unseen"] == 0, || {
+            format!("rail count while the new item comes in, read on arrival (sample {samples}): {state}")
+        })?;
+        let shown = items(&state).into_iter().find(|item| text(item, "id") == new);
+        if let Some(item) = &shown {
+            ensure(item["read"] == true, || format!("the new item drawn unread: {item}"))?;
+        }
+        if synced.is_none() && shown.is_some() && qa.server(new)?["isread"] == true {
+            synced = Some(Instant::now());
+        }
+        // the read's change comes back from the service after the write: watch through it
+        if synced.is_some_and(|at| at.elapsed() > Duration::from_secs(4)) {
+            say(&format!(
+                "read on arrival: {samples} samples, the rail count 0 throughout"
+            ));
+            return Ok(());
+        }
+        ensure(Instant::now() < deadline, || {
+            format!(
+                "the new item never read on the service: {}",
+                qa.server(new).unwrap_or_default()
+            )
+        })?;
+        thread::sleep(Duration::from_millis(40));
+    }
 }
 
 /// New activity for a chat not on screen arrives live and the rail counts it; showing the pane clears the count.
@@ -1123,6 +1160,7 @@ fn gone_chat_item(qa: &mut Qa<'_>) -> SandboxResult {
         format!("its third line: {row}")
     })?;
     let id = text(&row, "id");
+    let before = qa.state()?;
     qa.click_listed(ROW)?;
     let state = qa.state_until("the gone chat's item read", |state| {
         items(state)
@@ -1130,7 +1168,10 @@ fn gone_chat_item(qa: &mut Qa<'_>) -> SandboxResult {
             .any(|item| text(item, "id") == id && item["read"] == true)
     })?;
     ensure(
-        state["chat"] != GONE_CHAT && state["toast"] == teams_ui::activity_view::CHAT_GONE,
+        state["chat"] != GONE_CHAT
+            && state["main"] == before["main"]
+            && state["chat"] == before["chat"]
+            && state["toast"] == teams_ui::activity_view::CHAT_GONE,
         || {
             format!(
                 "gone chat clicked: main {} chat {} toast {}",
@@ -1160,6 +1201,37 @@ fn dark_theme(qa: &mut Qa<'_>) -> SandboxResult {
     qa.shot("header-menu-dark")?;
     qa.key(keys::ESC)?;
     qa.ask("theme light")?;
+    Ok(())
+}
+
+/// Teams Dark: the gone chat's toast, a group chat's "Chat with …" third line and the read missed call.
+fn dark_fixed_states(qa: &mut Qa<'_>) -> SandboxResult {
+    qa.ask("theme dark")?;
+    let outcome = dark_fixed_shots(qa);
+    qa.ask("theme light")?;
+    outcome
+}
+
+fn dark_fixed_shots(qa: &mut Qa<'_>) -> SandboxResult {
+    qa.search("the chat that is gone")?;
+    qa.click_listed(ROW)?;
+    qa.state_until("the gone chat's toast", |state| {
+        state["toast"] == teams_ui::activity_view::CHAT_GONE && state["chat"] != GONE_CHAT
+    })?;
+    qa.shot("gone-chat-dark")?;
+    let group = text(&item_with(&qa.plain_pane()?, "Made-up reply about")?, "place");
+    qa.search(&group)?;
+    qa.hover(AWAY)?;
+    qa.shot("group-place-dark")?;
+    qa.plain_pane()?;
+    qa.click_chip("missed-calls")?;
+    let state = qa.state_until("the missed calls", |state| state["filter"] == "missed-calls")?;
+    let call = first(&state)?;
+    ensure(text(&call, "kind") == "missed-call" && call["read"] == true, || {
+        format!("the missed call read: {call}")
+    })?;
+    qa.shot("missed-call-read-dark")?;
+    qa.click_chip("missed-calls")?;
     Ok(())
 }
 
