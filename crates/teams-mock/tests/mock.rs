@@ -381,6 +381,32 @@ async fn a_paged_list_hands_out_the_newest_first_page_by_page_and_a_held_page_wa
 }
 
 #[tokio::test]
+async fn a_paged_list_synthetic_chat_edited_keeps_its_place_and_reads_give_the_new_text() -> TestResult {
+    let lab = Lab::start().await?;
+    let made = lab.mock.add_synthetic_chats(3);
+    let before = lab.list(LAB_A).await?;
+    assert!(lab.mock.edit_synthetic_message(1, "Edited 1"));
+    assert!(!lab.mock.edit_synthetic_message(3, "no such chat"));
+    let after = lab.list(LAB_A).await?;
+    assert_eq!(ids(&after), ids(&before), "the edit moved no chat");
+    let entry = after["conversations"]
+        .as_array()
+        .and_then(|chats| chats.iter().find(|chat| chat["id"] == made[1].as_str()))
+        .ok_or("the edited chat isn't listed")?;
+    assert_eq!(entry["lastMessage"]["content"], "<p>Edited 1</p>");
+    let path = format!(
+        "users/ME/conversations/{}/messages?view=msnp24Equivalent&pageSize=20",
+        segment(&made[1])
+    );
+    let page = lab.get(LAB_A, &path).await?;
+    let messages = page["messages"].as_array().ok_or("no messages")?;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["content"], "<p>Edited 1</p>");
+    assert!(lab.mock.take_events(LAB_A).is_empty(), "nobody is told of the edit");
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_read_around_a_time_replays_the_message_fixture() -> TestResult {
     let lab = Lab::start().await?;
     let recorded = fixture("messages.json")?;

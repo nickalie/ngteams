@@ -191,6 +191,24 @@ impl ChatServiceMock {
         (0..count).map(synthetic_chat).collect()
     }
 
+    /// Edits the one message of the synthetic chat `n` to say `text`, as a newer version of it that every later read
+    /// gives (the conversation list's `lastMessage` too) while the chat keeps its place in the list. Nobody is told.
+    /// `false` when there is no such chat.
+    #[must_use = "false says there was no such chat"]
+    pub fn edit_synthetic_message(&self, n: usize, text: &str) -> bool {
+        let mut state = self.lock();
+        let version = state.tick();
+        let Some(message) = state
+            .conversation_mut(&synthetic_chat(n))
+            .and_then(|conversation| conversation.messages.first_mut())
+        else {
+            return false;
+        };
+        message["content"] = json!(format!("<p>{text}</p>"));
+        message["version"] = json!(version.to_string());
+        true
+    }
+
     /// From now on the conversation list is handed out newest first, `size` conversations a page, each page but the
     /// last with a `forwardLink` to the next.
     pub fn page_conversation_list(&self, size: usize) {

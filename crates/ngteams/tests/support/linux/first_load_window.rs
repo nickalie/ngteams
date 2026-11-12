@@ -11,10 +11,13 @@
 //!   chat of it opened then shows no messages yet, and its message once its sync is done. The other pages add their
 //!   chats under the first page's, which never move; while a later chat's messages are held the list is whole, the
 //!   chat opened stays selected, a synced chat shows its message, and the held one shows none until its read is let
-//!   go. No chat is listed twice, no message shown twice.
+//!   go. The first page's rows show each chat's last message and unread mark from the list page at once; a chat's
+//!   own sync replaces that preview (a message edited on the service after its list page came shows its new text).
+//!   No chat is listed twice, no message shown twice, no message held twice.
 //! - **A failed later page and a restart.** The second page refused, the catch-up fails and the list keeps the first
 //!   page. The app quit and started again on the same store shows that page at once, then the whole list once its
-//!   catch-up is done, each chat once with its one message.
+//!   catch-up is done, each chat once with its one message. The previews kept from the list page are no messages of
+//!   the chats' history.
 //!
 //! Without weston 15, niri or `dbus-daemon` it says so and passes, unless `GPUI_SMOKE_REQUIRE=1`.
 
@@ -69,6 +72,10 @@ const EARLY: usize = 2;
 const SYNCED: usize = 5;
 /// The chat whose messages read is held.
 const HELD: usize = 10;
+/// A first-page chat whose message is edited on the service after its list page came, before its sync.
+const EDITED: usize = 7;
+/// What [`EDITED`]'s message says after the edit.
+const EDITED_TEXT: &str = "Edited synthetic message 0007";
 const STARTUP: Duration = Duration::from_secs(90);
 const WAIT: Duration = Duration::from_secs(30);
 /// How soon something already synced should show.
@@ -540,11 +547,69 @@ fn ctl_lists(run: &AppRun, wanted: &[String]) -> SandboxResult {
     Ok(())
 }
 
+/// What synthetic chat `n`'s one message says: [`EDITED_TEXT`] for [`EDITED`] once `edited`.
+fn text_of(n: usize, edited: bool) -> String {
+    if edited && n == EDITED {
+        EDITED_TEXT.to_owned()
+    } else {
+        synthetic_text(n)
+    }
+}
+
 /// Synthetic chat `n` holds its one message, once.
 fn holds_its_message(run: &AppRun, n: usize) -> SandboxResult {
+    holds_text(run, n, &synthetic_text(n))
+}
+
+/// Synthetic chat `n` holds one message, once, saying `text`.
+fn holds_text(run: &AppRun, n: usize, text: &str) -> SandboxResult {
     let messages = run.messages(&synthetic_chat(n))?;
-    if messages.len() != 1 || messages[0].1 != synthetic_text(n) {
-        return Err(format!("synthetic chat {n} holds {messages:?}").into());
+    if messages.len() != 1 || messages[0].1 != text {
+        return Err(format!("synthetic chat {n} holds {messages:?}, not one {text:?}").into());
+    }
+    Ok(())
+}
+
+/// Waits until the engine gives synthetic chat `n`'s synced message: its own sync is done.
+fn wait_synced(run: &AppRun, n: usize) -> SandboxResult {
+    let chat = synthetic_chat(n);
+    wait_until(WAIT, || {
+        run.messages(&chat).ok().filter(|messages| !messages.is_empty())
+    })
+    .map(|_| ())
+    .ok_or_else(|| format!("{chat} never synced while the catch-up went on").into())
+}
+
+/// Every synthetic chat's row (`ngteamsctl chats`) shows `text(n)` as its last message, and one unread message unless
+/// the chat was `opened` (then none or one): no preview counted beside the message it stands for.
+fn rows_are_right(run: &AppRun, text: impl Fn(usize) -> String, opened: &[usize]) -> SandboxResult {
+    let Response::Chats { chats } = run.ask(Request::Chats {
+        unread_only: false,
+        limit: Some(1000),
+    })?
+    else {
+        return Err("no chat rows".into());
+    };
+    for n in 0..CHATS {
+        let id = synthetic_chat(n);
+        let row = chats
+            .iter()
+            .find(|row| row.id == id)
+            .ok_or_else(|| format!("chat {n} isn't listed"))?;
+        let unread_ok = if opened.contains(&n) {
+            row.unread <= 1
+        } else {
+            row.unread == 1
+        };
+        if row.preview.as_deref() != Some(text(n).as_str()) || !unread_ok {
+            return Err(format!(
+                "chat {n}'s row shows {:?} with {} unread, not {:?}",
+                row.preview,
+                row.unread,
+                text(n)
+            )
+            .into());
+        }
     }
     Ok(())
 }
@@ -581,59 +646,62 @@ fn wait_event(events: &mpsc::Receiver<EventLine>, kind: &str, within: Duration) 
 }
 
 /// While the held chat's read waits ([`MAX_HOLD`](teams_mock::MAX_HOLD) at most): the whole list, the early chat still
-/// open, and the chats synced before the held one shown with their messages. What doesn't hold, said.
+/// open and showing its message as soon as its sync is done, the chats synced before the held one listed with their
+/// synced last message (the edited one's new text), and a synced chat opened showing its message.
 fn the_synced_chats_show_while_a_later_one_waits(
     sandbox: &Sandbox,
     run: &mut AppRun,
     service: &Service,
     early: &str,
-) -> SandboxResult<Vec<String>> {
-    // every page listed; the chats before the held one synced, all while the held read waits (MAX_HOLD at most)
-    let mut problems = Vec::new();
+) -> SandboxResult {
     run.trace
         .wait_list("the whole list", &service.whole)
         .map_err(|error| run.running.fail(&error))?;
     step("the whole list shown");
-    if run.messages(early)?.len() != 1 {
-        problems.push(format!(
-            "the engine doesn't give {early}'s synced message while the catch-up goes on"
-        ));
-    }
-    match run.trace.chat_view_within(SOON, early, 1) {
-        Ok(shown) => once_each("the early chat's view", &shown)?,
-        Err(_) => problems.push(format!(
-            "{early}, open since before its sync, doesn't show its synced message while a later chat's read waits"
-        )),
+    wait_synced(run, EARLY)?;
+    step("the early chat synced");
+    let shown = run.trace.chat_view_within(SOON, early, 1).map_err(|error| {
+        format!("{early}, open since before its sync, doesn't show its synced message while a later chat's read waits: {error}")
+    })?;
+    once_each("the early chat's view", &shown)?;
+    step("the early chat shows its message");
+    for n in 0..HELD {
+        wait_synced(run, n)?;
+        holds_text(run, n, &text_of(n, true))?;
     }
     let previews = run.previews()?;
-    let without: Vec<String> = (0..HELD)
+    let without: Vec<usize> = (0..HELD)
         .filter(|&n| {
             let id = synthetic_chat(n);
             !previews
                 .iter()
-                .any(|(chat, preview)| *chat == id && preview.as_deref() == Some(synthetic_text(n).as_str()))
+                .any(|(chat, preview)| *chat == id && preview.as_deref() == Some(text_of(n, true).as_str()))
         })
-        .map(synthetic_chat)
         .collect();
     if !without.is_empty() {
-        problems.push(format!(
-            "the list shows no last message for the synced chats {} … while a later chat's read waits",
-            without.len()
-        ));
+        return Err(format!(
+            "the list doesn't show the synced last message of chats {without:?} while a later chat's read waits"
+        )
+        .into());
     }
+    step("the synced chats' rows show their synced last message, the edited one's new text");
     if run.open_chat()?.as_deref() != Some(early) {
         return Err(format!("the chat opened isn't {early} any more: {:?}", run.open_chat()?).into());
     }
     AppRun::shot(sandbox, "first-load-whole-list-syncing.png")?;
+    let edited = synthetic_chat(EDITED);
+    run.open(&edited)?;
+    run.trace.chat_view_within(SOON, &edited, 1).map_err(|error| {
+        format!("{edited}, synced, opened while a later chat's read waits, shows no message: {error}")
+    })?;
+    AppRun::shot(sandbox, "first-load-edited-chat-while-syncing.png")?;
     let synced = synthetic_chat(SYNCED);
     run.open(&synced)?;
-    if run.trace.chat_view_within(SOON, &synced, 1).is_err() {
-        problems.push(format!(
-            "{synced}, synced, opened while a later chat's read waits, doesn't show its message"
-        ));
-    }
+    run.trace.chat_view_within(SOON, &synced, 1).map_err(|error| {
+        format!("{synced}, synced, opened while a later chat's read waits, shows no message: {error}")
+    })?;
     AppRun::shot(sandbox, "first-load-synced-chat-while-syncing.png")?;
-    Ok(problems)
+    Ok(())
 }
 
 fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxResult {
@@ -652,6 +720,10 @@ fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxR
     ctl_lists(&run, &service.first_page)?;
     first_page_hints_are_shown(&run)?;
     AppRun::shot(sandbox, "first-load-first-page.png")?;
+    // edited on the service after its list page came: only the chat's own sync brings the new text
+    if !service.mock.edit_synthetic_message(EDITED, EDITED_TEXT) {
+        return Err("the mock has no chat to edit".into());
+    }
     let early = synthetic_chat(EARLY);
     run.open(&early)?;
     let shown = run.trace.wait_chat_view(&early, 0)?;
@@ -668,7 +740,7 @@ fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxR
         return Err(run.running.fail(&"the held chat's messages were never read"));
     }
     step("the held chat's messages read waits");
-    let problems = the_synced_chats_show_while_a_later_one_waits(sandbox, &mut run, service, &early)?;
+    the_synced_chats_show_while_a_later_one_waits(sandbox, &mut run, service, &early)?;
     let held_chat = synthetic_chat(HELD);
     run.open(&held_chat)?;
     run.trace.wait_chat_view(&held_chat, 0)?;
@@ -679,7 +751,7 @@ fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxR
     AppRun::shot(sandbox, "first-load-chat-loading.png")?;
     ctl_lists(&run, &service.whole)?;
     if !held.release() {
-        return Err(format!("the held read went at its limit before the checks ended; {problems:?}").into());
+        return Err("the held read went at its limit before the checks ended".into());
     }
     let shown = run.trace.wait_chat_view(&held_chat, 1)?;
     once_each("the held chat's view", &shown)?;
@@ -692,20 +764,17 @@ fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxR
         .wait_list("the whole list after the catch-up", &service.whole)?;
     the_list_never_jumped(&mut run.trace, &service.whole)?;
     ctl_lists(&run, &service.whole)?;
+    rows_are_right(&run, |n| text_of(n, true), &[EARLY, EDITED, SYNCED, HELD])?;
     for n in [0, EARLY, SYNCED, HELD, PAGE - 1, PAGE, CHATS - 1] {
         holds_its_message(&run, n)?;
     }
+    holds_text(&run, EDITED, EDITED_TEXT)?;
     for n in [EARLY, SYNCED] {
         let chat = synthetic_chat(n);
         run.open(&chat)?;
         once_each("a chat's view after the catch-up", &run.trace.wait_chat_view(&chat, 1)?)?;
     }
-    run.quit(sandbox)?;
-    if problems.is_empty() {
-        Ok(())
-    } else {
-        Err(format!("while the catch-up went on: {}", problems.join("; ")).into())
-    }
+    run.quit(sandbox)
 }
 
 fn a_failed_page_and_a_restart_leave_the_whole_list(sandbox: &Sandbox, service: &Service) -> SandboxResult {
@@ -758,6 +827,13 @@ fn a_failed_page_and_a_restart_leave_the_whole_list(sandbox: &Sandbox, service: 
         return Err(run.running.fail(&"the restart didn't read the list"));
     }
     first_page_hints_are_shown(&run)?;
+    // the previews kept from the list page are no history
+    for n in [0, EARLY, PAGE - 1] {
+        let messages = run.messages(&synthetic_chat(n))?;
+        if !messages.is_empty() {
+            return Err(format!("chat {n}, never synced, holds {messages:?} after the restart").into());
+        }
+    }
     if !start.release() {
         return Err("the restart's list read went before the test let it go".into());
     }
@@ -768,6 +844,7 @@ fn a_failed_page_and_a_restart_leave_the_whole_list(sandbox: &Sandbox, service: 
         .wait_list("the whole list after the restart", &service.whole)?;
     the_list_never_jumped(&mut run.trace, &service.whole)?;
     ctl_lists(&run, &service.whole)?;
+    rows_are_right(&run, synthetic_text, &[])?;
     for n in [0, PAGE - 1, PAGE, CHATS - 1] {
         holds_its_message(&run, n)?;
     }
