@@ -8,7 +8,7 @@ use std::fmt;
 
 use rusqlite::{params, params_from_iter};
 
-use crate::{Store, StoreError};
+use crate::{Store, StoreError, sql_limit};
 
 /// What a kept translation is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -131,11 +131,6 @@ impl fmt::Debug for GlossaryTerm {
 
 /// The most terms a chat's glossary keeps per language: the newest named.
 pub const GLOSSARY_TERMS: usize = 40;
-
-/// [`GLOSSARY_TERMS`] as SQLite takes a limit.
-fn glossary_limit() -> i64 {
-    i64::try_from(GLOSSARY_TERMS).unwrap_or(i64::MAX)
-}
 
 /// The most ids one read takes at a time (SQLite's bound parameters).
 const CHUNK: usize = 400;
@@ -294,7 +289,7 @@ impl Store {
                 "SELECT term, rendering, used_at FROM translation_glossary
                  WHERE conversation_id = ?1 AND language = ?2 ORDER BY used_at DESC, term LIMIT ?3",
             )?
-            .query_map(params![conversation_id, language, glossary_limit()], |row| {
+            .query_map(params![conversation_id, language, sql_limit(GLOSSARY_TERMS)], |row| {
                 Ok(GlossaryTerm {
                     conversation_id: conversation_id.to_owned(),
                     language: language.to_owned(),
@@ -344,7 +339,7 @@ impl Store {
             chats.sort_unstable();
             chats.dedup();
             for (conversation_id, language) in chats {
-                trim.execute(params![conversation_id, language, glossary_limit()])?;
+                trim.execute(params![conversation_id, language, sql_limit(GLOSSARY_TERMS)])?;
             }
         }
         tx.commit()?;
