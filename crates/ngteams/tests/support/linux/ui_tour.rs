@@ -2451,13 +2451,15 @@ fn activity_items(mine_number: u64, theirs_number: u64) -> [(serde_json::Value, 
         ),
         (item("call", "missedCall", (LAB_B, "Lab B"), ("", 1), ""), false),
         (
-            item(
-                "msGraph",
-                "privateMeetingUpdated",
-                (LAB_C, "Lab C"),
-                ("", 1),
-                "Made-up weekly sync",
-            ),
+            serde_json::json!({
+                "activityType": "msGraph", "activitySubtype": "privateMeetingUpdated", "activityId": 8,
+                "sourceThreadId": "", "sourceMessageId": 1, "sourceUserId": "28:app:made-up-calendar",
+                "sourceUserImDisplayName": "Lab C", "messagePreview": "Made-up weekly sync",
+                "activityContext": {
+                    "attributedToActorId": LAB_C,
+                    "location": "{\"Custom\":\"<DateTimeRange><StartDateTime>2025-10-10T14:30:00Z</StartDateTime><EndDateTime>2025-10-10T15:00:00Z</EndDateTime></DateTimeRange>\"}",
+                },
+            }),
             false,
         ),
         (
