@@ -5,11 +5,12 @@
 //! - **The chat's context**: the process keeps the conversation, so each batch is read against the batches before it.
 //!   Each job carries what the tool should know of the chat ([`Brief`]: its title, who is who, its glossary) and the
 //!   messages around its own as `<context>`; the session tells a process each of them once ([`Given`]): the chat on
-//!   its first question (again when it changes), each term and each context line once, so a process started anew
-//!   (after [`Limits::turns`] questions or [`Limits::chars`] characters, or after a failure) loses nothing that
-//!   matters, and a running one isn't told twice what it holds. A process's first question takes the whole context
-//!   the job carries; a later one at most [`WARM_LINES`] lines and [`WARM_CHARS`] characters of what is new to it,
-//!   besides the messages replied to, which go every time.
+//!   its first question (again when it changes), each term once (all of them again with the chat told again: a later
+//!   `<chat>` may be another chat) and each context line once, so a process started anew (after [`Limits::turns`]
+//!   questions or [`Limits::chars`] characters, or after a failure) loses nothing that matters, and a running one
+//!   isn't told twice what it holds. A process's first question about a chat takes the whole context the job carries;
+//!   a later one at most [`WARM_LINES`] lines and [`WARM_CHARS`] characters of what is new to it, besides the
+//!   messages replied to, which go every time.
 //! - **One job at a time**, in the order handed in: the model hands one batch at a time and an outgoing message at
 //!   once, so a send waits at most for the batch running.
 //! - **As it comes**: a batch's answers are told one message at a time as the tool writes them ([`Outcome::Partial`]),
@@ -185,6 +186,12 @@ impl Given {
     /// What a question with `brief` and `context` (oldest first) starts with, for a process told what this holds.
     pub(crate) fn preface<'a>(&self, brief: &'a Brief, context: &'a [Said]) -> Preface<'a> {
         let new_chat = self.chat.as_ref().is_none_or(|told| !told.same_chat(brief));
+        // a chat the process holds none of (previews ask one process about many chats) gets the whole window
+        let warm = self.warm
+            && self
+                .chat
+                .as_ref()
+                .is_some_and(|told| told.conversation == brief.conversation);
         let terms = brief
             .terms
             .iter()
@@ -197,7 +204,7 @@ impl Given {
             if !replied_to && !said.key.is_empty() && self.seen.contains(&said.key) {
                 continue;
             }
-            if !replied_to && self.warm {
+            if !replied_to && warm {
                 count += 1;
                 chars += said.text.len();
                 if count > WARM_LINES || chars > WARM_CHARS {

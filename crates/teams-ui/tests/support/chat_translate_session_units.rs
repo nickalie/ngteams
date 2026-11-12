@@ -488,6 +488,27 @@ fn a_running_process_gets_at_most_the_warm_window_but_every_line_replied_to() {
     assert_eq!(Given::default().preface(&brief, &context).context.len(), context.len());
 }
 
+#[test]
+fn a_running_process_asked_about_another_chat_takes_its_whole_window() {
+    // previews ask one process about every chat in a language
+    let mut given = Given::default();
+    let first = synthetic_brief("chat-1", &[]);
+    let preface = given.preface(&first, &[]);
+    given.told(&preface, &[], &[]);
+    let context: Vec<Said> = (0..WARM_LINES + 10)
+        .map(|n| line(&format!("k{n}"), &format!("line {n}")))
+        .collect();
+    let other = synthetic_brief("chat-2", &[]);
+    let preface = given.preface(&other, &context);
+    assert_eq!(preface.context.len(), context.len());
+    given.told(&preface, &[], &[]);
+    // and once it read that chat, only what is new to it
+    let more: Vec<Said> = (100..100 + WARM_LINES + 10)
+        .map(|n| line(&format!("k{n}"), &format!("line {n}")))
+        .collect();
+    assert_eq!(given.preface(&other, &more).context.len(), WARM_LINES);
+}
+
 /// A fake Claude Code that logs each question and answers a batch with a term after its message.
 const TERMING: &str = r#"#!/bin/bash
 log="$(dirname "$0")/received.log"

@@ -6,7 +6,8 @@
 //!   message is text, never instructions.
 //! - **What a question starts with** ([`Preface`]): `<chat>` (the chat's title, the member translated for and the
 //!   others: on a tool process's first question, and again when it changes), `<terms>` (the chat's glossary, the
-//!   renderings chosen before, each once a process) and `<context>` (who said what before, oldest first, as plain text;
+//!   renderings chosen before: each once a process, and all of them again whenever `<chat>` is told again, since a
+//!   later `<chat>` may be another chat) and `<context>` (who said what before, oldest first, as plain text;
 //!   a message one being translated replies to labelled `[qN]`).
 //! - **A batch of messages** ([`batch`]): `<translate>` with each message as `<m id="N" from="Name">…</m>`, and
 //!   `re="qN"` (or another message's `N`) on a reply. Each answer is `<m id="N" lang="xx">…</m>`, or
