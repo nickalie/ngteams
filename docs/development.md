@@ -510,6 +510,20 @@ Camera starts off; only the user's action turns it on.
 Notifications, tray and device access use the session selected at startup: desktop for the user's normal app,
 private sandbox for lab/tests. One call or ring is admitted at a time across the app's accounts.
 
+#### Translating the message you write
+
+Every message box (a chat's, a channel's post and reply boxes, editing a message, New message) has Translate beside
+Correct (Ctrl+Shift+Y), with the language button next to it. Translate replaces the draft with its translation, in
+place and as one edit, so Ctrl+Z brings the draft back; mentions, links that show their address, inline code, blocks
+of code, pictures and line breaks never go to the tool and come back as they were, and formatted words stay formatted.
+While it runs, a line over the box shows the language and the tool with Cancel (Escape or the button again cancel
+too); a failure keeps the draft and says why, with Try again, and with no tool installed it offers the settings. The
+language button opens a searchable list of common languages, and any other language can be typed. The language is one
+setting for every box and account in the app, kept across restarts; it and the tool are in Settings → General →
+Message translation (the tool: Automatic, which is Claude Code when installed and else Codex, or either one; by
+default Claude Sonnet or GPT-6.1-Terra). Only the draft's words and the language go to the tool and its provider,
+never the chat, names or tokens (`crates/teams-ui/src/draft_translate.rs`).
+
 The diagnostic file is `<data>/logs/teams-app.log` (the retained filename), mode `0600` in a `0700` directory,
 rotated at 8 MiB with four older files. `TEAMS_APP_LOG=<error|warn|info|debug>` overrides the settings' level;
 `trace` is treated as `debug`. Info stays payload-free. Debug includes every API request/response, including token

@@ -1,6 +1,6 @@
 //! The settings' one control for a local AI choice ([`AiChoice`]), the same wherever a setting picks the tool that
 //! does some work on this computer (live captions' translation, recaps' summaries, chats' translation, drafts'
-//! proofreading): a box titled by the work, of
+//! proofreading and translation): a box titled by the work, of
 //!
 //! - **the tool**: Automatic (Claude Code when it is installed, else Codex), Claude or Codex, side by side; under it
 //!   what goes to the tool, or that the tool isn't installed;
@@ -8,6 +8,9 @@
 //!   reports ([`Catalog`]) and "Other model…";
 //! - **the model's name**, while another model is being typed or one the tool didn't list is set: any name the tool
 //!   takes, used on Enter (or when the field is left).
+//!
+//! A draft's translation adds its language's row on top: the menu the compose box's language button opens
+//! ([`crate::draft_translate::menu`]), its button `message-language` and its rows `message-language-<language>`.
 //!
 //! Changing the tool sets its recommended model again: a model of one tool means nothing to the other. Test selectors:
 //! the tool's segments `<setting>-<tool>` (`caption-translator-claude`), the model's dropdown `<setting>-model` and
@@ -23,6 +26,7 @@ use gpui::{
 use gpui_component::input::{Input, InputEvent, InputState};
 
 use super::{Pick, group, picker, row_with, segmented};
+use crate::draft_translate::menu::{self, LanguageMenu};
 use crate::local_ai::{AiChoice, Backend, Catalog, Failure, Model, ToolChoice, Tools, Work};
 use crate::settings::SettingsModel;
 use crate::theme;
@@ -86,6 +90,16 @@ fn words(work: Work) -> Words {
             model_selector: "message-corrector-model",
             name_selector: "message-corrector-model-name",
         },
+        Work::Draft => Words {
+            title: "Message translation",
+            tool: "Translate messages with",
+            sends: crate::draft_translate::SETTINGS_NOTE,
+            install: "translate your messages",
+            model: "A stronger model writes the message as a native speaker would; you wait only when you translate.",
+            selector: "message-translator",
+            model_selector: "message-translator-model",
+            name_selector: "message-translator-model-name",
+        },
     }
 }
 
@@ -104,6 +118,8 @@ pub struct AiPicker {
     _observing: [Subscription; 3],
     /// The name field's Enter and leaving, while it is there.
     name_events: Option<Subscription>,
+    /// A draft's translation's language menu, made the first time it shows (it needs the window).
+    language: Option<Entity<LanguageMenu>>,
 }
 
 impl AiPicker {
@@ -122,6 +138,7 @@ impl AiPicker {
             bad_name: false,
             _observing: observing,
             name_events: None,
+            language: None,
         }
     }
 
@@ -192,6 +209,63 @@ impl AiPicker {
         Rc::new(move |cx| {
             let _ = this.update(cx, |this, cx| act(this, cx));
         })
+    }
+
+    /// The language a draft is translated into, the same in every box: a button opening the menu the compose box's
+    /// language button opens.
+    fn language_row(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let palette = theme::current(cx);
+        let settings = self.model.clone();
+        let language = self
+            .language
+            .get_or_insert_with(|| cx.new(|cx| LanguageMenu::new(settings, "message-language", window, cx)))
+            .clone();
+        let chosen = self.model.read(cx).settings().message_translate_to.clone();
+        let face = gpui_component::button::Button::new("message-language")
+            .outline()
+            .min_w(px(220.0))
+            .max_w(px(320.0))
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .child(chosen),
+                    )
+                    .child(
+                        crate::icons::Glyph::CHEVRON_DOWN
+                            .icon()
+                            .size(px(14.0))
+                            .text_color(gpui::rgb(palette.muted_foreground)),
+                    ),
+            );
+        row_with(
+            "Translate messages into".into(),
+            Some(
+                "The language Translate in the message box writes in, the same in every chat. Pick one or type any \
+                  other."
+                    .into(),
+            ),
+            div()
+                .debug_selector(|| "message-language".to_owned())
+                .child(menu::popover(
+                    &language,
+                    "message-language-popover",
+                    gpui::Anchor::TopRight,
+                    face,
+                    cx,
+                )),
+            palette,
+        )
     }
 
     /// The tool's row: its segments, and what goes to it (or that it isn't installed).
@@ -357,7 +431,11 @@ impl Render for AiPicker {
         let catalog = Catalog::of(cx);
         let picked = tools.pick(choice.tool);
         let backend = picked.as_ref().ok().map(|(backend, _)| *backend);
-        let mut rows = vec![self.tool_row(&choice, &picked, cx)];
+        let mut rows = Vec::new();
+        if self.work == Work::Draft {
+            rows.push(self.language_row(window, cx));
+        }
+        rows.push(self.tool_row(&choice, &picked, cx));
         let picks = self.model_picks(&choice, backend, &catalog, cx);
         let model_note: SharedString = match choice.tool {
             ToolChoice::Only(backend) if tools.pick(choice.tool).is_ok() && !catalog.is_listed() => {

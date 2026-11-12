@@ -377,6 +377,11 @@ pub struct Settings {
     pub chat_translator: AiChoice,
     /// Which tool, and model, proofreads a draft when the user asks ([`crate::message_correct`]).
     pub message_corrector: AiChoice,
+    /// The language a draft is translated into in its box ([`crate::draft_translate`]): the app's for every box and
+    /// account, by its name (one of [`crate::translate::TARGET_LANGUAGES`]' or any the user typed).
+    pub message_translate_to: String,
+    /// Which tool, and model, translates a draft in its box.
+    pub message_translator: AiChoice,
     /// Which sound plays for each event, how loud, and the pack they come from ([`crate::sounds`]).
     pub sounds: SoundSettings,
 }
@@ -543,8 +548,8 @@ impl Settings {
 }
 
 impl Settings {
-    /// The local AI choice of `work`: the captions' translator, the recaps' summarizer, the chats' translator or the
-    /// drafts' proofreader.
+    /// The local AI choice of `work`: the captions' translator, the recaps' summarizer, the chats' translator, the
+    /// drafts' proofreader or their translator.
     #[must_use]
     pub fn ai(&self, work: Work) -> &AiChoice {
         match work {
@@ -552,6 +557,7 @@ impl Settings {
             Work::Summary => &self.recap_summarizer,
             Work::Chat => &self.chat_translator,
             Work::Correction => &self.message_corrector,
+            Work::Draft => &self.message_translator,
         }
     }
 
@@ -562,6 +568,7 @@ impl Settings {
             Work::Summary => self.recap_summarizer = choice,
             Work::Chat => self.chat_translator = choice,
             Work::Correction => self.message_corrector = choice,
+            Work::Draft => self.message_translator = choice,
         }
     }
 }
@@ -595,6 +602,8 @@ impl Default for Settings {
             chat_languages: Vec::new(),
             chat_translator: AiChoice::default(),
             message_corrector: AiChoice::default(),
+            message_translate_to: crate::draft_translate::DEFAULT_LANGUAGE.to_owned(),
+            message_translator: AiChoice::default(),
             sounds: SoundSettings::default(),
         }
     }
@@ -643,6 +652,9 @@ pub mod keys {
     pub const CHAT_LANGUAGES: &str = "chat_languages";
     pub const CHAT_TRANSLATOR: &str = "chat_translator";
     pub const MESSAGE_CORRECTOR: &str = "message_corrector";
+    /// The language a draft is translated into in its box, by its name.
+    pub const MESSAGE_TRANSLATE_TO: &str = "message_translate_to";
+    pub const MESSAGE_TRANSLATOR: &str = "message_translator";
     /// The sound pack chosen as a whole (`builtin/<key>` or `added/<id>`), "Play sounds when I'm busy", every sound's
     /// volume, and each event's sound: a table of tables, by the event's name.
     pub const SOUND_PACK: &str = "sound_pack";
@@ -754,6 +766,7 @@ fn take(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem
         keys::CHAT_LANGUAGES | keys::CHAT_TRANSLATOR | keys::MESSAGE_CORRECTOR => {
             take_chat_translation(settings, key, value)?;
         }
+        keys::MESSAGE_TRANSLATE_TO | keys::MESSAGE_TRANSLATOR => take_message_translation(settings, key, value)?,
         keys::FIRST_ACCOUNT => {
             settings.first_account = Some(chat_id(value).ok_or(bad(keys::FIRST_ACCOUNT, "not an account's MRI"))?);
         }
@@ -842,6 +855,27 @@ fn take_chat_translation(settings: &mut Settings, key: &str, value: &Value) -> R
         }
     }
     if failed { Err(bad) } else { Ok(()) }
+}
+
+/// Takes a draft's translation in its box: the language (any name [`crate::draft_translate::language_name`] takes) or
+/// the tool.
+fn take_message_translation(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem> {
+    if key == keys::MESSAGE_TRANSLATOR {
+        settings.message_translator = ai_choice(value).ok_or(Problem::BadValue {
+            key: keys::MESSAGE_TRANSLATOR,
+            why: AI_CHOICE_SHAPE,
+        })?;
+        return Ok(());
+    }
+    settings.message_translate_to =
+        value
+            .as_str()
+            .and_then(crate::draft_translate::language_name)
+            .ok_or(Problem::BadValue {
+                key: keys::MESSAGE_TRANSLATE_TO,
+                why: "not a language's name",
+            })?;
+    Ok(())
 }
 
 /// Takes the other accounts' own settings: each a table under the account's MRI (an id as a chat id is kept) holding
@@ -1148,7 +1182,8 @@ fn render_people(settings: &Settings, table: &mut Table) {
     }
 }
 
-/// The chats' local AI settings, including draft correction, and any chat languages, into the file's table.
+/// The chats' local AI settings, including draft correction and translation, and any chat languages, into the file's
+/// table.
 fn render_chat_translation(settings: &Settings, table: &mut Table) {
     table.insert(
         keys::CHAT_TRANSLATOR.to_owned(),
@@ -1157,6 +1192,14 @@ fn render_chat_translation(settings: &Settings, table: &mut Table) {
     table.insert(
         keys::MESSAGE_CORRECTOR.to_owned(),
         ai_choice_value(&settings.message_corrector),
+    );
+    table.insert(
+        keys::MESSAGE_TRANSLATE_TO.to_owned(),
+        Value::String(settings.message_translate_to.clone()),
+    );
+    table.insert(
+        keys::MESSAGE_TRANSLATOR.to_owned(),
+        ai_choice_value(&settings.message_translator),
     );
     if !settings.chat_languages.is_empty() {
         let chats = settings

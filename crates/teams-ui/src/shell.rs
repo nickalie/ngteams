@@ -2468,6 +2468,11 @@ impl Shell {
             .on_action(cx.listener(|this, _: &ShowActivity, window, cx| this.show_activity(window, cx)))
             .on_action(cx.listener(|this, _: &ShowChats, window, cx| this.show_chats(window, cx)))
             .on_action(cx.listener(|this, _: &ShowCalendar, window, cx| this.show_calendar(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &crate::compose::OpenTranslationSettings, window, cx| {
+                    this.open_settings_page(Page::General, window, cx);
+                }),
+            )
     }
 
     /// Opens the switcher, or closes it when it is open.

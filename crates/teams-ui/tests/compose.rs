@@ -1751,17 +1751,16 @@ fn a_click_into_the_compose_box_closes_more_reactions_and_keeps_the_focus_there(
     act(&view, cx, MessageAction::React, &theirs.id);
     keys(cx, "5");
     let picker = cx.debug_bounds("reaction-picker-more").expect("more reactions open");
-    let compose_box = cx.debug_bounds("compose").unwrap();
+    // a spot of the box's text area: its toolbar's buttons act on their own
+    let text = cx.debug_bounds("rich-editor").unwrap();
     let inside = [
-        compose_box.center(),
-        // right of the picker, in the text area
-        point(picker.right() + px(24.0), compose_box.center().y),
-        point(compose_box.left() + px(4.0), compose_box.center().y),
-        point(compose_box.right() - px(4.0), compose_box.center().y),
+        text.center(),
+        point(text.right() - px(4.0), text.center().y),
+        point(text.left() + px(4.0), text.center().y),
     ]
     .into_iter()
     .find(|spot| !picker.contains(spot))
-    .expect("a spot of the compose box outside the picker");
+    .expect("a spot of the text area outside the picker");
 
     cx.simulate_click(inside, Modifiers::none());
     assert!(cx.update(|_, cx| view.read(cx).more_reactions().is_none()), "closed");

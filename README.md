@@ -54,6 +54,7 @@ built for your desktop instead of a web page in a wrapper.
 **Optional extras on your computer**
 - Read and write a chat in another language, with translated messages kept for next time
 - Have a draft corrected before you send it, in any language: spelling, grammar and the word that fits best, previewed word by word
+- Translate the message you are writing into any language, in place, keeping its mentions, links and formatting (Ctrl+Z brings it back)
 - Translate live captions as people speak
 - Keep every call's captions as a searchable transcript, saved only on this computer
 - Get an AI summary of a meeting: purpose, key takeaways, topics, next steps and open questions
@@ -195,7 +196,7 @@ The [full command list](docs/development.md#ngteamsctl) covers chats, calls, the
 - Your messages and settings are stored on your computer, and your sign-in is kept in your desktop keyring.
 - Your camera starts off, and only you can turn it on.
 - The update check asks GitHub for ngteams' latest release. It sends no account data and no sign-in, only the app's name and version.
-- If you turn on translation or AI summaries, or ask for a correction, that text goes to the tool you picked and its provider. Translating a chat also sends its earlier messages, its title and its members' names; a correction also sends the chat's recent messages.
+- If you turn on translation or AI summaries, or ask for a correction, that text goes to the tool you picked and its provider. Translating a chat also sends its earlier messages, its title and its members' names; a correction also sends the chat's recent messages. Translating the message you are writing sends only its words and the language.
 - Logs at the debug level contain message text, so don't post them publicly.
 
 ## Good to know

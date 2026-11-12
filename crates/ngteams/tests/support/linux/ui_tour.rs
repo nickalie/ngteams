@@ -189,7 +189,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 284] = [
+const STEPS: [Step; 5 + 294] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -492,6 +492,61 @@ const STEPS: [Step; 5 + 284] = [
         with_compose(shell, cx, |compose, cx| compose.end_correction(window, cx));
         cx.set_global(teams_ui::local_ai::Tools::default());
         clear_compose(shell, window, cx);
+    }),
+    // Translate and its language button in the box's toolbar, the language German
+    ("compose-translate", |shell, window, cx| {
+        tour_translator(cx);
+        set_message_language(shell, "German", cx);
+        type_in_compose(shell, TOUR_DRAFT, window, cx);
+    }),
+    // the language menu: a search field over the common languages, German checked
+    ("compose-translate-menu", |shell, window, cx| {
+        compose_language_menu(shell, Some(""), window, cx);
+    }),
+    // a language not listed, typed: offered to use as it is
+    ("compose-translate-menu-typed", |shell, window, cx| {
+        compose_language_menu(shell, Some("Klingon"), window, cx);
+    }),
+    // the draft being translated: the line over the box with the turning ring and Cancel, Translate lit
+    ("compose-translating", |shell, window, cx| {
+        compose_language_menu(shell, None, window, cx);
+        TOUR_TRANSLATION_HELD.store(true, std::sync::atomic::Ordering::Relaxed);
+        with_compose(shell, cx, |compose, cx| compose.translate_draft(window, cx));
+    }),
+    // the same in Teams Dark
+    ("compose-translating-dark", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    // the language menu in Teams Dark
+    ("compose-translate-menu-dark", |shell, window, cx| {
+        compose_language_menu(shell, Some("ge"), window, cx);
+    }),
+    // the translation in the box, in place of the draft
+    ("compose-translated", |shell, window, cx| {
+        compose_language_menu(shell, None, window, cx);
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        TOUR_TRANSLATION_HELD.store(false, std::sync::atomic::Ordering::Relaxed);
+    }),
+    // the tool signed out: why, with Try again, the draft as it was
+    ("compose-translate-failed", |shell, window, cx| {
+        TOUR_TRANSLATION_FAILS.store(true, std::sync::atomic::Ordering::Relaxed);
+        type_in_compose(shell, TOUR_DRAFT, window, cx);
+        with_compose(shell, cx, |compose, cx| compose.translate_draft(window, cx));
+    }),
+    // the settings' Message translation: the language, the tool and its model
+    ("settings-message-translation", |shell, window, cx| {
+        TOUR_TRANSLATION_FAILS.store(false, std::sync::atomic::Ordering::Relaxed);
+        with_compose(shell, cx, |compose, cx| compose.cancel_draft_translation(window, cx));
+        clear_compose(shell, window, cx);
+        made_up_ai_tools(cx);
+        show_page(shell, Page::General, cx);
+        shell.read(cx).settings_view().read(cx).scroll_to_end();
+    }),
+    ("compose-translate-over", |shell, window, cx| {
+        set_message_language(shell, teams_ui::draft_translate::DEFAULT_LANGUAGE, cx);
+        teams_ui::draft_translate::set_engine(cx, std::sync::Arc::new(teams_ui::draft_translate::LocalTools));
+        cx.set_global(teams_ui::local_ai::Tools::default());
+        show_chat_in_theme(shell, teams_ui::theme::LIGHT_KEY, window, cx);
     }),
     // text selected with the mouse from the second-to-last message into the last, on the selection colour, then its
     // right-click menu
@@ -2650,6 +2705,84 @@ while IFS= read -r line; do
   printf '{"type":"result","is_error":false,"result":"%s"}\n' "$ans"
 done
 "#;
+
+/// The made-up draft the tour translates.
+const TOUR_DRAFT: &str = "Good morning, can you send me the plan before lunch?";
+/// The tour's translating engine holds its answer while this is set.
+static TOUR_TRANSLATION_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The tour's translating engine answers that the tool is signed out while this is set.
+static TOUR_TRANSLATION_FAILS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A made-up translating engine (no tool runs): the made-up draft in German.
+struct TourTranslator;
+
+impl teams_ui::draft_translate::Engine for TourTranslator {
+    fn start(
+        &self,
+        _: &teams_ui::local_ai::Launch,
+        _: &std::sync::atomic::AtomicBool,
+    ) -> Result<Box<dyn teams_ui::draft_translate::Session>, teams_ui::local_ai::Failure> {
+        Ok(Box::new(Self))
+    }
+}
+
+impl teams_ui::draft_translate::Session for TourTranslator {
+    fn ask(
+        &mut self,
+        _: &str,
+        wait: Duration,
+        stop: &std::sync::atomic::AtomicBool,
+    ) -> Result<String, teams_ui::local_ai::Failure> {
+        use std::sync::atomic::Ordering;
+        use teams_ui::local_ai::{Backend, Failure};
+        let deadline = std::time::Instant::now() + wait;
+        while TOUR_TRANSLATION_HELD.load(Ordering::Relaxed) {
+            if stop.load(Ordering::Relaxed) || std::time::Instant::now() > deadline {
+                return Err(Failure::TimedOut(Backend::Claude));
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if TOUR_TRANSLATION_FAILS.load(Ordering::Relaxed) {
+            return Err(Failure::SignedOut(Backend::Claude));
+        }
+        Ok(
+            "<translated><x0>Guten Morgen, kannst du mir den Plan vor dem Mittagessen schicken?</x0></translated>"
+                .to_owned(),
+        )
+    }
+
+    fn close(self: Box<Self>) {}
+}
+
+/// The tour's translating engine in place of the local tools, with made-up tools installed.
+fn tour_translator(cx: &mut App) {
+    made_up_ai_tools(cx);
+    teams_ui::draft_translate::set_engine(cx, std::sync::Arc::new(TourTranslator));
+}
+
+/// The language every box translates into.
+fn set_message_language(shell: &Entity<Shell>, language: &str, cx: &mut App) {
+    let model = shell.read(cx).settings().clone();
+    let language = language.to_owned();
+    model.update(cx, |model, cx| {
+        model.change(|settings| settings.message_translate_to = language, cx);
+    });
+}
+
+/// The compose box's language menu opened with `query` typed, or closed.
+fn compose_language_menu(shell: &Entity<Shell>, query: Option<&str>, window: &mut Window, cx: &mut App) {
+    with_compose(shell, cx, |compose, cx| {
+        if query.is_some() {
+            compose.open_language_menu(window, cx);
+        }
+        if let Some(menu) = compose.language_menu() {
+            menu.update(cx, |menu, cx| match query {
+                Some(query) => menu.search(query, window, cx),
+                None => menu.set_open(false, window, cx),
+            });
+        }
+    });
+}
 
 /// A fake Claude Code for the tour: it answers the made-up captions with their German, anything else unchanged.
 const FAKE_CLAUDE: &str = r#"#!/bin/bash

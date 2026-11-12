@@ -115,6 +115,11 @@ fn changed() -> Settings {
             tool: TranslatorChoice::Only(Backend::Claude),
             model: teams_ui::local_ai::Model::ToolDefault,
         },
+        message_translate_to: "Klingon".to_owned(),
+        message_translator: AiChoice {
+            tool: TranslatorChoice::Only(Backend::Codex),
+            model: teams_ui::local_ai::Model::Recommended,
+        },
     }
 }
 
@@ -808,6 +813,69 @@ fn the_message_corrector_goes_through_the_file() {
             .any(|problem| problem.to_string().contains("message_corrector")),
         "{problems:?}"
     );
+}
+
+#[test]
+fn a_drafts_translation_language_and_tool_go_through_the_file() {
+    let defaults = Settings::default();
+    assert_eq!(defaults.message_translate_to, "English");
+    assert_eq!(defaults.message_translator, AiChoice::default());
+    for (choice, language) in ai_choices().into_iter().zip(
+        ["German", "Klingon", "Portuguese (Brazil)", "Scots Gaelic"]
+            .into_iter()
+            .cycle(),
+    ) {
+        let settings = Settings {
+            message_translator: choice,
+            message_translate_to: language.to_owned(),
+            ..Settings::default()
+        };
+        let text = render(&settings);
+        assert!(text.contains("[message_translator]"), "{text}");
+        assert!(
+            text.contains(&format!("message_translate_to = \"{language}\"")),
+            "{text}"
+        );
+        let (read, problems) = parse(&text).expect("TOML");
+        assert_eq!(read, settings);
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+    let (read, problems) = parse("message_translate_to = \"german\"").expect("TOML");
+    assert_eq!(
+        read.message_translate_to, "German",
+        "a listed language is kept by its own name"
+    );
+    assert!(problems.is_empty(), "{problems:?}");
+    for bad in [
+        "message_translate_to = 3",
+        "message_translate_to = \"<x0/>\"",
+        "message_translator = 3",
+    ] {
+        let (read, problems) = parse(bad).expect("TOML");
+        assert_eq!(read.message_translate_to, "English", "{bad}");
+        assert_eq!(read.message_translator, AiChoice::default(), "{bad}");
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.to_string().contains("message_translat")),
+            "{bad}: {problems:?}"
+        );
+    }
+}
+
+#[gpui::test]
+fn a_drafts_translation_language_set_is_there_after_a_restart(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (file, _) = file_in(&dir);
+    let model = cx.update(|cx| cx.new(|_| SettingsModel::load(file)));
+    cx.update(|cx| {
+        model.update(cx, |model, cx| {
+            model.change(|settings| settings.message_translate_to = "Klingon".to_owned(), cx);
+        });
+    });
+    let (file, _) = file_in(&dir);
+    let restarted = SettingsModel::load(file);
+    assert_eq!(restarted.settings().message_translate_to, "Klingon");
 }
 
 #[test]

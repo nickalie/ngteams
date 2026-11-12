@@ -202,7 +202,7 @@ impl Compose {
 
     /// Whether the box holds what a correction can start from.
     fn can_correct(&self, cx: &App) -> bool {
-        !self.editor.read(cx).is_blank() && !self.translating() && self.starting.is_none()
+        !self.editor.read(cx).is_blank() && !self.translating() && !self.translating_draft() && self.starting.is_none()
     }
 
     fn start_correction(&mut self, window: &mut Window, cx: &mut Context<Self>) {

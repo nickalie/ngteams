@@ -101,6 +101,7 @@ pub mod code;
 pub mod compose;
 pub mod create_team_more;
 pub mod desktop;
+pub mod draft_translate;
 pub mod editor;
 pub mod effects;
 pub mod event_form;
