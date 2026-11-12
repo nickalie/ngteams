@@ -1491,7 +1491,7 @@ async fn whether_the_whole_history_is_stored_tells_a_chat_never_synced_from_its_
 }
 
 #[tokio::test]
-async fn the_store_is_read_while_a_catch_up_waits_on_the_service_and_other_requests_wait_for_it() {
+async fn store_queries_and_history_requests_are_served_while_catch_up_waits() {
     let lab = Lab::start().await;
     let b = native(&lab, LAB_B, QUIET);
     b.handle.sync().await.unwrap();
@@ -1533,15 +1533,15 @@ async fn the_store_is_read_while_a_catch_up_waits_on_the_service_and_other_reque
         matches!(unknown, Err(EngineError::UnknownMessage { .. })),
         "{unknown:?}"
     );
-    // a request that isn't a query waits for the catch-up, and goes after it in the order it was made
-    let older = tokio::spawn(older);
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(!older.is_finished(), "older history was read while the catch-up waited");
+    let older = tokio::time::timeout(Duration::from_secs(5), older)
+        .await
+        .expect("older history waited for catch-up")
+        .unwrap();
+    assert!(older.is_none(), "the initial sync already stored the whole history");
 
     b.reads_held.send_replace(false);
     let report = sync.await.unwrap();
     assert!(report.failed.is_empty(), "{report:?}");
-    older.await.unwrap().unwrap();
     b.shutdown();
 }
 

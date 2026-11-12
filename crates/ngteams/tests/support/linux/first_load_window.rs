@@ -72,6 +72,8 @@ const EARLY: usize = 2;
 const SYNCED: usize = 5;
 /// The chat whose messages read is held.
 const HELD: usize = 10;
+/// A chat still queued after the held background read.
+const PRIORITY: usize = 20;
 /// A first-page chat whose message is edited on the service after its list page came, before its sync.
 const EDITED: usize = 7;
 /// What [`EDITED`]'s message says after the edit.
@@ -704,6 +706,20 @@ fn the_synced_chats_show_while_a_later_one_waits(
     Ok(())
 }
 
+fn the_opened_chat_passes_the_held_background_read(sandbox: &Sandbox, run: &mut AppRun) -> SandboxResult {
+    let priority = synthetic_chat(PRIORITY);
+    if !run.messages(&priority)?.is_empty() {
+        return Err("the priority chat synced before it was opened".into());
+    }
+    run.open(&priority)?;
+    let shown = run.trace.chat_view_within(SOON, &priority, 1)?;
+    once_each("the priority chat's view", &shown)?;
+    holds_its_message(run, PRIORITY)?;
+    step("a chat queued after the held read shows its message on open");
+    AppRun::shot(sandbox, "first-load-priority-chat-while-syncing.png")?;
+    Ok(())
+}
+
 fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxResult {
     let dir = tempfile::tempdir()?;
     let later_pages = service.hold_later_pages();
@@ -726,11 +742,10 @@ fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxR
     }
     let early = synthetic_chat(EARLY);
     run.open(&early)?;
-    let shown = run.trace.wait_chat_view(&early, 0)?;
-    if !shown.is_empty() {
-        return Err(format!("{early} shows messages before its sync: {shown:?}").into());
-    }
-    AppRun::shot(sandbox, "first-load-chat-not-synced.png")?;
+    let shown = run.trace.chat_view_within(SOON, &early, 1)?;
+    once_each("the early priority chat's view", &shown)?;
+    holds_its_message(&run, EARLY)?;
+    AppRun::shot(sandbox, "first-load-chat-during-list-read.png")?;
 
     let held = service.hold_messages(HELD);
     if !later_pages.release() {
@@ -741,6 +756,7 @@ fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxR
     }
     step("the held chat's messages read waits");
     the_synced_chats_show_while_a_later_one_waits(sandbox, &mut run, service, &early)?;
+    the_opened_chat_passes_the_held_background_read(sandbox, &mut run)?;
     let held_chat = synthetic_chat(HELD);
     run.open(&held_chat)?;
     run.trace.wait_chat_view(&held_chat, 0)?;
@@ -764,7 +780,7 @@ fn the_list_fills_page_by_page(sandbox: &Sandbox, service: &Service) -> SandboxR
         .wait_list("the whole list after the catch-up", &service.whole)?;
     the_list_never_jumped(&mut run.trace, &service.whole)?;
     ctl_lists(&run, &service.whole)?;
-    rows_are_right(&run, |n| text_of(n, true), &[EARLY, EDITED, SYNCED, HELD])?;
+    rows_are_right(&run, |n| text_of(n, true), &[EARLY, EDITED, SYNCED, HELD, PRIORITY])?;
     for n in [0, EARLY, SYNCED, HELD, PAGE - 1, PAGE, CHATS - 1] {
         holds_its_message(&run, n)?;
     }

@@ -25,6 +25,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use teams_proto::{ChannelType, Client, Credentials, CsaAnswerError, CsaTeams, HttpError, HttpTransport};
@@ -213,10 +214,15 @@ impl<C: Credentials + 'static> Teams<C> {
         !self.running.is_empty()
     }
 
-    /// The read's result once it is over; never while none runs ([`Self::busy`]).
-    pub(crate) async fn next(&mut self) -> Option<Result<TeamsRead, TeamsReadError>> {
-        let joined = self.running.join_next().await?;
-        Some(joined.unwrap_or(Err(TeamsReadError::Lost)))
+    #[cfg(test)]
+    async fn next(&mut self) -> Option<Result<TeamsRead, TeamsReadError>> {
+        std::future::poll_fn(|cx| self.poll_next(cx)).await
+    }
+
+    pub(crate) fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<TeamsRead, TeamsReadError>>> {
+        self.running
+            .poll_join_next(cx)
+            .map(|joined| joined.map(|read| read.unwrap_or(Err(TeamsReadError::Lost))))
     }
 
     /// Stores a read's teams and favourite chats and channels (these only when it could read them); whether either

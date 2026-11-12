@@ -40,12 +40,12 @@
 //!   an outbox row, a conversation's rows that aren't sent and the rows earlier runs left, all read from the store on
 //!   the engine's thread, which owns it; older history from the service ([`EngineRequests::load_older`]). A row of an earlier run (or a failed or
 //!   denied one) goes out again only by the explicit [`EngineRequests::resend`]. The requests are taken in the order
-//!   they were made, but a query (and a person, the teams and the chat listing, from the store alone, their own
-//!   background read started afterwards) is answered also while a read of the catch-up waits on the service, from the
-//!   store as it stands (`inbox`): a catch-up that runs for minutes (hundreds of conversations, a page of 200 channel
-//!   posts taking seconds) doesn't hold up a view's reads. Read receipts queue and advance the local horizon during
-//!   those waits too; local queries and receipts also proceed while an outbox attempt awaits transport. Other requests
-//!   wait their turn. The timestamp-ordered service horizon reconciles the local read without reviving stale badges.
+//!   they were made, except queries and cached person/list reads also answer while catch-up waits (`inbox`). Opened
+//!   chats and channels, older history and the teams list get one foreground read lane beside the pending background
+//!   read; store changes remain serial and reads of the same conversation share or wait for its current sync. A
+//!   catch-up that runs for minutes doesn't hold up those reads. Read receipts queue and advance the local horizon
+//!   during those waits too; local queries and receipts also proceed while an outbox attempt awaits transport. Other
+//!   requests wait their turn. The timestamp-ordered service horizon reconciles the local read without reviving stale badges.
 //! - **People** ([`EngineRequests::person`]): someone's name and picture as the views show them, from the store, and
 //!   read in the background when the store's are missing or old ([`crate::profiles`]: Graph, else the middle tier's
 //!   profile lookup, a read sent as a `POST`); each change stored is told as [`Event::Profile`].
@@ -1980,11 +1980,10 @@ where
 struct Core<C, T> {
     store: Store,
     /// The requests, which the catch-up's reads answer the queries of while they wait ([`Inbox`]).
-    inbox: Arc<Inbox>,
+    inbox: Arc<Inbox<C>>,
     outbox: Arc<Outbox<T>>,
     catch_up: CatchUp<C, T>,
     profiles: Profiles<C>,
-    teams: Teams<C>,
     presences: Presences<C>,
     animations: Animations<C>,
     pictures: Pictures<C>,
@@ -2066,6 +2065,7 @@ where
             requests,
             events.clone(),
             outbox.is_read_only(),
+            teams,
         ));
         let catch_up = CatchUp::new(parts.client, Arc::clone(&outbox), me).with_meanwhile(inbox.clone());
         Self {
@@ -2074,7 +2074,6 @@ where
             outbox,
             catch_up,
             profiles,
-            teams,
             presences,
             animations,
             pictures,
@@ -2123,13 +2122,13 @@ where
                 _ = tick.tick() => self.on_tick().await,
                 done = background(
                     &mut self.profiles,
-                    &mut self.teams,
+                    &self.inbox,
                     &mut self.presences,
                     &mut self.channels,
                     &mut self.calendar,
                 ),
                     if self.profiles.busy()
-                        || self.teams.busy()
+                        || self.inbox.teams().busy()
                         || self.presences.busy()
                         || self.channels.busy()
                         || self.calendar.busy() => {
@@ -2222,7 +2221,7 @@ where
     fn note_noticed(&mut self) {
         let noticed = self.inbox.take_noticed();
         for conversation in noticed {
-            if let Err(error) = self.teams.note_conversation(&self.store, &conversation) {
+            if let Err(error) = self.inbox.teams().note_conversation(&self.store, &conversation) {
                 self.failed("reading the stored teams", error);
             }
         }
@@ -2426,11 +2425,11 @@ where
             Request::FileSize(share_url, reply) => self.files.size(&share_url, reply),
             Request::Presence(mri, reply) => self.presence_asked(&mri, reply),
             Request::Teams(reply) => {
-                let teams = self.teams.teams(&self.store);
+                let teams = self.inbox.teams().teams(&self.store);
                 let _ = reply.send(teams.map_err(EngineError::from));
             }
             Request::ChatListing(reply) => {
-                let listing = self.teams.chat_listing(&self.store);
+                let listing = self.inbox.teams().chat_listing(&self.store);
                 let _ = reply.send(listing.map_err(EngineError::from));
             }
             // the engine's own: `on_request` takes them
@@ -2508,14 +2507,18 @@ where
             return;
         };
         if reread {
-            match self.teams.note_change(&mut self.store, team.map(|change| *change)) {
+            match self
+                .inbox
+                .teams()
+                .note_change(&mut self.store, team.map(|change| *change))
+            {
                 Ok(true) => self.emit(Event::Teams),
                 Ok(false) => {}
                 Err(error) => self.failed("storing the teams", error),
             }
         }
         if let Some(created) = created {
-            match self.teams.note_created(&mut self.store, created) {
+            match self.inbox.teams().note_created(&mut self.store, created) {
                 Ok(true) => self.emit(Event::Teams),
                 Ok(false) => {}
                 Err(error) => self.failed("storing the teams", error),
@@ -2537,7 +2540,7 @@ where
     /// docs).
     fn on_teams(&mut self, read: Option<Result<TeamsRead, TeamsReadError>>) {
         let Some(read) = read else { return };
-        match self.teams.store(&mut self.store, read) {
+        match self.inbox.teams().store(&mut self.store, read) {
             Ok(Ok(true)) => {
                 self.emit(Event::Teams);
                 self.notes_due = true;
@@ -2551,6 +2554,10 @@ where
     /// Syncs the account's own notes ([`NOTES`]) when the stored favourites name them and the store has none yet
     /// (the catch-up's own pass over them, [`CatchUp::catch_up`], ran before it knew they were a favourite).
     async fn sync_favourite_notes(&mut self) {
+        self.notes_due |= self
+            .inbox
+            .teams_changed
+            .swap(false, std::sync::atomic::Ordering::Relaxed);
         if !std::mem::take(&mut self.notes_due) {
             return;
         }
@@ -3171,7 +3178,7 @@ where
         // a team's own activity (people added or gone, a channel made, renamed or deleted) changes what its list shows
         if teams_proto::is_team_thread_id(&conversation) && message.message_type.as_str().starts_with("ThreadActivity/")
         {
-            self.teams.note_activity();
+            self.inbox.teams().note_activity();
         }
         let added = match self.add_if_unknown(&conversation).await {
             Ok(added) => added,
@@ -3421,14 +3428,14 @@ enum Background {
 /// never while none runs.
 async fn background<C: Credentials + 'static, T: Transport<Error = HttpError> + Send + 'static>(
     profiles: &mut Profiles<C>,
-    teams: &mut Teams<C>,
+    inbox: &Inbox<C>,
     presences: &mut Presences<C>,
     channels: &mut Channels<C, T>,
     calendar: &mut Calendar<C, T>,
 ) -> Background {
     tokio::select! {
         looked = profiles.next(), if profiles.busy() => Background::Looked(looked),
-        read = teams.next(), if teams.busy() => Background::Teams(read),
+        read = inbox.next_teams(), if inbox.teams().busy() => Background::Teams(read),
         polled = presences.next(), if presences.busy() => Background::Presence(polled),
         finished = channels.next(), if channels.busy() => Background::Channel(finished),
         done = calendar.next(), if calendar.busy() => Background::Calendar(done),

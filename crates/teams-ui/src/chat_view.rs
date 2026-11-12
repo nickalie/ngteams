@@ -5,6 +5,8 @@
 //!   delivery, a catch-up, an outbox row). A message's reactions come from the store too, read again only for a new
 //!   version of it. Store refreshes run while an older service read waits; that read's superseded snapshot is ignored
 //!   so it cannot duplicate rows or restore stale history state.
+//! - **On open**, asks the engine to sync the chat's newest messages with priority over background catch-up. Its
+//!   changes refresh the stored window through the models; dropping the view cancels a queued sync.
 //! - **Older pages** load when fewer than a page of rows ([`PAGE`]) is above the view: the store's next page, and once
 //!   the store has none, the service's next older page ([`Core::load_older`]) read into the store first. The view
 //!   never holds more than the pages it was scrolled through. Nothing older from the service is the chat's beginning
@@ -961,6 +963,7 @@ enum Load {
 
 #[derive(Default)]
 struct Loading {
+    syncing: Option<Task<()>>,
     window: Option<Task<()>>,
     older: Option<Task<()>>,
     generation: u64,
@@ -1272,7 +1275,7 @@ impl ChatView {
     fn start(mut self, cx: &mut Context<Self>) -> Self {
         self.kick(cx);
         self.typing_changed(cx);
-        self.sync_notes(cx);
+        self.sync_on_open(cx);
         self.read_saved(cx);
         self
     }
@@ -1345,17 +1348,14 @@ impl ChatView {
         cx.new(|cx| Compose::new(compose_parts, conversation, window, cx))
     }
 
-    /// The account's own notes ([`NOTES`]), which no conversation list brings, synced from the service as the view
-    /// opens: what it stores comes as the models' change, and a failed sync leaves what the store holds shown.
-    fn sync_notes(&self, cx: &mut Context<Self>) {
-        if self.conversation != NOTES {
+    fn sync_on_open(&mut self, cx: &mut Context<Self>) {
+        if self.place != Place::Chat || self.loading.syncing.is_some() {
             return;
         }
-        let core = Arc::clone(&self.core);
-        cx.spawn(async move |_: WeakEntity<Self>, _: &mut AsyncApp| {
-            let _ = core.sync_conversation(NOTES.to_owned()).await;
-        })
-        .detach();
+        let (core, conversation) = (Arc::clone(&self.core), self.conversation.clone());
+        self.loading.syncing = Some(cx.spawn(async move |_: WeakEntity<Self>, _: &mut AsyncApp| {
+            let _ = core.sync_conversation(conversation).await;
+        }));
     }
 
     /// The message list: bottom-aligned, following the newest; its scroll moves the pill, and back at the newest a

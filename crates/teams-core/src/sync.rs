@@ -81,17 +81,21 @@
 //!   ([`Meanwhile::progress`]), otherwise after the read. A message the store had as new or newer is not kept, so a
 //!   delivery the catch-up meets again changes nothing and is told once.
 //! - **Meanwhile** ([`Meanwhile`]): while a read waits on the service, the store is handed to its owner's
-//!   [`Meanwhile::serve`] (the engine answers its queries from it), and taken back the moment the read is over. A
-//!   catch-up of an account with hundreds of conversations and busy channels (a page of 200 channel posts takes
-//!   seconds) runs for a while, and a view's read of the store mustn't wait for it. The store is handed over only
-//!   between the catch-up's own uses of it, never while it is half way through storing a page.
+//!   [`Meanwhile::priority`]. One foreground operation may run beside the pending background read, with store
+//!   queries still answered through [`Meanwhile::serve`]. A conversation's sync or history operation excludes other
+//!   reads of that conversation until its cursor is stored. Successful message syncs are shared within one catch-up,
+//!   so opening a queued conversation doesn't make the background fetch it again. At each background read, one
+//!   queued foreground operation gets first turn; after that a ready background answer wins. Continuous user
+//!   requests cannot starve catch-up. The store has one owner throughout: the pending network
+//!   answer is held until the foreground operation has applied its changes.
 //!
 //! Every read is a `GET` through the native transport (`teams_proto::chat::ChatReads`), and every link is the
 //! service's own, followed only on the same chat base. Nothing here writes to the service.
 //!
 //! M1 Task 17 (`docs/plans/20261020-native-teams-m1-headless-chat-core.md`).
 
-use std::future::Future;
+use std::collections::HashMap;
+use std::future::{Future, pending};
 use std::pin::{Pin, pin};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -390,15 +394,77 @@ impl Gaps {
     }
 }
 
+/// A user read selected while a background service read waits.
+pub struct PriorityRead {
+    /// The conversation to read.
+    pub conversation: String,
+    /// Whether to read its next history page instead of syncing its newest messages.
+    pub older: bool,
+    /// Receives the result after all store changes are applied.
+    pub complete: Box<dyn FnOnce(Result<Option<Synced>, CatchUpError>) + Send>,
+}
+
+#[derive(Default)]
+struct Scheduling {
+    active: Vec<String>,
+    completed: Option<HashMap<String, Synced>>,
+    foreground: bool,
+}
+
+struct ActiveRead<'a>(&'a Mutex<Scheduling>);
+
+impl Drop for ActiveRead<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).active.pop();
+    }
+}
+
+struct ForegroundRead<'a>(&'a Mutex<Scheduling>);
+
+impl Drop for ForegroundRead<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).foreground = false;
+    }
+}
+
+struct CatchUpRun<'a>(&'a Mutex<Scheduling>);
+
+impl Drop for CatchUpRun<'_> {
+    fn drop(&mut self) {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).completed = None;
+    }
+}
+
 /// What the owner of a catch-up does with its store while a read waits on the service (see the module docs).
 pub trait Meanwhile: Send + Sync {
     /// Uses `store` until the read is over, when the future is dropped wherever it waits: only at an `.await` that
     /// loses nothing when dropped there. A future that ends gives the store back early; the read is waited for then.
     fn serve<'a>(&'a self, store: &'a mut Store) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
+    /// Selects one foreground read, serving store queries while waiting. The selected operation runs to completion
+    /// before the background answer can be applied; blocked conversations remain queued.
+    fn priority<'a>(
+        &'a self,
+        store: &'a mut Store,
+        _blocked: &'a [String],
+    ) -> Pin<Box<dyn Future<Output = PriorityRead> + Send + 'a>> {
+        Box::pin(async move {
+            self.serve(store).await;
+            pending().await
+        })
+    }
+
     /// Publishes a completed part of a catch-up before the rest is read. An owner that takes the changes removes
     /// them from `changes`, so the final publication does not tell them twice. The default keeps them for the owner.
     fn progress(&self, _store: &Store, _changes: &mut Changes) {}
+
+    /// Completes queued requests for the same conversation without repeating its successful read.
+    fn synced(&self, _store: &mut Store, _conversation: &str, _synced: Synced) {}
+
+    /// Publishes changes from a user-requested history page.
+    fn history_progress(&self, store: &Store, changes: &mut Changes) {
+        self.progress(store, changes);
+    }
 }
 
 /// The catch-up sync of one account (see the module docs): reads through `client`, stores what comes in through
@@ -414,6 +480,7 @@ pub struct CatchUp<C, T> {
     changes: Mutex<Changes>,
     /// What the store is used for while a read waits ([`CatchUp::with_meanwhile`]).
     meanwhile: Option<Arc<dyn Meanwhile>>,
+    scheduling: Mutex<Scheduling>,
 }
 
 impl<C, T> std::fmt::Debug for CatchUp<C, T> {
@@ -437,6 +504,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             clock: Arc::new(now_ms),
             changes: Mutex::new(Changes::default()),
             meanwhile: None,
+            scheduling: Mutex::default(),
         }
     }
 
@@ -451,6 +519,18 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
     async fn waiting<F: Future>(&self, store: &mut Store, read: F) -> F::Output {
         let mut read = pin!(read);
         if let Some(meanwhile) = &self.meanwhile {
+            let (priority, blocked) = {
+                let scheduling = self.scheduling.lock().unwrap_or_else(PoisonError::into_inner);
+                (
+                    scheduling.completed.is_some() && !scheduling.foreground,
+                    scheduling.active.clone(),
+                )
+            };
+            if priority {
+                return self
+                    .waiting_priority(store, read.as_mut(), meanwhile.as_ref(), &blocked)
+                    .await;
+            }
             tokio::select! {
                 biased;
                 output = &mut read => return output,
@@ -458,6 +538,70 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             }
         }
         read.await
+    }
+
+    async fn waiting_priority<F: Future>(
+        &self,
+        store: &mut Store,
+        mut read: Pin<&mut F>,
+        meanwhile: &dyn Meanwhile,
+        blocked: &[String],
+    ) -> F::Output {
+        let first = tokio::select! {
+            biased;
+            priority = meanwhile.priority(store, blocked) => priority,
+            output = &mut read => return output,
+        };
+        Box::pin(self.priority_read(store, first)).await;
+        loop {
+            let priority = tokio::select! {
+                biased;
+                output = &mut read => return output,
+                priority = meanwhile.priority(store, blocked) => priority,
+            };
+            Box::pin(self.priority_read(store, priority)).await;
+        }
+    }
+
+    fn active(&self, conversation: &str) -> ActiveRead<'_> {
+        self.scheduling
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .active
+            .push(conversation.to_owned());
+        ActiveRead(&self.scheduling)
+    }
+
+    fn completed(&self, conversation: &str) -> Option<Synced> {
+        self.scheduling
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .completed
+            .as_ref()
+            .and_then(|completed| completed.get(conversation).copied())
+    }
+
+    async fn priority_read(&self, store: &mut Store, read: PriorityRead) {
+        self.publish_progress(store);
+        self.scheduling
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .foreground = true;
+        let foreground = ForegroundRead(&self.scheduling);
+        let result = if read.older {
+            self.load_older(store, &read.conversation).await
+        } else {
+            self.sync_messages(store, &read.conversation).await.map(Some)
+        };
+        drop(foreground);
+        if read.older {
+            if let Some(meanwhile) = &self.meanwhile {
+                meanwhile.history_progress(store, &mut self.changes.lock().unwrap_or_else(PoisonError::into_inner));
+            }
+        } else {
+            self.publish_progress(store);
+        }
+        (read.complete)(result);
     }
 
     fn publish_progress(&self, store: &Store) {
@@ -528,6 +672,8 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
     /// [`CatchUpError::Store`] when the store fails to keep its sync link. A conversation that can't be synced is in
     /// [`CatchUpReport::failed`] instead.
     pub async fn catch_up(&self, store: &mut Store) -> Result<CatchUpReport, CatchUpError> {
+        self.scheduling.lock().unwrap_or_else(PoisonError::into_inner).completed = Some(HashMap::new());
+        let _run = CatchUpRun(&self.scheduling);
         self.read_app_horizon(store).await?;
         let kept = store.conversation_list_sync_link()?;
         let first = kept.is_none();
@@ -658,7 +804,10 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
     /// A conversation kept to be synced again that the list didn't bring: its messages, and a chat's members read
     /// again as a thread. What the list said of it was stored when it brought it ([`CatchUp::catch_up_conversation`]).
     async fn resync(&self, store: &mut Store, id: &str) -> Result<Synced, CatchUpError> {
-        let synced = self.sync_messages(store, id).await?;
+        let synced = match self.completed(id) {
+            Some(synced) => synced,
+            None => self.sync_messages(store, id).await?,
+        };
         let chat = store
             .conversation(id)?
             .is_some_and(|stored| matches!(stored.kind, ConversationKind::OneToOne | ConversationKind::Group));
@@ -684,13 +833,26 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         if conversation == DRAFTS {
             return Ok(Synced::default());
         }
-        match self.sync_stored(store, conversation).await {
+        let _active = self.active(conversation);
+        let result = match self.sync_stored(store, conversation).await {
             Err(error) if conversation == NOTES && not_found(&error) => {
                 log::debug!("sync: the account's notes aren't there yet (404)");
                 Ok(Synced::default())
             }
             synced => synced,
+        };
+        if let Ok(synced) = &result
+            && let Some(completed) = &mut self.scheduling.lock().unwrap_or_else(PoisonError::into_inner).completed
+        {
+            completed.entry(conversation.to_owned()).or_default().add(*synced);
         }
+        if let Ok(synced) = &result
+            && self.completed(conversation).is_some()
+            && let Some(meanwhile) = &self.meanwhile
+        {
+            meanwhile.synced(store, conversation, *synced);
+        }
+        result
     }
 
     /// [`CatchUp::sync_messages`], whatever the service answers.
@@ -772,6 +934,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
     ///
     /// As [`CatchUp::sync_messages`].
     pub async fn load_older(&self, store: &mut Store, conversation: &str) -> Result<Option<Synced>, CatchUpError> {
+        let _active = self.active(conversation);
         let Some(kept) = store.sync_state(conversation)? else {
             return Ok(None);
         };
@@ -1032,7 +1195,9 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         let state = store.sync_state(&listed.id)?;
         let changed = listing_changed(listed, stored.as_ref(), version, state.as_ref());
         let left = !changed && state.as_ref().is_some_and(marked_unreadable);
-        let messages = if changed || state.is_none() {
+        let messages = if let Some(synced) = self.completed(&listed.id) {
+            Ok(synced)
+        } else if changed || state.is_none() {
             self.sync_messages(store, &listed.id).await
         } else {
             Ok(Synced::default())
@@ -1096,6 +1261,10 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             .favorites()?
             .is_some_and(|favorites| favorites.iter().any(|id| id == NOTES));
         if !favourite && store.conversation(NOTES)?.is_none() {
+            return Ok(());
+        }
+        if let Some(synced) = self.completed(NOTES) {
+            report.messages.add(synced);
             return Ok(());
         }
         match self.sync_messages(store, NOTES).await {

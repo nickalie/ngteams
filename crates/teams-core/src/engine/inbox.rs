@@ -4,12 +4,12 @@
 //! stands, and keeps every other request, in order, for the loop to take once the read is over ([`Meanwhile`]): an
 //! account whose catch-up runs for minutes still opens its chats, channels and lists at once.
 //!
-//! - **Answered meanwhile**: every query, and the three store reads that also start a read of their own in the
-//!   background: a person ([`EngineRequests::person`](super::EngineRequests::person)), the teams and the chat
-//!   listing. Those are answered from the store alone ([`profiles::stored_person`], [`teams::stored_teams`],
-//!   [`teams::stored_listing`]), a person `looking` when their stored profile is due a lookup; the request is then
-//!   kept with its answer already given, so the loop starts that lookup or read once the catch-up's read is over, as
-//!   if it had been asked then.
+//! - **Answered meanwhile**: every store query and cached person, team and chat listing. Person lookups wait for
+//!   the main loop. The teams scheduler lives here so its one read can start, settle and publish during catch-up.
+//! - **Priority reads**: opened conversations and older history use one foreground lane beside the pending
+//!   background read. Requests remain FIFO within that lane, except one for a conversation being read waits until
+//!   its cursor is stored. Duplicate message syncs share the successful result; canceled queued reads are skipped.
+//!   Teams reads use the same lane, so requesting many chats and lists cannot create a burst of parallel reads.
 //! - **Read receipts**: queued locally at once, advancing the shared read horizon for the messages seen; the
 //!   transport waits its turn with the other writes. Queries and read receipts also run while an outbox attempt waits.
 //! - **Call actions**: handed to the calling at once ([`Inbox::hand_calls_to`]), as the loop hands them: the calling
@@ -17,7 +17,7 @@
 //!   header's Call went, and nothing happened until then). A group chat's call reads whom it calls from the store.
 //!   Once a shutdown is kept, none goes any more: each is answered [`EngineError::Stopped`]. A call's health (no
 //!   action: it reads the call's media) goes to the calling at once the same way.
-//! - **Kept**: everything else (another write, older history, a sync, presence, the shutdown).
+//! - **Kept**: everything else (another write, account sync, presence, the shutdown).
 //! - **Catch-up publication**: stored changes are published as each list page and conversation finishes
 //!   ([`Meanwhile::progress`]), and any remainder at the end ([`Inbox::brought`]), so views can query what is ready
 //!   while the rest loads. Noticed team threads are kept for the loop's next tick.
@@ -25,33 +25,37 @@
 //!   changes is told by its events, as always.
 
 use std::collections::{HashMap, VecDeque};
-use std::future::Future;
+use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{OnceLock, PoisonError};
+use std::sync::{MutexGuard, OnceLock, PoisonError};
 
+use teams_proto::Credentials;
 use teams_store::{Applied, OutboxEntry, ReadHorizon, Store, StoreError};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use super::{Action, EngineError, Event, MessageChange, Query, Request, Responder, Source};
 use crate::calling::CallActions;
 use crate::outbox::{Command, enqueue};
-use crate::sync::{Changes, Meanwhile};
+use crate::sync::{Changes, Meanwhile, PriorityRead};
+use crate::teams::{Teams, TeamsRead, TeamsReadError};
 use crate::{profiles, teams};
 
 /// See the module docs.
-pub(super) struct Inbox {
+pub(super) struct Inbox<C> {
     /// The account's MRI, whose read horizon and unread counts the queries answer with.
     me: String,
     /// The names the binary knows ([`Parts::known_names`](super::Parts::known_names)), for a person answered meanwhile.
     known: HashMap<String, String>,
     requests: Mutex<Requests>,
+    teams: std::sync::Mutex<Teams<C>>,
     events: mpsc::UnboundedSender<Event>,
     read_only: bool,
     /// The calling a call action goes to meanwhile, once it runs.
     calls: OnceLock<CallActions>,
     /// A shutdown was kept: the engine stops once the read is over, and starts no call meanwhile.
     stopping: AtomicBool,
+    pub(super) teams_changed: AtomicBool,
     /// Team threads the reads and deliveries brought since the last tick.
     noticed: std::sync::Mutex<Vec<String>>,
 }
@@ -62,26 +66,127 @@ struct Requests {
     kept: VecDeque<Request>,
 }
 
-impl Inbox {
+impl<C: Credentials + 'static> Inbox<C> {
     pub(super) fn new(
         me: String,
         known: HashMap<String, String>,
         received: mpsc::UnboundedReceiver<Request>,
         events: mpsc::UnboundedSender<Event>,
         read_only: bool,
+        teams: Teams<C>,
     ) -> Self {
         Self {
             me,
             known,
             events,
             read_only,
+            teams: std::sync::Mutex::new(teams),
             calls: OnceLock::new(),
             stopping: AtomicBool::new(false),
+            teams_changed: AtomicBool::new(false),
             noticed: std::sync::Mutex::default(),
             requests: Mutex::new(Requests {
                 received,
                 kept: VecDeque::new(),
             }),
+        }
+    }
+
+    async fn next_priority(&self, store: &mut Store, blocked: &[String]) -> PriorityRead {
+        let mut requests = self.requests.lock().await;
+        loop {
+            let teams_busy = self.teams().busy();
+            if let Some(at) = requests.kept.iter().position(|request| {
+                !self.stopping.load(Ordering::Relaxed) && priority_allowed(request, blocked, teams_busy)
+            }) {
+                let request = requests.kept.remove(at);
+                if let Some(request) = request
+                    && let Some(read) = self.priority_request(store, request)
+                {
+                    return read;
+                }
+                continue;
+            }
+            tokio::select! {
+                read = self.next_teams(), if teams_busy => self.store_teams(store, read),
+                request = requests.received.recv() => {
+                    let Some(request) = request else { return std::future::pending().await };
+                    if !self.stopping.load(Ordering::Relaxed) && priority_allowed(&request, blocked, teams_busy) {
+                        if let Some(read) = self.priority_request(store, request) {
+                            return read;
+                        }
+                    } else if let Some(kept) = self.meanwhile(store, request) {
+                        requests.kept.push_back(kept);
+                    }
+                }
+            }
+        }
+    }
+
+    pub(super) fn teams(&self) -> MutexGuard<'_, Teams<C>> {
+        self.teams.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(super) async fn next_teams(&self) -> Option<Result<TeamsRead, TeamsReadError>> {
+        poll_fn(|cx| self.teams().poll_next(cx)).await
+    }
+
+    fn store_teams(&self, store: &mut Store, read: Option<Result<TeamsRead, TeamsReadError>>) {
+        let Some(read) = read else { return };
+        let result = self.teams().store(store, read);
+        let event = match result {
+            Ok(Ok(true)) => {
+                self.teams_changed.store(true, Ordering::Relaxed);
+                Event::Teams
+            }
+            Ok(Ok(false)) => return,
+            Ok(Err(error)) => Event::Failed {
+                during: teams::READING_TEAMS,
+                error: error.into(),
+            },
+            Err(error) => Event::Failed {
+                during: "storing the teams",
+                error: error.into(),
+            },
+        };
+        super::emit_to(&self.events, event);
+    }
+
+    fn priority_request(&self, store: &mut Store, request: Request) -> Option<PriorityRead> {
+        match request {
+            Request::SyncConversation(_, reply) if reply.is_closed() => None,
+            Request::LoadOlder(_, reply) if reply.is_closed() => None,
+            Request::SyncConversation(conversation, reply) => {
+                log::info!("action: a sync of {conversation}");
+                Some(PriorityRead {
+                    conversation,
+                    older: false,
+                    complete: Box::new(move |result| {
+                        let _ = reply.send(result.map(Option::unwrap_or_default).map_err(EngineError::from));
+                    }),
+                })
+            }
+            Request::LoadOlder(conversation, reply) => {
+                log::info!("action: older history of {conversation}");
+                Some(PriorityRead {
+                    conversation,
+                    older: true,
+                    complete: Box::new(move |result| {
+                        let _ = reply.send(result.map_err(EngineError::from));
+                    }),
+                })
+            }
+            Request::Teams(reply) => {
+                let teams = self.teams().teams(store);
+                let _ = reply.send(teams.map_err(EngineError::from));
+                None
+            }
+            Request::ChatListing(reply) => {
+                let listing = self.teams().chat_listing(store);
+                let _ = reply.send(listing.map_err(EngineError::from));
+                None
+            }
+            _ => None,
         }
     }
 
@@ -346,7 +451,43 @@ impl Inbox {
     }
 }
 
-impl Meanwhile for Inbox {
+impl<C: Credentials + 'static> Meanwhile for Inbox<C> {
+    fn priority<'a>(
+        &'a self,
+        store: &'a mut Store,
+        blocked: &'a [String],
+    ) -> Pin<Box<dyn Future<Output = PriorityRead> + Send + 'a>> {
+        Box::pin(self.next_priority(store, blocked))
+    }
+
+    fn synced(&self, store: &mut Store, conversation: &str, synced: crate::sync::Synced) {
+        let Ok(mut requests) = self.requests.try_lock() else {
+            return;
+        };
+        while let Ok(request) = requests.received.try_recv() {
+            if let Some(kept) = self.meanwhile(store, request) {
+                requests.kept.push_back(kept);
+            }
+        }
+        let mut at = 0;
+        while at < requests.kept.len() {
+            if matches!(requests.kept[at], Request::Shutdown) {
+                break;
+            }
+            if matches!(&requests.kept[at], Request::SyncConversation(chat, _) if chat == conversation) {
+                if let Some(Request::SyncConversation(_, reply)) = requests.kept.remove(at) {
+                    let _ = reply.send(Ok(synced));
+                }
+            } else {
+                at += 1;
+            }
+        }
+    }
+
+    fn history_progress(&self, store: &Store, changes: &mut Changes) {
+        self.brought(store, std::mem::take(changes), Source::History);
+    }
+
     fn progress(&self, store: &Store, changes: &mut Changes) {
         self.brought(store, std::mem::take(changes), Source::CatchUp);
     }
@@ -365,6 +506,16 @@ impl Meanwhile for Inbox {
                 }
             }
         })
+    }
+}
+
+fn priority_allowed(request: &Request, blocked: &[String], teams_busy: bool) -> bool {
+    match request {
+        Request::SyncConversation(conversation, _) | Request::LoadOlder(conversation, _) => {
+            !teams_busy && !blocked.contains(conversation)
+        }
+        Request::Teams(_) | Request::ChatListing(_) => true,
+        _ => false,
     }
 }
 
