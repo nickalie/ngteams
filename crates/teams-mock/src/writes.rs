@@ -9,7 +9,7 @@ use crate::chatsvc::{Call, json, status};
 use crate::fixtures::object;
 use crate::reads::{member_of, thread_body};
 use crate::world::{self, Kind, State, iso_time};
-use crate::{CHAT_BASE, EventKind, REGIONAL_HOST};
+use crate::{CHAT_BASE, EventKind, NOTIFICATIONS, REGIONAL_HOST};
 
 /// The string-valued message properties a post or an edit carries through as sent (JSON strings of lists).
 const LISTED_PROPERTIES: [&str; 4] = ["mentions", "cards", "links", "files"];
@@ -160,7 +160,13 @@ pub(crate) fn edit(state: &mut State, call: &Call<'_>, chat: &str, id: &str) -> 
 /// `DELETE …/messages/<id>?behavior=softDelete` (`delete.json`): the sender's own message keeps its id and
 /// `clientmessageid`, loses its content and every property but `deletetime`, and gains `skypeeditedid`.
 pub(crate) fn delete(state: &mut State, call: &Call<'_>, chat: &str, id: &str) -> ResponseTemplate {
-    if let Err(code) = writable(state, chat, &call.caller) {
+    // the activity feed takes no posts, but its owner removes its items (`docs/protocol/chat.md`)
+    let allowed = if chat == NOTIFICATIONS {
+        member_of(state, chat, &call.caller).map(|_| ())
+    } else {
+        writable(state, chat, &call.caller)
+    };
+    if let Err(code) = allowed {
         return status(code);
     }
     if call.query("behavior") != Some("softDelete") {
@@ -228,7 +234,11 @@ pub(crate) fn reaction(state: &mut State, call: &Call<'_>, chat: &str, id: &str,
 /// `isread` becomes the boolean and its `version` the service's time, answered 200 with an empty body; the change is
 /// told to the caller as the item's edit.
 pub(crate) fn activity_read(state: &mut State, call: &Call<'_>, chat: &str, id: &str) -> ResponseTemplate {
-    if let Err(code) = writable(state, chat, &call.caller) {
+    // only the feed's items have a read mark; the feed takes no posts, but its owner marks its items
+    if chat != NOTIFICATIONS {
+        return status(404);
+    }
+    if let Err(code) = member_of(state, chat, &call.caller) {
         return status(code);
     }
     let read = match call
@@ -255,7 +265,8 @@ pub(crate) fn activity_read(state: &mut State, call: &Call<'_>, chat: &str, id: 
 /// `PUT …/conversations/<chat>/properties?name=consumptionhorizon`: the caller's own read horizon, answered 200 with
 /// an empty body (`docs/protocol/chat.md`).
 pub(crate) fn read_horizon(state: &mut State, call: &Call<'_>, chat: &str) -> ResponseTemplate {
-    if let Err(code) = writable(state, chat, &call.caller) {
+    // a horizon is the reader's own: a stream that takes no posts (the activity feed) takes its member's
+    if let Err(code) = member_of(state, chat, &call.caller) {
         return status(code);
     }
     if call.query("name") != Some("consumptionhorizon") {

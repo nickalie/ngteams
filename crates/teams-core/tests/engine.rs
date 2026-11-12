@@ -3064,3 +3064,132 @@ async fn a_read_horizon_of_a_conversation_the_store_doesn_t_know_comes_with_its_
     assert!(b.handle.read_horizon(unknown).await.unwrap().is_none());
     b.shutdown();
 }
+
+/// The body of the last `PUT` to the feed whose query holds `query`.
+async fn put_body(lab: &Lab, query: &str) -> Value {
+    let feed = format!("/conversations/{}/", teams_mock::NOTIFICATIONS);
+    let request = lab
+        .mock
+        .received_requests()
+        .await
+        .into_iter()
+        .rev()
+        .find(|request| {
+            request.method.as_str() == "PUT"
+                && decoded(request.url.path()).contains(&feed)
+                && request.url.query().is_some_and(|got| got.contains(query))
+        })
+        .unwrap_or_else(|| panic!("no PUT {query}"));
+    serde_json::from_slice(&request.body).unwrap()
+}
+
+/// One made-up feed item: a mention of a by b in the a–b chat, about message `message`.
+fn mention_of_a(message: u64) -> Value {
+    json!({
+        "activityType": "mentionInChat", "activitySubtype": "person", "activityId": 500 + message,
+        "sourceThreadId": AB_CHAT, "sourceMessageId": message, "sourceUserId": LAB_B,
+        "sourceUserImDisplayName": "Lab B", "messagePreview": "made up",
+    })
+}
+
+/// a's native client after its catch-up stored two made-up feed items: (older, newer).
+async fn feed_of_a(lab: &Lab) -> (Native, String, String) {
+    let older = lab.mock.add_activity(LAB_A, &mention_of_a(11), false).unwrap();
+    let newer = lab.mock.add_activity(LAB_A, &mention_of_a(12), false).unwrap();
+    let mut a = native(lab, LAB_A, How::default());
+    a.ready().await;
+    (a, older, newer)
+}
+
+/// Seen (`docs/protocol/chat.md`, "The activity feed"): the feed's horizon put at its newest item, the store's horizon
+/// there at once, the rail's count gone; seen again with nothing newer is refused. All read: the bookmark put, every
+/// item read at once.
+#[tokio::test]
+async fn the_feed_seen_and_all_read_put_its_horizon_and_its_bookmark() {
+    let lab = Lab::start().await;
+    let (a, older, newer) = feed_of_a(&lab).await;
+    let feed = a.handle.activity().await.unwrap();
+    let newest = feed.items.first().unwrap().clone();
+    assert_eq!(newest.id, newer);
+    assert!(feed.item(&older).is_some(), "{feed:?}");
+    assert!(feed.unseen() >= 2, "{feed:?}");
+
+    let seen = a.write(Action::ActivitySeen).await;
+    assert_eq!(
+        (seen.kind, seen.state),
+        (OutboxKind::ReadReceipt, OutboxState::Sent),
+        "{seen:?}"
+    );
+    let feed = a.handle.activity().await.unwrap();
+    assert_eq!((feed.seen_ms, feed.unseen()), (Some(newest.at_ms), 0), "{feed:?}");
+    let put = put_body(&lab, "name=consumptionhorizon").await;
+    let horizon = put["consumptionhorizon"].as_str().unwrap();
+    assert!(horizon.starts_with(&format!("{};", newest.at_ms)), "{horizon}");
+    assert!(
+        horizon.ends_with(&format!(";{}", newest.activity_id.clone().unwrap())),
+        "{horizon}"
+    );
+    assert!(matches!(
+        a.handle.write(Action::ActivitySeen).await,
+        Err(EngineError::NothingNewInActivity)
+    ));
+
+    let all = a.write(Action::ActivityAllRead).await;
+    assert_eq!(
+        (all.kind, all.state),
+        (OutboxKind::FeedRead, OutboxState::Sent),
+        "{all:?}"
+    );
+    let feed = a.handle.activity().await.unwrap();
+    assert_eq!(feed.bookmark_ms, Some(all.created_at), "{feed:?}");
+    assert!(feed.items.iter().all(|item| feed.is_read(item)), "{feed:?}");
+    let body = put_body(&lab, "name=consumptionHorizonBookmark").await;
+    assert_eq!(
+        body["consumptionHorizonBookmark"].as_str(),
+        Some(format!("0;{};0", all.created_at).as_str())
+    );
+    a.shutdown();
+}
+
+/// An item marked read, then unread: its `isread` put each time and its changed version synced back; an item the
+/// feed doesn't hold is refused. Removed: soft-deleted, it leaves the feed once its delete comes back.
+#[tokio::test]
+async fn a_feed_item_marked_read_unread_or_removed_syncs_back_from_the_service() {
+    let lab = Lab::start().await;
+    let (mut a, older, newer) = feed_of_a(&lab).await;
+    for read in [true, false] {
+        let row = a
+            .write(Action::ActivityRead {
+                item: older.clone(),
+                read,
+            })
+            .await;
+        assert_eq!(
+            (row.kind, row.state),
+            (OutboxKind::ActivityRead, OutboxState::Sent),
+            "{row:?}"
+        );
+        assert_eq!(put_body(&lab, "name=isread").await, json!({"isread": read.to_string()}));
+        a.message_event(teams_mock::NOTIFICATIONS, &older).await;
+        let feed = a.handle.activity().await.unwrap();
+        let item = feed.item(&older).unwrap();
+        assert_eq!((item.read_flag, feed.is_read(item)), (read, read), "{item:?}");
+    }
+    let unknown = Action::ActivityRead {
+        item: "1".to_owned(),
+        read: true,
+    };
+    assert!(a.handle.write(unknown).await.is_err());
+
+    let removed = a
+        .write(Action::Delete {
+            conversation: teams_mock::NOTIFICATIONS.to_owned(),
+            message_id: newer.clone(),
+        })
+        .await;
+    assert_eq!(removed.state, OutboxState::Sent, "{removed:?}");
+    a.message_event(teams_mock::NOTIFICATIONS, &newer).await;
+    let feed = a.handle.activity().await.unwrap();
+    assert!(feed.item(&newer).is_none() && feed.item(&older).is_some(), "{feed:?}");
+    a.shutdown();
+}

@@ -234,7 +234,7 @@ const STEPS: [Step; 5 + 284] = [
     }),
     // in Teams Dark, a mention opened: its chat at the message on the right, the item read and selected
     ("activity-dark-opened", |shell, window, cx| {
-        theme(shell, teams_ui::theme::DARK_KEY, cx);
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
         with_activity(shell, cx, |view, cx| {
             view.search_for("", window, cx);
             let mention = view
@@ -248,9 +248,9 @@ const STEPS: [Step; 5 + 284] = [
             }
         });
     }),
-    // back to the chats, in Teams Light, for the steps after
+    // back to the chats, the theme following the system again as before, for the steps after
     ("activity-left", |shell, window, cx| {
-        theme(shell, teams_ui::theme::LIGHT_KEY, cx);
+        fixed_theme(shell, None, cx);
         shell.update(cx, |shell, cx| {
             shell.show_chats(window, cx);
             shell.open_chat(AB_CHAT.to_owned(), window, cx);
