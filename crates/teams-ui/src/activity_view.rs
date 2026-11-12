@@ -16,6 +16,9 @@
 //!   at its message ([`ActivityViewEvent::Open`]).
 //! - **Seen**: while the pane is shown, the feed's horizon follows its newest item ([`Action::ActivitySeen`]), which
 //!   clears the rail's count ([`ActivityView::unseen`]).
+//! - **A chat on screen**: the conversation the main view shows ([`ActivityView::set_on_screen`]) has its unread items
+//!   marked read, at once and as new ones come while it stays there, as Teams marks a feed item read once its chat is
+//!   open (a reaction that came while the chat was open was marked read at once, `docs/protocol/chat.md`).
 //! - **Live**: the pane reads the feed again whenever the engine tells a change to it (a new item, a read state that
 //!   synced, the horizon), shown or not, so the rail's count stays current.
 //! - **Read-only** ([`Core::read_only`]): nothing is marked, removed or seen; items still open.
@@ -134,6 +137,8 @@ pub struct ActivityView {
     /// The header's "More options" menu, while open.
     header_menu: bool,
     shown: bool,
+    /// The conversation the main view shows.
+    on_screen: Option<String>,
     focus: FocusHandle,
     scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
@@ -195,6 +200,7 @@ impl ActivityView {
             item_menu: None,
             header_menu: false,
             shown: false,
+            on_screen: None,
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             _subscriptions: vec![searched, changed, named, teamed],
@@ -287,6 +293,7 @@ impl ActivityView {
             if self.shown {
                 self.mark_seen(cx);
             }
+            self.read_on_screen(cx);
         }
         cx.notify();
         if self.dirty {
@@ -307,6 +314,38 @@ impl ActivityView {
             self.focus.focus(window, cx);
         }
         cx.notify();
+    }
+
+    /// The conversation the main view shows now (none: something else); its unread items are marked read.
+    pub fn set_on_screen(&mut self, conversation: Option<&str>, cx: &mut Context<Self>) {
+        if self.on_screen.as_deref() == conversation {
+            return;
+        }
+        self.on_screen = conversation.map(str::to_owned);
+        self.read_on_screen(cx);
+    }
+
+    /// The conversation the main view shows, as last told.
+    #[must_use]
+    pub fn on_screen(&self) -> Option<&str> {
+        self.on_screen.as_deref()
+    }
+
+    /// Marks read every unread item of the conversation on screen.
+    fn read_on_screen(&mut self, cx: &mut Context<Self>) {
+        let Some(conversation) = self.on_screen.as_deref() else {
+            return;
+        };
+        let unread: Vec<String> = self
+            .feed
+            .items
+            .iter()
+            .filter(|item| item.thread.as_deref() == Some(conversation) && !self.is_read(item))
+            .map(|item| item.id.clone())
+            .collect();
+        for id in unread {
+            self.mark_item(&id, true, cx);
+        }
     }
 
     /// Whether the pane is shown.
@@ -393,6 +432,10 @@ impl ActivityView {
     /// Marks an item read or unread (every feed message a folded item stands for).
     pub fn mark(&mut self, id: &str, read: bool, cx: &mut Context<Self>) {
         self.item_menu = None;
+        self.mark_item(id, read, cx);
+    }
+
+    fn mark_item(&mut self, id: &str, read: bool, cx: &mut Context<Self>) {
         let Some(item) = self.feed.item(id).cloned() else {
             return;
         };

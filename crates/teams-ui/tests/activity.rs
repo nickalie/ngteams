@@ -148,6 +148,48 @@ fn opening_an_item_marks_it_read_and_opens_its_chat_at_its_message() {
 }
 
 #[test]
+fn a_chat_opened_directly_has_its_unread_items_marked_read() {
+    let rig = rig();
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_chat(GROUP.to_owned(), window, cx)));
+    assert!(drawn(cx, "rail-activity"));
+    assert_eq!(
+        cx.update(|_, cx| pane.read(cx).on_screen().map(str::to_owned)),
+        Some(GROUP.to_owned())
+    );
+    // the unread items of that chat, each once; the read mention needs nothing
+    let marked: Vec<Action> = writes(&rig)
+        .into_iter()
+        .filter(|action| matches!(action, Action::ActivityRead { .. }))
+        .collect();
+    assert_eq!(
+        marked,
+        [
+            Action::ActivityRead {
+                item: "3000".to_owned(),
+                read: true
+            },
+            Action::ActivityRead {
+                item: "2000".to_owned(),
+                read: true
+            },
+        ]
+    );
+    let items = cx.update(|_, cx| pane.read(cx).feed().items.clone());
+    assert!(items.iter().all(|item| cx.update(|_, cx| pane.read(cx).is_read(item))));
+    // drawn again, nothing more is asked
+    assert!(drawn(cx, "rail-activity"));
+    assert_eq!(
+        writes(&rig)
+            .iter()
+            .filter(|action| matches!(action, Action::ActivityRead { .. }))
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn the_item_menu_marks_unread_and_removes() {
     let rig = rig();
     let (shell, cx) = shell_window(&rig);

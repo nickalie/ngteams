@@ -566,6 +566,19 @@ impl Shell {
         }
     }
 
+    /// Tells the Activity pane the conversation the main view shows: its feed items read as Teams reads them.
+    fn sync_activity_on_screen(&mut self, cx: &mut Context<Self>) {
+        let on_screen = match &self.main {
+            Main::Chat(id) | Main::Channel(id) => Some(id.clone()),
+            _ => None,
+        };
+        if self.activity.0.read(cx).on_screen() != on_screen.as_deref() {
+            self.activity
+                .0
+                .update(cx, |view, cx| view.set_on_screen(on_screen.as_deref(), cx));
+        }
+    }
+
     /// A chat the chat list opens shows in the conversation pane.
     fn opened(list: &Entity<ChatList>, window: &mut Window, cx: &mut Context<Self>) -> Subscription {
         cx.subscribe_in(list, window, |this: &mut Self, _, event, window, cx| match event {
@@ -3129,6 +3142,7 @@ impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = theme::current(cx);
         self.sync_activity_shown(window, cx);
+        self.sync_activity_on_screen(cx);
         self.sync_new_message_row(cx);
         self.history.note(&self.main);
         let suggestions = self.search_suggestions(palette, window, cx);

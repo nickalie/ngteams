@@ -83,7 +83,9 @@ impl ActivityView {
             .as_ref()
             .and_then(|actor| self.pictures.get(actor))
             .and_then(Option::as_ref);
-        let avatar = people::avatar(name.as_ref(), picture, Size::Medium);
+        // the kit's small avatar drawn at the row's size: two initials, as Teams shows them (a size of its own would
+        // make the initials' box half the avatar, room for one)
+        let avatar = people::avatar(name.as_ref(), picture, Size::Small).size(px(AVATAR));
         let badge = div()
             .debug_selector({
                 let id = item.id.clone();
