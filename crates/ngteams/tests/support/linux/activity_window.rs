@@ -236,7 +236,7 @@ struct Qa<'a> {
 type Check = (&'static str, fn(&mut Qa<'_>) -> SandboxResult);
 
 /// The flows, in the order a user meets them (each leaves the window as the next expects it).
-const CHECKS: [Check; 21] = [
+const CHECKS: [Check; 26] = [
     ("rail_counts_new_activity", rail_counts_new_activity),
     ("ctl_lists_the_feed_as_the_pane_does", ctl_lists_the_feed),
     ("ctl_filters_search_and_limit", ctl_filters_search_and_limit),
@@ -257,10 +257,21 @@ const CHECKS: [Check; 21] = [
     ("item_menu_remove_hides_it_with_a_toast", item_menu_remove),
     ("click_opens_the_chat_at_the_message", click_opens_the_item),
     ("keyboard_walks_and_opens", keyboard_walks_and_opens),
+    (
+        "reopened_pane_opens_its_newest_again_chip_cleared_keys_on_the_pane",
+        newest_opens_each_time,
+    ),
     ("missed_call_chat_and_call", missed_call_buttons),
     ("meeting_item_time_line", meeting_item),
     ("chat_on_screen_reads_its_items_and_new_ones", chat_on_screen),
     ("live_activity_counts_on_the_rail", live_activity_counts),
+    ("newest_missed_call_opens_the_chat_with_the_caller", newest_missed_call),
+    ("newest_whose_chat_is_gone_opens_nothing_quietly", newest_gone_chat),
+    (
+        "newest_meeting_only_selected_enter_and_click_open_its_card",
+        newest_meeting,
+    ),
+    ("meeting_the_calendar_doesnt_know_shows_its_day", unknown_meeting),
     ("many_items_scroll_to_the_oldest", many_items_scroll),
     ("item_whose_chat_is_gone", gone_chat_item),
     ("mark_all_read_by_shift_esc_and_menu", mark_all_read),
@@ -939,6 +950,64 @@ fn keyboard_walks_and_opens(qa: &mut Qa<'_>) -> SandboxResult {
     Ok(())
 }
 
+/// Teams doesn't keep the last pick: after another item was opened and a chip chosen, leaving the pane and coming
+/// back (Ctrl+1, then the rail with @Mentions chosen) opens the newest item again beside the pane, the chip let go;
+/// the keyboard stays on the pane (Down, Enter opens the second item).
+fn newest_opens_each_time(qa: &mut Qa<'_>) -> SandboxResult {
+    let state = qa.plain_pane()?;
+    let listed = items(&state);
+    let (newest, second) = (
+        listed.first().cloned().ok_or("no items")?,
+        listed.get(1).cloned().ok_or("one item")?,
+    );
+    ensure(newest["thread"] != second["thread"], || {
+        format!("the two newest in one chat: {newest} {second}")
+    })?;
+    let opened_at = |item: &Value| {
+        let item = item.clone();
+        move |state: &Value| state["chat"] == item["thread"] && state["revealed"] == item["message"]
+    };
+    // another item picked, the search closed again, a chip chosen
+    let other = item_with(&qa.search("check the made-up numbers")?, "check the made-up numbers")?;
+    qa.click_listed(ROW)?;
+    qa.state_until("the other item opened", opened_at(&other))?;
+    qa.click(HEADER_FILTER)?;
+    qa.box_open = false;
+    qa.click_chip("unread")?;
+    qa.state_until("the Unread chip chosen", |state| state["filter"] == "unread")?;
+    qa.chord(&[Modifier::Ctrl], '2')?;
+    let away = qa.state_until("Ctrl+2: the chats", |state| state["list"] == "Chats")?;
+    ensure(away["chat"] == other["thread"], || {
+        format!("the picked chat kept while the chats show: {away}")
+    })?;
+    qa.trace.drain();
+    qa.chord(&[Modifier::Ctrl], '1')?;
+    let state = qa.state_until("Ctrl+1: the newest opened again, the chip let go", |state| {
+        state["list"] == "Activity" && state["filter"] == "all" && opened_at(&newest)(state)
+    })?;
+    ensure(state["toast"].is_null(), || format!("a toast: {}", state["toast"]))?;
+    let traced = qa.trace.next_where("activity newest", |line| {
+        line["view"] == "activity" && line["change"] == "newest"
+    })?;
+    say(&format!("newest on Ctrl+1: {traced}"));
+    qa.hover(AWAY)?;
+    qa.shot("newest-again-light")?;
+    qa.chord(&[Modifier::Ctrl, Modifier::Alt], 'm')?;
+    qa.state_until("Ctrl+Alt+M: @Mentions", |state| state["filter"] == "mentions")?;
+    qa.ctl_json(&["open", "chat", ABC_CHAT])?;
+    qa.chord(&[Modifier::Ctrl], '2')?;
+    qa.state_until("Ctrl+2: the chats", |state| state["list"] == "Chats")?;
+    qa.click(RAIL_ACTIVITY)?;
+    qa.state_until("the rail: the newest opened again, @Mentions let go", |state| {
+        state["list"] == "Activity" && state["filter"] == "all" && opened_at(&newest)(state)
+    })?;
+    // the keyboard is still on the pane, on the newest item
+    qa.key(keys::DOWN)?;
+    qa.key(keys::ENTER)?;
+    qa.state_until("Down, Enter: the second item opened", opened_at(&second))?;
+    Ok(())
+}
+
 /// A missed call: Chat opens the 1:1 chat with the caller; Call calls back through it.
 fn missed_call_buttons(qa: &mut Qa<'_>) -> SandboxResult {
     qa.plain_pane()?;
@@ -1118,6 +1187,158 @@ fn live_activity_counts(qa: &mut Qa<'_>) -> SandboxResult {
     qa.state_until("the count cleared", |state| {
         state["list"] == "Activity" && state["unseen"] == 0
     })?;
+    Ok(())
+}
+
+/// The pane put aside (the chats shown, the group chat open), `what` pushed on the mock as the service tells a, and
+/// seen arriving unread; its id.
+fn push_while_away(qa: &mut Qa<'_>, what: &str) -> SandboxResult<String> {
+    qa.chord(&[Modifier::Ctrl], '2')?;
+    qa.state_until("Ctrl+2: the chats", |state| state["list"] == "Chats")?;
+    qa.ctl_json(&["open", "chat", ABC_CHAT])?;
+    qa.state_until("the group chat open", |state| state["chat"] == ABC_CHAT)?;
+    let pushed = qa.ask(what)?;
+    let id = text(&pushed, "id");
+    ensure(!id.is_empty(), || format!("{what}: {pushed}"))?;
+    qa.state_until(&format!("{what} arrived unread, the newest"), |state| {
+        items(state)
+            .first()
+            .is_some_and(|item| text(item, "id") == id && item["read"] == false)
+    })?;
+    Ok(id)
+}
+
+/// The newest item a missed call from b: Ctrl+1 opens the 1:1 chat with b (Teams opens its Calls page, which the app
+/// doesn't have), the call read here and on the service, nothing said.
+fn newest_missed_call(qa: &mut Qa<'_>) -> SandboxResult {
+    let id = push_while_away(qa, "push-missed-call")?;
+    qa.chord(&[Modifier::Ctrl], '1')?;
+    let state = qa.state_until("the chat with the caller opened, the call read", |state| {
+        state["list"] == "Activity"
+            && state["chat"] == AB_CHAT
+            && items(state)
+                .first()
+                .is_some_and(|item| text(item, "id") == id && item["read"] == true)
+    })?;
+    ensure(state["toast"].is_null(), || format!("a toast: {}", state["toast"]))?;
+    qa.server_until(&id, "the missed call's isread true on the service", |held| {
+        held["isread"] == true
+    })?;
+    qa.hover(AWAY)?;
+    qa.shot("newest-missed-call-light")?;
+    Ok(())
+}
+
+/// The newest item from a chat that is gone: opening the pane opens nothing and says nothing (the chat on screen
+/// stays), the item is read, and the keyboard stays on the pane (Down, Enter opens the missed call's chat).
+fn newest_gone_chat(qa: &mut Qa<'_>) -> SandboxResult {
+    let id = push_while_away(qa, "push-gone-mention")?;
+    let before = qa.state()?;
+    qa.chord(&[Modifier::Ctrl], '1')?;
+    qa.state_until("the gone chat's newest read", |state| {
+        state["list"] == "Activity"
+            && items(state)
+                .first()
+                .is_some_and(|item| text(item, "id") == id && item["read"] == true)
+    })?;
+    // a toast would have come with the read; watch a while for one
+    for _ in 0..5 {
+        let state = qa.state()?;
+        ensure(
+            state["toast"].is_null() && state["chat"] == ABC_CHAT && state["main"] == before["main"],
+            || {
+                format!(
+                    "gone chat as newest: main {} chat {} toast {}",
+                    state["main"], state["chat"], state["toast"]
+                )
+            },
+        )?;
+        thread::sleep(Duration::from_millis(300));
+    }
+    qa.hover(AWAY)?;
+    qa.shot("newest-gone-chat-light")?;
+    qa.key(keys::DOWN)?;
+    qa.key(keys::ENTER)?;
+    qa.state_until("Down, Enter: the missed call's chat with b", |state| {
+        state["chat"] == AB_CHAT
+    })?;
+    Ok(())
+}
+
+/// The newest item a meeting (its details link names the mock's Friday 17 Oct "Weekly roundup", 21:00 here): opening
+/// the pane only selects it (the chat on screen stays, the item unread, no calendar); Enter on it, then a click on it,
+/// open the calendar at its day, scrolled to its evening start, with its card.
+fn newest_meeting(qa: &mut Qa<'_>) -> SandboxResult {
+    let id = push_while_away(qa, "push-meeting-known")?;
+    qa.trace.drain();
+    qa.chord(&[Modifier::Ctrl], '1')?;
+    qa.trace.next_where("activity newest: a meeting", |line| {
+        line["view"] == "activity" && line["change"] == "newest" && line.to_string().contains("meeting")
+    })?;
+    thread::sleep(SETTLE);
+    let state = qa.state()?;
+    let newest = first(&state)?;
+    ensure(
+        state["list"] == "Activity"
+            && state["pane_shown"] == true
+            && state["main"] == "Chat"
+            && state["chat"] == ABC_CHAT
+            && text(&newest, "id") == id
+            && newest["read"] == false,
+        || format!("the newest meeting only selected: {state}"),
+    )?;
+    qa.hover(AWAY)?;
+    qa.shot("newest-meeting-light")?;
+    // Enter opens what the keyboard is on: the meeting
+    qa.key(keys::ENTER)?;
+    let roundup = |state: &Value| {
+        state["main"] == "Calendar"
+            && state["calendar_day"] == "2025-10-17"
+            && state["calendar_card"] == "Weekly roundup"
+    };
+    let state = qa.state_until("Enter: the calendar at the roundup's day with its card", roundup)?;
+    ensure(
+        items(&state)
+            .iter()
+            .all(|item| text(item, "id") != id || item["read"] == true),
+        || format!("the meeting read: {state}"),
+    )?;
+    thread::sleep(SETTLE);
+    qa.shot("meeting-by-id-light")?;
+    qa.key(keys::ESC)?;
+    qa.state_until("the card closed", |state| state["calendar_card"].is_null())?;
+    qa.shot("meeting-by-id-card-closed-light")?;
+    qa.chord(&[Modifier::Ctrl], '1')?;
+    qa.state_until("the pane again", |state| {
+        state["pane_shown"] == true && state["main"] != "Calendar"
+    })?;
+    qa.click_listed(ROW)?;
+    qa.state_until("a click: the calendar at the roundup's day with its card", roundup)?;
+    qa.key(keys::ESC)?;
+    qa.chord(&[Modifier::Ctrl], '1')?;
+    qa.state_until("the pane again", |state| state["pane_shown"] == true)?;
+    Ok(())
+}
+
+/// A meeting the calendar has no event for (its id unknown, nothing at its time on Wednesday 22 Oct): a click shows
+/// that day, and once the day's events are read no card opens.
+fn unknown_meeting(qa: &mut Qa<'_>) -> SandboxResult {
+    push_while_away(qa, "push-meeting-unknown")?;
+    qa.chord(&[Modifier::Ctrl], '1')?;
+    qa.state_until("the pane", |state| state["pane_shown"] == true)?;
+    qa.click_listed(ROW)?;
+    qa.state_until("the calendar at the meeting's day, done looking", |state| {
+        state["main"] == "Calendar" && state["calendar_day"] == "2025-10-22" && state["calendar_revealing"] == false
+    })?;
+    thread::sleep(Duration::from_secs(2));
+    let state = qa.state()?;
+    ensure(
+        state["calendar_card"].is_null() && state["calendar_day"] == "2025-10-22" && state["toast"].is_null(),
+        || format!("no card, the day kept: {state}"),
+    )?;
+    qa.shot("meeting-unknown-light")?;
+    qa.chord(&[Modifier::Ctrl], '1')?;
+    qa.state_until("the pane again", |state| state["pane_shown"] == true)?;
     Ok(())
 }
 
@@ -1665,6 +1886,19 @@ fn reply_to(question: &str, shell: &Entity<Shell>, mock: &ChatServiceMock, cx: &
         "server" => server_copy(mock, rest),
         "push-reaction" => push_reaction(mock),
         "push-mention" => push_mention(mock),
+        "push-missed-call" => push(mock, &activity("call", "missedCall", (LAB_B, "Lab B"), ("", 2), "")),
+        "push-gone-mention" => push(
+            mock,
+            &activity(
+                "mentionInChat",
+                "person",
+                (LAB_B, "Lab B"),
+                (GONE_CHAT, 6),
+                "Made-up newest words where the chat went",
+            ),
+        ),
+        "push-meeting-known" => push(mock, &roundup_update()),
+        "push-meeting-unknown" => push(mock, &unknown_meeting_update()),
         "theme" => {
             let key = if rest == "dark" {
                 teams_ui::theme::DARK_KEY
@@ -1726,6 +1960,7 @@ fn state_of(shell: &Entity<Shell>, cx: &App) -> Value {
         "toast": shell.toast().map(ToString::to_string),
         "calendar_day": calendar.anchor().to_string(),
         "calendar_card": calendar.card().map(|shown| shown.event.subject.clone()),
+        "calendar_revealing": calendar.revealing().is_some(),
     })
 }
 
@@ -1770,6 +2005,51 @@ fn push_reaction(mock: &ChatServiceMock) -> Value {
     );
     mock.add_activity(LAB_A, &item, false)
         .map_or_else(|| json!({"error": "no feed"}), |id| json!({"id": id}))
+}
+
+/// `item` added to a's feed, unread, as the service tells a.
+fn push(mock: &ChatServiceMock, item: &Value) -> Value {
+    mock.add_activity(LAB_A, item, false)
+        .map_or_else(|| json!({"error": "no feed"}), |id| json!({"id": id}))
+}
+
+/// A meeting c updated whose details link names the mock calendar's Friday 17 Oct 2025 "Weekly roundup" (18:00–19:00
+/// UTC) by its event id.
+fn roundup_update() -> Value {
+    meeting_activity(
+        9,
+        "Made-up weekly roundup",
+        "AAMkMadeUpEvent037813",
+        ("2025-10-17T18:00:00Z", "2025-10-17T19:00:00Z"),
+    )
+}
+
+/// A meeting c updated that the mock calendar has no event for: an unknown id, nothing at its time (Wednesday 22 Oct
+/// 2025 05:00–05:30 UTC).
+fn unknown_meeting_update() -> Value {
+    meeting_activity(
+        10,
+        "Made-up early check-in",
+        "AAMkMadeUpNoSuchEvent%3D",
+        ("2025-10-22T05:00:00Z", "2025-10-22T05:30:00Z"),
+    )
+}
+
+/// The Calendar app's item for a meeting c updated: `event` its details link's id, `(start, end)` its time.
+fn meeting_activity(number: u64, preview: &str, event: &str, (start, end): (&str, &str)) -> Value {
+    let range = format!(
+        "<DateTimeRange><StartDateTime>{start}</StartDateTime><EndDateTime>{end}</EndDateTime></DateTimeRange>"
+    );
+    json!({
+        "activityType": "msGraph", "activitySubtype": "privateMeetingUpdated", "activityId": number,
+        "sourceThreadId": "", "sourceMessageId": 1, "sourceUserId": "28:app:made-up-calendar",
+        "sourceUserImDisplayName": "Lab C", "messagePreview": preview,
+        "customTapAction": format!("https://teams.microsoft.com/l/meeting/details/?eventId={event}"),
+        "activityContext": {
+            "attributedToActorId": LAB_C,
+            "location": json!({"Custom": range}).to_string(),
+        },
+    })
 }
 
 /// c posts in the group chat mentioning a, as the feed then tells a.
