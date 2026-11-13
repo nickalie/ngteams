@@ -70,3 +70,67 @@ fn a_menu_inside_the_shares_vertical_span_is_still_counted() {
         }
     }
 }
+
+#[test]
+fn a_shared_screens_tall_white_bar_is_not_the_accounts_own_tile() {
+    let window = Rect {
+        x: 0,
+        y: 0,
+        w: 1280,
+        h: 800,
+    };
+    let mut image = RgbImage::from_pixel(1280, 800, Rgb([40; 3]));
+    let mut fill = |area: Rect, colour: [u8; 3]| {
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                image.put_pixel(x.cast_unsigned(), y.cast_unsigned(), Rgb(colour));
+            }
+        }
+    };
+    fill(
+        Rect {
+            x: 10,
+            y: 58,
+            w: 1260,
+            h: 732,
+        },
+        [235, 235, 240],
+    );
+    // the share, its bar wider in pixels than the strip's own tile, as at 1280x800 and larger
+    fill(
+        Rect {
+            x: 18,
+            y: 143,
+            w: 1000,
+            h: 562,
+        },
+        [64; 3],
+    );
+    fill(
+        Rect {
+            x: 25,
+            y: 143,
+            w: 92,
+            h: 562,
+        },
+        [255; 3],
+    );
+    fill(
+        Rect {
+            x: 1026,
+            y: 406,
+            w: 236,
+            h: 132,
+        },
+        [120; 3],
+    );
+    let own = Rect {
+        x: 1026,
+        y: 545,
+        w: 236,
+        h: 132,
+    };
+    fill(own, [255; 3]);
+    let stage = pixels::stage(&image, window).unwrap();
+    assert_eq!(stage.own, Some(own));
+}

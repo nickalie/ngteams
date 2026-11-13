@@ -476,7 +476,9 @@ fn share_strip(rig: &mut Rig<'_>) -> SandboxResult {
         }
         let before = rig.shot()?;
         rig.click(pager.next)?;
-        if pixels::changed_pixels(&before, &rig.shot()?, column) < 40 || turned > 30 {
+        // the next page, once the strip redraws (a busy app may take a while); the last stays as it was
+        let after = rig.shot_until(|after| pixels::changed_pixels(&before, after, column) >= 40)?;
+        if pixels::changed_pixels(&before, &after, column) < 40 || turned > 30 {
             break;
         }
     }

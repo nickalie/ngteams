@@ -290,7 +290,8 @@ pub fn stage(image: &RgbImage, window: Rect) -> Option<Stage> {
         pixel(image, x, y).is_some_and(|colour| colour.0.iter().all(|channel| *channel >= 250))
     })
     .into_iter()
-    .filter(|blob| blob.bounds.w >= 60 && blob.bounds.h >= 34)
+    // landscape, as every own tile is: a shared screen's white bar runs its picture's full height
+    .filter(|blob| blob.bounds.w >= 60 && blob.bounds.h >= 34 && blob.bounds.w > blob.bounds.h)
     .max_by_key(|blob| blob.pixels)
     .map(|blob| blob.bounds);
     // marks on the panel itself, not in a tile: the panel's colour round them
