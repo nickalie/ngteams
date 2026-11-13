@@ -1956,3 +1956,24 @@ async fn activity_settings_are_json_text_owned_by_the_caller() -> TestResult {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn the_made_up_app_s_tile_is_served_on_the_cdn_s_path_as_a_picture() -> TestResult {
+    let lab = Lab::start().await?;
+    let token = Arc::new(MockToken(lab.mock.token(LAB_A).ok_or("no a")?));
+    let client = Client::new(HttpTransport::with_mock_origin(token, CHAT_BASE, &lab.mock.origin())?);
+    let tile = teams_proto::AppPicture::of(
+        "https://res.cdn.office.net/teamsappdata/evergreen-assets/apps/made-up-updates_largeImage.png?v=1",
+    )
+    .ok_or("an app tile's URL")?;
+    let answer = client.read(&tile).await?;
+    let picture = tile.read_answer(&answer).ok_or("a picture")?;
+    assert_eq!(picture.format, teams_proto::PastedFormat::Png);
+    let decoded = image::load_from_memory(&picture.bytes)?;
+    assert_eq!((decoded.width(), decoded.height()), (192, 192));
+    // another app's tile isn't there
+    let other = teams_proto::AppPicture::of("https://res.cdn.office.net/teamsappdata/evergreen-assets/apps/other.png")
+        .ok_or("an app tile's URL")?;
+    assert!(client.read(&other).await.is_err());
+    Ok(())
+}

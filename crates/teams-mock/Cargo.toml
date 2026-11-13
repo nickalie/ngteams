@@ -19,6 +19,8 @@ base64.workspace = true
 flate2.workspace = true
 # the Trouter mock's socket halves
 futures-util.workspace = true
+# the made-up app tile it serves on the CDN's path (`team_apps.rs`), drawn when asked
+image = { workspace = true, features = ["png"] }
 # decodes the conversation and message ids the clients percent-encode as one path segment
 percent-encoding.workspace = true
 serde_json.workspace = true

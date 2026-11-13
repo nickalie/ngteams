@@ -2,7 +2,9 @@
 //! ([`teams_proto::MessagePicture`]: a `GET` of the picture's view from the account's AMS base, the way the web client
 //! reads it), a GIF picked from Teams' GIF picker ([`teams_proto::GiphyPicture`]: a `GET` of the GIF from Giphy's
 //! media host, no token), or a link preview's picture ([`teams_proto::LinkPreviewPicture`]: a `GET` of the async
-//! gateway's thumbnail of it), as [`crate::emoticons`] reads reactions' animations.
+//! gateway's thumbnail of it), as [`crate::emoticons`] reads reactions' animations; and an app's tile, the picture its
+//! definition's `largeImageUrl` names ([`teams_proto::AppPicture`]: a `GET` from Microsoft's CDN, no token), which
+//! Activity draws for the app's items. Each kind is kept apart, by its own key.
 //!
 //! - **Kept for the run**, in memory, up to [`KEPT_BYTES`] of them (the oldest read let go first: a view keeps what it
 //!   decoded, so a picture let go is read again only when a view asks for it anew); a view the service has none of (an
@@ -11,12 +13,14 @@
 //! - **Cached across runs** on disk ([`Disk`]: the account's [`PictureCache`] beside its store, up to
 //!   [`PICTURE_CACHE_BYTES`], the least recently used let go first): a picture the run doesn't know yet is looked for
 //!   there before it is read, and one read is kept there, so a later run shows it without reading it again. An AMS
-//!   object's view and a GIF never change, so they are kept for as long as there is room; a missing one isn't kept.
+//!   object's view, a GIF and an app's tile at its version never change, so they are kept for as long as there is
+//!   room; a missing one isn't kept.
 //!   The cache is opened (when first used), read and written on tokio's blocking pool, never on the engine's
 //!   thread; a cache that can't be opened, read or written only means the picture is read, and a cached picture whose
 //!   bytes changed or aren't a picture is read again.
 //! - **One read per picture at a time**: asks while its read runs wait for that read.
-//! - A `src` that names neither ([`InlinePicture::of`]) is answered `None` with nothing read.
+//! - A `src` that names neither ([`InlinePicture::of`]), or a tile's URL off the CDN's app folders
+//!   ([`AppPicture::of`]), is answered `None` with nothing read.
 //! - Nothing is sent but the reads.
 
 use std::cell::RefCell;
@@ -27,7 +31,10 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use teams_proto::{Client, Credentials, HttpError, HttpTransport, InlinePicture, PastedFormat, PastedPicture};
+use teams_proto::{
+    AppPicture, Client, Credentials, HttpError, HttpTransport, InlinePicture, PastedFormat, PastedPicture, Read,
+    Response,
+};
 use teams_store::pictures::PICTURE_CACHE_BYTES;
 use teams_store::{PictureCache, StoreError};
 
@@ -183,14 +190,35 @@ fn using<T>(
     }
 }
 
-/// What the cache finds a message's picture by: the AMS object and its view, the GIF's id and file, or the page's
-/// picture a link preview's thumbnail is of (never the link the message names: the account's AMS base reads it,
-/// whichever host the message names).
-fn cache_key(picture: &InlinePicture) -> String {
-    match picture {
-        InlinePicture::Ams(picture) => format!("ams/{}/{}", picture.object(), picture.view()),
-        InlinePicture::Giphy(picture) => format!("giphy/{}/{}", picture.id(), picture.file()),
-        InlinePicture::LinkPreview(picture) => format!("urlp/thumbnail/{}", picture.picture()),
+/// A picture read by what names it, kept for the run under that and cached on disk under [`Self::cache_key`].
+pub(crate) trait PictureRead: Read + Clone + Eq + Hash + 'static {
+    fn cache_key(&self) -> String;
+    fn picture_of(&self, answer: &Response) -> Option<PastedPicture>;
+}
+
+impl PictureRead for InlinePicture {
+    /// The AMS object and its view, the GIF's id and file, or the page's picture a link preview's thumbnail is of
+    /// (never the link the message names: the account's AMS base reads it, whichever host the message names).
+    fn cache_key(&self) -> String {
+        match self {
+            Self::Ams(picture) => format!("ams/{}/{}", picture.object(), picture.view()),
+            Self::Giphy(picture) => format!("giphy/{}/{}", picture.id(), picture.file()),
+            Self::LinkPreview(picture) => format!("urlp/thumbnail/{}", picture.picture()),
+        }
+    }
+
+    fn picture_of(&self, answer: &Response) -> Option<PastedPicture> {
+        self.read_answer(answer)
+    }
+}
+
+impl PictureRead for AppPicture {
+    fn cache_key(&self) -> String {
+        self.key()
+    }
+
+    fn picture_of(&self, answer: &Response) -> Option<PastedPicture> {
+        self.read_answer(answer)
     }
 }
 
@@ -198,6 +226,7 @@ pub(crate) struct Pictures<C> {
     client: Arc<Client<HttpTransport<C>>>,
     disk: Disk,
     kept: Rc<RefCell<Kept<InlinePicture>>>,
+    apps: Rc<RefCell<Kept<AppPicture>>>,
 }
 
 impl<C: Credentials + 'static> Pictures<C> {
@@ -206,17 +235,34 @@ impl<C: Credentials + 'static> Pictures<C> {
             client,
             disk,
             kept: Rc::default(),
+            apps: Rc::default(),
         }
     }
 
     /// Answers `reply` with the picture `src` names: at once when it is known, else once its read is over (the read
     /// started now unless one runs). A `src` no read can name is answered `None`.
     pub(crate) fn picture(&self, src: &str, reply: Responder<Option<PictureBytes>>) {
-        let Some(picture) = InlinePicture::of(src) else {
-            let _ = reply.send(Ok(None));
-            return;
-        };
-        let mut kept = self.kept.borrow_mut();
+        match InlinePicture::of(src) {
+            Some(picture) => self.ask(&self.kept, picture, reply),
+            None => {
+                let _ = reply.send(Ok(None));
+            }
+        }
+    }
+
+    /// Answers `reply` with the app tile `url` names (a definition's `largeImageUrl`), as [`Self::picture`] does; a
+    /// URL off the CDN's app folders is answered `None`.
+    pub(crate) fn app_picture(&self, url: &str, reply: Responder<Option<PictureBytes>>) {
+        match AppPicture::of(url) {
+            Some(picture) => self.ask(&self.apps, picture, reply),
+            None => {
+                let _ = reply.send(Ok(None));
+            }
+        }
+    }
+
+    fn ask<P: PictureRead>(&self, kept_by: &Rc<RefCell<Kept<P>>>, picture: P, reply: Responder<Option<PictureBytes>>) {
+        let mut kept = kept_by.borrow_mut();
         match kept.known.get_mut(&picture) {
             Some(Known::Read(bytes)) => {
                 let _ = reply.send(Ok(bytes.clone()));
@@ -229,7 +275,7 @@ impl<C: Credentials + 'static> Pictures<C> {
                     Arc::clone(&self.client),
                     self.disk.clone(),
                     picture,
-                    Rc::clone(&self.kept),
+                    Rc::clone(kept_by),
                 ));
             }
         }
@@ -238,15 +284,15 @@ impl<C: Credentials + 'static> Pictures<C> {
 
 /// Reads `picture` from the service: its bytes, `Some(None)` when the service has none, `None` when the read failed on
 /// the way.
-async fn fetch<C: Credentials + 'static>(
+async fn fetch<C: Credentials + 'static, P: PictureRead>(
     client: &Client<HttpTransport<C>>,
-    picture: &InlinePicture,
+    picture: &P,
 ) -> Option<Option<PictureBytes>> {
     match client.read(picture).await {
-        Ok(answer) => Some(picture.read_answer(&answer).map(Arc::new)),
+        Ok(answer) => Some(picture.picture_of(&answer).map(Arc::new)),
         Err(HttpError::Status(_) | HttpError::BodyTooLarge) => Some(None),
         Err(error) => {
-            log::info!("a message's picture couldn't be read: {error}");
+            log::info!("a picture couldn't be read: {error}");
             None
         }
     }
@@ -254,13 +300,13 @@ async fn fetch<C: Credentials + 'static>(
 
 /// Finds `picture` in the cache on disk, else reads it (and caches what it read); answers every ask that waits for
 /// it; keeps it, or that there is none, unless the read failed on the way ([`EngineError::PictureUnread`]).
-async fn read_picture<C: Credentials + 'static>(
+async fn read_picture<C: Credentials + 'static, P: PictureRead>(
     client: Arc<Client<HttpTransport<C>>>,
     disk: Disk,
-    picture: InlinePicture,
-    kept: Rc<RefCell<Kept<InlinePicture>>>,
+    picture: P,
+    kept: Rc<RefCell<Kept<P>>>,
 ) {
-    let key = cache_key(&picture);
+    let key = picture.cache_key();
     let answer = disk.or_fetch(key, None, fetch(&client, &picture)).await;
     let waiting = match answer.clone() {
         Some(bytes) => kept.borrow_mut().keep(picture, bytes),

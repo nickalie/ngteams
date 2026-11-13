@@ -93,6 +93,13 @@ pub enum Service {
     /// `<img>` loads as any browser does): a GIF a message shows, picked from Teams' GIF picker
     /// (`media/<id>/<file>`, [`crate::GiphyPicture`]). Reads only, nothing of the account's sent.
     Giphy,
+    /// App tiles on Microsoft's CDN, `https://res.cdn.office.net/teamsappdata/`, with no token (public files the web
+    /// client's `<img>` loads as any browser does): the picture an app definition's `largeImageUrl` names
+    /// ([`crate::AppPicture`]). Reads only, nothing of the account's sent.
+    AppPictures,
+    /// App tiles on Teams' static CDN, `https://statics.teams.cdn.office.net/` (`app-assets/…`,
+    /// `evergreen-assets/apps/…`), with no token, as [`Service::AppPictures`] ([`crate::AppPicture`]).
+    StaticAppPictures,
     /// The meeting content processing service (MCPS) at the account's base for it, the region's GTM `mcpService`
     /// (`https://<AFD host>/api/mcps/<region>`), which a transport reaches only once it was given one
     /// (`HttpTransport::with_mcps`), with the account's token for the meeting-artifacts app

@@ -68,14 +68,17 @@ impl ActivityView {
             .when(!selected, |row| row.hover(move |row| row.bg(rgb(palette.hover))))
             .on_click(cx.listener(move |this, _, _, cx| this.open(&opened, cx)))
             .children(unread.then(|| unread_dot(palette)))
-            .child(self.face(item, palette))
+            .child(match self.app_tile(item, palette) {
+                Some(tile) => tile.into_any_element(),
+                None => self.face(item, palette).into_any_element(),
+            })
             .child(self.body(item, unread, palette, cx))
             .child(Self::corner(item, &group, menu_open, palette, cx))
             .children(menu_open.then(|| self.item_menu_view(item, unread, palette, cx)))
             .into_any_element()
     }
 
-    /// The avatar with the kind's badge.
+    /// The avatar with the kind's badge (an app's item without its tile, too).
     fn face(&self, item: &ActivityItem, palette: Palette) -> impl IntoElement {
         let name: Option<SharedString> = (!item.actor_name.is_empty()).then(|| item.actor_name.clone().into());
         let picture = item

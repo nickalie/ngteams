@@ -409,6 +409,14 @@ Giphy's public media CDN holds GIFs selected by Teams' picker. The native transp
 | --- | --- | --- | --- | --- | --- |
 | `GET` | `/media/<id>/<file>.gif` (a message names it as `https://media<n>.giphy.com/media/v1.<token>/<id>/giphy.gif`, sometimes with a query) | a GIF a message shows, picked from Teams' GIF picker: its bytes | Read (`GiphyPicture`) | [chat.md](chat.md#pictures-in-messages) | the user's chats (the `<img>`, read for its shape); the read without the token and on `media.giphy.com` checked by hand (the same bytes); native on the mock only |
 
+## App tiles (`res.cdn.office.net`, `statics.teams.cdn.office.net`)
+
+Microsoft's public CDN holds each app's tile, which an app definition names in `largeImageUrl`. The native transport reads it with no account credential, on `Service::AppPictures` (`https://res.cdn.office.net/teamsappdata/`) or `Service::StaticAppPictures` (`https://statics.teams.cdn.office.net/`, its `app-assets/` and `evergreen-assets/apps/` folders only).
+
+| Method | Path | What it does | Native | Notes · task | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| `GET` | `/teamsappdata/<folders>/<file>.png` `?v=<version>` (or no query), `/app-assets/<folders>/<file>.png`, `/evergreen-assets/apps/<file>.png` | an app's tile (192×192 PNG, typed `application/octet-stream`), which Activity draws for the app's items | Read (`AppPicture`) | [chat.md](chat.md#the-activity-feed) · #28 | seen (definitions' `largeImageUrl`, the web client's `<img>`); Workflows' tile read by hand; native on the mock |
+
 ## The Teams page itself (`https://<teams origin>/`)
 
 | Method | Path | What it does | Native | Notes · task | Evidence |

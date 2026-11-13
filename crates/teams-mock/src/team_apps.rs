@@ -1,6 +1,8 @@
 //! What Manage team's Apps tab and "More create team options" read (`docs/protocol/teams.md`), made up: a team's
 //! installed apps, the store's apps and their definitions, Teams' templates and one template's channels and apps, and no
-//! Microsoft 365 group to make a team of. Requests not implemented by these fixtures remain unmatched.
+//! Microsoft 365 group to make a team of; and the tile Made-up Updates' definition names, on the CDN's path (Activity
+//! draws it for the app's items; the other apps name none). Requests not implemented by these fixtures remain
+//! unmatched.
 
 use serde_json::{Value, json};
 use wiremock::ResponseTemplate;
@@ -16,7 +18,56 @@ pub(crate) fn serve(method: &str, segments: &[&str], body: &[u8]) -> Option<Resp
         ("GET", [.., "teamtemplates", "v1.0", "en-us"]) => Some(json(200, &templates())),
         ("GET", [.., "teamtemplates", "v1.0", _, "Public", _]) => Some(json(200, &template())),
         ("GET", [.., "teams", "usergroups"]) => Some(json(200, &json!([]))),
+        (
+            "GET",
+            [
+                "teamsappdata",
+                "evergreen-assets",
+                "apps",
+                "made-up-updates_largeImage.png",
+            ],
+        ) => Some(tile()),
         _ => None,
+    }
+}
+
+/// Made-up Updates' tile as the CDN answers one: a 192×192 PNG, its picture (a blue-to-violet rounded square) inside
+/// a transparent margin, typed `application/octet-stream`.
+fn tile() -> ResponseTemplate {
+    const SIDE: u32 = 192;
+    const MARGIN: u32 = 36;
+    const CORNER: u32 = 28;
+    let inside = |x: u32, y: u32| {
+        let (left, right) = (MARGIN, SIDE - MARGIN - 1);
+        let near = |v: u32, low: u32, high: u32| {
+            if v < low + CORNER {
+                Some(low + CORNER - v)
+            } else if v > high - CORNER {
+                Some(v - (high - CORNER))
+            } else {
+                None
+            }
+        };
+        (left..=right).contains(&x)
+            && (left..=right).contains(&y)
+            && match (near(x, left, right), near(y, left, right)) {
+                (Some(dx), Some(dy)) => dx * dx + dy * dy <= CORNER * CORNER,
+                _ => true,
+            }
+    };
+    let picture = image::RgbaImage::from_fn(SIDE, SIDE, |x, y| {
+        if !inside(x, y) {
+            return image::Rgba([0, 0, 0, 0]);
+        }
+        // from Teams' blue at the top left to its violet at the bottom right
+        let t = (x + y) * 255 / (2 * (SIDE - 1));
+        let mix = |from: u32, to: u32| u8::try_from((from * (255 - t) + to * t) / 255).unwrap_or(u8::MAX);
+        image::Rgba([mix(0x36, 0x5b), mix(0x9b, 0x5f), mix(0xf0, 0xc7), 255])
+    });
+    let mut png = Vec::new();
+    match picture.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png) {
+        Ok(()) => ResponseTemplate::new(200).set_body_raw(png, "application/octet-stream"),
+        Err(_) => ResponseTemplate::new(500),
     }
 }
 

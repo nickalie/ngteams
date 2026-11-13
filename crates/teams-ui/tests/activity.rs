@@ -1414,3 +1414,95 @@ fn only_app_item_menus_offer_turn_off_and_it_preserves_the_feed() {
     cx.update(|_, cx| view.update(cx, |view, cx| view.show_item_menu(Some("4000".to_owned()), cx)));
     assert!(!drawn(cx, "activity-item-turn-off-app"));
 }
+
+fn app_item(id: i64, app: &str) -> teams_core::activity::ActivityItem {
+    let mut message = item(
+        id,
+        "msGraph",
+        "customNotification",
+        ("28:made-up-app", "Lab B"),
+        1,
+        false,
+    );
+    let mut properties: serde_json::Value = serde_json::from_str(message.properties.as_deref().unwrap()).unwrap();
+    properties["activity"]["sourceAppDisplayName"] = json!("Made-up Updates");
+    properties["activity"]["activityContext"] = json!({ "teamsAppId": app });
+    message.properties = Some(properties.to_string());
+    teams_core::activity::ActivityItem::from_message(&message).unwrap()
+}
+
+fn definition(app: &str, tile: Option<&str>) -> teams_proto::AppDefinition {
+    let mut definition = json!({ "id": app, "name": "Made-up Updates" });
+    if let Some(tile) = tile {
+        definition["largeImageUrl"] = json!(tile);
+    }
+    teams_proto::AppDefinitions::read_answer(json!([definition]).to_string().as_bytes())
+        .pop()
+        .unwrap()
+        .definition
+}
+
+fn tile_png() -> teams_core::PictureBytes {
+    let mut bytes = Vec::new();
+    image::RgbaImage::from_pixel(192, 192, image::Rgba([60, 90, 200, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .unwrap();
+    Arc::new(teams_proto::PastedPicture {
+        format: teams_proto::PastedFormat::Png,
+        bytes,
+    })
+}
+
+#[test]
+fn an_app_item_shows_its_app_s_tile_without_a_badge_else_initials_and_its_badge() {
+    const TILE: &str = "https://res.cdn.office.net/teamsappdata/evergreen-assets/apps/made-up_largeImage.png?v=1";
+    const BROKEN: &str = "https://res.cdn.office.net/teamsappdata/evergreen-assets/apps/broken_largeImage.png";
+    let rig = rig();
+    rig.core.activity.lock().unwrap().items.extend([
+        app_item(4000, "made-up-tiled"),
+        app_item(4050, "made-up-tiled"),
+        app_item(4100, "made-up-no-url"),
+        app_item(4200, "made-up-broken"),
+        app_item(4300, "made-up-unknown"),
+    ]);
+    rig.core.app_definitions.lock().unwrap().extend([
+        ("made-up-tiled".to_owned(), definition("made-up-tiled", Some(TILE))),
+        ("made-up-no-url".to_owned(), definition("made-up-no-url", None)),
+        ("made-up-broken".to_owned(), definition("made-up-broken", Some(BROKEN))),
+    ]);
+    rig.core.app_pictures.lock().unwrap().extend([
+        (TILE.to_owned(), tile_png()),
+        (
+            BROKEN.to_owned(),
+            Arc::new(teams_proto::PastedPicture {
+                format: teams_proto::PastedFormat::Png,
+                bytes: b"\x89PNG\r\n\x1a\nnot a picture".to_vec(),
+            }),
+        ),
+    ]);
+    let (_shell, cx) = shell_window(&rig);
+    click(cx, "rail-activity");
+    for tiled in ["4000", "4050"] {
+        assert!(drawn(cx, &format!("activity-app-tile-{tiled}")), "{tiled}: the tile");
+        assert!(!drawn(cx, &format!("activity-badge-{tiled}")), "{tiled}: no badge");
+    }
+    for fallback in ["4100", "4200", "4300"] {
+        assert!(
+            !drawn(cx, &format!("activity-app-tile-{fallback}")),
+            "{fallback}: no tile"
+        );
+        assert!(
+            drawn(cx, &format!("activity-badge-{fallback}")),
+            "{fallback}: initials and badge"
+        );
+    }
+    // a person's item keeps its avatar and badge
+    assert!(drawn(cx, "activity-badge-2000"));
+    let asked = rig.core.asked();
+    let count = |name| asked.iter().filter(|asked| **asked == name).count();
+    assert_eq!(count("app_definition"), 4, "one definition read per app");
+    assert_eq!(count("app_picture"), 2, "one picture read per app with a URL");
+    // the tile's size and shape are the avatar's
+    let tile = cx.debug_bounds("activity-app-tile-4000").unwrap();
+    assert_eq!((tile.size.width, tile.size.height), (gpui::px(32.0), gpui::px(32.0)));
+}

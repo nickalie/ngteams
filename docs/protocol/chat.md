@@ -1037,8 +1037,14 @@ in browser Teams (team-manage, 2026-11-12), and in a lab store's synced feed.
   against the calendar's `objectId`, then the meeting's time, then an occurrence's `seriesMasterId`.
 - **App items** carry `activityContext.teamsAppId`. The pane draws them with the app's own icon and no kind badge
   (Workflows' tile; Teams' own for "A team owner added you to …"); the app definitions Teams reads
-  (`aggregatedEntitlements`, `batchedDefinitions`) carry `largeImageUrl`, a picture on `res.cdn.office.net`. The native
-  client draws an app's initials with its badge for now.
+  (`aggregatedEntitlements`, `batchedDefinitions`) carry `largeImageUrl`, a picture on `res.cdn.office.net`
+  (`teamsappdata/evergreen-assets/apps/<id>_largeImage.png?v=<version>`, `teamsappdata/app-assets/<ring>/<id>/…`,
+  `teamsappdata/ais_prod_v1/evergreen-assets/…/<id>_largeimage.png`), or for older definitions on
+  `statics.teams.cdn.office.net` (`app-assets/…`, `evergreen-assets/apps/…`): a public 192×192 PNG, its picture inside
+  a transparent margin, which the CDN answers as `application/octet-stream` and reads with no credential (checked
+  once by hand on Workflows' tile). The pane draws it at the avatar's size in a rounded square with a hairline border
+  (a white one in Teams Light). The native client reads it the same way (`AppPicture`) and draws the app's initials
+  with its badge while it has none.
 - **An item's second menu group** (team-manage, 2026-11-12, account a): "Notification settings" opens the settings at
   "Notifications and activity" and sends nothing. "Turn off <app>" (an app item's, in red) sent `PUT
   v1/users/ME/properties?name=userGraphSettings` with `{"userGraphSettings": "<JSON text>"}`: `{"<teamsAppId>":

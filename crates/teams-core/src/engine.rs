@@ -786,6 +786,7 @@ enum Request {
     Presence(String, Responder<Availability>),
     ReactionAnimation(String, Responder<Option<Strip>>),
     MessagePicture(String, Responder<Option<PictureBytes>>),
+    AppPicture(String, Responder<Option<PictureBytes>>),
     FileThumbnail(String, Responder<Option<PictureBytes>>),
     FileRange {
         share_url: String,
@@ -1255,6 +1256,13 @@ impl EngineRequests {
     pub fn message_picture(&self, src: impl Into<String>) -> Reply<Option<PictureBytes>> {
         let src = src.into();
         self.ask(|reply| Request::MessagePicture(src, reply))
+    }
+
+    /// An app's tile, the picture its definition's `largeImageUrl` names on Microsoft's CDN ([`crate::pictures`]): its
+    /// bytes and format, or `None` when there is none or `url` isn't an app tile's.
+    pub fn app_picture(&self, url: impl Into<String>) -> Reply<Option<PictureBytes>> {
+        let url = url.into();
+        self.ask(|reply| Request::AppPicture(url, reply))
     }
 
     /// The account's calendar events between `start_ms` and `end_ms` (ms since the epoch), read from the middle tier
@@ -2361,6 +2369,7 @@ where
         match request {
             Request::ReactionAnimation(id, reply) => self.animations.animation(id, reply),
             Request::MessagePicture(src, reply) => self.pictures.picture(&src, reply),
+            Request::AppPicture(url, reply) => self.pictures.app_picture(&url, reply),
             Request::FileThumbnail(share_url, reply) => self.thumbnails.thumbnail(&share_url, reply),
             Request::Calendar {
                 start_ms,

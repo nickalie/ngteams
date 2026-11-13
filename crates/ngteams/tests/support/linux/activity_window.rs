@@ -28,6 +28,8 @@ use ngteams::app::{self, Launch};
 use ngteams::calling::PersonalCalls;
 #[path = "../window.rs"]
 mod support;
+#[path = "activity_app_tiles.rs"]
+mod tiles;
 #[path = "activity_turn_off.rs"]
 mod turn_off;
 use ngteams::descriptors::adopt_trace;
@@ -110,6 +112,8 @@ const CHIPS: [(&str, (u32, u32)); 7] = [
 const ROW: (u32, u32) = (260, 205);
 const ROW_MORE: (u32, u32) = (430, 177);
 const ROW_TITLE: (u32, u32) = (200, 184);
+/// Around the first row's avatar (left, top, right, bottom): an app's tile there.
+const FIRST_AVATAR: (u32, u32, u32, u32) = (80, 160, 150, 215);
 /// A missed call's buttons on the first row.
 const ROW_CALL: (u32, u32) = (154, 229);
 const ROW_CHAT: (u32, u32) = (202, 229);
@@ -303,6 +307,10 @@ fn run_checks(sandbox: &Sandbox) -> SandboxResult<usize> {
         turn_off::dark_banner_reopens_the_window,
     );
     for (name, check) in turn_off::CHECKS {
+        qa.check(name, check);
+    }
+    // an app item's tile (#28): last, as its second app's item comes first under Apps from then on
+    for (name, check) in tiles::CHECKS {
         qa.check(name, check);
     }
     let (mut passed, mut failed) = (qa.passed.clone(), qa.failed.clone());
@@ -1707,7 +1715,7 @@ fn meeting_update() -> Value {
 }
 
 /// An app's note in the team's channel.
-fn app_note() -> Value {
+pub(super) fn app_note() -> Value {
     json!({
         "activityType": "msGraph", "activitySubtype": "customNotification", "activityId": 7,
         "sourceThreadId": TEAM, "sourceMessageId": 1, "sourceUserImDisplayName": "Workflows", "sourceAppDisplayName": "Workflows",
@@ -2023,6 +2031,7 @@ fn mock_reply(question: &str, probe: &Probe) -> Option<Value> {
         "push-meeting-known" => push(mock, &roundup_update()),
         "push-meeting-unknown" => push(mock, &unknown_meeting_update()),
         "push-app" => push_app(mock, rest),
+        "push-other-app" => tiles::push_other_app(mock),
         "push-chat" => push_chat(mock),
         "prefs" => probe.prefs(),
         "refuse" => probe.refuse(rest),
@@ -2074,7 +2083,8 @@ fn state_of(shell: &Entity<Shell>, cx: &App) -> Value {
             json!({
                 "id": item.id, "kind": item.kind.key(), "title": item.title(), "preview": item.preview,
                 "place": view.place(item, cx), "read": view.is_read(item), "thread": item.thread,
-                "message": item.message, "meeting_line": meeting_line,
+                "message": item.message, "meeting_line": meeting_line, "tile": view.shows_app_tile(item),
+                "app": item.teams_app_id,
             })
         })
         .collect();

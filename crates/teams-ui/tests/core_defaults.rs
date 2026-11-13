@@ -414,6 +414,11 @@ fn team_directories_and_apps_are_empty() {
         ("team_picture", none(core.team_picture(picture))),
         ("team_apps", empty(core.team_apps("team".into()))),
         ("app_store", empty(core.app_store())),
+        ("app_definition", none(core.app_definition("app".into()))),
+        (
+            "app_picture",
+            none(core.app_picture("https://res.cdn.office.net/teamsappdata/a.png".into())),
+        ),
         (
             "channel_analytics",
             none(core.channel_analytics(group(), "channel".into(), AnalyticsPeriod::LastNinetyDays)),

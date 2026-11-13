@@ -435,6 +435,11 @@ pub trait Core: Send + Sync + 'static {
     fn app_definition(&self, _id: String) -> Reply<Option<teams_proto::AppDefinition>> {
         Reply::ready(Ok(None))
     }
+    /// An app's tile, the picture its definition's `largeImageUrl` names on Microsoft's CDN, read by the engine once a
+    /// run and cached; `None` when there is none or `url` isn't an app tile's. A fake core has none.
+    fn app_picture(&self, _url: String) -> Reply<Option<PictureBytes>> {
+        Reply::ready(Ok(None))
+    }
     /// The apps the store offers to add to a team. A fake core offers none.
     fn app_store(&self) -> Reply<Vec<StoreApp>> {
         Reply::ready(Ok(Vec::new()))
@@ -842,6 +847,10 @@ impl Core for EngineRequests {
 
     fn message_picture(&self, src: String) -> Reply<Option<PictureBytes>> {
         EngineRequests::message_picture(self, src)
+    }
+
+    fn app_picture(&self, url: String) -> Reply<Option<PictureBytes>> {
+        EngineRequests::app_picture(self, url)
     }
 
     fn file_thumbnail(&self, share_url: String) -> Reply<Option<PictureBytes>> {

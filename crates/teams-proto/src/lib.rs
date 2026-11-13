@@ -25,6 +25,8 @@ pub use channel_sections::{ChannelSection, ChannelSectionAction, ChannelSectionW
 pub use write::{ChannelChange, ChannelData, ChannelRead, ChannelTarget, ChannelWrite};
 pub use write::{CreatePicture, MAX_SENT_PICTURE, UploadPicture};
 mod activity_settings;
+mod app_picture;
+pub use app_picture::{APP_PICTURES_HOST, APP_PICTURES_PATH, AppPicture, STATIC_APP_PICTURES_HOST};
 pub mod chat;
 mod client;
 mod emoticon;

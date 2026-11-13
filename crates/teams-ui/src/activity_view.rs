@@ -7,11 +7,12 @@
 //! - **Filter chips** ([`ActivityFilter::CHIPS`]): Unread, @Mentions, Reactions, Missed calls, Replies, Voicemail and
 //!   Apps; one is chosen at a time, chosen again it lets go. Ctrl+Alt+U and Ctrl+Alt+M (⌘ on macOS) toggle the first
 //!   two, as Teams'.
-//! - **An item**: the person's avatar (their picture, else initials; an app's tile) with a badge for its kind (the
+//! - **An item**: the person's avatar (their picture, else initials) with a badge for its kind (the
 //!   reaction's emoji, "@" for a mention, people for a group mention or a team, a missed call's phone, a meeting's
 //!   calendar), its title (semibold while unread, a dot at the left edge), its date (the time today), the preview and
 //!   where it happened (a channel's team and name, a group chat's topic, else "Chat with" its members' first names,
-//!   "In chat with you" for a 1:1 chat: [`chat_place`]). Hovered, the
+//!   "In chat with you" for a 1:1 chat: [`chat_place`]). An app's item shows its app's tile instead, with no badge
+//!   (the `tile` module). Hovered, the
 //!   date gives way to "More options": Mark as read or unread, Remove (a toast says "Removed"), and Notification
 //!   settings (the settings' Notifications page). A missed call
 //!   offers Call and Chat with the caller; either marks it read, as opening it does.
@@ -184,6 +185,8 @@ pub struct ActivityView {
     /// An item's "More options" menu, while open.
     item_menu: Option<String>,
     app_names: HashMap<String, String>,
+    /// Apps' tiles, by `teamsAppId`: `None` while asked or when there is none ([`tile`]).
+    app_tiles: HashMap<String, Option<Arc<gpui::RenderImage>>>,
     /// The header's "More options" menu, while open.
     header_menu: bool,
     shown: bool,
@@ -271,6 +274,7 @@ impl ActivityView {
             pictures: HashMap::new(),
             item_menu: None,
             app_names: HashMap::new(),
+            app_tiles: HashMap::new(),
             header_menu: false,
             shown: false,
             open_newest: false,
@@ -384,6 +388,7 @@ impl ActivityView {
             self.feed = feed;
             self.fed = true;
             self.ask_pictures(cx);
+            self.ask_app_tiles(cx);
             if self.shown {
                 self.mark_seen(cx);
             }
@@ -1336,3 +1341,4 @@ fn menu_surface(id: &'static str, palette: Palette) -> gpui::Stateful<gpui::Div>
 }
 
 mod row;
+mod tile;

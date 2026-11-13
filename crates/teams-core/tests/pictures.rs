@@ -3,7 +3,8 @@
 //! message's picture and a file's thumbnail read by the first run are shown by the second without a read; a picture
 //! the service has none of isn't cached, so the next run reads it again; the cache is a private file beside the store.
 //! A GIF and a link preview's picture are cached by what they are of; asks that come while a read runs wait for it; a
-//! file Graph lists no thumbnail for has none; a cache that can't be opened leaves every run reading.
+//! file Graph lists no thumbnail for has none; a cache that can't be opened leaves every run reading. An app's tile on
+//! the CDN is read once per version and cached alike; a URL off the CDN's app folders is never read.
 //!
 //! Tokens, ids and links here are made up; the thumbnails' answer follows the synthetic fixture
 //! (`tests/fixtures/graph/thumbnails.json`).
@@ -424,4 +425,102 @@ async fn a_gif_and_a_link_preview_s_picture_are_cached_by_what_they_are_of() {
     second.shutdown();
     assert_eq!(requests_to(&server, "/media/MadeUpGif01/giphy.gif").await, 1);
     assert_eq!(requests_to(&server, "/urlp/v1/url/image/Thumbnail").await, 2);
+}
+
+#[tokio::test]
+async fn an_app_s_tile_is_read_once_cached_by_its_version_and_refused_off_the_cdn() {
+    const TILE: &str = "/teamsappdata/evergreen-assets/apps/00000000-0000-4000-8000-00000000a002_largeImage.png";
+    let url = |version: &str| format!("https://res.cdn.office.net{TILE}?v={version}");
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(TILE))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(PNG.to_vec(), "application/octet-stream"))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let store_file = store_file(&dir);
+
+    let first = engine(&server, &store_file);
+    let requests = first.requests();
+    let (one, two) = tokio::join!(requests.app_picture(url("1")), requests.app_picture(url("1")));
+    for tile in [one.unwrap().unwrap(), two.unwrap().unwrap()] {
+        assert_eq!((tile.format, tile.bytes.as_slice()), (PastedFormat::Png, PNG));
+    }
+    // a host or a folder the CDN's app tiles don't use is never read
+    for refused in [
+        "https://cdn.example.test/teamsappdata/apps/made-up.png".to_owned(),
+        "https://res.cdn.office.net/other/made-up.png".to_owned(),
+        url("1").replace("https://", "http://"),
+    ] {
+        assert!(requests.app_picture(refused).await.unwrap().is_none());
+    }
+    first.shutdown();
+    assert_eq!(requests_to(&server, TILE).await, 1, "one read for both asks");
+
+    // the next run: the same version from the cache; a new version is read
+    let second = engine(&server, &store_file);
+    assert_eq!(
+        second.requests().app_picture(url("1")).await.unwrap().unwrap().bytes,
+        PNG
+    );
+    assert_eq!(requests_to(&server, TILE).await, 1, "no read in the second run");
+    assert_eq!(
+        second.requests().app_picture(url("2")).await.unwrap().unwrap().bytes,
+        PNG
+    );
+    second.shutdown();
+    assert_eq!(requests_to(&server, TILE).await, 2);
+}
+
+#[tokio::test]
+async fn an_app_s_tile_that_isn_t_a_picture_is_none_and_a_failed_read_is_tried_again() {
+    const TILE: &str = "/teamsappdata/evergreen-assets/apps/made-up_largeImage.png";
+    let url = format!("https://res.cdn.office.net{TILE}");
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(TILE))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(b"<html></html>".to_vec(), "text/html"))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let handle = engine(&server, &store_file(&dir));
+    assert!(handle.requests().app_picture(url.clone()).await.unwrap().is_none());
+    // kept as none for the run: not read again
+    assert!(handle.requests().app_picture(url.clone()).await.unwrap().is_none());
+    handle.shutdown();
+    assert_eq!(requests_to(&server, TILE).await, 1);
+
+    // a read that fails on the way (the connection) is an error, and the next ask reads again
+    // nothing listens on port 1
+    let gone_uri = "http://127.0.0.1:1";
+    let tokens = Arc::new(FakeTokens);
+    let client = Arc::new(Client::new(
+        HttpTransport::with_mock_origin(Arc::clone(&tokens), CHAT_BASE, gone_uri).unwrap(),
+    ));
+    let author = Author::new(Mri::new(LAB_A), "lab-a");
+    let outbox = Outbox::new(
+        Arc::new(HttpTransport::with_mock_origin(tokens, CHAT_BASE, gone_uri).unwrap()),
+        author,
+    );
+    let other = tempfile::tempdir().unwrap();
+    let handle = engine::start(Parts {
+        calls: None,
+        store: Store::open(&store_file(&other)).unwrap(),
+        client,
+        outbox,
+        push: None,
+        options: EngineOptions::default(),
+        known_names: Vec::new(),
+    })
+    .unwrap();
+    for _ in 0..2 {
+        let answer = handle.requests().app_picture(url.clone()).await;
+        assert!(
+            matches!(answer, Err(teams_core::EngineError::PictureUnread)),
+            "{:?}",
+            answer.map(|tile| tile.map(|tile| tile.bytes.len()))
+        );
+    }
+    handle.shutdown();
 }

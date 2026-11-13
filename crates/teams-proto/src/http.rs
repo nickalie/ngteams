@@ -17,6 +17,7 @@ use teams_auth::session::Session;
 use teams_auth::token::{SPACES_RESOURCE, TokenError, retry_after};
 use url::Url;
 
+use crate::app_picture::{APP_PICTURES_HOST, APP_PICTURES_PATH, STATIC_APP_PICTURES_HOST};
 use crate::client::{Response, Transport};
 use crate::endpoint::{Endpoint, Service};
 use crate::file_content::{FileContentLink, MAX_RANGE, MAX_STREAM, StreamStart, is_content_link};
@@ -856,6 +857,8 @@ impl<C: Credentials> HttpTransport<C> {
             Service::Relay => fixed(format!("https://{RELAY_HOST}/{RELAY_PATH}")),
             Service::Emoticons => fixed(format!("https://{EMOTICONS_HOST}/{EMOTICONS_PATH}")),
             Service::Giphy => fixed(format!("https://{GIPHY_HOST}/")),
+            Service::AppPictures => fixed(format!("https://{APP_PICTURES_HOST}/{APP_PICTURES_PATH}")),
+            Service::StaticAppPictures => fixed(format!("https://{STATIC_APP_PICTURES_HOST}/")),
             Service::Substrate => fixed(format!("https://{SUBSTRATE_HOST}/")),
             Service::Ams => self.ams.clone().ok_or(refused(Refusal::NoAms)),
             Service::Mcps => self.mcps.clone().ok_or(refused(Refusal::NoMcps)),
@@ -1498,7 +1501,9 @@ fn audience(service: Service) -> Option<&'static str> {
         | Service::Emoticons
         | Service::FileThumbnail
         | Service::FileContent
-        | Service::Giphy => None,
+        | Service::Giphy
+        | Service::AppPictures
+        | Service::StaticAppPictures => None,
     }
 }
 
@@ -1525,13 +1530,15 @@ fn plain_headers(service: Service, body: bool) -> Vec<(String, String)> {
         | Service::FileThumbnail
         | Service::FileContent
         | Service::Giphy
+        | Service::AppPictures
+        | Service::StaticAppPictures
         | Service::Substrate
         | Service::Loki
         | Service::LokiGlobal => "application/json",
     };
     // a picture's view and a thumbnail answer an image, as a browser's `<img>` asks for one
     let accept = match service {
-        Service::Ams | Service::FileThumbnail => PICTURE_ACCEPT,
+        Service::Ams | Service::FileThumbnail | Service::AppPictures | Service::StaticAppPictures => PICTURE_ACCEPT,
         Service::Giphy => GIF_ACCEPT,
         // a file's bytes, whatever it holds, as a browser's media element asks for them
         Service::FileContent => "*/*",
@@ -1620,6 +1627,8 @@ fn service_headers(service: Service) -> &'static [(&'static str, &'static str)] 
         | Service::FileThumbnail
         | Service::FileContent
         | Service::Giphy
+        | Service::AppPictures
+        | Service::StaticAppPictures
         | Service::Substrate => &[],
     }
 }
@@ -1661,6 +1670,8 @@ fn on_base(service: Service, base: &Url, url: &Url, endpoint: &Endpoint) -> bool
         | Service::FileThumbnail
         | Service::FileContent
         | Service::Giphy
+        | Service::AppPictures
+        | Service::StaticAppPictures
         | Service::Substrate
         | Service::Loki
         | Service::LokiGlobal => true,

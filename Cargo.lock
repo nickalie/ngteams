@@ -11306,6 +11306,7 @@ dependencies = [
  "base64 0.23.1",
  "flate2",
  "futures-util",
+ "image",
  "percent-encoding",
  "reqwest 0.13.5",
  "serde_json",

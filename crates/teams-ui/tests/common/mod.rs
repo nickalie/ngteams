@@ -86,6 +86,10 @@ pub struct FakeCore {
     pub unread_animations: Mutex<HashSet<String>>,
     /// Messages' pictures by their `src`; any other is answered `None`.
     pub pictures: Mutex<HashMap<String, PictureBytes>>,
+    /// The app definitions `app_definition` answers, by `teamsAppId`; any other has none.
+    pub app_definitions: Mutex<HashMap<String, teams_proto::AppDefinition>>,
+    /// App tiles by their URL; any other is answered `None`.
+    pub app_pictures: Mutex<HashMap<String, PictureBytes>>,
     /// The thumbnails `file_thumbnail` answers, by the file's sharing link.
     pub thumbnails: Mutex<HashMap<String, PictureBytes>>,
     /// What `profile_card` answers, by the person's MRI; anyone else's card can't be read (`ProfileUnread`).
@@ -929,6 +933,14 @@ impl Core for FakeCore {
 
     fn message_picture(&self, src: String) -> Reply<Option<PictureBytes>> {
         self.answer("message_picture", || locked(&self.pictures).get(&src).cloned())
+    }
+
+    fn app_definition(&self, id: String) -> Reply<Option<teams_proto::AppDefinition>> {
+        self.answer("app_definition", || locked(&self.app_definitions).get(&id).cloned())
+    }
+
+    fn app_picture(&self, url: String) -> Reply<Option<PictureBytes>> {
+        self.answer("app_picture", || locked(&self.app_pictures).get(&url).cloned())
     }
 
     fn file_thumbnail(&self, share_url: String) -> Reply<Option<PictureBytes>> {
