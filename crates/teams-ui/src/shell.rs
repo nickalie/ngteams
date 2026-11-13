@@ -501,13 +501,8 @@ impl Shell {
         let view = cx.new(|cx| ActivityView::new(parts, window, cx));
         // the rail's count follows the feed
         let events = cx.subscribe_in(&view, window, |this: &mut Self, _, event, window, cx| match event {
-            // Only a finished initial load can establish absence: it publishes its first 50 rows early.
             // A chat left or deleted isn't opened as an empty one to write in.
-            ActivityViewEvent::Open(target)
-                if !teams_proto::is_team_thread_id(&target.conversation)
-                    && this.list.read(cx).loads() > 0
-                    && this.list.read(cx).row(&target.conversation).is_none() =>
-            {
+            ActivityViewEvent::Open(target) if this.chat_gone(target, cx) => {
                 this.show_toast(crate::activity_view::CHAT_GONE, cx);
             }
             ActivityViewEvent::Open(target) => this.open_message(target.clone(), window, cx),
@@ -552,15 +547,21 @@ impl Shell {
             .map(|row| row.id.clone())
     }
 
+    /// Whether `target`'s chat is gone (left or deleted). Only a finished initial load of the list can establish
+    /// absence: it publishes its first 50 rows early. A channel's thread is never taken for gone.
+    fn chat_gone(&self, target: &HitTarget, cx: &App) -> bool {
+        let list = self.list.read(cx);
+        !teams_proto::is_team_thread_id(&target.conversation)
+            && list.loads() > 0
+            && list.row(&target.conversation).is_none()
+    }
+
     /// Opens what the Activity pane's newest item opens, as the pane opened from the rail does: a chat or a channel
-    /// that is there, a missed call's chat with the caller when there is one; nothing said otherwise. The pane keeps
+    /// that isn't gone, a missed call's chat with the caller when there is one; nothing said otherwise. The pane keeps
     /// the keyboard.
     fn open_newest(&mut self, event: &ActivityViewEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
-            ActivityViewEvent::Open(target)
-                if teams_proto::is_team_thread_id(&target.conversation)
-                    || self.list.read(cx).row(&target.conversation).is_some() =>
-            {
+            ActivityViewEvent::Open(target) if !self.chat_gone(target, cx) => {
                 self.open_message(target.clone(), window, cx);
             }
             ActivityViewEvent::ChatWith(mri) => {

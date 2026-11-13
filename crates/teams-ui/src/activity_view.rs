@@ -169,7 +169,8 @@ pub struct ActivityView {
     /// The header's "More options" menu, while open.
     header_menu: bool,
     shown: bool,
-    /// The pane was opened from the rail before the feed was read: its newest item opens once it is.
+    /// The pane was opened from the rail before the feed was read: its newest item opens once it is, in an active
+    /// window's selected account.
     open_newest: bool,
     /// The feed was read at least once.
     fed: bool,
@@ -366,7 +367,8 @@ impl ActivityView {
             if self.shown {
                 self.mark_seen(cx);
             }
-            if self.open_newest && self.shown {
+            // only on screen: a pane in a window put aside or an account switched from marks nothing unseen
+            if self.open_newest && self.shown && self.active {
                 self.open_newest(cx);
             }
             self.read_on_screen(cx);
@@ -420,6 +422,9 @@ impl ActivityView {
         if active {
             if self.shown {
                 self.mark_seen(cx);
+                if self.open_newest && self.fed {
+                    self.open_newest(cx);
+                }
             }
             self.read_on_screen(cx);
         }
@@ -682,7 +687,8 @@ impl ActivityView {
         cx.notify();
     }
 
-    /// Opens an item: marked read, its conversation opened at its message.
+    /// Opens an item: marked read, then what it opens (its message in its conversation, a meeting's day in the
+    /// calendar, a missed call's chat).
     pub fn open(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(item) = self.feed.item(id).cloned() else {
             return;
@@ -709,13 +715,13 @@ impl ActivityView {
         let Some(item) = self.shown_items(cx).first().map(|item| (*item).clone()) else {
             return;
         };
+        self.trace
+            .record(&TraceLine::new("activity", "newest").kind(kind_key(&item.kind)));
         if matches!(item.kind, ActivityKind::Meeting(_)) {
             self.selected = Some(item.id);
             self.scroll.scroll_to_item(0);
             return;
         }
-        self.trace
-            .record(&TraceLine::new("activity", "newest").kind(kind_key(&item.kind)));
         let event = opens(&item).map(|event| ActivityViewEvent::OpenNewest(Box::new(event)));
         self.act_on(&item.id, event, cx);
         self.scroll.scroll_to_item(0);

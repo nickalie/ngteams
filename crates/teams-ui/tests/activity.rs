@@ -878,22 +878,31 @@ fn meeting_item(id: i64, event: &str, (start, end): (i64, i64), read: bool) -> M
     }
 }
 
-/// 2026-10-27 at `hour` local time, as the calendar fixtures' floating times are placed, ms.
+/// 2026-10-27 (a Tuesday) at `hour` local time, as the calendar fixtures' floating times are placed, ms.
 fn local_ms(hour: u32) -> i64 {
+    local_ms_on(27, hour)
+}
+
+/// 2026-10-`day` at `hour` local time, ms.
+fn local_ms_on(day: u32, hour: u32) -> i64 {
     use chrono::TimeZone as _;
     chrono::Local
-        .with_ymd_and_hms(2026, 10, 27, hour, 0, 0)
+        .with_ymd_and_hms(2026, 10, day, hour, 0, 0)
         .single()
         .unwrap()
         .timestamp_millis()
 }
 
 fn calendar_event(id: &str, hour: u8, series: Option<&str>) -> teams_core::CalendarEvent {
+    calendar_event_on(27, id, hour, series)
+}
+
+fn calendar_event_on(day: u8, id: &str, hour: u8, series: Option<&str>) -> teams_core::CalendarEvent {
     let body = json!({
         "objectId": id,
         "subject": format!("Synthetic event {id}"),
-        "startTime": format!("2026-10-27T{hour:02}:00:00"),
-        "endTime": format!("2026-10-27T{:02}:00:00", hour + 1),
+        "startTime": format!("2026-10-{day:02}T{hour:02}:00:00"),
+        "endTime": format!("2026-10-{day:02}T{:02}:00:00", hour + 1),
         "isOnlineMeeting": true,
         "seriesMasterId": series,
         "myResponseType": "Accepted",
@@ -1052,4 +1061,106 @@ fn a_meeting_is_found_by_its_time_or_its_series_else_its_day_is_shown() {
     let calendar = calendar(&shell, cx);
     assert!(cx.update(|_, cx| calendar.read(cx).revealing().is_none()));
     assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), Main::Calendar);
+}
+
+#[test]
+fn a_weekend_meeting_widens_the_work_week_to_its_week() {
+    let rig = rig();
+    // 2026-10-31 is a Saturday, which the work week (the calendar's first view) leaves out
+    let messages = [meeting_item(
+        5000,
+        "made-up-saturday",
+        (local_ms_on(31, 10), local_ms_on(31, 11)),
+        true,
+    )];
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(&messages, None, None);
+    rig.core.calendar.lock().unwrap().events = vec![calendar_event_on(31, "made-up-saturday", 10, None)];
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    click(cx, "rail-activity");
+    cx.update(|_, cx| pane.update(cx, |pane, cx| pane.open("5000", cx)));
+    cx.run_until_parked();
+    let calendar = calendar(&shell, cx);
+    let saturday = chrono::NaiveDate::from_ymd_opt(2026, 10, 31).unwrap();
+    assert_eq!(
+        cx.update(|_, cx| calendar.read(cx).mode()),
+        teams_ui::calendar::Mode::Week
+    );
+    assert!(cx.update(|_, cx| calendar.read(cx).span().contains(saturday)));
+    assert_eq!(carded(&shell, cx).as_deref(), Some("made-up-saturday"));
+}
+
+#[test]
+fn a_series_occurrence_on_the_meeting_s_day_comes_first() {
+    let rig = rig();
+    // moved: at none of the occurrences' times, so found by its series, on its day (Tuesday), not Monday's
+    let messages = [meeting_item(5000, "made-up-series", (local_ms(9), local_ms(10)), true)];
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(&messages, None, None);
+    rig.core.calendar.lock().unwrap().events = vec![
+        calendar_event_on(26, "made-up-monday", 12, Some("made-up-series")),
+        calendar_event("made-up-tuesday", 12, Some("made-up-series")),
+    ];
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    click(cx, "rail-activity");
+    cx.update(|_, cx| pane.update(cx, |pane, cx| pane.open("5000", cx)));
+    cx.run_until_parked();
+    assert_eq!(carded(&shell, cx).as_deref(), Some("made-up-tuesday"));
+}
+
+#[test]
+fn events_read_before_the_ask_open_a_meeting_only_by_its_id() {
+    let rig = rig();
+    let messages = [
+        meeting_item(6000, "made-up-new", (local_ms(10), local_ms(11)), true),
+        meeting_item(5000, "made-up-first", (local_ms(14), local_ms(15)), true),
+    ];
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(&messages, None, None);
+    rig.core.calendar.lock().unwrap().events = vec![
+        calendar_event("made-up-first", 14, None),
+        calendar_event("made-up-other", 10, None),
+    ];
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    click(cx, "rail-activity");
+    let open = |id: &str, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| pane.update(cx, |pane, cx| pane.open(id, cx)));
+        cx.run_until_parked();
+    };
+    open("5000", cx);
+    assert_eq!(carded(&shell, cx).as_deref(), Some("made-up-first"));
+    // a new invitation, not in what the calendar read, at another meeting's time: the fresh read finds it
+    rig.core
+        .calendar
+        .lock()
+        .unwrap()
+        .events
+        .push(calendar_event("made-up-new", 10, None));
+    open("6000", cx);
+    assert_eq!(carded(&shell, cx).as_deref(), Some("made-up-new"));
+}
+
+#[test]
+fn the_newest_item_waits_for_an_active_window_to_open() {
+    let rig = rig();
+    *rig.core.activity_unread.lock().unwrap() = true;
+    let (shell, cx) = shell_window(&rig);
+    click(cx, "rail-activity");
+    let pane = view(&shell, cx);
+    // put aside before the feed is read: it is read, but nothing opens or is marked read unseen
+    cx.deactivate_window();
+    cx.run_until_parked();
+    *rig.core.activity_unread.lock().unwrap() = false;
+    cx.update(|_, cx| pane.update(cx, ActivityView::reload));
+    cx.run_until_parked();
+    assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), Main::Nothing);
+    assert!(!read(&pane, "3000", cx));
+    // back: the newest opens now
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).main().clone()),
+        Main::Chat(AB.to_owned())
+    );
+    assert!(read(&pane, "3000", cx));
 }
