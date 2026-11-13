@@ -1,11 +1,12 @@
 # Continuous integration
 
-The [Coverage workflow](../.github/workflows/coverage.yml) and
-[Windows portability workflow](../.github/workflows/windows.yml) skip pull requests and pushes to `main` whose
+The [Coverage workflow](../.github/workflows/coverage.yml),
+[Windows portability workflow](../.github/workflows/windows.yml) and
+[macOS portability workflow](../.github/workflows/macos.yml) skip pull requests and pushes to `main` whose
 changes are entirely Markdown (`**/*.md`) or under `docs/`. This includes `README.md`, `AGENTS.md` and skill prose.
 Files under any `tests/fixtures/` directory and `vendor/gpui-pre/README.md` remain included: tests consume fixtures
 and GPUI compiles its README with `include_str!`. Licenses remain included because packaging reads them. A mixed
-documentation/code change runs both workflows. Merge queues and manual dispatch remain unfiltered, as does
+documentation/code change runs them all. Merge queues and manual dispatch remain unfiltered, as does
 Coverage's reusable `workflow_call` entry point used by releases.
 
 The small [Fixture and documentation guard workflow](../.github/workflows/fixtures.yml) still runs
