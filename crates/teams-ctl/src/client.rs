@@ -179,13 +179,7 @@ impl Client {
             Outcome::Ok(other) => return Err(ClientError::Protocol(format!("{other:?} for subscribe"))),
             Outcome::Error(error) => return Ok(Err(Refused { id, error })),
         }
-        if let Err(error) = self.writer.set_read_timeout(None) {
-            // macOS refuses a socket option once the app has closed its end (`EINVAL`): what it sent before is read
-            // to its end all the same
-            if !(cfg!(target_vendor = "apple") && error.kind() == std::io::ErrorKind::InvalidInput) {
-                return Err(error.into());
-            }
-        }
+        subscription_timeout_result(self.writer.set_read_timeout(None), cfg!(target_vendor = "apple"))?;
         Ok(Ok(Events { reader: self.reader }))
     }
 
@@ -233,6 +227,16 @@ impl Client {
             Outcome::Error(error) => Err(ClientError::Server(error)),
         }
     }
+}
+
+fn subscription_timeout_result(result: io::Result<()>, is_apple: bool) -> Result<(), ClientError> {
+    if let Err(error) = result {
+        // macOS rejects socket options after the peer closes, but its buffered events can still be read.
+        if !(is_apple && error.kind() == io::ErrorKind::InvalidInput) {
+            return Err(error.into());
+        }
+    }
+    Ok(())
 }
 
 /// A subscription the app refused: the request's id and the error answered.
@@ -302,4 +306,57 @@ pub fn connect_stream(path: &Path, timeout: Duration) -> Result<Stream, ClientEr
         },
         _ => ClientError::from(source),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subscription_timeout_reset_succeeds_on_every_platform() {
+        for is_apple in [false, true] {
+            assert!(subscription_timeout_result(Ok(()), is_apple).is_ok());
+        }
+    }
+
+    #[test]
+    fn only_apple_accepts_invalid_input_when_resetting_subscription_timeout() {
+        assert!(subscription_timeout_result(Err(io::ErrorKind::InvalidInput.into()), true).is_ok());
+        let error = subscription_timeout_result(Err(io::ErrorKind::InvalidInput.into()), false).unwrap_err();
+        let ClientError::Codec(CodecError::Io(error)) = error else {
+            panic!("expected the socket error");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn other_subscription_timeout_reset_errors_keep_their_cause_on_every_platform() {
+        for is_apple in [false, true] {
+            let error = subscription_timeout_result(
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "synthetic socket failure",
+                )),
+                is_apple,
+            )
+            .unwrap_err();
+            let ClientError::Codec(CodecError::Io(error)) = error else {
+                panic!("expected the socket error");
+            };
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+            assert_eq!(error.to_string(), "synthetic socket failure");
+        }
+    }
+
+    #[test]
+    fn subscription_timeout_reset_preserves_timeout_classification_on_every_platform() {
+        for is_apple in [false, true] {
+            for kind in [io::ErrorKind::WouldBlock, io::ErrorKind::TimedOut] {
+                assert!(matches!(
+                    subscription_timeout_result(Err(kind.into()), is_apple),
+                    Err(ClientError::Timeout)
+                ));
+            }
+        }
+    }
 }
