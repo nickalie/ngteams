@@ -31,7 +31,8 @@
 //!   General → Message translation: the language by its menu, the Model dropdown, Codex and then Claude chosen, a
 //!   model's name typed under "Other model…" and the tool then started with it, and Codex chosen again (not
 //!   installed: said so in the box, "Install it").
-//! - **A narrow box**: the post box beside a thread compacts its toolbar and keeps its placeholder on one line.
+//! - **A narrow box**: the post box beside a thread compacts its toolbar and keeps its placeholder on one line; the
+//!   thread's narrow box shows Translate's and the language caret's tooltips, and the caret opens the menu.
 //!
 //! Screenshots are kept under `target/ui-shots/translate-*.png`, in Teams Light and Dark.
 //!
@@ -960,6 +961,42 @@ fn open_menu(user: &mut User, bar: Toolbar) -> SandboxResult {
     })
 }
 
+/// The pointer resting on `button` shows its tooltip (something drawn outside the button), in Teams Light and Dark,
+/// shot as `translate-<name>-{light,dark}.png`; back in Light after.
+fn tip_shown(user: &mut User, button: Rect, name: &str) -> SandboxResult {
+    let around = Rect {
+        x0: button.x0.saturating_sub(4),
+        y0: button.y0.saturating_sub(4),
+        x1: button.x1 + 4,
+        y1: button.y1 + 4,
+    };
+    for theme in ["light", "dark"] {
+        user.ask(&format!("theme-{theme}"))?;
+        user.park()?;
+        thread::sleep(SETTLE);
+        let before = user.look("tip-before.png")?;
+        user.input.move_to(button.center().0, button.center().1)?;
+        thread::sleep(QUIET);
+        let png = user.shot(&format!("translate-{name}-{theme}.png"))?;
+        let after = image::open(&png)?.to_rgb8();
+        user.park()?;
+        let tip = bounds_of(&after, |x, y, pixel| {
+            !around.contains((x, y))
+                && pixel
+                    .0
+                    .iter()
+                    .zip(before.get_pixel(x, y).0)
+                    .any(|(&got, was)| got.abs_diff(was) > 5)
+        });
+        if tip.is_none() {
+            return Err(format!("no tooltip by {button:?} in {theme}").into());
+        }
+    }
+    user.ask("theme-light")?;
+    thread::sleep(SETTLE);
+    Ok(())
+}
+
 /// A click at `at` brings a state `wanted` takes, named `what` in the error. A click the app didn't take is clicked
 /// again and said, at most twice.
 fn click_until(user: &mut User, at: (u32, u32), what: &str, wanted: impl Fn(&Value) -> bool) -> SandboxResult {
@@ -1411,6 +1448,14 @@ fn the_channel_s_boxes(user: &mut User) -> SandboxResult {
     if bar.send.x0 < THREAD.start || bar.send.x0 < POSTS.end {
         return Err(format!("the thread's toolbar isn't in the thread: {bar:?}").into());
     }
+    // the narrow box's Translate and language caret still name themselves, and the caret opens the menu
+    tip_shown(user, bar.translate, "thread-translate-tip")?;
+    tip_shown(user, bar.language, "thread-language-tip")?;
+    open_menu(user, bar)?;
+    user.key(keys::ESC)?;
+    user.until("the thread's language menu closed", |state| {
+        state["menu"]["open"] != true
+    })?;
     translates(user, "thread", None, (DRAFT, GERMAN))?;
     user.click(bar.translate.center())?;
     user.park()?;
