@@ -76,7 +76,7 @@ where
             }
             TeamAppsAsk::CachedDefinition { id, reply } => {
                 // the cache is never held across a read, so this answers at once
-                let known = cached(&self.app_definitions, &id);
+                let known = self.app_definitions.cached(&id);
                 let _ = reply.send(Ok(known));
             }
             TeamAppsAsk::Apps { team, reply } => self.spawn_read(reply, async move |client| {
@@ -147,17 +147,41 @@ async fn notification_settings<C: Credentials + 'static>(
     UserGraphSettingsRead::settings_of(answer.status(), answer.body()).ok()
 }
 
-/// Account-scoped definitions shared by Activity writes and readers such as app icons. The lock is held only to look
-/// up or insert, never across a read, so a cache-only ask for one app never waits on another app's read.
-pub(crate) type AppDefinitionsCache = Arc<std::sync::Mutex<BTreeMap<String, teams_proto::AppDefinition>>>;
+/// Account-scoped definitions shared by Activity writes and readers such as app icons. `known` is locked only to look
+/// up or insert, never across a read, so a cache-only ask for one app never waits on another app's read; `reading`
+/// holds one lock per app across its read, so concurrent asks for one app send one request.
+#[derive(Default)]
+pub(crate) struct AppDefinitionsCache {
+    known: std::sync::Mutex<BTreeMap<String, teams_proto::AppDefinition>>,
+    reading: std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
+}
 
-/// `id`'s definition when the cache has it.
-fn cached(cache: &AppDefinitionsCache, id: &str) -> Option<teams_proto::AppDefinition> {
-    cache
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(id)
-        .cloned()
+impl AppDefinitionsCache {
+    /// `id`'s definition when the cache has it.
+    fn cached(&self, id: &str) -> Option<teams_proto::AppDefinition> {
+        self.known
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(id)
+            .cloned()
+    }
+
+    fn reading(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        Arc::clone(
+            self.reading
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .entry(id.to_owned())
+                .or_default(),
+        )
+    }
+
+    fn insert(&self, id: &str, definition: teams_proto::AppDefinition) {
+        self.known
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id.to_owned(), definition);
+    }
 }
 
 pub(crate) async fn definition<C: Credentials + 'static>(
@@ -165,7 +189,12 @@ pub(crate) async fn definition<C: Credentials + 'static>(
     cache: &AppDefinitionsCache,
     id: &str,
 ) -> Option<teams_proto::AppDefinition> {
-    if let Some(definition) = cached(cache, id) {
+    if let Some(definition) = cache.cached(id) {
+        return Some(definition);
+    }
+    let reading = cache.reading(id);
+    let _reading = reading.lock().await;
+    if let Some(definition) = cache.cached(id) {
         return Some(definition);
     }
     let body = send_body(
@@ -179,9 +208,6 @@ pub(crate) async fn definition<C: Credentials + 'static>(
         .into_iter()
         .find(|app| app.definition.id() == id)?
         .definition;
-    cache
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(id.to_owned(), definition.clone());
+    cache.insert(id, definition.clone());
     Some(definition)
 }

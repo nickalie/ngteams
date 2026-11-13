@@ -1,11 +1,12 @@
 //! The pictures messages show, cached across runs, through two engines run one after the other on the same store,
-//! against wiremock as AMS, Graph and SharePoint's media host (the transport's `test-support` mock origin): a
+//! against wiremock as AMS, Graph, the middle tier and SharePoint's media host (the transport's `test-support` mock origin): a
 //! message's picture and a file's thumbnail read by the first run are shown by the second without a read; a picture
 //! the service has none of isn't cached, so the next run reads it again; the cache is a private file beside the store.
 //! A GIF and a link preview's picture are cached by what they are of; asks that come while a read runs wait for it; a
 //! file Graph lists no thumbnail for has none; a cache that can't be opened leaves every run reading. An app's tile on
 //! the CDN is read once per version and cached alike; a URL off the CDN's app folders is never read. A banner's ask for
-//! a tile answers only what the run keeps or the cache holds, and reads nothing.
+//! a tile answers only what the run keeps or the cache holds, and reads nothing. Concurrent asks for one app's
+//! definition share one read, and a banner's ask for another app's cached definition doesn't wait for it.
 //!
 //! Tokens, ids and links here are made up; the thumbnails' answer follows the synthetic fixture
 //! (`tests/fixtures/graph/thumbnails.json`).
@@ -25,7 +26,7 @@ use teams_core::engine::{self, EngineHandle, EngineOptions, Parts};
 use teams_proto::Mri;
 use teams_proto::{Author, Client, Credentials, FileThumbnails, HttpTransport, PastedFormat};
 use teams_store::{PictureCache, Store};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_json, method, path, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[path = "../../teams-platform/tests/support/privacy.rs"]
@@ -34,6 +35,7 @@ mod privacy;
 const LAB_A: &str = "8:orgid:0000000a-0000-4000-8000-00000000000a";
 const CHAT_BASE: &str = "https://teams.microsoft.com/api/chatsvc/amer";
 const AMS_BASE: &str = "https://us-prod.asyncgw.teams.microsoft.com";
+const MIDDLE_TIER_BASE: &str = "https://teams.microsoft.com/api/mt/part/amer-03";
 const OBJECT: &str = "0-eus-d9-00000000000000000000000000000abc";
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\nmade-up picture";
 const JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
@@ -65,7 +67,13 @@ impl Credentials for FakeTokens {
 fn engine(server: &MockServer, store_file: &Path) -> EngineHandle {
     let tokens = Arc::new(FakeTokens);
     let transport = || HttpTransport::with_mock_origin(Arc::clone(&tokens), CHAT_BASE, &server.uri()).unwrap();
-    let client = Arc::new(Client::new(transport().with_ams(AMS_BASE).unwrap()));
+    let client = Arc::new(Client::new(
+        transport()
+            .with_ams(AMS_BASE)
+            .unwrap()
+            .with_middle_tier(MIDDLE_TIER_BASE)
+            .unwrap(),
+    ));
     let author = Author::new(Mri::new(LAB_A), "lab-a");
     let outbox = Outbox::new(Arc::new(transport()), author);
     engine::start(Parts {
@@ -596,4 +604,51 @@ async fn a_banner_s_ask_for_an_app_s_tile_being_read_is_answered_without_waiting
     assert_eq!(requests.cached_app_picture(url).await.unwrap().unwrap().bytes, PNG);
     handle.shutdown();
     assert_eq!(requests_to(&server, TILE).await, 1);
+}
+
+#[tokio::test]
+async fn asks_for_an_app_s_definition_share_one_read_and_a_banner_s_ask_for_another_app_never_waits_on_it() {
+    const SLOW: &str = "00000000-0000-4000-8000-00000000a005";
+    const KNOWN: &str = "00000000-0000-4000-8000-00000000a006";
+    let server = MockServer::start().await;
+    for (id, delay) in [(SLOW, 3), (KNOWN, 0)] {
+        Mock::given(method("POST"))
+            .and(path_regex("/batchedDefinitions$"))
+            .and(body_json(serde_json::json!([id])))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!([{"id": id, "name": "Made-up App"}]))
+                    .set_delay(std::time::Duration::from_secs(delay)),
+            )
+            .mount(&server)
+            .await;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let handle = engine(&server, &store_file(&dir));
+    let requests = handle.requests();
+    let known = requests.app_definition(KNOWN.to_owned()).await.unwrap().unwrap();
+
+    let (first, second) = (
+        requests.app_definition(SLOW.to_owned()),
+        requests.app_definition(SLOW.to_owned()),
+    );
+    let banner = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        requests.cached_app_definition(KNOWN.to_owned()),
+    )
+    .await
+    .expect("answered while the other app is read");
+    assert_eq!(banner.unwrap(), Some(known));
+    let (first, second) = (first.await.unwrap().unwrap(), second.await.unwrap().unwrap());
+    assert_eq!(first, second);
+    handle.shutdown();
+    let reads: Vec<_> = server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.url.path().ends_with("/batchedDefinitions"))
+        .map(|request| serde_json::from_slice::<Value>(&request.body).unwrap())
+        .collect();
+    assert_eq!(reads, [serde_json::json!([KNOWN]), serde_json::json!([SLOW])]);
 }

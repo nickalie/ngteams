@@ -4,7 +4,8 @@
 //! icon shows the window again (the app asks [`Desktop::show`] then). No D-Bus address is read or reached.
 //!
 //! - The notification center serves only an app started from its bundle (`ngteams.app`): a binary run on its own gets
-//!   no notifications, said as a problem (GPUI's binding would abort the process on the center's first use).
+//!   no notifications, said as a problem (the app's own posting would abort the process without a bundle identifier;
+//!   GPUI's binding refuses that case itself).
 //! - Each notification's tag is this run's nonce and its id, never a chat's id or its text: an old run's notification
 //!   activated after a restart names no notification of this run and does nothing (its body still brings the app up).
 //! - Answer, and a notification's body, bring the app to the front; Decline doesn't.
@@ -155,7 +156,8 @@ fn run_nonce() -> String {
 }
 
 /// Whether this process was started from an app bundle with a bundle identifier, where the notification center serves
-/// it (for a bundle without one, the center raises an exception, which aborts the process: GPUI's binding checks it too).
+/// it (for a bundle without one, the center raises an exception, which aborts the process; GPUI's binding refuses that
+/// case itself, the app's own [`Poster`] doesn't).
 fn in_bundle() -> bool {
     std::env::current_exe().is_ok_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/"))
         && objc2_foundation::NSBundle::mainBundle().bundleIdentifier().is_some()
