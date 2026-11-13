@@ -87,11 +87,14 @@ for binary in ngteams ngteams-webview; do
     install_name_tool -add_rpath "@executable_path/../Frameworks/gstreamer/lib" \
         "$contents/MacOS/$binary" 2>/dev/null || true
 done
-# a link to a library outside the bundle and the system would fail on the user's Mac
-if otool -L "$contents/MacOS"/* | grep -F "$gstreamer"; then
-    echo "a binary still names the build's GStreamer prefix" >&2
-    exit 1
-fi
+# a link to a library outside the bundle and the system would fail on the user's Mac. otool -L heads each file's list
+# with "<file>:" lines, which may share the prefix's start (--out beside it): only the linked libraries are checked.
+for binary in "$contents/MacOS"/*; do
+    if otool -L "$binary" | awk '!/:$/ { print $1 }' | grep -F "$gstreamer"; then
+        echo "${binary#"$contents"/} still names the build's GStreamer prefix" >&2
+        exit 1
+    fi
+done
 
 # the release marker and identity the updater checks
 mkdir -p "$contents/Resources/ngteams"

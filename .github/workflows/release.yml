@@ -387,8 +387,16 @@ jobs:
           codesign --verify --strict --deep "$app"
           [[ "$(cat "$app/Contents/Resources/ngteams/update-format")" == macos-app ]]
           [[ "$(cat "$app/Contents/Resources/ngteams/release")" == "$VERSION" ]]
-          # nothing may link the build's GStreamer prefix: the user's Mac has none
-          if otool -L "$app"/Contents/MacOS/* | grep -F "$RUNNER_TEMP"; then exit 1; fi
+          # nothing may link the build's GStreamer prefix: the user's Mac has none. otool -L heads each file's list
+          # with "<file>:" (a universal file with a "(architecture ...):" line per slice), which is under RUNNER_TEMP
+          # too: only the linked libraries are checked.
+          for program in "$app"/Contents/MacOS/*; do
+            linked=$(otool -L "$program" | awk '!/:$/ { print $1 }')
+            if grep -F "$RUNNER_TEMP" <<< "$linked"; then
+              echo "::error::${program#"$app"/} links the build's GStreamer prefix"
+              exit 1
+            fi
+          done
           # display-free: the build identity and the control client's help touch no account or credential store
           identity=$("$app/Contents/MacOS/ngteams" --build-identity)
           [[ "$identity" == "$WORKSPACE_VERSION"$'\n'"$NGTEAMS_BUILD_COMMIT" ]] || { echo "build identity mismatch: $identity" >&2; exit 1; }
