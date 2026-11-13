@@ -11210,6 +11210,7 @@ dependencies = [
  "log",
  "percent-encoding",
  "reqwest 0.13.5",
+ "rusqlite",
  "serde",
  "serde_json",
  "teams-auth",

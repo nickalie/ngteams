@@ -13,7 +13,7 @@
 
 use std::collections::VecDeque;
 use std::future::{self, Future};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use serde_json::{Value, json};
@@ -2802,4 +2802,132 @@ async fn a_catch_up_s_debug_names_its_account_and_page_size_but_nothing_of_its_t
     assert!(shown.contains("page_size"), "{shown}");
     assert!(!shown.contains("placeholder-token"), "{shown}");
     assert!(!shown.contains(&server.uri()), "{shown}");
+}
+
+fn keep_message_missing_copy(account: &mut Account) {
+    let mut blocked = entry(1500, json!(1501));
+    blocked["from"] = json!(format!("{CHAT_BASE}/v1/users/ME/contacts/{LAB_A}"));
+    blocked["content"] = json!("");
+    blocked["properties"] = json!({"policyViolation": {"state": 1, "genericStreamItemId": 900}});
+    let message = serde_json::from_value(blocked).unwrap();
+    account
+        .catch_up
+        .receive_message(&mut account.store, CHAT, &message)
+        .unwrap();
+}
+
+async fn mount_copy_refusal(server: &MockServer) {
+    Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path_regex(
+            "/conversations/48(:|%3A)generic/messages/900$",
+        ))
+        .respond_with(ResponseTemplate::new(403))
+        .with_priority(1)
+        .mount(server)
+        .await;
+}
+
+async fn assert_copy_after(server: &MockServer, earlier_suffix: &str) {
+    let paths = paths_read(server).await;
+    let earlier = paths.iter().position(|path| path.ends_with(earlier_suffix)).unwrap();
+    let copies: Vec<_> = paths
+        .iter()
+        .enumerate()
+        .filter(|(_, path)| path.ends_with("/messages/900"))
+        .collect();
+    assert_eq!(copies.len(), 1, "{paths:?}");
+    assert!(earlier < copies[0].0, "{paths:?}");
+}
+
+struct MessageProgress(Arc<AtomicBool>);
+
+impl teams_core::sync::Meanwhile for MessageProgress {
+    fn serve<'a>(&'a self, _store: &'a mut Store) -> std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(future::pending())
+    }
+
+    fn progress(&self, store: &Store, _changes: &mut teams_core::sync::Changes) {
+        if store.message(CHAT, "2000").unwrap().is_some() {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+#[tokio::test]
+async fn missing_blocked_copies_wait_for_catch_up_messages_and_progress() {
+    let server = scripted(vec![("", page(vec![entry(2000, json!(2000))], Some("s1"), None))]).await;
+    mount_list(&server, vec![listed(CHAT, 2)], "l1").await;
+    Mock::given(wiremock::matchers::path_regex("/threads/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": CHAT})))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let mut a = plain_account(&server);
+    keep_message_missing_copy(&mut a);
+    let published = Arc::new(AtomicBool::new(false));
+    let published_before_copy = Arc::new(AtomicBool::new(false));
+    a.catch_up = a
+        .catch_up
+        .with_meanwhile(Arc::new(MessageProgress(Arc::clone(&published))));
+    Mock::given(wiremock::matchers::path_regex(
+        "/conversations/48(:|%3A)generic/messages/900$",
+    ))
+    .respond_with({
+        let published_before_copy = Arc::clone(&published_before_copy);
+        move |_: &Request| {
+            published_before_copy.store(published.load(Ordering::SeqCst), Ordering::SeqCst);
+            ResponseTemplate::new(403)
+        }
+    })
+    .with_priority(1)
+    .mount(&server)
+    .await;
+    let report = a.catch_up.catch_up(&mut a.store).await.unwrap();
+    assert!(report.failed.is_empty(), "{report:?}");
+    assert!(published_before_copy.load(Ordering::SeqCst));
+    assert_copy_after(&server, "/conversations").await;
+    assert_copy_after(&server, "/messages").await;
+}
+
+#[tokio::test]
+async fn missing_blocked_copies_follow_successful_and_failed_chat_reads() {
+    for status in [200, 403] {
+        let server = MockServer::start().await;
+        Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(ResponseTemplate::new(status).set_body_json(page(vec![], Some("s1"), None)))
+            .mount(&server)
+            .await;
+        mount_copy_refusal(&server).await;
+        let mut a = plain_account(&server);
+        keep_message_missing_copy(&mut a);
+        let result = a.catch_up.sync_messages(&mut a.store, CHAT).await;
+        assert_eq!(result.is_ok(), status == 200, "{result:?}");
+        assert_copy_after(&server, "/messages").await;
+    }
+}
+
+#[tokio::test]
+async fn missing_blocked_copies_are_retried_even_when_the_list_read_fails() {
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::method("GET"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+    let mut a = plain_account(&server);
+    keep_message_missing_copy(&mut a);
+    assert!(a.catch_up.catch_up(&mut a.store).await.is_err());
+    assert_copy_after(&server, "/conversations").await;
+}
+
+#[tokio::test]
+async fn a_blocked_copy_store_error_does_not_change_the_normal_sync_result() {
+    let server = scripted(vec![("", page(vec![], Some("s1"), None))]).await;
+    mount_list(&server, vec![], "l1").await;
+    let mut a = plain_account(&server);
+    rusqlite::Connection::open(a.store.path())
+        .unwrap()
+        .execute("DROP TABLE blocked_copies", [])
+        .unwrap();
+    a.catch_up.catch_up(&mut a.store).await.unwrap();
+    a.catch_up.sync_messages(&mut a.store, CHAT).await.unwrap();
 }

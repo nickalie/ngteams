@@ -701,7 +701,17 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
     pub async fn catch_up(&self, store: &mut Store) -> Result<CatchUpReport, CatchUpError> {
         self.scheduling.lock().unwrap_or_else(PoisonError::into_inner).completed = Some(HashMap::new());
         let _run = CatchUpRun(&self.scheduling);
-        self.retry_blocked_copies(store, None).await?;
+        let retry_failed = self
+            .failed_blocked_copies
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let result = self.catch_up_list(store).await;
+        self.retry_blocked_copies(store, None, &retry_failed).await;
+        result
+    }
+
+    async fn catch_up_list(&self, store: &mut Store) -> Result<CatchUpReport, CatchUpError> {
         self.read_app_horizon(store).await?;
         let kept = store.conversation_list_sync_link()?;
         let first = kept.is_none();
@@ -869,15 +879,18 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             return Ok(Synced::default());
         }
         let _active = self.active(conversation);
-        if self
+        let retry_failed = self
             .scheduling
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .completed
             .is_none()
-        {
-            self.retry_blocked_copies(store, Some(conversation)).await?;
-        }
+            .then(|| {
+                self.failed_blocked_copies
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone()
+            });
         let result = match self.sync_stored(store, conversation).await {
             Err(error) if conversation == NOTES && not_found(&error) => {
                 log::debug!("sync: the account's notes aren't there yet (404)");
@@ -895,6 +908,10 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             && let Some(meanwhile) = &self.meanwhile
         {
             meanwhile.synced(store, conversation, *synced);
+        }
+        if let Some(retry_failed) = retry_failed {
+            self.retry_blocked_copies(store, Some(conversation), &retry_failed)
+                .await;
         }
         result
     }
@@ -1133,8 +1150,19 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         self.read_blocked_copy(store, id).await
     }
 
-    async fn retry_blocked_copies(&self, store: &mut Store, conversation: Option<&str>) -> Result<(), CatchUpError> {
-        let missing = store.messages_missing_blocked_copies(self.me.as_str(), conversation)?;
+    async fn retry_blocked_copies(
+        &self,
+        store: &mut Store,
+        conversation: Option<&str>,
+        retry_failed: &HashSet<String>,
+    ) {
+        let missing = match store.messages_missing_blocked_copies(self.me.as_str(), conversation) {
+            Ok(missing) => missing,
+            Err(error) => {
+                log::debug!("sync: missing blocked copies weren't listed: {error}");
+                return;
+            }
+        };
         let ids: HashSet<_> = missing
             .iter()
             .filter_map(|message| {
@@ -1152,15 +1180,16 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
                 .unwrap_or_else(PoisonError::into_inner);
             let mut tried = self.tried_blocked_copies.lock().unwrap_or_else(PoisonError::into_inner);
             for id in &ids {
-                if failed.remove(id) {
+                if retry_failed.contains(id) && failed.remove(id) {
                     tried.remove(id);
                 }
             }
         }
         for id in ids {
-            self.read_blocked_copy(store, &id).await?;
+            if let Err(error) = self.read_blocked_copy(store, &id).await {
+                log::debug!("sync: blocked copy {id} wasn't recovered: {error}");
+            }
         }
-        Ok(())
     }
 
     async fn read_blocked_copy(&self, store: &mut Store, id: &str) -> Result<(), CatchUpError> {

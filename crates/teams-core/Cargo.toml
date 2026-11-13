@@ -51,6 +51,7 @@ teams-core = { path = ".", features = ["test-support"] }
 teams-media = { workspace = true, features = ["test-support"] }
 # the sync tests write as the other lab accounts straight to the mock chat service
 reqwest.workspace = true
+rusqlite.workspace = true
 # the sync tests' chat service, from the synthetic fixtures; with its calling service's media (a loopback peer behind
 # the parties it plays) for the call session's tests
 teams-mock = { workspace = true, features = ["media"] }

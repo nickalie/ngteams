@@ -14,8 +14,19 @@ const BLOCKED_MESSAGES: &str = "WITH candidates AS (
                                   THEN json_extract(properties, '$.policyViolation') END
             ELSE json_extract(properties, '$.policyViolation')
         END AS verdict
-    FROM messages WHERE sender = ?1 AND delete_time IS NULL AND json_valid(properties)
-)";
+    FROM messages WHERE sender = ?1 AND delete_time IS NULL AND json_valid(properties)";
+
+fn missing_blocked_copies_sql(conversation: bool) -> String {
+    let filter = if conversation { " AND conversation_id = ?2" } else { "" };
+    format!(
+        "{BLOCKED_MESSAGES}{filter})
+         SELECT {MESSAGE_COLUMNS} FROM candidates
+         WHERE json_extract(verdict, '$.state') = 1
+           AND json_extract(verdict, '$.genericStreamItemId') IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM blocked_copies
+               WHERE blocked_copies.id = CAST(json_extract(verdict, '$.genericStreamItemId') AS TEXT))"
+    )
+}
 
 /// A copy as the service sent it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,7 +88,7 @@ impl Store {
     /// [`StoreError::Sqlite`] when the read fails.
     pub fn messages_naming_copy(&self, sender: &str, id: &str) -> Result<Vec<Message>, StoreError> {
         let sql = format!(
-            "{BLOCKED_MESSAGES}
+            "{BLOCKED_MESSAGES})
              SELECT {MESSAGE_COLUMNS} FROM candidates
              WHERE json_extract(verdict, '$.state') = 1
                AND CAST(json_extract(verdict, '$.genericStreamItemId') AS TEXT) = ?2"
@@ -96,17 +107,12 @@ impl Store {
         sender: &str,
         conversation: Option<&str>,
     ) -> Result<Vec<Message>, StoreError> {
-        let sql = format!(
-            "{BLOCKED_MESSAGES}
-             SELECT {MESSAGE_COLUMNS} FROM candidates
-             WHERE json_extract(verdict, '$.state') = 1
-               AND (?2 IS NULL OR conversation_id = ?2)
-               AND json_extract(verdict, '$.genericStreamItemId') IS NOT NULL
-               AND NOT EXISTS (SELECT 1 FROM blocked_copies
-                   WHERE blocked_copies.id = CAST(json_extract(verdict, '$.genericStreamItemId') AS TEXT))"
-        );
+        let sql = missing_blocked_copies_sql(conversation.is_some());
         let mut statement = self.conn.prepare_cached(&sql)?;
-        let rows = statement.query_map(params![sender, conversation], message_from_row)?;
+        let rows = match conversation {
+            Some(conversation) => statement.query_map(params![sender, conversation], message_from_row)?,
+            None => statement.query_map([sender], message_from_row)?,
+        };
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -146,5 +152,31 @@ impl Store {
         }
         tx.commit()?;
         Ok(changed > 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_copies_in_one_conversation_search_the_conversation_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("store.sqlite")).unwrap();
+        let sql = format!("EXPLAIN QUERY PLAN {}", missing_blocked_copies_sql(true));
+        let mut statement = store.conn.prepare(&sql).unwrap();
+        let plan = statement
+            .query_map(params!["synthetic-sender", "synthetic-chat"], |row| {
+                row.get::<_, String>(3)
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("SEARCH messages") && step.contains("conversation_id=?")),
+            "{plan:?}"
+        );
+        assert!(!plan.iter().any(|step| step.contains("SCAN messages")), "{plan:?}");
     }
 }
