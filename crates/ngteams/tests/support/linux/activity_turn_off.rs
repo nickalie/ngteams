@@ -356,12 +356,20 @@ fn banner_into_closed_window(qa: &mut Qa<'_>, which: &str, shot: &str) -> Sandbo
     wait_until(WAIT, || qa.ask("state").ok().filter(|state| state["window"] == false))
         .ok_or("the window didn't close into the tray")?;
     let shown = qa.sandbox.bus().notifications().len();
+    qa.trace.drain();
     let pushed = qa.ask(&format!("push-app {which}"))?;
     let id = text(&pushed, "id");
     let banner = wait_until(BANNER_WAIT, || qa.sandbox.bus().notifications().get(shown).cloned())
         .ok_or("no banner for a new app item with the window closed")?;
     ensure(banner.body == format!("Made-up {which} reminder"), || {
         format!("the banner says {:?}: {:?}", banner.summary, banner.body)
+    })?;
+    // the app maps the banner to its item only once the server's reply is back: a click before it does nothing
+    qa.trace.next_where("the app item's banner shown", |line| {
+        line["view"] == "notification"
+            && line["change"] == "shown"
+            && line["conversation"] == "48:notifications"
+            && line["kinds"] == json!(["activity"])
     })?;
     qa.trace.drain();
     let from = qa.trace.seen.len();
