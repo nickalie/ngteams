@@ -249,7 +249,8 @@ fn first_line(text: &str) -> String {
 }
 
 /// A text message's first line with something in it, at most [`PREVIEW_CHARS`] characters: read from its sanitized
-/// rich text, or as it came for a `Text` message; [`DELETED`] for a deleted one; Teams' "Sent a card" for a card
+/// rich text with quotes left out (forwarded content kept), or as it came for a `Text` message;
+/// [`DELETED`] for a deleted one; Teams' "Sent a card" for a card
 /// ([`crate::card_view::SENT_A_CARD`]: its fallback text is never shown); a policy's notice for one whose text a
 /// policy withheld ([`crate::policy_notice`]).
 #[must_use]
@@ -263,7 +264,7 @@ pub fn message_line(message: &Message) -> String {
             // plain text: its `<` and `&` are the text's own
             first_line(&message.content)
         } else {
-            first_line(&parse_html(&message.content).plain_text())
+            text_line(&parse_html(&message.content))
         };
         if line.is_empty()
             && let Some(notice) = withheld(message)
@@ -330,10 +331,10 @@ fn own_line(text: String, message: &Message, me: &str) -> String {
 }
 
 /// The first line with something in it of `text` (a message's translation, or the account's own as written), at most
-/// [`PREVIEW_CHARS`] characters.
+/// [`PREVIEW_CHARS`] characters, with quotes left out and forwarded content kept.
 #[must_use]
 pub fn text_line(text: &teams_proto::chat::RichText) -> String {
-    first_line(&text.plain_text())
+    first_line(&text.preview_text())
 }
 
 /// What a chat is called, whether that is a name, and its picture.

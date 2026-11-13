@@ -162,6 +162,69 @@ impl Notifying {
 }
 
 #[test]
+fn a_reply_notifies_by_its_own_text_instead_of_its_quote() {
+    for quoted in [
+        "Earlier message",
+        "This message was blocked due to organization policy.",
+    ] {
+        let n = Notifying::start(Settings::default());
+        let reply = format!(
+            "<blockquote itemtype=\"http://schema.skype.com/Reply\" itemid=\"42\"><p>{quoted}</p></blockquote>\
+             <p>My <b>reply</b></p><p>Second line</p>"
+        );
+        n.arrive(message(AB, "reply", LAB_B, &reply, 5_000), Source::Delivery);
+        n.settle();
+        assert_eq!(n.server.shown()[0].body, "My reply");
+    }
+}
+
+#[test]
+fn a_translated_reply_notifies_by_its_own_translated_text() {
+    let mut settings = Settings::default();
+    settings.set_chat_language(LAB_A, AB, Some("de"));
+    let n = Notifying::start(settings);
+    let reply = message(
+        AB,
+        "reply",
+        LAB_B,
+        "<blockquote><p>Earlier message</p></blockquote><p>My reply</p>",
+        5_000,
+    );
+    let translated =
+        teams_proto::chat::parse_html("<blockquote><p>Frühere Nachricht</p></blockquote><p>Meine Antwort</p>");
+    n.rig
+        .core
+        .translations
+        .lock()
+        .unwrap()
+        .push(teams_store::StoredTranslation {
+            conversation_id: AB.to_owned(),
+            message_id: reply.id.clone(),
+            version: reply.version,
+            language: "de".to_owned(),
+            kind: teams_store::TranslationKind::Translated,
+            content: serde_json::to_string(&translated).unwrap(),
+            source_language: Some("en".to_owned()),
+        });
+    n.arrive(reply, Source::Delivery);
+    n.settle();
+    assert_eq!(n.server.shown()[0].body, "Meine Antwort");
+}
+
+#[test]
+fn a_withheld_message_still_notifies_by_its_policy_notice() {
+    let n = Notifying::start(Settings::default());
+    let mut withheld = message(AB, "withheld", LAB_B, "", 5_000);
+    withheld.properties = Some(r#"{"policyViolation":{"state":1,"violationType":"dlp"}}"#.to_owned());
+    n.arrive(withheld, Source::Delivery);
+    n.settle();
+    assert_eq!(
+        n.server.shown()[0].body,
+        "This message was blocked due to organization policy."
+    );
+}
+
+#[test]
 fn a_delivered_message_from_someone_else_notifies_with_its_name_and_first_line() {
     let n = Notifying::start(Settings::default());
     n.arrive(

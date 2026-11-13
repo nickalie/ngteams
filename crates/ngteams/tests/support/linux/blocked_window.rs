@@ -18,7 +18,8 @@
 //! - **Someone else's.** b's messages in a group chat: a policy's block shows only "…blocked due to organization
 //!   policy." with "What's this?" (opening Microsoft's page), a file type's its line and link, never their text; a
 //!   harmful link and phishing show their warnings over the text; a flag shows to its sender only ("This message was
-//!   flagged." on a's own, nothing on b's). A reply to the withheld message quotes the notice's line.
+//!   flagged." on a's own, nothing on b's). A reply to the withheld message quotes the notice's line and previews its
+//!   own text.
 //! - **Withheld before it came.** b's message that comes withheld to a chat not open notifies, and the chat list
 //!   previews it, with the notice's line.
 //! - **A restart between the copy and the block** (in that group chat). A copy kept before the app quit puts the text
@@ -394,7 +395,21 @@ fn reply_quotes_the_notice(run: &mut AppRun, sandbox: &Sandbox, service: &Servic
     if !sent.contains(OTHERS_LINE) || sent.contains(group::DLP_TEXT) {
         return Err(format!("the reply as sent: {sent}").into());
     }
-    step("a reply quotes a withheld message by its notice");
+    let expected = format!("You: {REPLY}");
+    let preview = wait_until(WAIT, || {
+        run.preview(&group.chat)
+            .ok()
+            .flatten()
+            .filter(|preview| preview == &expected)
+    });
+    if preview.is_none() {
+        return Err(format!("the chat list previews a's reply as {:?}", run.preview(&group.chat)?).into());
+    }
+    run.shot(sandbox, "blocked-reply-sent.png")?;
+    run.theme(true)?;
+    run.shot(sandbox, "blocked-reply-sent-dark.png")?;
+    run.theme(false)?;
+    step("a reply quotes the notice and previews its own text");
     Ok(())
 }
 

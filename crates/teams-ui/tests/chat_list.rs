@@ -91,6 +91,48 @@ async fn a_list_page_preview_shows_until_stored_history_replaces_it() {
     assert_eq!(row.preview.as_ref(), "You: Synced message");
 }
 
+#[test]
+fn reply_previews_read_the_reply_s_own_first_line_including_when_translated() {
+    use teams_ui::chat_list::{message_line, preview, text_line};
+
+    for quoted in [
+        "Earlier message",
+        "This message was blocked due to organization policy.",
+    ] {
+        let html = format!(
+            "<blockquote itemtype=\"http://schema.skype.com/Reply\" itemid=\"42\"><p>{quoted}</p></blockquote>\
+             <p><br></p><p>My <b>reply</b> &amp; more</p><p>Second line</p>"
+        );
+        let own = message(AB, "reply", LAB_A, &html, 5_000);
+        assert_eq!(message_line(&own), "My reply & more");
+        assert_eq!(preview(&[own], LAB_A).as_ref(), "You: My reply & more");
+        assert_eq!(text_line(&teams_proto::chat::parse_html(&html)), "My reply & more");
+        let other = message(AB, "reply", LAB_B, &html, 5_000);
+        assert_eq!(preview(&[other], LAB_A).as_ref(), "My reply & more");
+    }
+}
+
+#[test]
+fn preview_keeps_forwarded_content_and_bounds_the_reply_s_own_text() {
+    use teams_ui::chat_list::{PREVIEW_CHARS, message_line, text_line};
+
+    let forward = concat!(
+        "<blockquote itemtype=\"http://schema.skype.com/Forward\">",
+        "<p>Forwarded text</p></blockquote>"
+    );
+    assert_eq!(
+        message_line(&message(AB, "forward", LAB_B, forward, 5_000)),
+        "Forwarded text"
+    );
+    let quoted = "<blockquote><p>Earlier text</p></blockquote>";
+    assert!(text_line(&teams_proto::chat::parse_html(quoted)).is_empty());
+    let long = format!("{quoted}<p>{}</p>", "é".repeat(PREVIEW_CHARS + 1));
+    assert_eq!(
+        message_line(&message(AB, "reply", LAB_A, &long, 5_001)),
+        format!("{}…", "é".repeat(PREVIEW_CHARS - 1))
+    );
+}
+
 /// a's store: the a–b and a–c chats, a 1:1 with a bot, a group without a topic, a meeting's chat and a meeting nobody
 /// wrote in; a's notes and the a–c chat its favourites (in that order), the quiet meeting and the bot's chat empty.
 fn seed(core: &FakeCore) {

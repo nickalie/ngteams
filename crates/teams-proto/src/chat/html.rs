@@ -114,6 +114,14 @@ impl RichText {
         plain_text(&self.nodes, &mut text);
         text
     }
+
+    /// The text for a message preview: quotes left out, except a forwarded message's own content.
+    #[must_use]
+    pub fn preview_text(&self) -> String {
+        let mut text = String::new();
+        text_of(&self.nodes, &mut text, false);
+        text
+    }
 }
 
 /// One piece of rich text.
@@ -1057,21 +1065,26 @@ fn push_text(children: &mut Vec<Node>, text: &str, marks: Marks) {
 
 /// The text `nodes` show (see [`RichText::plain_text`]). Recursive, over a model at most [`MAX_DEPTH`] deep.
 fn plain_text(nodes: &[Node], out: &mut String) {
+    text_of(nodes, out, true);
+}
+
+fn text_of(nodes: &[Node], out: &mut String, include_quotes: bool) {
     for node in nodes {
         match node {
             Node::Text { text, .. } | Node::Mention { text, .. } => out.push_str(text),
             Node::Break => out.push('\n'),
             Node::Paragraph(children) | Node::Heading { children, .. } | Node::Indented { children, .. } => {
-                paragraph_text(children, out);
+                paragraph_text(children, out, include_quotes);
             }
-            Node::Link { children, .. } | Node::Span { children, .. } => plain_text(children, out),
+            Node::Link { children, .. } | Node::Span { children, .. } => text_of(children, out, include_quotes),
             Node::Rule => {
                 if !out.is_empty() && !out.ends_with('\n') {
                     out.push('\n');
                 }
             }
             Node::Image(image) => out.push_str(image.alt.as_deref().unwrap_or_default()),
-            Node::Quote(quote) => plain_text(&quote.body, out),
+            Node::Quote(quote) if include_quotes || quote.forward => text_of(&quote.body, out, include_quotes),
+            Node::Quote(_) => {}
             Node::Code(code) => {
                 if !out.is_empty() && !out.ends_with('\n') {
                     out.push('\n');
@@ -1081,7 +1094,7 @@ fn plain_text(nodes: &[Node], out: &mut String) {
             }
             Node::List(list) => {
                 for item in &list.items {
-                    item_text(item, out);
+                    item_text(item, out, include_quotes);
                 }
             }
         }
@@ -1089,20 +1102,20 @@ fn plain_text(nodes: &[Node], out: &mut String) {
 }
 
 /// The text of a paragraph with its `children`: on a line of its own.
-fn paragraph_text(children: &[Node], out: &mut String) {
+fn paragraph_text(children: &[Node], out: &mut String, include_quotes: bool) {
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
-    plain_text(children, out);
+    text_of(children, out, include_quotes);
     out.push('\n');
 }
 
 /// The text of a list's item: on a line of its own, with no blank line after a list nested at its end.
-fn item_text(children: &[Node], out: &mut String) {
+fn item_text(children: &[Node], out: &mut String, include_quotes: bool) {
     if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
-    plain_text(children, out);
+    text_of(children, out, include_quotes);
     if !out.ends_with('\n') {
         out.push('\n');
     }

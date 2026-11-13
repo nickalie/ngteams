@@ -924,6 +924,44 @@ fn a_segment_time_in_a_form_no_capture_showed_is_unknown() -> TestResult {
 // ---- rich text ----
 
 #[test]
+fn html_preview_omits_quotes_while_plain_text_keeps_them() {
+    for quote in [
+        "<blockquote><p>Earlier text</p></blockquote>",
+        concat!(
+            "<blockquote itemtype=\"http://schema.skype.com/Reply\" itemid=\"42\">",
+            "<p>This message was blocked due to organization policy.</p></blockquote>"
+        ),
+    ] {
+        let rich = parse_html(&format!("{quote}<p>My <b>reply</b> &amp; more</p><p>Second line</p>"));
+        assert_eq!(rich.preview_text(), "My reply & more\nSecond line\n");
+        assert_eq!(
+            rich.plain_text(),
+            format!("{}My reply & more\nSecond line\n", parse_html(quote).plain_text())
+        );
+        assert!(parse_html(quote).preview_text().is_empty());
+    }
+}
+
+#[test]
+fn html_preview_omits_nested_quotes_and_keeps_forwarded_content_and_formatting() {
+    let rich = parse_html(concat!(
+        "<div><blockquote>Quoted</blockquote><h2>Heading</h2></div>",
+        "<ul><li><blockquote>Also quoted</blockquote><span>Item</span></li></ul>",
+        "<blockquote itemtype=\"http://schema.skype.com/Forward\">",
+        "<blockquote>Original quote</blockquote><p>Forwarded text</p></blockquote>",
+        "<pre>Code</pre><hr><p><a href=\"https://example.test\">Link</a><br>",
+        "<img src=\"https://example.test/a.png\" alt=\"Picture\"></p>"
+    ));
+    assert_eq!(
+        rich.preview_text(),
+        "Heading\n\nItem\nForwarded text\nCode\nLink\nPicture\n"
+    );
+    for quoted in ["Quoted", "Also quoted", "Original quote"] {
+        assert!(rich.plain_text().contains(quoted));
+    }
+}
+
+#[test]
 fn no_script_style_or_event_attribute_survives() {
     let rich = parse_html(concat!(
         "<p onclick=\"alert(1)\" style=\"color:red\">hi<script>alert(2)</script><style>p{}</style></p>",
