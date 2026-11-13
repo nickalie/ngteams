@@ -125,7 +125,7 @@ impl RecapView {
 
     /// Try again after a tool was missing: the tools looked for again, then the summary made.
     pub fn find_tools_and_summarize(&mut self, cx: &mut Context<Self>) {
-        cx.set_global(Tools::detect());
+        Tools::look_again(cx);
         self.summarize(cx);
     }
 

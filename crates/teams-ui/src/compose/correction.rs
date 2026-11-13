@@ -273,11 +273,7 @@ impl Compose {
 
     fn correction_failed(&mut self, draft: Doc, failure: &Failure, cx: &mut Context<Self>) {
         let missing = matches!(failure, Failure::NotInstalled(_));
-        let hint = if missing {
-            " Install it, or choose another tool in Settings under General."
-        } else {
-            ""
-        };
+        let hint = failure.install_hint();
         self.correction.state = State::Failed {
             draft,
             why: format!("Your message wasn't corrected. {}{hint}", failure.message()).into(),
@@ -389,7 +385,7 @@ impl Compose {
     /// Try again after a failure, or Check again after the draft changed; tools are looked for again if one was missing.
     pub fn retry_correction(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.correction.state, State::Failed { missing: true, .. }) {
-            cx.set_global(Tools::detect());
+            Tools::look_again(cx);
         }
         self.correction.state = State::Idle;
         self.start_correction(window, cx);

@@ -170,9 +170,12 @@ impl Editor {
             Kind::Heading(level) => rich_text::block_text_size(Some(level), None),
             _ => rich_text::block_text_size(None, block_size(block)),
         };
+        let placeholder = index == 0 && self.is_empty() && !self.placeholder.is_empty();
         let body = div()
             .flex_1()
             .min_w_0()
+            // a placeholder is one line, cut short where the box is narrow
+            .when(placeholder, gpui::Styled::truncate)
             .when_some(size, |body, size| body.text_size(px(size)).line_height(px(size * 1.35)))
             .when(matches!(block.kind, Kind::Heading(_)), |body| {
                 body.font_weight(FontWeight::SEMIBOLD)

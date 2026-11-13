@@ -421,9 +421,66 @@ fn with_no_tool_installed_it_says_so_and_offers_the_setting() {
         panic!("{:?}", status(&compose, cx))
     };
     assert!(why.contains("Neither Claude Code"), "{why}");
+    assert!(
+        why.ends_with("Install one, or choose another tool in Settings under General."),
+        "{why}"
+    );
     assert!(cx.debug_bounds("compose-draft-translation-settings").is_some());
     assert!(fake.asked().is_empty());
     assert_eq!(value(&compose, cx), "hello");
+}
+
+#[test]
+fn the_one_tool_chosen_missing_is_named_with_install_it() {
+    let rig = Rig::start();
+    let fake = Fake::install(&rig);
+    let model = settings(&rig);
+    rig.cx.update(|cx| {
+        model.update(cx, |model, cx| {
+            model.change(
+                |settings| settings.message_translator = AiChoice::of(ToolChoice::Only(Backend::Codex)),
+                cx,
+            );
+        });
+    });
+    let (compose, cx) = chat_in(&rig, &model);
+    type_in(&compose, cx, "hello");
+    translate(&compose, cx);
+    draw(cx);
+    let DraftTranslationStatus::Failed(why) = status(&compose, cx) else {
+        panic!("{:?}", status(&compose, cx))
+    };
+    assert_eq!(
+        why.as_ref(),
+        "Your message wasn't translated. The Codex CLI (codex) isn't installed. Install it, or choose another tool \
+         in Settings under General."
+    );
+    assert!(fake.asked().is_empty());
+}
+
+#[test]
+fn a_narrow_box_keeps_its_placeholder_on_one_line_and_its_language_an_icon() {
+    let rig = Rig::start();
+    let _fake = Fake::install(&rig);
+    let (compose, cx) = chat(&rig);
+    compose.update(cx, |compose, cx| {
+        compose.in_channel(Writes::Channel, "Message in A made-up channel with a long name", cx);
+    });
+    draw(cx);
+    let wide = cx.debug_bounds("compose-language").unwrap();
+    let one_line = cx.debug_bounds("compose-box").unwrap().size.height;
+
+    cx.simulate_resize(size(px(380.0), px(600.0)));
+    draw(cx);
+    let narrow = cx.debug_bounds("compose-language").unwrap();
+    assert!(narrow.size.width < wide.size.width, "{narrow:?} vs {wide:?}");
+    assert!(narrow.size.width <= px(28.0), "{narrow:?}");
+    assert_eq!(cx.debug_bounds("compose-box").unwrap().size.height, one_line);
+
+    // the menu still opens from the icon
+    click(cx, "compose-language");
+    draw(cx);
+    assert!(cx.debug_bounds("compose-language-menu").is_some());
 }
 
 #[test]

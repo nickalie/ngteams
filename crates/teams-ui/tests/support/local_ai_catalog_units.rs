@@ -179,6 +179,50 @@ fn the_catalog_lists_each_installed_tool_and_the_app_s_is_listed_in_the_backgrou
     assert_eq!(cx.update(Catalog::of), set);
 }
 
+#[gpui::test]
+fn a_tool_found_on_a_later_look_has_its_models_listed(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let catalog = dir.path().join("catalog.json");
+    fs::write(&catalog, CODEX_CATALOG).unwrap();
+    let codex = fake(dir.path(), "codex", &format!("cat '{}'", catalog.display()));
+
+    cx.update(|cx| cx.set_global(Tools::default()));
+    cx.update(Catalog::of);
+    cx.run_until_parked();
+    assert!(cx.update(Catalog::of).models(Backend::Codex).is_empty());
+
+    // Try again finds the tool installed since
+    let found = Tools::with(vec![(Backend::Codex, codex)]);
+    cx.update(|cx| Tools::found_again(found.clone(), cx));
+    assert!(!cx.update(Catalog::of).is_listed(), "being listed again");
+    cx.run_until_parked();
+    assert_eq!(cx.update(Catalog::of).models(Backend::Codex).len(), 3);
+
+    // the same tools found again: the models aren't asked for again
+    let set = Catalog::with(Vec::new(), vec![listed("gpt-set", "GPT-Set", false)]);
+    cx.update(|cx| cx.set_global(set.clone()));
+    cx.update(|cx| Tools::found_again(found, cx));
+    cx.run_until_parked();
+    assert_eq!(cx.update(Catalog::of), set);
+}
+
+#[gpui::test]
+fn a_listing_of_tools_since_found_again_is_dropped(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let catalog = dir.path().join("catalog.json");
+    fs::write(&catalog, CODEX_CATALOG).unwrap();
+    let codex = fake(dir.path(), "codex", &format!("cat '{}'", catalog.display()));
+
+    cx.update(|cx| cx.set_global(Tools::with(vec![(Backend::Codex, codex)])));
+    cx.update(Catalog::of);
+    // the tool is gone before its listing comes back
+    cx.update(|cx| Tools::found_again(Tools::default(), cx));
+    cx.run_until_parked();
+    let catalog = cx.update(Catalog::of);
+    assert!(catalog.is_listed());
+    assert!(catalog.models(Backend::Codex).is_empty());
+}
+
 fn listed_one() -> Listed {
     listed("opus", "Opus", true)
 }

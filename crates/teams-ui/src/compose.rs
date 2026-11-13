@@ -31,9 +31,11 @@
 //! - **The box** is drawn as Teams' compose box: the editor on a raised, rounded surface with a hairline border
 //!   ([`BOX_HEIGHT`] at least), Teams' accent line in the brand colour along its foot while it has the focus, and its
 //!   controls inside it on the right: Format, Emoji, Attach, Loop and Actions and apps (the last two shown disabled,
-//!   saying the app doesn't have them yet), Correct, Translate and its language, a thin divider, then Send. Expanded,
-//!   the format bar ([`crate::editor::toolbar::FormatBar`]) runs along its top, the editor is taller, and the controls
-//!   sit along its foot; Discard on the bar empties the box (and ends a reply or an edit).
+//!   saying the app doesn't have them yet), Correct, Translate and its language, a thin divider, then Send. Its
+//!   placeholder stays on one line, cut short with an ellipsis; a narrow box (a thread's pane) shows the language as
+//!   a caret alone, naming it in its tooltip. Expanded, the format bar ([`crate::editor::toolbar::FormatBar`]) runs
+//!   along its top, the editor is taller, and the controls sit along its foot; Discard on the bar empties the box (and
+//!   ends a reply or an edit).
 //! - **Emoji** ([`Compose::toggle_emoji`], the button or Ctrl+.): every emoji Teams offers ([`ReactionPicker::for_emoji`],
 //!   searchable) over the box; the one picked goes in at the cursor, in place of the text selected, as if typed. It
 //!   is only text in the box: nothing is sent until the message is.
@@ -115,6 +117,8 @@ pub const BOX_HEIGHT: f32 = 56.0;
 const BOX_PADDING: f32 = 6.0;
 /// A toolbar button in the box, px (its icon three quarters of it).
 const TOOL: f32 = 28.0;
+/// Below this width, px, the box's toolbar is compacted (the translation language an icon alone), as in a thread's pane.
+const NARROW_BOX: f32 = 560.0;
 /// The editor's least height expanded, px: Teams' expanded box's writing area.
 const EXPANDED_MIN: f32 = 96.0;
 /// The editor's most height expanded, px, before it scrolls.
@@ -638,6 +642,8 @@ pub struct Compose {
     emoji: Option<(Entity<ReactionPicker>, Subscription)>,
     /// Where the emoji button was last drawn, for the picker to open by.
     emoji_at: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// Where the box was last drawn: a narrow one compacts its toolbar.
+    box_at: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Whether the picker was open as the emoji button was pressed: its click then closes it.
     emoji_on_press: bool,
     _editor_events: Subscription,
@@ -749,6 +755,7 @@ impl Compose {
             draft_translation: draft_translation::DraftTranslation::new(),
             emoji: None,
             emoji_at: Rc::default(),
+            box_at: Rc::default(),
             emoji_on_press: false,
             _editor_events: editor_events,
             _bar_events: bar_events,
@@ -1683,7 +1690,7 @@ impl Compose {
                     .then(|| unavailable("compose-apps", Glyph::PLUS, NO_APPS)),
             )
             .child(self.correct_button(cx))
-            .child(self.translate_buttons(cx))
+            .child(self.translate_buttons(self.is_narrow(), cx))
             .child(div().w(px(1.0)).h(px(20.0)).mx_1().bg(rgb(palette.border)))
             .child(self.send_button(palette, cx))
             .into_any_element()
@@ -1711,6 +1718,14 @@ impl Compose {
             .with_priority(1)
             .into_any_element(),
         )
+    }
+
+    /// Whether the box was last drawn narrower than [`NARROW_BOX`], its toolbar compacted.
+    #[must_use]
+    pub fn is_narrow(&self) -> bool {
+        self.box_at
+            .get()
+            .is_some_and(|bounds| bounds.size.width < px(NARROW_BOX))
     }
 
     /// The box itself: the editor and its controls on a raised, rounded surface with a hairline border, and Teams'
@@ -1769,6 +1784,7 @@ impl Compose {
                 .child(div().px_1().pt_1().child(self.editor.clone()))
                 .children(self.attachment_cards(palette, cx))
                 .child(div().flex().justify_end().child(self.toolbar(palette, cx)))
+                .child(measured(&self.box_at))
                 .children(accent)
                 .into_any_element();
         }
@@ -1795,6 +1811,7 @@ impl Compose {
             .overflow_hidden()
             .children(send_to.map(gpui::Styled::pt_1))
             .child(line)
+            .child(measured(&self.box_at))
             .children(accent)
             .into_any_element()
     }

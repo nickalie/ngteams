@@ -26,10 +26,12 @@
 //!   draft starts nothing; a draft of only a mention has no words to translate.
 //! - **One language for every box**: the a–c chat's box shows it too.
 //! - **After a restart**, without the tool on the `PATH`: the language is the one chosen; Translate says no tool is
-//!   installed, Open settings opens Settings → General, and once the tool is there Try again translates. In Settings →
+//!   installed, Open settings opens Settings → General, and once the tool is there Try again translates and lists the
+//!   models it offers. In Settings →
 //!   General → Message translation: the language by its menu, the Model dropdown, Codex and then Claude chosen, a
 //!   model's name typed under "Other model…" and the tool then started with it, and Codex chosen again (not
-//!   installed: said so in the box).
+//!   installed: said so in the box, "Install it").
+//! - **A narrow box**: the post box beside a thread compacts its toolbar and keeps its placeholder on one line.
 //!
 //! Screenshots are kept under `target/ui-shots/translate-*.png`, in Teams Light and Dark.
 //!
@@ -601,12 +603,12 @@ impl<'a> User<'a> {
             x1: send.x0,
             y1: row + 15,
         };
-        // the language button ends a divider's width left of Send
+        // the language button ends a divider's width left of Send (its caret alone in a narrow box)
         let mut language = None;
         for _ in 0..3 {
             let found = self.hovered((send.x0 - 26, row), band)?;
             language = found.filter(|found| {
-                (34..=130).contains(&found.width()) && (send.x0 - 24..=send.x0 - 10).contains(&found.x1)
+                (14..=130).contains(&found.width()) && (send.x0 - 24..=send.x0 - 10).contains(&found.x1)
             });
             if language.is_some() {
                 break;
@@ -1395,6 +1397,11 @@ fn the_channel_s_boxes(user: &mut User) -> SandboxResult {
 
     user.open("open-thread")?;
     user.until("the thread's box", |state| state["boxes"]["thread"].is_object())?;
+    // beside the thread the post box is narrow: its toolbar compacted, its placeholder one line
+    user.until("the post box compacted beside the thread", |state| {
+        state["boxes"]["post"]["narrow"] == true && text(state, "post").is_empty()
+    })?;
+    user.shots_in_both_themes("thread-placeholder")?;
     user.click((THREAD.start + 120, 749))?;
     user.park()?;
     user.until("the thread's box has the keys", |state| focused(state, "thread"))?;
@@ -1472,6 +1479,10 @@ fn no_tool_installed(user: &mut User) -> SandboxResult {
     user.until("Try again finds the tool and translates", |state| {
         text(state, "chat") == GERMAN && status(state, "chat") == "idle"
     })?;
+    // and the models it offers are listed for the settings
+    user.until("the tool found lists its models", |state| {
+        state["claude_models"] == json!(["sonnet", "opus"])
+    })?;
     Ok(())
 }
 
@@ -1513,8 +1524,9 @@ fn the_settings(user: &mut User) -> SandboxResult {
         return Err("a click on the model dropdown (Claude) shows no menu".into());
     }
     user.shot("translate-settings-model-claude-light.png")?;
-    // its last row, "Other model…", and a model's name typed
-    for _ in 0..3 {
+    // its last row, "Other model…" (after Recommended, Claude Code's default and the tool's two models), and a model's
+    // name typed
+    for _ in 0..5 {
         user.key(keys::DOWN)?;
     }
     user.key(keys::ENTER)?;
@@ -1546,9 +1558,12 @@ fn the_settings(user: &mut User) -> SandboxResult {
     user.open("open-ab")?;
     type_draft(user, "chat", DRAFT)?;
     user.press("ctrl+shift+y")?;
-    user.until("Codex isn't installed", |state| {
+    let state = user.until("Codex isn't installed", |state| {
         status(state, "chat").starts_with("failed:") && status(state, "chat").contains("Codex")
     })?;
+    if !status(&state, "chat").ends_with("Install it, or choose another tool in Settings under General.") {
+        return Err(format!("the one tool missing isn't worded for it: {state}").into());
+    }
     user.shots_in_both_themes("codex-missing")?;
     Ok(())
 }
@@ -2006,6 +2021,15 @@ fn state_of(shell: &Entity<Shell>, window: &Window, cx: &App) -> Value {
         "language": settings.message_translate_to,
         "tool": format!("{:?}", choice.tool),
         "model": format!("{:?}", choice.model),
+        "claude_models": cx
+            .try_global::<teams_ui::local_ai::Catalog>()
+            .map_or(Vec::new(), |catalog| {
+                catalog
+                    .models(teams_ui::local_ai::Backend::Claude)
+                    .iter()
+                    .map(|listed| listed.id.clone())
+                    .collect()
+            }),
     })
 }
 
@@ -2068,6 +2092,7 @@ fn box_state(compose: &Entity<Compose>, window: &Window, cx: &App) -> Value {
         "correction": format!("{:?}", compose.correction_status()),
         "mode": mode,
         "focused": compose.focused(window, cx),
+        "narrow": compose.is_narrow(),
         "mentioning": compose.picker().map_or(0, |picker| picker.matches.len()),
         "menu": menu,
     })

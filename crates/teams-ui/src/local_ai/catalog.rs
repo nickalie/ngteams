@@ -8,7 +8,8 @@
 //!   `~/.codex/models_cache.json` (`$CODEX_HOME` when set) is read. Models it hides from its own picker are left out.
 //!
 //! The settings offer these, and also take any other name the user types ([`super::Model::Named`]). The catalog is an
-//! app global, listed once per run in the background ([`Catalog::of`]).
+//! app global, listed in the background on first use ([`Catalog::of`]) and again when the tools found change
+//! ([`super::Tools::look_again`]).
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -91,16 +92,27 @@ impl Catalog {
         if let Some(catalog) = cx.try_global::<Self>() {
             return catalog.clone();
         }
+        Self::relist(cx);
+        Self::default()
+    }
+
+    /// Asks the app's tools for their models again (they changed), in the background; empty until they answer.
+    pub fn relist(cx: &mut App) {
         cx.set_global(Self::default());
         let tools = Tools::of(cx);
+        let asked = tools.clone();
         // on the background executor (a pool thread; the test scheduler's own in tests)
-        let listing = cx.background_executor().spawn(async move { Self::list(&tools) });
+        let listing = cx.background_executor().spawn(async move { Self::list(&asked) });
         cx.spawn(async move |cx: &mut AsyncApp| {
             let catalog = listing.await;
-            cx.update(|cx| cx.set_global(catalog));
+            cx.update(|cx| {
+                // a listing of tools since found again is stale
+                if cx.try_global::<Tools>() == Some(&tools) {
+                    cx.set_global(catalog);
+                }
+            });
         })
         .detach();
-        Self::default()
     }
 
     /// Asks each tool in `tools` for its models (blocking: a tool runs).

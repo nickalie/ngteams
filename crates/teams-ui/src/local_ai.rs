@@ -363,7 +363,8 @@ impl AiChoice {
     }
 }
 
-/// The tools found on this computer: an app global, looked for on the `PATH` once (and again on Try again).
+/// The tools found on this computer: an app global, looked for on the `PATH` once (and again on Try again:
+/// [`Tools::look_again`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Tools {
     pub(crate) found: Vec<(Backend, PathBuf)>,
@@ -400,6 +401,23 @@ impl Tools {
             cx.set_global(Self::detect());
         }
         cx.global::<Self>().clone()
+    }
+
+    /// Looks on the `PATH` again (Try again after a tool was missing); when what is found changed, the models the
+    /// tools offer are listed again too.
+    pub fn look_again(cx: &mut App) {
+        Self::found_again(Self::detect(), cx);
+    }
+
+    /// The tools a look on the `PATH` found: the app's from now on, and the models listed again when they changed.
+    pub fn found_again(found: Self, cx: &mut App) {
+        if cx.try_global::<Self>() == Some(&found) {
+            return;
+        }
+        cx.set_global(found);
+        if cx.has_global::<Catalog>() {
+            Catalog::relist(cx);
+        }
     }
 
     /// The tools installed, Claude Code first.
@@ -472,6 +490,16 @@ pub enum Failure {
 }
 
 impl Failure {
+    /// What a draft's failure line adds when the tool isn't installed: install the one named, or one of the two.
+    #[must_use]
+    pub fn install_hint(&self) -> &'static str {
+        match self {
+            Self::NotInstalled(None) => " Install one, or choose another tool in Settings under General.",
+            Self::NotInstalled(Some(_)) => " Install it, or choose another tool in Settings under General.",
+            _ => "",
+        }
+    }
+
     /// What a view says of it.
     #[must_use]
     pub fn message(&self) -> String {

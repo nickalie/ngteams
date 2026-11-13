@@ -1,6 +1,7 @@
 //! The box's side of translating a draft ([`crate::draft_translate`]): Translate (the toolbar's button or Ctrl+Shift+Y)
 //! sends what the box holds to the tool the settings name and puts the translation in its place; the language button
-//! beside it shows the language every box translates into and opens the menu that changes it.
+//! beside it shows the language every box translates into (in a narrow box only in its tooltip, the button a caret alone)
+//! and opens the menu that changes it.
 //!
 //! - **One edit**: the translation replaces the draft as one edit, so Ctrl+Z brings the draft as written back.
 //! - **Of the draft it read**: the draft changing while the tool works drops the translation, saying so; a result that
@@ -207,11 +208,7 @@ impl Compose {
 
     fn draft_translation_failed(&mut self, failure: &Failure, cx: &mut Context<Self>) {
         let missing = matches!(failure, Failure::NotInstalled(_));
-        let hint = if missing {
-            " Install one, or choose another tool in Settings under General."
-        } else {
-            ""
-        };
+        let hint = failure.install_hint();
         self.draft_translation.state = State::Failed {
             why: format!("Your message wasn't translated. {}{hint}", failure.message()).into(),
             missing,
@@ -294,7 +291,7 @@ impl Compose {
     /// Try again after a failure, or after the draft changed; tools are looked for again if none was found.
     pub fn retry_draft_translation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.draft_translation.state, State::Failed { missing: true, .. }) {
-            cx.set_global(Tools::detect());
+            Tools::look_again(cx);
         }
         self.draft_translation.state = State::Idle;
         self.start_draft_translation(window, cx);
@@ -326,8 +323,9 @@ impl Compose {
         self.language_menu_entity(window, cx);
     }
 
-    /// Translate and the language button, in the box's toolbar: Translate lit while it runs, when it stops it.
-    pub(super) fn translate_buttons(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// Translate and the language button, in the box's toolbar: Translate lit while it runs, when it stops it; the
+    /// language button its name and a caret, or the caret alone in a `narrow` box.
+    pub(super) fn translate_buttons(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
         let busy = self.translating_draft();
         let language = self.settings.read(cx).settings().message_translate_to.clone();
         let tip: SharedString = if busy {
@@ -343,11 +341,13 @@ impl Compose {
         let face = Button::new("compose-language")
             .ghost()
             .compact()
-            .with_size(Size::Small)
-            .label(short(&language))
-            .dropdown_caret(true)
             .tooltip(format!("Translation language: {language}"))
             .accessibility_label(format!("Translation language: {language}"));
+        let face = if narrow {
+            face.with_size(Size::XSmall).icon(Glyph::CHEVRON_DOWN.icon())
+        } else {
+            face.with_size(Size::Small).label(short(&language)).dropdown_caret(true)
+        };
         div()
             .flex()
             .flex_none()
