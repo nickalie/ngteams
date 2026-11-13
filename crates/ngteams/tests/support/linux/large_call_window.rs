@@ -528,15 +528,17 @@ fn share_strip(rig: &mut Rig<'_>) -> SandboxResult {
 /// The sharer's name sits on the shared picture's bottom left, as Teams places it, not under the picture on the stage.
 fn share_named_on_picture(rig: &mut Rig<'_>, (width, height): (i32, i32)) -> SandboxResult {
     let case = format!("the share at {width}x{height}");
-    // the shared screen plays on: its white bars may run into the name for a frame
-    for _ in 0..8 {
-        let stage = rig.stage_with_own()?;
+    let deadline = Instant::now() + WAIT;
+    rig.wait_share()?;
+    // The moving white bar can merge with the name for a frame.
+    loop {
+        let shot = rig.shot()?;
+        let stage = pixels::stage(&shot, rig.window()?).ok_or_else(|| format!("{case}: no stage"))?;
         let own = stage.own.ok_or_else(|| format!("{case}: no own tile: {stage:?}"))?;
         let room = Rect {
             w: own.x - 6 - stage.panel.x,
             ..stage.panel
         };
-        let shot = rig.shot()?;
         let picture = pixels::dark_bounds(&shot, room).ok_or_else(|| format!("{case}: no shared picture"))?;
         let under = Rect {
             y: picture.bottom() + 2,
@@ -560,7 +562,10 @@ fn share_named_on_picture(rig: &mut Rig<'_>, (width, height): (i32, i32)) -> San
             rig.save(&format!("large-call-share-name-{width}x{height}"))?;
             return Ok(());
         }
-        thread::sleep(Duration::from_millis(400));
+        if Instant::now() >= deadline {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
     }
     rig.save("failed-share-name")?;
     Err(format!("{case}: no name on the shared picture's bottom left").into())
@@ -647,8 +652,7 @@ fn themes(rig: &mut Rig<'_>) -> SandboxResult {
     }
     // View on Max gallery size, the keyboard in its sizes (dark on dark: no submenu found by its change)
     rig.show(View::Gallery)?;
-    let view = rig.toolbar_view()?;
-    rig.click(view)?;
+    rig.open_view_menu()?;
     for key in ["down", "down", "down", "down", "right"] {
         rig.key(key)?;
     }
@@ -1021,7 +1025,11 @@ impl<'a> Rig<'a> {
             .niri_msg(&["action", "set-window-height", &height.to_string()])?;
         self.wait_window(|size| size == (width, height))?;
         thread::sleep(SETTLE);
-        self.park()
+        self.park()?;
+        if self.sharing {
+            self.wait_share()?;
+        }
+        Ok(())
     }
 
     /// The call window takes the keyboard, as a click on it gives it.
@@ -1050,18 +1058,14 @@ impl<'a> Rig<'a> {
         pixels::stage(&shot, window).ok_or_else(|| format!("no stage in the window {window:?}").into())
     }
 
-    /// The stage once the account's own tile is drawn in full (it fades in as a strip redraws), or as it is after a
-    /// few seconds.
+    /// The stage once the account's camera-off own tile is drawn in full after a strip redraw or camera toggle.
     fn stage_with_own(&mut self) -> SandboxResult<Stage> {
-        let mut stage = self.stage()?;
-        for _ in 0..6 {
-            if stage.own.is_some() {
-                break;
-            }
-            thread::sleep(SETTLE);
-            stage = self.stage()?;
-        }
-        Ok(stage)
+        self.park()?;
+        let window = self.window()?;
+        let shot = self.shot_until(|shot| pixels::stage(shot, window).is_some_and(|stage| stage.own.is_some()))?;
+        pixels::stage(&shot, window)
+            .filter(|stage| stage.own.is_some())
+            .ok_or_else(|| "the account's camera-off own tile wasn't drawn".into())
     }
 
     /// Saves the call window as it is now as `<name>.png` under `target/ui-shots/` and the evidence directory.
@@ -1118,6 +1122,7 @@ impl<'a> Rig<'a> {
     }
 
     fn key(&mut self, spec: &str) -> SandboxResult {
+        self.focus()?;
         let (modifiers, key) = parse_key(spec, self.input.keymap()).ok_or_else(|| format!("no key {spec}"))?;
         self.input.key_with(&modifiers, key)?;
         thread::sleep(Duration::from_millis(250));
@@ -1177,17 +1182,38 @@ impl Rig<'_> {
             thread::sleep(SETTLE * 2);
         }
         if share {
-            return Ok(());
+            return self.wait_share();
         }
-        let bar_view = self.toolbar_view()?;
-        self.click(bar_view)?;
+        let previous = self
+            .app
+            .trace
+            .catch_up()
+            .iter()
+            .rev()
+            .find(|line| line["view"] == "call-window" && line["change"] == "layout")
+            .and_then(|line| line["kinds"][0].as_str())
+            .unwrap_or("gallery")
+            .to_owned();
+        let (button, before) = self.open_view_menu()?;
         // the menu: Gallery, Speaker (Focus on content while a share shows), …
         let downs = if view == View::Gallery { 1 } else { 2 };
         for _ in 0..downs {
             self.key("down")?;
         }
         self.key("enter")?;
-        thread::sleep(SETTLE);
+        if previous != view.name() {
+            self.app.trace.wait_until("the chosen call layout", |seen| {
+                seen.iter()
+                    .rev()
+                    .find(|line| line["view"] == "call-window" && line["change"] == "layout")
+                    .is_some_and(|line| line["kinds"][0] == view.name())
+            })?;
+        }
+        let closed = self.shot_until(|closed| pixels::changed_surface_pixels(&before, closed, button) <= 40)?;
+        if pixels::changed_surface_pixels(&before, &closed, button) > 40 {
+            self.keep_failed("view-choice", [&before, &before, &closed])?;
+            return Err("View stayed open after choosing a layout".into());
+        }
         Ok(())
     }
 
@@ -1202,18 +1228,28 @@ impl Rig<'_> {
             .ok_or_else(|| format!("no View two right of Raise: {groups:?}").into())
     }
 
+    fn open_view_menu(&mut self) -> SandboxResult<(Rect, RgbImage)> {
+        let view = self.toolbar_view()?;
+        let before = self.shot()?;
+        let below = self.still_below_toolbar(&before)?;
+        self.click(view)?;
+        let open = self.shot_until(|open| pixels::changed_surface_pixels(&before, open, below) >= 1_000)?;
+        if pixels::changed_surface_pixels(&before, &open, below) < 1_000 {
+            return Err("View's click opened no menu".into());
+        }
+        Ok((view, before))
+    }
+
     /// Opens View > Max gallery size (the pointer on View, the keyboard down to Max gallery size, whose submenu opens
     /// beside it): the submenu's box, found where it appeared.
     fn view_menu_open_on_sizes(&mut self) -> SandboxResult<Rect> {
-        let view = self.toolbar_view()?;
-        self.click(view)?;
+        let (view, _) = self.open_view_menu()?;
         for _ in 0..3 {
             self.key("down")?;
         }
         thread::sleep(SETTLE);
         let before = self.shot()?;
         self.key("down")?;
-        thread::sleep(SETTLE);
         self.debug("menu-sizes")?;
         let window = self.window()?;
         // below the toolbar: its title's timer ticks on
@@ -1227,12 +1263,15 @@ impl Rig<'_> {
             w: 260 + view.w + 40,
             ..below
         };
-        pixels::changes(&before, &self.shot()?, below)
-            .into_iter()
-            .map(|blob| blob.bounds)
-            .filter(|bounds| bounds.w >= 60 && bounds.h >= 80 && !menu.holds(*bounds, 0))
-            .max_by_key(|bounds| bounds.area())
-            .ok_or_else(|| "View > Max gallery size opened no submenu".into())
+        let submenu = |after: &RgbImage| {
+            pixels::changes(&before, after, below)
+                .into_iter()
+                .map(|blob| blob.bounds)
+                .filter(|bounds| bounds.w >= 60 && bounds.h >= 80 && !menu.holds(*bounds, 0))
+                .max_by_key(|bounds| bounds.area())
+        };
+        let after = self.shot_until(|after| submenu(after).is_some())?;
+        submenu(&after).ok_or_else(|| "View > Max gallery size opened no submenu".into())
     }
 
     /// Chooses `size` in View > Max gallery size; `others` are in the call, so its first page shows
@@ -1290,14 +1329,19 @@ impl Rig<'_> {
 
     /// At full HD the first page shows `min(size, others + 1)` tiles.
     fn first_page_shows(&mut self, size: usize, others: usize) -> SandboxResult {
-        let stage = self.stage()?;
         let window = self.window()?;
-        if window.w == 1920 && stage.tiles.len() != size.min(others + 1) {
-            return Err(format!(
-                "max gallery size {size}: the first page shows {} tiles",
-                stage.tiles.len()
-            )
-            .into());
+        if window.w == 1920 {
+            let wanted = size.min(others + 1);
+            let shot =
+                self.shot_until(|shot| pixels::stage(shot, window).is_some_and(|stage| stage.tiles.len() == wanted))?;
+            let stage = pixels::stage(&shot, window).ok_or("no stage after choosing the gallery size")?;
+            if stage.tiles.len() != wanted {
+                return Err(format!(
+                    "max gallery size {size}: the first page shows {} tiles",
+                    stage.tiles.len()
+                )
+                .into());
+            }
         }
         Ok(())
     }
@@ -1305,7 +1349,7 @@ impl Rig<'_> {
 
 /// Finding the toolbar's buttons and clicking them.
 impl Rig<'_> {
-    /// The button whose look changed when `toggle` turned something on: the largest change in the toolbar's band.
+    /// The button whose look changes with `toggle` in both directions, after the toolbar's layout settles.
     fn locate_toggled(
         &mut self,
         what: &str,
@@ -1313,42 +1357,70 @@ impl Rig<'_> {
     ) -> SandboxResult<Rect> {
         self.park()?;
         let window = self.window()?;
-        let before = self.shot()?;
-        toggle(self, true)?;
+        let deadline = Instant::now() + WAIT;
+        let mut before = self.settled_toolbar()?;
         let band = Rect {
             h: TOOLBAR_BAND,
             ..window
         };
-        // the button redraws once the engine answered: a few looks
-        let mut found = None;
-        for _ in 0..8 {
-            thread::sleep(Duration::from_millis(400));
-            let after = self.shot()?;
-            found = pixels::changes(&before, &after, band)
-                .into_iter()
-                .map(|blob| blob.bounds)
-                .filter(|bounds| bounds.w >= 14 && bounds.h >= 14)
-                .max_by_key(|bounds| bounds.area());
-            if found.is_some() {
-                break;
+        loop {
+            toggle(self, true)?;
+            let on = self.shot_until(|on| {
+                pixels::changes(&before, on, band)
+                    .iter()
+                    .any(|blob| blob.bounds.w >= 14 && blob.bounds.h >= 14)
+            })?;
+            toggle(self, false)?;
+            let off = self.settled_toolbar()?;
+            if let Some(button) = pixels::toggled_button(&before, &on, &off, band) {
+                return Ok(button);
             }
+            if Instant::now() >= deadline {
+                return Err(format!("{what}: no button changed with its state in both directions").into());
+            }
+            before = off;
         }
-        toggle(self, false)?;
-        thread::sleep(SETTLE);
-        found.ok_or_else(|| format!("{what}: no button changed in the toolbar").into())
     }
 
-    /// Shots of the screen until `done` holds for one (up to a few seconds): the last.
-    fn shot_until(&mut self, done: impl Fn(&RgbImage) -> bool) -> SandboxResult<RgbImage> {
-        let mut shot = self.shot()?;
-        for _ in 0..8 {
-            if done(&shot) {
-                break;
+    fn settled_toolbar(&mut self) -> SandboxResult<RgbImage> {
+        let band = Rect {
+            h: 30,
+            ..self.window()?
+        };
+        let deadline = Instant::now() + WAIT;
+        let mut before = self.shot()?;
+        loop {
+            thread::sleep(Duration::from_millis(100));
+            let after = self.shot()?;
+            if pixels::changed_surface_pixels(&before, &after, band) <= 40 {
+                return Ok(after);
             }
-            thread::sleep(Duration::from_millis(400));
+            if Instant::now() >= deadline {
+                return Err("the toolbar's title and controls didn't settle".into());
+            }
+            before = after;
+        }
+    }
+
+    /// Shots of the screen until `done` holds for one (within the state-change deadline): the last.
+    fn shot_until(&mut self, done: impl Fn(&RgbImage) -> bool) -> SandboxResult<RgbImage> {
+        let deadline = Instant::now() + WAIT;
+        let mut shot = self.shot()?;
+        while !done(&shot) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(100));
             shot = self.shot()?;
         }
         Ok(shot)
+    }
+
+    fn wait_share(&mut self) -> SandboxResult {
+        let window = self.window()?;
+        let shot = self.shot_until(|shot| pixels::shared_picture(shot, window).is_some())?;
+        if pixels::shared_picture(&shot, window).is_none() {
+            self.save("failed-share")?;
+            return Err("the shared picture and its people's strip weren't drawn".into());
+        }
+        Ok(())
     }
 
     fn mute(&mut self, on: bool) -> SandboxResult {
@@ -1462,6 +1534,7 @@ impl Rig<'_> {
                 return Err(format!("{case}: Camera's click wasn't asked").into());
             }
         }
+        self.stage_with_own()?;
         for op in ["publishState", "removeState"] {
             let count = self.sent(op) + 1;
             self.click(bar.raise)?;
@@ -1489,28 +1562,22 @@ impl Rig<'_> {
 
     /// A pane button: its click opens its pane beside the stage (the stage redrawn), the next closes it.
     fn toggles_pane(&mut self, button: Rect, case: &str) -> SandboxResult {
-        let window = self.window()?;
-        let below = Rect {
-            y: window.y + TOOLBAR_BAND,
-            h: window.h - TOOLBAR_BAND,
-            ..window
-        };
         self.park()?;
         let before = self.shot()?;
+        let below = self.still_below_toolbar(&before)?;
         self.click(button)?;
-        let open = self.shot_until(|open| pixels::changed_pixels(&before, open, below) >= 3_000)?;
-        if pixels::changed_pixels(&before, &open, below) < 3_000 {
+        let open = self.shot_until(|open| pixels::changed_surface_pixels(&before, open, below) >= 3_000)?;
+        if pixels::changed_surface_pixels(&before, &open, below) < 3_000 {
             return Err(format!("{case}: its click opened no pane").into());
         }
         self.click(button)?;
-        // as large a change again (a shared screen plays on, so not to the pixel)
         let closed = self.shot_until(|closed| {
-            let back = pixels::changed_pixels(&open, closed, below);
-            back >= 3_000 && pixels::changed_still(&before, closed, below) * 4 <= back
+            let back = pixels::changed_surface_pixels(&open, closed, below);
+            back >= 3_000 && pixels::changed_surface_pixels(&before, closed, below) <= 40
         })?;
-        let back = pixels::changed_pixels(&open, &closed, below);
-        let left = pixels::changed_still(&before, &closed, below);
-        if back < 3_000 || left * 4 > back {
+        let back = pixels::changed_surface_pixels(&open, &closed, below);
+        let left = pixels::changed_surface_pixels(&before, &closed, below);
+        if back < 3_000 || left > 40 {
             self.keep_failed("pane", [&before, &open, &closed])?;
             return Err(
                 format!("{case}: its second click didn't close the pane ({back} px went, {left} px stay)").into(),
@@ -1521,17 +1588,12 @@ impl Rig<'_> {
 
     /// A menu button: its click opens its menu under the toolbar, Escape closes it.
     fn opens_menu(&mut self, button: Rect, case: &str) -> SandboxResult {
-        let window = self.window()?;
-        let below = Rect {
-            y: window.y + TOOLBAR_BAND,
-            h: window.h - TOOLBAR_BAND,
-            ..window
-        };
         self.park()?;
         let before = self.shot()?;
+        let below = self.still_below_toolbar(&before)?;
         self.click(button)?;
-        let open = self.shot_until(|open| pixels::changed_pixels(&before, open, below) >= 1_000)?;
-        let opened = pixels::changed_pixels(&before, &open, below);
+        let open = self.shot_until(|open| pixels::changed_surface_pixels(&before, open, below) >= 1_000)?;
+        let opened = pixels::changed_surface_pixels(&before, &open, below);
         if opened < 1_000 {
             return Err(format!("{case}: its click opened no menu").into());
         }
@@ -1543,16 +1605,31 @@ impl Rig<'_> {
         }
         self.key("escape")?;
         let closed = self.shot_until(|closed| {
-            let back = pixels::changed_pixels(&open, closed, below);
-            back * 2 >= opened && pixels::changed_still(&before, closed, below) * 4 <= back
+            let back = pixels::changed_surface_pixels(&open, closed, below);
+            back * 2 >= opened && pixels::changed_surface_pixels(&before, closed, below) <= 40
         })?;
-        let back = pixels::changed_pixels(&open, &closed, below);
-        let left = pixels::changed_still(&before, &closed, below);
-        if back * 2 < opened || left * 4 > back {
+        let back = pixels::changed_surface_pixels(&open, &closed, below);
+        let left = pixels::changed_surface_pixels(&before, &closed, below);
+        if back * 2 < opened || left > 40 {
             self.keep_failed("menu", [&before, &open, &closed])?;
             return Err(format!("{case}: Escape didn't close its menu ({back} px went, {left} px stay)").into());
         }
         Ok(())
+    }
+
+    fn still_below_toolbar(&self, before: &RgbImage) -> SandboxResult<Rect> {
+        let window = self.window()?;
+        let below = Rect {
+            y: window.y + TOOLBAR_BAND,
+            h: window.h - TOOLBAR_BAND,
+            ..window
+        };
+        let picture = if self.sharing {
+            Some(pixels::shared_picture(before, window).ok_or("no shared picture before the toolbar click")?)
+        } else {
+            None
+        };
+        pixels::still_below_toolbar(below, picture).ok_or_else(|| "no still region under the toolbar".into())
     }
 
     /// Share's click opens its menu, whose "Share content" asks to share (the screen is then picked at the desktop's

@@ -140,61 +140,63 @@ pub fn changed_pixels(before: &RgbImage, after: &RgbImage, within: Rect) -> i64 
     changes(before, after, within).iter().map(|blob| blob.pixels).sum()
 }
 
-/// How many pixels in `within` differ between `before` and `after`, leaving out the moving picture `before` shows
-/// (a shared screen: its dark grey areas), which changes on its own.
-pub fn changed_still(before: &RgbImage, after: &RgbImage, within: Rect) -> i64 {
-    let video = picture_bounds(before, within).map(|before| {
-        // Recover only the pattern's 16px bar at its 720px source height, never a menu-sized extension.
-        let edge_slack = 16.max(before.h * 16 / 720) + 6;
-        let after = picture_bounds(after, within).filter(|after| {
-            before.y.abs_diff(after.y) <= 6
-                && before.bottom().abs_diff(after.bottom()) <= 6
-                && before.x.abs_diff(after.x) <= edge_slack.cast_unsigned()
-                && before.right().abs_diff(after.right()) <= edge_slack.cast_unsigned()
-        });
-        // The other frame reveals an edge hidden by the moving bright bar.
-        let bounds = after.map_or(before, |after| before.union(after));
-        Rect {
-            x: bounds.x - 6,
-            y: bounds.y - 6,
-            w: bounds.w + 12,
-            h: bounds.h + 12,
-        }
-    });
-    blobs(within, |x, y| {
-        let moving = video.is_some_and(|video| video.holds(Rect { x, y, w: 1, h: 1 }, 0));
-        !moving
-            && match (pixel(before, x, y), pixel(after, x, y)) {
-                (Some(a), Some(b)) => distance(a, b) > 48,
-                _ => false,
-            }
-    })
-    .iter()
-    .map(|blob| blob.pixels)
-    .sum()
+/// Changes on a still surface, including a white popup over the light stage, whose RGB distance is only 28.
+pub fn changed_surface_pixels(before: &RgbImage, after: &RgbImage, within: Rect) -> i64 {
+    (within.y..within.bottom())
+        .flat_map(|y| (within.x..within.right()).map(move |x| (x, y)))
+        .filter(|(x, y)| match (pixel(before, *x, *y), pixel(after, *x, *y)) {
+            (Some(a), Some(b)) => distance(a, b) > 12,
+            _ => false,
+        })
+        .fold(0, |count, _| count + 1)
 }
 
-fn picture_bounds(image: &RgbImage, within: Rect) -> Option<Rect> {
-    // dark and grey, inside the frame (the window's frame is a dark blue)
-    let grey_dark = |colour: Rgb<u8>| {
-        let (low, high) = (colour.0.iter().min(), colour.0.iter().max());
-        luminance(colour) < 90 && high.zip(low).is_some_and(|(high, low)| high - low < 30)
-    };
-    blobs(within, |x, y| pixel(image, x, y).is_some_and(grey_dark))
-        .into_iter()
-        .filter(|blob| blob.bounds.w >= 12 && blob.bounds.h >= 60)
-        .filter(|blob| {
-            let inner = Rect {
-                x: within.x + 4,
-                y: within.y + 4,
-                w: within.w - 8,
-                h: within.h - 8,
-            };
-            inner.holds(blob.bounds, 0)
+/// A control whose change reverses when toggled off; a delayed title/layout redraw cannot identify a button.
+pub fn toggled_button(before: &RgbImage, on: &RgbImage, off: &RgbImage, band: Rect) -> Option<Rect> {
+    blobs(band, |x, y| {
+        match (pixel(before, x, y), pixel(on, x, y), pixel(off, x, y)) {
+            (Some(before), Some(on), Some(off)) => {
+                distance(before, on) > 48 && distance(on, off) > 48 && distance(before, off) <= 12
+            }
+            _ => false,
+        }
+    })
+    .into_iter()
+    .map(|blob| blob.bounds)
+    .filter(|bounds| bounds.w >= 14 && bounds.h >= 14)
+    .max_by_key(|bounds| bounds.area())
+}
+
+/// The mock's received 16:9 share, left of the people's strip in Light, or its grey pattern in Dark.
+pub fn shared_picture(image: &RgbImage, window: Rect) -> Option<Rect> {
+    let picture = if let Some(stage) = stage(image, window) {
+        let own = stage.own?;
+        let room = Rect {
+            w: own.x - stage.panel.x - 6,
+            ..stage.panel
+        };
+        dark_bounds(image, room)?
+    } else {
+        blobs(window, |x, y| {
+            pixel(image, x, y).is_some_and(|colour| colour.0.iter().all(|channel| (48..=80).contains(channel)))
         })
-        // its bars split it: all of its dark parts
+        .into_iter()
+        .filter(|blob| blob.bounds.w >= 12 && blob.bounds.h >= window.h / 3)
+        .filter(|blob| blob.pixels * 2 >= blob.bounds.area())
         .map(|blob| blob.bounds)
-        .reduce(Rect::union)
+        .reduce(Rect::union)?
+    };
+    let ratio = f64::from(picture.w) / f64::from(picture.h);
+    (picture.w >= 80 && picture.h >= 40 && (ratio - 16.0 / 9.0).abs() < 0.15).then_some(picture)
+}
+
+/// A menu/pane comparison region above the moving share, fixed from the closed baseline for all three shots.
+pub fn still_below_toolbar(below: Rect, picture: Option<Rect>) -> Option<Rect> {
+    let band = Rect {
+        h: picture.map_or(below.h, |picture| picture.y - below.y - 6),
+        ..below
+    };
+    (band.h > 0 && band.area() >= 3_000).then_some(band)
 }
 
 /// The pager under the gallery, beside the speaker's strip or under the strip beside a share: `<`, its `n/N`, `>`.
