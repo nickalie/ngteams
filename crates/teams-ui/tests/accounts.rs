@@ -592,3 +592,44 @@ fn switching_accounts_stops_the_hidden_accounts_automatic_activity_writes() {
         read: true
     }));
 }
+
+#[test]
+fn an_activity_open_waiting_for_the_feed_is_dropped_when_its_account_is_switched_away() {
+    use teams_core::activity::{ActivityFeed, FEED};
+    let d = TwoAccounts::start();
+    let window = d.open();
+    let shell = d
+        .rig
+        .cx
+        .update(|cx| window::content(window, cx).unwrap().read(cx).shell().unwrap().clone());
+    let pane = d.rig.cx.update(|cx| shell.read(cx).activity_view().clone());
+    let mut activity = message(FEED, "4000", LAB_C, "", 4000);
+    activity.properties = Some(
+        serde_json::json!({"activity": {
+        "activityType": "mentionInChat", "activitySubtype": "person", "activityId": 4000,
+        "sourceThreadId": AC, "sourceMessageId": 4000, "sourceUserId": LAB_C
+    }, "isread": false})
+        .to_string(),
+    );
+    *d.rig.core.activity.lock().unwrap() = ActivityFeed::new(&[activity], None, None);
+    d.rig.core.actions.lock().unwrap().clear();
+    // a's banner clicked while a's feed is being read, then b shown before the read comes back
+    d.rig.cx.update(|cx| {
+        pane.update(cx, teams_ui::activity_view::ActivityView::reload);
+        d.desktop.update(cx, |desktop, cx| {
+            desktop.open_activity_item_of(LAB_A, "4000", cx);
+            desktop.switch(LAB_B, cx);
+        });
+    });
+    d.rig.cx.run_until_parked();
+    assert_eq!(d.shown(window).0, LAB_B);
+    assert_eq!(d.rig.cx.read(|cx| pane.read(cx).selected().map(str::to_owned)), None);
+    let actions = d.rig.core.actions.lock().unwrap();
+    assert!(
+        !actions.contains(&teams_core::Action::ActivityRead {
+            item: "4000".to_owned(),
+            read: true
+        }),
+        "the hidden account opens and reads nothing: {actions:?}"
+    );
+}

@@ -443,6 +443,11 @@ impl ActivityView {
         self.on_screen.as_deref()
     }
 
+    /// Drops an open still waiting for the feed (the account switched away): it never opens in a hidden account.
+    pub fn drop_opening(&mut self) {
+        self.opening = None;
+    }
+
     /// Updates whether this account is visible in the active window, including while another account is shown.
     pub fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
         if self.active == active {
@@ -931,6 +936,8 @@ impl ActivityView {
             _ => return,
         };
         if let Some(id) = ids.get(next) {
+            // the keyboard's move replaces an open still waiting for the feed
+            self.opening = None;
             self.selected = Some(id.clone());
             self.scroll.scroll_to_item(next);
             cx.stop_propagation();

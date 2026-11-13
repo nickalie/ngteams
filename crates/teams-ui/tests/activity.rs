@@ -372,6 +372,39 @@ fn the_keyboard_walks_the_items_and_opens_one() {
 }
 
 #[test]
+fn a_keyboard_move_drops_an_open_still_waiting_for_the_feed() {
+    let rig = rig();
+    let (shell, cx) = shell_window(&rig);
+    click(cx, "rail-activity");
+    let pane = view(&shell, cx);
+    let messages = [
+        item(1000, "mentionInChat", "person", (LAB_B, "Lab B"), 500, true),
+        item(4000, "mentionInChat", "person", (LAB_B, "Lab B"), 700, false),
+    ];
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(&messages, Some(1500), None);
+    rig.core.actions.lock().unwrap().clear();
+    // a banner's item asked for while the feed is read, then the keyboard moved before the read comes back
+    cx.update(|window, cx| {
+        pane.update(cx, |pane, cx| {
+            pane.reload(cx);
+            pane.open("4000", cx);
+        });
+        window.dispatch_keystroke(gpui::Keystroke::parse("down").unwrap(), cx);
+    });
+    cx.run_until_parked();
+    let selected = cx.update(|_, cx| pane.read(cx).selected().map(str::to_owned));
+    assert_ne!(selected.as_deref(), Some("4000"));
+    assert!(selected.is_some(), "the keyboard's move selected an item");
+    assert!(
+        !writes(&rig).contains(&Action::ActivityRead {
+            item: "4000".to_owned(),
+            read: true,
+        }),
+        "the dropped open read nothing"
+    );
+}
+
+#[test]
 fn dates_read_as_teams_shows_them() {
     use chrono::TimeZone as _;
     let now = chrono::Utc.with_ymd_and_hms(2026, 11, 12, 15, 0, 0).unwrap();

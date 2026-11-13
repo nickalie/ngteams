@@ -1064,7 +1064,10 @@ impl Shell {
     pub fn set_accounts(&mut self, accounts: Entity<Accounts>, cx: &mut Context<Self>) {
         let observing = cx.observe(&accounts, |this: &mut Self, accounts, cx| {
             if accounts.read(cx).active_key() != Some(this.account()) {
-                this.activity.0.update(cx, |view, cx| view.set_active(false, cx));
+                this.activity.0.update(cx, |view, cx| {
+                    view.drop_opening();
+                    view.set_active(false, cx);
+                });
             }
             this.trace_call_button(cx);
             cx.notify();
