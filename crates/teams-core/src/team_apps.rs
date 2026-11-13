@@ -75,12 +75,8 @@ where
                 self.spawn_read(reply, async move |client| definition(client, &cache, &id).await);
             }
             TeamAppsAsk::CachedDefinition { id, reply } => {
-                // a read under way holds the cache: answered as not known rather than waiting for it
-                let known = self
-                    .app_definitions
-                    .try_lock()
-                    .ok()
-                    .and_then(|definitions| definitions.get(&id).cloned());
+                // the cache is never held across a read, so this answers at once
+                let known = cached(&self.app_definitions, &id);
                 let _ = reply.send(Ok(known));
             }
             TeamAppsAsk::Apps { team, reply } => self.spawn_read(reply, async move |client| {
@@ -151,17 +147,26 @@ async fn notification_settings<C: Credentials + 'static>(
     UserGraphSettingsRead::settings_of(answer.status(), answer.body()).ok()
 }
 
-/// Account-scoped definitions shared by Activity writes and readers such as app icons.
-pub(crate) type AppDefinitionsCache = Arc<tokio::sync::Mutex<BTreeMap<String, teams_proto::AppDefinition>>>;
+/// Account-scoped definitions shared by Activity writes and readers such as app icons. The lock is held only to look
+/// up or insert, never across a read, so a cache-only ask for one app never waits on another app's read.
+pub(crate) type AppDefinitionsCache = Arc<std::sync::Mutex<BTreeMap<String, teams_proto::AppDefinition>>>;
+
+/// `id`'s definition when the cache has it.
+fn cached(cache: &AppDefinitionsCache, id: &str) -> Option<teams_proto::AppDefinition> {
+    cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(id)
+        .cloned()
+}
 
 pub(crate) async fn definition<C: Credentials + 'static>(
     client: &teams_proto::Client<teams_proto::HttpTransport<C>>,
     cache: &AppDefinitionsCache,
     id: &str,
 ) -> Option<teams_proto::AppDefinition> {
-    let mut definitions = cache.lock().await;
-    if let Some(definition) = definitions.get(id) {
-        return Some(definition.clone());
+    if let Some(definition) = cached(cache, id) {
+        return Some(definition);
     }
     let body = send_body(
         client,
@@ -174,6 +179,9 @@ pub(crate) async fn definition<C: Credentials + 'static>(
         .into_iter()
         .find(|app| app.definition.id() == id)?
         .definition;
-    definitions.insert(id.to_owned(), definition.clone());
+    cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(id.to_owned(), definition.clone());
     Some(definition)
 }

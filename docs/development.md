@@ -1009,9 +1009,10 @@ sign-in window in the `ngteams-webview` worker (`WKWebView` on a non-persistent 
 `crates/teams-signin/src/macos/`), devices through GStreamer's `osxaudio` and `avfvideosrc` on the Windows backend
 (`crates/teams-media/src/devices/native.rs`), video through GPUI's image path, and the background-effects model on
 Metal. Linux-only crates (WPE, the UI sandbox) compile to nothing there. The desktop (`crates/teams-ui/src/desktop/
-macos.rs`, `crates/ngteams/src/mac_app.rs`): notifications through GPUI's `UNUserNotificationCenter` binding (only
-for the app started from `ngteams.app`; a bare binary gets none), the unread total on the Dock badge, the Dock in the
-tray's place (closing the main window keeps the app, a Dock click shows it again), the menu bar (⌘Q, ⌘H, ⌘M, ⌘W) and
+macos.rs`, `crates/ngteams/src/mac_app.rs`): notifications the app posts to the `UNUserNotificationCenter` with the
+banner's picture as an attachment, while GPUI's binding hands back responses and dismissals (only for the app started
+from `ngteams.app`; a bare binary gets none), the unread total on the Dock badge, the Dock in the tray's place
+(closing the main window keeps the app, a Dock click shows it again), the menu bar (⌘Q, ⌘H, ⌘M, ⌘W) and
 `AppKit`'s terminate (the Dock's Quit, a logout) routed through the app's own quit. Shortcuts bind `secondary-`
 (⌘ on macOS, Ctrl elsewhere); the message box adds macOS's ⌥/⌘ arrow keys.
 

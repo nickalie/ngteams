@@ -273,7 +273,7 @@ sha256 = "2d9947ba59d53b94bd258189c605789af95a0d26bdc31a09ef7f9a140800c702"
 reason = "Windows-only native shell integration with no Linux LLVM mapping. The authorized console fixture exercises visible body/Answer/Decline COM activation, stale/foreign arguments, toast history and native tray/taskbar primitives without an account. Native whole-application coverage remains a final port gate."
 
 [unmapped_sources."crates/teams-ui/src/desktop/windows/toasts.rs"]
-sha256 = "22c29353fb53896547d5f1ea4d32d7bacf719e7a3841275f4efecc48b7b590b5"
+sha256 = "3d8d0a17fb6ce0970bedd5b928be768dcb12982b7c394eb5c2fac6ae5dc4b5a6"
 reason = "Windows-only native shell integration with no Linux LLVM mapping. The authorized console fixture exercises visible body/Answer/Decline COM activation, stale/foreign arguments, toast history and native tray/taskbar primitives without an account. Native whole-application coverage remains a final port gate."
 
 [unmapped_sources."crates/teams-ui/src/desktop/windows/tray.rs"]
@@ -568,9 +568,9 @@ reason = "Linux-only WPE/GPUI sign-in source selected by the cfg(target_os = \"l
 context = { "crates/teams-signin/src/lib.rs" = "a7b946e05829938c67d8c83c2f95877bbe47a5351f68ba7e8bd036149f3132ab" }
 
 [unmapped_sources_windows."crates/teams-ui/src/notify/linux.rs"]
-sha256 = "0e29693e2780a52e74d1e9f03ea3f3879b5489c2d78a9c4a2c43577036a622b5"
+sha256 = "b8f61b3c4e85a501b4fded150d3552df0a7aea10ec9412c8e71310b4feb8e67c"
 reason = "Linux-only freedesktop notification D-Bus transport; notify.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
-context = { "crates/teams-ui/src/lib.rs" = "558e475cbb1d9ab866224391104a64025c16307e4d109697b293705e4446cd0a", "crates/teams-ui/src/notify.rs" = "7f0d5dc37c789a405e2c5243c18bd499e8babedb0db072f31a262ee9be7fc009" }
+context = { "crates/teams-ui/src/lib.rs" = "558e475cbb1d9ab866224391104a64025c16307e4d109697b293705e4446cd0a", "crates/teams-ui/src/notify.rs" = "2ac8085ca8faeeff7aa18b251cca8327fb8d7d32ea19165cfe74fe16dfdce63d" }
 
 [unmapped_sources_windows."crates/teams-ui/src/tray/linux.rs"]
 sha256 = "ceed6565f30d059be5e8b6c0901fcba714248fe4ba0998e40c912d90db539ade"
@@ -614,7 +614,7 @@ sha256 = "f8695424981879c878659211b5b8b47c7cec742923f8ef5a61bc44e04f6a7fef"
 reason = "macOS-only AppKit/WebKit sign-in window; no Linux LLVM mapping; compiled and linted by the macOS portability workflow, run on the Mac console"
 
 [unmapped_sources."crates/teams-ui/src/desktop/macos.rs"]
-sha256 = "c49fbf9ee50f64efab94d94930104d707920518ffd82e20ad9f7a92ea2bf02ea"
+sha256 = "0509c0b8dbaf64cd83341e313e85d1726c5951ba0488ccfa608cc21df54bc976"
 reason = "macOS-only notifications (posted to the notification center with a picture attachment, GPUI's binding for responses and dismissal) and Dock badge; no Linux LLVM mapping; its tags, actions and picture files are tested natively by the macOS portability workflow, the notification center and the Dock on the Mac console"
 
 [unmapped_sources."crates/ngteams/src/mac_app.rs"]

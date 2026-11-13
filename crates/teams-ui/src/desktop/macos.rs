@@ -1,7 +1,7 @@
-//! macOS's desktop, as Teams has it there: notifications through the system's notification center (GPUI's
-//! `UNUserNotificationCenter` binding), the unread total on the Dock icon's badge, and the Dock in the tray's place:
-//! closing the main window keeps the app in the Dock, and a click on its Dock icon shows the window again (the app
-//! asks [`Desktop::show`] then). No D-Bus address is read or reached.
+//! macOS's desktop, as Teams has it there: notifications the app posts to the system's notification center (GPUI's
+//! `UNUserNotificationCenter` binding hands back responses and dismissals), the unread total on the Dock icon's
+//! badge, and the Dock in the tray's place: closing the main window keeps the app in the Dock, and a click on its Dock
+//! icon shows the window again (the app asks [`Desktop::show`] then). No D-Bus address is read or reached.
 //!
 //! - The notification center serves only an app started from its bundle (`ngteams.app`): a binary run on its own gets
 //!   no notifications, said as a problem (GPUI's binding would abort the process on the center's first use).
@@ -42,7 +42,7 @@ struct Banner {
     picture: Option<PathBuf>,
 }
 
-/// The app's notifications on macOS: [`NotificationServer`] over GPUI's system notifications.
+/// The app's notifications on macOS: [`NotificationServer`] over the notification center, posted by [`Poster`].
 pub(crate) struct Notifications {
     commands: async_channel::Sender<Command>,
     /// This run's nonce, the start of every tag.
@@ -154,9 +154,11 @@ fn run_nonce() -> String {
     format!("ngteams-{}-{started:x}", std::process::id())
 }
 
-/// Whether this process was started from an app bundle, where the notification center serves it.
+/// Whether this process was started from an app bundle with a bundle identifier, where the notification center serves
+/// it (for a bundle without one, the center raises an exception, which aborts the process: GPUI's binding checks it too).
 fn in_bundle() -> bool {
     std::env::current_exe().is_ok_and(|exe| exe.to_string_lossy().contains(".app/Contents/MacOS/"))
+        && objc2_foundation::NSBundle::mainBundle().bundleIdentifier().is_some()
 }
 
 /// The Dock icon's badge: the unread total, none at 0.

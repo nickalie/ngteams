@@ -1574,8 +1574,8 @@ impl EngineRequests {
         self.ask(|reply| Request::TeamApps(Box::new(TeamAppsAsk::Definition { id, reply })))
     }
 
-    /// [`Self::app_definition`] only when this run has it already: nothing is read, and a read under way is answered
-    /// `None` rather than waited for (a desktop banner's picture).
+    /// [`Self::app_definition`] only when this run has it already: nothing is read, and an app whose read is under way
+    /// is answered `None` rather than waited for (a desktop banner's picture).
     pub fn cached_app_definition(&self, id: String) -> Reply<Option<teams_proto::AppDefinition>> {
         self.ask(|reply| Request::TeamApps(Box::new(TeamAppsAsk::CachedDefinition { id, reply })))
     }

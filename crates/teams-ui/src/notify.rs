@@ -855,12 +855,29 @@ async fn with_pictures(
     if pictures.iter().all(Option::is_none) {
         return notices;
     }
+    // more than [`SINGLES`] are collapsed into one banner, which shows only the last one's picture
+    let first_shown = if pictures.len() > SINGLES {
+        pictures.len() - 1
+    } else {
+        0
+    };
     let decoded = cx
         .background_executor()
         .spawn(async move {
+            // one sender's picture is decoded once, however many of their messages there are
+            let mut known: Vec<(&StoredPicture, Option<BannerPicture>)> = Vec::new();
             pictures
                 .iter()
-                .map(|picture| picture.as_ref().and_then(BannerPicture::of_person))
+                .enumerate()
+                .map(|(index, picture)| {
+                    let picture = picture.as_ref().filter(|_| index >= first_shown)?;
+                    if let Some((_, decoded)) = known.iter().find(|(seen, _)| *seen == picture) {
+                        return decoded.clone();
+                    }
+                    let decoded = BannerPicture::of_person(picture);
+                    known.push((picture, decoded.clone()));
+                    decoded
+                })
                 .collect::<Vec<_>>()
         })
         .await;
@@ -1008,4 +1025,4 @@ pub fn mute_in_call(muted: bool, cx: &mut App) {
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::{BusNotifications, IMAGE_DATA, image_data};
+pub use linux::BusNotifications;

@@ -1,6 +1,6 @@
 //! Live-process `WinRT` notifications, with explicit replacement, withdrawal and global account-safe IDs. A notice's
 //! picture is a PNG in the app's banner folder ([`BannerFiles`]), named by the toast's key, in the app logo's place;
-//! it is removed with its toast (closed, replaced, dismissed, or the run's stop).
+//! it is removed with its toast (closed, replaced, dismissed, activated, failed to show, or the run's stop).
 use super::{Apartment, activation::Activator, registration};
 use crate::notify::picture::{file_key, toast_image};
 use crate::notify::{
@@ -208,7 +208,6 @@ impl Center {
                 .ok_or_else(|| windows::core::Error::from_hresult(windows::Win32::Foundation::E_UNEXPECTED))?;
             self.next
         };
-        let document = XmlDocument::new()?;
         self.generation += 1;
         let key = format!("{}-{}-{}", self.group, id, self.generation);
         let picture_key = file_key(&key);
@@ -216,21 +215,20 @@ impl Center {
             let path = self.files.as_ref()?.write(&picture_key, picture)?;
             Some(toast_image(&path, picture.shape()))
         });
-        let loaded = document.LoadXml(&HSTRING::from(xml(notice, &key, picture.as_deref())));
-        if picture.is_some()
-            && loaded.is_err()
-            && let Some(files) = &self.files
-        {
-            files.remove(&picture_key);
-        }
-        loaded?;
-        let toast = ToastNotification::CreateToastNotification(&document)?;
-        toast.SetGroup(&self.group)?;
-        toast.SetTag(&HSTRING::from(id.to_string()))?;
-        toast.SetExpiresOnReboot(true)?;
         let live = Arc::new(AtomicBool::new(true));
-        self.handlers(&toast, id, &live)?;
-        self.notifier.Show(&toast)?;
+        // the picture is the toast's only once it is shown: any failed step before that removes it
+        let toast = match self.post(notice, id, &key, picture.as_deref(), &live) {
+            Ok(toast) => toast,
+            Err(error) => {
+                live.store(false, Ordering::Release);
+                if picture.is_some()
+                    && let Some(files) = &self.files
+                {
+                    files.remove(&picture_key);
+                }
+                return Err(error);
+            }
+        };
         let shown = Shown {
             toast,
             live,
@@ -242,6 +240,25 @@ impl Center {
             self.drop_picture(&old);
         }
         Ok(id)
+    }
+    /// Builds toast `id` of `notice` (`key` its activation key, `picture` its picture's element) and shows it.
+    fn post(
+        &self,
+        notice: &Notice,
+        id: u32,
+        key: &str,
+        picture: Option<&str>,
+        live: &Arc<AtomicBool>,
+    ) -> windows::core::Result<ToastNotification> {
+        let document = XmlDocument::new()?;
+        document.LoadXml(&HSTRING::from(xml(notice, key, picture)))?;
+        let toast = ToastNotification::CreateToastNotification(&document)?;
+        toast.SetGroup(&self.group)?;
+        toast.SetTag(&HSTRING::from(id.to_string()))?;
+        toast.SetExpiresOnReboot(true)?;
+        self.handlers(&toast, id, live)?;
+        self.notifier.Show(&toast)?;
+        Ok(toast)
     }
     fn handlers(&self, toast: &ToastNotification, id: u32, live: &Arc<AtomicBool>) -> windows::core::Result<()> {
         let (active, commands) = (Arc::clone(live), self.commands.clone());
@@ -275,9 +292,13 @@ impl Center {
         if !valid_action(action) {
             return;
         }
-        if let Some((&id, shown)) = self.shown.iter().find(|(_, shown)| shown.key == key)
+        if let Some((&id, shown)) = self.shown.iter_mut().find(|(_, shown)| shown.key == key)
             && shown.live.swap(false, Ordering::AcqRel)
         {
+            // an activated toast has left the screen: its picture is no longer shown
+            if let (Some(files), Some(picture)) = (&self.files, shown.picture.take()) {
+                files.remove(&picture);
+            }
             let _ = self.events.try_send((id, action.into()));
         }
     }

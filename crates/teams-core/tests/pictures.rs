@@ -564,3 +564,36 @@ async fn a_banner_s_ask_for_an_app_s_tile_reads_nothing() {
     second.shutdown();
     assert_eq!(requests_to(&server, TILE).await, 1);
 }
+
+#[tokio::test]
+async fn a_banner_s_ask_for_an_app_s_tile_being_read_is_answered_without_waiting() {
+    const TILE: &str = "/teamsappdata/evergreen-assets/apps/00000000-0000-4000-8000-00000000a004_largeImage.png";
+    let url = format!("https://res.cdn.office.net{TILE}?v=1");
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(TILE))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(PNG.to_vec(), "application/octet-stream")
+                .set_delay(std::time::Duration::from_secs(3)),
+        )
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let handle = engine(&server, &store_file(&dir));
+    let requests = handle.requests();
+
+    // the read is asked first, so the banner's ask finds it under way
+    let reading = requests.app_picture(url.clone());
+    let banner = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        requests.cached_app_picture(url.clone()),
+    )
+    .await
+    .expect("answered before the read ends");
+    assert!(banner.unwrap().is_none());
+    assert_eq!(reading.await.unwrap().unwrap().bytes, PNG);
+    assert_eq!(requests.cached_app_picture(url).await.unwrap().unwrap().bytes, PNG);
+    handle.shutdown();
+    assert_eq!(requests_to(&server, TILE).await, 1);
+}

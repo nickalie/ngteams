@@ -50,12 +50,12 @@ impl BusNotifications {
 }
 
 /// The hint a notice's picture goes as.
-pub const IMAGE_DATA: &str = "image-data";
+const IMAGE_DATA: &str = "image-data";
 
 /// `picture` as the `image-data` hint's value, `(iiibiiay)`: width, height, row stride, alpha, bits per sample,
 /// channels, the pixels. `None` for one too large to say in it.
 #[must_use]
-pub fn image_data(picture: &BannerPicture) -> Option<Value<'static>> {
+fn image_data(picture: &BannerPicture) -> Option<Value<'static>> {
     let width = i32::try_from(picture.width()).ok()?;
     let height = i32::try_from(picture.height()).ok()?;
     let stride = width.checked_mul(4)?;

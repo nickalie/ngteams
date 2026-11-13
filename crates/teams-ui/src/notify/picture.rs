@@ -183,12 +183,6 @@ impl BannerFiles {
         Some(files)
     }
 
-    /// The folder.
-    #[must_use]
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
     /// Writes `picture` as the file of banner `key` (letters, digits and `-` only, at most 128 of them); its path, or
     /// `None` when the key isn't one or the file couldn't be written.
     #[must_use]
@@ -369,15 +363,15 @@ mod tests {
             PictureShape::Square,
         );
         let files = BannerFiles::open(data.path()).expect("opened");
-        assert_eq!(files.dir(), data.path().join(BANNER_DIR));
+        assert_eq!(files.dir, data.path().join(BANNER_DIR));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
-            let mode = fs::metadata(files.dir()).expect("made").permissions().mode();
+            let mode = fs::metadata(&files.dir).expect("made").permissions().mode();
             assert_eq!(mode & 0o777, 0o700);
         }
         let written = files.write("run-1-2", &picture).expect("written");
-        assert_eq!(written, files.dir().join("run-1-2.png"));
+        assert_eq!(written, files.dir.join("run-1-2.png"));
         assert!(image::open(&written).is_ok());
         for refused in ["", "../escape", "a/b", "a.b", "name with space", &"x".repeat(129)] {
             assert!(files.write(refused, &picture).is_none(), "{refused:?}");
@@ -388,14 +382,14 @@ mod tests {
 
         // what an earlier run left is removed at the next start; anything else stays
         let left = files.write("run-0-9", &picture).expect("written");
-        let other = files.dir().join("keep.txt");
+        let other = files.dir.join("keep.txt");
         fs::write(&other, b"not ours").expect("written");
         let again = BannerFiles::open(data.path()).expect("opened");
         assert!(!left.exists());
         assert!(other.exists());
         again.write("run-2-1", &picture).expect("written");
         again.clear();
-        assert_eq!(fs::read_dir(again.dir()).expect("listed").count(), 1);
+        assert_eq!(fs::read_dir(&again.dir).expect("listed").count(), 1);
     }
 
     #[test]

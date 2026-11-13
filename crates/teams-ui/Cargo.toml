@@ -186,7 +186,7 @@ ui-sandbox.workspace = true
 block2.workspace = true
 objc2.workspace = true
 objc2-app-kit.workspace = true
-objc2-foundation = { workspace = true, features = ["NSArray", "NSDictionary", "NSError", "NSSet", "NSString", "NSURL"] }
+objc2-foundation = { workspace = true, features = ["NSArray", "NSBundle", "NSDictionary", "NSError", "NSSet", "NSString", "NSURL"] }
 objc2-user-notifications = { workspace = true, features = ["std", "block2", "UNNotificationAction", "UNNotificationAttachment", "UNNotificationCategory", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 
 [target.'cfg(windows)'.dependencies]
