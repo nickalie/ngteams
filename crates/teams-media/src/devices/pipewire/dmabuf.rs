@@ -3,6 +3,7 @@
 //! the screen's stream maps each one itself, only ever one with the linear layout its offer asked for, and brackets the
 //! read with the kernel's CPU-access sync so the picture the GPU drew is the one read.
 
+use std::io;
 use std::os::fd::{AsRawFd as _, BorrowedFd};
 use std::ptr::NonNull;
 
@@ -13,18 +14,26 @@ const SYNC_START: u64 = 0;
 const SYNC_END: u64 = 4;
 
 /// The bytes `offset..offset + len` of the DMA-BUF `fd`, read between the starting and ending sync; `None` when it
-/// is shorter or can't be mapped. A buffer the kernel doesn't sync (a memfd the producer called a DMA-BUF) is read all
-/// the same.
+/// is shorter, can't be mapped or fails either sync. Only `ENOTTY` permits unsynced reads of the sandbox's memfds.
 pub(super) fn read(fd: BorrowedFd<'_>, offset: usize, len: usize) -> Option<Vec<u8>> {
+    read_with_sync(fd, offset, len, |step| sync(fd, step))
+}
+
+fn read_with_sync(
+    fd: BorrowedFd<'_>,
+    offset: usize,
+    len: usize,
+    mut sync: impl FnMut(u64) -> io::Result<()>,
+) -> Option<Vec<u8>> {
     let end = offset.checked_add(len)?;
     // a mapping read past the buffer's end faults (SIGBUS) rather than failing
     if size(fd)? < end {
         return None;
     }
     let mapped = Mapping::new(fd, end)?;
-    sync(fd, SYNC_START);
-    let bytes = mapped.bytes().get(offset..)?.to_vec();
-    sync(fd, SYNC_END);
+    sync(SYNC_START).ok()?;
+    let bytes = mapped.bytes()[offset..end].to_vec();
+    sync(SYNC_END).ok()?;
     Some(bytes)
 }
 
@@ -41,12 +50,26 @@ fn size(fd: BorrowedFd<'_>) -> Option<usize> {
     usize::try_from(stat.st_size).ok()
 }
 
-/// Tells the kernel the CPU starts or ends reading `fd`; a descriptor that isn't a DMA-BUF refuses it, harmlessly.
-fn sync(fd: BorrowedFd<'_>, step: u64) {
-    let flags: u64 = SYNC_READ | step;
-    // SAFETY: the descriptor is borrowed open for the call, and the argument is the `struct dma_buf_sync` (one u64)
-    // the request takes, alive for the call.
-    let _ = unsafe { libc::ioctl(fd.as_raw_fd(), DMA_BUF_IOCTL_SYNC, &raw const flags) };
+fn sync(fd: BorrowedFd<'_>, step: u64) -> io::Result<()> {
+    sync_with(step, |flags| {
+        // SAFETY: the descriptor is borrowed open, and the argument is the request's `struct dma_buf_sync` (one u64).
+        let result = unsafe { libc::ioctl(fd.as_raw_fd(), DMA_BUF_IOCTL_SYNC, &raw const flags) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    })
+}
+
+fn sync_with(step: u64, mut ioctl: impl FnMut(u64) -> io::Result<()>) -> io::Result<()> {
+    loop {
+        match ioctl(SYNC_READ | step) {
+            Err(error) if matches!(error.raw_os_error(), Some(libc::EINTR | libc::EAGAIN)) => {}
+            Err(error) if error.raw_os_error() == Some(libc::ENOTTY) => return Ok(()),
+            result => return result,
+        }
+    }
 }
 
 /// `len` bytes of `fd` mapped for reading, unmapped when dropped.
@@ -106,5 +129,63 @@ mod tests {
         assert_eq!(read(file.as_fd(), 0, 0), None);
         assert_eq!(read(file.as_fd(), 4, 8), None, "past the buffer's end");
         assert_eq!(read(file.as_fd(), usize::MAX, 2), None);
+    }
+
+    #[test]
+    fn both_sync_steps_retry_interruptions_and_temporary_failures() {
+        for step in [SYNC_START, SYNC_END] {
+            let mut errors = [Some(libc::EINTR), Some(libc::EAGAIN), None].into_iter();
+            let mut attempts = 0;
+            sync_with(step, |flags| {
+                assert_eq!(flags, SYNC_READ | step);
+                attempts += 1;
+                errors
+                    .next()
+                    .unwrap()
+                    .map_or(Ok(()), |code| Err(io::Error::from_raw_os_error(code)))
+            })
+            .unwrap();
+            assert_eq!(attempts, 3);
+        }
+    }
+
+    #[test]
+    fn only_an_unsupported_ioctl_is_an_acceptable_sync_failure() {
+        for step in [SYNC_START, SYNC_END] {
+            for code in [libc::ENOTTY, libc::EIO, libc::EINVAL, libc::EBADF, libc::EOPNOTSUPP] {
+                let result = sync_with(step, |_| Err(io::Error::from_raw_os_error(code)));
+                if code == libc::ENOTTY {
+                    assert!(result.is_ok());
+                } else {
+                    assert_eq!(result.unwrap_err().raw_os_error(), Some(code));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_frame_is_returned_only_after_both_syncs_succeed() {
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(&[1, 2, 3, 4]).unwrap();
+        for failed_step in [None, Some(SYNC_START), Some(SYNC_END)] {
+            let mut steps = Vec::new();
+            let bytes = read_with_sync(file.as_fd(), 1, 2, |step| {
+                steps.push(step);
+                if failed_step == Some(step) {
+                    Err(io::Error::from_raw_os_error(libc::EIO))
+                } else {
+                    Ok(())
+                }
+            });
+            assert_eq!(bytes, failed_step.is_none().then(|| vec![2, 3]));
+            assert_eq!(
+                steps,
+                if failed_step == Some(SYNC_START) {
+                    vec![SYNC_START]
+                } else {
+                    vec![SYNC_START, SYNC_END]
+                }
+            );
+        }
     }
 }

@@ -37,10 +37,10 @@ const PIXEL: u32 = 4;
 const BLACK: i32 = 16;
 const WHITE: i32 = 235;
 
-/// The screen's stream; frames go out on each [`StreamRc::trigger_process`].
+/// The screen's listener unhooks before its stream drops; frames go out on each [`StreamRc::trigger_process`].
 pub(super) struct Screen {
-    pub(super) stream: StreamRc,
     _listener: StreamListener<Showing>,
+    pub(super) stream: StreamRc,
 }
 
 struct Showing {
@@ -97,8 +97,8 @@ pub(super) fn show(core: &CoreRc, shown: ScreenShown) -> Result<Screen, String> 
         )
         .map_err(text)?;
     Ok(Screen {
-        stream,
         _listener: listener,
+        stream,
     })
 }
 

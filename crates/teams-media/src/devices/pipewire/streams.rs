@@ -472,11 +472,11 @@ fn frame_of(data: &mut spa::buffer::Data, (format, width, height): (PixelFormat,
 }
 
 /// The frame a DMA-BUF of the negotiated `format` holds: its first plane mapped and read here, `stride` bytes a row
-/// (`width` pixels of 4 bytes when the chunk names none); `None` for a buffer the producer marked unused (size 0 or
-/// corrupted) or that can't be read. Its chunk's size says nothing more: DMA-BUF producers may set it to 0 or 1.
+/// (`width` pixels of 4 bytes when the chunk names none); `None` for a corrupted buffer or one that can't be read.
+/// Its chunk's size is ignored: DMA-BUF producers may set it to 0 or 1, so the descriptor supplies the size check.
 fn dmabuf_frame(data: &spa::buffer::Data, (format, width, height): (PixelFormat, u32, u32)) -> Option<VideoFrame> {
     let chunk = data.chunk();
-    if chunk.size() == 0 || chunk.flags().contains(ChunkFlags::CORRUPTED) || data.fd() < 0 {
+    if chunk.flags().contains(ChunkFlags::CORRUPTED) || data.fd() < 0 {
         return None;
     }
     let packed = width.checked_mul(4)?;
@@ -795,10 +795,73 @@ fn to_usize_u64(value: u64) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write as _;
+    use std::os::fd::AsRawFd as _;
     use std::time::Duration;
 
     use super::*;
     use crate::devices::DeviceError;
+
+    fn dmabuf_test_frame(fd: i32, chunk: &mut spa::sys::spa_chunk) -> Option<VideoFrame> {
+        let data = spa::sys::spa_data {
+            type_: spa::buffer::DataType::DmaBuf.as_raw(),
+            flags: spa::buffer::DataFlags::READABLE.bits(),
+            fd: i64::from(fd),
+            mapoffset: 0,
+            maxsize: 0,
+            data: std::ptr::null_mut(),
+            chunk,
+        };
+        // SAFETY: Data is a transparent wrapper of spa_data; its descriptor and chunk live through this call.
+        let data = unsafe { &*(&raw const data).cast::<spa::buffer::Data>() };
+        dmabuf_frame(data, (PixelFormat::Bgrx, 2, 2))
+    }
+
+    #[test]
+    fn dma_buf_frames_ignore_chunk_size_and_maxsize_but_keep_the_offset_and_stride() {
+        let mut file = tempfile::tempfile().unwrap();
+        let bytes: Vec<u8> = (0..32).collect();
+        file.write_all(&bytes).unwrap();
+        for size in [0, 1, 4096] {
+            let mut chunk = spa::sys::spa_chunk {
+                offset: 4,
+                size,
+                stride: 12,
+                flags: 0,
+            };
+            let frame = dmabuf_test_frame(file.as_raw_fd(), &mut chunk).unwrap();
+            assert_eq!((frame.width, frame.height, frame.stride), (2, 2, 12));
+            assert_eq!(frame.format, PixelFormat::Bgrx);
+            assert_eq!(frame.data, bytes[4..28]);
+        }
+    }
+
+    #[test]
+    fn dma_buf_frames_skip_corruption_invalid_descriptors_and_reads_past_the_buffer() {
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(&[42; 16]).unwrap();
+        let mut chunk = spa::sys::spa_chunk {
+            offset: 0,
+            size: 0,
+            stride: 0,
+            flags: 0,
+        };
+        let frame = dmabuf_test_frame(file.as_raw_fd(), &mut chunk).unwrap();
+        assert_eq!(frame.stride, 8, "packed rows when stride is absent");
+        assert_eq!(frame.data, [42; 16]);
+        chunk.flags = ChunkFlags::CORRUPTED.bits();
+        assert!(dmabuf_test_frame(file.as_raw_fd(), &mut chunk).is_none());
+        chunk.flags = 0;
+        assert!(dmabuf_test_frame(-1, &mut chunk).is_none());
+        chunk.offset = 1;
+        assert!(dmabuf_test_frame(file.as_raw_fd(), &mut chunk).is_none());
+        chunk.offset = 0;
+        chunk.stride = 12;
+        assert!(dmabuf_test_frame(file.as_raw_fd(), &mut chunk).is_none());
+        chunk.stride = 0;
+        file.set_len(15).unwrap();
+        assert!(dmabuf_test_frame(file.as_raw_fd(), &mut chunk).is_none());
+    }
 
     #[test]
     fn the_camera_takes_dma_bufs_and_memfds_so_a_v4l2_camera_s_buffers_reach_it() {
