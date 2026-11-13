@@ -4,8 +4,8 @@
 //!   size and rate asked, a frame on each tick of its own timer (it drives its graph, as a camera does), each frame
 //!   carrying its index.
 //! - **The screen** (`sandbox-screen`, [`super::screen`]): the same pattern at 720p, 15 frames a second, cast as niri
-//!   casts a screen (a stream of the kind a compositor's screen cast is, `Stream/Output/Video`, so no camera list
-//!   names it); its node is what the sandbox's fake screen-cast portal hands out ([`MediaHelper::screen_node`]).
+//!   casts a screen (or in plain memory, [`super::ScreenCast::Memory`]; a stream of the kind a compositor's screen
+//!   cast is, `Stream/Output/Video`, so no camera list names it); its node is what the sandbox's fake screen-cast portal hands out ([`MediaHelper::screen_node`]).
 //! - **The recording**: a capture of the speaker's monitor, written to a WAV file whose header is brought up to date
 //!   every second, each buffer marked on its [`Timeline`] (when its first sample was heard).
 //! - **Devices added and removed while it runs** ([`super::nodes`]): another microphone playing a tone of its own, or
@@ -50,7 +50,7 @@ use teams_media::devices::pipewire::CONFIG_OVERRIDES;
 use teams_media::devices::wav::WavWriter;
 
 use super::timeline::{Timeline, now_us, samples_to_us};
-use super::{CAMERA_NODE, SPEAKER_NODE};
+use super::{CAMERA_NODE, SPEAKER_NODE, ScreenCast};
 use crate::{SOCKET_WAIT, SandboxResult};
 
 /// The camera and the recording, stopped (and the recording's header brought up to date) on drop.
@@ -94,7 +94,13 @@ impl MediaHelper {
     /// # Errors
     /// This process sets a config override ([`check_environment`]), the socket can't be reached, a stream can't be
     /// made, or the recording isn't linked within [`SOCKET_WAIT`].
-    pub fn start(socket: &Path, client_conf: &Path, recording: &Path, camera: PatternCamera) -> SandboxResult<Self> {
+    pub fn start(
+        socket: &Path,
+        client_conf: &Path,
+        recording: &Path,
+        camera: PatternCamera,
+        cast: ScreenCast,
+    ) -> SandboxResult<Self> {
         check_environment()?;
         let stream = UnixStream::connect(socket)?;
         let (commands, commands_rx) = pipewire::channel::channel();
@@ -110,6 +116,7 @@ impl MediaHelper {
             camera,
             frames: Arc::clone(&frames),
             screen: screen.clone(),
+            cast,
         };
         let thread = thread::Builder::new()
             .name("ui-sandbox-media".to_owned())
@@ -190,6 +197,7 @@ struct Setup {
     camera: PatternCamera,
     frames: Arc<AtomicU64>,
     screen: ScreenShown,
+    cast: ScreenCast,
 }
 
 pub(super) fn text(error: impl std::fmt::Display) -> String {
@@ -226,7 +234,7 @@ impl Setup {
             .update_timer(Some(period), Some(period))
             .into_sync_result()
             .map_err(text)?;
-        let screen = super::screen::show(&core, self.screen)?;
+        let screen = super::screen::show(&core, self.screen, self.cast)?;
         let screen_ticks = screen.stream.clone();
         let screen_timer = main_loop.loop_().add_timer(move |_| {
             let _ = screen_ticks.trigger_process();

@@ -6,7 +6,7 @@
 //! in above it becomes the default, and falling back when a chosen device is unplugged; following the system, both moved with a device plugged in above the
 //! system's and back once it is unplugged; the personal build's camera route, through the sandbox's fake camera
 //! portal on the sandbox's bus: granted, denied, and refused outright for a bus outside the sandbox; and a shared
-//! screen's, through its fake screen-cast portal there.
+//! screen's, through its fake screen-cast portal there, cast as niri casts (DMA-BUFs only) or in plain memory.
 //!
 //! Without `pipewire` and `wireplumber` (and for the portal, the compositors and `dbus-daemon`) the tests say so and
 //! pass, unless `GPUI_SMOKE_REQUIRE=1`. Nothing here plays aloud or opens a real device: the server is a private one
@@ -30,6 +30,7 @@ use tempfile::TempDir;
 use ui_sandbox::pipewire::nodes::{AddedNode, NodeSpec};
 use ui_sandbox::pipewire::{
     CAMERA_NODE, DEVICE_PRIORITY, MICROPHONE_NODE, PipeWireOptions, PipeWireTools, PrivatePipeWire, SPEAKER_NODE,
+    ScreenCast,
 };
 use ui_sandbox::{LineError, Running, SandboxOptions, SandboxResult, clean_command, required, spawn, unavailable};
 
@@ -468,4 +469,37 @@ fn a_shared_screen_comes_through_the_sandbox_s_screen_cast_portal() {
     assert_eq!(refused["screen"], "refused", "{refused:?}");
     assert!(refused["why"].contains("sandbox"), "{refused:?}");
     assert!(listener.accept().is_err(), "the canary bus was reached");
+}
+
+/// A screen cast in plain memory, as compositors that offer no DMA-BUF cast it (the DMA-BUF offer comes first and is
+/// turned down): its frames come through the portal in order, and its session is closed once the screen went.
+#[test]
+fn a_screen_cast_in_plain_memory_comes_through_the_screen_cast_portal_too() {
+    let options = SandboxOptions {
+        pipewire: Some(PipeWireOptions {
+            screen: ScreenCast::Memory,
+            ..PipeWireOptions::default()
+        }),
+        ..SandboxOptions::default()
+    };
+    let Some(sandbox) = ui_sandbox::sandbox_or_skip("the_screen_cast_portal_in_memory", &options).unwrap() else {
+        return;
+    };
+    let seen = probe(&sandbox.client_env(), &["portal-screen", "10", "20"])
+        .unwrap_or_else(|error| panic!("{error}{}", sandbox.logs()));
+    assert_eq!(seen["screen"], "open", "{seen:?}");
+    assert_eq!(seen["size"], "1280x720", "{seen:?}");
+    assert!(value::<u64>(&seen, "frames") >= 10, "{seen:?}");
+    assert_eq!(seen["in_order"], "1", "{seen:?}");
+    let asked: Vec<&str> = sandbox.bus().portal_calls().iter().map(|call| call.method).collect();
+    assert_eq!(
+        asked,
+        [
+            "ScreenCast.CreateSession",
+            "ScreenCast.SelectSources",
+            "ScreenCast.Start",
+            "ScreenCast.OpenPipeWireRemote",
+            "ScreenCast.Close",
+        ]
+    );
 }

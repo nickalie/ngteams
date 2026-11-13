@@ -113,6 +113,19 @@ pub struct PipeWireOptions {
     /// The loopback from the speaker into the microphone; `None` leaves the microphone the tone alone.
     pub echo: Option<Echo>,
     pub camera: PatternCamera,
+    /// How the screen the fake screen-cast portal shares is cast.
+    pub screen: ScreenCast,
+}
+
+/// How the sandbox's screen is cast: as niri does (the default), or in plain memory, as compositors that offer no
+/// DMA-BUF do.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScreenCast {
+    /// `BGRx` with a mandatory linear modifier, DMA-BUFs only, allocated by the screen (see `screen`'s module docs).
+    #[default]
+    Niri,
+    /// `BGRx` with no modifier, in memory the consumer maps.
+    Memory,
 }
 
 impl Default for PipeWireOptions {
@@ -124,6 +137,7 @@ impl Default for PipeWireOptions {
             },
             echo: None,
             camera: PatternCamera::default(),
+            screen: ScreenCast::default(),
         }
     }
 }
@@ -335,6 +349,7 @@ impl PrivatePipeWire {
             &pipewire.layout.config.join(client_conf_name()?),
             &pipewire.recording(),
             options.camera,
+            options.screen,
         );
         match helper {
             Ok(helper) => pipewire.media = Some(helper),
