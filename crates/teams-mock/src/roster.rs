@@ -48,6 +48,10 @@ pub(crate) struct Party {
     pub(crate) hand: Option<String>,
     /// The organizer muted its main audio (Mute all): the endpoint's mute version then (0: not muted by them).
     pub(crate) server_mute: u64,
+    /// The name it is listed by, for someone the mock made up (no account of the world's); the account's otherwise.
+    pub(crate) name: Option<String>,
+    /// Its screen goes out on its `applicationsharing-video` stream, of this (made-up) source id.
+    pub(crate) sharing: Option<i64>,
 }
 
 /// The `rosterUpdate` callback a start's, a join's or an `attach`'s body hands out (wherever in it).
@@ -233,6 +237,8 @@ pub(crate) fn enter(state: &mut State, index: usize, mri: &str, link: Option<Str
         muted: false,
         hand: None,
         server_mute: 0,
+        name: None,
+        sharing: None,
     });
     if call.group_chat.is_some() || call.test_call {
         send(state, index, Some(mri));
@@ -256,6 +262,57 @@ pub(crate) fn watch(state: &mut State, index: usize, link: &str) {
     {
         state.call_back(Some(link), body);
     }
+}
+
+/// Made-up people (`(mri, name)`, no client of their own) are in group call `index`, their cameras off: everyone is told
+/// them in one delivery. `false` without such a group call.
+pub(crate) fn made_up(state: &mut State, index: usize, people: &[(String, String)]) -> bool {
+    let Some(call) = state
+        .calling
+        .calls
+        .get_mut(index)
+        .filter(|call| call.group_chat.is_some())
+    else {
+        return false;
+    };
+    for (mri, name) in people {
+        call.roster.retain(|party| &party.mri != mri);
+        call.roster.push(Party {
+            mri: mri.clone(),
+            link: None,
+            messages: None,
+            updates: None,
+            active: true,
+            video_on: false,
+            muted: false,
+            hand: None,
+            server_mute: 0,
+            name: Some(name.clone()),
+            sharing: None,
+        });
+    }
+    send(state, index, None);
+    true
+}
+
+/// `mri`'s screen in group call `index` goes out (`on`) on its sharing stream, or no longer: everyone is told. `false`
+/// when it isn't in such a call.
+pub(crate) fn sharing(state: &mut State, index: usize, mri: &str, on: bool) -> bool {
+    let Some(call) = state
+        .calling
+        .calls
+        .get_mut(index)
+        .filter(|call| call.group_chat.is_some())
+    else {
+        return false;
+    };
+    let Some(at) = call.roster.iter().position(|party| party.mri == mri && party.active) else {
+        return false;
+    };
+    // the mock's own source id: the mixer sends nothing on it
+    call.roster[at].sharing = on.then(|| 9_000 + i64::try_from(at).unwrap_or_default());
+    send(state, index, Some(mri));
+    true
 }
 
 /// `mri` left group call `index`: everyone left is told; whether anyone is left.
@@ -379,10 +436,19 @@ fn entry(
             let direction = if party.video_on { "sendrecv" } else { "recvonly" };
             let mut audio = stream("audio", "main-audio", sources.map(|(audio, _)| audio), "sendrecv");
             audio["serverMuted"] = json!(party.server_mute > 0);
-            json!({endpoint: {"call": {"mediaStreams": [
+            let mut streams = vec![
                 audio,
                 stream("video", "main-video", sources.map(|(_, video)| video), direction),
-            ], "serverMuteVersion": party.server_mute}}})
+            ];
+            if let Some(source) = party.sharing {
+                streams.push(stream(
+                    "applicationsharing-video",
+                    "applicationsharing-video",
+                    Some(source),
+                    "sendonly",
+                ));
+            }
+            json!({endpoint: {"call": {"mediaStreams": streams, "serverMuteVersion": party.server_mute}}})
         }
         false => json!({endpoint: {"call": {"serverMuteVersion": 0}, "modalityJoined": "Call"}}),
     };
@@ -396,7 +462,7 @@ fn entry(
     let mut entry = json!({
         "version": version,
         "state": if party.active { "active" } else { "inactive" },
-        "details": {"id": party.mri, "displayName": state.display_name(&party.mri)},
+        "details": {"id": party.mri, "displayName": party.name.clone().unwrap_or_else(|| state.display_name(&party.mri))},
         "endpoints": endpoints,
     });
     if let Some(hand) = &party.hand {

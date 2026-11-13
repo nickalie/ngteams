@@ -666,6 +666,49 @@ impl ChatServiceMock {
         calling::ring(&mut self.lock(), from, &callees, Some(chat.to_owned()))
     }
 
+    /// Made-up people (`(mri, name)`, no client of their own, cameras off) are in group call `id`, as the service lists
+    /// those who joined: everyone in it is told them at once. `false` without such a group call.
+    #[must_use = "false says there was no such group call"]
+    pub fn join_made_up(&self, id: &str, people: &[(&str, &str)]) -> bool {
+        let mut state = self.lock();
+        let Some(index) = state.calling.calls.iter().position(|call| call.id == id) else {
+            return false;
+        };
+        let people: Vec<(String, String)> = people
+            .iter()
+            .map(|(mri, name)| ((*mri).to_owned(), (*name).to_owned()))
+            .collect();
+        roster::made_up(&mut state, index, &people)
+    }
+
+    /// `mri`, someone [`Self::join_made_up`] made up, leaves group call `id`: everyone left is told. `false` when it
+    /// wasn't in it.
+    #[must_use = "false says nobody left"]
+    pub fn leave_made_up(&self, id: &str, mri: &str) -> bool {
+        let mut state = self.lock();
+        let Some(index) = state
+            .calling
+            .calls
+            .iter()
+            .position(|call| call.id == id && call.roster.iter().any(|party| party.mri == mri && party.active))
+        else {
+            return false;
+        };
+        roster::leave(&mut state, index, mri);
+        true
+    }
+
+    /// `mri`, someone in group call `id`, shares its screen (`on`) or stops: its roster entry's sharing stream goes out
+    /// or no longer, everyone told (the mixer sends no frames for it). `false` when it isn't in such a call.
+    #[must_use = "false says nobody shares"]
+    pub fn share_made_up(&self, id: &str, mri: &str, on: bool) -> bool {
+        let mut state = self.lock();
+        let Some(index) = state.calling.calls.iter().position(|call| call.id == id) else {
+            return false;
+        };
+        roster::sharing(&mut state, index, mri, on)
+    }
+
     /// Call `id`'s ring ends with `code` and `phrase` (its caller cancelled, it timed out: see [`TIMED_OUT`]). `false`
     /// when there is no such call.
     #[must_use = "false says there was no such call"]

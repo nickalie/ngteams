@@ -1893,5 +1893,30 @@ async fn the_calling_service_takes_the_accounts_skypetoken_alone_and_answers_a_s
     Ok(())
 }
 
+/// Made-up people join a running group call, one shares and stops, one leaves; nothing is made up in a call that isn't
+/// a group call or isn't there. (What a client hears of them: `crates/ngteams/tests/large_call_window.rs`.)
+#[tokio::test]
+async fn made_up_people_join_share_and_leave_only_a_group_call() -> TestResult {
+    let mock = ChatServiceMock::start().await?;
+    let people = [
+        ("8:orgid:00000000-0000-4000-8000-00000000a001", "Ann Able"),
+        ("8:orgid:00000000-0000-4000-8000-00000000a002", "Ben Able"),
+    ];
+    assert!(!mock.join_made_up("NoSuchCall", &people));
+    let one_to_one = mock.ring(LAB_B, LAB_A);
+    assert!(!mock.join_made_up(&one_to_one, &people), "a 1:1 call");
+    let group = mock.ring_group(LAB_B, ABC_CHAT, &[LAB_A]);
+    assert!(mock.join_made_up(&group, &people));
+    assert!(mock.share_made_up(&group, people[0].0, true));
+    assert!(mock.share_made_up(&group, people[0].0, false));
+    assert!(!mock.share_made_up(&group, OUTSIDER, true), "not in the call");
+    assert!(!mock.share_made_up(&one_to_one, people[0].0, true));
+    assert!(!mock.share_made_up("NoSuchCall", people[0].0, true));
+    assert!(mock.leave_made_up(&group, people[1].0));
+    assert!(!mock.leave_made_up(&group, people[1].0), "left already");
+    assert!(!mock.share_made_up(&group, people[1].0, true), "gone");
+    Ok(())
+}
+
 #[path = "support/helpers.rs"]
 mod helpers;
