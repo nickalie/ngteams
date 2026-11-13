@@ -175,6 +175,8 @@ gpui-component = { version = "0.8.0", default-features = false }
 gpui-kit-assets = { version = "0.8.0", default-features = false }
 # GPUI's `RenderImage` frames are `image` buffers: the version GPUI already links.
 image = { version = "0.25.10", default-features = false }
+# Keep the decoder's allocation bounds when resolving image's transitive dependencies.
+image-webp = "=0.2.4"
 # STUN MESSAGE-INTEGRITY (HMAC-SHA1 over a long-term key) for the echo call's TURN client
 hmac = "0.13.0"
 # a Retry-After given as an HTTP date
@@ -357,11 +359,13 @@ opt-level = 3
 # pinned 0.3.9 plus build/patches/gpui-pre{,-wgpu} (scripts/vendor-crates.sh; `--check` verifies them); so is
 # vendor/gpui-pre-linux, whose Wayland clipboard keeps another program's HTML for the rich-text editor's paste.
 [patch.crates-io]
-image-webp = { path = "vendor/image-webp" }
 gpui-pre = { path = "vendor/gpui-pre" }
 gpui-pre-wgpu = { path = "vendor/gpui-pre-wgpu" }
 gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
 gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
+# image-webp 0.2.4 plus build/patches/image-webp (scripts/vendor-crates.sh): teams-ui's WebP budget relies on
+# bounded lossless Huffman storage and VP8 dimensions checked before allocation; keep until upstream bounds both.
+image-webp = { path = "vendor/image-webp" }
 # LiveKit's libwebrtc bindings, the pinned 0.3.55 plus build/patches/libwebrtc (scripts/vendor-crates.sh):
 # `RtpTransceiver::set_direction`, which webrtc-sys binds and the safe API leaves out (0.4.0 too). A group call's screen
 # goes out on the mixer's sharing line, turned to send before the answer (crates/teams-media/src/rtc.rs). Only the Rust

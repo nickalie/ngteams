@@ -1167,7 +1167,10 @@ impl<R: Read> Vp8Decoder<R> {
         self.b.check(res, ())
     }
 
-    fn read_frame_header(&mut self) -> Result<(), DecodingError> {
+    fn read_frame_header(
+        &mut self,
+        expected_dimensions: Option<(u32, u32)>,
+    ) -> Result<(), DecodingError> {
         let tag = self.r.read_u24::<LittleEndian>()?;
 
         self.frame.keyframe = tag & 1 == 0;
@@ -1189,6 +1192,12 @@ impl<R: Read> Vp8Decoder<R> {
 
             self.frame.width = w & 0x3FFF;
             self.frame.height = h & 0x3FFF;
+
+            if let Some(dimensions) = expected_dimensions {
+                if dimensions != (u32::from(self.frame.width), u32::from(self.frame.height)) {
+                    return Err(DecodingError::InconsistentImageSizes);
+                }
+            }
 
             self.top = init_top_macroblocks(self.frame.width as usize);
             // Almost always the first macro block, except when non exists (i.e. `width == 0`)
@@ -1944,11 +1953,20 @@ impl<R: Read> Vp8Decoder<R> {
     /// Decodes the current frame
     pub fn decode_frame(r: R) -> Result<Frame, DecodingError> {
         let decoder = Self::new(r);
-        decoder.decode_frame_()
+        decoder.decode_frame_(None)
     }
 
-    fn decode_frame_(mut self) -> Result<Frame, DecodingError> {
-        self.read_frame_header()?;
+    pub(crate) fn decode_frame_with_dimensions(
+        r: R,
+        width: u32,
+        height: u32,
+    ) -> Result<Frame, DecodingError> {
+        let decoder = Self::new(r);
+        decoder.decode_frame_(Some((width, height)))
+    }
+
+    fn decode_frame_(mut self, expected_dimensions: Option<(u32, u32)>) -> Result<Frame, DecodingError> {
+        self.read_frame_header(expected_dimensions)?;
 
         for mby in 0..self.mbheight as usize {
             let p = mby % self.num_partitions as usize;
@@ -2664,6 +2682,23 @@ mod benches {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mismatched_dimensions_leave_frame_storage_unallocated() {
+        let header = [48, 1, 0, 157, 1, 42, 255, 63, 255, 63];
+        let mut decoder = Vp8Decoder::new(&header[..]);
+        assert!(matches!(
+            decoder.read_frame_header(Some((2, 2))),
+            Err(DecodingError::InconsistentImageSizes)
+        ));
+        assert_eq!(decoder.frame.ybuf.capacity(), 0);
+        assert_eq!(decoder.frame.ubuf.capacity(), 0);
+        assert_eq!(decoder.frame.vbuf.capacity(), 0);
+        assert_eq!(decoder.top.capacity(), 0);
+        assert_eq!(decoder.top_border_y.capacity(), 0);
+        assert_eq!(decoder.top_border_u.capacity(), 0);
+        assert_eq!(decoder.top_border_v.capacity(), 0);
+    }
 
     #[test]
     fn test_avg2() {

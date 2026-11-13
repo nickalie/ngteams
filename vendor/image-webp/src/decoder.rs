@@ -696,10 +696,7 @@ impl<R: BufRead + Seek> WebPDecoder<R> {
                 .get(&WebPRiffChunk::VP8)
                 .ok_or(DecodingError::ChunkMissing)?;
             let reader = range_reader(&mut self.r, range.start..range.end)?;
-            let frame = Vp8Decoder::decode_frame(reader)?;
-            if u32::from(frame.width) != self.width || u32::from(frame.height) != self.height {
-                return Err(DecodingError::InconsistentImageSizes);
-            }
+            let frame = Vp8Decoder::decode_frame_with_dimensions(reader, self.width, self.height)?;
 
             if self.has_alpha() {
                 frame.fill_rgba(buf, self.webp_decode_options.lossy_upsampling);
@@ -800,12 +797,8 @@ impl<R: BufRead + Seek> WebPDecoder<R> {
         let (frame, frame_has_alpha): (Vec<u8>, bool) = match chunk {
             WebPRiffChunk::VP8 => {
                 let reader = (&mut self.r).take(chunk_size);
-                let raw_frame = Vp8Decoder::decode_frame(reader)?;
-                if u32::from(raw_frame.width) != frame_width
-                    || u32::from(raw_frame.height) != frame_height
-                {
-                    return Err(DecodingError::InconsistentImageSizes);
-                }
+                let raw_frame =
+                    Vp8Decoder::decode_frame_with_dimensions(reader, frame_width, frame_height)?;
                 let mut rgb_frame = vec![0; frame_width as usize * frame_height as usize * 3];
                 raw_frame.fill_rgb(&mut rgb_frame, self.webp_decode_options.lossy_upsampling);
                 (rgb_frame, false)
@@ -835,7 +828,11 @@ impl<R: BufRead + Seek> WebPDecoder<R> {
                     return Err(DecodingError::ChunkHeaderInvalid(next_chunk.to_fourcc()));
                 }
 
-                let frame = Vp8Decoder::decode_frame((&mut self.r).take(next_chunk_size))?;
+                let frame = Vp8Decoder::decode_frame_with_dimensions(
+                    (&mut self.r).take(next_chunk_size),
+                    frame_width,
+                    frame_height,
+                )?;
 
                 let mut rgba_frame = vec![0; frame_width as usize * frame_height as usize * 4];
                 frame.fill_rgba(&mut rgba_frame, self.webp_decode_options.lossy_upsampling);

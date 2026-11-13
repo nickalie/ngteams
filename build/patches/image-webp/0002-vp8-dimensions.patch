@@ -1,0 +1,121 @@
+diff --git a/src/decoder.rs b/src/decoder.rs
+index b36275b0..1ccb1785 100644
+--- a/src/decoder.rs
++++ b/src/decoder.rs
+@@ -696,10 +696,7 @@ impl<R: BufRead + Seek> WebPDecoder<R> {
+                 .get(&WebPRiffChunk::VP8)
+                 .ok_or(DecodingError::ChunkMissing)?;
+             let reader = range_reader(&mut self.r, range.start..range.end)?;
+-            let frame = Vp8Decoder::decode_frame(reader)?;
+-            if u32::from(frame.width) != self.width || u32::from(frame.height) != self.height {
+-                return Err(DecodingError::InconsistentImageSizes);
+-            }
++            let frame = Vp8Decoder::decode_frame_with_dimensions(reader, self.width, self.height)?;
+ 
+             if self.has_alpha() {
+                 frame.fill_rgba(buf, self.webp_decode_options.lossy_upsampling);
+@@ -800,12 +797,8 @@ impl<R: BufRead + Seek> WebPDecoder<R> {
+         let (frame, frame_has_alpha): (Vec<u8>, bool) = match chunk {
+             WebPRiffChunk::VP8 => {
+                 let reader = (&mut self.r).take(chunk_size);
+-                let raw_frame = Vp8Decoder::decode_frame(reader)?;
+-                if u32::from(raw_frame.width) != frame_width
+-                    || u32::from(raw_frame.height) != frame_height
+-                {
+-                    return Err(DecodingError::InconsistentImageSizes);
+-                }
++                let raw_frame =
++                    Vp8Decoder::decode_frame_with_dimensions(reader, frame_width, frame_height)?;
+                 let mut rgb_frame = vec![0; frame_width as usize * frame_height as usize * 3];
+                 raw_frame.fill_rgb(&mut rgb_frame, self.webp_decode_options.lossy_upsampling);
+                 (rgb_frame, false)
+@@ -835,7 +828,11 @@ impl<R: BufRead + Seek> WebPDecoder<R> {
+                     return Err(DecodingError::ChunkHeaderInvalid(next_chunk.to_fourcc()));
+                 }
+ 
+-                let frame = Vp8Decoder::decode_frame((&mut self.r).take(next_chunk_size))?;
++                let frame = Vp8Decoder::decode_frame_with_dimensions(
++                    (&mut self.r).take(next_chunk_size),
++                    frame_width,
++                    frame_height,
++                )?;
+ 
+                 let mut rgba_frame = vec![0; frame_width as usize * frame_height as usize * 4];
+                 frame.fill_rgba(&mut rgba_frame, self.webp_decode_options.lossy_upsampling);
+diff --git a/src/vp8.rs b/src/vp8.rs
+index 8bb51189..d187b1c7 100644
+--- a/src/vp8.rs
++++ b/src/vp8.rs
+@@ -1167,7 +1167,10 @@ impl<R: Read> Vp8Decoder<R> {
+         self.b.check(res, ())
+     }
+ 
+-    fn read_frame_header(&mut self) -> Result<(), DecodingError> {
++    fn read_frame_header(
++        &mut self,
++        expected_dimensions: Option<(u32, u32)>,
++    ) -> Result<(), DecodingError> {
+         let tag = self.r.read_u24::<LittleEndian>()?;
+ 
+         self.frame.keyframe = tag & 1 == 0;
+@@ -1190,6 +1193,12 @@ impl<R: Read> Vp8Decoder<R> {
+             self.frame.width = w & 0x3FFF;
+             self.frame.height = h & 0x3FFF;
+ 
++            if let Some(dimensions) = expected_dimensions {
++                if dimensions != (u32::from(self.frame.width), u32::from(self.frame.height)) {
++                    return Err(DecodingError::InconsistentImageSizes);
++                }
++            }
++
+             self.top = init_top_macroblocks(self.frame.width as usize);
+             // Almost always the first macro block, except when non exists (i.e. `width == 0`)
+             self.left = self.top.first().copied().unwrap_or_default();
+@@ -1944,11 +1953,20 @@ impl<R: Read> Vp8Decoder<R> {
+     /// Decodes the current frame
+     pub fn decode_frame(r: R) -> Result<Frame, DecodingError> {
+         let decoder = Self::new(r);
+-        decoder.decode_frame_()
++        decoder.decode_frame_(None)
++    }
++
++    pub(crate) fn decode_frame_with_dimensions(
++        r: R,
++        width: u32,
++        height: u32,
++    ) -> Result<Frame, DecodingError> {
++        let decoder = Self::new(r);
++        decoder.decode_frame_(Some((width, height)))
+     }
+ 
+-    fn decode_frame_(mut self) -> Result<Frame, DecodingError> {
+-        self.read_frame_header()?;
++    fn decode_frame_(mut self, expected_dimensions: Option<(u32, u32)>) -> Result<Frame, DecodingError> {
++        self.read_frame_header(expected_dimensions)?;
+ 
+         for mby in 0..self.mbheight as usize {
+             let p = mby % self.num_partitions as usize;
+@@ -2665,6 +2683,23 @@ mod benches {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn mismatched_dimensions_leave_frame_storage_unallocated() {
++        let header = [48, 1, 0, 157, 1, 42, 255, 63, 255, 63];
++        let mut decoder = Vp8Decoder::new(&header[..]);
++        assert!(matches!(
++            decoder.read_frame_header(Some((2, 2))),
++            Err(DecodingError::InconsistentImageSizes)
++        ));
++        assert_eq!(decoder.frame.ybuf.capacity(), 0);
++        assert_eq!(decoder.frame.ubuf.capacity(), 0);
++        assert_eq!(decoder.frame.vbuf.capacity(), 0);
++        assert_eq!(decoder.top.capacity(), 0);
++        assert_eq!(decoder.top_border_y.capacity(), 0);
++        assert_eq!(decoder.top_border_u.capacity(), 0);
++        assert_eq!(decoder.top_border_v.capacity(), 0);
++    }
++
+     #[test]
+     fn test_avg2() {
+         for i in 0u8..=255 {

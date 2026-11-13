@@ -19,7 +19,8 @@
 #                  absent values remain unknown and a measured zero is retained. Keep these patches until upstream
 #                  supports both (0.4.0 still leaves out set_direction).
 #   image-webp    bound cumulative Huffman group, tree and lookup-table allocations to 16 MiB per lossless decoder,
-#                  including compressed alpha; the image wrapper does not forward its allocation limit.
+#                  including compressed alpha, and check VP8 dimensions before allocating frame buffers;
+#                  the image wrapper does not forward its allocation limit.
 #
 # Each source is the crates.io archive of the crate's VERSION, verified against SHA256 below (the release's crates.io
 # checksum: the `cksum` of its line in https://index.crates.io/<prefix>/<crate>, also what Cargo.lock recorded for the
@@ -61,7 +62,7 @@ mode=vendor
 case "${1:-}" in
   "") ;;
   --check) mode=check ;;
-  -h | --help) sed -n '2,26s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; exit 0 ;;
+  -h | --help) sed -n '1d; /^#/!q; s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; exit 0 ;;
   *) die "unknown argument: $1 (see --help)" ;;
 esac
 
