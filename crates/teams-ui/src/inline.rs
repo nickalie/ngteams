@@ -7,7 +7,7 @@
 //!   ([`Core::message_picture`]), decoded here off the foreground (every frame scaled down to at most
 //!   [`MAX_DECODED_SIDE`] on its longer side; a GIF with its frames up to the first that doesn't decode, at most
 //!   [`MAX_GIF_FRAMES`] and [`MAX_GIF_BYTES`] of them, its canvas at most [`MAX_GIF_SIDE`]; a still picture's source
-//!   at most [`MAX_STILL_SIDE`] per side and 256 MiB in RGBA8) and kept for the run. It is
+//!   at most [`MAX_STILL_SIDE`] per side and 256 MiB across overlapping pixel buffers) and kept for the run. It is
 //!   drawn as Teams draws a picture in a message ([`Shape::of`]): sized by the size the message gives it (else its
 //!   own), never upscaled, its aspect ratio kept, in a frame of the border colour (1 px, rounded) at the start of its
 //!   line, never wider than the width there is. A tall one (twice as high as wide) or a small one (lower than
@@ -55,7 +55,7 @@ pub const MAX_DECODED_SIDE: u32 = 2048;
 /// The largest source side of a still picture, before downscaling; the pixel budget also bounds its area.
 pub const MAX_STILL_SIDE: u32 = 16384;
 
-/// The decoder's allocation budget and the largest RGBA8 source buffer before downscaling.
+/// The decoder's allocation budget and the peak of the conversion and scaling pixel buffers.
 const MAX_STILL_ALLOC: u64 = 256 << 20;
 
 /// App tiles keep the smaller source bounds, regardless of the size they are drawn at.
@@ -400,11 +400,33 @@ fn decode_limited(
         return None;
     }
     limits.reserve(decoder.total_bytes()).ok()?;
+    if still_peak_bytes(natural, decoder.color_type(), max_side) > max_alloc {
+        return None;
+    }
     decoder.set_limits(limits).ok()?;
     let rgba = image::DynamicImage::from_decoder(decoder).ok()?.into_rgba8();
     let mut shown = scaled_down(rgba, max_side);
     to_bgra(&mut shown);
     Some((RenderImage::new(vec![Frame::new(shown)]), natural))
+}
+
+fn still_peak_bytes(natural: (u32, u32), color: image::ColorType, max_side: u32) -> u64 {
+    let pixels = u64::from(natural.0) * u64::from(natural.1);
+    let rgba = pixels * 4;
+    let conversion = if color == image::ColorType::Rgba8 {
+        rgba
+    } else {
+        pixels * u64::from(color.bytes_per_pixel()) + rgba
+    };
+    let shown = scaled_size(natural, max_side);
+    if shown == natural {
+        return conversion;
+    }
+    // Triangle resizing keeps a full-width float RGBA intermediate beside its source and output.
+    let scratch = u64::from(natural.0) * u64::from(shown.1) * 16;
+    let output = u64::from(shown.0) * u64::from(shown.1) * 4;
+    let weights = u64::from(natural.0.max(natural.1)) * 8;
+    conversion.max(rgba + scratch + output + weights)
 }
 
 /// A GIF's frames, each scaled down as a still picture is, up to the first that doesn't decode (a truncated file's
@@ -436,17 +458,24 @@ fn decode_gif(bytes: &[u8], max_side: u32) -> Option<(RenderImage, (u32, u32))> 
 
 /// `image` scaled down to at most `max_side` on its longer side, keeping its aspect ratio.
 fn scaled_down(image: RgbaImage, max_side: u32) -> RgbaImage {
-    let (width, height) = image.dimensions();
+    let shown = scaled_size(image.dimensions(), max_side);
+    if shown == image.dimensions() {
+        return image;
+    }
+    imageops::resize(&image, shown.0, shown.1, imageops::FilterType::Triangle)
+}
+
+fn scaled_size((width, height): (u32, u32), max_side: u32) -> (u32, u32) {
     let longer = width.max(height);
     if longer <= max_side {
-        return image;
+        return (width, height);
     }
     let scale = |side: u32| {
         u32::try_from(u64::from(side) * u64::from(max_side) / u64::from(longer))
             .unwrap_or(max_side)
             .max(1)
     };
-    imageops::resize(&image, scale(width), scale(height), imageops::FilterType::Triangle)
+    (scale(width), scale(height))
 }
 
 /// GPUI draws BGRA.

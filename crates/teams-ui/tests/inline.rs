@@ -3,8 +3,8 @@
 //! `MAX_GIF_BYTES` of them, each scaled down to `MAX_DECODED_SIDE`, and none for a canvas past `MAX_GIF_SIDE`. Every
 //! GIF here is made up in the test. Synthetic PNG/JPEG sources past `MAX_STILL_SIDE` are refused before scaling;
 //! accepted pictures retain their natural dimensions. Large screenshots decode for messages, the viewer and pastes,
-//! while sources exceeding the RGBA8 allocation budget are refused. A picture is shaped as Teams sizes one
-//! (`inline::Shape`).
+//! while sources exceeding the decoder or overlapping conversion/scaling allocation budget are refused. A picture
+//! is shaped as Teams sizes one (`inline::Shape`).
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -97,6 +97,37 @@ fn a_grayscale_source_within_the_decoder_budget_but_past_the_rgba_budget_is_refu
         bytes,
     });
     assert!(inline::decode(&picture).is_none());
+}
+
+fn png(image: &image::DynamicImage) -> teams_core::PictureBytes {
+    let mut bytes = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .unwrap();
+    Arc::new(PastedPicture {
+        format: PastedFormat::Png,
+        bytes,
+    })
+}
+
+#[test]
+fn a_16_bit_source_past_the_decoder_budget_but_within_the_rgba_budget_is_refused() {
+    let picture = png(&image::DynamicImage::ImageRgba16(image::ImageBuffer::new(5800, 5800)));
+    assert!(inline::decode(&picture).is_none());
+}
+
+#[test]
+fn overlapping_conversion_buffers_must_fit_the_budget() {
+    let picture = png(&image::DynamicImage::ImageRgb8(image::RgbImage::new(7000, 6000)));
+    assert!(inline::decode(&picture).is_none());
+}
+
+#[test]
+fn scaling_scratch_and_output_must_fit_beside_the_source() {
+    let picture = png(&image::DynamicImage::ImageRgba8(RgbaImage::new(6000, 6000)));
+    assert!(inline::decode(&picture).is_none());
+    let picture = png(&image::DynamicImage::ImageRgba8(RgbaImage::new(16384, 4096)));
+    assert!(inline::decode_within(&picture, teams_ui::picture_viewer::MAX_VIEWER_SIDE).is_none());
 }
 
 #[test]
