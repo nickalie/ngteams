@@ -238,6 +238,8 @@ struct Qa<'a> {
     trace: TraceReader,
     input: VirtualInput,
     socket: PathBuf,
+    /// When the app's child was spawned: no request of its own came before.
+    launched: Instant,
     passed: Vec<&'static str>,
     failed: Vec<(&'static str, String)>,
     /// Whether the search's box is open (it moves the chips and rows down by [`SEARCH_SHIFT`]).
@@ -357,6 +359,7 @@ impl<'a> Qa<'a> {
         let fd = writer.as_raw_fd().to_string();
         let mut vars = vec![(CHILD_ENV, mode), (TRACE_FD_ENV, fd.as_str())];
         vars.extend_from_slice(env);
+        let launched = Instant::now();
         let child = sandbox.spawn_with_fds(&std::env::current_exe()?, &[], &vars, &[writer.as_fd()])?;
         drop(writer);
         let mut running = Running::new(child)?;
@@ -370,6 +373,7 @@ impl<'a> Qa<'a> {
             trace,
             input: sandbox.input()?,
             socket: sandbox.path(CTL_SOCKET),
+            launched,
             passed: Vec::new(),
             failed: Vec::new(),
             box_open: false,

@@ -52,7 +52,8 @@ const CDN: &str = "https://res.cdn.office.net/teamsappdata/evergreen-assets/apps
 const CDN_PATH: &str = "/teamsappdata/evergreen-assets/apps";
 /// More than the definition reads a run makes.
 const DEFINITION_READS: usize = 24;
-/// How long the mock holds the outsider's picture and Made-up Slow's tile before it answers (404).
+/// How long the mock holds the outsider's picture and Made-up Slow's tile before it answers (404): the app's request
+/// timeout, so a read is held until it gives up.
 const HANG: Duration = Duration::from_secs(30);
 /// The longest a banner may take from the post that brings it: far less than [`HANG`].
 const PROMPT: Duration = Duration::from_secs(4);
@@ -61,6 +62,8 @@ const SETTLE_BANNERS: Duration = Duration::from_secs(3);
 
 /// The flows (each leaves the window as the next expects it).
 const CHECKS: [Check; 9] = [
+    // first: the outsider's read is held from about the app's start, for HANG only
+    ("hanging_picture_read_doesnt_hold_the_banner", hanging_person),
     ("message_banner_shows_the_sender_s_round_picture", message),
     ("mention_banner_shows_the_sender_s_round_picture", mention),
     (
@@ -76,7 +79,6 @@ const CHECKS: [Check; 9] = [
         "picture_that_doesnt_decode_gives_a_prompt_banner_without_one",
         undecodable,
     ),
-    ("hanging_picture_read_doesnt_hold_the_banner", hanging_person),
     (
         "first_app_banner_without_its_tile_the_next_with_it_square",
         app_first_then_tile,
@@ -577,6 +579,17 @@ fn undecodable(qa: &mut Qa<'_>) -> SandboxResult {
 fn hanging_person(qa: &mut Qa<'_>) -> SandboxResult {
     park(qa)?;
     let (banner, took) = banner_for(qa, "pic outsider-says")?;
+    let since_launch = qa.launched.elapsed();
+    say(&format!(
+        "the outsider's banner {} ms after the app's start",
+        since_launch.as_millis()
+    ));
+    ensure(since_launch < HANG, || {
+        format!(
+            "the outsider's banner came {} ms after the app's start: their picture's read may have ended",
+            since_launch.as_millis()
+        )
+    })?;
     no_picture(&banner)?;
     prompt(took, "the outsider's banner")?;
     let reads = picture_reads(qa)?;

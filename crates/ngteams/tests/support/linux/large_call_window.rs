@@ -688,8 +688,9 @@ fn share_and_leave(rig: &mut Rig<'_>) -> SandboxResult {
 
 /// A 1:1 call: the account's own tile floats at the stage's bottom right, over the far end's.
 fn one_to_one(rig: &mut Rig<'_>) -> SandboxResult {
+    let shown = rig.banners_shown();
     let _ = rig.mock.ring(LAB_B, LAB_A);
-    rig.answer()?;
+    rig.answer(shown)?;
     for size in [(800, 560), (1920, 1080)] {
         rig.resize(size)?;
         let stage = rig.stage()?;
@@ -812,12 +813,19 @@ impl<'a> Rig<'a> {
 
     /// b rings a in the a-b-c chat's group call; a answers.
     fn group_call(&mut self) -> SandboxResult {
+        let shown = self.banners_shown();
         self.call = self.mock.ring_group(LAB_B, ABC_CHAT, &[LAB_A]);
-        self.answer()
+        self.answer(shown)
     }
 
-    /// Answers the ringing call over the control socket, as `ngteamsctl answer` does; the call window shows it.
-    fn answer(&mut self) -> SandboxResult {
+    /// How many banners the sandbox's bus has shown so far (closed ones too).
+    fn banners_shown(&self) -> usize {
+        self.sandbox.bus().notifications().len()
+    }
+
+    /// Answers the ringing call over the control socket, as `ngteamsctl answer` does; the call window shows it. Its
+    /// banner is one shown after the first `shown`.
+    fn answer(&mut self, shown: usize) -> SandboxResult {
         let opened = |seen: &[serde_json::Value]| {
             seen.iter()
                 .filter(|line| line["view"] == "call-window" && line["change"] == "opened")
@@ -825,7 +833,7 @@ impl<'a> Rig<'a> {
         };
         let before = opened(self.app.trace.catch_up());
         self.wait_call("ringing", |row| row.ringing)?;
-        self.caller_picture()?;
+        self.caller_picture(shown)?;
         self.window_id = None;
         self.ctl.request(None, Request::Answer)?;
         self.wait_call("connected", |row| row.state == "connected")?;
@@ -838,13 +846,15 @@ impl<'a> Rig<'a> {
         Ok(())
     }
 
-    /// The ringing call's banner on the sandbox's bus (its newest with Answer) carries b's picture, round (#114).
-    fn caller_picture(&mut self) -> SandboxResult {
+    /// The ringing call's banner on the sandbox's bus (the newest with Answer after the first `shown`) carries b's
+    /// picture, round (#114).
+    fn caller_picture(&mut self, shown: usize) -> SandboxResult {
         let banner = wait_until(WAIT, || {
             self.sandbox
                 .bus()
                 .notifications()
                 .into_iter()
+                .skip(shown)
                 .rfind(|banner| banner.actions.iter().any(|action| action == "answer"))
         })
         .ok_or("no incoming call's banner")?;
