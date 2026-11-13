@@ -9,6 +9,9 @@
 //!   its start to [`LATE_MS`] after its end, as Teams checks the calendar: "<name> started the meeting", titled with
 //!   the meeting's subject. Teams shows none for a channel's ad-hoc Meet now or a meeting not on the calendar.
 //!
+//! It shows its starter's picture as the engine has it stored, as a message's banner shows its sender's
+//! ([`crate::notify::picture`]); none is waited for from the network.
+//!
 //! A group chat's plain group call and a 1:1 call ring instead ([`crate::call_alert`]). None shows while the "Meeting
 //! started notification" switch is off ([`Settings::meeting_started`]), notifications are off, the account's status
 //! is Do not disturb, a call's Mute notifications holds them back, the channel is muted, or the account is in that
@@ -40,12 +43,14 @@ use teams_core::CalendarEvent;
 use teams_core::Source;
 use teams_proto::chat::{ChatEvent, chat_event, meeting_times};
 use teams_proto::{MeetingInfo, is_group_chat_id, is_meeting_chat_id, is_team_thread_id};
-use teams_store::Message;
+use teams_store::{Message, StoredPicture};
 
 use crate::bridge::Core;
 use crate::calls::Calls;
 use crate::models::{FeedEvent, Models};
-use crate::notify::{self, DEFAULT_ACTION, JOIN_ACTION, Notice, NoticeKind, NotificationServer, SOMEONE};
+use crate::notify::{
+    self, BannerPicture, DEFAULT_ACTION, JOIN_ACTION, Notice, NoticeKind, NotificationServer, SOMEONE,
+};
 use crate::people::Shown;
 use crate::settings::{ManualStatus, Notifications, Settings, SettingsModel};
 use crate::sounds::SoundEvent;
@@ -195,10 +200,11 @@ struct ShownBanner {
     join: MeetingJoin,
 }
 
-/// A banner decided on, to show.
+/// A banner decided on, to show: its notice, without its starter's `picture` until that is decoded.
 struct Banner {
     notice: Notice,
     join: MeetingJoin,
+    picture: Option<StoredPicture>,
 }
 
 /// The start a banner is being decided for: its chat, its message, its call, and how many of the chat's ends (and of
@@ -449,7 +455,7 @@ impl MeetingAlert {
     fn decide(&self, pending: Pending, place: StartedIn, starter: Option<String>, cx: &mut Context<Self>) {
         let core = Arc::clone(&self.core);
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let Some(banner) = banner(&*core, &pending.conversation, place, starter).await else {
+            let Some(mut banner) = banner(&*core, &pending.conversation, place, starter).await else {
                 return;
             };
             // an end that came before a restart is in the store only
@@ -469,6 +475,12 @@ impl MeetingAlert {
             let Some(server) = server else {
                 return;
             };
+            if let Some(picture) = banner.picture.take() {
+                banner.notice.picture = cx
+                    .background_executor()
+                    .spawn(async move { BannerPicture::of_person(&picture) })
+                    .await;
+            }
             let Ok(id) = server.show(&banner.notice, 0).await else {
                 return;
             };
@@ -573,9 +585,9 @@ impl MeetingAlert {
 /// The banner of a start in `conversation` (`place`, by `starter`), as the reads say; `None` when none is due: a
 /// meeting the calendar doesn't hold now, a muted channel, reads that failed.
 async fn banner(core: &dyn Core, conversation: &str, place: StartedIn, starter: Option<String>) -> Option<Banner> {
-    let name = match starter {
-        Some(starter) => person_name(core, starter).await,
-        None => SOMEONE.to_owned(),
+    let (name, picture) = match starter {
+        Some(starter) => person(core, starter).await,
+        None => (SOMEONE.to_owned(), None),
     };
     let (summary, body, join) = match place {
         StartedIn::GroupChat { huddle: false } => return None,
@@ -620,6 +632,7 @@ async fn banner(core: &dyn Core, conversation: &str, place: StartedIn, starter: 
             picture: None,
         },
         join,
+        picture,
     })
 }
 
@@ -662,13 +675,17 @@ async fn chat_name(core: &dyn Core, conversation: &str) -> String {
     }
 }
 
-/// A person's name as the engine has it, else [`SOMEONE`].
-async fn person_name(core: &dyn Core, mri: String) -> String {
+/// A person's name as the engine has it, else [`SOMEONE`], and their picture as it has it stored.
+async fn person(core: &dyn Core, mri: String) -> (String, Option<StoredPicture>) {
     match core.person(mri).await {
-        Ok(person) => Shown::of(person)
-            .name
-            .map_or_else(|| SOMEONE.to_owned(), |name| name.to_string()),
-        Err(_) => SOMEONE.to_owned(),
+        Ok(person) => {
+            let picture = person.picture.clone();
+            let name = Shown::of(person)
+                .name
+                .map_or_else(|| SOMEONE.to_owned(), |name| name.to_string());
+            (name, picture)
+        }
+        Err(_) => (SOMEONE.to_owned(), None),
     }
 }
 

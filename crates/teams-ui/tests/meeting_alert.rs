@@ -322,6 +322,36 @@ fn someone_else_s_meet_now_in_a_group_chat_shows_a_banner_whose_join_joins_it() 
 }
 
 #[test]
+fn a_meeting_s_banner_shows_its_starter_s_stored_picture() {
+    let a = Alerting::start(Settings::default());
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(120, 120, image::Rgba([40, 160, 90, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    a.rig.core.people.lock().unwrap().insert(
+        LAB_B.to_owned(),
+        teams_core::Person {
+            mri: LAB_B.to_owned(),
+            name: Some("Bee".to_owned()),
+            from: Some(teams_core::NameFrom::Graph),
+            picture: Some(teams_store::StoredPicture {
+                media_type: "image/png".to_owned(),
+                bytes: png,
+            }),
+            looking: false,
+        },
+    );
+    a.arrive(call_event(TRIO, "1", LAB_B, huddle(LAB_B)), Source::Delivery);
+    let shown = a.server.shown();
+    assert_eq!(shown[0].body, "Bee started a meeting");
+    let picture = shown[0].picture.as_ref().expect("the starter's picture");
+    assert_eq!(
+        (picture.width(), picture.height(), picture.shape()),
+        (96, 96, teams_ui::notify::PictureShape::Circle)
+    );
+}
+
+#[test]
 fn the_call_s_end_closes_its_banner_and_the_chat_s_join() {
     let a = Alerting::start(Settings::default());
     a.arrive(call_event(TRIO, "1", LAB_B, huddle(LAB_B)), Source::Delivery);
