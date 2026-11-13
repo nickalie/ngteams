@@ -900,7 +900,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         let mut synced = Synced::default();
         let kept = self.read_gap(store, kept, &mut synced).await?;
         let page = self.waiting(store, reads.messages_from(conversation, &link)).await?;
-        synced.add(self.apply_page(store, conversation, &page)?);
+        synced.add(self.apply_page(store, conversation, &page).await?);
         let rest = page.backward_link().filter(|_| !reached(&page, until));
         let (left, walked) = self
             .follow_back(store, conversation, rest, MAX_PAGES - 1, Bound::Until(until))
@@ -989,7 +989,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         let conversation = kept.conversation_id.as_str();
         let reads = ChatReads::new(&self.client);
         let page = self.waiting(store, reads.messages_from(conversation, link)).await?;
-        let synced = self.apply_page(store, conversation, &page)?;
+        let synced = self.apply_page(store, conversation, &page).await?;
         let older = page.backward_link().map(str::to_owned);
         // a state of an older schema keeps the bound its next sync answer falls back on, not the time of this write
         let sync_until = Some(sync_bound(&kept));
@@ -1097,6 +1097,34 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         Ok(restored)
     }
 
+    /// Fetches an own blocked message's missing copy by id, including messages read after an offline interval.
+    ///
+    /// # Errors
+    /// [`CatchUpError`] when the read or restoration fails. A missing copy (404) leaves the fallback in place.
+    pub(crate) async fn recover_blocked_copy(
+        &self,
+        store: &mut Store,
+        message: &chat::Message,
+    ) -> Result<(), CatchUpError> {
+        let chat::Field::Known(verdict) = message.policy_violation() else {
+            return Ok(());
+        };
+        if message.sender() != Some(self.me.as_str()) || !verdict.blocks() || message.delete_time().known().is_some() {
+            return Ok(());
+        }
+        let Some(id) = verdict.generic_stream_item.as_deref() else {
+            return Ok(());
+        };
+        if store.blocked_copy(id)?.is_some() {
+            return Ok(());
+        }
+        let reads = ChatReads::new(&self.client);
+        if let Some(copy) = self.waiting(store, reads.blocked_copy(id)).await? {
+            self.receive_blocked_copy(store, &copy)?;
+        }
+        Ok(())
+    }
+
     /// The first read of a conversation's messages: its newest page, with the page's `backwardLink` kept for older
     /// history.
     async fn first_read(
@@ -1111,7 +1139,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         let page = self
             .waiting(store, reads.messages(conversation, self.page_size))
             .await?;
-        let synced = self.apply_page(store, conversation, &page)?;
+        let synced = self.apply_page(store, conversation, &page).await?;
         let backward_link = page.backward_link().map(str::to_owned);
         let state = SyncState {
             conversation_id: conversation.to_owned(),
@@ -1152,7 +1180,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
                 return Ok((Some(next), synced));
             }
             let page = self.waiting(store, reads.messages_from(conversation, &next)).await?;
-            let applied = self.apply_page(store, conversation, &page)?;
+            let applied = self.apply_page(store, conversation, &page).await?;
             synced.add(applied);
             read += 1;
             link = page
@@ -1165,7 +1193,12 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
 
     /// Stores a page's messages, the oldest first, once every entry it can't read that carries an outbox row's
     /// `clientmessageid` is recorded on that row ([`CatchUp::note_unreadable`]).
-    fn apply_page(&self, store: &mut Store, conversation: &str, page: &MessagePage) -> Result<Synced, CatchUpError> {
+    async fn apply_page(
+        &self,
+        store: &mut Store,
+        conversation: &str,
+        page: &MessagePage,
+    ) -> Result<Synced, CatchUpError> {
         self.note_unreadable(store, conversation, page)?;
         let mut synced = Synced {
             skipped: page.unreadable.len(),
@@ -1181,6 +1214,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
                 Some(received) => {
                     synced.count(received.applied);
                     self.message_stored(conversation, &message.id, received.applied);
+                    self.recover_blocked_copy(store, message).await?;
                     if has_unreadable_reactions(message) {
                         synced.skipped += 1;
                     }

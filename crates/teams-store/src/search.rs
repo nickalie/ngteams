@@ -116,7 +116,7 @@ fn indexable(text: &str) -> String {
 
 /// Indexes one message's text at its version, in place of an older version's; an index row of a newer version stays.
 /// A message that isn't stored is left out. Whether it was indexed.
-fn index_text(conn: &Connection, entry: &IndexText) -> rusqlite::Result<bool> {
+pub(crate) fn index_text(conn: &Connection, entry: &IndexText) -> rusqlite::Result<bool> {
     let stored: Option<(i64, i64)> = conn
         .prepare_cached("SELECT id, version FROM search_entries WHERE conversation_id = ?1 AND message_id = ?2")?
         .query_row(params![entry.conversation_id, entry.message_id], |row| {

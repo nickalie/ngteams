@@ -178,6 +178,34 @@ impl<'c, C: Credentials> ChatReads<'c, C> {
         Ok(MessagePage::from_body(self.get(endpoint).await?.body())?)
     }
 
+    /// The sender's copy named by a blocked message's verdict, as the web client's message read fetches it.
+    /// `None` when the service no longer has it (404); the stream is never read as a thread.
+    ///
+    /// # Errors
+    /// See [`ChatReadError`]. A response naming another message is malformed.
+    pub async fn blocked_copy(&self, id: &str) -> Result<Option<model::Message>, ChatReadError> {
+        let endpoint = Endpoint::new([
+            "v1",
+            "users",
+            "ME",
+            "conversations",
+            super::GENERIC_STREAM,
+            "messages",
+            id,
+        ])
+        .with_query("view", MESSAGES_VIEW);
+        let answer = match self.get(endpoint).await {
+            Ok(answer) => answer,
+            Err(error) if error.status() == Some(404) && matches!(error, ChatReadError::Http(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let message: model::Message = model::object(answer.body(), "a blocked message's copy")?;
+        if message.id != id {
+            return Err(model::Malformed("a blocked message's copy with the requested id").into());
+        }
+        Ok(Some(message))
+    }
+
     /// `conversation`'s messages from a link a page of them handed out (`syncState`, `backwardLink`, `forwardLink`).
     ///
     /// # Errors

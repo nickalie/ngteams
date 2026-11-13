@@ -68,7 +68,7 @@ fn a_copy_is_kept_across_a_reopen_and_replaced_when_sent_again() {
 }
 
 #[test]
-fn the_messages_naming_a_copy_are_the_senders_own_without_text() {
+fn the_messages_naming_a_copy_are_the_senders_own_and_still_blocked() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = open(&dir);
     let object = r#"{"policyViolation":{"state":1,"genericStreamItemId":900}}"#;
@@ -88,6 +88,9 @@ fn the_messages_naming_a_copy_are_the_senders_own_without_text() {
             delete_time: Some(3),
             ..blocked("8", ME, object)
         },
+        blocked("9", ME, r#"{"policyViolation":{"state":0,"genericStreamItemId":900}}"#),
+        blocked("10", ME, r#"{"policyViolation":{"state":2,"genericStreamItemId":900}}"#),
+        blocked("11", ME, r#"{"policyViolation":{"genericStreamItemId":900}}"#),
     ] {
         store.upsert_message(&message, None).unwrap();
     }
@@ -97,7 +100,7 @@ fn the_messages_naming_a_copy_are_the_senders_own_without_text() {
         .into_iter()
         .map(|message| message.id)
         .collect();
-    assert_eq!(ids, ["1", "2"]);
+    assert_eq!(ids, ["1", "2", "7"]);
 }
 
 #[test]
@@ -111,17 +114,27 @@ fn text_goes_back_only_into_the_version_stored_and_is_indexed_again() {
         content: "<p>synthetic text</p>".to_owned(),
         ..message.clone()
     };
-    assert!(store.restore_blocked(&restored).unwrap());
-    assert_eq!(store.message(CHAT, "1").unwrap(), Some(restored.clone()));
-    assert_eq!(
-        store.messages_to_index(None, 10).unwrap(),
-        std::slice::from_ref(&restored)
+    assert!(
+        store
+            .restore_blocked(&restored, |message| message.content.clone())
+            .unwrap()
     );
+    assert_eq!(store.message(CHAT, "1").unwrap(), Some(restored.clone()));
+    assert!(store.messages_to_index(None, 10).unwrap().is_empty());
+    assert_eq!(store.search("synthetic", 10).unwrap()[0].message_id, restored.id);
     // a newer version (or a delete) that came meanwhile stays
     let stale = Message {
         version: 1,
         ..restored.clone()
     };
-    assert!(!store.restore_blocked(&stale).unwrap());
-    assert!(!store.restore_blocked(&blocked("9", ME, "{}")).unwrap());
+    assert!(
+        !store
+            .restore_blocked(&stale, |message| message.content.clone())
+            .unwrap()
+    );
+    assert!(
+        !store
+            .restore_blocked(&blocked("9", ME, "{}"), |message| message.content.clone())
+            .unwrap()
+    );
 }

@@ -78,41 +78,32 @@ pub fn keep_copy(store: &mut Store, copy: &BlockedCopy, me: &str) -> Result<Vec<
     store.keep_blocked_copy(copy)?;
     let mut restored = Vec::new();
     for mut message in store.messages_naming_copy(me, &copy.id)? {
+        let previous = message.clone();
         put_back(&mut message, &copy.content, copy.properties.as_deref());
-        if store.restore_blocked(&message)? {
+        if message != previous && store.restore_blocked(&message, crate::search::search_text)? {
             restored.push(message);
         }
     }
     Ok(restored)
 }
 
-/// Puts `content` into `row`, and each of [`PUT_BACK`] that `properties` (JSON text) has and the row lacks or holds
-/// empty.
+/// Puts `content` and its matching properties (JSON text) into `row`, replacing any fallback from an older version.
 fn put_back(row: &mut Message, content: &str, properties: Option<&str>) {
     content.clone_into(&mut row.content);
-    let Some(source) = properties.and_then(|text| serde_json::from_str::<Map<String, Value>>(text).ok()) else {
-        return;
-    };
+    let source = properties
+        .and_then(|text| serde_json::from_str::<Map<String, Value>>(text).ok())
+        .unwrap_or_default();
     let mut target = row
         .properties
         .as_deref()
         .and_then(|text| serde_json::from_str::<Map<String, Value>>(text).ok())
         .unwrap_or_default();
     for key in PUT_BACK {
-        if let Some(value) = source.get(key)
-            && target.get(key).is_none_or(is_empty_list)
-        {
+        if let Some(value) = source.get(key) {
             target.insert(key.to_owned(), value.clone());
+        } else {
+            target.remove(key);
         }
     }
     row.properties = Some(Value::Object(target).to_string());
-}
-
-/// An empty list, as a list or as its JSON text.
-fn is_empty_list(value: &Value) -> bool {
-    match value {
-        Value::Array(list) => list.is_empty(),
-        Value::String(text) => text.trim() == "[]" || text.is_empty(),
-        _ => false,
-    }
 }

@@ -1785,3 +1785,30 @@ fn a_fully_transparent_colour_is_no_colour_and_a_tint_its_colour() {
         }])]
     );
 }
+
+#[tokio::test]
+async fn a_blocked_copy_is_read_by_id_with_properties_and_missing_or_invalid_answers_are_safe() -> TestResult {
+    let mock = ChatServiceMock::start().await?;
+    let client = lab_client(&mock, LAB_A)?;
+    let reads = ChatReads::new(&client);
+    let copy = fixture("policy-blocked.json")?["copy"].clone();
+    let id = copy["id"].as_str().ok_or("copy id")?;
+    let path = format!("/conversations/48:generic/messages/{id}");
+    mock.answer_next("GET", &path, 200, &copy).await;
+    assert_eq!(reads.blocked_copy(id).await?, Some(message(&copy)?));
+    let requests = mock.received_requests().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].method.as_str(), "GET");
+    assert_eq!(
+        requests[0].url.query_pairs().collect::<Vec<_>>(),
+        [("view".into(), "msnp24Equivalent|supportsMessageProperties".into())]
+    );
+    assert_eq!(reads.blocked_copy(id).await?, None);
+    for invalid in [json!({}), json!({"id": "another-copy"})] {
+        mock.answer_next("GET", &path, 200, &invalid).await;
+        assert!(matches!(reads.blocked_copy(id).await, Err(ChatReadError::Malformed(_))));
+    }
+    mock.answer_next("GET", &path, 403, &json!({})).await;
+    assert_eq!(reads.blocked_copy(id).await.unwrap_err().status(), Some(403));
+    Ok(())
+}

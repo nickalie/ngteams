@@ -860,8 +860,14 @@ check; structure only, nothing copied) and read from the web client's message re
   the others' block muted. The sender's "What can I do?" (override and report) needs a policy tip from the compliance
   service, which no chat service shape carries.
 - **The native client** keeps each copy of the account's own (`blocked_copies`, schema 25) and puts its text and files
-  back into the blocked message as stored, whichever comes first; without a copy it keeps the text the store had. It
-  never adds `48:generic` as a conversation (deliveries and the conversation list alike), keeps the stored edit time
+  back into the blocked message as stored, whichever comes first; without a copy it keeps the text the store had.
+  A matching copy replaces that fallback, including its files and mentions, and updates the search index in the same
+  transaction. For the sender's own blocked messages read from history or push, a missing copy is fetched with
+  `GET v1/users/ME/conversations/48:generic/messages/<copy>?view=msnp24Equivalent|supportsMessageProperties`.
+  The saved web transport bundle (`precompiled-web-worker-inner~services_i`, message request builder) shows that
+  request; the message resolver's generic-stream branch uses its get-message workflow directly. A 404 leaves the
+  fallback and notice in place; other read failures are reported for catch-up. The client never adds `48:generic`
+  as a conversation (deliveries and the conversation list alike), keeps the stored edit time
   through a verdict's update, and words the notice as above (`crates/teams-ui/src/policy_notice.rs`).
 
 ## Mentions (mention)

@@ -2486,6 +2486,7 @@ impl ChatView {
             self.history = History::More;
         }
         let Some(loaded) = read.loaded else { return };
+        self.invalidate_rendered(&loaded.messages);
         self.reactions.extend(loaded.reactions);
         let mut messages = loaded.messages;
         messages.reverse();
@@ -2533,6 +2534,23 @@ impl ChatView {
         self.reactions.retain(|id, _| held.contains(id.as_str()));
         self.rendered.retain(|id, _| held.contains(id.as_str()));
         self.systems.shown.retain(|id, _| held.contains(id.as_str()));
+    }
+
+    fn invalidate_rendered(&mut self, loaded: &[Message]) {
+        let previous: HashMap<&str, &Message> = self
+            .messages
+            .iter()
+            .map(|message| (message.id.as_str(), message))
+            .collect();
+        for message in loaded {
+            if let Some(old) = previous.get(message.id.as_str())
+                && (old.content != message.content
+                    || old.properties != message.properties
+                    || old.message_type != message.message_type)
+            {
+                self.rendered.remove(&message.id);
+            }
+        }
     }
 
     /// Asks the engine for the people the rows name: the senders (their profile's name and their picture), events'

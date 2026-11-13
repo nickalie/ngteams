@@ -3504,7 +3504,9 @@ fn blocked_update(shapes: &Value, id: &str, client_id: &str) -> Value {
 
 /// The service's copy of the blocked message, and its stream's own updates before it.
 fn deliver_copy(lab: &Lab, shapes: &Value) {
-    let stream = &shapes["stream"];
+    let mut stream = shapes["stream"].clone();
+    stream["properties"]["consumptionhorizon"] = json!("1760000100900;1760000101000;7100000000000000002");
+    stream["properties"]["consumptionHorizonBookmark"] = json!("synthetic-bookmark");
     lab.trouter.deliver_chat(
         LAB_A,
         &json!({"type": "EventMessage", "resourceType": "ThreadUpdate", "resource": {"id": stream["id"]}}),
@@ -3519,13 +3521,12 @@ fn deliver_copy(lab: &Lab, shapes: &Value) {
     );
 }
 
-/// Whether the engine read anything of the copies' stream (its thread can't be read).
+/// Whether the engine read the copies' stream as a thread or a conversation's message list.
 async fn read_the_stream(lab: &Lab) -> bool {
-    lab.mock
-        .received_requests()
-        .await
-        .iter()
-        .any(|request| decoded(request.url.path()).contains("48:generic"))
+    lab.mock.received_requests().await.iter().any(|request| {
+        let path = decoded(request.url.path());
+        path.ends_with("/threads/48:generic") || path.ends_with("/conversations/48:generic/messages")
+    })
 }
 
 fn files_of(message: &Message) -> usize {
@@ -3597,6 +3598,21 @@ async fn a_blocked_message_keeps_its_text_as_sent_and_takes_a_copy_that_comes_af
     assert_eq!(message.content, shapes["copy"]["content"].as_str().unwrap());
     assert_eq!(files_of(&message), 1);
     assert_eq!(a.stored(AB_CHAT, &other).await, message, "stored as told");
+    let message = a.stored(AB_CHAT, &id).await;
+    assert_eq!(
+        message.content,
+        shapes["copy"]["content"].as_str().unwrap(),
+        "the copy replaces stale fallback text"
+    );
+    assert_eq!(files_of(&message), 1);
+    assert!(
+        a.handle
+            .search("made up line", 10)
+            .await
+            .unwrap()
+            .iter()
+            .any(|hit| hit.message_id == other)
+    );
     assert!(!read_the_stream(&lab).await);
     a.shutdown();
 }
@@ -3628,4 +3644,70 @@ async fn someone_else_s_blocked_message_keeps_no_text_and_takes_no_copy() {
     assert_eq!(b.stored(AB_CHAT, &id).await.content, "");
     a.shutdown();
     b.shutdown();
+}
+
+#[tokio::test]
+async fn an_offline_blocked_message_recovers_its_copy_from_history_and_keeps_it_across_restart() {
+    let lab = Lab::start().await;
+    let shapes = blocked_shapes();
+    let id = shapes["blocked"]["id"].as_str().unwrap();
+    let copy_id = shapes["copy"]["id"].as_str().unwrap();
+    lab.mock
+        .answer_next(
+            "GET",
+            &format!("/conversations/{AB_CHAT}/messages"),
+            200,
+            &json!({"messages": [shapes["blocked"]]}),
+        )
+        .await;
+    lab.mock
+        .answer_next(
+            "GET",
+            &format!("/conversations/48:generic/messages/{copy_id}"),
+            200,
+            &shapes["copy"],
+        )
+        .await;
+    let how = How {
+        push: false,
+        ..How::default()
+    };
+    let dir = Arc::new(tempfile::tempdir().unwrap());
+    let a = try_native_in(&lab, LAB_A, how, Arc::clone(&dir)).unwrap();
+    assert!(a.handle.sync().await.unwrap().failed.is_empty());
+    let restored = a.stored(AB_CHAT, id).await;
+    assert_eq!(restored.content, shapes["copy"]["content"].as_str().unwrap());
+    assert_eq!(files_of(&restored), 1);
+    assert!(
+        a.handle
+            .search("made up line", 10)
+            .await
+            .unwrap()
+            .iter()
+            .any(|hit| hit.message_id == id)
+    );
+    assert!(!read_the_stream(&lab).await);
+    a.shutdown();
+    let a = try_native_in(&lab, LAB_A, how, dir).unwrap();
+    assert_eq!(a.stored(AB_CHAT, id).await, restored);
+    lab.mock
+        .answer_next(
+            "GET",
+            &format!("/conversations/{AB_CHAT}/messages"),
+            200,
+            &json!({"messages": [shapes["blocked"]]}),
+        )
+        .await;
+    assert!(a.handle.sync().await.unwrap().failed.is_empty());
+    assert_eq!(a.stored(AB_CHAT, id).await, restored);
+    let reads = lab.mock.received_requests().await;
+    assert_eq!(
+        reads
+            .iter()
+            .filter(|request| decoded(request.url.path())
+                .ends_with(&format!("/conversations/48:generic/messages/{copy_id}")))
+            .count(),
+        1
+    );
+    a.shutdown();
 }

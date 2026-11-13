@@ -59,36 +59,43 @@ impl Store {
             .optional()?)
     }
 
-    /// The stored messages from `sender` without content that name the copy `id` (their
+    /// The stored blocked messages from `sender` that name the copy `id` (their
     /// `properties.policyViolation.genericStreamItemId`, as a number or as text): those it puts the text back into.
     ///
     /// # Errors
     ///
     /// [`StoreError::Sqlite`] when the read fails.
     pub fn messages_naming_copy(&self, sender: &str, id: &str) -> Result<Vec<Message>, StoreError> {
-        // the verdict comes as an object or as its JSON text
         let sql = format!(
-            "SELECT {MESSAGE_COLUMNS} FROM messages
-             WHERE sender = ?1 AND content = '' AND delete_time IS NULL AND json_valid(properties)
-               AND CAST(json_extract(
+            "WITH candidates AS (
+                 SELECT {MESSAGE_COLUMNS},
                      CASE json_type(properties, '$.policyViolation')
                          WHEN 'text' THEN CASE WHEN json_valid(json_extract(properties, '$.policyViolation'))
                                                THEN json_extract(properties, '$.policyViolation') END
                          ELSE json_extract(properties, '$.policyViolation')
-                     END, '$.genericStreamItemId') AS TEXT) = ?2"
+                     END AS verdict
+                 FROM messages WHERE sender = ?1 AND delete_time IS NULL AND json_valid(properties)
+             )
+             SELECT {MESSAGE_COLUMNS} FROM candidates
+             WHERE json_extract(verdict, '$.state') = 1
+               AND CAST(json_extract(verdict, '$.genericStreamItemId') AS TEXT) = ?2"
         );
         let mut statement = self.conn.prepare_cached(&sql)?;
         let rows = statement.query_map(params![sender, id], message_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// Puts a blocked message's text and properties back at the version stored, and drops its search entry so the
-    /// index takes the text again; whether a row changed (none when a newer version or a delete came meanwhile).
+    /// Puts a blocked message's text and properties back at the version stored and indexes its text in the same
+    /// transaction; whether a row changed (none when a newer version or a delete came meanwhile).
     ///
     /// # Errors
     ///
     /// [`StoreError::Sqlite`] when the write fails.
-    pub fn restore_blocked(&mut self, restored: &Message) -> Result<bool, StoreError> {
+    pub fn restore_blocked(
+        &mut self,
+        restored: &Message,
+        text: impl FnOnce(&Message) -> String,
+    ) -> Result<bool, StoreError> {
         let tx = self.conn.transaction()?;
         let changed = tx.execute(
             "UPDATE messages SET content = ?4, properties = ?5
@@ -102,9 +109,14 @@ impl Store {
             ],
         )?;
         if changed > 0 {
-            tx.execute(
-                "DELETE FROM search_entries WHERE conversation_id = ?1 AND message_id = ?2",
-                params![restored.conversation_id, restored.id],
+            crate::search::index_text(
+                &tx,
+                &crate::IndexText {
+                    conversation_id: restored.conversation_id.clone(),
+                    message_id: restored.id.clone(),
+                    version: restored.version,
+                    text: text(restored),
+                },
             )?;
         }
         tx.commit()?;

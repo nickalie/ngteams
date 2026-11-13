@@ -3229,6 +3229,10 @@ where
                 Err(error) => self.missed("storing the account's mark-all-read horizon", error),
             },
             ChatEvent::ConversationUpdate { conversation } => {
+                if chat::is_generic_stream(&conversation.id) {
+                    self.brought(source);
+                    return;
+                }
                 self.on_conversation(conversation.id.clone()).await;
                 if let Err(error) = self.catch_up.store_horizon(&mut self.store, &conversation) {
                     self.missed("storing a conversation's horizons", error);
@@ -3291,6 +3295,10 @@ where
             Ok(None) => self.arrived(&[]),
             Err(error) => self.missed("storing a delivered message", error),
         }
+        if let Err(error) = self.catch_up.recover_blocked_copy(&mut self.store, message).await {
+            self.missed("recovering a blocked message's copy", error);
+        }
+        self.brought(source);
         if added && let Err(error) = self.catch_up.sync_messages(&mut self.store, &conversation).await {
             self.missed("syncing a delivery's new conversation", error);
         }

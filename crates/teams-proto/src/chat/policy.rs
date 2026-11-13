@@ -94,21 +94,10 @@ pub enum PolicyNotice {
     HarmfulLink,
     /// Delivered with a warning of phishing; told to everyone.
     Phishing,
-    /// Blocked by a data loss prevention policy; `reported` once the sender reported it as a mistake.
+    /// Blocked by any other check; `reported` once the sender reported it as a mistake.
     Blocked { reported: bool },
-    /// Flagged by a data loss prevention policy; told to its sender alone.
+    /// Flagged by any other check; told to its sender alone.
     Flagged { reported: bool },
-}
-
-impl PolicyNotice {
-    /// Whether it tells of a block (else of a warning or a flag).
-    #[must_use]
-    pub const fn is_block(self) -> bool {
-        matches!(
-            self,
-            Self::FileTypeBlocked | Self::HarmfulContentBlocked | Self::Blocked { .. }
-        )
-    }
 }
 
 impl PolicyViolation {
@@ -166,7 +155,7 @@ impl PolicyViolation {
     }
 
     /// What a view tells of it, to its sender (`own`) or to anyone else, as the web client chooses: `None` when it
-    /// tells nothing (no verdict, a state it doesn't name, a data loss prevention flag to anyone but the sender).
+    /// tells nothing (no verdict, a state it doesn't name, any other warning to anyone but the sender).
     #[must_use]
     pub fn notice(&self, own: bool) -> Option<PolicyNotice> {
         let reported = self.user_action == REPORTED_FALSE_POSITIVE;

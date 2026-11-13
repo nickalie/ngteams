@@ -158,5 +158,4 @@ fn each_verdict_tells_its_sender_and_everyone_else_as_teams_does() {
         notice(json!({"state": 1}), false),
         Some(PolicyNotice::Blocked { reported: false })
     );
-    assert!(PolicyNotice::FileTypeBlocked.is_block() && !PolicyNotice::Phishing.is_block());
 }
