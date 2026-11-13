@@ -2,6 +2,11 @@
 //! manager to the device chosen for it ([`Target`]: `target.object`) or, with none chosen, to the system's default,
 //! which it then follows; and a shared screen's, connected to the node the screen-cast portal named ([`screen`]).
 //!
+//! A shared screen is offered as a linear DMA-BUF first, then in plain memory ([`screen_formats`]): a compositor may
+//! cast only as DMA-BUFs with a negotiated modifier (niri does), and a link where one side's mandatory property is
+//! missing from the other's offer gets no format at all, so the stream would err before its first frame and end the
+//! share. A DMA-BUF of ours is read on the CPU ([`super::dmabuf`]).
+//!
 //! A chosen device is pinned with `node.dont-move`: WirePlumber takes a stream whose `target.object` names the
 //! current default for one following the default (the rule `PulseAudio` has: it writes `target.node = -1` into the
 //! `default` metadata for it), so a device chosen while it is the default would be left for every later default.
@@ -24,13 +29,14 @@ use std::rc::Rc;
 use pipewire::core::CoreRc;
 use pipewire::properties::{PropertiesBox, properties};
 use pipewire::spa;
+use pipewire::spa::buffer::ChunkFlags;
 use pipewire::spa::param::ParamType;
 use pipewire::spa::param::audio::{AudioFormat, AudioInfoRaw};
 use pipewire::spa::param::format::{FormatProperties, MediaSubtype, MediaType};
 use pipewire::spa::param::format_utils;
 use pipewire::spa::param::video::{VideoFormat, VideoInfoRaw};
 use pipewire::spa::pod::serialize::PodSerializer;
-use pipewire::spa::pod::{self, ChoiceValue, Pod, Value};
+use pipewire::spa::pod::{self, ChoiceValue, Pod, PropertyFlags, Value};
 use pipewire::spa::utils::{Choice, ChoiceEnum, ChoiceFlags, Direction, Fraction, Id, Rectangle, SpaTypes};
 use pipewire::stream::{StreamFlags, StreamListener, StreamRc, StreamState};
 
@@ -346,6 +352,8 @@ fn fill(bytes: &mut [u8], requested: usize, queue: Option<&Queue<f32>>) -> usize
 
 struct CameraState {
     format: Option<(PixelFormat, u32, u32)>,
+    /// Whether the negotiated format names a modifier: the buffers are DMA-BUFs of that (linear) layout.
+    dmabuf: bool,
     frames: Feed<VideoFrame>,
     /// The buffers the stream takes ([`camera_buffers`]), answered to every format.
     buffers: Vec<u8>,
@@ -388,7 +396,7 @@ pub(super) fn screen(
         },
         None,
     )?;
-    video_capture(stream, frames, gate, (Some(node), &[screen_formats()?]))
+    video_capture(stream, frames, gate, (Some(node), &screen_formats()?))
 }
 
 /// A video stream's listeners and its connection (to `node` when one is named, offering `formats`): each buffer's
@@ -401,6 +409,7 @@ fn video_capture(
 ) -> Result<Box<dyn Any>, String> {
     let state = CameraState {
         format: None,
+        dmabuf: false,
         frames: Feed::new(frames, gate),
         buffers: camera_buffers()?,
     };
@@ -409,6 +418,7 @@ fn video_capture(
         .param_changed(|stream, state, id, param| {
             if id == ParamType::Format.as_raw() {
                 state.format = param.and_then(video_format);
+                state.dmabuf = param.is_some_and(names_a_modifier);
                 if state.format.is_some()
                     && let Some(buffers) = Pod::from_bytes(&state.buffers)
                 {
@@ -421,8 +431,15 @@ fn video_capture(
             let Some(mut buffer) = stream.dequeue_buffer() else {
                 return;
             };
+            let dmabuf = state.dmabuf;
             if let (Some(queue), Some(format)) = (state.frames.live(), state.format)
-                && let Some(frame) = buffer.datas_mut().first_mut().and_then(|data| frame_of(data, format))
+                && let Some(frame) = buffer.datas_mut().first_mut().and_then(|data| {
+                    if dmabuf {
+                        dmabuf_frame(data, format)
+                    } else {
+                        frame_of(data, format)
+                    }
+                })
             {
                 queue.push(frame);
             }
@@ -452,6 +469,44 @@ fn frame_of(data: &mut spa::buffer::Data, (format, width, height): (PixelFormat,
         stride: if stride == 0 { width } else { stride },
         data: bytes.to_vec(),
     })
+}
+
+/// The frame a DMA-BUF of the negotiated `format` holds: its first plane mapped and read here, `stride` bytes a row
+/// (`width` pixels of 4 bytes when the chunk names none); `None` for a buffer the producer marked unused (size 0 or
+/// corrupted) or that can't be read. Its chunk's size says nothing more: DMA-BUF producers may set it to 0 or 1.
+fn dmabuf_frame(data: &spa::buffer::Data, (format, width, height): (PixelFormat, u32, u32)) -> Option<VideoFrame> {
+    let chunk = data.chunk();
+    if chunk.size() == 0 || chunk.flags().contains(ChunkFlags::CORRUPTED) || data.fd() < 0 {
+        return None;
+    }
+    let packed = width.checked_mul(4)?;
+    let stride = u32::try_from(chunk.stride())
+        .ok()
+        .filter(|stride| *stride >= packed)
+        .unwrap_or(packed);
+    let len = to_usize(stride).checked_mul(to_usize(height))?;
+    // SAFETY: the buffer's descriptor stays open while the stream holds the buffer, which it does for this call.
+    let fd = unsafe { std::os::fd::BorrowedFd::borrow_raw(data.fd()) };
+    let bytes = super::dmabuf::read(fd, to_usize(chunk.offset()), len)?;
+    Some(VideoFrame {
+        width,
+        height,
+        format,
+        stride,
+        data: bytes,
+    })
+}
+
+/// Whether a negotiated format names a modifier (its buffers are DMA-BUFs of that layout).
+fn names_a_modifier(param: &Pod) -> bool {
+    let Ok((_, Value::Object(object))) = pod::deserialize::PodDeserializer::deserialize_any_from(param.as_bytes())
+    else {
+        return false;
+    };
+    object
+        .properties
+        .iter()
+        .any(|property| property.key == FormatProperties::VideoModifier.as_raw())
 }
 
 /// A negotiated video format we take, as its pixel format and size.
@@ -633,55 +688,101 @@ fn camera_format(encoding: Encoding, size: Value, (min, max): (Fraction, Fractio
     })
 }
 
-/// A shared screen's offer: any of [`CAMERA_FORMATS`], 1080p at 15 frames a second preferred, anything up to 4K.
-fn screen_formats() -> Result<Vec<u8>, String> {
-    let object = pod::object!(
-        SpaTypes::ObjectParamFormat,
-        ParamType::EnumFormat,
-        pod::property!(FormatProperties::MediaType, Id, MediaType::Video),
-        pod::property!(FormatProperties::MediaSubtype, Id, MediaSubtype::Raw),
-        pod::property!(
-            FormatProperties::VideoFormat,
-            Choice,
-            Enum,
-            Id,
-            VideoFormat::I420,
-            VideoFormat::I420,
-            VideoFormat::NV12,
-            VideoFormat::YUY2,
-            VideoFormat::RGBx,
-            VideoFormat::BGRx,
-            VideoFormat::RGBA,
-            VideoFormat::BGRA,
-            VideoFormat::RGB,
-            VideoFormat::BGR
-        ),
-        pod::property!(
-            FormatProperties::VideoSize,
-            Choice,
-            Range,
-            Rectangle,
-            Rectangle {
-                width: 1920,
-                height: 1080
+/// `DRM_FORMAT_MOD_LINEAR`: rows one after another, as the CPU reads them.
+const LINEAR: i64 = 0;
+
+/// The packed formats of 4 bytes a pixel a screen's DMA-BUF may come in (a compositor's own: niri draws `BGRx` or
+/// `BGRA`), the first preferred.
+const SCREEN_DMABUF_FORMATS: [VideoFormat; 4] = [
+    VideoFormat::BGRx,
+    VideoFormat::BGRA,
+    VideoFormat::RGBx,
+    VideoFormat::RGBA,
+];
+
+/// A shared screen's offers, tried in order: a linear DMA-BUF in one of [`SCREEN_DMABUF_FORMATS`], its modifier
+/// mandatory (a compositor that casts only DMA-BUFs takes nothing else), then plain memory in any of
+/// [`CAMERA_FORMATS`]; each at 1080p and 15 frames a second preferred, anything up to 8K (a wide or 5K screen's
+/// whole picture: the call scales it down).
+fn screen_formats() -> Result<Vec<Vec<u8>>, String> {
+    let dmabuf = Value::Choice(ChoiceValue::Id(Choice(
+        ChoiceFlags::empty(),
+        ChoiceEnum::Enum {
+            default: Id(SCREEN_DMABUF_FORMATS[0].as_raw()),
+            alternatives: SCREEN_DMABUF_FORMATS.iter().map(|format| Id(format.as_raw())).collect(),
+        },
+    )));
+    let memory = Value::Choice(ChoiceValue::Id(Choice(
+        ChoiceFlags::empty(),
+        ChoiceEnum::Enum {
+            default: Id(CAMERA_FORMATS[0].0.as_raw()),
+            alternatives: CAMERA_FORMATS.iter().map(|(video, _)| Id(video.as_raw())).collect(),
+        },
+    )));
+    let modifier = pod::Property {
+        key: FormatProperties::VideoModifier.as_raw(),
+        flags: PropertyFlags::MANDATORY,
+        value: Value::Choice(ChoiceValue::Long(Choice(
+            ChoiceFlags::empty(),
+            ChoiceEnum::Enum {
+                default: LINEAR,
+                alternatives: vec![LINEAR],
             },
-            Rectangle { width: 1, height: 1 },
-            Rectangle {
-                width: 4096,
-                height: 4096
-            }
+        ))),
+    };
+    Ok(vec![
+        screen_format(dmabuf, Some(modifier))?,
+        screen_format(memory, None)?,
+    ])
+}
+
+/// A screen's offer of `formats` (with `modifier` when one is named), at the sizes and rates [`screen_formats`] says.
+fn screen_format(formats: Value, modifier: Option<pod::Property>) -> Result<Vec<u8>, String> {
+    let mut properties = vec![
+        pod::Property::new(
+            FormatProperties::MediaType.as_raw(),
+            Value::Id(Id(MediaType::Video.as_raw())),
         ),
-        pod::property!(
-            FormatProperties::VideoFramerate,
-            Choice,
-            Range,
-            Fraction,
-            Fraction { num: 15, denom: 1 },
-            Fraction { num: 0, denom: 1 },
-            Fraction { num: 120, denom: 1 }
+        pod::Property::new(
+            FormatProperties::MediaSubtype.as_raw(),
+            Value::Id(Id(MediaSubtype::Raw.as_raw())),
         ),
-    );
-    serialize(object)
+        pod::Property::new(FormatProperties::VideoFormat.as_raw(), formats),
+    ];
+    properties.extend(modifier);
+    properties.push(pod::Property::new(
+        FormatProperties::VideoSize.as_raw(),
+        Value::Choice(ChoiceValue::Rectangle(Choice(
+            ChoiceFlags::empty(),
+            ChoiceEnum::Range {
+                default: Rectangle {
+                    width: 1920,
+                    height: 1080,
+                },
+                min: Rectangle { width: 1, height: 1 },
+                max: Rectangle {
+                    width: 8192,
+                    height: 8192,
+                },
+            },
+        ))),
+    ));
+    properties.push(pod::Property::new(
+        FormatProperties::VideoFramerate.as_raw(),
+        Value::Choice(ChoiceValue::Fraction(Choice(
+            ChoiceFlags::empty(),
+            ChoiceEnum::Range {
+                default: Fraction { num: 15, denom: 1 },
+                min: Fraction { num: 0, denom: 1 },
+                max: Fraction { num: 120, denom: 1 },
+            },
+        ))),
+    ));
+    serialize(pod::Object {
+        type_: SpaTypes::ObjectParamFormat.as_raw(),
+        id: ParamType::EnumFormat.as_raw(),
+        properties,
+    })
 }
 
 fn to_usize(value: u32) -> usize {
@@ -902,5 +1003,58 @@ mod tests {
             );
             assert_eq!(read(&fixed(MediaSubtype::H264, None)), None);
         }
+    }
+
+    #[test]
+    fn a_screen_is_asked_for_a_linear_dma_buf_first_its_modifier_mandatory_then_plain_memory() {
+        let offers = screen_formats().unwrap();
+        assert_eq!(offers.len(), 2);
+        let dmabuf = properties(&offers[0]);
+        let modifier = dmabuf
+            .iter()
+            .find(|property| property.key == FormatProperties::VideoModifier.as_raw())
+            .expect("a modifier");
+        assert!(modifier.flags.contains(PropertyFlags::MANDATORY));
+        assert!(matches!(
+            &modifier.value,
+            Value::Choice(ChoiceValue::Long(Choice(_, ChoiceEnum::Enum { default: LINEAR, alternatives })))
+                if *alternatives == [LINEAR]
+        ));
+        let Value::Choice(ChoiceValue::Id(Choice(_, ChoiceEnum::Enum { alternatives, .. }))) =
+            property(&dmabuf, FormatProperties::VideoFormat)
+        else {
+            panic!("no formats");
+        };
+        assert_eq!(alternatives[0], Id(VideoFormat::BGRx.as_raw()), "niri's own first");
+        let packed = [
+            PixelFormat::Bgrx,
+            PixelFormat::Bgra,
+            PixelFormat::Rgbx,
+            PixelFormat::Rgba,
+        ];
+        assert!(alternatives.iter().all(|format| {
+            CAMERA_FORMATS
+                .iter()
+                .any(|(video, pixel)| video.as_raw() == format.0 && packed.contains(pixel))
+        }));
+        let memory = properties(&offers[1]);
+        assert!(
+            memory
+                .iter()
+                .all(|property| property.key != FormatProperties::VideoModifier.as_raw())
+        );
+        for offer in [&dmabuf, &memory] {
+            let Value::Choice(ChoiceValue::Rectangle(Choice(_, ChoiceEnum::Range { max, .. }))) =
+                property(offer, FormatProperties::VideoSize)
+            else {
+                panic!("not a size range");
+            };
+            assert!(max.width >= 5120 && max.height >= 2880, "a 5K screen: {max:?}");
+        }
+        assert!(
+            offers
+                .iter()
+                .all(|offer| Pod::from_bytes(offer).is_some_and(names_a_modifier) == (offer == &offers[0]))
+        );
     }
 }

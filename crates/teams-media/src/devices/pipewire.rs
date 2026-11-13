@@ -52,6 +52,7 @@ use std::time::{Duration, Instant};
 use super::catalog::{Choices, DeviceDirectory, DeviceKind, DeviceList, DeviceWatcher};
 use super::{AudioFrame, AudioSink, AudioSource, DeviceError, Devices, VideoFrame, VideoSource, portal};
 
+mod dmabuf;
 mod listing;
 mod serve;
 mod streams;

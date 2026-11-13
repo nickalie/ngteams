@@ -17,6 +17,8 @@
 //! Beside it on the same object, a fake screen-cast portal (`org.freedesktop.portal.ScreenCast`): `CreateSession`,
 //! `SelectSources` and `Start` each answered at once (the user's pick: the sandbox's synthetic screen, its node as
 //! `Start`'s one stream), and `OpenPipeWireRemote` on a started session with a connection to the sandbox's PipeWire.
+//! Each session is an object of its own at its path, as the real portal's: its `Close` ends it (the real portal ends
+//! the cast then, and the desktop says the share stopped), so a remote is refused on it afterwards.
 //! Every call is recorded as the camera portal's are.
 
 use std::{
@@ -436,6 +438,15 @@ impl ScreenCastPortal {
             sender.trim_start_matches(':').replace('.', "_"),
             token_of(&options, "session_handle_token")
         );
+        let object = PortalSession {
+            records: Arc::clone(&self.records),
+            owner: sender.clone(),
+        };
+        connection
+            .object_server()
+            .at(session.as_str(), object)
+            .await
+            .map_err(failed)?;
         self.record(sender.clone(), "ScreenCast.CreateSession", "session");
         let mut results = HashMap::new();
         results.insert("session_handle", Value::from(session.as_str()));
@@ -524,6 +535,45 @@ impl ScreenCastPortal {
     #[expect(clippy::unused_self, reason = "a D-Bus property zbus reads on the object")]
     fn version(&self) -> u32 {
         4
+    }
+}
+
+/// A screen-cast session of the fake portal, at its path (see the module docs).
+struct PortalSession {
+    records: Shared,
+    /// The caller that made it: only it may close it.
+    owner: String,
+}
+
+#[interface(name = "org.freedesktop.portal.Session")]
+impl PortalSession {
+    /// Ends the session: recorded, and no longer started.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "zbus hands a method its message header by value"
+    )]
+    fn close(&self, #[zbus(header)] header: Header<'_>) -> zbus::fdo::Result<()> {
+        let sender = sender(&header);
+        if sender != self.owner {
+            return Err(zbus::fdo::Error::AccessDenied("not the session's caller".to_owned()));
+        }
+        let path = header.path().map(ToString::to_string).unwrap_or_default();
+        let mut records = records(&self.records);
+        records
+            .screen_cast_started
+            .retain(|started| *started != (sender.clone(), path.clone()));
+        records.portal_calls.push(PortalCall {
+            sender,
+            method: "ScreenCast.Close",
+            answer: "closed",
+        });
+        Ok(())
+    }
+
+    #[zbus(property, name = "version")]
+    #[expect(clippy::unused_self, reason = "a D-Bus property zbus reads on the object")]
+    fn version(&self) -> u32 {
+        1
     }
 }
 

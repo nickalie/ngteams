@@ -400,9 +400,10 @@ fn the_camera_comes_through_the_sandbox_s_camera_portal_only_when_allowed() {
 }
 
 /// A shared screen's route, on the sandbox's fake screen-cast portal (sandbox reach asks only the sandbox's bus): its
-/// session made, its sources picked, the sandbox's synthetic screen started and its remote handed over, and the
-/// screen's frames (the 720p pattern, in order) coming through it; a bus outside the sandbox refused before anything is
-/// asked.
+/// session made, its sources picked, the sandbox's synthetic screen started and its remote handed over, the screen's
+/// frames (the 720p pattern, in order) coming through it though the screen casts as niri does (linear DMA-BUFs only,
+/// its modifier mandatory), and the session closed only once the screen went; a bus outside the sandbox refused
+/// before anything is asked.
 #[test]
 fn a_shared_screen_comes_through_the_sandbox_s_screen_cast_portal() {
     let options = SandboxOptions {
@@ -427,6 +428,7 @@ fn a_shared_screen_comes_through_the_sandbox_s_screen_cast_portal() {
             ("ScreenCast.SelectSources", "selected"),
             ("ScreenCast.Start", "screen"),
             ("ScreenCast.OpenPipeWireRemote", "remote"),
+            ("ScreenCast.Close", "closed"),
         ]
     );
     assert!(calls.iter().all(|call| call.sender == calls[0].sender), "one caller");

@@ -233,6 +233,18 @@ fn the_camera_is_the_test_pattern_whose_frames_carry_their_index_and_move() {
         ..pattern.frame(0)
     };
     assert_eq!(pattern::index_of(&blank), None);
+    // a packed RGB frame of the pattern (a screen's) is read by its greys
+    let i420 = pattern.frame(7);
+    let bgrx = VideoFrame {
+        format: PixelFormat::Bgrx,
+        stride: 640 * 4,
+        data: i420.data[..640 * 360]
+            .iter()
+            .flat_map(|&luma| [luma, luma, luma, 255])
+            .collect(),
+        ..i420
+    };
+    assert_eq!(pattern::index_of(&bgrx), Some(7));
 }
 
 #[test]

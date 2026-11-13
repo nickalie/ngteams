@@ -3,9 +3,9 @@
 //! - **The camera** (`sandbox-camera`, a video source): `teams-media`'s test pattern ([`TestPattern`]), I420 at the
 //!   size and rate asked, a frame on each tick of its own timer (it drives its graph, as a camera does), each frame
 //!   carrying its index.
-//! - **The screen** (`sandbox-screen`): the same pattern at 720p, 15 frames a second, on a stream of the kind a
-//!   compositor's screen cast is (`Stream/Output/Video`, so no camera list names it); its node is what the sandbox's
-//!   fake screen-cast portal hands out ([`MediaHelper::screen_node`]).
+//! - **The screen** (`sandbox-screen`, [`super::screen`]): the same pattern at 720p, 15 frames a second, cast as niri
+//!   casts a screen (a stream of the kind a compositor's screen cast is, `Stream/Output/Video`, so no camera list
+//!   names it); its node is what the sandbox's fake screen-cast portal hands out ([`MediaHelper::screen_node`]).
 //! - **The recording**: a capture of the speaker's monitor, written to a WAV file whose header is brought up to date
 //!   every second, each buffer marked on its [`Timeline`] (when its first sample was heard).
 //! - **Devices added and removed while it runs** ([`super::nodes`]): another microphone playing a tone of its own, or
@@ -50,7 +50,7 @@ use teams_media::devices::pipewire::CONFIG_OVERRIDES;
 use teams_media::devices::wav::WavWriter;
 
 use super::timeline::{Timeline, now_us, samples_to_us};
-use super::{CAMERA_NODE, SCREEN_NODE, SPEAKER_NODE};
+use super::{CAMERA_NODE, SPEAKER_NODE};
 use crate::{SOCKET_WAIT, SandboxResult};
 
 /// The camera and the recording, stopped (and the recording's header brought up to date) on drop.
@@ -226,7 +226,7 @@ impl Setup {
             .update_timer(Some(period), Some(period))
             .into_sync_result()
             .map_err(text)?;
-        let screen = Camera::show_screen(&core, self.screen)?;
+        let screen = super::screen::show(&core, self.screen)?;
         let screen_ticks = screen.stream.clone();
         let screen_timer = main_loop.loop_().add_timer(move |_| {
             let _ = screen_ticks.trigger_process();
@@ -387,58 +387,6 @@ struct Showing {
 }
 
 impl Camera {
-    /// The sandbox's screen (see the module docs): its node told on `shown` once the server made it.
-    fn show_screen(core: &CoreRc, shown: ScreenShown) -> Result<Self, String> {
-        let pattern = TestPattern::new(SCREEN.width, SCREEN.height);
-        let props = properties! {
-            *pipewire::keys::MEDIA_TYPE => "Video",
-            *pipewire::keys::MEDIA_CATEGORY => "Source",
-            *pipewire::keys::MEDIA_ROLE => "Screen",
-            *pipewire::keys::NODE_NAME => SCREEN_NODE,
-            *pipewire::keys::NODE_DESCRIPTION => "Sandbox screen",
-        };
-        let stream = StreamRc::new(core.clone(), SCREEN_NODE, props).map_err(text)?;
-        let showing = Showing {
-            pattern,
-            index: Rc::default(),
-            frames: shown.frames,
-        };
-        let node = shown.node;
-        let listener = stream
-            .add_local_listener_with_user_data(showing)
-            .param_changed(|stream, showing, id, param| {
-                if id == ParamType::Format.as_raw() && param.is_some() {
-                    let _ = buffers(showing.pattern)
-                        .and_then(|params| stream.update_params(&mut [as_pod(&params)?]).map_err(text));
-                }
-            })
-            .state_changed(move |stream, _, _, _| {
-                let id = stream.node_id();
-                if id != u32::MAX {
-                    node.store(id, Ordering::Relaxed);
-                }
-            })
-            .process(show_frame)
-            .register()
-            .map_err(text)?;
-        let format = camera_format(pattern, SCREEN.fps)?;
-        stream
-            .connect(
-                Direction::Output,
-                None,
-                StreamFlags::DRIVER | StreamFlags::MAP_BUFFERS,
-                &mut [as_pod(&format)?],
-            )
-            .map_err(text)?;
-        Ok(Self {
-            stream: stream.clone(),
-            _open: Open {
-                _listener: listener,
-                _stream: stream,
-            },
-        })
-    }
-
     fn show(core: &CoreRc, camera: PatternCamera, frames: Arc<AtomicU64>) -> Result<Self, String> {
         let pattern = TestPattern::new(camera.width, camera.height);
         let props = properties! {

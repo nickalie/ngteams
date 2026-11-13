@@ -84,7 +84,7 @@ fn write_blocks(line: &mut [u8], index: u32) {
 }
 
 /// The index a frame of the pattern carries, or `None` for a frame without one (too small, another picture, a
-/// format whose luma isn't readable here).
+/// format whose luma isn't readable here). A packed RGB frame is read as the pattern's greys.
 #[must_use]
 pub fn index_of(frame: &VideoFrame) -> Option<u32> {
     if !TestPattern::new(frame.width, frame.height).carries_index() {
@@ -96,6 +96,8 @@ pub fn index_of(frame: &VideoFrame) -> Option<u32> {
         let at = match frame.format {
             PixelFormat::I420 | PixelFormat::Nv12 => row + x,
             PixelFormat::Yuy2 => row + 2 * x,
+            // a grey's green stands for its luma
+            PixelFormat::Rgbx | PixelFormat::Bgrx | PixelFormat::Rgba | PixelFormat::Bgra => row + 4 * x + 1,
             _ => return None,
         };
         frame.data.get(at).copied()
