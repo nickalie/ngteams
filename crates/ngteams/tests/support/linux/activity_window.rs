@@ -1,5 +1,6 @@
 //! The Activity pane as a user meets it, in the UI sandbox on the mock (`harness = false`: GPUI runs on the process's
-//! main thread); an app item's "Turn off <app>" is in `activity_turn_off.rs`.
+//! main thread); an app item's "Turn off <app>" is in `activity_turn_off.rs`, the desktop banners' pictures in
+//! `activity_banner_pictures.rs`.
 //!
 //! The test runs itself again inside the sandbox as the app of lab account a (its engine on the mock chat service and
 //! its Trouter, the app's control socket served in the sandbox's dir), over a made-up feed: two dozen older read
@@ -26,6 +27,8 @@ use clap::Parser as _;
 use gpui::{App, AsyncApp, Entity, Window, WindowHandle, WindowingModes};
 use ngteams::app::{self, Launch};
 use ngteams::calling::PersonalCalls;
+#[path = "activity_banner_pictures.rs"]
+mod pictures;
 #[path = "../window.rs"]
 mod support;
 #[path = "activity_tile_runs.rs"]
@@ -135,7 +138,7 @@ const AWAY: (u32, u32) = (900, 500);
 
 pub(super) fn main() -> ExitCode {
     let outcome = match std::env::var(CHILD_ENV).as_deref() {
-        Ok(mode @ ("app" | "read-only" | "tiles-v1" | "tiles-v2")) => child_app(mode),
+        Ok(mode @ ("app" | "read-only" | "tiles-v1" | "tiles-v2" | pictures::MODE)) => child_app(mode),
         Ok(other) => Err(format!("unknown mode {other}").into()),
         Err(_) => parent(),
     };
@@ -327,6 +330,10 @@ fn run_checks(sandbox: &Sandbox) -> SandboxResult<usize> {
     let (mut tile_passed, mut tile_failed) = tile_runs::run(sandbox)?;
     passed.append(&mut tile_passed);
     failed.append(&mut tile_failed);
+    // the desktop banners' pictures (#114): people's and apps', in a run of their own
+    let (mut picture_passed, mut picture_failed) = pictures::run(sandbox)?;
+    passed.append(&mut picture_passed);
+    failed.append(&mut picture_failed);
     for (name, error) in &failed {
         say(&format!("FAILED {name}: {error}"));
     }
@@ -1634,8 +1641,13 @@ struct MockLab {
 impl MockLab {
     /// `read_only`: the engine's writes are refused before sending, as `ngteams --read-only` refuses them; otherwise
     /// a's app preferences are seeded ([`turn_off::seeded_prefs`]). `tiles`: a tile run's feed and data dir
-    /// ([`tile_runs`]), else the module docs' feed in a dir of its own.
-    fn start(read_only: bool, tiles: Option<&tile_runs::Run>) -> SandboxResult<(Self, EngineHandle)> {
+    /// ([`tile_runs`]), else the module docs' feed: with `pictures`, the banner pictures' run's data dir and mock
+    /// ([`pictures`]), else in a dir of its own.
+    fn start(
+        read_only: bool,
+        tiles: Option<&tile_runs::Run>,
+        pictures: Option<PathBuf>,
+    ) -> SandboxResult<(Self, EngineHandle)> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -1645,6 +1657,10 @@ impl MockLab {
         let (dir, temp) = if let Some(run) = tiles {
             runtime.block_on(tile_runs::seed(&mock, run))?;
             (run.dir.clone(), None)
+        } else if let Some(dir) = pictures {
+            seed_feed(&mock)?;
+            runtime.block_on(pictures::seed(&mock))?;
+            (dir, None)
         } else {
             seed_feed(&mock)?;
             let temp = tempfile::tempdir()?;
@@ -1861,7 +1877,7 @@ fn child_app(mode: &str) -> SandboxResult {
     let tiles = tile_runs::Run::of_mode(mode)?;
     let trace = teams_ui::ViewTrace::new(adopt_trace(passed_trace_fd()?)?);
     let dir = PathBuf::from(std::env::var_os(ui_sandbox::SANDBOX_ENV).ok_or("no sandbox dir")?);
-    let (lab, engine) = MockLab::start(read_only, tiles.as_ref())?;
+    let (lab, engine) = MockLab::start(read_only, tiles.as_ref(), pictures::data_dir(mode)?)?;
     // the calls shown (Call buttons ask them); the engine has no calling, so a call asked is refused there
     let first = ngteams::accounts::Started {
         calls: Some(PersonalCalls {
@@ -2058,6 +2074,7 @@ fn mock_reply(question: &str, probe: &Probe) -> Option<Value> {
         "tile-reads" => tile_runs::reads(probe),
         "tile-push" => tile_runs::push_update(mock),
         "push-chat" => push_chat(mock),
+        "pic" => pictures::reply(rest, probe),
         "prefs" => probe.prefs(),
         "refuse" => probe.refuse(rest),
         _ => return None,

@@ -27,6 +27,8 @@
 //! - The share strip and the speaker strip page with their own pagers, the account's own tile last in the share strip,
 //!   the speaker staying large; a call of 2-9 shows everyone on one page, no pager; in a 1:1 call the account's own
 //!   tile floats at the stage's bottom right.
+//! - Each ring's banner on the sandbox's bus carries the caller's (b's) picture, round, as the mock's Graph gives it
+//!   (#114).
 //! - Screenshots of each under `target/ui-shots/large-call-*.png` (and `$LARGE_CALL_EVIDENCE`, if set), in Teams Light
 //!   and Dark.
 //!
@@ -111,6 +113,10 @@ const SCREEN: (u32, u32) = (1920, 1080);
 const SIZES: [(i32, i32); 4] = [(560, 400), (800, 560), (1280, 800), (1920, 1080)];
 /// The call window's toolbar lies within this many px of its top.
 const TOOLBAR_BAND: i32 = 58;
+/// b's picture as the mock's Graph gives it (#114): 96×96, one colour.
+const B_PICTURE: [u8; 3] = [0xd0, 0x40, 0x90];
+/// The side of Graph's picture and of a banner's.
+const PICTURE_SIDE: u32 = 96;
 /// The mock's peers' tone.
 const PEER_TONE: Tone = Tone {
     hz: 880.0,
@@ -158,7 +164,20 @@ fn parent() -> SandboxResult {
     let trouter = mock.start_trouter()?;
     let dir = tempfile::tempdir()?;
     let relay = mock.start_group_video(dir.path(), PEER_TONE)?;
+    runtime.block_on(mock.serve_bytes(&b_picture_path(), "image/png", b_picture()?));
     let mut app = AppUnderTest::start(&sandbox, &mock, &relay.to_string(), trouter.origin(), dir.path())?;
+    // the chat list shows b: the app reads b's picture and keeps it, as the call banner then shows it
+    let read = wait_until(WAIT, || {
+        let requests = runtime.block_on(mock.received_requests());
+        requests
+            .iter()
+            .any(|request| request.url.path() == b_picture_path())
+            .then_some(())
+    });
+    if read.is_none() {
+        return Err(format!("b's picture never read{}", sandbox.logs()).into());
+    }
+    thread::sleep(Duration::from_secs(1));
     let outcome = Rig::new(&sandbox, &mock, &mut app).and_then(|mut rig| scenarios(&mut rig));
     let outcome = outcome.map_err(|error| {
         format!(
@@ -172,6 +191,23 @@ fn parent() -> SandboxResult {
     drop(trouter);
     say("ngteams large call window: ok");
     Ok(())
+}
+
+/// Graph's path of b's picture.
+fn b_picture_path() -> String {
+    format!(
+        "/v1.0/users/{}/photos/96x96/$value",
+        LAB_B.trim_start_matches("8:orgid:")
+    )
+}
+
+/// b's picture: a PNG of [`B_PICTURE`], [`PICTURE_SIDE`] square.
+fn b_picture() -> SandboxResult<Vec<u8>> {
+    let [r, g, b] = B_PICTURE;
+    let picture = image::RgbaImage::from_pixel(PICTURE_SIDE, PICTURE_SIDE, image::Rgba([r, g, b, 255]));
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgba8(picture).write_to(&mut io::Cursor::new(&mut bytes), image::ImageFormat::Png)?;
+    Ok(bytes)
 }
 
 /// Everything the user does, in order.
@@ -789,6 +825,7 @@ impl<'a> Rig<'a> {
         };
         let before = opened(self.app.trace.catch_up());
         self.wait_call("ringing", |row| row.ringing)?;
+        self.caller_picture()?;
         self.window_id = None;
         self.ctl.request(None, Request::Answer)?;
         self.wait_call("connected", |row| row.state == "connected")?;
@@ -798,6 +835,62 @@ impl<'a> Rig<'a> {
         self.wait_window(|size| size.0 == i32_of(SCREEN.0))?;
         self.park()?;
         thread::sleep(SETTLE);
+        Ok(())
+    }
+
+    /// The ringing call's banner on the sandbox's bus (its newest with Answer) carries b's picture, round (#114).
+    fn caller_picture(&mut self) -> SandboxResult {
+        let banner = wait_until(WAIT, || {
+            self.sandbox
+                .bus()
+                .notifications()
+                .into_iter()
+                .rfind(|banner| banner.actions.iter().any(|action| action == "answer"))
+        })
+        .ok_or("no incoming call's banner")?;
+        let (width, height, pixels) = banner.image.as_ref().ok_or_else(|| {
+            format!(
+                "no picture on the call's banner: {:?} (hints {:?})",
+                banner.summary, banner.hints
+            )
+        })?;
+        let side = i32::try_from(PICTURE_SIDE)?;
+        if (*width, *height) != (side, side) || !banner.hints.iter().any(|hint| hint == "image-data") {
+            return Err(format!(
+                "the call banner's picture is {width}×{height}, hints {:?}",
+                banner.hints
+            )
+            .into());
+        }
+        let at = |x: u32, y: u32| {
+            let start = usize::try_from((y * PICTURE_SIDE + x) * 4).unwrap_or_default();
+            pixels.get(start..start + 4).map(<[u8]>::to_vec).unwrap_or_default()
+        };
+        let last = PICTURE_SIDE - 1;
+        let corners = [at(0, 0), at(last, 0), at(0, last), at(last, last)];
+        let middle = at(PICTURE_SIDE / 2, PICTURE_SIDE / 2);
+        let b_colour = middle.len() == 4
+            && middle[3] == 255
+            && middle
+                .iter()
+                .zip(B_PICTURE)
+                .all(|(got, wanted)| got.abs_diff(wanted) <= 8);
+        say(&format!(
+            "the call banner {:?}: {:?}: picture {width}×{height}, middle {middle:?}, corners {corners:?}",
+            banner.summary, banner.body
+        ));
+        if !b_colour || corners.iter().any(|corner| corner.get(3) != Some(&0)) {
+            return Err(format!("not b's round picture: middle {middle:?}, corners {corners:?}").into());
+        }
+        self.shots += 1;
+        let picture = image::RgbaImage::from_raw(PICTURE_SIDE, PICTURE_SIDE, pixels.clone())
+            .ok_or("the picture's bytes don't fill it")?;
+        let file = format!("large-call-banner-picture-{}.png", self.shots);
+        if let Some(dir) = std::env::var_os(EVIDENCE_ENV) {
+            let dir = PathBuf::from(dir);
+            fs::create_dir_all(&dir)?;
+            picture.save(dir.join(&file))?;
+        }
         Ok(())
     }
 
