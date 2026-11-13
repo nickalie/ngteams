@@ -36,7 +36,11 @@ fn call_devices_open_at_once_on_an_empty_gstreamer_registry() {
             }
         }
     }
-    child.env(CHILD_ENV, "1").env("GST_REGISTRY", &registry);
+    // GST_REGISTRY_1_0 wins over GST_REGISTRY, and the Windows console runner sets it to its run's shared registry
+    child
+        .env(CHILD_ENV, "1")
+        .env("GST_REGISTRY", &registry)
+        .env("GST_REGISTRY_1_0", &registry);
     if let Some(value) = std::env::var_os(REQUIRE_READY_ENV) {
         child.env(REQUIRE_READY_ENV, value);
     }

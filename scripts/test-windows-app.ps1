@@ -103,8 +103,10 @@ if(!$exes.Count -or ($Only.Count -and $exes.Count -ne $Only.Count)){throw 'Reque
 $exes|ConvertTo-Json|Set-Content "$RunDirectory/executables.json"
 $taskName='ngteams-app-synthetic-'+[Guid]::NewGuid().ToString('N')
 $command='& '+(ConvertTo-NgteamsLiteral $PSCommandPath)+' -Serve -RunDirectory '+(ConvertTo-NgteamsLiteral $RunDirectory)+' *> '+(ConvertTo-NgteamsLiteral "$RunDirectory/console.log")
-if($env:RECAP_PAGES){
- $command='$env:RECAP_PAGES='+(ConvertTo-NgteamsLiteral $env:RECAP_PAGES)+'; '+$command
+# The console task starts from the user's profile environment: pass on the test switches set for this run.
+foreach($name in @('RECAP_PAGES','NGTEAMS_DEFERRED_STARTUP_REQUIRE_READY')){
+ $value=[Environment]::GetEnvironmentVariable($name)
+ if($value){$command="`$env:$name="+(ConvertTo-NgteamsLiteral $value)+'; '+$command}
 }
 $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
 $action=New-ScheduledTaskAction -Execute (Get-Command pwsh -CommandType Application|Select-Object -First 1).Source -Argument "-NoProfile -NonInteractive -EncodedCommand $encoded" -WorkingDirectory $root
