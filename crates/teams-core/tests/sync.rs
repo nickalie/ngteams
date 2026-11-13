@@ -2804,16 +2804,64 @@ async fn a_catch_up_s_debug_names_its_account_and_page_size_but_nothing_of_its_t
     assert!(!shown.contains(&server.uri()), "{shown}");
 }
 
-fn keep_message_missing_copy(account: &mut Account) {
-    let mut blocked = entry(1500, json!(1501));
+fn message_missing_copy(version: u64) -> Value {
+    let mut blocked = entry(1500, json!(version));
     blocked["from"] = json!(format!("{CHAT_BASE}/v1/users/ME/contacts/{LAB_A}"));
     blocked["content"] = json!("");
     blocked["properties"] = json!({"policyViolation": {"state": 1, "genericStreamItemId": 900}});
-    let message = serde_json::from_value(blocked).unwrap();
+    blocked
+}
+
+fn keep_message_missing_copy(account: &mut Account) {
+    let message = serde_json::from_value(message_missing_copy(1501)).unwrap();
     account
         .catch_up
         .receive_message(&mut account.store, CHAT, &message)
         .unwrap();
+}
+
+#[tokio::test]
+async fn replayed_blocked_messages_leave_queued_copies_for_after_sync_completion() {
+    for catch_up in [false, true] {
+        for version in [1501, 1502] {
+            let server = scripted(vec![(
+                "",
+                page(
+                    vec![message_missing_copy(version), entry(2000, json!(2000))],
+                    Some("s1"),
+                    None,
+                ),
+            )])
+            .await;
+            mount_list(&server, vec![listed(CHAT, 2)], "l1").await;
+            Mock::given(wiremock::matchers::path_regex("/threads/"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": CHAT})))
+                .with_priority(1)
+                .mount(&server)
+                .await;
+            mount_copy_refusal(&server).await;
+            let mut a = plain_account(&server);
+            keep_message_missing_copy(&mut a);
+            if catch_up {
+                let report = a.catch_up.catch_up(&mut a.store).await.unwrap();
+                assert!(report.failed.is_empty(), "{report:?}");
+            } else {
+                let synced = a.catch_up.sync_messages(&mut a.store, CHAT).await.unwrap();
+                assert_eq!(synced.unchanged, usize::from(version == 1501));
+                assert_eq!(synced.updated, usize::from(version == 1502));
+            }
+            assert!(a.store.message(CHAT, "2000").unwrap().is_some());
+            assert!(a.store.sync_state(CHAT).unwrap().unwrap().sync_link.is_some());
+            assert!(
+                !paths_read(&server)
+                    .await
+                    .iter()
+                    .any(|path| path.ends_with("/messages/900"))
+            );
+            a.catch_up.retry_blocked_copies(&mut a.store).await;
+            assert_copy_after(&server, "/messages").await;
+        }
+    }
 }
 
 async fn mount_copy_refusal(server: &MockServer) {

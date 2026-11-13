@@ -4036,6 +4036,59 @@ async fn delay_stored_copy(lab: &Lab) {
 }
 
 #[tokio::test]
+async fn chat_sync_and_older_history_run_beside_deferred_copy_recovery() {
+    let lab = Lab::start().await;
+    delay_stored_copy(&lab).await;
+    let messages = format!("{CHAT_BASE}/v1/users/ME/conversations/{ABC_CHAT}/messages");
+    lab.mock
+        .answer_next(
+            "GET",
+            &format!("/conversations/{ABC_CHAT}/messages"),
+            200,
+            &json!({"messages": [], "_metadata": {
+                "syncState": format!("{messages}?syncState=made-up-sync"),
+                "backwardLink": format!("{messages}?syncState=made-up-older"),
+            }}),
+        )
+        .await;
+    let mut a = native_with_stored_missing_copy(&lab, How::default());
+    a.event(|event| matches!(event, Event::CaughtUp { .. }).then_some(()))
+        .await;
+    tokio::time::timeout(Duration::from_secs(4), async {
+        while copy_reads(&lab, &blocked_shapes()).await == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("deferred copy recovery never started");
+    lab.mock
+        .answer_next(
+            "GET",
+            &format!("/conversations/{ABC_CHAT}/messages"),
+            200,
+            &json!({"messages": []}),
+        )
+        .await;
+    tokio::time::timeout(Duration::from_secs(4), async {
+        a.handle.sync_conversation(ABC_CHAT).await.unwrap();
+        lab.mock
+            .answer_next(
+                "GET",
+                &format!("/conversations/{ABC_CHAT}/messages"),
+                200,
+                &json!({"messages": []}),
+            )
+            .await;
+        assert!(a.handle.load_older(ABC_CHAT).await.unwrap().is_some());
+        assert_eq!(a.handle.history_complete(ABC_CHAT).await.unwrap(), Some(true));
+    })
+    .await
+    .expect("foreground sync or history waited for deferred copy recovery");
+    a.shutdown();
+    assert_eq!(copy_reads(&lab, &blocked_shapes()).await, 1);
+}
+
+#[tokio::test]
 async fn standalone_sync_replies_and_publishes_before_slow_stored_copy_retries() {
     for status in [200, 403] {
         let lab = Lab::start().await;

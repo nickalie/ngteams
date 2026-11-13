@@ -870,7 +870,9 @@ check; structure only, nothing copied) and read from the web client's message re
   are logged at debug and leave the chat's sync running. Each later catch-up revisits stored messages with missing
   copies, even when no conversation changed; a conversation sync does so for that chat. Syncs queue the stored
   missing copies before their normal reads. The engine retries them after publishing messages, outbox arrivals,
-  replies and catch-up completion events, including when the normal reads fail. Recovery errors
+  replies and catch-up completion events, including when the normal reads fail. A page that brings a queued message
+  again leaves its copy queued. Foreground chat sync and older-history reads run beside deferred copy reads through
+  the catch-up's priority lane. Recovery errors
   do not change the normal sync result. Failed reads are retried once per sync, including after a restart, without
   replaying messages or holding back the sync cursor. The client never
   adds `48:generic` as a conversation (deliveries and the conversation list alike), keeps the stored edit time

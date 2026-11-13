@@ -703,9 +703,13 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
     /// [`CatchUpReport::failed`] instead.
     pub async fn catch_up(&self, store: &mut Store) -> Result<CatchUpReport, CatchUpError> {
         self.queue_blocked_copies(store, None);
-        self.scheduling.lock().unwrap_or_else(PoisonError::into_inner).completed = Some(HashMap::new());
-        let _run = CatchUpRun(&self.scheduling);
+        let _run = self.background_run();
         self.catch_up_list(store).await
+    }
+
+    fn background_run(&self) -> CatchUpRun<'_> {
+        self.scheduling.lock().unwrap_or_else(PoisonError::into_inner).completed = Some(HashMap::new());
+        CatchUpRun(&self.scheduling)
     }
 
     async fn catch_up_list(&self, store: &mut Store) -> Result<CatchUpReport, CatchUpError> {
@@ -1138,6 +1142,14 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         let Some(id) = verdict.generic_stream_item.as_deref() else {
             return Ok(());
         };
+        if self
+            .pending_blocked_copies
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(id)
+        {
+            return Ok(());
+        }
         self.read_blocked_copy(store, id).await
     }
 
@@ -1173,14 +1185,23 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
     /// Retries stored missing copies queued by syncs, after their caller has published changes and completion.
     /// Read and storage failures leave the normal sync result unchanged. A copy that first failed during the sync
     /// stays suppressed until a later sync; missing or rejected copies stay suppressed for the account session.
+    /// Foreground sync and history reads can run beside each pending copy read.
     pub async fn retry_blocked_copies(&self, store: &mut Store) {
-        let pending = std::mem::take(
-            &mut *self
+        let pending: Vec<_> = self
+            .pending_blocked_copies
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .keys()
+            .cloned()
+            .collect();
+        let _run = self.background_run();
+        for id in pending {
+            let retry = self
                 .pending_blocked_copies
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner),
-        );
-        for (id, retry) in pending {
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&id)
+                .unwrap_or_default();
             {
                 let mut failed = self
                     .failed_blocked_copies
