@@ -3461,7 +3461,10 @@ fn call_act(store: &Store, me: &str, action: CallAction) -> Result<Act, CallActi
         | CallAction::StopTranscription { .. }) => crate::calling::record_act(action)?,
         CallAction::Call { chat } => Act::Place(placement(store, me, &chat)?),
         CallAction::TestCall { echo } => Act::Place(Placement::TestCall { echo }),
-        CallAction::Join { chat } => Act::Join(chat),
+        CallAction::Join { chat } => {
+            let posted = posted_running_call(store, &chat);
+            Act::Join(chat, posted)
+        }
         // a channel's meeting is joined at the conversation its channel names it runs at, read as it goes
         CallAction::JoinMeeting { chat, .. } if teams_proto::is_team_thread_id(&chat) => {
             Act::JoinChannel(chat, Arc::default())
@@ -3493,6 +3496,22 @@ fn call_act(store: &Store, me: &str, action: CallAction) -> Result<Act, CallActi
 
 /// Whom a call from `chat` calls: a 1:1 chat's other member (from its id), or a group chat's other members as the
 /// store holds them.
+/// Where group chat `chat`'s call runs, as its newest stored call events say ([`teams_proto::running_call`]).
+fn posted_running_call(store: &Store, chat: &str) -> Option<teams_proto::CallLink> {
+    if !teams_proto::is_group_chat_id(chat) {
+        return None;
+    }
+    let page = store.messages_before(chat, None, POSTED_CALL_LOOKBACK).ok()?;
+    teams_proto::running_call(
+        page.messages
+            .iter()
+            .map(|message| (message.message_type.as_str(), message.content.as_str())),
+    )
+}
+
+/// How many of a group chat's newest messages a join looks through for its running call's start.
+const POSTED_CALL_LOOKBACK: usize = 200;
+
 fn placement(store: &Store, me: &str, chat: &str) -> Result<Placement, CallActionError> {
     if let Some(other) = one_to_one_other(chat, me) {
         return Ok(Placement::Chat {
@@ -3657,6 +3676,59 @@ mod start_within {
         let others = "19:00000000-0000-4000-8000-00000000000b_00000000-0000-4000-8000-00000000000c@unq.gbl.spaces";
         let call = resolved(CallAction::Call { chat: others.into() });
         assert!(matches!(call, Err(CallActionError::NotAChat)), "not the account's chat");
+    }
+
+    #[test]
+    fn a_group_chat_s_join_goes_where_its_newest_stored_start_says_it_runs() {
+        let chat = "19:00000000000000000000000000000001@thread.v2";
+        let link = "https://api.flightproxy.teams.microsoft.com/api/v2/ep/conv-zz-01-prod-aks.conv.skype.com/conv/SyntheticHuddle?i=10-0-0-2&amp;e=1";
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("store.db")).unwrap();
+        let join = || CallAction::Join { chat: chat.to_owned() };
+        assert!(
+            matches!(call_act(&store, ME, join()), Ok(Act::Join(_, None))),
+            "nothing stored"
+        );
+        store
+            .upsert_conversation(&teams_store::Conversation {
+                id: chat.to_owned(),
+                kind: teams_store::ConversationKind::Group,
+                topic: None,
+                version: 1,
+                last_activity: None,
+            })
+            .unwrap();
+        let started = teams_store::Message {
+            conversation_id: chat.to_owned(),
+            id: "1700000000001".to_owned(),
+            version: 1,
+            client_message_id: None,
+            sender: Some("8:orgid:00000000-0000-4000-8000-00000000000b".to_owned()),
+            sender_name: None,
+            message_type: "Event/Call".to_owned(),
+            content: format!(
+                "<partlist type=\"started\" alt=\"\"></partlist><conversationType>\"huddleGroupCall\"</conversationType>\
+                 <callEventType>callStarted</callEventType><conversationUrl>{link}</conversationUrl><callId>c-1</callId>"
+            ),
+            properties: None,
+            arrival_time: 1_700_000_000_001,
+            compose_time: None,
+            edit_time: None,
+            delete_time: None,
+        };
+        store.upsert_message(&started, None).unwrap();
+        let Ok(Act::Join(at, Some(posted))) = call_act(&store, ME, join()) else {
+            panic!("the stored start's link")
+        };
+        assert_eq!(
+            (at.as_str(), posted.as_str()),
+            (chat, link.replace("&amp;", "&").as_str())
+        );
+        // a meeting's chat is no group chat: its meeting is joined by its own entry
+        let meeting = CallAction::Join {
+            chat: "19:meeting_MadeUpMeeting01@thread.v2".to_owned(),
+        };
+        assert!(matches!(call_act(&store, ME, meeting), Ok(Act::Join(_, None))));
     }
 
     #[test]

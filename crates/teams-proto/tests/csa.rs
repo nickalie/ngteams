@@ -581,3 +581,47 @@ fn a_channel_s_running_meeting_is_read_from_its_posts_when_csa_names_none() {
     nobody.properties.clear();
     assert_eq!(teams_proto::ChannelMeetup::of_posts(&[nobody]), None);
 }
+
+#[test]
+fn a_group_chat_s_running_call_is_where_its_newest_unended_start_says() {
+    let conversation = "https://api.flightproxy.teams.microsoft.com/api/v2/ep/conv-zz-01-prod-aks.conv.skype.com/conv/SyntheticHuddle?i=10-0-0-1&amp;e=1";
+    let event = |kind: &str, call: &str| {
+        format!(
+            "<partlist type=\"started\" alt=\"\"></partlist><conversationType>\"huddleGroupCall\"</conversationType>\
+             <callEventType>{kind}</callEventType><conversationUrl>{conversation}</conversationUrl><callId>{call}</callId>"
+        )
+    };
+    let (started, ended, older) = (
+        event("callStarted", "call-2"),
+        event("callEnded", "call-2"),
+        event("callStarted", "call-1"),
+    );
+    let found = teams_proto::running_call([("Event/Call", started.as_str())]).unwrap();
+    assert_eq!(found.as_str(), conversation.replace("&amp;", "&"));
+    // newest first: a text message between changes nothing; an ended call runs no more, an older start still does
+    let text = ("RichText/Html", "<p>hi</p>");
+    assert!(teams_proto::running_call([text, ("Event/Call", started.as_str())]).is_some());
+    assert_eq!(
+        teams_proto::running_call([("Event/Call", ended.as_str()), ("Event/Call", started.as_str())]),
+        None
+    );
+    let found = teams_proto::running_call([
+        ("Event/Call", ended.as_str()),
+        ("Event/Call", started.as_str()),
+        ("Event/Call", older.as_str()),
+    ]);
+    assert!(found.is_some());
+    // an end naming no call ends whatever ran; a start with no link, or one off the calling service, names none
+    let bare_end = "<ended/><partlist alt=\"\" count=\"0\"></partlist><callEventType>callEnded</callEventType>";
+    assert_eq!(
+        teams_proto::running_call([("Event/Call", bare_end), ("Event/Call", started.as_str())]),
+        None
+    );
+    assert_eq!(
+        teams_proto::running_call([("Event/Call", "<partlist alt =\"\"></partlist>")]),
+        None
+    );
+    let elsewhere = event("callStarted", "call-3").replace(conversation, "https://example.invalid/conv/x");
+    assert_eq!(teams_proto::running_call([("Event/Call", elsewhere.as_str())]), None);
+    assert_eq!(teams_proto::running_call([text]), None);
+}

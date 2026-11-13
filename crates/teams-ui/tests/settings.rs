@@ -59,6 +59,7 @@ fn changed() -> Settings {
         send_presence: false,
         first_run: FirstRunState::Confirmed,
         notifications: Notifications::Mentions,
+        meeting_started: false,
         idle_minutes: 15,
         manual_status: ManualStatus::DoNotDisturb,
         log_level: LogLevel::Debug,

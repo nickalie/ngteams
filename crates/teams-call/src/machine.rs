@@ -418,9 +418,9 @@ pub struct Calls {
     identity: Identity,
     agent: Option<CallAgent>,
     call: Option<Call>,
-    /// The running calls invitations named, by their group chat: the conversation a join goes to. An entry goes when
-    /// its conversation's end is delivered, when a join to it fails, or when a newer invitation in the chat names
-    /// another.
+    /// The running calls invitations named, by their group chat: the conversation a join goes to (or the chat's own
+    /// start named, [`Self::posted_running`]). An entry goes when its conversation's end is delivered, when a join to
+    /// it fails, or when a newer invitation in the chat names another.
     running: BTreeMap<String, CallLink>,
     /// The rosters of running calls an invitation's `attach` subscribed to, by their group chat: who is in the call,
     /// kept from the ring on (see [`Followed`]).
@@ -586,6 +586,15 @@ impl Calls {
     #[must_use]
     pub fn joinable(&self, chat: &str) -> bool {
         self.running.contains_key(chat)
+    }
+
+    /// The group chat `chat`'s call runs at `conversation`, as the chat's own start message says (a group chat's
+    /// meeting, which rings nobody: `teams_proto::running_call`): [`Self::join`] goes there. The chat's newest start
+    /// is newer than what an earlier invitation named.
+    pub fn posted_running(&mut self, chat: &str, conversation: CallLink) {
+        if teams_proto::is_group_chat_id(chat) {
+            self.running.insert(chat.to_owned(), conversation);
+        }
     }
 
     /// The account places a call to `placement` with `offer`.

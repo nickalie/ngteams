@@ -4,7 +4,8 @@
 use super::{Apartment, activation::Activator, registration};
 use crate::notify::picture::{file_key, toast_image};
 use crate::notify::{
-    ANSWER_ACTION, BannerFiles, DECLINE_ACTION, DEFAULT_ACTION, Notice, NoticeKind, NotificationServer, escape_markup,
+    ANSWER_ACTION, BannerFiles, DECLINE_ACTION, DEFAULT_ACTION, JOIN_ACTION, Notice, NoticeKind, NotificationServer,
+    escape_markup,
 };
 use futures_util::future::BoxFuture;
 use std::{
@@ -314,7 +315,14 @@ impl Center {
     }
 }
 fn valid_action(action: &str) -> bool {
-    matches!(action, DEFAULT_ACTION | ANSWER_ACTION | DECLINE_ACTION)
+    matches!(action, DEFAULT_ACTION | ANSWER_ACTION | DECLINE_ACTION | JOIN_ACTION)
+}
+
+/// A started meeting's toast's Join button ([`crate::meeting_alert`]); its body opens the chat.
+fn meeting_actions(key: &str) -> String {
+    format!(
+        r#"<actions><action content="Join" arguments="{key}:{JOIN_ACTION}" activationType="foreground"/></actions>"#
+    )
 }
 
 /// Only an opaque per-notice key and fixed actions are launch arguments. Display text is XML-escaped and remains plain
@@ -330,6 +338,8 @@ fn xml(notice: &Notice, key: &str, picture: Option<&str>) -> String {
         format!(
             r#"<actions><action content="Answer" hint-buttonStyle="Success" arguments="{key}:answer" activationType="foreground"/><action content="Decline" hint-buttonStyle="Critical" arguments="{key}:decline" activationType="foreground"/></actions>"#
         )
+    } else if notice.kind == NoticeKind::Meeting {
+        meeting_actions(key)
     } else {
         String::new()
     };
@@ -341,4 +351,24 @@ fn xml(notice: &Notice, key: &str, picture: Option<&str>) -> String {
         escape_markup(&notice.body),
         picture.unwrap_or_default()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_started_meeting_s_toast_offers_join_and_its_join_is_taken() {
+        let notice = Notice {
+            conversation: "19:chat".to_owned(),
+            kind: NoticeKind::Meeting,
+            summary: "Weekly sync".to_owned(),
+            body: "Ada started the meeting".to_owned(),
+            picture: None,
+        };
+        let toast = xml(&notice, "k1", None);
+        assert!(toast.contains(r#"<action content="Join" arguments="k1:join" activationType="foreground"/>"#));
+        assert!(!toast.contains("incomingCall"));
+        assert!(valid_action(JOIN_ACTION));
+    }
 }

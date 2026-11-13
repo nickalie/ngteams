@@ -2691,3 +2691,25 @@ fn recording_without_a_caption_link_survives_another_mris_empty_active_entry() {
     assert!(calls.call.as_ref().unwrap().meeting.state.recording.is_none());
     assert!(calls.call.as_ref().unwrap().meeting.state.transcribing.is_none());
 }
+
+#[test]
+fn a_group_chat_s_meeting_its_start_named_is_joined_where_it_runs() {
+    let now = Instant::now();
+    let mut calls = Calls::new(identity(B));
+    calls.set_push_url(PUSH).unwrap();
+    assert!(!calls.joinable(CHAT));
+    let link = teams_proto::CallLink::parse(&conv("")).unwrap();
+    calls.posted_running(CHAT, link.clone());
+    assert!(calls.joinable(CHAT));
+    calls.join(CHAT, media(), now).unwrap();
+    let [(_, "join")] = sent(&effects(&mut calls))[..] else {
+        panic!("one join")
+    };
+
+    // only a group chat's: a meeting's chat and a 1:1 chat are joined otherwise
+    let mut calls = Calls::new(identity(B));
+    calls.posted_running("19:meeting_SyntheticMeeting@thread.v2", link.clone());
+    calls.posted_running("19:a_b@unq.gbl.spaces", link);
+    assert!(!calls.joinable("19:meeting_SyntheticMeeting@thread.v2"));
+    assert!(!calls.joinable("19:a_b@unq.gbl.spaces"));
+}

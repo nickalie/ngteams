@@ -82,6 +82,7 @@ impl NotificationServer for BusNotifications {
             notice.body.clone()
         };
         let call_notice = notice.kind == NoticeKind::Call;
+        let meeting_notice = notice.kind == NoticeKind::Meeting;
         let image = notice.picture.as_ref().and_then(image_data);
         Box::pin(async move {
             // an incoming call's: Answer and Decline, critical, shown until it is closed (its ring ended)
@@ -99,6 +100,8 @@ impl NotificationServer for BusNotifications {
                     ("desktop-entry", Value::from(desktop_entry.as_str())),
                 ]);
                 (actions, hints, 0_i32)
+            } else if meeting_notice {
+                (meeting_actions(), meeting_hints(&desktop_entry), -1_i32)
             } else {
                 let hints: HashMap<&str, Value<'_>> = HashMap::from([
                     ("category", Value::from("im.received")),
@@ -134,6 +137,20 @@ impl NotificationServer for BusNotifications {
             let _ = proxy.call::<_, _, ()>("CloseNotification", &(id,)).await;
         })
     }
+}
+
+/// A started meeting's notification's actions: its body opens the chat (Teams' "Open chat"), Join joins it.
+fn meeting_actions() -> Vec<&'static str> {
+    vec![DEFAULT_ACTION, "Open chat", JOIN_ACTION, "Join"]
+}
+
+/// A started meeting's notification's hints: of the app, as a chat's.
+fn meeting_hints(desktop_entry: &str) -> HashMap<&'static str, Value<'_>> {
+    HashMap::from([
+        ("category", Value::from("im.received")),
+        ("urgency", Value::U8(1)),
+        ("desktop-entry", Value::from(desktop_entry)),
+    ])
 }
 
 #[cfg(test)]

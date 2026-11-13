@@ -381,7 +381,9 @@ pub(crate) enum Act {
     /// A recording or a transcription started or stopped.
     Record(CallId, teams_proto::captions::RecordCommand),
     Place(Placement),
-    Join(String),
+    /// The running call of a group chat joined: the chat, and where its own newest start says it runs (the store's,
+    /// `teams_proto::running_call`), for a meeting no invitation named.
+    Join(String, Option<teams_proto::CallLink>),
     /// The meeting that runs in a channel joined: the channel, and the meeting as CSA names it, read as the media is
     /// set up ([`Calling::set_up`]).
     JoinChannel(String, Arc<std::sync::Mutex<Option<ChannelMeetup>>>),
@@ -1701,7 +1703,7 @@ where
         let answer = match act {
             act @ (Act::Health(..) | Act::Options(..)) => return self.aside(act, reply),
             Act::Captions(..) | Act::CaptionLanguage(..) | Act::Record(..) => self.service_act(act),
-            Act::Place(_) | Act::Join(_) | Act::JoinChannel(..) | Act::Answer(_) => return self.set_up(act, reply),
+            Act::Place(_) | Act::Join(..) | Act::JoinChannel(..) | Act::Answer(_) => return self.set_up(act, reply),
             Act::Decline(call) => self.calls.decline(call).map(|()| call).map_err(CallActionError::from),
             Act::HangUp(call) => self.hang_up(call, now),
             Act::Mute(call, muted) => return self.mute_action(call, muted, reply),
@@ -1865,6 +1867,9 @@ where
     /// Sets up the media of a start, a join or an answer; the action goes once it is.
     fn set_up(&mut self, act: Act, reply: Waiting) {
         let busy = self.preparing.is_some() || self.live.is_some();
+        if let Act::Join(chat, Some(posted)) = &act {
+            self.calls.posted_running(chat, posted.clone());
+        }
         // a 1:1 call takes its main video line, and so does the test call (its camera turned by a renegotiation, at
         // the link its acceptance hands out, as a 1:1 call's; it hands out no `updateMediaDescriptions` link, so its
         // lines couldn't be described as a group call's are); a group call's (placed, joined, answered) its main line
@@ -1881,9 +1886,9 @@ where
                 }
             }
             _ if busy || self.calls.current().is_some() => return refuse(reply, CallActionError::Busy),
-            Act::Join(chat) if !self.calls.joinable(chat) => return refuse(reply, CallError::NotJoinable.into()),
+            Act::Join(chat, _) if !self.calls.joinable(chat) => return refuse(reply, CallError::NotJoinable.into()),
             Act::Place(placement) => (None, None, placement_video(placement)),
-            Act::Join(_) | Act::JoinChannel(..) => (None, None, VideoKind::Group),
+            Act::Join(..) | Act::JoinChannel(..) => (None, None, VideoKind::Group),
             // only a start, a join or an answer sets its media up
             _ => return refuse(reply, CallError::NotNow.into()),
         };
@@ -1983,7 +1988,7 @@ where
         let sdp = media::first_content(&prepared);
         let acted = match &preparing.act {
             Act::Place(placement) => self.calls.place(placement, sdp, now),
-            Act::Join(chat) => self.calls.join(chat, sdp, now),
+            Act::Join(chat, _) => self.calls.join(chat, sdp, now),
             Act::JoinChannel(channel, meetup) => {
                 let meetup = meetup.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
                 meetup.map_or(Err(CallError::NotJoinable), |meetup| {

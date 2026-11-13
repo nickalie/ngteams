@@ -17,6 +17,8 @@
 //!   in the account menu, and the quit stops it before the app asks for its shutdown (nothing is sent on quit).
 //! - An incoming call (M3 Task 17) rings through the [`CallAlert`]: its ringtone on the default output and its
 //!   notification with Answer and Decline on the same bus; its body shows the window, where the banner is.
+//! - A meeting someone started shows through the [`MeetingAlert`]: its banner's Join goes into it as the chat's or the
+//!   calendar's Join does, its body opens the chat or the channel.
 //! - **A call has a window of its own** ([`CallWindows`]), any account's, one at a time: its "Device settings" shows
 //!   the main window's settings on their Calls page for its account. The app stays while it is open: the main window
 //!   closed without a tray item to stay in quits only once the call window is closed too.
@@ -62,6 +64,7 @@ use crate::bus::BusError;
 use crate::call_alert::{CallAlert, CallAlertEvent};
 use crate::call_sounds::CallSounds;
 use crate::call_window::{AccountNamer, CallWindows, CallWindowsEvent};
+use crate::meeting_alert::{MeetingAlert, MeetingAlertEvent};
 #[cfg(target_os = "linux")]
 use crate::notify::BusNotifications;
 use crate::notify::{DEFAULT_ACTION, NotificationServer, Notifier, NotifierEvent};
@@ -151,11 +154,12 @@ struct Slot {
     shell: ShellParts,
     notifier: Entity<Notifier>,
     call_alert: Entity<CallAlert>,
+    meeting_alert: Entity<MeetingAlert>,
     /// The sounds of its calls: held for as long as the account is.
     _call_sounds: Entity<CallSounds>,
     own_presence: Entity<OwnPresence>,
     tray: Entity<Tray>,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 3],
 }
 
 /// The app on the desktop (see the module docs). A GPUI entity.
@@ -369,6 +373,7 @@ impl Desktop {
                 this.show(cx);
             }
         });
+        let (meeting_alert, meeting_asked) = Self::meeting_alert(&shell, &key, cx);
         let own_presence = cx.new(|cx| {
             OwnPresence::new(
                 Arc::clone(&shell.core),
@@ -386,11 +391,39 @@ impl Desktop {
             shell,
             notifier,
             call_alert,
+            meeting_alert,
             _call_sounds: call_sounds,
             own_presence,
             tray,
-            _subscriptions: [opening, alerted],
+            _subscriptions: [opening, alerted, meeting_asked],
         }
+    }
+
+    /// Account `key`'s started meetings' banners over `shell`, what they ask done in its shell.
+    fn meeting_alert(shell: &ShellParts, key: &str, cx: &mut Context<Self>) -> (Entity<MeetingAlert>, Subscription) {
+        let alert = cx.new(|cx| {
+            MeetingAlert::new(
+                Arc::clone(&shell.core),
+                &shell.models,
+                shell.settings.clone(),
+                Arc::clone(&shell.trace),
+                cx,
+            )
+        });
+        let key = key.to_owned();
+        let asked = cx.subscribe(&alert, move |this: &mut Self, _, event, cx| match event {
+            MeetingAlertEvent::Open {
+                conversation,
+                channel: true,
+            } => this.open_channel_of(&key, conversation.clone(), cx),
+            MeetingAlertEvent::Open { conversation, .. } => this.open_chat_of(&key, conversation.clone(), cx),
+            MeetingAlertEvent::Join(join) => {
+                let join = join.clone();
+                this.switch(&key, cx);
+                this.in_shell(cx, move |shell, window, cx| shell.join_from_banner(join, window, cx));
+            }
+        });
+        (alert, asked)
     }
 
     /// Adds `slot` to the desktop: to the accounts, to the item's total, to the window's shells and to the bus's
@@ -895,10 +928,17 @@ impl Desktop {
         self.server = Some(server);
     }
 
-    /// Notification `id` had `action` invoked: the call alert's it is, else (its body) the notifier's it is.
+    /// Notification `id` had `action` invoked: the call alert's or the meeting alert's it is, else (its body) the
+    /// notifier's it is.
     fn activated(&mut self, id: u32, action: &str, cx: &mut Context<Self>) {
         for slot in &self.slots {
             if slot.call_alert.update(cx, |alert, cx| alert.activated(id, action, cx)) {
+                return;
+            }
+        }
+        let meetings: Vec<Entity<MeetingAlert>> = self.slots.iter().map(|slot| slot.meeting_alert.clone()).collect();
+        for alert in meetings {
+            if alert.update(cx, |alert, cx| alert.activated(id, action, cx)) {
                 return;
             }
         }
@@ -912,10 +952,12 @@ impl Desktop {
     }
 }
 
-/// Hands `server` to `slot`'s notifier and call alert.
+/// Hands `server` to `slot`'s notifier, call alert and meeting alert.
 fn hand_server(slot: &Slot, server: &Arc<dyn NotificationServer>, cx: &mut App) {
     slot.notifier
         .update(cx, |notifier, _| notifier.set_server(Arc::clone(server)));
+    slot.meeting_alert
+        .update(cx, |alert, _| alert.set_server(Arc::clone(server)));
     slot.call_alert
         .update(cx, |alert, cx| alert.set_server(Arc::clone(server), cx));
 }

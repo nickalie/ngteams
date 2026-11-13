@@ -42,6 +42,7 @@ built for your desktop instead of a web page in a wrapper.
 
 **Calls and meetings**
 - One-on-one and group audio and video calls, and scheduled or instant meetings
+- A notification with Join when a meeting you're invited to, or a Meet now in one of your group chats, starts
 - Screen sharing, background blur and virtual backgrounds
 - Gallery and speaker views, raise hand, reactions, hold, transfer and inviting people mid-call
 - Recording and transcription, live captions, and meeting recaps with recordings and transcripts

@@ -567,6 +567,38 @@ deleted after): the native creation answered `201`, the post came, a's calendar 
 (the retired native probe) went through; again the same day (a team with a alone,
 deleted after) with the change (`--rename`) between them, its post renamed in place.
 
+## When a meeting starts
+
+Read 2026-11-13 from the web client's own code in a lab capture (no run of its own). Teams tells the members of a
+chat, a channel or a meeting that a meeting started with a banner of its own (its "meeting started notification",
+switched by Settings → Notifications and activity → Meetings → **Meeting started notification**, on by default), not a
+ring:
+
+- **A group chat's Meet now** (`huddleGroupCall`): titled with the chat's topic, else its members' given names
+  ("Ann, Bob +2"), else a placeholder; its line "<name> started a meeting"; its buttons **Join** (into the chat's
+  running call, with no pre-join) and **Open chat**. None shows for a chat the user muted.
+- **A meeting** (a meeting chat's, or a channel's): titled with the meeting's subject; its line "<name> started the
+  meeting" (Teams' strings `{{meetingCaller}} started the meeting`, `{{audioDropInCaller}} started a meeting`);
+  **Join** (the meeting's join, as from the calendar) and, but for a channel's, **Open chat**.
+- None shows when the user started it (the starter is the user), when the user is in that call already, for a live
+  event, or when the switch is off. Each call's start shows once.
+
+The web client learns of a meeting's start two ways: a calling push (an event of its own on the calling endpoint,
+which no lab capture holds yet) and the chat service's call start in the meeting's chat (the `Event/Call`
+`callStarted` message, [chat.md](chat.md#system-messages)). From the chat service's it shows the banner only when the
+user's calendar holds that meeting (its `skypeTeamsData` naming the chat, and for a channel's the post) within a window
+around the meeting's scheduled time, and only for a scheduled meeting: a channel's ad-hoc Meet now and a meeting not
+on the calendar give none.
+
+The native client follows the chat service's way for both (`teams_ui::meeting_alert`): a call start delivered in a
+group chat with `huddleGroupCall`, or in a meeting chat or a channel while the account's calendar holds the meeting
+from 15 minutes before its start to 15 minutes after its end (Teams' window lives in its remote configuration, not
+captured). A group chat's plain group call rings its members instead ([The invitation](#the-invitation)). Join of a
+group chat's meeting goes where its start says it runs (`<conversationUrl>`, `teams_proto::running_call`): nobody was
+rung, so no invitation named the conversation, and the join is the one a callee makes after its ring ended
+([Joining a running call](#joining-a-running-call)). The chat's header shows Join while the start is the chat's
+newest call event.
+
 ## The lobby
 
 Who waits in a meeting's lobby is the meeting's option `AutoAdmittedUsers` (`Everyone`,

@@ -1054,6 +1054,35 @@ impl Shell {
         .detach();
     }
 
+    /// A started meeting's banner's Join ([`crate::meeting_alert`]): a group chat's meeting joined as its header's Join
+    /// joins it, a meeting chat's pre-join as its header opens it, a channel's meeting's pre-join (or, when the calendar
+    /// names no meeting to go into, the channel, whose header has Join while it runs).
+    pub fn join_from_banner(
+        &mut self,
+        join: crate::meeting_alert::MeetingJoin,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::meeting_alert::MeetingJoin;
+        match join {
+            MeetingJoin::GroupChat { chat } => self.ask_call(Ask::Join { chat }, cx),
+            MeetingJoin::MeetingChat { chat, title } => self.join_meeting_chat(chat, Some(title), None, cx),
+            MeetingJoin::Channel {
+                channel,
+                title,
+                meeting: Some(meeting),
+            } => self.open_prejoin(
+                MeetingToJoin::Chat {
+                    chat: channel,
+                    meeting,
+                    title,
+                },
+                cx,
+            ),
+            MeetingJoin::Channel { channel, .. } => self.open_channel_id(channel, window, cx),
+        }
+    }
+
     /// Open the pre-join for an invitation. The service resolves its ID only after Join now; a meeting's
     /// chat may hold a long link and cannot reliably be searched by numeric code.
     pub fn join_meeting_code(&mut self, code: teams_core::MeetingCode, cx: &mut Context<Self>) {

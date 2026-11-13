@@ -987,6 +987,23 @@ impl Calls {
         self.running.contains(chat)
     }
 
+    /// The group chat `chat`'s own call event says its call `runs` (a start) or ran (an end), as
+    /// [`crate::meeting_alert`] reads it: a group chat's meeting rings nobody, so only its start tells that a join can
+    /// go there (the engine joins where the start says it runs). Nothing for any other chat.
+    pub fn posted_running(&mut self, chat: &str, runs: bool, cx: &mut Context<Self>) {
+        if !self.shown || !teams_proto::is_group_chat_id(chat) {
+            return;
+        }
+        let changed = if runs {
+            self.running.insert(chat.to_owned())
+        } else {
+            self.running.remove(chat)
+        };
+        if changed {
+            cx.notify();
+        }
+    }
+
     /// The meeting's pre-join, while it shows.
     #[must_use]
     pub fn prejoin(&self) -> Option<&Prejoin> {

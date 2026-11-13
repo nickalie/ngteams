@@ -94,6 +94,8 @@ pub const DEFAULT_ACTION: &str = "default";
 /// An incoming call's notification's actions (M3 Task 17): answer it, decline it.
 pub const ANSWER_ACTION: &str = "answer";
 pub const DECLINE_ACTION: &str = "decline";
+/// A started meeting's notification's action: join it ([`crate::meeting_alert`]).
+pub const JOIN_ACTION: &str = "join";
 /// What a sender without a name is called.
 pub const SOMEONE: &str = "Someone";
 
@@ -110,6 +112,8 @@ pub enum NoticeKind {
     Call,
     /// An app's Activity item.
     Activity,
+    /// A meeting someone started, with Join ([`crate::meeting_alert`]).
+    Meeting,
 }
 
 impl NoticeKind {
@@ -122,6 +126,7 @@ impl NoticeKind {
             Self::Collapsed => "collapsed",
             Self::Call => "call",
             Self::Activity => "activity",
+            Self::Meeting => "meeting",
         }
     }
 }

@@ -27,7 +27,7 @@ use gpui::{App, AsyncApp, SystemNotification, SystemNotificationAction, SystemNo
 
 use super::Desktop;
 use crate::notify::{
-    ANSWER_ACTION, BannerFiles, DECLINE_ACTION, DEFAULT_ACTION, Notice, NoticeKind, NotificationServer,
+    ANSWER_ACTION, BannerFiles, DECLINE_ACTION, DEFAULT_ACTION, JOIN_ACTION, Notice, NoticeKind, NotificationServer,
 };
 use crate::tray::TrayIcon;
 
@@ -114,7 +114,8 @@ impl NotificationServer for Notifications {
     }
 }
 
-/// `notice` as the system shows it, under `tag`: an incoming call with Answer and Decline. Its text is plain text.
+/// `notice` as the system shows it, under `tag`: an incoming call with Answer and Decline, a started meeting with Join.
+/// Its text is plain text.
 fn system_notification(notice: &Notice, tag: String) -> SystemNotification {
     let actions = if notice.kind == NoticeKind::Call {
         vec![
@@ -127,6 +128,11 @@ fn system_notification(notice: &Notice, tag: String) -> SystemNotification {
                 label: "Decline".into(),
             },
         ]
+    } else if notice.kind == NoticeKind::Meeting {
+        vec![SystemNotificationAction {
+            id: JOIN_ACTION.into(),
+            label: "Join".into(),
+        }]
     } else {
         Vec::new()
     };
@@ -142,7 +148,7 @@ fn system_notification(notice: &Notice, tag: String) -> SystemNotification {
 fn action_of(response: &SystemNotificationResponse) -> Option<&str> {
     match response.action_id.as_deref() {
         None => Some(DEFAULT_ACTION),
-        Some(action @ (ANSWER_ACTION | DECLINE_ACTION)) => Some(action),
+        Some(action @ (ANSWER_ACTION | DECLINE_ACTION | JOIN_ACTION)) => Some(action),
         Some(_) => None,
     }
 }
@@ -259,6 +265,17 @@ fn notifications(desktop: &WeakEntity<Desktop>, files: Option<BannerFiles>, cx: 
 
 /// The category of a notification with Answer and Decline: an incoming call's.
 const CALL_CATEGORY: &str = "ngteams-call";
+/// The category of a notification with Join: a started meeting's.
+const MEETING_CATEGORY: &str = "ngteams-meeting";
+
+/// The category of a notification offering `actions` (some).
+fn category_of(actions: &[SystemNotificationAction]) -> &'static str {
+    if actions.iter().any(|action| action.id.as_ref() == JOIN_ACTION) {
+        MEETING_CATEGORY
+    } else {
+        CALL_CATEGORY
+    }
+}
 
 /// Posts the app's notifications to the system's notification center, as GPUI's binding does, with a picture as an
 /// attachment. Used on the main thread only.
@@ -266,8 +283,11 @@ const CALL_CATEGORY: &str = "ngteams-call";
 struct Poster {
     /// The user was asked to allow notifications (once a run, at the first).
     asked: bool,
-    /// The call category was registered.
-    call_category: bool,
+    /// The categories registered so far: the center takes them all at once, each with its actions.
+    categories: Vec<(
+        &'static str,
+        objc2::rc::Retained<objc2_user_notifications::UNNotificationCategory>,
+    )>,
 }
 
 impl Poster {
@@ -283,8 +303,9 @@ impl Poster {
         content.setTitle(&NSString::from_str(&notification.title));
         content.setBody(&NSString::from_str(&notification.body));
         if !notification.actions.is_empty() {
-            self.register_calls(&center, &notification.actions);
-            content.setCategoryIdentifier(&NSString::from_str(CALL_CATEGORY));
+            let category = category_of(&notification.actions);
+            self.register(&center, category, &notification.actions);
+            content.setCategoryIdentifier(&NSString::from_str(category));
         }
         if let Some(attachment) = banner.picture.as_deref().and_then(attachment) {
             content.setAttachments(&NSArray::from_retained_slice(&[attachment]));
@@ -328,10 +349,12 @@ impl Poster {
         );
     }
 
-    /// Registers the call category with `actions` (Answer and Decline), once: the app's only category.
-    fn register_calls(
+    /// Registers category `id` with `actions` (a call's Answer and Decline, a meeting's Join), once, beside the
+    /// categories registered before.
+    fn register(
         &mut self,
         center: &objc2_user_notifications::UNUserNotificationCenter,
+        id: &'static str,
         actions: &[SystemNotificationAction],
     ) {
         use objc2_foundation::{NSArray, NSSet, NSString};
@@ -339,7 +362,7 @@ impl Poster {
             UNNotificationAction, UNNotificationActionOptions, UNNotificationCategory, UNNotificationCategoryOptions,
         };
 
-        if std::mem::replace(&mut self.call_category, true) {
+        if self.categories.iter().any(|(known, _)| *known == id) {
             return;
         }
         let actions: Vec<_> = actions
@@ -353,12 +376,14 @@ impl Poster {
             })
             .collect();
         let category = UNNotificationCategory::categoryWithIdentifier_actions_intentIdentifiers_options(
-            &NSString::from_str(CALL_CATEGORY),
+            &NSString::from_str(id),
             &NSArray::from_retained_slice(&actions),
             &NSArray::new(),
             UNNotificationCategoryOptions::empty(),
         );
-        center.setNotificationCategories(&NSSet::from_retained_slice(&[category]));
+        self.categories.push((id, category));
+        let all: Vec<_> = self.categories.iter().map(|(_, category)| category.clone()).collect();
+        center.setNotificationCategories(&NSSet::from_retained_slice(&all));
     }
 }
 
@@ -452,6 +477,29 @@ mod tests {
         };
         let ids: Vec<&str> = shown.actions.iter().map(|action| action.id.as_ref()).collect();
         assert_eq!(ids, [ANSWER_ACTION, DECLINE_ACTION]);
+        assert_eq!(category_of(&shown.actions), CALL_CATEGORY);
+    }
+
+    #[test]
+    fn a_started_meeting_offers_join() {
+        let (server, queue) = server();
+        let _ = server
+            .show(&notice(NoticeKind::Meeting), 0)
+            .now_or_never()
+            .expect("ready");
+        let Ok(Command::Show(Banner {
+            notification: shown, ..
+        })) = queue.try_recv()
+        else {
+            panic!("nothing shown")
+        };
+        let actions: Vec<(&str, &str)> = shown
+            .actions
+            .iter()
+            .map(|action| (action.id.as_ref(), action.label.as_ref()))
+            .collect();
+        assert_eq!(actions, [(JOIN_ACTION, "Join")]);
+        assert_eq!(category_of(&shown.actions), MEETING_CATEGORY);
     }
 
     #[test]
@@ -537,6 +585,7 @@ mod tests {
         assert_eq!(action_of(&response(None)), Some(DEFAULT_ACTION));
         assert_eq!(action_of(&response(Some(ANSWER_ACTION))), Some(ANSWER_ACTION));
         assert_eq!(action_of(&response(Some(DECLINE_ACTION))), Some(DECLINE_ACTION));
+        assert_eq!(action_of(&response(Some(JOIN_ACTION))), Some(JOIN_ACTION));
         assert_eq!(action_of(&response(Some("other"))), None);
     }
 

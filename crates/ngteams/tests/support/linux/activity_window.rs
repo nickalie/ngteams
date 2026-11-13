@@ -27,6 +27,8 @@ use clap::Parser as _;
 use gpui::{App, AsyncApp, Entity, Window, WindowHandle, WindowingModes};
 use ngteams::app::{self, Launch};
 use ngteams::calling::PersonalCalls;
+#[path = "activity_meeting_started.rs"]
+mod meeting_started;
 #[path = "activity_banner_pictures.rs"]
 mod pictures;
 #[path = "../window.rs"]
@@ -313,6 +315,10 @@ fn run_checks(sandbox: &Sandbox) -> SandboxResult<usize> {
         turn_off::dark_banner_reopens_the_window,
     );
     for (name, check) in turn_off::CHECKS {
+        qa.check(name, check);
+    }
+    // a meeting that started (#125)
+    for (name, check) in meeting_started::CHECKS {
         qa.check(name, check);
     }
     // an app item's tile (#28): last, as its second app's item comes first under Apps from then on
@@ -2081,7 +2087,7 @@ fn mock_reply(question: &str, probe: &Probe) -> Option<Value> {
         "pic" => pictures::reply(rest, probe),
         "prefs" => probe.prefs(),
         "refuse" => probe.refuse(rest),
-        _ => return None,
+        _ => return meeting_started::mock_reply(verb, rest, mock),
     })
 }
 
@@ -2107,6 +2113,14 @@ fn reply_to(question: &str, shell: &Entity<Shell>, cx: &mut App) -> Value {
                 );
             });
             json!({"theme": key})
+        }
+        "meeting-started" => {
+            let on = rest == "on";
+            let model = shell.read(cx).settings().clone();
+            model.update(cx, |model, cx| {
+                model.change(|settings| settings.meeting_started = on, cx);
+            });
+            json!({"meeting_started": on})
         }
         _ => json!({"error": format!("unknown question {question}")}),
     }

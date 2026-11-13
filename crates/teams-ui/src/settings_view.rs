@@ -8,7 +8,8 @@
 //! - **Appearance**: the theme (following the system's light or dark mode with a theme for each, or one theme
 //!   whatever the system says), each a tile drawn in its own colours; the font size with its steps; the font family,
 //!   searchable among the system's.
-//! - **Notifications**: which messages notify, and the sounds ([`sounds`]): the pack, then each event's sound.
+//! - **Notifications**: which messages notify, whether a meeting's start does (Meetings), and the sounds ([`sounds`]): the
+//!   pack, then each event's sound.
 //! - **Privacy**: sending typing and read receipts.
 //! - **Calls** (where the app has calls, or its calls have video): the calls' microphone, speaker and camera
 //!   ("Follow the system", naming the system's default, then every device there is, a device chosen that isn't there
@@ -838,16 +839,30 @@ impl SettingsView {
                 apply: self.changer(move |settings| settings.notifications = level),
             })
             .collect();
-        let mut boxes = vec![group(
-            None,
-            vec![row(
-                "Notify me about",
-                Some("A desktop notification for every new message, only for those that mention you, or none."),
-                segmented("notifications", choices, palette),
+        let mut boxes = vec![
+            group(
+                None,
+                vec![row(
+                    "Notify me about",
+                    Some("A desktop notification for every new message, only for those that mention you, or none."),
+                    segmented("notifications", choices, palette),
+                    palette,
+                )],
                 palette,
-            )],
-            palette,
-        )];
+            ),
+            group(
+                Some("Meetings"),
+                vec![row(
+                    "Meeting started notification",
+                    Some("A notification with Join when a meeting you're invited to, or one in a group chat, starts."),
+                    self.switch("meeting-started", settings.meeting_started, |settings, on| {
+                        settings.meeting_started = on;
+                    }),
+                    palette,
+                )],
+                palette,
+            ),
+        ];
         boxes.extend(self.sound_groups(settings, palette, cx));
         boxes
     }
