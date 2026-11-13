@@ -1,5 +1,5 @@
 //! The Activity pane as a user meets it, in the UI sandbox on the mock (`harness = false`: GPUI runs on the process's
-//! main thread).
+//! main thread); an app item's "Turn off <app>" is in `activity_turn_off.rs`.
 //!
 //! The test runs itself again inside the sandbox as the app of lab account a (its engine on the mock chat service and
 //! its Trouter, the app's control socket served in the sandbox's dir), over a made-up feed: two dozen older read
@@ -28,6 +28,8 @@ use ngteams::app::{self, Launch};
 use ngteams::calling::PersonalCalls;
 #[path = "../window.rs"]
 mod support;
+#[path = "activity_turn_off.rs"]
+mod turn_off;
 use ngteams::descriptors::adopt_trace;
 use serde_json::{Value, json};
 use support::Alias;
@@ -43,7 +45,7 @@ use teams_mock::{
     PRESENCE_BASE, TrouterMock, USER_PROFILE_BASE,
 };
 use teams_proto::Mri;
-use teams_proto::{Author, Client, Credentials, HttpTransport};
+use teams_proto::{Author, Client, Credentials, HttpError, HttpTransport, Transport as _};
 use teams_store::Store;
 use teams_trouter::{Options, Trouter, TrouterCredentials};
 use teams_ui::shell::Shell;
@@ -126,7 +128,8 @@ const AWAY: (u32, u32) = (900, 500);
 
 pub(super) fn main() -> ExitCode {
     let outcome = match std::env::var(CHILD_ENV).as_deref() {
-        Ok("app") => child_app(),
+        Ok("app") => child_app(false),
+        Ok("read-only") => child_app(true),
         Ok(other) => Err(format!("unknown mode {other}").into()),
         Err(_) => parent(),
     };
@@ -278,48 +281,71 @@ const CHECKS: [Check; 26] = [
 ];
 
 fn run_checks(sandbox: &Sandbox) -> SandboxResult<usize> {
-    let (reader, writer) = io::pipe()?;
-    let fd = writer.as_raw_fd().to_string();
-    let child = sandbox.spawn_with_fds(
-        &std::env::current_exe()?,
-        &[],
-        &[(CHILD_ENV, "app"), (TRACE_FD_ENV, &fd)],
-        &[writer.as_fd()],
-    )?;
-    drop(writer);
-    let mut running = Running::new(child)?;
-    let trace = TraceReader::start(reader);
-    running
-        .line_where(STARTUP, |line| line == "ready")
-        .map_err(|error| running.fail(&format!("no ready line: {error:?}")))?;
-    let mut qa = Qa {
-        sandbox,
-        running,
-        trace,
-        input: sandbox.input()?,
-        socket: sandbox.path(CTL_SOCKET),
-        passed: Vec::new(),
-        failed: Vec::new(),
-        box_open: false,
-    };
-    qa.settled()?;
+    let mut qa = Qa::start(sandbox, "app")?;
     for (name, check) in CHECKS {
         qa.check(name, check);
     }
     // then the same pane in Teams Dark, its hover and menus
     qa.check("dark_theme_pane_hover_and_menus", dark_theme);
     qa.check("dark_theme_gone_chat_group_place_missed_call", dark_fixed_states);
-    let failed = qa.failed.len();
-    for (name, error) in &qa.failed {
+    // an app item's "Turn off <app>" (#27)
+    qa.check(
+        "app_item_banner_while_its_notifications_are_on",
+        turn_off::banner_while_on,
+    );
+    for (name, check) in turn_off::CHECKS {
+        qa.check(name, check);
+    }
+    let (mut passed, mut failed) = (qa.passed.clone(), qa.failed.clone());
+    qa.quit()?;
+    // the same feed in the read-only mode, the app again in the sandbox
+    let _ = fs::remove_file(sandbox.path(CTL_SOCKET));
+    let mut qa = Qa::start(sandbox, "read-only")?;
+    qa.check("read_only_offers_no_turn_off", turn_off::read_only_offers_none);
+    passed.append(&mut qa.passed.clone());
+    failed.append(&mut qa.failed.clone());
+    qa.quit()?;
+    for (name, error) in &failed {
         say(&format!("FAILED {name}: {error}"));
     }
     say(&format!(
         "activity checks: {} passed, {} failed",
-        qa.passed.len(),
-        failed
+        passed.len(),
+        failed.len()
     ));
-    qa.quit()?;
-    Ok(failed)
+    Ok(failed.len())
+}
+
+impl<'a> Qa<'a> {
+    /// The app started in the sandbox in `mode` (`app`, or `read-only`: the read-only mode), its feed listed.
+    fn start(sandbox: &'a Sandbox, mode: &str) -> SandboxResult<Self> {
+        let (reader, writer) = io::pipe()?;
+        let fd = writer.as_raw_fd().to_string();
+        let child = sandbox.spawn_with_fds(
+            &std::env::current_exe()?,
+            &[],
+            &[(CHILD_ENV, mode), (TRACE_FD_ENV, &fd)],
+            &[writer.as_fd()],
+        )?;
+        drop(writer);
+        let mut running = Running::new(child)?;
+        let trace = TraceReader::start(reader);
+        running
+            .line_where(STARTUP, |line| line == "ready")
+            .map_err(|error| running.fail(&format!("no ready line: {error:?}")))?;
+        let qa = Qa {
+            sandbox,
+            running,
+            trace,
+            input: sandbox.input()?,
+            socket: sandbox.path(CTL_SOCKET),
+            passed: Vec::new(),
+            failed: Vec::new(),
+            box_open: false,
+        };
+        qa.settled()?;
+        Ok(qa)
+    }
 }
 
 impl Qa<'_> {
@@ -1567,14 +1593,18 @@ impl Tokens {
 
 /// The mock with a's feed seeded, and a's engine on it.
 struct MockLab {
-    _runtime: tokio::runtime::Runtime,
+    runtime: tokio::runtime::Runtime,
     mock: Arc<ChatServiceMock>,
     _trouter: TrouterMock,
     dir: tempfile::TempDir,
+    /// a's own way to the mock outside the app, for the test's reads of what the mock holds.
+    probe: Arc<HttpTransport<Tokens>>,
 }
 
 impl MockLab {
-    fn start() -> SandboxResult<(Self, EngineHandle)> {
+    /// `read_only`: the engine's writes are refused before sending, as `ngteams --read-only` refuses them; otherwise
+    /// a's app preferences are seeded ([`turn_off::seeded_prefs`]).
+    fn start(read_only: bool) -> SandboxResult<(Self, EngineHandle)> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -1589,7 +1619,13 @@ impl MockLab {
         });
         let origin = mock.origin();
         let http = || HttpTransport::with_mock_origin(Arc::clone(&tokens), CHAT_BASE, &origin);
-        let transport = Arc::new(http()?);
+        let probe = Arc::new(http()?);
+        if !read_only {
+            let answer = json!({"userGraphSettings": turn_off::seeded_prefs().to_string()}).to_string();
+            let settings = teams_proto::UserGraphSettings::read_answer(answer.as_bytes())?;
+            runtime.block_on(probe.deliver(teams_proto::SetUserGraphSettings(settings)))?;
+        }
+        let transport = Arc::new(if read_only { http()?.read_only() } else { http()? });
         let trouter_client = Trouter::with_mock_origin(Arc::clone(&transport), Arc::clone(&tokens), trouter.origin())?
             .with_options(Options {
                 backoff_base: Duration::from_millis(50),
@@ -1607,7 +1643,7 @@ impl MockLab {
                     .with_presence(PRESENCE_BASE)?
                     .with_csa(CSA_BASE)?
                     .with_user_profile(USER_PROFILE_BASE)?
-                    // the calendar a meeting item opens
+                    // the calendar a meeting item opens; the apps' definitions ("Turn off <app>")
                     .with_middle_tier(MIDDLE_TIER_BASE)?,
             )),
             outbox: Outbox::new(transport, author),
@@ -1616,10 +1652,11 @@ impl MockLab {
             known_names: Vec::new(),
         })?;
         let lab = Self {
-            _runtime: runtime,
+            runtime,
             mock: Arc::new(mock),
             _trouter: trouter,
             dir,
+            probe,
         };
         Ok((lab, engine))
     }
@@ -1780,11 +1817,11 @@ fn passed_trace_fd() -> SandboxResult<RawFd> {
     Ok(std::env::var(TRACE_FD_ENV)?.parse()?)
 }
 
-fn child_app() -> SandboxResult {
+fn child_app(read_only: bool) -> SandboxResult {
     ngteams::read_only::window_allowed_here()?;
     let trace = teams_ui::ViewTrace::new(adopt_trace(passed_trace_fd()?)?);
     let dir = PathBuf::from(std::env::var_os(ui_sandbox::SANDBOX_ENV).ok_or("no sandbox dir")?);
-    let (lab, engine) = MockLab::start()?;
+    let (lab, engine) = MockLab::start(read_only)?;
     // the calls shown (Call buttons ask them); the engine has no calling, so a call asked is refused there
     let first = ngteams::accounts::Started {
         calls: Some(PersonalCalls {
@@ -1801,7 +1838,11 @@ fn child_app() -> SandboxResult {
     let runner = support::runner(lab.dir.path())?;
     let failed = Arc::new(Mutex::new(None));
     let failed_in_app = Arc::clone(&failed);
-    let mock = Arc::clone(&lab.mock);
+    let probe = Probe {
+        mock: Arc::clone(&lab.mock),
+        runtime: lab.runtime.handle().clone(),
+        transport: Arc::clone(&lab.probe),
+    };
     let application = gpui_platform::linux(WindowingModes::WAYLAND).with_assets(teams_ui::AppAssets);
     application.run(move |cx: &mut App| {
         let launched = app::launch(
@@ -1815,7 +1856,7 @@ fn child_app() -> SandboxResult {
                 bus: teams_ui::bus::address_from_env(),
                 sign_in_again: std::rc::Rc::new(|_| std::rc::Rc::new(|_| {})),
                 runner,
-                read_only: false,
+                read_only,
             },
         );
         match launched {
@@ -1824,7 +1865,7 @@ fn child_app() -> SandboxResult {
                 let _ = window.update(cx, |_, window, _| {
                     after_frames(window, READY_FRAMES, |_, _| say("ready"));
                 });
-                answer(window, mock, dir.join(ASK), cx);
+                answer(window, probe, dir.join(ASK), cx);
             }
             Err(failed) => {
                 *failed_in_app.lock().unwrap_or_else(PoisonError::into_inner) = Some(failed.error);
@@ -1850,8 +1891,73 @@ fn shell_of(window: WindowHandle<KitRoot>, cx: &mut AsyncApp) -> Option<Entity<S
         .flatten()
 }
 
+/// What the child reads and changes on the mock for the parent's questions: the mock, its runtime, and a's own
+/// transport to it.
+struct Probe {
+    mock: Arc<ChatServiceMock>,
+    runtime: tokio::runtime::Handle,
+    transport: Arc<HttpTransport<Tokens>>,
+}
+
+impl Probe {
+    /// Runs `work` on the mock's runtime, from a thread of its own (GPUI's isn't one to block a runtime on).
+    fn block<T: Send>(&self, work: impl Future<Output = T> + Send) -> Option<T> {
+        thread::scope(|scope| scope.spawn(|| self.runtime.block_on(work)).join().ok())
+    }
+
+    /// a's app preferences as the mock holds them: its read's `status`, the `settings` it holds (parsed; `null` when
+    /// it holds none), and every `PUT` of them it got (refused ones too), each as the setting it carried.
+    fn prefs(&self) -> Value {
+        let read = self.block(self.transport.read(&teams_proto::UserGraphSettingsRead));
+        let (status, body) = match read {
+            Some(Ok(answer)) => (answer.status(), answer.body().to_vec()),
+            Some(Err(HttpError::Status(answer))) => (answer.status(), answer.body().to_vec()),
+            Some(Err(error)) => return json!({"error": error.to_string()}),
+            None => return json!({"error": "no answer"}),
+        };
+        let setting = |answer: &Value| {
+            answer["userGraphSettings"]
+                .as_str()
+                .and_then(|setting| serde_json::from_str::<Value>(setting).ok())
+        };
+        let settings = serde_json::from_slice::<Value>(&body)
+            .ok()
+            .and_then(|answer| setting(&answer));
+        let puts: Vec<Value> = self
+            .block(self.mock.received_requests())
+            .unwrap_or_default()
+            .iter()
+            .filter(|request| request.method.as_str() == "PUT" && request.url.path().ends_with("/users/ME/properties"))
+            .map(|request| {
+                serde_json::from_slice::<Value>(&request.body)
+                    .ok()
+                    .and_then(|body| setting(&body))
+                    .unwrap_or(Value::Null)
+            })
+            .collect();
+        json!({"status": status, "settings": settings, "puts": puts})
+    }
+
+    /// `rest` is `<METHOD> <status> <times>`: the mock refuses a's next `times` requests of its app preferences of
+    /// that method with `status`, before its world sees them.
+    fn refuse(&self, rest: &str) -> Value {
+        let mut words = rest.split(' ');
+        let (Some(method), Some(Ok(status)), Some(Ok(times))) = (
+            words.next(),
+            words.next().map(str::parse::<u16>),
+            words.next().map(str::parse::<usize>),
+        ) else {
+            return json!({"error": format!("refuse what: {rest}")});
+        };
+        for _ in 0..times {
+            self.block(self.mock.refuse_next(method, "users/ME/properties", status));
+        }
+        json!({"refused": rest})
+    }
+}
+
 /// Answers each question the parent writes to `ask`, one `answer <json>` line each.
-fn answer(window: WindowHandle<KitRoot>, mock: Arc<ChatServiceMock>, ask: PathBuf, cx: &mut App) {
+fn answer(window: WindowHandle<KitRoot>, probe: Probe, ask: PathBuf, cx: &mut App) {
     cx.spawn(async move |cx: &mut AsyncApp| {
         loop {
             cx.background_executor().timer(Duration::from_millis(50)).await;
@@ -1870,7 +1976,7 @@ fn answer(window: WindowHandle<KitRoot>, mock: Arc<ChatServiceMock>, ask: PathBu
                 continue;
             };
             let reply = window
-                .update(cx, |_, _, cx| reply_to(&question, &shell, &mock, cx))
+                .update(cx, |_, _, cx| reply_to(&question, &shell, &probe, cx))
                 .unwrap_or_else(|_| json!({"error": "no window"}));
             say(&format!("answer {reply}"));
         }
@@ -1879,8 +1985,9 @@ fn answer(window: WindowHandle<KitRoot>, mock: Arc<ChatServiceMock>, ask: PathBu
 }
 
 /// The answer to one question.
-fn reply_to(question: &str, shell: &Entity<Shell>, mock: &ChatServiceMock, cx: &mut App) -> Value {
+fn reply_to(question: &str, shell: &Entity<Shell>, probe: &Probe, cx: &mut App) -> Value {
     let (verb, rest) = question.split_once(' ').unwrap_or((question, ""));
+    let mock = &probe.mock;
     match verb {
         "state" => state_of(shell, cx),
         "server" => server_copy(mock, rest),
@@ -1899,6 +2006,10 @@ fn reply_to(question: &str, shell: &Entity<Shell>, mock: &ChatServiceMock, cx: &
         ),
         "push-meeting-known" => push(mock, &roundup_update()),
         "push-meeting-unknown" => push(mock, &unknown_meeting_update()),
+        "push-app" => push_app(mock, rest),
+        "push-chat" => push_chat(mock),
+        "prefs" => probe.prefs(),
+        "refuse" => probe.refuse(rest),
         "theme" => {
             let key = if rest == "dark" {
                 teams_ui::theme::DARK_KEY
@@ -2069,4 +2180,19 @@ fn push_mention(mock: &ChatServiceMock) -> Value {
     );
     mock.add_activity(LAB_A, &item, false)
         .map_or_else(|| json!({"error": "no feed"}), |id| json!({"id": id}))
+}
+
+/// A later note of the app ([`app_note`]'s), `which` in its words, as the feed then tells a.
+fn push_app(mock: &ChatServiceMock, which: &str) -> Value {
+    let mut item = app_note();
+    item["activityId"] = json!(if which == "later" { 10 } else { 9 });
+    item["messagePreview"] = json!(format!("Made-up {which} reminder"));
+    mock.add_activity(LAB_A, &item, false)
+        .map_or_else(|| json!({"error": "no feed"}), |id| json!({"id": id}))
+}
+
+/// b posts to the a–b chat, as a's banner for it then comes.
+fn push_chat(mock: &ChatServiceMock) -> Value {
+    mock.post_as(LAB_B, AB_CHAT, "<p>A made-up note for a banner</p>")
+        .map_or_else(|| json!({"error": "b's post refused"}), |id| json!({"id": id}))
 }
