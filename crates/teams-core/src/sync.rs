@@ -1150,7 +1150,8 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         {
             return Ok(());
         }
-        self.read_blocked_copy(store, id).await
+        // Keep the session HTTP state out of the enclosing sync futures.
+        Box::pin(self.read_blocked_copy(store, id)).await
     }
 
     fn queue_blocked_copies(&self, store: &Store, conversation: Option<&str>) {
@@ -1212,7 +1213,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
                     tried.remove(&id);
                 }
             }
-            if let Err(error) = self.read_blocked_copy(store, &id).await {
+            if let Err(error) = Box::pin(self.read_blocked_copy(store, &id)).await {
                 log::debug!("sync: blocked copy {id} wasn't recovered: {error}");
             }
         }

@@ -3834,7 +3834,14 @@ async fn a_failed_blocked_copy_read_keeps_history_readable_and_retries_later() {
             .await;
         let synced = a.handle.sync_conversation(AB_CHAT).await.unwrap();
         assert_eq!(synced.changed(), 0);
-        restored_copy_event(&mut a, &shapes).await;
+        // Identical recovered content emits no new message event; wait for the retry itself.
+        tokio::time::timeout(WAIT, async {
+            while copy_reads(&lab, &shapes).await < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
         assert_eq!(a.stored(AB_CHAT, id).await.content, shapes["copy"]["content"]);
         assert_eq!(files_of(&a.stored(AB_CHAT, id).await), 1);
         assert_eq!(copy_reads(&lab, &shapes).await, 2);
