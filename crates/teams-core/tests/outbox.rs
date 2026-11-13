@@ -21,6 +21,7 @@ use teams_auth::token::TokenError;
 use teams_core::{
     CHECK_RETRY_WAIT, Clock, Command, ConversationSync, MAX_ATTEMPTS, MAX_FAILED_CHECKS, MAX_TRANSIENT_WAIT, Outbox,
     OutboxError, Sent, SyncError, Transient, TransientSent, create_chat, enqueue, new_client_message_id,
+    outcome_unknown,
 };
 use teams_proto::Mri;
 use teams_proto::chat::MessageText;
@@ -712,6 +713,7 @@ async fn an_unrecoverable_legacy_edit_fails_locally_without_erasing_attachments(
             failed.last_error.as_deref().unwrap().contains("nothing was sent"),
             "{case}: {failed:?}"
         );
+        assert!(!outcome_unknown(&failed), "{case}: {failed:?}");
         assert_eq!(failed.payload, row.payload);
         assert!(
             setup
@@ -742,6 +744,7 @@ async fn a_write_other_than_a_post_whose_outcome_is_unknown_is_failed_not_tried_
             ended.last_error.as_deref().unwrap().contains("isn't sent again"),
             "{ended:?}"
         );
+        assert!(outcome_unknown(&ended), "{ended:?}");
     }
     assert!(setup.sync.calls().is_empty(), "only a post can be looked for");
 }

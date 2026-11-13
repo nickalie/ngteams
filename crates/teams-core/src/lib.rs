@@ -77,7 +77,7 @@ pub use file_content::FileStream;
 pub use outbox::{
     Arrival, CHECK_RETRY_WAIT, CallRetries, CallTried, Clock, Command, ConversationSync, DueFailed, Lane, MAX_ATTEMPTS,
     MAX_FAILED_CHECKS, MAX_TRANSIENT_WAIT, Outbox, OutboxError, Received, Sent, SentDue, SyncError, Transient,
-    TransientSent, UnreadableSeen, Unsynced, create_chat, enqueue, new_client_message_id,
+    TransientSent, UnreadableSeen, Unsynced, create_chat, enqueue, new_client_message_id, outcome_unknown,
 };
 pub use own_presence::{AVAILABLE_REFRESH, Choice, OwnPresencePolicy, Reporting};
 pub use pictures::PictureBytes;

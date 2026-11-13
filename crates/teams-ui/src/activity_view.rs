@@ -50,7 +50,7 @@ use gpui::{
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Selectable as _, Sizable as _};
 use teams_core::activity::{ActivityFeed, ActivityFilter, ActivityItem, ActivityKind, FEED};
-use teams_core::{Action, EngineError};
+use teams_core::{Action, EngineError, outcome_unknown};
 use teams_store::OutboxState;
 
 use crate::bridge::Core;
@@ -94,6 +94,8 @@ pub const TEAMS_CALL: &str = "Teams call";
 pub const CHAT_GONE: &str = "This chat isn't available";
 /// The toast a failed Activity write shows.
 pub const WRITE_FAILED: &str = "Couldn't update activity. Try again.";
+/// The toast a restoration (Undo) shows when whether it arrived is unknown: it isn't offered again.
+pub const UNDO_UNKNOWN: &str = "Couldn't confirm the setting was restored. Check Notification settings.";
 /// How a group chat's item names its chat before its members' first names ("Chat with Dmitry, Nikita").
 pub const CHAT_WITH: &str = "Chat with";
 /// An item's avatar, px.
@@ -126,7 +128,7 @@ pub enum ActivityViewEvent {
     Toast(&'static str),
     /// A confirmed app preference change, with the outbox row Undo restores.
     AppTurnedOff(i64),
-    /// Undo failed: offer it again for the same outbox row, whose saved preference still stands.
+    /// Undo surely didn't go out: offer it again for the same outbox row, whose saved preference still stands.
     UndoFailed(i64),
     /// Show the notification settings (an item's "Notification settings").
     NotificationSettings,
@@ -509,9 +511,9 @@ impl ActivityView {
                 Err(EngineError::NothingNewInActivity) if operation.0 == Operation::Seen => {
                     view.succeeded_write(&operation, 0, cx);
                 }
-                Err(_) => view.failed_write(&operation, cx),
+                Err(_) => view.failed_write(&operation, false, cx),
                 Ok(row) if matches!(row.state, OutboxState::Denied | OutboxState::Failed) => {
-                    view.failed_write(&operation, cx);
+                    view.failed_write(&operation, outcome_unknown(&row), cx);
                 }
                 Ok(row) if row.state != OutboxState::Sent => {
                     view.writes.insert(row.id, operation);
@@ -540,21 +542,28 @@ impl ActivityView {
             .iter()
             .filter_map(|(id, operation)| {
                 let row = self.models.chats.read(cx).outbox_row(*id)?;
-                matches!(row.state, OutboxState::Sent | OutboxState::Denied | OutboxState::Failed)
-                    .then(|| (*id, operation.clone(), row.state != OutboxState::Sent))
+                matches!(row.state, OutboxState::Sent | OutboxState::Denied | OutboxState::Failed).then(|| {
+                    (
+                        *id,
+                        operation.clone(),
+                        row.state != OutboxState::Sent,
+                        outcome_unknown(row),
+                    )
+                })
             })
             .collect();
-        for (id, operation, failed) in done {
+        for (id, operation, failed, unknown) in done {
             self.writes.remove(&id);
             if failed {
-                self.failed_write(&operation, cx);
+                self.failed_write(&operation, unknown, cx);
             } else {
                 self.succeeded_write(&operation, id, cx);
             }
         }
     }
 
-    fn failed_write(&mut self, (key, generation): &(Operation, u64), cx: &mut Context<Self>) {
+    /// `unknown`: whether the failed write may have arrived ([`outcome_unknown`]).
+    fn failed_write(&mut self, (key, generation): &(Operation, u64), unknown: bool, cx: &mut Context<Self>) {
         if self.operations.get(key) != Some(generation) {
             return;
         }
@@ -567,6 +576,13 @@ impl ActivityView {
             Operation::Seen => self.feed.seen_ms = self.stored_seen,
             Operation::AllRead => self.feed.bookmark_ms = self.stored_bookmark,
             Operation::App(_) => {}
+            // A restoration that may have arrived isn't offered again: a new one would resend it.
+            Operation::UndoApp(_) if unknown => {
+                cx.emit(ActivityViewEvent::Toast(UNDO_UNKNOWN));
+                self.reload(cx);
+                cx.notify();
+                return;
+            }
             Operation::UndoApp(row) => {
                 cx.emit(ActivityViewEvent::UndoFailed(*row));
                 self.reload(cx);

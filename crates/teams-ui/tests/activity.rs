@@ -1304,11 +1304,14 @@ fn undo_offers_itself_again_after_a_failed_restoration(rig: &Rig, shell: &Entity
         Some("Couldn't update activity. Try again.".into())
     );
     assert!(drawn(cx, "activity-undo-app"));
-    rig.core.write_answers.lock().unwrap().push_back(common::outbox_row(
+    // a restoration whose answer was lost may have arrived: not offered again, so it isn't resent
+    let mut uncertain = common::outbox_row(
         502,
         teams_store::OutboxKind::ActivityRestoreApp,
-        teams_store::OutboxState::Sent,
-    ));
+        teams_store::OutboxState::Failed,
+    );
+    uncertain.last_error = Some("HTTP 500; whether it arrived is unknown, so it isn't sent again".to_owned());
+    rig.core.write_answers.lock().unwrap().push_back(uncertain);
     click(cx, "activity-undo-app");
     assert_eq!(
         writes(rig)
@@ -1317,6 +1320,11 @@ fn undo_offers_itself_again_after_a_failed_restoration(rig: &Rig, shell: &Entity
             .count(),
         2
     );
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).toast().cloned()),
+        Some(teams_ui::activity_view::UNDO_UNKNOWN.into())
+    );
+    assert!(!drawn(cx, "activity-undo-app"));
 }
 
 #[test]

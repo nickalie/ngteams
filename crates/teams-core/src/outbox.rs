@@ -95,6 +95,23 @@ pub const CHECK_RETRY_WAIT: Duration = Duration::from_secs(30);
 /// How many fresh `clientmessageid`s a command is tried with when one is taken already.
 const CLIENT_MESSAGE_ID_TRIES: usize = 3;
 
+/// What a row's `last_error` says when an attempt may have arrived.
+const OUTCOME_UNKNOWN: &str = "whether it arrived is unknown";
+
+/// Whether an unsent row's last attempt may have arrived: one begun by an earlier run and never finished, or one whose
+/// answer was lost. Such a row is not to be done again as a new command either.
+#[must_use]
+pub fn outcome_unknown(row: &OutboxEntry) -> bool {
+    match row.state {
+        OutboxState::Sending => true,
+        OutboxState::Failed => row
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains(OUTCOME_UNKNOWN)),
+        OutboxState::Pending | OutboxState::Sent | OutboxState::Denied => false,
+    }
+}
+
 /// What the user asked for, as the outbox stores it (the row's payload, JSON). Each attempt builds its sealed request
 /// from it, with the row's `created_at` as the time the request carries (a post's compose time, an edit's time, a
 /// reaction's or a read receipt's), so every attempt sends the same request.
@@ -806,8 +823,7 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
             return Ok(None);
         };
         if let Err(source) = sync.sync_conversation_since(store, conversation, row.created_at).await {
-            let error =
-                format!("the conversation couldn't be synced to look for it ({source}); whether it arrived is unknown");
+            let error = format!("the conversation couldn't be synced to look for it ({source}); {OUTCOME_UNKNOWN}");
             let after = self.check_failed(store, row, error)?;
             if after.state == OutboxState::Sent {
                 // the sync matched it before it failed
@@ -1178,7 +1194,7 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
     /// An attempt whose message may have arrived: another one (after the sync check) for a row that can be looked
     /// for; any other is failed rather than risk doing it twice.
     fn again_if_findable(&self, row: &OutboxEntry, error: &str) -> (AttemptOutcome, bool) {
-        let error = format!("{error}; whether it arrived is unknown");
+        let error = format!("{error}; {OUTCOME_UNKNOWN}");
         if findable(row).is_some() {
             (self.retry(row, Duration::ZERO, error), true)
         } else {
