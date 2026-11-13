@@ -288,8 +288,8 @@ pub(crate) fn read_horizon(state: &mut State, call: &Call<'_>, chat: &str) -> Re
     status(200)
 }
 
-/// `PUT …/conversations/<chat>/properties?name=<channelNotificationSettings|followAllRc>`: one of the caller's own
-/// channel preferences, its text value kept for the caller's own read of the conversation, answered 200
+/// `PUT …/conversations/<chat>/properties?name=<channelNotificationSettings|followAllRc|alerts>`: one of the caller's
+/// own channel preferences (`alerts` `false`: a channel the classic client muted), its text value kept for the caller's own read of the conversation, answered 200
 /// (`docs/protocol/channels.md`). Nobody else is told.
 pub(crate) fn own_property(state: &mut State, call: &Call<'_>, chat: &str) -> ResponseTemplate {
     if let Err(code) = member_of(state, chat, &call.caller) {

@@ -267,6 +267,11 @@ pub(crate) fn thread_body(state: &State, conversation: &Conversation) -> Value {
     if conversation.kind == Kind::Group && topic.is_string() {
         properties.insert("topic".to_owned(), topic.clone());
     }
+    // a meeting's chat names its meeting (`properties.meeting`, [`crate::ChatServiceMock::add_meeting_chat`])
+    let meeting = &conversation.entry["threadProperties"]["meeting"];
+    if meeting.is_string() {
+        properties.insert("meeting".to_owned(), meeting.clone());
+    }
     let thread_type = &conversation.entry["threadProperties"]["threadType"];
     if conversation.kind == Kind::ReadOnly && thread_type.is_string() {
         properties.insert("threadType".to_owned(), thread_type.clone());

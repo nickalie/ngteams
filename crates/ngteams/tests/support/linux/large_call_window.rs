@@ -76,6 +76,8 @@ use ui_sandbox::{Running, Sandbox, SandboxOptions, SandboxResult, sandbox_or_ski
 #[path = "../window.rs"]
 mod support;
 use support::{Alias, display_name};
+#[path = "large_call_meet_now.rs"]
+mod meet_now;
 #[path = "call_pixels.rs"]
 mod pixels;
 use pixels::{Rect, Stage};
@@ -229,6 +231,18 @@ fn scenarios(rig: &mut Rig<'_>) -> SandboxResult {
     ];
     // a run of some steps alone (`LARGE_CALL_STEPS=sizes,strips`), each setting up the call it needs
     let only = std::env::var(STEPS_ENV).ok();
+    let wanted = |name: &str| {
+        only.as_deref()
+            .is_none_or(|only| only.split(',').any(|step| step == name))
+    };
+    // before b's group call, as it joins a call of its own (#125)
+    if wanted("meet-now") {
+        say("step meet-now");
+        meet_now::meet_now(rig)?;
+        if only.as_deref() == Some("meet-now") {
+            return Ok(());
+        }
+    }
     rig.group_call()?;
     for (name, step) in steps {
         if only

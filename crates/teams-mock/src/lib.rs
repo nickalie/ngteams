@@ -320,6 +320,30 @@ impl ChatServiceMock {
         Some(id)
     }
 
+    /// A scheduled meeting's chat `id` (`19:meeting_<id>@thread.v2`) of `members` (its organizer first) called
+    /// `topic`, with no messages yet, as the conversation list then gives it; its thread read names the meeting
+    /// (`properties.meeting`: the organizer's object id, the tenant, the subject). `false` when the fixtures have no
+    /// empty chat to make its list entry from.
+    #[must_use = "false says no chat was made"]
+    pub fn add_meeting_chat(&self, id: &str, topic: &str, members: &[&str]) -> bool {
+        let mut state = self.lock();
+        let Some(empty) = state.fixtures.entries.get(1).cloned() else {
+            return false;
+        };
+        let time = state.tick();
+        let mut conversation = world::created(&empty, id, world::Kind::Group, members, time);
+        conversation.entry["threadProperties"]["topic"] = serde_json::json!(topic);
+        let organizer = members
+            .first()
+            .and_then(|mri| mri.rsplit(':').next())
+            .unwrap_or_default();
+        conversation.entry["threadProperties"]["meeting"] = serde_json::json!(
+            serde_json::json!({"organizerId": organizer, "tenantId": TENANT, "subject": topic}).to_string()
+        );
+        state.conversations.push(conversation);
+        true
+    }
+
     /// `from` posts `html` (a rich-text message) to `chat`, as one of its clients would: stored as a read gives it back
     /// and queued for the chat's other members, as any post. Its id, or `None` when `from` may not write there.
     #[must_use = "None says the post was refused"]

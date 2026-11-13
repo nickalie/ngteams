@@ -140,7 +140,9 @@ const AWAY: (u32, u32) = (900, 500);
 
 pub(super) fn main() -> ExitCode {
     let outcome = match std::env::var(CHILD_ENV).as_deref() {
-        Ok(mode @ ("app" | "read-only" | "tiles-v1" | "tiles-v2" | pictures::MODE)) => child_app(mode),
+        Ok(mode @ ("app" | "read-only" | "tiles-v1" | "tiles-v2" | pictures::MODE | meeting_started::RESTART_MODE)) => {
+            child_app(mode)
+        }
         Ok(other) => Err(format!("unknown mode {other}").into()),
         Err(_) => parent(),
     };
@@ -342,6 +344,10 @@ fn run_checks(sandbox: &Sandbox) -> SandboxResult<usize> {
     let (mut picture_passed, mut picture_failed) = pictures::run(sandbox)?;
     passed.append(&mut picture_passed);
     failed.append(&mut picture_failed);
+    // a running meeting across restarts of the app (#125)
+    let (mut restart_passed, mut restart_failed) = meeting_started::restart_runs(sandbox)?;
+    passed.append(&mut restart_passed);
+    failed.append(&mut restart_failed);
     for (name, error) in &failed {
         say(&format!("FAILED {name}: {error}"));
     }
@@ -1636,11 +1642,19 @@ impl Tokens {
     }
 }
 
+/// A run's data dir the parent made, with what the mock is seeded with besides the feed.
+enum KeptDir {
+    /// The banner pictures' run's ([`pictures::seed`]).
+    Pictures(PathBuf),
+    /// A meeting restart run's, kept across its runs, a meeting running ([`meeting_started::seed_running`]).
+    Meeting(PathBuf),
+}
+
 /// The mock with a's feed seeded, and a's engine on it.
 struct MockLab {
     runtime: tokio::runtime::Runtime,
     mock: Arc<ChatServiceMock>,
-    _trouter: TrouterMock,
+    trouter: Arc<TrouterMock>,
     /// a's data: a dir of its own, or the one a tile run keeps across runs.
     dir: PathBuf,
     _temp: Option<tempfile::TempDir>,
@@ -1651,12 +1665,12 @@ struct MockLab {
 impl MockLab {
     /// `read_only`: the engine's writes are refused before sending, as `ngteams --read-only` refuses them; otherwise
     /// a's app preferences are seeded ([`turn_off::seeded_prefs`]). `tiles`: a tile run's feed and data dir
-    /// ([`tile_runs`]), else the module docs' feed: with `pictures`, the banner pictures' run's data dir and mock
-    /// ([`pictures`]), else in a dir of its own.
+    /// ([`tile_runs`]), else the module docs' feed in a dir of its own, or in `kept`'s dir with its seed
+    /// ([`KeptDir`]).
     fn start(
         read_only: bool,
         tiles: Option<&tile_runs::Run>,
-        pictures: Option<PathBuf>,
+        kept: Option<KeptDir>,
     ) -> SandboxResult<(Self, EngineHandle)> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -1667,9 +1681,13 @@ impl MockLab {
         let (dir, temp) = if let Some(run) = tiles {
             runtime.block_on(tile_runs::seed(&mock, run))?;
             (run.dir.clone(), None)
-        } else if let Some(dir) = pictures {
+        } else if let Some(KeptDir::Pictures(dir)) = kept {
             seed_feed(&mock)?;
             runtime.block_on(pictures::seed(&mock))?;
+            (dir, None)
+        } else if let Some(KeptDir::Meeting(dir)) = kept {
+            seed_feed(&mock)?;
+            meeting_started::seed_running(&mock)?;
             (dir, None)
         } else {
             seed_feed(&mock)?;
@@ -1717,7 +1735,7 @@ impl MockLab {
         let lab = Self {
             runtime,
             mock: Arc::new(mock),
-            _trouter: trouter,
+            trouter: Arc::new(trouter),
             dir,
             _temp: temp,
             probe,
@@ -1873,7 +1891,7 @@ fn seed_feed(mock: &ChatServiceMock) -> SandboxResult {
     for (item, read) in feed {
         mock.add_activity(LAB_A, &item, read).ok_or("no feed")?;
     }
-    Ok(())
+    meeting_started::seed(mock)
 }
 
 /// The trace descriptor the parent passed.
@@ -1887,7 +1905,11 @@ fn child_app(mode: &str) -> SandboxResult {
     let tiles = tile_runs::Run::of_mode(mode)?;
     let trace = teams_ui::ViewTrace::new(adopt_trace(passed_trace_fd()?)?);
     let dir = PathBuf::from(std::env::var_os(ui_sandbox::SANDBOX_ENV).ok_or("no sandbox dir")?);
-    let (lab, engine) = MockLab::start(read_only, tiles.as_ref(), pictures::data_dir(mode)?)?;
+    let kept = match (pictures::data_dir(mode)?, meeting_started::kept_dir(mode)?) {
+        (Some(dir), _) => Some(KeptDir::Pictures(dir)),
+        (None, dir) => dir.map(KeptDir::Meeting),
+    };
+    let (lab, engine) = MockLab::start(read_only, tiles.as_ref(), kept)?;
     // the calls shown (Call buttons ask them); the engine has no calling, so a call asked is refused there
     let first = ngteams::accounts::Started {
         calls: Some(PersonalCalls {
@@ -1906,6 +1928,7 @@ fn child_app(mode: &str) -> SandboxResult {
     let failed_in_app = Arc::clone(&failed);
     let probe = Probe {
         mock: Arc::clone(&lab.mock),
+        trouter: Arc::clone(&lab.trouter),
         runtime: lab.runtime.handle().clone(),
         transport: Arc::clone(&lab.probe),
     };
@@ -1960,6 +1983,7 @@ fn shell_of(window: WindowHandle<KitRoot>, cx: &mut AsyncApp) -> Option<Entity<S
 /// transport to it.
 struct Probe {
     mock: Arc<ChatServiceMock>,
+    trouter: Arc<TrouterMock>,
     runtime: tokio::runtime::Handle,
     transport: Arc<HttpTransport<Tokens>>,
 }
@@ -2087,7 +2111,7 @@ fn mock_reply(question: &str, probe: &Probe) -> Option<Value> {
         "pic" => pictures::reply(rest, probe),
         "prefs" => probe.prefs(),
         "refuse" => probe.refuse(rest),
-        _ => return meeting_started::mock_reply(verb, rest, mock),
+        _ => return meeting_started::mock_reply(verb, rest, probe),
     })
 }
 
@@ -2122,7 +2146,8 @@ fn reply_to(question: &str, shell: &Entity<Shell>, cx: &mut App) -> Value {
             });
             json!({"meeting_started": on})
         }
-        _ => json!({"error": format!("unknown question {question}")}),
+        _ => meeting_started::window_reply(verb, rest, shell, cx)
+            .unwrap_or_else(|| json!({"error": format!("unknown question {question}")})),
     }
 }
 

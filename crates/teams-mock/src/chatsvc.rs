@@ -215,7 +215,7 @@ fn dispatch(state: &mut State, route: Route, call: &Call<'_>) -> ResponseTemplat
         } if call.query("name") == Some("isread") => writes::activity_read(state, call, &chat, &message),
         Route::Reaction { chat, message, remove } => writes::reaction(state, call, &chat, &message, remove),
         Route::ConversationProperty { chat } => match call.query("name") {
-            Some("channelNotificationSettings" | "followAllRc" | "consumptionHorizonBookmark") => {
+            Some("channelNotificationSettings" | "followAllRc" | "alerts" | "consumptionHorizonBookmark") => {
                 writes::own_property(state, call, &chat)
             }
             _ => writes::read_horizon(state, call, &chat),
