@@ -143,12 +143,38 @@ pub fn changed_pixels(before: &RgbImage, after: &RgbImage, within: Rect) -> i64 
 /// How many pixels in `within` differ between `before` and `after`, leaving out the moving picture `before` shows
 /// (a shared screen: its dark grey areas), which changes on its own.
 pub fn changed_still(before: &RgbImage, after: &RgbImage, within: Rect) -> i64 {
+    let video = picture_bounds(before, within).map(|before| {
+        let after = picture_bounds(after, within)
+            .filter(|after| before.y.abs_diff(after.y) <= 6 && before.bottom().abs_diff(after.bottom()) <= 6);
+        // The other frame reveals an edge hidden by the moving bright bar.
+        let bounds = after.map_or(before, |after| before.union(after));
+        Rect {
+            x: bounds.x - 6,
+            y: bounds.y - 6,
+            w: bounds.w + 12,
+            h: bounds.h + 12,
+        }
+    });
+    blobs(within, |x, y| {
+        let moving = video.is_some_and(|video| video.holds(Rect { x, y, w: 1, h: 1 }, 0));
+        !moving
+            && match (pixel(before, x, y), pixel(after, x, y)) {
+                (Some(a), Some(b)) => distance(a, b) > 48,
+                _ => false,
+            }
+    })
+    .iter()
+    .map(|blob| blob.pixels)
+    .sum()
+}
+
+fn picture_bounds(image: &RgbImage, within: Rect) -> Option<Rect> {
     // dark and grey, inside the frame (the window's frame is a dark blue)
     let grey_dark = |colour: Rgb<u8>| {
         let (low, high) = (colour.0.iter().min(), colour.0.iter().max());
         luminance(colour) < 90 && high.zip(low).is_some_and(|(high, low)| high - low < 30)
     };
-    let video = blobs(within, |x, y| pixel(before, x, y).is_some_and(grey_dark))
+    blobs(within, |x, y| pixel(image, x, y).is_some_and(grey_dark))
         .into_iter()
         .filter(|blob| blob.bounds.w >= 12 && blob.bounds.h >= 60)
         .filter(|blob| {
@@ -163,23 +189,6 @@ pub fn changed_still(before: &RgbImage, after: &RgbImage, within: Rect) -> i64 {
         // its bars split it: all of its dark parts
         .map(|blob| blob.bounds)
         .reduce(Rect::union)
-        .map(|bounds| Rect {
-            x: bounds.x - 6,
-            y: bounds.y - 6,
-            w: bounds.w + 12,
-            h: bounds.h + 12,
-        });
-    blobs(within, |x, y| {
-        let moving = video.is_some_and(|video| video.holds(Rect { x, y, w: 1, h: 1 }, 0));
-        !moving
-            && match (pixel(before, x, y), pixel(after, x, y)) {
-                (Some(a), Some(b)) => distance(a, b) > 48,
-                _ => false,
-            }
-    })
-    .iter()
-    .map(|blob| blob.pixels)
-    .sum()
 }
 
 /// The pager under the gallery, beside the speaker's strip or under the strip beside a share: `<`, its `n/N`, `>`.
