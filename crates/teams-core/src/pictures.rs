@@ -21,6 +21,7 @@
 //! - **One read per picture at a time**: asks while its read runs wait for that read.
 //! - A `src` that names neither ([`InlinePicture::of`]), or a tile's URL off the CDN's app folders
 //!   ([`AppPicture::of`]), is answered `None` with nothing read.
+//! - A desktop banner asks for an app's tile only as kept or cached ([`Pictures::cached_app_picture`]): never read.
 //! - Nothing is sent but the reads.
 
 use std::cell::RefCell;
@@ -257,6 +258,29 @@ impl<C: Credentials + 'static> Pictures<C> {
             Some(picture) => self.ask(&self.apps, picture, reply),
             None => {
                 let _ = reply.send(Ok(None));
+            }
+        }
+    }
+
+    /// Answers `reply` with the app tile `url` names only from what this run keeps or the cache on disk holds: nothing
+    /// is read, and a tile whose read runs is answered `None` rather than waited for.
+    pub(crate) fn cached_app_picture(&self, url: &str, reply: Responder<Option<PictureBytes>>) {
+        let Some(picture) = AppPicture::of(url) else {
+            let _ = reply.send(Ok(None));
+            return;
+        };
+        match self.apps.borrow().known.get(&picture) {
+            Some(Known::Read(bytes)) => {
+                let _ = reply.send(Ok(bytes.clone()));
+            }
+            Some(Known::Reading(_)) => {
+                let _ = reply.send(Ok(None));
+            }
+            None => {
+                let disk = self.disk.clone();
+                tokio::task::spawn_local(async move {
+                    let _ = reply.send(Ok(disk.get(picture.cache_key(), None).await));
+                });
             }
         }
     }

@@ -34,6 +34,8 @@ an existing identity is not replaced by a different account. Under the data root
 - `regions/<oid>.json`: region metadata from authz, without a token.
 - `settings.toml`: the app's UI/privacy/device/diagnostic settings.
 - `logs/teams-app.log`: the retained diagnostic filename, private and rotated.
+- `banner-pictures/` (Windows and macOS): the picture of each desktop banner shown, a PNG named by the banner's own
+  key, removed with its banner, at the quit and at the next start. Linux hands the pixels on the bus instead.
 
 A legacy single `account.toml` and `region.json` migrate to the multi-account layout at startup. Removing an account
 deletes its credential items, account entry and region; its store remains for explicit deletion by the user. Engine

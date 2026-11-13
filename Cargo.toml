@@ -288,6 +288,7 @@ block2 = "0.6.2"
 objc2 = "0.6.5"
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3.2"
+objc2-user-notifications = { version = "0.3.2", default-features = false }
 objc2-web-kit = "0.3.2"
 # The macOS Keychain (generic password items): the version rustls-platform-verifier already links on macOS; no logging.
 # Its -sys crate and core-foundation (the versions it links) for the lab keychain's item access rules.

@@ -1,6 +1,7 @@
 //! The incoming call on the desktop (M3 Task 17): while an invitation the engine offered rings, its ringtone on the
 //! default output ([`Ringer`]) and a notification with Answer and Decline on the bus the app is given, both gone once
-//! the ring ends (answered, declined, cancelled, answered elsewhere, timed out) or the user answers it here. Answer and Decline on the notification
+//! the ring ends (answered, declined, cancelled, answered elsewhere, timed out) or the user answers it here. The
+//! notification shows the caller's picture when the engine has it stored ([`crate::notify::picture`]). Answer and Decline on the notification
 //! are the user's asks, as the banner's buttons are ([`calls::ask`]); its body shows the window, where the banner is.
 //!
 //! What it does is traced: `ringtone started`/`stopped` and `call-notification shown`/`closed`/`answered`/`declined`,
@@ -9,11 +10,13 @@
 use std::sync::Arc;
 
 use gpui::{AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription};
-use teams_core::{CallId, IncomingCall};
+use teams_core::{CallId, IncomingCall, Person};
 
 use crate::bridge::Core;
 use crate::calls::{self, Ask, Calls};
-use crate::notify::{ANSWER_ACTION, DECLINE_ACTION, DEFAULT_ACTION, Notice, NoticeKind, NotificationServer, SOMEONE};
+use crate::notify::{
+    ANSWER_ACTION, BannerPicture, DECLINE_ACTION, DEFAULT_ACTION, Notice, NoticeKind, NotificationServer, SOMEONE,
+};
 use crate::ringtone::{Ringer, Ringtone};
 use crate::trace::{TraceLine, ViewTrace};
 
@@ -27,6 +30,8 @@ pub enum CallAlertEvent {
 /// The invitation alerted: its call, its notification once shown, its ringtone while it plays.
 struct Alerting {
     call: CallId,
+    /// The caller's MRI: their stored picture is the notification's.
+    caller: String,
     notice: Notice,
     notification: Option<u32>,
     ringtone: Option<Ringtone>,
@@ -58,6 +63,7 @@ pub fn notice_of(incoming: &IncomingCall) -> Notice {
         } else {
             "Incoming call".to_owned()
         },
+        picture: None,
     }
 }
 
@@ -130,6 +136,7 @@ impl CallAlert {
         });
         self.alerting = Some(Alerting {
             call: incoming.call,
+            caller: incoming.caller.as_str().to_owned(),
             notice: notice_of(&incoming),
             notification: None,
             ringtone,
@@ -160,8 +167,19 @@ impl CallAlert {
         let (Some(server), Some(alerting)) = (self.server.clone(), self.alerting.as_ref()) else {
             return;
         };
-        let (call, notice) = (alerting.call, alerting.notice.clone());
+        let (call, mut notice) = (alerting.call, alerting.notice.clone());
+        // the caller as stored: their picture is never waited for from the network
+        let caller = self.core.person(alerting.caller.clone());
         cx.spawn(async move |this, cx: &mut AsyncApp| {
+            if let Ok(Person {
+                picture: Some(picture), ..
+            }) = caller.await
+            {
+                notice.picture = cx
+                    .background_executor()
+                    .spawn(async move { BannerPicture::of_person(&picture) })
+                    .await;
+            }
             let Ok(id) = server.show(&notice, 0).await else {
                 return;
             };

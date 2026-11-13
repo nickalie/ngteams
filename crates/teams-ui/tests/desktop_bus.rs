@@ -2,7 +2,7 @@
 //! notification server and tray watcher (`ui_sandbox::bus`), never the desktop's.
 //!
 //! - [`BusNotifications`]: a notice reaches the server with the app's name, its summary and body, the `default`
-//!   action and its hints; one replaces another by id; a close is the server's `CloseNotification`; the server's
+//!   action and its hints, its picture's pixels as the `image-data` hint; one replaces another by id; a close is the server's `CloseNotification`; the server's
 //!   `ActionInvoked` for a body comes back as the notification's id, any other action doesn't.
 //! - [`BusTray`]: the item registers its own name with the watcher; its title, tooltip, icon (the count drawn on it,
 //!   its attention icon too) and status say the unread total, and change with it (`NewTitle` told), as does the Unity
@@ -27,7 +27,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use futures_util::StreamExt as _;
-use teams_ui::notify::{BusNotifications, Notice, NoticeKind, NotificationServer as _};
+use teams_ui::notify::{BannerPicture, BusNotifications, Notice, NoticeKind, NotificationServer as _};
 use teams_ui::tray::{
     BusTray, Hosted, ITEM_PATH, LAUNCHER_ENTRY, MENU_OPEN, MENU_PATH, MENU_QUIT, TrayEvent, TrayIcon as _,
 };
@@ -70,6 +70,7 @@ fn notice(kind: NoticeKind, summary: &str, body: &str) -> Notice {
         kind,
         summary: summary.to_owned(),
         body: body.to_owned(),
+        picture: None,
     }
 }
 
@@ -133,7 +134,37 @@ fn notifications_reach_the_server_on_the_bus_given_and_its_activations_come_back
         private.invoke_action(ringing, "answer").unwrap();
         let answered = tokio::time::timeout(WAIT, activations.next()).await.unwrap();
         assert_eq!(answered, Some((ringing, "answer".to_owned())));
+        assert!(private.notifications().iter().all(|shown| shown.image.is_none()));
+
+        // a notice's picture: its pixels in the image-data hint, a call's too
+        let picture = picture();
+        for kind in [NoticeKind::Message, NoticeKind::Call] {
+            let pictured = Notice {
+                picture: Some(picture.clone()),
+                ..notice(kind, "Bee", "with a picture")
+            };
+            let id = server.show(&pictured, 0).await.unwrap();
+            let got = private.notifications();
+            let shown = got.iter().find(|shown| shown.id == id).unwrap();
+            assert!(shown.hints.iter().any(|hint| hint == "image-data"), "{:?}", shown.hints);
+            let (width, height, pixels) = shown.image.clone().unwrap();
+            assert_eq!((width, height), (96, 96));
+            assert_eq!(pixels, picture.rgba());
+        }
     });
+}
+
+/// A person's picture as a banner shows it.
+fn picture() -> BannerPicture {
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(128, 128, image::Rgba([30, 60, 90, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    BannerPicture::of_person(&teams_store::StoredPicture {
+        media_type: "image/png".to_owned(),
+        bytes: png,
+    })
+    .unwrap()
 }
 
 /// A property of the item or its menu, read as a host reads it.

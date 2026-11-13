@@ -27,6 +27,11 @@ pub(crate) enum TeamAppsAsk {
         id: String,
         reply: Responder<Option<teams_proto::AppDefinition>>,
     },
+    /// The definition only when this run has it already: nothing is read.
+    CachedDefinition {
+        id: String,
+        reply: Responder<Option<teams_proto::AppDefinition>>,
+    },
     Apps {
         team: String,
         reply: Responder<Vec<InstalledApp>>,
@@ -68,6 +73,15 @@ where
             TeamAppsAsk::Definition { id, reply } => {
                 let cache = Arc::clone(&self.app_definitions);
                 self.spawn_read(reply, async move |client| definition(client, &cache, &id).await);
+            }
+            TeamAppsAsk::CachedDefinition { id, reply } => {
+                // a read under way holds the cache: answered as not known rather than waiting for it
+                let known = self
+                    .app_definitions
+                    .try_lock()
+                    .ok()
+                    .and_then(|definitions| definitions.get(&id).cloned());
+                let _ = reply.send(Ok(known));
             }
             TeamAppsAsk::Apps { team, reply } => self.spawn_read(reply, async move |client| {
                 let read = TeamApps { team };

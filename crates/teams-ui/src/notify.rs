@@ -35,6 +35,11 @@
 //! couldn't be read. A catch-up's or a replayed one notifies only when unread and after the cutoff, as a chat's.
 //! Activating it opens the Activity pane at the item ([`NotifierEvent::OpenActivity`]).
 //!
+//! **Pictures** ([`picture`]): a message's or a mention's banner shows its sender's picture, a collapsed one in a 1:1
+//! chat the other person's (a group's or a channel's is about the chat, and shows none), an app item's the app's tile,
+//! each only when the engine already has it: a banner never waits on a network read. An app tile the engine doesn't
+//! have yet is read after its banner shows, so the app's next banner has it.
+//!
 //! **Activating one** (its body, the `default` action) opens its chat: [`NotifierEvent::Open`], or for a team's
 //! channel (the stored conversation's kind when it was shown) [`NotifierEvent::OpenChannel`], which the
 //! [`Desktop`](crate::desktop::Desktop) acts on. Each one shown is told too ([`NotifierEvent::Shown`]: its chat and
@@ -56,10 +61,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures_util::future::BoxFuture;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, WeakEntity};
 use teams_core::activity::{ActivityFeed, ActivityItem};
-use teams_core::{CLOCK_SKEW_MS, Source};
+use teams_core::{CLOCK_SKEW_MS, PictureBytes, Source};
 use teams_proto::ACTIVITY_FEED;
 use teams_proto::chat::RichText;
-use teams_store::{Conversation, ConversationKind, Message};
+use teams_store::{Conversation, ConversationKind, Message, StoredPicture};
 
 use crate::bridge::Core;
 use crate::calls::Calls;
@@ -73,6 +78,9 @@ use crate::settings::{Notifications, SettingsModel};
 use crate::sounds::SoundEvent;
 use crate::system_message;
 use crate::trace::{TraceLine, ViewTrace};
+
+pub mod picture;
+pub use picture::{BannerFiles, BannerPicture, PictureShape};
 
 /// How long messages are gathered before they are shown.
 pub const GATHER: Duration = Duration::from_millis(250);
@@ -125,6 +133,8 @@ pub struct Notice {
     pub kind: NoticeKind,
     pub summary: String,
     pub body: String,
+    /// The person's or the app's picture it shows; `None` shows the app's icon alone.
+    pub picture: Option<BannerPicture>,
 }
 
 /// The desktop's notification server, as the notifier sees it.
@@ -388,6 +398,7 @@ impl Notifier {
             return;
         }
         let settings = self.core.app_notification_settings();
+        let core = Arc::clone(&self.core);
         cx.spawn(async move |this, cx: &mut AsyncApp| {
             let app = item.teams_app_id.clone().unwrap_or_default();
             let on = settings
@@ -398,10 +409,21 @@ impl Notifier {
             if !on {
                 return;
             }
+            let picture = if let Some(tile) = cached_app_tile(&*core, &app).await {
+                cx.background_executor()
+                    .spawn(async move { BannerPicture::of_app(&tile) })
+                    .await
+            } else {
+                read_app_tile(&core, app, cx);
+                None
+            };
             let Ok(Some(server)) = this.update(cx, |this, cx| this.app_banners_on(cx)) else {
                 return;
             };
-            let notice = app_notice(&item);
+            let notice = Notice {
+                picture,
+                ..app_notice(&item)
+            };
             if let Ok(id) = server.show(&notice, 0).await {
                 let _ = this.update(cx, |this, cx| this.shown_app_item(&notice, id, item.id.clone(), cx));
             }
@@ -572,7 +594,31 @@ fn app_notice(item: &ActivityItem) -> Notice {
         kind: NoticeKind::Activity,
         summary,
         body,
+        picture: None,
     }
+}
+
+/// App `app`'s tile, only when the engine keeps or caches it already (its definition known this run, its picture
+/// kept or on disk): nothing is read.
+async fn cached_app_tile(core: &dyn Core, app: &str) -> Option<PictureBytes> {
+    let definition = core.cached_app_definition(app.to_owned()).await.ok().flatten()?;
+    let url = definition.large_image_url()?.to_owned();
+    core.cached_app_picture(url).await.ok().flatten()
+}
+
+/// Reads app `app`'s definition and tile in the background, for its next banner: no banner waits for it.
+fn read_app_tile(core: &Arc<dyn Core>, app: String, cx: &AsyncApp) {
+    let core = Arc::clone(core);
+    let definition = core.app_definition(app);
+    cx.background_executor()
+        .spawn(async move {
+            if let Ok(Some(definition)) = definition.await
+                && let Some(url) = definition.large_image_url()
+            {
+                let _ = core.app_picture(url.to_owned()).await;
+            }
+        })
+        .detach();
 }
 
 /// Waits [`GATHER`], then processes what was gathered until nothing is left.
@@ -622,7 +668,14 @@ async fn process(this: &WeakEntity<Notifier>, batch: Batch, cx: &mut AsyncApp) {
             continue;
         }
         let translated = translations(this, &chosen, cx).await;
-        let (chat, notices) = describe(&*core, &conversation, stored, chosen, translated).await;
+        let (chat, notices, pictures) = describe(&*core, &conversation, stored, chosen, translated).await;
+        let notices = with_pictures(notices, pictures, cx).await;
+        // a 1:1 chat's collapsed banner is about the other person; a group's or a channel's about the chat
+        let one_to_one = stored.is_none_or(|stored| stored.kind == ConversationKind::OneToOne);
+        let collapsed_picture = notices
+            .last()
+            .and_then(|notice| notice.picture.clone())
+            .filter(|_| one_to_one);
         // asked again after the reads above, right before what is shown is read (nothing waits in between)
         let channel = stored.is_some_and(|stored| stored.kind == ConversationKind::Channel);
         let due = this.update(cx, |this, cx| {
@@ -633,7 +686,12 @@ async fn process(this: &WeakEntity<Notifier>, batch: Batch, cx: &mut AsyncApp) {
             due
         });
         if due.is_ok_and(|due| due) {
-            show(this, &*server, &conversation, &chat, notices, cx).await;
+            let chat = ChatBanner {
+                conversation: &conversation,
+                name: &chat,
+                picture: collapsed_picture,
+            };
+            show(this, &*server, chat, notices, cx).await;
         }
     }
 }
@@ -744,24 +802,26 @@ async fn translations(
 }
 
 /// The chat's name and the notices for its messages that notify, each with its text in the chat's language when
-/// `translated` has it.
+/// `translated` has it, and their senders' stored pictures (the notices have none yet: [`with_pictures`]).
 async fn describe(
     core: &dyn Core,
     conversation: &str,
     stored: Option<&Conversation>,
     chosen: Vec<(Candidate, bool)>,
     translated: Vec<Option<Arc<RichText>>>,
-) -> (SharedString, Vec<Notice>) {
+) -> (SharedString, Vec<Notice>, Vec<Option<StoredPicture>>) {
     let one_to_one = stored.is_none_or(|stored| stored.kind == ConversationKind::OneToOne);
     let chat: SharedString = match stored {
         Some(stored) => chat_list::chat_name(core, stored).await,
         None => "Chat".into(),
     };
     let mut notices = Vec::with_capacity(chosen.len());
+    let mut pictures = Vec::with_capacity(chosen.len());
     let mut translated = translated.into_iter();
     for (candidate, mention) in chosen {
         let text = translated.next().flatten();
-        let sender = sender_name(core, &candidate.message).await;
+        let (sender, picture) = sender_of(core, &candidate.message).await;
+        pictures.push(picture);
         let summary = match (one_to_one, mention) {
             (true, false) => sender,
             (true, true) => format!("{sender} mentioned you"),
@@ -780,28 +840,57 @@ async fn describe(
                 || chat_list::message_line(&candidate.message),
                 |text| chat_list::text_line(&text),
             ),
+            picture: None,
         });
     }
-    (chat, notices)
+    (chat, notices, pictures)
 }
 
-/// A sender's name: as the engine has it, else as the message carried it, else [`SOMEONE`].
-async fn sender_name(core: &dyn Core, message: &Message) -> String {
-    let Some(sender) = message.sender.clone() else {
-        return SOMEONE.to_owned();
-    };
-    if let Ok(person) = core.person(sender).await
-        && let Some(name) = Shown::of(person).name
-    {
-        return name.to_string();
+/// `notices` with the pictures of `pictures` (one each, in order), decoded off the main thread.
+async fn with_pictures(
+    mut notices: Vec<Notice>,
+    pictures: Vec<Option<StoredPicture>>,
+    cx: &mut AsyncApp,
+) -> Vec<Notice> {
+    if pictures.iter().all(Option::is_none) {
+        return notices;
     }
-    message
-        .sender_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .unwrap_or(SOMEONE)
-        .to_owned()
+    let decoded = cx
+        .background_executor()
+        .spawn(async move {
+            pictures
+                .iter()
+                .map(|picture| picture.as_ref().and_then(BannerPicture::of_person))
+                .collect::<Vec<_>>()
+        })
+        .await;
+    for (notice, picture) in notices.iter_mut().zip(decoded) {
+        notice.picture = picture;
+    }
+    notices
+}
+
+/// A sender's name (as the engine has it, else as the message carried it, else [`SOMEONE`]) and their picture as the
+/// engine has it stored.
+async fn sender_of(core: &dyn Core, message: &Message) -> (String, Option<StoredPicture>) {
+    let carried = || {
+        message
+            .sender_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(SOMEONE)
+            .to_owned()
+    };
+    let Some(sender) = message.sender.clone() else {
+        return (SOMEONE.to_owned(), None);
+    };
+    let Ok(person) = core.person(sender).await else {
+        return (carried(), None);
+    };
+    let picture = person.picture.clone();
+    let name = Shown::of(person).name.map_or_else(carried, |name| name.to_string());
+    (name, picture)
 }
 
 /// What a collapsed notification of `count` messages says.
@@ -814,15 +903,22 @@ pub fn collapsed_body(count: usize, mention: bool) -> String {
     }
 }
 
+/// A chat as its collapsed banner shows it: its id, its name and the picture it shows.
+struct ChatBanner<'a> {
+    conversation: &'a str,
+    name: &'a str,
+    picture: Option<BannerPicture>,
+}
+
 /// Shows one chat's notices: one by one while the chat has at most [`SINGLES`], else collapsed into one.
 async fn show(
     this: &WeakEntity<Notifier>,
     server: &dyn NotificationServer,
-    conversation: &str,
-    chat: &str,
+    chat: ChatBanner<'_>,
     notices: Vec<Notice>,
     cx: &mut AsyncApp,
 ) {
+    let conversation = chat.conversation;
     let Ok((count, singles, collapsed, mentioned)) = this.update(cx, |this, _| {
         this.shown
             .get(conversation)
@@ -855,8 +951,9 @@ async fn show(
     let notice = Notice {
         conversation: conversation.to_owned(),
         kind: NoticeKind::Collapsed,
-        summary: chat.to_owned(),
+        summary: chat.name.to_owned(),
         body: collapsed_body(total, mention),
+        picture: chat.picture,
     };
     if let Ok(id) = server.show(&notice, collapsed.unwrap_or(0)).await {
         let _ = this.update(cx, |this, cx| {
@@ -911,4 +1008,4 @@ pub fn mute_in_call(muted: bool, cx: &mut App) {
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-pub use linux::BusNotifications;
+pub use linux::{BusNotifications, IMAGE_DATA, image_data};

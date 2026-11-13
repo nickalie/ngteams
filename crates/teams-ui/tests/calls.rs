@@ -1697,6 +1697,51 @@ fn a_notification_says_who_calls_as_the_invitation_names_them() {
     );
 }
 
+#[test]
+fn a_call_notification_shows_the_caller_s_stored_picture_else_none() {
+    let rig = calling();
+    let (trace, _) = trace();
+    let ringer = Arc::new(FakeRinger::default());
+    let server = Arc::new(FakeServer::default());
+    let _alert = alert(&rig, &trace, &ringer, &server);
+    registered(&rig);
+    rig.send(Event::IncomingCall(invitation(1, Some(CALLER_NAME), None)));
+    rig.cx.run_until_parked();
+    assert_eq!(
+        server.shown()[0].picture,
+        None,
+        "no stored picture: the app's icon alone"
+    );
+    status(&rig, 1, CallStatus::Ended(End::Remote(RemoteEnd::default())));
+
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(120, 120, image::Rgba([40, 160, 90, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    rig.core.people.lock().unwrap().insert(
+        LAB_B.to_owned(),
+        teams_core::Person {
+            mri: LAB_B.to_owned(),
+            name: Some(CALLER_NAME.to_owned()),
+            from: Some(teams_core::NameFrom::Graph),
+            picture: Some(teams_store::StoredPicture {
+                media_type: "image/png".to_owned(),
+                bytes: png,
+            }),
+            looking: false,
+        },
+    );
+    rig.send(Event::IncomingCall(invitation(2, Some(CALLER_NAME), None)));
+    rig.cx.run_until_parked();
+    let shown = server.shown();
+    let picture = shown[1].picture.as_ref().expect("the caller's picture");
+    assert_eq!(shown[1].kind, NoticeKind::Call);
+    assert_eq!(
+        (picture.width(), picture.height(), picture.shape()),
+        (96, 96, teams_ui::notify::PictureShape::Circle)
+    );
+}
+
 /// The settings shown on their Calls page.
 fn calls_page(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
     cx.update(|_, cx| {

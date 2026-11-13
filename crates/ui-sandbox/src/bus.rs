@@ -82,8 +82,10 @@ pub struct Notification {
     pub summary: String,
     pub body: String,
     pub actions: Vec<String>,
-    /// The hints' keys, sorted (their values aren't kept).
+    /// The hints' keys, sorted (their values aren't kept but the picture's).
     pub hints: Vec<String>,
+    /// The `image-data` hint's picture, when it is one: its width, height and pixels' bytes (RGBA, row after row).
+    pub image: Option<(i32, i32, Vec<u8>)>,
     pub expire_timeout: i32,
 }
 
@@ -137,6 +139,7 @@ struct Notify<'a> {
     body: &'a str,
     actions: Vec<&'a str>,
     hints: Vec<String>,
+    image: Option<(i32, i32, Vec<u8>)>,
     expire_timeout: i32,
 }
 
@@ -160,6 +163,7 @@ impl Notifications {
             body: call.body.to_owned(),
             actions: call.actions.iter().map(|&action| action.to_owned()).collect(),
             hints,
+            image: call.image,
             expire_timeout: call.expire_timeout,
         });
         id
@@ -188,6 +192,7 @@ impl Notifications {
         hints: HashMap<&str, Value<'_>>,
         expire_timeout: i32,
     ) -> u32 {
+        let image = hints.get("image-data").and_then(image_data);
         let call = Notify {
             app_name,
             replaces_id,
@@ -196,6 +201,7 @@ impl Notifications {
             body,
             actions,
             hints: hints.into_keys().map(str::to_owned).collect(),
+            image,
             expire_timeout,
         };
         self.record(sender(&header), call)
@@ -214,6 +220,18 @@ impl Notifications {
     fn get_server_information(&self) -> (&'static str, &'static str, &'static str, &'static str) {
         ("ui-sandbox", "ngteams", "0", "1.2")
     }
+}
+
+/// An `image-data` hint's picture, `(iiibiiay)`: its width, height and pixels, when it is 8-bit RGBA whose rows are
+/// as wide as it says.
+fn image_data(value: &Value<'_>) -> Option<(i32, i32, Vec<u8>)> {
+    let (width, height, stride, alpha, bits, channels, pixels): (i32, i32, i32, bool, i32, i32, Vec<u8>) =
+        value.try_clone().ok()?.try_into().ok()?;
+    let rows = usize::try_from(stride)
+        .ok()?
+        .checked_mul(usize::try_from(height).ok()?)?;
+    (alpha && bits == 8 && channels == 4 && stride == width.checked_mul(4)? && pixels.len() == rows)
+        .then_some((width, height, pixels))
 }
 
 /// The fake `org.kde.StatusNotifierWatcher`: it says a host is there, so an app registers its item.

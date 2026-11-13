@@ -377,14 +377,38 @@ pub(crate) fn decode_app_tile(picture: &PictureBytes, max_side: u32) -> Option<(
     decode_limited(picture, max_side, MAX_TILE_SIDE, MAX_TILE_ALLOC)
 }
 
+/// A still picture (a desktop banner's: a person's or an app's) as RGBA, scaled down to at most `max_side` on its
+/// longer side, within an app tile's limits; `None` for a GIF, or bytes that don't decode or exceed the limits.
+pub(crate) fn decode_still_rgba(picture: &PictureBytes, max_side: u32) -> Option<RgbaImage> {
+    if picture.format == PastedFormat::Gif {
+        return None;
+    }
+    decode_still(picture, max_side, MAX_TILE_SIDE, MAX_TILE_ALLOC).map(|(rgba, _)| rgba)
+}
+
 fn decode_limited(
     picture: &PictureBytes,
     max_side: u32,
     source_side: u32,
     max_alloc: u64,
 ) -> Option<(RenderImage, (u32, u32))> {
+    if picture.format == PastedFormat::Gif {
+        return decode_gif(&picture.bytes, max_side);
+    }
+    let (mut shown, natural) = decode_still(picture, max_side, source_side, max_alloc)?;
+    to_bgra(&mut shown);
+    Some((RenderImage::new(vec![Frame::new(shown)]), natural))
+}
+
+/// A PNG, JPEG or WebP picture as RGBA scaled down to at most `max_side`, and its natural size.
+fn decode_still(
+    picture: &PictureBytes,
+    max_side: u32,
+    source_side: u32,
+    max_alloc: u64,
+) -> Option<(RgbaImage, (u32, u32))> {
     let format = match picture.format {
-        PastedFormat::Gif => return decode_gif(&picture.bytes, max_side),
+        PastedFormat::Gif => return None,
         PastedFormat::Png => image::ImageFormat::Png,
         PastedFormat::Jpeg => image::ImageFormat::Jpeg,
         PastedFormat::Webp => image::ImageFormat::WebP,
@@ -407,9 +431,7 @@ fn decode_limited(
     }
     decoder.set_limits(limits).ok()?;
     let rgba = image::DynamicImage::from_decoder(decoder).ok()?.into_rgba8();
-    let mut shown = scaled_down(rgba, max_side);
-    to_bgra(&mut shown);
-    Some((RenderImage::new(vec![Frame::new(shown)]), natural))
+    Some((scaled_down(rgba, max_side), natural))
 }
 
 fn still_peak_bytes(natural: (u32, u32), color: image::ColorType, codec: u64, max_side: u32) -> u64 {

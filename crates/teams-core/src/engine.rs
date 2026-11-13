@@ -787,6 +787,7 @@ enum Request {
     ReactionAnimation(String, Responder<Option<Strip>>),
     MessagePicture(String, Responder<Option<PictureBytes>>),
     AppPicture(String, Responder<Option<PictureBytes>>),
+    CachedAppPicture(String, Responder<Option<PictureBytes>>),
     FileThumbnail(String, Responder<Option<PictureBytes>>),
     FileRange {
         share_url: String,
@@ -1265,6 +1266,13 @@ impl EngineRequests {
         self.ask(|reply| Request::AppPicture(url, reply))
     }
 
+    /// [`Self::app_picture`] only from what this run keeps or the picture cache on disk holds: nothing is read from
+    /// the network, and a read under way is answered `None` rather than waited for (a desktop banner's picture).
+    pub fn cached_app_picture(&self, url: impl Into<String>) -> Reply<Option<PictureBytes>> {
+        let url = url.into();
+        self.ask(|reply| Request::CachedAppPicture(url, reply))
+    }
+
     /// The account's calendar events between `start_ms` and `end_ms` (ms since the epoch), read from the middle tier
     /// now and kept in the store ([`crate::calendar`]): [`EngineError::CalendarUnread`] when the read failed.
     pub fn calendar(&self, start_ms: i64, end_ms: i64) -> Reply<Vec<CalendarEvent>> {
@@ -1564,6 +1572,12 @@ impl EngineRequests {
     /// An app definition, cached for this account by `teamsAppId` and shared with Activity writes.
     pub fn app_definition(&self, id: String) -> Reply<Option<teams_proto::AppDefinition>> {
         self.ask(|reply| Request::TeamApps(Box::new(TeamAppsAsk::Definition { id, reply })))
+    }
+
+    /// [`Self::app_definition`] only when this run has it already: nothing is read, and a read under way is answered
+    /// `None` rather than waited for (a desktop banner's picture).
+    pub fn cached_app_definition(&self, id: String) -> Reply<Option<teams_proto::AppDefinition>> {
+        self.ask(|reply| Request::TeamApps(Box::new(TeamAppsAsk::CachedDefinition { id, reply })))
     }
 
     /// The apps the store offers to add to a team, with their definitions, read now.
@@ -2370,6 +2384,7 @@ where
             Request::ReactionAnimation(id, reply) => self.animations.animation(id, reply),
             Request::MessagePicture(src, reply) => self.pictures.picture(&src, reply),
             Request::AppPicture(url, reply) => self.pictures.app_picture(&url, reply),
+            Request::CachedAppPicture(url, reply) => self.pictures.cached_app_picture(&url, reply),
             Request::FileThumbnail(share_url, reply) => self.thumbnails.thumbnail(&share_url, reply),
             Request::Calendar {
                 start_ms,

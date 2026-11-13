@@ -53,6 +53,7 @@ fn a_release_updater_renders_without_reading_the_shell_it_is_rendering() {
                     account_detail: "synthetic account".into(),
                     can_add: false,
                     ringer: None,
+                    pictures_dir: None,
                 },
                 cx,
             )

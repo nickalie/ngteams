@@ -180,11 +180,14 @@ zbus.workspace = true
 # Linux compositor, private bus and virtual keyboard; Windows uses the authorized VM console.
 ui-sandbox.workspace = true
 
-# macOS: the Dock icon's badge (AppKit through objc2, the versions GPUI already links)
+# macOS: the Dock icon's badge (AppKit through objc2, the versions GPUI already links), and notifications posted with
+# their picture as an attachment (UserNotifications, which GPUI's binding leaves out)
 [target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
 objc2.workspace = true
 objc2-app-kit.workspace = true
-objc2-foundation.workspace = true
+objc2-foundation = { workspace = true, features = ["NSArray", "NSDictionary", "NSError", "NSSet", "NSString", "NSURL"] }
+objc2-user-notifications = { workspace = true, features = ["std", "block2", "UNNotificationAction", "UNNotificationAttachment", "UNNotificationCategory", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 
 [target.'cfg(windows)'.dependencies]
 dirs.workspace = true

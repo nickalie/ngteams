@@ -99,6 +99,10 @@ pub struct DesktopParts {
     pub can_add: bool,
     /// What plays an incoming call's ringtone (the app's speaker); `None` plays none.
     pub ringer: Option<Arc<dyn Ringer>>,
+    /// The app's data directory: Windows' toasts and macOS' notifications read a banner's picture from a file the app
+    /// writes in its banner folder there ([`crate::notify::BannerFiles`]). `None` shows those banners without
+    /// pictures; Linux hands the pixels on the bus and writes no file.
+    pub pictures_dir: Option<std::path::PathBuf>,
 }
 
 /// What the desktop asks of the app.
@@ -833,7 +837,14 @@ impl Desktop {
         }
         let (app_id, app_name) = (self.parts.app_id.to_owned(), self.parts.app_name.to_string());
         let with_tray = !self.parts.shell.core.read_only();
-        cx.spawn(async move |this, cx: &mut AsyncApp| windows::connect(this, app_id, app_name, with_tray, cx).await)
+        let files = self
+            .parts
+            .pictures_dir
+            .as_deref()
+            .and_then(crate::notify::BannerFiles::open);
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            windows::connect(this, app_id, app_name, with_tray, files, cx).await
+        })
     }
 
     /// Puts the notifications and the Dock badge up on macOS (its module's docs); closing the window keeps the app in
@@ -847,7 +858,12 @@ impl Desktop {
                 .spawn(async move |_, _| vec!["native desktop is not opened by a deterministic UI test".to_owned()]);
         }
         let with_dock = !self.parts.shell.core.read_only();
-        cx.spawn(async move |this, cx: &mut AsyncApp| macos::connect(&this, with_dock, cx))
+        let files = self
+            .parts
+            .pictures_dir
+            .as_deref()
+            .and_then(crate::notify::BannerFiles::open);
+        cx.spawn(async move |this, cx: &mut AsyncApp| macos::connect(&this, with_dock, files, cx))
     }
 
     /// Keep the native taskbar target current when closing to tray and opening a new GPUI window.

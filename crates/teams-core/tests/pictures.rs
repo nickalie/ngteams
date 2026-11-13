@@ -4,7 +4,8 @@
 //! the service has none of isn't cached, so the next run reads it again; the cache is a private file beside the store.
 //! A GIF and a link preview's picture are cached by what they are of; asks that come while a read runs wait for it; a
 //! file Graph lists no thumbnail for has none; a cache that can't be opened leaves every run reading. An app's tile on
-//! the CDN is read once per version and cached alike; a URL off the CDN's app folders is never read.
+//! the CDN is read once per version and cached alike; a URL off the CDN's app folders is never read. A banner's ask for
+//! a tile answers only what the run keeps or the cache holds, and reads nothing.
 //!
 //! Tokens, ids and links here are made up; the thumbnails' answer follows the synthetic fixture
 //! (`tests/fixtures/graph/thumbnails.json`).
@@ -523,4 +524,43 @@ async fn an_app_s_tile_that_isn_t_a_picture_is_none_and_a_failed_read_is_tried_a
         );
     }
     handle.shutdown();
+}
+
+#[tokio::test]
+async fn a_banner_s_ask_for_an_app_s_tile_reads_nothing() {
+    const TILE: &str = "/teamsappdata/evergreen-assets/apps/00000000-0000-4000-8000-00000000a003_largeImage.png";
+    let url = format!("https://res.cdn.office.net{TILE}?v=1");
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(TILE))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(PNG.to_vec(), "application/octet-stream"))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let store_file = store_file(&dir);
+
+    let first = engine(&server, &store_file);
+    let requests = first.requests();
+    assert!(requests.cached_app_picture(url.clone()).await.unwrap().is_none());
+    assert!(
+        requests
+            .cached_app_picture("https://cdn.example.test/made-up.png")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(requests_to(&server, TILE).await, 0, "nothing read for a banner");
+    assert_eq!(requests.app_picture(url.clone()).await.unwrap().unwrap().bytes, PNG);
+    assert_eq!(
+        requests.cached_app_picture(url.clone()).await.unwrap().unwrap().bytes,
+        PNG
+    );
+    first.shutdown();
+
+    // the next run: the cache on disk answers before anything is read
+    let second = engine(&server, &store_file);
+    let cached = second.requests().cached_app_picture(url).await.unwrap().unwrap();
+    assert_eq!((cached.format, cached.bytes.as_slice()), (PastedFormat::Png, PNG));
+    second.shutdown();
+    assert_eq!(requests_to(&server, TILE).await, 1);
 }

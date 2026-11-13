@@ -41,7 +41,7 @@ pub fn main() -> std::process::ExitCode {
 async fn contract() {
     let app_id = format!("com.nickalie.ngteams.synthetic.{}", std::process::id());
     teams_platform::windows_desktop::set_app_id(&app_id).unwrap();
-    let (server, activations) = toasts::Notifications::start(app_id.clone(), "NGTEAMS SYNTHETIC DESKTOP".into())
+    let (server, activations) = toasts::Notifications::start(app_id.clone(), "NGTEAMS SYNTHETIC DESKTOP".into(), None)
         .await
         .unwrap();
     notification_setting(&app_id);
@@ -54,6 +54,7 @@ async fn contract() {
         kind: NoticeKind::Message,
         summary: "NGTEAMS SYNTHETIC DESKTOP".into(),
         body: "Synthetic message <one> & two".into(),
+        picture: None,
     };
     // SAFETY: read-only shell availability query; no notification preference is changed.
     println!("synthetic shell notification state={:?}", unsafe {

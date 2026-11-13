@@ -419,6 +419,11 @@ fn team_directories_and_apps_are_empty() {
             "app_picture",
             none(core.app_picture("https://res.cdn.office.net/teamsappdata/a.png".into())),
         ),
+        ("cached_app_definition", none(core.cached_app_definition("app".into()))),
+        (
+            "cached_app_picture",
+            none(core.cached_app_picture("https://res.cdn.office.net/teamsappdata/a.png".into())),
+        ),
         (
             "channel_analytics",
             none(core.channel_analytics(group(), "channel".into(), AnalyticsPeriod::LastNinetyDays)),

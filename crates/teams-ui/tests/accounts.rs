@@ -114,6 +114,7 @@ impl TwoAccounts {
                         account_detail: "aye@example.test".into(),
                         can_add: true,
                         ringer: None,
+                        pictures_dir: None,
                     },
                     cx,
                 )
@@ -491,6 +492,7 @@ fn a_lone_account_s_notifications_name_no_account() {
                     account_detail: "aye@example.test".into(),
                     can_add: true,
                     ringer: None,
+                    pictures_dir: None,
                 },
                 cx,
             )

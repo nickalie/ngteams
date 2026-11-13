@@ -3296,7 +3296,13 @@ async fn activity_turn_off_app_merges_current_preferences_and_reuses_its_definit
     a.ready().await;
     let item = a.handle.activity().await.unwrap().item(&id).unwrap().clone();
     assert_eq!(item.teams_app_id.as_deref(), Some(app));
+    // a banner's ask reads nothing: unknown until a read brought the definition
+    assert_eq!(a.handle.cached_app_definition(app.to_owned()).await.unwrap(), None);
     let definition = a.handle.app_definition(app.to_owned()).await.unwrap().unwrap();
+    assert_eq!(
+        a.handle.cached_app_definition(app.to_owned()).await.unwrap(),
+        Some(definition.clone())
+    );
     assert_eq!(
         definition.activity_types().unwrap(),
         ["messageNotify", "customNotification"]

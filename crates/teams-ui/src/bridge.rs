@@ -440,6 +440,16 @@ pub trait Core: Send + Sync + 'static {
     fn app_picture(&self, _url: String) -> Reply<Option<PictureBytes>> {
         Reply::ready(Ok(None))
     }
+    /// [`Core::app_definition`] only when the engine has it already, nothing read (a desktop banner's). A fake core
+    /// has none.
+    fn cached_app_definition(&self, _id: String) -> Reply<Option<teams_proto::AppDefinition>> {
+        Reply::ready(Ok(None))
+    }
+    /// [`Core::app_picture`] only as the engine keeps or caches it, nothing read (a desktop banner's). A fake core has
+    /// none.
+    fn cached_app_picture(&self, _url: String) -> Reply<Option<PictureBytes>> {
+        Reply::ready(Ok(None))
+    }
     /// The apps the store offers to add to a team. A fake core offers none.
     fn app_store(&self) -> Reply<Vec<StoreApp>> {
         Reply::ready(Ok(Vec::new()))
@@ -714,6 +724,10 @@ impl Core for EngineRequests {
         EngineRequests::app_definition(self, id)
     }
 
+    fn cached_app_definition(&self, id: String) -> Reply<Option<teams_proto::AppDefinition>> {
+        EngineRequests::cached_app_definition(self, id)
+    }
+
     fn app_store(&self) -> Reply<Vec<StoreApp>> {
         EngineRequests::app_store(self)
     }
@@ -851,6 +865,10 @@ impl Core for EngineRequests {
 
     fn app_picture(&self, url: String) -> Reply<Option<PictureBytes>> {
         EngineRequests::app_picture(self, url)
+    }
+
+    fn cached_app_picture(&self, url: String) -> Reply<Option<PictureBytes>> {
+        EngineRequests::cached_app_picture(self, url)
     }
 
     fn file_thumbnail(&self, share_url: String) -> Reply<Option<PictureBytes>> {

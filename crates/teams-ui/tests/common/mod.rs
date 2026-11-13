@@ -90,6 +90,9 @@ pub struct FakeCore {
     pub app_definitions: Mutex<HashMap<String, teams_proto::AppDefinition>>,
     /// App tiles by their URL; any other is answered `None`.
     pub app_pictures: Mutex<HashMap<String, PictureBytes>>,
+    /// The engine has no app definition or tile yet: the cache-only asks (a banner's) answer `None`; else they answer
+    /// `app_definitions` and `app_pictures`.
+    pub apps_uncached: Mutex<bool>,
     /// The thumbnails `file_thumbnail` answers, by the file's sharing link.
     pub thumbnails: Mutex<HashMap<String, PictureBytes>>,
     /// What `profile_card` answers, by the person's MRI; anyone else's card can't be read (`ProfileUnread`).
@@ -941,6 +944,22 @@ impl Core for FakeCore {
 
     fn app_picture(&self, url: String) -> Reply<Option<PictureBytes>> {
         self.answer("app_picture", || locked(&self.app_pictures).get(&url).cloned())
+    }
+
+    fn cached_app_definition(&self, id: String) -> Reply<Option<teams_proto::AppDefinition>> {
+        let cached = !*locked(&self.apps_uncached);
+        self.answer("cached_app_definition", || {
+            cached
+                .then(|| locked(&self.app_definitions).get(&id).cloned())
+                .flatten()
+        })
+    }
+
+    fn cached_app_picture(&self, url: String) -> Reply<Option<PictureBytes>> {
+        let cached = !*locked(&self.apps_uncached);
+        self.answer("cached_app_picture", || {
+            cached.then(|| locked(&self.app_pictures).get(&url).cloned()).flatten()
+        })
     }
 
     fn file_thumbnail(&self, share_url: String) -> Reply<Option<PictureBytes>> {

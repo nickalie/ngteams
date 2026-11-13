@@ -75,6 +75,7 @@ fn desktop(id: &'static str, cx: &mut App) -> (Entity<Desktop>, [Arc<FakeCore>; 
                 account_detail: "a@example.test".into(),
                 can_add: true,
                 ringer: None,
+                pictures_dir: None,
             },
             cx,
         )

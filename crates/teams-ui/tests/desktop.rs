@@ -199,6 +199,7 @@ impl OnDesktop {
                         account_detail: "lab a".into(),
                         can_add: false,
                         ringer: None,
+                        pictures_dir: None,
                     },
                     cx,
                 )

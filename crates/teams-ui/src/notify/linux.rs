@@ -1,4 +1,5 @@
-//! Freedesktop notification transport, on the explicit Linux session bus.
+//! Freedesktop notification transport, on the explicit Linux session bus. A notice's picture goes as the spec's
+//! `image-data` hint (its pixels: no file is written), which servers draw in the icon's place.
 use super::*;
 use crate::app_icon;
 use futures_util::{StreamExt as _, stream::BoxStream};
@@ -48,6 +49,27 @@ impl BusNotifications {
     }
 }
 
+/// The hint a notice's picture goes as.
+pub const IMAGE_DATA: &str = "image-data";
+
+/// `picture` as the `image-data` hint's value, `(iiibiiay)`: width, height, row stride, alpha, bits per sample,
+/// channels, the pixels. `None` for one too large to say in it.
+#[must_use]
+pub fn image_data(picture: &BannerPicture) -> Option<Value<'static>> {
+    let width = i32::try_from(picture.width()).ok()?;
+    let height = i32::try_from(picture.height()).ok()?;
+    let stride = width.checked_mul(4)?;
+    Some(Value::from((
+        width,
+        height,
+        stride,
+        true,
+        8_i32,
+        4_i32,
+        picture.rgba().to_vec(),
+    )))
+}
+
 impl NotificationServer for BusNotifications {
     fn show(&self, notice: &Notice, replaces: u32) -> BoxFuture<'static, Result<u32, String>> {
         let proxy = self.proxy.clone();
@@ -60,9 +82,10 @@ impl NotificationServer for BusNotifications {
             notice.body.clone()
         };
         let call_notice = notice.kind == NoticeKind::Call;
+        let image = notice.picture.as_ref().and_then(image_data);
         Box::pin(async move {
             // an incoming call's: Answer and Decline, critical, shown until it is closed (its ring ended)
-            let (actions, hints, expires) = if call_notice {
+            let (actions, mut hints, expires) = if call_notice {
                 let actions = vec![
                     DEFAULT_ACTION,
                     "Open",
@@ -84,6 +107,9 @@ impl NotificationServer for BusNotifications {
                 ]);
                 (vec![DEFAULT_ACTION, "Open"], hints, -1_i32)
             };
+            if let Some(image) = image {
+                hints.insert(IMAGE_DATA, image);
+            }
             let call = (
                 app_name.as_str(),
                 replaces,
@@ -107,5 +133,31 @@ impl NotificationServer for BusNotifications {
             // one the server already closed is no matter
             let _ = proxy.call::<_, _, ()>("CloseNotification", &(id,)).await;
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use teams_proto::{PastedFormat, PastedPicture};
+
+    #[test]
+    fn a_picture_is_its_pixels_in_the_image_data_hint() {
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(3, 2, image::Rgba([1, 2, 3, 4]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .expect("encoded");
+        let picture = BannerPicture::of_app(&Arc::new(PastedPicture {
+            format: PastedFormat::Png,
+            bytes: png,
+        }))
+        .expect("decoded");
+        let value = image_data(&picture).expect("a hint");
+        assert_eq!(value.value_signature().to_string(), "(iiibiiay)");
+        let (width, height, stride, alpha, bits, channels, pixels): (i32, i32, i32, bool, i32, i32, Vec<u8>) =
+            value.try_into().expect("its fields");
+        assert_eq!((width, height, stride, alpha, bits, channels), (3, 2, 12, true, 8, 4));
+        assert_eq!(pixels, [1, 2, 3, 4].repeat(6));
     }
 }

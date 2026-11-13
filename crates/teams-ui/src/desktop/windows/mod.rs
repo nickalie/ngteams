@@ -7,6 +7,7 @@ pub(crate) mod toasts;
 pub(crate) mod tray;
 
 use super::Desktop;
+use crate::notify::BannerFiles;
 use gpui::{AsyncApp, WeakEntity};
 use std::sync::Arc;
 
@@ -15,10 +16,11 @@ pub(super) async fn connect(
     app_id: String,
     app_name: String,
     with_tray: bool,
+    files: Option<BannerFiles>,
     cx: &mut AsyncApp,
 ) -> Vec<String> {
     let mut problems = Vec::new();
-    if let Err(error) = connect_notifications(desktop.clone(), app_id, app_name.clone(), cx).await {
+    if let Err(error) = connect_notifications(desktop.clone(), app_id, app_name.clone(), files, cx).await {
         problems.push(format!("no notifications: {error}"));
     }
     if with_tray && let Err(error) = connect_tray(desktop, app_name, cx).await {
@@ -30,9 +32,10 @@ async fn connect_notifications(
     desktop: WeakEntity<Desktop>,
     app_id: String,
     name: String,
+    files: Option<BannerFiles>,
     cx: &mut AsyncApp,
 ) -> Result<(), String> {
-    let (server, events) = toasts::Notifications::start(app_id, name).await?;
+    let (server, events) = toasts::Notifications::start(app_id, name, files).await?;
     let server = Arc::new(server);
     let held = Arc::clone(&server);
     cx.update(|cx| {

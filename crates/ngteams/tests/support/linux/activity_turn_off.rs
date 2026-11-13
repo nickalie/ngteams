@@ -279,8 +279,13 @@ fn no_banner_after(qa: &mut Qa<'_>) -> SandboxResult {
     qa.chord(&[Modifier::Ctrl], '1')?;
     let shown = qa.sandbox.bus().notifications().len();
     qa.ask("push-chat")?;
-    wait_until(WAIT, || (qa.sandbox.bus().notifications().len() > shown).then_some(()))
+    let banner = wait_until(WAIT, || qa.sandbox.bus().notifications().get(shown).cloned())
         .ok_or_else(|| format!("no banner for b's message in {AB_CHAT}"))?;
+    // the mock gives b no picture: the banner shows the app's icon alone (#114)
+    ensure(
+        banner.image.is_none() && !banner.hints.iter().any(|hint| hint == "image-data"),
+        || format!("a picture on b's banner: {:?}", banner.hints),
+    )?;
     thread::sleep(BANNER_WAIT);
     let shown = qa.sandbox.bus().notifications().len();
     let pushed = qa.ask("push-app later")?;
@@ -351,6 +356,18 @@ pub(super) fn dark_banner_reopens_the_window(qa: &mut Qa<'_>) -> SandboxResult {
     outcome
 }
 
+/// How many pixels of `banner`'s picture are the made-up tile's blue-to-violet (`teams-mock`'s `team_apps.rs`), when
+/// it carries a 96 px picture.
+fn banner_tile_pixels(banner: &ui_sandbox::bus::Notification) -> Option<usize> {
+    let (width, height, pixels) = banner.image.as_ref()?;
+    ((*width, *height) == (96, 96)).then(|| {
+        pixels
+            .chunks(4)
+            .filter(|pixel| pixel[2] > 180 && (0x30..=0x60).contains(&pixel[0]) && (0x5a..=0xa0).contains(&pixel[1]))
+            .count()
+    })
+}
+
 fn banner_into_closed_window(qa: &mut Qa<'_>, which: &str, shot: &str) -> SandboxResult {
     qa.sandbox.niri_msg(&["action", "close-window"])?;
     wait_until(WAIT, || qa.ask("state").ok().filter(|state| state["window"] == false))
@@ -363,6 +380,12 @@ fn banner_into_closed_window(qa: &mut Qa<'_>, which: &str, shot: &str) -> Sandbo
         .ok_or("no banner for a new app item with the window closed")?;
     ensure(banner.body == format!("Made-up {which} reminder"), || {
         format!("the banner says {:?}: {:?}", banner.summary, banner.body)
+    })?;
+    // the app's tile, which its earlier items had the engine read (#114)
+    let tiled = banner_tile_pixels(&banner).ok_or("the app item's banner carries no picture")?;
+    super::say(&format!("the app item's banner picture: {tiled} tile pixels"));
+    ensure(tiled > 1000, || {
+        format!("the banner's picture isn't the app's tile ({tiled} pixels)")
     })?;
     // the app maps the banner to its item only once the server's reply is back: a click before it does nothing
     qa.trace.next_where("the app item's banner shown", |line| {

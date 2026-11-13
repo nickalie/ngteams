@@ -29,7 +29,7 @@ use teams_store::{Applied, ConversationKind, Member, Message, ReadHorizon};
 use teams_trouter::Down;
 use teams_ui::ViewTrace;
 use teams_ui::local_ai::{Backend, Tools};
-use teams_ui::notify::{GATHER, Notice, NoticeKind, Notifier, NotifierEvent, may_notify};
+use teams_ui::notify::{GATHER, Notice, NoticeKind, Notifier, NotifierEvent, PictureShape, may_notify};
 use teams_ui::settings::{Notifications, Settings, SettingsModel};
 
 const LAB_C: &str = "8:orgid:00000000-0000-4000-8000-00000000000c";
@@ -176,6 +176,7 @@ fn a_delivered_message_from_someone_else_notifies_with_its_name_and_first_line()
             kind: NoticeKind::Message,
             summary: "Bee".to_owned(),
             body: "lunch at noon?".to_owned(),
+            picture: None,
         }]
     );
     // a group chat names its sender and the chat
@@ -612,6 +613,7 @@ fn more_than_three_in_one_chat_collapse_into_one() {
                 kind: NoticeKind::Collapsed,
                 summary: "Bee".to_owned(),
                 body: "5 new messages, one or more mentioning you".to_owned(),
+                picture: None,
             },
             replaces: id,
             id,
@@ -974,6 +976,7 @@ fn an_app_item_shows_its_banner_until_its_app_is_turned_off() {
             kind: NoticeKind::Activity,
             summary: "Build finished".to_owned(),
             body: "the made-up build passed".to_owned(),
+            picture: None,
         }]
     );
     assert_eq!(
@@ -1066,4 +1069,152 @@ fn a_catch_up_s_app_item_notifies_only_unread_and_after_the_cutoff() {
     n.arrive(app_item("3", APP_TYPE, cutoff + 2_000, false), Source::CatchUp);
     n.settle();
     assert_eq!(n.server.shown().len(), 1);
+}
+
+/// A made-up picture of `side` a side, as a profile's is stored.
+fn stored_picture(side: u32) -> teams_store::StoredPicture {
+    teams_store::StoredPicture {
+        media_type: "image/png".to_owned(),
+        bytes: png(side),
+    }
+}
+
+fn png(side: u32) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    image::RgbaImage::from_pixel(side, side, image::Rgba([200, 120, 40, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .unwrap();
+    bytes
+}
+
+/// `mri` with a stored picture, as their profile has them.
+fn pictured(n: &Notifying, mri: &str, name: &str) {
+    n.rig.core.people.lock().unwrap().insert(
+        mri.to_owned(),
+        teams_core::Person {
+            mri: mri.to_owned(),
+            name: Some(name.to_owned()),
+            from: Some(teams_core::NameFrom::Graph),
+            picture: Some(stored_picture(160)),
+            looking: false,
+        },
+    );
+}
+
+fn shape_of(notice: &Notice) -> Option<(u32, u32, PictureShape)> {
+    notice
+        .picture
+        .as_ref()
+        .map(|picture| (picture.width(), picture.height(), picture.shape()))
+}
+
+#[test]
+fn a_banner_shows_its_sender_s_picture_and_a_collapsed_one_only_in_a_1_1_chat() {
+    let n = Notifying::start(Settings::default());
+    pictured(&n, LAB_B, "Bee");
+    let person = Some((96, 96, PictureShape::Circle));
+    n.arrive(message(AB, "1", LAB_B, "<p>one</p>", 5_000), Source::Delivery);
+    // Cee has no stored picture: the app's icon alone
+    n.arrive(message(TRIO, "2", LAB_C, "<p>two</p>", 5_001), Source::Delivery);
+    n.arrive(message(TRIO, "3", LAB_B, "<p>three</p>", 5_002), Source::Delivery);
+    n.settle();
+    let shown = n.server.shown();
+    assert_eq!(shown.len(), 3);
+    assert_eq!((shown[0].summary.as_str(), shape_of(&shown[0])), ("Bee", person));
+    assert_eq!(
+        (shown[1].summary.as_str(), shape_of(&shown[1])),
+        ("Cee in Lab trio", None)
+    );
+    assert_eq!(shape_of(&shown[2]), person);
+    let picture = shown[0].picture.as_ref().unwrap();
+    assert_eq!(picture.rgba()[..4], [200, 120, 40, 0], "a corner is outside the circle");
+
+    // collapsed: a 1:1 chat's banner is about the other person; a group's about the chat
+    for (id, at) in [("4", 6_000), ("5", 6_001), ("6", 6_002)] {
+        n.arrive(message(AB, id, LAB_B, "<p>more</p>", at), Source::Delivery);
+        n.arrive(
+            message(TRIO, &format!("t{id}"), LAB_B, "<p>more</p>", at),
+            Source::Delivery,
+        );
+    }
+    n.settle();
+    let collapsed: Vec<Notice> = n
+        .server
+        .shown()
+        .into_iter()
+        .filter(|notice| notice.kind == NoticeKind::Collapsed)
+        .collect();
+    assert_eq!(collapsed.len(), 2, "{collapsed:?}");
+    assert_eq!(
+        (collapsed[0].conversation.as_str(), shape_of(&collapsed[0])),
+        (AB, person)
+    );
+    assert_eq!(
+        (collapsed[1].conversation.as_str(), shape_of(&collapsed[1])),
+        (TRIO, None)
+    );
+}
+
+#[test]
+fn a_sender_s_picture_that_doesn_t_decode_shows_no_picture() {
+    let n = Notifying::start(Settings::default());
+    pictured(&n, LAB_B, "Bee");
+    if let Some(person) = n.rig.core.people.lock().unwrap().get_mut(LAB_B) {
+        person.picture = Some(teams_store::StoredPicture {
+            media_type: "image/jpeg".to_owned(),
+            bytes: vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0],
+        });
+    }
+    n.arrive(message(AB, "1", LAB_B, "<p>one</p>", 5_000), Source::Delivery);
+    n.settle();
+    let shown = n.server.shown();
+    assert_eq!((shown[0].summary.as_str(), shown[0].picture.as_ref()), ("Bee", None));
+}
+
+#[test]
+fn an_app_item_s_banner_shows_the_app_s_cached_tile_and_never_waits_for_one() {
+    const TILE: &str = "https://res.cdn.office.net/teamsappdata/evergreen-assets/apps/made-up_largeImage.png?v=1";
+    let n = Notifying::start(Settings::default());
+    *n.rig.core.app_settings.lock().unwrap() = Some(teams_proto::UserGraphSettings::default());
+    let definition = serde_json::json!([{ "id": APP, "name": "Made-up flows", "largeImageUrl": TILE }]);
+    let definition = teams_proto::AppDefinitions::read_answer(definition.to_string().as_bytes())
+        .pop()
+        .unwrap()
+        .definition;
+    n.rig
+        .core
+        .app_definitions
+        .lock()
+        .unwrap()
+        .insert(APP.to_owned(), definition);
+    n.rig.core.app_pictures.lock().unwrap().insert(
+        TILE.to_owned(),
+        Arc::new(teams_proto::PastedPicture {
+            format: teams_proto::PastedFormat::Png,
+            bytes: png(192),
+        }),
+    );
+
+    // the engine has neither the definition nor the tile yet: the banner shows without, and both are read for later
+    *n.rig.core.apps_uncached.lock().unwrap() = true;
+    n.arrive(app_item("1", APP_TYPE, 5_000, false), Source::Delivery);
+    n.settle();
+    assert_eq!(n.server.shown()[0].picture, None);
+    let asked = n.rig.core.asked();
+    let at = |name: &str| {
+        asked
+            .iter()
+            .position(|asked| *asked == name)
+            .unwrap_or_else(|| panic!("{name} never asked: {asked:?}"))
+    };
+    assert!(at("cached_app_definition") < at("app_definition"), "{asked:?}");
+    assert!(at("app_definition") < at("app_picture"), "{asked:?}");
+
+    // once the engine has them: the app's tile, square
+    *n.rig.core.apps_uncached.lock().unwrap() = false;
+    n.arrive(app_item("2", APP_TYPE, 6_000, false), Source::Delivery);
+    n.settle();
+    let shown = n.server.shown();
+    assert_eq!(shape_of(&shown[1]), Some((96, 96, PictureShape::Square)));
+    assert_eq!(shown[1].picture.as_ref().unwrap().rgba()[..4], [200, 120, 40, 255]);
 }

@@ -169,6 +169,21 @@ pub struct LaunchFailed {
     pub stopped: Task<()>,
 }
 
+/// The desktop of the first account's `shell`, as `account` names it; no ringtone, no banner pictures.
+fn desktop_parts(app_id: &'static str, shell: ShellParts, account: &PersonalAccount, read_only: bool) -> DesktopParts {
+    DesktopParts {
+        app_id,
+        app_name: TITLE.into(),
+        title: TITLE.into(),
+        shell,
+        account_name: display_name(account).to_owned().into(),
+        account_detail: account.upn.clone().into(),
+        can_add: !read_only,
+        ringer: None,
+        pictures_dir: None,
+    }
+}
+
 /// Starts the app inside GPUI's `run`: a bridge per account holding its engine, the window with every account in it,
 /// the sign-out watches, the bus, and what the rail asks (an account added or removed) and the quit.
 ///
@@ -209,21 +224,12 @@ pub fn launch<S: SecretStore + 'static>(cx: &mut App, launch: Launch<S>) -> Resu
         settings: settings.clone(),
         trace: Arc::clone(&trace),
     };
-    let desktop = cx.new(|cx| {
-        Desktop::new(
-            DesktopParts {
-                app_id,
-                app_name: TITLE.into(),
-                title: TITLE.into(),
-                shell: parts,
-                account_name: display_name(&first.account).to_owned().into(),
-                account_detail: first.account.upn.clone().into(),
-                can_add: !read_only,
-                ringer: first.calls.and_then(|calls| calls.ringer),
-            },
-            cx,
-        )
-    });
+    let parts = DesktopParts {
+        ringer: first.calls.and_then(|calls| calls.ringer),
+        pictures_dir: Some(runner.setup.paths.data_dir().to_path_buf()),
+        ..desktop_parts(app_id, parts, &first.account, read_only)
+    };
+    let desktop = cx.new(|cx| Desktop::new(parts, cx));
     limit_lab_accounts(&desktop, &runner, cx);
     let running = cx.new(|_| Running {
         desktop: desktop.clone(),

@@ -1,7 +1,10 @@
-//! Live-process `WinRT` notifications, with explicit replacement, withdrawal and global account-safe IDs.
+//! Live-process `WinRT` notifications, with explicit replacement, withdrawal and global account-safe IDs. A notice's
+//! picture is a PNG in the app's banner folder ([`BannerFiles`]), named by the toast's key, in the app logo's place;
+//! it is removed with its toast (closed, replaced, dismissed, or the run's stop).
 use super::{Apartment, activation::Activator, registration};
+use crate::notify::picture::{file_key, toast_image};
 use crate::notify::{
-    ANSWER_ACTION, DECLINE_ACTION, DEFAULT_ACTION, Notice, NoticeKind, NotificationServer, escape_markup,
+    ANSWER_ACTION, BannerFiles, DECLINE_ACTION, DEFAULT_ACTION, Notice, NoticeKind, NotificationServer, escape_markup,
 };
 use futures_util::future::BoxFuture;
 use std::{
@@ -56,7 +59,12 @@ impl Drop for Notifications {
     }
 }
 impl Notifications {
-    pub(crate) async fn start(app_id: String, name: String) -> Result<(Self, Events), String> {
+    /// The toasts of app `app_id` named `name`, their pictures written to `files` (none: toasts without pictures).
+    pub(crate) async fn start(
+        app_id: String,
+        name: String,
+        files: Option<BannerFiles>,
+    ) -> Result<(Self, Events), String> {
         let (commands, queue) = mpsc::channel();
         let (events, activations) = async_channel::unbounded();
         let (ready, started) = oneshot::channel();
@@ -73,7 +81,7 @@ impl Notifications {
                     })
                     .map_err(|e| e.to_string())?;
                     let registered = registration::register(&app_id, &name).map_err(|e| e.to_string())?;
-                    let center = Center::new(app_id, callbacks, events).map_err(|e| e.to_string())?;
+                    let center = Center::new(app_id, callbacks, events, files).map_err(|e| e.to_string())?;
                     Ok((apartment, activator, registered, center))
                 });
                 match result {
@@ -115,6 +123,8 @@ struct Shown {
     toast: ToastNotification,
     live: Arc<AtomicBool>,
     key: String,
+    /// Its picture's file, by its key in the banner folder.
+    picture: Option<String>,
 }
 struct Center {
     app_id: HSTRING,
@@ -126,12 +136,14 @@ struct Center {
     shown: HashMap<u32, Shown>,
     next: u32,
     generation: u64,
+    files: Option<BannerFiles>,
 }
 impl Center {
     fn new(
         app_id: String,
         commands: mpsc::Sender<Command>,
         events: async_channel::Sender<Activation>,
+        files: Option<BannerFiles>,
     ) -> windows::core::Result<Self> {
         let app_id = HSTRING::from(app_id);
         Ok(Self {
@@ -147,6 +159,7 @@ impl Center {
             shown: HashMap::new(),
             next: 0,
             generation: 0,
+            files,
         })
     }
     fn run(&mut self, queue: &mpsc::Receiver<Command>) {
@@ -160,8 +173,10 @@ impl Center {
                 }
                 Command::Close(id) => self.close(id),
                 Command::Forget(id, live) => {
-                    if self.shown.get(&id).is_some_and(|shown| Arc::ptr_eq(&shown.live, &live)) {
-                        self.shown.remove(&id);
+                    if self.shown.get(&id).is_some_and(|shown| Arc::ptr_eq(&shown.live, &live))
+                        && let Some(shown) = self.shown.remove(&id)
+                    {
+                        self.drop_picture(&shown);
                     }
                 }
                 Command::Activate(args) => self.activated(&args),
@@ -171,6 +186,16 @@ impl Center {
         let ids: Vec<u32> = self.shown.keys().copied().collect();
         for id in ids {
             self.close(id);
+        }
+        if let Some(files) = &self.files {
+            files.clear();
+        }
+    }
+
+    /// Removes `shown`'s picture file, if it has one.
+    fn drop_picture(&self, shown: &Shown) {
+        if let (Some(files), Some(picture)) = (&self.files, &shown.picture) {
+            files.remove(picture);
         }
     }
     fn show(&mut self, notice: &Notice, replaces: u32) -> windows::core::Result<u32> {
@@ -186,7 +211,19 @@ impl Center {
         let document = XmlDocument::new()?;
         self.generation += 1;
         let key = format!("{}-{}-{}", self.group, id, self.generation);
-        document.LoadXml(&HSTRING::from(xml(notice, &key)))?;
+        let picture_key = file_key(&key);
+        let picture = notice.picture.as_ref().and_then(|picture| {
+            let path = self.files.as_ref()?.write(&picture_key, picture)?;
+            Some(toast_image(&path, picture.shape()))
+        });
+        let loaded = document.LoadXml(&HSTRING::from(xml(notice, &key, picture.as_deref())));
+        if picture.is_some()
+            && loaded.is_err()
+            && let Some(files) = &self.files
+        {
+            files.remove(&picture_key);
+        }
+        loaded?;
         let toast = ToastNotification::CreateToastNotification(&document)?;
         toast.SetGroup(&self.group)?;
         toast.SetTag(&HSTRING::from(id.to_string()))?;
@@ -194,8 +231,15 @@ impl Center {
         let live = Arc::new(AtomicBool::new(true));
         self.handlers(&toast, id, &live)?;
         self.notifier.Show(&toast)?;
-        if let Some(old) = self.shown.insert(id, Shown { toast, live, key }) {
+        let shown = Shown {
+            toast,
+            live,
+            key,
+            picture: picture.map(|_| picture_key),
+        };
+        if let Some(old) = self.shown.insert(id, shown) {
             old.live.store(false, Ordering::Release);
+            self.drop_picture(&old);
         }
         Ok(id)
     }
@@ -241,6 +285,7 @@ impl Center {
         if let Some(shown) = self.shown.remove(&id) {
             shown.live.store(false, Ordering::Release);
             let _ = self.notifier.Hide(&shown.toast);
+            self.drop_picture(&shown);
             if let Ok(history) = ToastNotificationManager::History() {
                 let _ = history.RemoveGroupedTagWithId(&HSTRING::from(id.to_string()), &self.group, &self.app_id);
             }
@@ -251,8 +296,9 @@ fn valid_action(action: &str) -> bool {
     matches!(action, DEFAULT_ACTION | ANSWER_ACTION | DECLINE_ACTION)
 }
 
-/// Only an opaque per-notice key and fixed actions are launch arguments. Display text is XML-escaped and remains plain text.
-fn xml(notice: &Notice, key: &str) -> String {
+/// Only an opaque per-notice key and fixed actions are launch arguments. Display text is XML-escaped and remains plain
+/// text; `picture` is the notice's picture's element ([`toast_image`]), when it has one.
+fn xml(notice: &Notice, key: &str, picture: Option<&str>) -> String {
     let call = notice.kind == NoticeKind::Call;
     let scenario = if call {
         " scenario=\"incomingCall\" duration=\"long\" useButtonStyle=\"true\""
@@ -269,8 +315,9 @@ fn xml(notice: &Notice, key: &str) -> String {
     // Message sounds follow Windows notification preferences; the app's ringer owns call audio.
     let audio = if call { r#"<audio silent="true"/>"# } else { "" };
     format!(
-        r#"<toast launch="{key}:default"{scenario}><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual>{actions}{audio}</toast>"#,
+        r#"<toast launch="{key}:default"{scenario}><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text>{}</binding></visual>{actions}{audio}</toast>"#,
         escape_markup(&notice.summary),
-        escape_markup(&notice.body)
+        escape_markup(&notice.body),
+        picture.unwrap_or_default()
     )
 }
