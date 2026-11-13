@@ -3711,3 +3711,173 @@ async fn an_offline_blocked_message_recovers_its_copy_from_history_and_keeps_it_
     );
     a.shutdown();
 }
+
+async fn answer_blocked_history(lab: &Lab, shapes: &Value) {
+    let mut newer = shapes["sent"].clone();
+    newer["id"] = json!("1760000102000");
+    lab.mock
+        .answer_next(
+            "GET",
+            &format!("/conversations/{AB_CHAT}/messages"),
+            200,
+            &json!({"messages": [newer, shapes["blocked"]]}),
+        )
+        .await;
+}
+
+async fn copy_reads(lab: &Lab, shapes: &Value) -> usize {
+    let suffix = format!(
+        "/conversations/48:generic/messages/{}",
+        shapes["copy"]["id"].as_str().unwrap()
+    );
+    lab.mock
+        .received_requests()
+        .await
+        .iter()
+        .filter(|request| decoded(request.url.path()).ends_with(&suffix))
+        .count()
+}
+
+async fn delivery_finished(lab: &Lab, a: &mut Native) {
+    lab.trouter
+        .deliver_chat(LAB_A, &control_delivery(AB_CHAT, LAB_B, "Control/Typing"));
+    a.event(|event| matches!(event, Event::Typing { .. }).then_some(()))
+        .await;
+}
+
+async fn native_with_sent_history(lab: &Lab, shapes: &Value) -> Native {
+    lab.mock
+        .answer_next(
+            "GET",
+            &format!("/conversations/{AB_CHAT}/messages"),
+            200,
+            &json!({"messages": [shapes["sent"]]}),
+        )
+        .await;
+    let a = native(
+        lab,
+        LAB_A,
+        How {
+            push: false,
+            ..How::default()
+        },
+    );
+    assert!(a.handle.sync().await.unwrap().failed.is_empty());
+    lab.mock
+        .post_as(LAB_A, AB_CHAT, "<p>made up newer message</p>")
+        .unwrap();
+    a
+}
+
+#[tokio::test]
+async fn a_failed_blocked_copy_read_keeps_history_readable_and_retries_later() {
+    for status in [403, 410, 400, 500, 200] {
+        let lab = Lab::start().await;
+        let shapes = blocked_shapes();
+        let id = shapes["blocked"]["id"].as_str().unwrap();
+        let copy_id = shapes["copy"]["id"].as_str().unwrap();
+        let mut a = native_with_sent_history(&lab, &shapes).await;
+        answer_blocked_history(&lab, &shapes).await;
+        lab.mock
+            .answer_next("GET", &format!("/messages/{copy_id}"), status, &json!({}))
+            .await;
+        let report = a.handle.sync().await.unwrap();
+        assert!(report.failed.is_empty(), "{status}: {report:?}");
+        assert!(report.unreadable.is_empty(), "{status}: {report:?}");
+        let fallback = a.stored(AB_CHAT, id).await;
+        assert_eq!(fallback.content, shapes["sent"]["content"]);
+        assert_eq!(files_of(&fallback), 1);
+        assert_eq!(
+            a.stored(AB_CHAT, "1760000102000").await.content,
+            shapes["sent"]["content"]
+        );
+        assert_eq!(copy_reads(&lab, &shapes).await, 1);
+
+        answer_blocked_history(&lab, &shapes).await;
+        lab.mock
+            .answer_next("GET", &format!("/messages/{copy_id}"), 200, &shapes["copy"])
+            .await;
+        a.handle.sync_conversation(AB_CHAT).await.unwrap();
+        assert_eq!(a.stored(AB_CHAT, id).await.content, shapes["copy"]["content"]);
+        assert_eq!(copy_reads(&lab, &shapes).await, 2);
+        assert!(
+            a.drain()
+                .await
+                .iter()
+                .all(|event| !matches!(event, Event::Failed { .. }))
+        );
+        a.shutdown();
+    }
+}
+
+#[tokio::test]
+async fn a_failed_blocked_copy_read_on_delivery_keeps_the_fallback_without_failing_catch_up() {
+    for status in [403, 500] {
+        let lab = Lab::start().await;
+        let mut a = native(&lab, LAB_A, How::default());
+        a.ready().await;
+        let row = a.send(AB_CHAT, "made up fallback").await;
+        let id = id_of(&row);
+        a.message_event(AB_CHAT, &id).await;
+        let shapes = blocked_shapes();
+        let copy_id = shapes["copy"]["id"].as_str().unwrap();
+        lab.mock
+            .answer_next("GET", &format!("/messages/{copy_id}"), status, &json!({}))
+            .await;
+        lab.trouter
+            .deliver_chat(LAB_A, &blocked_update(&shapes, &id, &row.client_message_id));
+        let (_, _, message) = a.message_event(AB_CHAT, &id).await;
+        assert!(message.content.contains("made up fallback"));
+        assert_eq!(message.edit_time, None);
+        delivery_finished(&lab, &mut a).await;
+        assert!(
+            a.drain()
+                .await
+                .iter()
+                .all(|event| !matches!(event, Event::Failed { .. }))
+        );
+        assert_eq!(copy_reads(&lab, &shapes).await, 1);
+        deliver_copy(&lab, &shapes);
+        let (_, _, message) = a.message_event(AB_CHAT, &id).await;
+        assert_eq!(message.content, shapes["copy"]["content"]);
+        a.shutdown();
+    }
+}
+
+#[tokio::test]
+async fn missing_or_rejected_blocked_copies_are_read_once_per_session_and_push_can_still_restore_them() {
+    for status in [404, 200] {
+        let lab = Lab::start().await;
+        let mut a = native(&lab, LAB_A, How::default());
+        a.ready().await;
+        let shapes = blocked_shapes();
+        let id = shapes["blocked"]["id"].as_str().unwrap();
+        let copy_id = shapes["copy"]["id"].as_str().unwrap();
+        let mut rejected = shapes["copy"].clone();
+        rejected["from"] = json!(format!("{CHAT_BASE}/v1/users/ME/contacts/{LAB_B}"));
+        lab.mock
+            .answer_next("GET", &format!("/messages/{copy_id}"), status, &rejected)
+            .await;
+        for _ in 0..2 {
+            answer_blocked_history(&lab, &shapes).await;
+            a.handle.sync_conversation(AB_CHAT).await.unwrap();
+            assert_eq!(a.stored(AB_CHAT, id).await.content, "");
+        }
+        lab.trouter
+            .deliver_chat(LAB_A, &blocked_update(&shapes, id, "7100000000000000001"));
+        a.message_event(AB_CHAT, id).await;
+        delivery_finished(&lab, &mut a).await;
+        assert!(
+            a.drain()
+                .await
+                .iter()
+                .all(|event| !matches!(event, Event::Failed { .. }))
+        );
+        assert_eq!(copy_reads(&lab, &shapes).await, 1);
+        deliver_copy(&lab, &shapes);
+        let (_, _, message) = a.message_event(AB_CHAT, id).await;
+        assert_eq!(message.content, shapes["copy"]["content"]);
+        assert_eq!(files_of(&message), 1);
+        a.shutdown();
+    }
+}

@@ -95,7 +95,7 @@
 //!
 //! M1 Task 17 (`docs/plans/20261020-native-teams-m1-headless-chat-core.md`).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::{Future, pending};
 use std::pin::{Pin, pin};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -483,6 +483,7 @@ pub struct CatchUp<C, T> {
     /// What the store is used for while a read waits ([`CatchUp::with_meanwhile`]).
     meanwhile: Option<Arc<dyn Meanwhile>>,
     scheduling: Mutex<Scheduling>,
+    tried_blocked_copies: Mutex<HashSet<String>>,
 }
 
 impl<C, T> std::fmt::Debug for CatchUp<C, T> {
@@ -507,6 +508,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             changes: Mutex::new(Changes::default()),
             meanwhile: None,
             scheduling: Mutex::default(),
+            tried_blocked_copies: Mutex::default(),
         }
     }
 
@@ -1100,7 +1102,8 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
     /// Fetches an own blocked message's missing copy by id, including messages read after an offline interval.
     ///
     /// # Errors
-    /// [`CatchUpError`] when the read or restoration fails. A missing copy (404) leaves the fallback in place.
+    /// [`CatchUpError::Store`] when restoration fails. Read failures leave the fallback in place and permit another
+    /// attempt later; missing (404) or rejected copies are tried only once during this account session.
     pub(crate) async fn recover_blocked_copy(
         &self,
         store: &mut Store,
@@ -1118,9 +1121,27 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         if store.blocked_copy(id)?.is_some() {
             return Ok(());
         }
+        if !self
+            .tried_blocked_copies
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id.to_owned())
+        {
+            return Ok(());
+        }
         let reads = ChatReads::new(&self.client);
-        if let Some(copy) = self.waiting(store, reads.blocked_copy(id)).await? {
-            self.receive_blocked_copy(store, &copy)?;
+        match self.waiting(store, reads.blocked_copy(id)).await {
+            Ok(Some(copy)) => {
+                self.receive_blocked_copy(store, &copy)?;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                self.tried_blocked_copies
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(id);
+                log::debug!("sync: blocked copy {id} wasn't read; kept the message's fallback: {error}");
+            }
         }
         Ok(())
     }

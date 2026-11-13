@@ -866,7 +866,8 @@ check; structure only, nothing copied) and read from the web client's message re
   `GET v1/users/ME/conversations/48:generic/messages/<copy>?view=msnp24Equivalent|supportsMessageProperties`.
   The saved web transport bundle (`precompiled-web-worker-inner~services_i`, message request builder) shows that
   request; the message resolver's generic-stream branch uses its get-message workflow directly. A 404 leaves the
-  fallback and notice in place; other read failures are reported for catch-up. The client never adds `48:generic`
+  fallback and notice in place. Missing or rejected copies are tried once per account session; other read failures
+  are logged at debug, leave the chat's sync running and allow a later read to retry. The client never adds `48:generic`
   as a conversation (deliveries and the conversation list alike), keeps the stored edit time
   through a verdict's update, and words the notice as above (`crates/teams-ui/src/policy_notice.rs`).
 
