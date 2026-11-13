@@ -1,9 +1,11 @@
 //! A meeting shown from elsewhere (an Activity meeting item, which Teams opens at the meeting's details): the calendar
 //! moves to the meeting's day (a work week that leaves the day out widens to the whole week), scrolls to its start and
-//! opens its card once the day's events name it: by the event's id, else by its time, else an occurrence of the series
-//! the id names (the one on the meeting's day first). Events read before the ask (the store's, an earlier visit's) open
-//! it only by its id: a new invitation may not be among them while another meeting is at its time. Only a read
-//! answered after the ask settles that the day has no such event; the day stays shown then.
+//! opens its card once the day's events name it: by the event's id, else an occurrence on the meeting's day of the series
+//! the id names (the one at its time first), else by its time, else another occurrence of the series. Events read
+//! before the ask (the store's, an earlier visit's) open it only by its id: a new invitation may not be among them
+//! while another meeting is at its time. Only a read answered after the ask settles that the day has no such event;
+//! the day stays shown then. A read that failed settles it too, matching by the id alone: what is shown is still what
+//! was read before the ask.
 
 use chrono::{Datelike as _, NaiveDateTime, TimeZone as _};
 use gpui::Context;
@@ -37,7 +39,7 @@ impl CalendarView {
             }
         }
         self.reveal = Some(reveal);
-        self.reveal_found(false, cx);
+        self.reveal_found(false, false, cx);
         if self.reveal.is_some() {
             self.read(true, cx);
         }
@@ -50,14 +52,15 @@ impl CalendarView {
         self.reveal.as_ref()
     }
 
-    /// Opens the card of the meeting being revealed when the events shown name it; until `settled` (a read answered
-    /// since the ask, none pending) only by its id. Settled, it gives up when they don't.
-    pub(super) fn reveal_found(&mut self, settled: bool, cx: &mut Context<Self>) {
+    /// Opens the card of the meeting being revealed when the events shown name it; only by its id unless `settled` (a
+    /// read answered since the ask, none pending) and `fresh` (that read answered the span shown with its events).
+    /// Settled, it gives up when they don't.
+    pub(super) fn reveal_found(&mut self, settled: bool, fresh: bool, cx: &mut Context<Self>) {
         let Some(reveal) = self.reveal.as_ref() else {
             return;
         };
         let found = match self.loaded.get(&self.span()) {
-            Some(Loaded::Events(events) | Loaded::Stored(events)) => find(events, reveal, settled),
+            Some(Loaded::Events(events) | Loaded::Stored(events)) => find(events, reveal, settled && fresh),
             Some(Loaded::Failed) | None => None,
         };
         if let Some(shown) = found {
@@ -69,7 +72,7 @@ impl CalendarView {
     }
 }
 
-/// The event of `events` that `reveal` names: by its id only, unless `fallbacks` (its time, its series) may be used.
+/// The event of `events` that `reveal` names: by its id only, unless `fallbacks` (its series, its time) may be used.
 fn find(events: &[Shown], reveal: &Reveal, fallbacks: bool) -> Option<Shown> {
     let own = || events.iter().filter(|shown| shown.owner.is_none());
     let id = reveal.event.as_deref();
@@ -82,19 +85,22 @@ fn find(events: &[Shown], reveal: &Reveal, fallbacks: bool) -> Option<Shown> {
         return None;
     }
     let time = reveal.time.and_then(|(start, end)| local(start).zip(local(end)));
-    if let Some((start, end)) = time {
-        let at_time: Vec<&Shown> = own().filter(|shown| shown.start == start && shown.end == end).collect();
-        let meeting = at_time.iter().find(|shown| shown.event.online).or(at_time.first());
-        if let Some(shown) = meeting {
-            return Some((*shown).clone());
-        }
-    }
-    let id = id?;
+    let at = |shown: &Shown| time.is_some_and(|(start, end)| shown.start == start && shown.end == end);
     let series: Vec<&Shown> = own()
-        .filter(|shown| shown.event.series_master_id.as_deref() == Some(id))
+        .filter(|shown| id.is_some() && shown.event.series_master_id.as_deref() == id)
         .collect();
-    let on_day = time.and_then(|(start, _)| series.iter().find(|shown| shown.start.date() == start.date()));
-    on_day.or(series.first()).map(|shown| (*shown).clone())
+    // an occurrence of the series on the meeting's day beats an unrelated meeting at its (maybe moved) time
+    let on_day: Vec<&Shown> = series
+        .iter()
+        .copied()
+        .filter(|shown| time.is_some_and(|(start, _)| shown.start.date() == start.date()))
+        .collect();
+    if let Some(shown) = on_day.iter().find(|shown| at(shown)).or(on_day.first()) {
+        return Some((*shown).clone());
+    }
+    let at_time: Vec<&Shown> = own().filter(|shown| at(shown)).collect();
+    let meeting = at_time.iter().find(|shown| shown.event.online).or(at_time.first());
+    meeting.or(series.first()).map(|shown| (*shown).clone())
 }
 
 /// `ms` in local time.

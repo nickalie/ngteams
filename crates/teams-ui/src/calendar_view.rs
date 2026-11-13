@@ -872,7 +872,7 @@ impl CalendarView {
         self.loaded.insert(span, Loaded::Stored(Rc::new(shown(events))));
         self.trace
             .record(&TraceLine::new("calendar", "stored").kind(self.mode.key()));
-        self.reveal_found(false, cx);
+        self.reveal_found(false, false, cx);
         cx.notify();
     }
 
@@ -894,6 +894,7 @@ impl CalendarView {
         } else {
             Err(teams_core::EngineError::Stopped)
         };
+        let answered = answer.is_ok();
         match answer {
             Ok(events) => {
                 self.loaded.insert(span, Loaded::Events(Rc::new(shown(events))));
@@ -913,7 +914,7 @@ impl CalendarView {
             self.read(again, cx);
         }
         let settled = self.reading.is_none();
-        self.reveal_found(settled, cx);
+        self.reveal_found(settled, answered && self.span() == span, cx);
         cx.notify();
     }
 

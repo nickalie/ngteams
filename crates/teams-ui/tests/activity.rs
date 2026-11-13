@@ -761,6 +761,52 @@ fn an_item_opens_its_chat_while_the_first_chat_list_load_is_unfinished() {
 }
 
 #[test]
+fn the_newest_item_opens_its_chat_while_the_first_chat_list_load_is_unfinished() {
+    for first_rows in [0, 50] {
+        let rig = rig();
+        let messages = [
+            item(1000, "mentionInChat", "person", (LAB_B, "Lab B"), 500, true),
+            item(2000, "reactionInChat", "heart", (LAB_C, "Lab C"), 600, false),
+        ];
+        *rig.core.activity.lock().unwrap() = ActivityFeed::new(&messages, Some(1500), None);
+        rig.core
+            .conversations
+            .lock()
+            .unwrap()
+            .extend((0..first_rows).map(|index| Conversation {
+                id: format!("19:made-up-older-{index}@thread.v2"),
+                kind: ConversationKind::Group,
+                topic: Some(format!("Made-up chat {index}")),
+                version: 1,
+                last_activity: Some(2),
+            }));
+        rig.core.hold_people.lock().unwrap().insert(LAB_B.to_owned());
+        let (shell, cx) = shell_window(&rig);
+        let list = cx.update(|_, cx| shell.read(cx).list().clone());
+        cx.update(|_, cx| {
+            let list = list.read(cx);
+            assert!(list.loading());
+            assert!(list.row(GROUP).is_none());
+        });
+        // the rail opens the pane's newest item, whose chat has no row yet: it opens, nothing said
+        click(cx, "rail-activity");
+        assert_eq!(
+            cx.update(|_, cx| shell.read(cx).main().clone()),
+            Main::Chat(GROUP.to_owned())
+        );
+        assert_eq!(cx.update(|_, cx| shell.read(cx).toast().cloned()), None);
+        assert!(read(&view(&shell, cx), "2000", cx));
+
+        rig.core.hold_people.lock().unwrap().clear();
+        let held: Vec<_> = rig.core.held.lock().unwrap().drain(..).collect();
+        for (answer, person) in held {
+            answer.send(Ok(person));
+        }
+        cx.run_until_parked();
+    }
+}
+
+#[test]
 fn an_item_whose_chat_is_gone_is_read_and_says_so_without_opening_a_chat() {
     let rig = rig();
     let mut messages = vec![in_chat(
@@ -1093,11 +1139,13 @@ fn a_weekend_meeting_widens_the_work_week_to_its_week() {
 #[test]
 fn a_series_occurrence_on_the_meeting_s_day_comes_first() {
     let rig = rig();
-    // moved: at none of the occurrences' times, so found by its series, on its day (Tuesday), not Monday's
+    // moved: at none of the occurrences' times, so found by its series, on its day (Tuesday), not Monday's, and not
+    // by another meeting at its old time
     let messages = [meeting_item(5000, "made-up-series", (local_ms(9), local_ms(10)), true)];
     *rig.core.activity.lock().unwrap() = ActivityFeed::new(&messages, None, None);
     rig.core.calendar.lock().unwrap().events = vec![
         calendar_event_on(26, "made-up-monday", 12, Some("made-up-series")),
+        calendar_event("made-up-nine", 9, None),
         calendar_event("made-up-tuesday", 12, Some("made-up-series")),
     ];
     let (shell, cx) = shell_window(&rig);
@@ -1138,6 +1186,46 @@ fn events_read_before_the_ask_open_a_meeting_only_by_its_id() {
         .push(calendar_event("made-up-new", 10, None));
     open("6000", cx);
     assert_eq!(carded(&shell, cx).as_deref(), Some("made-up-new"));
+}
+
+#[test]
+fn a_failed_fresh_read_opens_a_meeting_only_by_its_id() {
+    for stopped in [false, true] {
+        let error = || {
+            if stopped {
+                teams_core::EngineError::Stopped
+            } else {
+                teams_core::EngineError::CalendarUnread
+            }
+        };
+        let rig = rig();
+        let messages = [
+            meeting_item(6000, "made-up-new", (local_ms(10), local_ms(11)), true),
+            meeting_item(5000, "made-up-first", (local_ms(14), local_ms(15)), true),
+        ];
+        *rig.core.activity.lock().unwrap() = ActivityFeed::new(&messages, None, None);
+        rig.core.calendar.lock().unwrap().events = vec![
+            calendar_event("made-up-first", 14, None),
+            calendar_event("made-up-other", 10, None),
+        ];
+        let (shell, cx) = shell_window(&rig);
+        let pane = view(&shell, cx);
+        click(cx, "rail-activity");
+        let open = |id: &str, cx: &mut VisualTestContext| {
+            cx.update(|_, cx| pane.update(cx, |pane, cx| pane.open(id, cx)));
+            cx.run_until_parked();
+        };
+        open("5000", cx);
+        assert_eq!(carded(&shell, cx).as_deref(), Some("made-up-first"));
+        // a new invitation at another meeting's time, and the fresh read fails: what was read before the ask is
+        // still shown, so the other meeting doesn't open; the day stays shown
+        rig.core.calendar.lock().unwrap().answers.push_back(Err(error()));
+        open("6000", cx);
+        assert_eq!(carded(&shell, cx), None, "{:?}", error());
+        let calendar = calendar(&shell, cx);
+        assert!(cx.update(|_, cx| calendar.read(cx).revealing().is_none()));
+        assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), Main::Calendar);
+    }
 }
 
 #[test]
