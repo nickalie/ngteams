@@ -12,6 +12,8 @@ const DMA_BUF_IOCTL_SYNC: libc::Ioctl = 0x4008_6200;
 const SYNC_READ: u64 = 1;
 const SYNC_START: u64 = 0;
 const SYNC_END: u64 = 4;
+// A persistently unavailable exporter must not hold up PipeWire's process callback or shutdown.
+const MAX_SYNC_RETRIES: usize = 8;
 
 /// The bytes `offset..offset + len` of the DMA-BUF `fd`, read between the starting and ending sync; `None` when it
 /// is shorter, can't be mapped or fails either sync. Only `ENOTTY` permits unsynced reads of the sandbox's memfds.
@@ -63,9 +65,14 @@ fn sync(fd: BorrowedFd<'_>, step: u64) -> io::Result<()> {
 }
 
 fn sync_with(step: u64, mut ioctl: impl FnMut(u64) -> io::Result<()>) -> io::Result<()> {
+    let mut retries = 0;
     loop {
         match ioctl(SYNC_READ | step) {
-            Err(error) if matches!(error.raw_os_error(), Some(libc::EINTR | libc::EAGAIN)) => {}
+            Err(error)
+                if matches!(error.raw_os_error(), Some(libc::EINTR | libc::EAGAIN)) && retries < MAX_SYNC_RETRIES =>
+            {
+                retries += 1;
+            }
             Err(error) if error.raw_os_error() == Some(libc::ENOTTY) => return Ok(()),
             result => return result,
         }
@@ -164,15 +171,41 @@ mod tests {
     }
 
     #[test]
+    fn persistent_retryable_sync_errors_return_the_last_error() {
+        for step in [SYNC_START, SYNC_END] {
+            for code in [libc::EINTR, libc::EAGAIN] {
+                let mut attempts = 0;
+                let error = sync_with(step, |flags| {
+                    assert_eq!(flags, SYNC_READ | step);
+                    attempts += 1;
+                    assert!(attempts <= MAX_SYNC_RETRIES + 1);
+                    Err(io::Error::from_raw_os_error(code))
+                })
+                .unwrap_err();
+                assert_eq!(error.raw_os_error(), Some(code));
+                assert_eq!(attempts, MAX_SYNC_RETRIES + 1);
+            }
+        }
+    }
+
+    #[test]
     fn a_frame_is_returned_only_after_both_syncs_succeed() {
         let mut file = tempfile::tempfile().unwrap();
         file.write_all(&[1, 2, 3, 4]).unwrap();
-        for failed_step in [None, Some(SYNC_START), Some(SYNC_END)] {
+        for (failed_step, code) in [
+            (None, 0),
+            (Some(SYNC_START), libc::EIO),
+            (Some(SYNC_END), libc::EIO),
+            (Some(SYNC_START), libc::EINTR),
+            (Some(SYNC_END), libc::EINTR),
+            (Some(SYNC_START), libc::EAGAIN),
+            (Some(SYNC_END), libc::EAGAIN),
+        ] {
             let mut steps = Vec::new();
             let bytes = read_with_sync(file.as_fd(), 1, 2, |step| {
                 steps.push(step);
                 if failed_step == Some(step) {
-                    Err(io::Error::from_raw_os_error(libc::EIO))
+                    sync_with(step, |_| Err(io::Error::from_raw_os_error(code)))
                 } else {
                     Ok(())
                 }
