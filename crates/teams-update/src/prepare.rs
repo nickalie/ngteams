@@ -147,6 +147,7 @@ pub(crate) fn ready(format: Format, asset: &Path, work: &Path, version: Version)
             }
             Ok(asset.to_path_buf())
         }
+        #[cfg(target_os = "macos")]
         Format::MacApp => {
             let unpacked = work.join("unpacked");
             fs::create_dir(&unpacked)?;
@@ -156,14 +157,20 @@ pub(crate) fn ready(format: Format, asset: &Path, work: &Path, version: Version)
             validate_app(&candidate, version)?;
             Ok(candidate)
         }
+        #[cfg(not(target_os = "macos"))]
+        Format::MacApp => Err(error(
+            "This copy says it's the macOS app, which updates only on macOS. Nothing was changed.",
+        )),
         // kept as it is: its checksum was verified, and the installer checks the files it holds as it writes them
         Format::Deb | Format::Rpm | Format::Pacman | Format::WindowsSetup => Ok(asset.to_path_buf()),
     }
 }
 
 /// The app bundle a macOS release's zip holds.
+#[cfg(target_os = "macos")]
 const APP_BUNDLE: &str = "ngteams.app";
 /// The programs a macOS release's bundle holds.
+#[cfg(target_os = "macos")]
 const APP_PROGRAMS: [&str; 3] = [
     "Contents/MacOS/ngteams",
     "Contents/MacOS/ngteams-webview",
@@ -172,6 +179,7 @@ const APP_PROGRAMS: [&str; 3] = [
 
 /// Unpacks the zip `asset` into `into` with the system's `ditto`, as Finder does (permissions, links and the
 /// bundle's signature kept).
+#[cfg(target_os = "macos")]
 fn unpack_zip(asset: &Path, into: &Path) -> Result<(), Error> {
     let unpacked = std::process::Command::new("/usr/bin/ditto")
         .arg("-x")
@@ -192,6 +200,7 @@ fn unpack_zip(asset: &Path, into: &Path) -> Result<(), Error> {
 
 /// An unpacked app bundle is the release it should be: the macOS app's marker, `version` as its identity, its
 /// programs, and a code signature that verifies over the whole bundle.
+#[cfg(target_os = "macos")]
 fn validate_app(candidate: &Path, version: Version) -> Result<(), Error> {
     validate_release(candidate, version, Format::MacApp, &APP_PROGRAMS, "app")?;
     let verified = std::process::Command::new("/usr/bin/codesign")

@@ -256,6 +256,18 @@ fn an_archive_of_another_release_or_missing_a_program_is_refused() {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn a_copy_marked_as_the_macos_app_isnt_updated_elsewhere() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().join("opt/ngteams");
+    tree(&root, "0.1.0.5", Format::MacApp).unwrap();
+    let installation = Installation::detect(&places(root.join("usr/bin/ngteams"), home.path())).unwrap();
+    assert_eq!(installation.format(), Format::MacApp);
+    let error = refused(&installation, |_, _| {});
+    assert!(error.to_string().contains("updates only on macOS"), "{error}");
+}
+
 #[test]
 fn a_folder_the_user_cant_write_is_said_and_left_alone() {
     let home = tempfile::tempdir().unwrap();
