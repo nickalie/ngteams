@@ -568,7 +568,7 @@ reason = "Linux-only WPE/GPUI sign-in source selected by the cfg(target_os = \"l
 context = { "crates/teams-signin/src/lib.rs" = "a7b946e05829938c67d8c83c2f95877bbe47a5351f68ba7e8bd036149f3132ab" }
 
 [unmapped_sources_windows."crates/teams-ui/src/notify/linux.rs"]
-sha256 = "78efb7a12f89a589820cfe10a8a555046323948cb875311b43a8bf3105ed4d5b"
+sha256 = "419bb65bc6b399c4234dfa1e46f79e0ecb65dfd33a9f4411d5c0b53b688229a1"
 reason = "Linux-only freedesktop notification D-Bus transport; notify.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
 context = { "crates/teams-ui/src/lib.rs" = "4e35f5cae8b642aeeb7ebda26ea4e152bb31bdea6ddf615cac61b9079b05695e", "crates/teams-ui/src/notify.rs" = "9bd2a19d2ab55ccf6994a44372c710074d246edb8ae84b11e7356282c71e70bb" }
 

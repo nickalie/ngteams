@@ -555,7 +555,7 @@ fn channel_meeting(qa: &mut Qa<'_>) -> SandboxResult {
     let checked = ensure(
         banner.summary == CHANNEL_SUBJECT
             && banner.body == "Lab B started the meeting"
-            && offers(&banner, "join", "Join"),
+            && banner.actions == ["default", "", "join", "Join"],
         || {
             format!(
                 "the banner: {:?}: {:?} {:?}",

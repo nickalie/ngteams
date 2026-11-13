@@ -83,6 +83,7 @@ impl NotificationServer for BusNotifications {
         };
         let call_notice = notice.kind == NoticeKind::Call;
         let meeting_notice = notice.kind == NoticeKind::Meeting;
+        let channel = teams_proto::is_team_thread_id(&notice.conversation);
         let image = notice.picture.as_ref().and_then(image_data);
         Box::pin(async move {
             // an incoming call's: Answer and Decline, critical, shown until it is closed (its ring ended)
@@ -101,7 +102,7 @@ impl NotificationServer for BusNotifications {
                 ]);
                 (actions, hints, 0_i32)
             } else if meeting_notice {
-                (meeting_actions(), meeting_hints(&desktop_entry), -1_i32)
+                (meeting_actions(channel), meeting_hints(&desktop_entry), -1_i32)
             } else {
                 let hints: HashMap<&str, Value<'_>> = HashMap::from([
                     ("category", Value::from("im.received")),
@@ -139,9 +140,14 @@ impl NotificationServer for BusNotifications {
     }
 }
 
-/// A started meeting's notification's actions: its body opens the chat (Teams' "Open chat"), Join joins it.
-fn meeting_actions() -> Vec<&'static str> {
-    vec![DEFAULT_ACTION, "Open chat", JOIN_ACTION, "Join"]
+/// A channel's meeting offers only Join; the unlabeled default keeps its body opening the channel.
+fn meeting_actions(channel: bool) -> Vec<&'static str> {
+    vec![
+        DEFAULT_ACTION,
+        if channel { "" } else { "Open chat" },
+        JOIN_ACTION,
+        "Join",
+    ]
 }
 
 /// A started meeting's notification's hints: of the app, as a chat's.
