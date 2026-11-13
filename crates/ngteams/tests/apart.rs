@@ -214,8 +214,8 @@ fn the_install_marker_is_confined_to_refusals_runners_and_authorized_builders() 
     let release = fs::read_to_string(root().join(".github/workflows/release.yml")).unwrap();
     assert_eq!(
         release.matches(&format!("{marker}: \"1\"")).count(),
-        2,
-        "only the Linux and Windows release builds set it"
+        3,
+        "only the Linux, Windows and macOS release builds set it"
     );
 }
 
