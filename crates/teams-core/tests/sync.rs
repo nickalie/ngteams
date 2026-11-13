@@ -21,7 +21,7 @@ use teams_auth::secrets::Secret;
 use teams_auth::token::TokenError;
 use teams_core::{
     CLOCK_SKEW_MS, CatchUp, CatchUpError, CatchUpReport, Clock, Command, DRAFTS, Gaps, MAX_FAILED_CHECKS, MAX_PAGES,
-    NOTES, Outbox, OutboxError, StoredMessage, UnreadableSeen, enqueue, outbox::ConversationSync,
+    NOTES, Outbox, OutboxError, StoredMessage, UnreadableSeen, enqueue, outbox::ConversationSync, outcome_unknown,
 };
 use teams_mock::{
     AB_CHAT, ABC_CHAT, AC_CHAT, AX_CHAT, CHANNEL, ChatEvent, ChatServiceMock, EventKind, LAB_A, LAB_B, LAB_C,
@@ -2519,6 +2519,7 @@ async fn an_unreadable_entry_an_ordinary_catch_up_moves_past_keeps_later_checks_
         (OutboxState::Failed, MAX_FAILED_CHECKS)
     );
     assert!(given_up.may_have_arrived(), "{given_up:?}");
+    assert!(outcome_unknown(&given_up), "{given_up:?}");
     assert!(
         given_up.last_error.as_deref().unwrap().contains("may have arrived"),
         "{given_up:?}"

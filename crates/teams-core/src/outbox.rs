@@ -98,16 +98,20 @@ const CLIENT_MESSAGE_ID_TRIES: usize = 3;
 /// What a row's `last_error` says when an attempt may have arrived.
 const OUTCOME_UNKNOWN: &str = "whether it arrived is unknown";
 
-/// Whether an unsent row's last attempt may have arrived: one begun by an earlier run and never finished, or one whose
-/// answer was lost. Such a row is not to be done again as a new command either.
+/// Whether an unsent row's last attempt may have arrived: one begun by an earlier run and never finished, one whose
+/// answer was lost, or one given up after a read met an entry it couldn't read that carries its `clientmessageid`
+/// ([`OutboxEntry::may_have_arrived`]). Such a row is not to be done again as a new command either.
 #[must_use]
 pub fn outcome_unknown(row: &OutboxEntry) -> bool {
     match row.state {
         OutboxState::Sending => true,
-        OutboxState::Failed => row
-            .last_error
-            .as_deref()
-            .is_some_and(|error| error.contains(OUTCOME_UNKNOWN)),
+        OutboxState::Failed => {
+            row.may_have_arrived()
+                || row
+                    .last_error
+                    .as_deref()
+                    .is_some_and(|error| error.contains(OUTCOME_UNKNOWN))
+        }
         OutboxState::Pending | OutboxState::Sent | OutboxState::Denied => false,
     }
 }
