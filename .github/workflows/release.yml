@@ -357,7 +357,11 @@ jobs:
           security import "$RUNNER_TEMP/developer-id.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           rm "$RUNNER_TEMP/developer-id.p12"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          keychains=("$keychain")
+          while read -r existing_keychain; do
+            keychains+=("${existing_keychain//\"/}")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "${keychains[@]}"
           identity=$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application/ { print $2; exit }')
           [[ -n "$identity" ]] || { echo "the certificate holds no Developer ID Application identity" >&2; exit 1; }
           echo "NGTEAMS_MACOS_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"

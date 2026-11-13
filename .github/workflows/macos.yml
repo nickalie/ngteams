@@ -71,7 +71,8 @@ jobs:
       - name: Notifications' tags and actions, and the Dock's badge server (no notification center reached)
         run: cargo test --locked -p teams-ui --lib desktop::macos
       - name: Native device backend's catalog (no device opened)
-        run: cargo test --locked -p teams-media --lib devices:: -- --test-threads=1
+        run: >-
+          cargo test --locked -p teams-media --lib devices:: -- --test-threads=1
       - name: Coverage tools
         run: |
           rustup component add llvm-tools-preview
