@@ -355,10 +355,10 @@ fn xml(notice: &Notice, key: &str, picture: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn a_started_meeting_s_toast_offers_join_and_its_join_is_taken() {
+        use super::*;
+
         let notice = Notice {
             conversation: "19:chat".to_owned(),
             kind: NoticeKind::Meeting,

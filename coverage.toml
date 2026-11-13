@@ -273,7 +273,7 @@ sha256 = "2d9947ba59d53b94bd258189c605789af95a0d26bdc31a09ef7f9a140800c702"
 reason = "Windows-only native shell integration with no Linux LLVM mapping. The authorized console fixture exercises visible body/Answer/Decline COM activation, stale/foreign arguments, toast history and native tray/taskbar primitives without an account. Native whole-application coverage remains a final port gate."
 
 [unmapped_sources."crates/teams-ui/src/desktop/windows/toasts.rs"]
-sha256 = "603ca8ef38ccbc1dd07255c7d247206cccc60d1630195fdcd17a23c6a81036fd"
+sha256 = "ecdad3b5d65f6a46ea6d0c4bfccd8862f5223ee73ed1edb3c5c9460996f794dd"
 reason = "Windows-only native shell integration with no Linux LLVM mapping. The authorized console fixture exercises visible body/Answer/Decline COM activation, stale/foreign arguments, toast history and native tray/taskbar primitives without an account. Native whole-application coverage remains a final port gate."
 
 [unmapped_sources."crates/teams-ui/src/desktop/windows/tray.rs"]
