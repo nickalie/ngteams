@@ -6,10 +6,10 @@
 //! definition's `largeImageUrl` names ([`teams_proto::AppPicture`]: a `GET` from Microsoft's CDN, no token), which
 //! Activity draws for the app's items. Each kind is kept apart, by its own key.
 //!
-//! - **Kept for the run**, in memory, up to [`KEPT_BYTES`] of them (the oldest read let go first: a view keeps what it
-//!   decoded, so a picture let go is read again only when a view asks for it anew); a view the service has none of (an
-//!   answer that isn't a success, or isn't a picture) is kept as missing. A read that failed on the way isn't kept and
-//!   is answered [`EngineError::PictureUnread`], so the next ask reads again.
+//! - **Kept for the run**, in memory, up to [`KEPT_BYTES`] of each kind (the oldest read let go first: a view keeps
+//!   what it decoded, so a picture let go is read again only when a view asks for it anew); a view the service has
+//!   none of (an answer that isn't a success, or isn't a picture) is kept as missing. A read that failed on the way
+//!   isn't kept and is answered [`EngineError::PictureUnread`], so the next ask reads again.
 //! - **Cached across runs** on disk ([`Disk`]: the account's [`PictureCache`] beside its store, up to
 //!   [`PICTURE_CACHE_BYTES`], the least recently used let go first): a picture the run doesn't know yet is looked for
 //!   there before it is read, and one read is kept there, so a later run shows it without reading it again. An AMS
@@ -54,7 +54,7 @@ pub(crate) enum Known {
     Reading(Vec<Responder<Option<PictureBytes>>>),
 }
 
-/// The pictures kept, by what names each (a message's AMS view or GIF; a shared file, [`crate::thumbnails`]).
+/// The pictures kept, by what names each (a message's picture; a shared file, [`crate::thumbnails`]; an [`AppPicture`]).
 pub(crate) struct Kept<K> {
     pub(crate) known: HashMap<K, Known>,
     /// The pictures read, oldest first, and their bytes in all.
@@ -92,9 +92,9 @@ impl<K: Clone + Eq + Hash> Kept<K> {
     }
 }
 
-/// The account's picture cache on disk, shared by the messages' pictures and the files' thumbnails
-/// ([`crate::thumbnails`]): opened on the blocking pool by the first picture that asks for it, and every picture read
-/// once it can't be opened.
+/// The account's picture cache on disk, shared by messages' pictures, files' thumbnails ([`crate::thumbnails`]) and
+/// app tiles ([`AppPicture`]): opened on the blocking pool by the first picture that asks for it, and every picture
+/// read once it can't be opened.
 #[derive(Clone)]
 pub(crate) struct Disk(Arc<Mutex<Opened>>);
 

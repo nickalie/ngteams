@@ -6,7 +6,8 @@
 //!   picked from Teams' GIF picker, playing as Teams plays it): asked of the engine once a run per account and `src`
 //!   ([`Core::message_picture`]), decoded here off the foreground (every frame scaled down to at most
 //!   [`MAX_DECODED_SIDE`] on its longer side; a GIF with its frames up to the first that doesn't decode, at most
-//!   [`MAX_GIF_FRAMES`] and [`MAX_GIF_BYTES`] of them, its canvas at most [`MAX_GIF_SIDE`]) and kept for the run. It is
+//!   [`MAX_GIF_FRAMES`] and [`MAX_GIF_BYTES`] of them, its canvas at most [`MAX_GIF_SIDE`]; a still picture's source
+//!   at most [`MAX_STILL_SIDE`] per side) and kept for the run. It is
 //!   drawn as Teams draws a picture in a message ([`Shape::of`]): sized by the size the message gives it (else its
 //!   own), never upscaled, its aspect ratio kept, in a frame of the border colour (1 px, rounded) at the start of its
 //!   line, never wider than the width there is. A tall one (twice as high as wide) or a small one (lower than
@@ -50,6 +51,12 @@ use crate::reactions;
 
 /// The longer side a decoded picture is scaled down to, at most: no message is drawn wider.
 pub const MAX_DECODED_SIDE: u32 = 2048;
+
+/// The largest source side of a still picture: bounds the RGBA conversion before downscaling to 64 MiB.
+pub const MAX_STILL_SIDE: u32 = 4096;
+
+/// The decoder's allocation budget, enough for a source at [`MAX_STILL_SIDE`] square with 16-bit RGBA channels.
+const MAX_STILL_ALLOC: u64 = 8 * (MAX_STILL_SIDE as u64) * (MAX_STILL_SIDE as u64);
 
 /// The most frames of a GIF kept: the frames past it are left out, the animation looping over those before.
 pub const MAX_GIF_FRAMES: usize = 300;
@@ -347,7 +354,7 @@ fn asked(named: Named, source: &PictureSource, cx: &mut App) -> PictureState {
 }
 
 /// A picture's bytes as the frames GPUI draws (BGRA), each scaled down to at most [`MAX_DECODED_SIDE`] on its longer
-/// side, and the size the bytes have; `None` when they don't decode.
+/// side, and the size the bytes have; `None` when they don't decode or a still source exceeds [`MAX_STILL_SIDE`].
 #[must_use]
 pub fn decode(picture: &PictureBytes) -> Option<(RenderImage, (u32, u32))> {
     decode_within(picture, MAX_DECODED_SIDE)
@@ -363,9 +370,13 @@ pub fn decode_within(picture: &PictureBytes, max_side: u32) -> Option<(RenderIma
         PastedFormat::Jpeg => image::ImageFormat::Jpeg,
         PastedFormat::Webp => image::ImageFormat::WebP,
     };
-    let decoded = image::load_from_memory_with_format(&picture.bytes, format)
-        .ok()?
-        .into_rgba8();
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(&picture.bytes), format);
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_STILL_SIDE);
+    limits.max_image_height = Some(MAX_STILL_SIDE);
+    limits.max_alloc = Some(MAX_STILL_ALLOC);
+    reader.limits(limits);
+    let decoded = reader.decode().ok()?.into_rgba8();
     let natural = decoded.dimensions();
     let mut shown = scaled_down(decoded, max_side);
     to_bgra(&mut shown);

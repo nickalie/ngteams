@@ -1442,9 +1442,9 @@ fn definition(app: &str, tile: Option<&str>) -> teams_proto::AppDefinition {
         .definition
 }
 
-fn tile_png() -> teams_core::PictureBytes {
+fn tile_png(width: u32, height: u32) -> teams_core::PictureBytes {
     let mut bytes = Vec::new();
-    image::RgbaImage::from_pixel(192, 192, image::Rgba([60, 90, 200, 255]))
+    image::RgbaImage::from_pixel(width, height, image::Rgba([60, 90, 200, 255]))
         .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
         .unwrap();
     Arc::new(teams_proto::PastedPicture {
@@ -1457,6 +1457,7 @@ fn tile_png() -> teams_core::PictureBytes {
 fn an_app_item_shows_its_app_s_tile_without_a_badge_else_initials_and_its_badge() {
     const TILE: &str = "https://res.cdn.office.net/teamsappdata/evergreen-assets/apps/made-up_largeImage.png?v=1";
     const BROKEN: &str = "https://res.cdn.office.net/teamsappdata/evergreen-assets/apps/broken_largeImage.png";
+    const OVERSIZED: &str = "https://res.cdn.office.net/teamsappdata/evergreen-assets/apps/oversized_largeImage.png";
     let rig = rig();
     rig.core.activity.lock().unwrap().items.extend([
         app_item(4000, "made-up-tiled"),
@@ -1464,14 +1465,20 @@ fn an_app_item_shows_its_app_s_tile_without_a_badge_else_initials_and_its_badge(
         app_item(4100, "made-up-no-url"),
         app_item(4200, "made-up-broken"),
         app_item(4300, "made-up-unknown"),
+        app_item(4400, "made-up-oversized"),
     ]);
     rig.core.app_definitions.lock().unwrap().extend([
         ("made-up-tiled".to_owned(), definition("made-up-tiled", Some(TILE))),
         ("made-up-no-url".to_owned(), definition("made-up-no-url", None)),
         ("made-up-broken".to_owned(), definition("made-up-broken", Some(BROKEN))),
+        (
+            "made-up-oversized".to_owned(),
+            definition("made-up-oversized", Some(OVERSIZED)),
+        ),
     ]);
     rig.core.app_pictures.lock().unwrap().extend([
-        (TILE.to_owned(), tile_png()),
+        (TILE.to_owned(), tile_png(192, 192)),
+        (OVERSIZED.to_owned(), tile_png(teams_ui::inline::MAX_STILL_SIDE + 1, 1)),
         (
             BROKEN.to_owned(),
             Arc::new(teams_proto::PastedPicture {
@@ -1486,7 +1493,7 @@ fn an_app_item_shows_its_app_s_tile_without_a_badge_else_initials_and_its_badge(
         assert!(drawn(cx, &format!("activity-app-tile-{tiled}")), "{tiled}: the tile");
         assert!(!drawn(cx, &format!("activity-badge-{tiled}")), "{tiled}: no badge");
     }
-    for fallback in ["4100", "4200", "4300"] {
+    for fallback in ["4100", "4200", "4300", "4400"] {
         assert!(
             !drawn(cx, &format!("activity-app-tile-{fallback}")),
             "{fallback}: no tile"
@@ -1500,8 +1507,8 @@ fn an_app_item_shows_its_app_s_tile_without_a_badge_else_initials_and_its_badge(
     assert!(drawn(cx, "activity-badge-2000"));
     let asked = rig.core.asked();
     let count = |name| asked.iter().filter(|asked| **asked == name).count();
-    assert_eq!(count("app_definition"), 4, "one definition read per app");
-    assert_eq!(count("app_picture"), 2, "one picture read per app with a URL");
+    assert_eq!(count("app_definition"), 5, "one definition read per app");
+    assert_eq!(count("app_picture"), 3, "one picture read per app with a URL");
     // the tile's size and shape are the avatar's
     let tile = cx.debug_bounds("activity-app-tile-4000").unwrap();
     assert_eq!((tile.size.width, tile.size.height), (gpui::px(32.0), gpui::px(32.0)));

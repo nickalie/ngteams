@@ -1,7 +1,8 @@
 //! A message's pasted GIF decoded as `inline::decode` keeps it for the run: every frame of a normal one, the frames
 //! before the first that doesn't decode (a truncated file ends at once, never spins), at most `MAX_GIF_FRAMES` and
 //! `MAX_GIF_BYTES` of them, each scaled down to `MAX_DECODED_SIDE`, and none for a canvas past `MAX_GIF_SIDE`. Every
-//! GIF here is made up in the test. A picture is shaped as Teams sizes one (`inline::Shape`).
+//! GIF here is made up in the test. Synthetic PNG/JPEG/WebP sources past `MAX_STILL_SIDE` are refused before scaling;
+//! accepted pictures retain their natural dimensions. A picture is shaped as Teams sizes one (`inline::Shape`).
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -15,11 +16,52 @@ use image::codecs::gif::GifEncoder;
 use image::{Delay, Frame, Rgba, RgbaImage};
 use teams_proto::{PastedFormat, PastedPicture};
 use teams_ui::inline::{
-    self, Kind, MAX_DECODED_SIDE, MAX_GIF_BYTES, MAX_GIF_FRAMES, MAX_GIF_SIDE, PICTURE_BOX, Shape, WIDE_MAX_WIDTH,
+    self, Kind, MAX_DECODED_SIDE, MAX_GIF_BYTES, MAX_GIF_FRAMES, MAX_GIF_SIDE, MAX_STILL_SIDE, PICTURE_BOX, Shape,
+    WIDE_MAX_WIDTH,
 };
 
 /// How long a decode may take before the test calls it stuck.
 const STUCK: Duration = Duration::from_secs(20);
+
+fn still(format: PastedFormat, width: u32, height: u32) -> teams_core::PictureBytes {
+    let encoded = match format {
+        PastedFormat::Png => image::ImageFormat::Png,
+        PastedFormat::Jpeg => image::ImageFormat::Jpeg,
+        PastedFormat::Webp => image::ImageFormat::WebP,
+        PastedFormat::Gif => unreachable!("still pictures only"),
+    };
+    let mut bytes = Vec::new();
+    image::RgbImage::from_pixel(width, height, image::Rgb([10, 20, 30]))
+        .write_to(&mut std::io::Cursor::new(&mut bytes), encoded)
+        .unwrap();
+    Arc::new(PastedPicture { format, bytes })
+}
+
+#[test]
+fn still_source_dimensions_are_bounded_before_scaling_even_for_a_small_tile() {
+    for format in [PastedFormat::Png, PastedFormat::Jpeg, PastedFormat::Webp] {
+        for (width, height) in [(MAX_STILL_SIDE + 1, 1), (1, MAX_STILL_SIDE + 1)] {
+            let picture = still(format, width, height);
+            assert!(inline::decode(&picture).is_none(), "{format:?}: {width}x{height}");
+            assert!(inline::decode_within(&picture, 96).is_none());
+        }
+        for (width, height) in [(MAX_STILL_SIDE, 1), (1, MAX_STILL_SIDE)] {
+            let (image, natural) = inline::decode_within(&still(format, width, height), 96).unwrap();
+            assert_eq!(natural, (width, height));
+            assert_eq!(image.frame_count(), 1);
+            let shown = if width > height { (96, 1) } else { (1, 96) };
+            assert_eq!(image.size(0), size(DevicePixels(shown.0), DevicePixels(shown.1)));
+        }
+    }
+}
+
+#[test]
+fn a_still_tile_keeps_its_natural_size_and_scales_in_bgra() {
+    let (image, natural) = inline::decode_within(&still(PastedFormat::Png, 192, 96), 96).unwrap();
+    assert_eq!(natural, (192, 96));
+    assert_eq!(image.size(0), size(DevicePixels(96), DevicePixels(48)));
+    assert_eq!(&image.as_bytes(0).unwrap()[..4], [30, 20, 10, 255]);
+}
 
 /// A GIF of `frames` frames, `width` by `height`, each of one colour (frame `i`'s red is `i`).
 fn gif(width: u32, height: u32, frames: usize) -> Vec<u8> {
