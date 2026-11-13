@@ -28,6 +28,8 @@ use ngteams::app::{self, Launch};
 use ngteams::calling::PersonalCalls;
 #[path = "../window.rs"]
 mod support;
+#[path = "activity_tile_runs.rs"]
+mod tile_runs;
 #[path = "activity_app_tiles.rs"]
 mod tiles;
 #[path = "activity_turn_off.rs"]
@@ -133,8 +135,7 @@ const AWAY: (u32, u32) = (900, 500);
 
 pub(super) fn main() -> ExitCode {
     let outcome = match std::env::var(CHILD_ENV).as_deref() {
-        Ok("app") => child_app(false),
-        Ok("read-only") => child_app(true),
+        Ok(mode @ ("app" | "read-only" | "tiles-v1" | "tiles-v2")) => child_app(mode),
         Ok(other) => Err(format!("unknown mode {other}").into()),
         Err(_) => parent(),
     };
@@ -322,6 +323,10 @@ fn run_checks(sandbox: &Sandbox) -> SandboxResult<usize> {
     passed.append(&mut qa.passed.clone());
     failed.append(&mut qa.failed.clone());
     qa.quit()?;
+    // an app's tile across runs (#28): its read, its cache and a new version, the app quit and started again
+    let (mut tile_passed, mut tile_failed) = tile_runs::run(sandbox)?;
+    passed.append(&mut tile_passed);
+    failed.append(&mut tile_failed);
     for (name, error) in &failed {
         say(&format!("FAILED {name}: {error}"));
     }
@@ -336,14 +341,16 @@ fn run_checks(sandbox: &Sandbox) -> SandboxResult<usize> {
 impl<'a> Qa<'a> {
     /// The app started in the sandbox in `mode` (`app`, or `read-only`: the read-only mode), its feed listed.
     fn start(sandbox: &'a Sandbox, mode: &str) -> SandboxResult<Self> {
+        Self::start_in(sandbox, mode, &[])
+    }
+
+    /// [`Self::start`], with `env` set for the child too.
+    fn start_in(sandbox: &'a Sandbox, mode: &str, env: &[(&str, &str)]) -> SandboxResult<Self> {
         let (reader, writer) = io::pipe()?;
         let fd = writer.as_raw_fd().to_string();
-        let child = sandbox.spawn_with_fds(
-            &std::env::current_exe()?,
-            &[],
-            &[(CHILD_ENV, mode), (TRACE_FD_ENV, &fd)],
-            &[writer.as_fd()],
-        )?;
+        let mut vars = vec![(CHILD_ENV, mode), (TRACE_FD_ENV, fd.as_str())];
+        vars.extend_from_slice(env);
+        let child = sandbox.spawn_with_fds(&std::env::current_exe()?, &[], &vars, &[writer.as_fd()])?;
         drop(writer);
         let mut running = Running::new(child)?;
         let trace = TraceReader::start(reader);
@@ -360,7 +367,11 @@ impl<'a> Qa<'a> {
             failed: Vec::new(),
             box_open: false,
         };
-        qa.settled()?;
+        if mode.starts_with("tiles") {
+            tile_runs::settled(&qa)?;
+        } else {
+            qa.settled()?;
+        }
         Ok(qa)
     }
 }
@@ -1613,23 +1624,32 @@ struct MockLab {
     runtime: tokio::runtime::Runtime,
     mock: Arc<ChatServiceMock>,
     _trouter: TrouterMock,
-    dir: tempfile::TempDir,
+    /// a's data: a dir of its own, or the one a tile run keeps across runs.
+    dir: PathBuf,
+    _temp: Option<tempfile::TempDir>,
     /// a's own way to the mock outside the app, for the test's reads of what the mock holds.
     probe: Arc<HttpTransport<Tokens>>,
 }
 
 impl MockLab {
     /// `read_only`: the engine's writes are refused before sending, as `ngteams --read-only` refuses them; otherwise
-    /// a's app preferences are seeded ([`turn_off::seeded_prefs`]).
-    fn start(read_only: bool) -> SandboxResult<(Self, EngineHandle)> {
+    /// a's app preferences are seeded ([`turn_off::seeded_prefs`]). `tiles`: a tile run's feed and data dir
+    /// ([`tile_runs`]), else the module docs' feed in a dir of its own.
+    fn start(read_only: bool, tiles: Option<&tile_runs::Run>) -> SandboxResult<(Self, EngineHandle)> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()?;
         let mock = runtime.block_on(ChatServiceMock::start())?;
         let trouter = mock.start_trouter()?;
-        seed_feed(&mock)?;
-        let dir = tempfile::tempdir()?;
+        let (dir, temp) = if let Some(run) = tiles {
+            runtime.block_on(tile_runs::seed(&mock, run))?;
+            (run.dir.clone(), None)
+        } else {
+            seed_feed(&mock)?;
+            let temp = tempfile::tempdir()?;
+            (temp.path().to_owned(), Some(temp))
+        };
         let tokens = Arc::new(Tokens {
             token: mock.token(LAB_A).ok_or("the mock's token for a")?,
             renewals: broadcast::channel(4).0,
@@ -1653,7 +1673,7 @@ impl MockLab {
         let author = Author::new(Mri::new(LAB_A), display_name("bot-a@lab.example.test"));
         let engine = engine::start(Parts {
             calls: None,
-            store: Store::open(&support::store_file(dir.path(), Alias::A))?,
+            store: Store::open(&support::store_file(&dir, Alias::A))?,
             // the people's names and pictures, as the app reads them
             client: Arc::new(Client::new(
                 http()?
@@ -1673,6 +1693,7 @@ impl MockLab {
             mock: Arc::new(mock),
             _trouter: trouter,
             dir,
+            _temp: temp,
             probe,
         };
         Ok((lab, engine))
@@ -1834,11 +1855,13 @@ fn passed_trace_fd() -> SandboxResult<RawFd> {
     Ok(std::env::var(TRACE_FD_ENV)?.parse()?)
 }
 
-fn child_app(read_only: bool) -> SandboxResult {
+fn child_app(mode: &str) -> SandboxResult {
     ngteams::read_only::window_allowed_here()?;
+    let read_only = mode == "read-only";
+    let tiles = tile_runs::Run::of_mode(mode)?;
     let trace = teams_ui::ViewTrace::new(adopt_trace(passed_trace_fd()?)?);
     let dir = PathBuf::from(std::env::var_os(ui_sandbox::SANDBOX_ENV).ok_or("no sandbox dir")?);
-    let (lab, engine) = MockLab::start(read_only)?;
+    let (lab, engine) = MockLab::start(read_only, tiles.as_ref())?;
     // the calls shown (Call buttons ask them); the engine has no calling, so a call asked is refused there
     let first = ngteams::accounts::Started {
         calls: Some(PersonalCalls {
@@ -1851,8 +1874,8 @@ fn child_app(read_only: bool) -> SandboxResult {
         }),
         ..support::started(Alias::A, engine)?
     };
-    let settings = teams_ui::SettingsFile::new(lab.dir.path().join("ui").join("a.toml"));
-    let runner = support::runner(lab.dir.path())?;
+    let settings = teams_ui::SettingsFile::new(lab.dir.join("ui").join("a.toml"));
+    let runner = support::runner(&lab.dir)?;
     let failed = Arc::new(Mutex::new(None));
     let failed_in_app = Arc::clone(&failed);
     let probe = Probe {
@@ -2032,6 +2055,8 @@ fn mock_reply(question: &str, probe: &Probe) -> Option<Value> {
         "push-meeting-unknown" => push(mock, &unknown_meeting_update()),
         "push-app" => push_app(mock, rest),
         "push-other-app" => tiles::push_other_app(mock),
+        "tile-reads" => tile_runs::reads(probe),
+        "tile-push" => tile_runs::push_update(mock),
         "push-chat" => push_chat(mock),
         "prefs" => probe.prefs(),
         "refuse" => probe.refuse(rest),
