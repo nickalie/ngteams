@@ -831,6 +831,15 @@ impl ActivityView {
         cx.notify();
     }
 
+    /// The pane brought on screen at item `id` (a banner's click), as a click there opens it: the chip lets go, and
+    /// that item, not the newest, opens (once the feed holds it).
+    pub fn opened_at(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.filter = ActivityFilter::All;
+        self.open_newest = false;
+        self.open(id, cx);
+        cx.notify();
+    }
+
     fn open_newest(&mut self, cx: &mut Context<Self>) {
         self.open_newest = false;
         let Some(item) = self.shown_items(cx).first().map(|item| (*item).clone()) else {

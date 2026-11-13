@@ -602,18 +602,30 @@ impl Shell {
     /// calendar or the search's results for what they hid; the keyboard goes to the pane. Coming on screen, the pane
     /// opens its newest item ([`ActivityView::opened`]).
     pub fn show_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let was_shown = self.activity.0.read(cx).shown();
+        self.place_activity(window, cx);
+        if !was_shown && self.activity.0.read(cx).shown() {
+            self.activity.0.update(cx, ActivityView::opened);
+        }
+        cx.notify();
+    }
+
+    /// The Activity pane shown at its item `item` (a banner's click), opened as a click on it there opens it, instead
+    /// of the newest item the rail's Activity opens.
+    pub fn open_activity_item(&mut self, item: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.place_activity(window, cx);
+        self.activity.0.update(cx, |view, cx| view.opened_at(item, cx));
+        cx.notify();
+    }
+
+    fn place_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_chats_pane(window, cx);
         self.list_shown = true;
         if self.list_place != ListPlace::Activity {
             self.trace.record(&TraceLine::new("activity", "shown"));
             self.list_place = ListPlace::Activity;
         }
-        let was_shown = self.activity.0.read(cx).shown();
         self.sync_activity_shown(window, cx);
-        if !was_shown && self.activity.0.read(cx).shown() {
-            self.activity.0.update(cx, ActivityView::opened);
-        }
-        cx.notify();
     }
 
     /// Automatic activity writes require this account in the active window.

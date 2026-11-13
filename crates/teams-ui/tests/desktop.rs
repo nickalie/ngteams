@@ -443,20 +443,45 @@ fn activating_a_notification_opens_its_chat_in_a_window_opened_again() {
     assert_eq!(d.server.shown().len(), 2);
 }
 
+/// An unread app item of a made-up app, `id` its activity's and its arrival's, at `at` ms.
+fn app_item(id: i64, at: i64) -> teams_store::Message {
+    let activity = serde_json::json!({
+        "activityType": "msGraph", "activitySubtype": "customNotification", "activityId": id,
+        "sourceAppDisplayName": "Made-up flows", "messagePreview": "a made-up reminder",
+        "activityContext": {"teamsAppId": "00000000-0000-4000-8000-00000000a0aa"},
+    });
+    let mut item = message("48:notifications", &id.to_string(), LAB_A, "", at);
+    item.message_type = "Text".to_owned();
+    item.properties = Some(serde_json::json!({"activity": activity, "isread": false}).to_string());
+    item
+}
+
+/// The banner's item opened, not the newer item 8 a plain open of the pane picks.
+fn opened_only_the_banner_s_item(d: &OnDesktop) {
+    let actions = d.rig.core.actions.lock().unwrap().clone();
+    assert!(
+        actions.iter().any(|action| matches!(
+            action,
+            teams_core::Action::ActivityRead { item, read: true } if item == "7"
+        )),
+        "the item opened as a click in the pane opens it: {actions:?}"
+    );
+    assert!(
+        !actions.iter().any(|action| matches!(
+            action,
+            teams_core::Action::ActivityRead { item, .. } if item == "8"
+        )),
+        "the newest item stays as it was: {actions:?}"
+    );
+}
+
 #[test]
 fn activating_an_app_item_s_notification_shows_the_activity_pane_at_the_item() {
     let d = OnDesktop::start();
     d.open();
-    let activity = serde_json::json!({
-        "activityType": "msGraph", "activitySubtype": "customNotification", "activityId": 7,
-        "sourceAppDisplayName": "Made-up flows", "messagePreview": "a made-up reminder",
-        "activityContext": {"teamsAppId": "00000000-0000-4000-8000-00000000a0aa"},
-    });
-    let mut item = message("48:notifications", "7", LAB_A, "", 5_000);
-    item.message_type = "Text".to_owned();
-    item.properties = Some(serde_json::json!({"activity": activity, "isread": false}).to_string());
+    let item = app_item(7, 5_000);
     *d.rig.core.activity.lock().unwrap() =
-        teams_core::activity::ActivityFeed::new(std::slice::from_ref(&item), None, None);
+        teams_core::activity::ActivityFeed::new(&[app_item(8, 9_000), item.clone()], None, None);
     *d.rig.core.app_settings.lock().unwrap() = Some(teams_proto::UserGraphSettings::default());
     d.rig.send(Event::Message {
         conversation: item.conversation_id.clone(),
@@ -491,14 +516,7 @@ fn activating_an_app_item_s_notification_shows_the_activity_pane_at_the_item() {
         )
     });
     assert_eq!((place.as_str(), shown), ("Activity", true));
-    let actions = d.rig.core.actions.lock().unwrap().clone();
-    assert!(
-        actions.iter().any(|action| matches!(
-            action,
-            teams_core::Action::ActivityRead { item, read: true } if item == "7"
-        )),
-        "the item opened as a click in the pane opens it: {actions:?}"
-    );
+    opened_only_the_banner_s_item(&d);
 }
 
 #[test]
@@ -508,16 +526,9 @@ fn activating_an_app_item_s_notification_in_a_window_opened_again_opens_the_item
         .cx
         .update(|cx| d.desktop.update(cx, |desktop, cx| desktop.set_in_tray(true, cx)));
     let window = d.open();
-    let activity = serde_json::json!({
-        "activityType": "msGraph", "activitySubtype": "customNotification", "activityId": 7,
-        "sourceAppDisplayName": "Made-up flows", "messagePreview": "a made-up reminder",
-        "activityContext": {"teamsAppId": "00000000-0000-4000-8000-00000000a0aa"},
-    });
-    let mut item = message("48:notifications", "7", LAB_A, "", 5_000);
-    item.message_type = "Text".to_owned();
-    item.properties = Some(serde_json::json!({"activity": activity, "isread": false}).to_string());
+    let item = app_item(7, 5_000);
     *d.rig.core.activity.lock().unwrap() =
-        teams_core::activity::ActivityFeed::new(std::slice::from_ref(&item), None, None);
+        teams_core::activity::ActivityFeed::new(&[app_item(8, 9_000), item.clone()], None, None);
     *d.rig.core.app_settings.lock().unwrap() = Some(teams_proto::UserGraphSettings::default());
     d.rig.send(Event::Message {
         conversation: item.conversation_id.clone(),
@@ -556,14 +567,7 @@ fn activating_an_app_item_s_notification_in_a_window_opened_again_opens_the_item
         (place.as_str(), shown, selected.as_deref()),
         ("Activity", true, Some("7"))
     );
-    let actions = d.rig.core.actions.lock().unwrap().clone();
-    assert!(
-        actions.iter().any(|action| matches!(
-            action,
-            teams_core::Action::ActivityRead { item, read: true } if item == "7"
-        )),
-        "the item opened once the pane read its feed: {actions:?}"
-    );
+    opened_only_the_banner_s_item(&d);
 }
 
 #[test]

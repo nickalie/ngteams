@@ -704,10 +704,7 @@ impl Desktop {
     /// Shows account `key`'s Activity pane at its item `item`, opened as a click on it there opens it.
     pub fn open_activity_item_of(&mut self, key: &str, item: &str, cx: &mut Context<Self>) {
         self.switch(key, cx);
-        self.in_shell(cx, |shell, window, cx| {
-            shell.show_activity(window, cx);
-            shell.activity_view().clone().update(cx, |view, cx| view.open(item, cx));
-        });
+        self.in_shell(cx, |shell, window, cx| shell.open_activity_item(item, window, cx));
     }
 
     /// Shows account `key`'s settings in the window on `page`, or where they were left without one, that account shown,
