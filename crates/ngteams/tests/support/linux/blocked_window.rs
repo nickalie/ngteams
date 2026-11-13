@@ -22,9 +22,9 @@
 //!   own text.
 //! - **Withheld before it came.** b's message that comes withheld to a chat not open notifies, and the chat list
 //!   previews it, with the notice's line.
-//! - **A restart between the copy and the block** (in that group chat). A copy kept before the app quit puts the text
-//!   back into a message
-//!   that came blocked after the restart; a message whose copy the service still has gets it from the copy's read; one
+//! - **A restart between the copy and the block** (in that group chat). With the mock's saved deliveries cleared,
+//!   a copy kept before the app quit puts the text back into a message that came blocked after the restart;
+//!   a message whose copy the service still has gets it from the copy's read; one
 //!   whose copy the service has lost shows the notice alone (the chat list previewing its line) until the copy comes.
 //! - **`48:generic` is no chat.** It is never listed, never read as a thread, and nothing but its copies is read from
 //!   it.
@@ -189,6 +189,7 @@ fn walk(sandbox: &Sandbox, runtime: &tokio::runtime::Runtime, service: &Service,
         return Err(run.fail(sandbox, &*error));
     }
     run.quit(sandbox)?;
+    service.trouter.clear_stored_deliveries(LAB_A);
     step("quit");
     let offline = service.while_down(runtime)?;
     let mut run = AppRun::launch(sandbox, service, dir)?;

@@ -278,6 +278,11 @@ impl TrouterMock {
         self.shared.world().registrations.clone()
     }
 
+    /// Removes `account`'s saved chat deliveries so later connections cannot replay them.
+    pub fn clear_stored_deliveries(&self, account: &str) {
+        self.shared.sockets().stored.remove(account);
+    }
+
     /// Whether pings are answered (they are unless this turned it off).
     pub fn set_pongs(&self, answer: bool) {
         self.shared.sockets().no_pongs = !answer;
