@@ -13,10 +13,10 @@
 //! - **1:1 call**: a calls b, b answers. a shares: the portal's session started and its remote handed over, b's window
 //!   presents a's screen, and for [`HOLD`] the share keeps going (a's screen is read, b presents more of it, the portal
 //!   session stays open). a clicks Stop sharing: the portal session is closed, a's screen is no longer read, and b's
-//!   window no longer presents or draws it. a shares again: a new portal session, b presents it again; a stops again.
+//!   window no longer presents or draws it. a shares twice more: new portal sessions, b presents each again; a stops each time.
 //! - **Group call**: the mock's c rings a and b in the a–b–c chat, both answer. a shares: a new portal session, the
 //!   sharing line described `sendonly` to the service, a's screen read for [`HOLD`], the session open; a stops: the
-//!   session closed, the line described `recvonly`. (The mock's mixer doesn't pass a's frames on to b.)
+//!   session closed, the line described `recvonly`; repeated three times. (The mock's mixer doesn't pass a's frames on to b.)
 //! - Screenshots of a's window while it shares and of b's window showing a's screen, under `target/ui-shots/` (and
 //!   `$SHARE_EVIDENCE`, if set).
 //!
@@ -85,6 +85,8 @@ const DIR_ENV: &str = "NGTEAMS_SHARE_DIR";
 const EVIDENCE_ENV: &str = "SHARE_EVIDENCE";
 /// The steps to run, by name (`one-to-one`, `group`), comma-separated; all of them when unset.
 const STEPS_ENV: &str = "SHARE_STEPS";
+/// Set to `dark` for a's Teams Dark screenshots; b keeps the screenshot reader's light palette.
+const THEME_ENV: &str = "SHARE_THEME";
 /// The file in the sandbox dir the parent writes to have the child quit.
 const QUIT_TRIGGER: &str = "quit";
 /// From the child's start to its `ready`.
@@ -223,7 +225,7 @@ fn one_to_one(user: &mut User<'_>, a: &mut AppUnderTest, b: &mut AppUnderTest) -
     a.in_call(&["chat", "connected"])?;
     user.find_call_window()?;
 
-    for round in 1..=2 {
+    for round in 1..=3 {
         let presented_before = b.trace.presented_share();
         user.share(a, round)?;
         let first = b.trace.next_where("b: a's screen presented", |line| {
@@ -241,10 +243,8 @@ fn one_to_one(user: &mut User<'_>, a: &mut AppUnderTest, b: &mut AppUnderTest) -
             "1:1 share {round}: b presented a's screen ({})",
             first["frames"]
         ));
-        if round == 1 {
-            user.shot_a("share-1to1-sharing.png")?;
-            user.shot_b("share-1to1-far-end.png")?;
-        }
+        user.shot_a(&format!("share-1to1-{round}-sharing.png"))?;
+        user.shot_b(&format!("share-1to1-{round}-far-end.png"))?;
         user.holds(&format!("1:1 share {round}"), round)?;
         let presented = b.trace.presented_share();
         if presented < frames_of(&first) + PRESENTED {
@@ -296,16 +296,18 @@ fn group_call(user: &mut User<'_>, a: &mut AppUnderTest, b: &mut AppUnderTest) -
     user.find_call_window()?;
 
     // the portal's sessions so far: the 1:1 call's, when it ran first
-    let round = user.calls("ScreenCast.OpenPipeWireRemote") + 1;
-    let described = user.descriptions().len();
-    user.share(a, round)?;
-    user.described(described, "sendonly")?;
-    user.holds("group share", round)?;
-    user.shot_a("share-group-sharing.png")?;
-    user.shot_b("share-group-other.png")?;
-    let described = user.descriptions().len();
-    user.stop_sharing(a, round)?;
-    user.described(described, "recvonly")?;
+    for share in 1..=3 {
+        let round = user.calls("ScreenCast.OpenPipeWireRemote") + 1;
+        let described = user.descriptions().len();
+        user.share(a, round)?;
+        user.described(described, "sendonly")?;
+        user.holds(&format!("group share {share}"), round)?;
+        user.shot_a(&format!("share-group-{share}-sharing.png"))?;
+        user.shot_b(&format!("share-group-{share}-other.png"))?;
+        let described = user.descriptions().len();
+        user.stop_sharing(a, round)?;
+        user.described(described, "recvonly")?;
+    }
 
     user.a_keys("ctrl+shift+h")?;
     a.in_call(&["ended", "hung-up"])?;
@@ -454,10 +456,14 @@ impl<'a> User<'a> {
     /// a clicks Share, then its "Screen, window, or tab"; the portal picks a's screen (session `round`).
     fn share(&mut self, a: &mut AppUnderTest, round: usize) -> SandboxResult {
         let asked = a.trace.asked("share");
-        let share = self.share_button(false)?;
-        self.click(share)?;
-        if round == 1 {
-            self.shot_a("share-menu.png")?;
+        if round == 2 {
+            self.a_keys("ctrl+shift+e")?;
+        } else {
+            let share = self.share_button(false)?;
+            self.click(share)?;
+        }
+        if round <= 2 {
+            self.shot_a(&format!("share-menu-{round}.png"))?;
         }
         self.a_keys("down")?;
         self.a_keys("enter")?;
@@ -730,6 +736,7 @@ impl AppUnderTest {
         let skype = mock.skypetoken(mri).ok_or("the mock's skypetoken")?;
         let account = alias.to_string();
         let own = dir.to_string_lossy().into_owned();
+        let theme = std::env::var(THEME_ENV).unwrap_or_default();
         let child = sandbox.spawn_with_fds(
             &std::env::current_exe()?,
             &[],
@@ -742,6 +749,7 @@ impl AppUnderTest {
                 (IC3_ENV, &ic3),
                 (SKYPE_ENV, &skype),
                 (DIR_ENV, &own),
+                (THEME_ENV, &theme),
             ],
             &[writer.as_fd()],
         )?;
@@ -997,6 +1005,15 @@ fn child(alias: Alias) -> SandboxResult {
     if alias == Alias::A {
         let opened = Settings {
             selected_chat: Some(AB_CHAT.to_owned()),
+            appearance: teams_ui::theme::Appearance {
+                follow_system: false,
+                theme: if std::env::var(THEME_ENV).as_deref() == Ok("dark") {
+                    teams_ui::theme::DARK_KEY
+                } else {
+                    teams_ui::theme::LIGHT_KEY
+                },
+                ..teams_ui::theme::Appearance::default()
+            },
             ..Settings::default()
         };
         settings.save(&opened).map_err(|problem| format!("{problem:?}"))?;

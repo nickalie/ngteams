@@ -14,7 +14,7 @@
 //!   started; a sharing line's to [`crate::rtc::SHARING_LINE`]'s; a line the negotiated SDP doesn't name (a group
 //!   offer's sharing line) shows nothing.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -380,8 +380,7 @@ pub(super) struct Decoder {
     pub(super) lines: Arc<Mutex<LineMap>>,
     pub(super) track: RtcVideoTrack,
     pub(super) transceiver: RtpTransceiver,
-    /// The lines a decoding thread runs for, and this one's: taken out when it ends.
-    pub(super) running: (Arc<Mutex<HashSet<String>>>, String),
+    pub(super) stop: Arc<AtomicBool>,
 }
 
 /// Starts a decoding thread for the track `decoder` names.
@@ -403,7 +402,7 @@ pub(super) fn spawn_decoder(shared: &Arc<Shared>, decoder: Decoder) {
 impl Decoder {
     fn run(self) {
         let mut stream = NativeVideoStream::new(self.track.clone());
-        while !self.shared.stopping() {
+        while !self.stop.load(Ordering::Relaxed) && !self.shared.stopping() {
             let frame = match next_within(&mut stream, FRAME_WAIT) {
                 Ok(Next::Item(frame)) => frame,
                 Ok(Next::Ended) | Err(_) => break,
@@ -428,8 +427,6 @@ impl Decoder {
             }
         }
         stream.close();
-        let (running, line) = &self.running;
-        running.lock().unwrap_or_else(PoisonError::into_inner).remove(line);
     }
 }
 

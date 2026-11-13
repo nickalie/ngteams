@@ -160,6 +160,28 @@ fn a_screen_shared_goes_on_a_sharing_line_of_its_own_and_the_far_end_shows_it_ap
     assert_eq!(answer.sharing_line(), None);
     assert!(!a.session.sharing());
     assert!(a.session.stop_screen().unwrap().is_none(), "nothing left to stop");
+
+    share_again(&mut a, &mut b);
+}
+
+fn share_again(a: &mut End, b: &mut End) {
+    for round in 2..=3 {
+        let before = b.share.counts().indexed;
+        let screen = file_devices(A_TONE, std::path::Path::new("/dev/null"))
+            .screen()
+            .unwrap();
+        let (offer, mid) = a.session.share_screen(screen).unwrap();
+        a.dialect.mark_sharing(&mid);
+        let offer = a.dialect.write_offer(&offer).unwrap();
+        exchange(a, b, &offer);
+        assert!(
+            wait_frames(&b.share, before + 20, Duration::from_secs(15)) >= before + 20,
+            "B shows A's screen on share {round}"
+        );
+        let offer = a.session.stop_screen().unwrap().unwrap();
+        let offer = a.dialect.write_offer(&offer).unwrap();
+        exchange(a, b, &offer);
+    }
 }
 
 /// The value of attribute `name` in `section`.
@@ -239,12 +261,15 @@ fn a_group_call_s_screen_goes_out_on_the_mixer_s_sharing_line_without_a_renegoti
     );
     assert!(!a.session.stop_group_screen(), "nothing left to stop");
 
-    a.session.share_group_screen(screen()).unwrap();
-    assert!(
-        wait_frames(&mixer.share, stopped + 20, Duration::from_secs(15)) >= stopped + 20,
-        "shared again on the same line"
-    );
-    assert!(a.session.stop_group_screen());
+    for round in 2..=3 {
+        let before = mixer.share.counts().indexed;
+        a.session.share_group_screen(screen()).unwrap();
+        assert!(
+            wait_frames(&mixer.share, before + 20, Duration::from_secs(15)) >= before + 20,
+            "shared again on the same line ({round})"
+        );
+        assert!(a.session.stop_group_screen());
+    }
 
     // the offering side's sharing line (a group offer of ours) sends the same way
     mixer.session.share_group_screen(screen()).unwrap();

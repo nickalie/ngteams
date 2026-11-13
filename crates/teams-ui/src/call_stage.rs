@@ -97,7 +97,8 @@ use crate::people;
 use crate::settings::SettingsModel;
 use crate::settings_view::{self, DeviceChoice, device_label};
 use crate::shell::{
-    CallChat, HangUpCall, JoinCall, ShellParts, ToggleCameraCall, ToggleCaptionsCall, ToggleHandCall, ToggleMuteCall,
+    CallChat, HangUpCall, JoinCall, OpenShareCall, ShellParts, ToggleCameraCall, ToggleCaptionsCall, ToggleHandCall,
+    ToggleMuteCall,
 };
 use crate::theme::{self, Palette};
 use crate::trace::{TraceLine, ViewTrace};
@@ -224,6 +225,8 @@ pub struct CallStage {
     tiles: Option<Tiles>,
     /// The side pane open.
     pane: Pane,
+    share_menu: Option<Entity<PopupMenu>>,
+    share_dismiss: Option<Subscription>,
     /// The video effects' pane's picker, while it is open.
     effects: Option<Entity<EffectsPicker>>,
     /// The call's chat, once the Chat pane showed it.
@@ -332,6 +335,14 @@ impl CallStage {
 }
 
 impl CallStage {
+    fn observe_profiles(shell: Option<&ShellParts>, cx: &mut Context<Self>) -> Option<Subscription> {
+        shell.map(|shell| {
+            cx.observe(&shell.models.chats, |this: &mut Self, chats, cx| {
+                this.profiles_changed(&chats, cx);
+            })
+        })
+    }
+
     /// The window of call `call` over `parts`.
     pub fn new(parts: StageParts, call: CallId, cx: &mut Context<Self>) -> Self {
         let StageParts {
@@ -350,11 +361,7 @@ impl CallStage {
         let tiles = feed.map(|feed| Tiles::new(feed, Arc::clone(&trace)));
         // profile changes before the stage asked about anyone change nothing it read
         let seen = shell.as_ref().map_or(0, |shell| shell.models.chats.read(cx).revision());
-        let profiles = shell.as_ref().map(|shell| {
-            cx.observe(&shell.models.chats, |this: &mut Self, chats, cx| {
-                this.profiles_changed(&chats, cx);
-            })
-        });
+        let profiles = Self::observe_profiles(shell.as_ref(), cx);
         let mut stage = Self {
             core,
             calls,
@@ -366,6 +373,8 @@ impl CallStage {
             people: CallPeople::default(),
             tiles,
             pane: Pane::None,
+            share_menu: None,
+            share_dismiss: None,
             effects: None,
             chat: None,
             health: None,
@@ -1125,6 +1134,7 @@ impl Render for CallStage {
             .on_action(cx.listener(|this, _: &ToggleCameraCall, _, cx| this.ask(Ask::ToggleCamera, cx)))
             .on_action(cx.listener(|this, _: &HangUpCall, _, cx| this.ask(Ask::HangUp, cx)))
             .on_action(cx.listener(|this, _: &ToggleHandCall, _, cx| this.toggle_hand(cx)))
+            .on_action(cx.listener(|this, _: &OpenShareCall, window, cx| this.set_share_open(true, window, cx)))
             .on_action(cx.listener(|this, _: &CallChat, _, cx| this.act_on_end(false, cx)))
             .on_action(cx.listener(|this, _: &JoinCall, _, cx| this.act_on_end(true, cx)))
             .relative()

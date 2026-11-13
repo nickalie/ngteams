@@ -133,7 +133,8 @@ actions!(
         ToggleMuteCall,
         ToggleCaptionsCall,
         ToggleCameraCall,
-        ToggleHandCall
+        ToggleHandCall,
+        OpenShareCall
     ]
 );
 
@@ -224,6 +225,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("secondary-shift-d", DeclineCall, None),
         KeyBinding::new("secondary-shift-h", HangUpCall, None),
         KeyBinding::new("secondary-shift-m", ToggleMuteCall, None),
+        KeyBinding::new("secondary-shift-e", OpenShareCall, None),
         KeyBinding::new("alt-shift-c", ToggleCaptionsCall, None),
         // Teams' own key for the camera
         KeyBinding::new("secondary-shift-o", ToggleCameraCall, None),

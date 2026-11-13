@@ -3,6 +3,8 @@
 //! Stop sharing in its place. Teams' other entries (Microsoft Whiteboard, `PowerPoint` Live, Excel Live, Browse OneDrive,
 //! Browse my computer) are Microsoft's web apps and files shared through them: none of them is offered here.
 use super::*;
+use gpui::{DismissEvent, Focusable as _};
+use gpui_component::popover::Popover;
 
 impl CallStage {
     /// Whether the call takes Share: a call's that is up and carries video, 1:1 or group call or meeting, as Teams
@@ -28,25 +30,61 @@ impl CallStage {
             return Some(stop_sharing(self.caption("Stop sharing"), palette, cx));
         }
         let stage = cx.weak_entity();
-        Some(
-            selected_by(
-                "call-share",
-                toolbar::frame_button("call-share", palette, cx)
-                    .h(px(48.0))
-                    .child(toolbar::tool_face(Glyph::SCREEN_SHARE, self.caption("Share")))
-                    .tooltip("Share content")
-                    .dropdown_menu_with_anchor(Anchor::TopRight, move |menu: PopupMenu, _, _| {
-                        let stage = stage.clone();
-                        menu.min_w(px(340.0))
-                            .item(
-                                PopupMenuItem::element(move |_, cx| share_content(cx)).on_click(move |_, _, cx| {
-                                    let _ = stage.update(cx, |stage, cx| stage.ask(Ask::ToggleShare, cx));
-                                }),
-                            )
-                    }),
+        let menu = self.share_menu.clone();
+        let trigger = toolbar::frame_button("call-share", palette, cx)
+            .h(px(48.0))
+            .child(toolbar::tool_face(Glyph::SCREEN_SHARE, self.caption("Share")))
+            .tooltip_with_action("Share content", &OpenShareCall, None);
+        let mut popover = Popover::new("call-share-menu")
+            .appearance(false)
+            .overlay_closable(false)
+            .trigger(trigger)
+            .anchor(Anchor::TopRight)
+            .open(menu.is_some())
+            .on_open_change(move |open, window, cx| {
+                let _ = stage.update(cx, |stage, cx| stage.set_share_open(*open, window, cx));
+            })
+            .content(move |_, _, _| div().children(menu.clone()));
+        if let Some(menu) = &self.share_menu {
+            popover = popover.track_focus(&menu.focus_handle(cx));
+        }
+        Some(selected_by("call-share", popover).into_any_element())
+    }
+
+    pub(super) fn set_share_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !open {
+            self.share_menu = None;
+            self.share_dismiss = None;
+            cx.notify();
+            return;
+        }
+        if self.share_menu.is_some()
+            || !self.live(cx).is_some_and(|active| {
+                self.takes_share(&active, cx)
+                    && !active.sharing
+                    && active.held.is_none()
+                    && !active.meeting.share_blocked()
+            })
+        {
+            return;
+        }
+        let stage = cx.weak_entity();
+        let focus = self.focus.clone();
+        let menu = PopupMenu::build(window, cx, move |menu, _, _| {
+            menu.action_context(focus.clone()).min_w(px(340.0)).item(
+                PopupMenuItem::element(move |_, cx| share_content(cx)).on_click(move |_, _, cx| {
+                    let _ = stage.update(cx, |stage, cx| stage.ask(Ask::ToggleShare, cx));
+                }),
             )
-            .into_any_element(),
-        )
+        });
+        self.share_dismiss = Some(cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
+            this.share_menu = None;
+            this.share_dismiss = None;
+            cx.notify();
+        }));
+        menu.focus_handle(cx).focus(window, cx);
+        self.share_menu = Some(menu);
+        cx.notify();
     }
 }
 

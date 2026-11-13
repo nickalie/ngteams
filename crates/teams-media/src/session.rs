@@ -42,7 +42,7 @@
 //! the mixer tells comes back as events (the dominant speakers). The levels of what the microphone hears and of what
 //! the speaker plays are kept ([`MediaSession::levels`]): who speaks in a 1:1 call.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -351,7 +351,7 @@ impl MediaSession {
             inputs: input_rx,
             control: None,
             captions: crate::captions::Receiver::default(),
-            decoding: Arc::new(Mutex::new(HashSet::new())),
+            decoding: HashMap::new(),
         };
         let handle = thread::Builder::new()
             .name("teams-media-net".into())
@@ -839,8 +839,8 @@ struct Network {
     inputs: Receiver<Input>,
     control: Option<Control>,
     captions: crate::captions::Receiver,
-    /// The video lines a decoding thread runs for now, by mid (a thread takes its line out when it ends).
-    decoding: Arc<Mutex<HashSet<String>>>,
+    /// Each video line's decoder stop flag; a replacement track retires its previous decoder.
+    decoding: HashMap<String, Arc<AtomicBool>>,
 }
 
 impl Network {
@@ -886,24 +886,18 @@ impl Network {
                 }
             }
             PeerEvent::Video(track, transceiver) => {
-                // libwebrtc tells a line's track again whenever the line receives again (the far end's camera back
-                // on): one decoding thread per line at a time (a track's id is the far end's to choose, and two
-                // lines may share one); a thread whose stream ended has left its line for the next
+                // A rejected m-line can return with a new track before its old stream ends.
                 let line = transceiver.mid().unwrap_or_else(|| track.id());
-                if !self
-                    .decoding
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .insert(line.clone())
-                {
-                    return;
+                let stop = Arc::new(AtomicBool::new(false));
+                if let Some(previous) = self.decoding.insert(line, Arc::clone(&stop)) {
+                    previous.store(true, Ordering::Relaxed);
                 }
                 let decoder = video::Decoder {
                     shared: Arc::clone(&self.shared),
                     lines: self.peer.lines(),
                     track,
                     transceiver,
-                    running: (Arc::clone(&self.decoding), line),
+                    stop,
                 };
                 video::spawn_decoder(&self.shared, decoder);
             }

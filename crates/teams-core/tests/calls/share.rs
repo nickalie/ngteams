@@ -166,7 +166,7 @@ async fn a_native_end_shares_again_after_stopping_and_the_other_is_shown_it_agai
 
     let share = |on| CallAction::Share { call, on };
     let mut shown = 0;
-    for round in 1..=2 {
+    for round in 1..=3 {
         // the stop's renegotiation settles first, as it has by the time a user shares again
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {

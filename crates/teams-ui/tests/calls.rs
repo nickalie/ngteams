@@ -3708,6 +3708,38 @@ fn a_one_to_one_call_shares_its_screen_from_share_content_and_stops_as_teams_sho
     assert!(drawn(stage, "call-held-controls") && drawn(stage, "call-share"));
 }
 
+#[test]
+fn the_share_shortcut_opens_the_same_picker_and_respects_hold() {
+    let feed = VideoFeed::new();
+    let (rig, stage) = one_to_one_video_call(&feed);
+    stage.simulate_keystrokes("ctrl-shift-e");
+    assert!(drawn(stage, "call-share-content"));
+    assert!(
+        !actions(&rig)
+            .iter()
+            .any(|action| matches!(action, CallAction::Share { .. }))
+    );
+    stage.simulate_keystrokes("escape");
+    assert!(!drawn(stage, "call-share-content"));
+    stage.simulate_keystrokes("ctrl-shift-e");
+    assert!(drawn(stage, "call-share-content"));
+    stage.simulate_keystrokes("down enter");
+    assert_eq!(
+        actions(&rig).last(),
+        Some(&CallAction::Share {
+            call: call(1),
+            on: true
+        })
+    );
+    rig.send(Event::CallHeld {
+        call: call(1),
+        held: true,
+    });
+    rig.cx.run_until_parked();
+    stage.simulate_keystrokes("ctrl-shift-e");
+    assert!(!drawn(stage, "call-share-content"));
+}
+
 /// The sharer's name sits on the shared picture's bottom left, where the 16:9 picture is drawn letterboxed in the
 /// share's room, not on the room's.
 fn share_named_on_its_picture(stage: &mut VisualTestContext) {
