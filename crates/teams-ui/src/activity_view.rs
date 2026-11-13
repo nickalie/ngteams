@@ -171,6 +171,9 @@ pub struct ActivityView {
     searching: bool,
     /// The item the keyboard or the last click is on.
     selected: Option<String>,
+    /// An item asked to be opened before the feed read under way holds it (a notification's click on a pane just
+    /// made): opened once that read comes back.
+    opening: Option<String>,
     /// Items marked here whose change hasn't come back yet: the read state asked for, at the version then shown.
     pending: HashMap<String, (bool, i64)>,
     /// Items removed here, hidden until the store drops them.
@@ -261,6 +264,7 @@ impl ActivityView {
             search,
             searching: false,
             selected: None,
+            opening: None,
             pending: HashMap::new(),
             removed: Vec::new(),
             pictures: HashMap::new(),
@@ -388,6 +392,14 @@ impl ActivityView {
             }
             self.read_on_screen(cx);
         }
+        if let Some(id) = self.opening.take() {
+            if self.feed.item(&id).is_some() {
+                self.open(&id, cx);
+            } else if self.dirty {
+                // the read after this one may hold it
+                self.opening = Some(id);
+            }
+        }
         cx.notify();
         if self.dirty {
             self.reload(cx);
@@ -401,6 +413,9 @@ impl ActivityView {
         }
         self.shown = shown;
         self.item_menu = None;
+        if !shown {
+            self.opening = None;
+        }
         self.header_menu = false;
         self.open_newest &= shown;
         if shown {
@@ -475,6 +490,12 @@ impl ActivityView {
     #[must_use]
     pub fn shown(&self) -> bool {
         self.shown
+    }
+
+    /// The item the keyboard or the last open is on.
+    #[must_use]
+    pub fn selected(&self) -> Option<&str> {
+        self.selected.as_deref()
     }
 
     /// Moves the feed's horizon to its newest item, when it isn't there.
@@ -779,9 +800,13 @@ impl ActivityView {
     }
 
     /// Opens an item: marked read, then what it opens (its message in its conversation, a meeting's day in the
-    /// calendar, a missed call's chat).
+    /// calendar, a missed call's chat). An item the feed doesn't hold yet while it is being read is opened once the
+    /// read comes back.
     pub fn open(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(item) = self.feed.item(id).cloned() else {
+            if self.loading.is_some() {
+                self.opening = Some(id.to_owned());
+            }
             return;
         };
         self.trace
@@ -823,6 +848,8 @@ impl ActivityView {
         let Some(item) = self.feed.item(id).cloned() else {
             return;
         };
+        // what is acted on now replaces an open still waiting for the feed
+        self.opening = None;
         self.selected = Some(item.id.clone());
         self.item_menu = None;
         if !self.is_read(&item) {
