@@ -48,6 +48,7 @@ use teams_proto::Mri;
 use teams_proto::{Author, Client, Credentials, HttpError, HttpTransport, Transport as _};
 use teams_store::Store;
 use teams_trouter::{Options, Trouter, TrouterCredentials};
+use teams_ui::desktop::Desktop;
 use teams_ui::shell::Shell;
 use teams_ui::view::Root;
 use teams_ui::window::KitRoot;
@@ -292,6 +293,14 @@ fn run_checks(sandbox: &Sandbox) -> SandboxResult<usize> {
     qa.check(
         "app_item_shows_a_banner_while_its_notifications_are_on",
         turn_off::banner_while_on,
+    );
+    qa.check(
+        "app_item_banner_opens_a_window_closed_into_the_tray_at_the_item",
+        turn_off::banner_reopens_the_window,
+    );
+    qa.check(
+        "dark_theme_app_item_banner_opens_a_window_closed_into_the_tray",
+        turn_off::dark_banner_reopens_the_window,
     );
     for (name, check) in turn_off::CHECKS {
         qa.check(name, check);
@@ -1861,11 +1870,10 @@ fn child_app(read_only: bool) -> SandboxResult {
         );
         match launched {
             Ok(launched) => {
-                let window = launched.window;
-                let _ = window.update(cx, |_, window, _| {
+                let _ = launched.window.update(cx, |_, window, _| {
                     after_frames(window, READY_FRAMES, |_, _| say("ready"));
                 });
-                answer(window, probe, dir.join(ASK), cx);
+                answer(launched.desktop, probe, dir.join(ASK), cx);
             }
             Err(failed) => {
                 *failed_in_app.lock().unwrap_or_else(PoisonError::into_inner) = Some(failed.error);
@@ -1956,8 +1964,9 @@ impl Probe {
     }
 }
 
-/// Answers each question the parent writes to `ask`, one `answer <json>` line each.
-fn answer(window: WindowHandle<KitRoot>, probe: Probe, ask: PathBuf, cx: &mut App) {
+/// Answers each question the parent writes to `ask`, one `answer <json>` line each, from the window the desktop shows
+/// now (a window closed into the tray and opened again is another one).
+fn answer(desktop: Entity<Desktop>, probe: Probe, ask: PathBuf, cx: &mut App) {
     cx.spawn(async move |cx: &mut AsyncApp| {
         loop {
             cx.background_executor().timer(Duration::from_millis(50)).await;
@@ -1971,12 +1980,20 @@ fn answer(window: WindowHandle<KitRoot>, probe: Probe, ask: PathBuf, cx: &mut Ap
                 cx.update(|cx| cx.quit());
                 return;
             }
+            if let Some(reply) = mock_reply(&question, &probe) {
+                say(&format!("answer {reply}"));
+                continue;
+            }
+            let Some(window) = cx.update(|cx| desktop.read(cx).window()) else {
+                say("answer {\"window\":false}");
+                continue;
+            };
             let Some(shell) = shell_of(window, cx) else {
                 say("answer {\"error\":\"no shell\"}");
                 continue;
             };
             let reply = window
-                .update(cx, |_, _, cx| reply_to(&question, &shell, &probe, cx))
+                .update(cx, |_, _, cx| reply_to(&question, &shell, cx))
                 .unwrap_or_else(|_| json!({"error": "no window"}));
             say(&format!("answer {reply}"));
         }
@@ -1984,12 +2001,11 @@ fn answer(window: WindowHandle<KitRoot>, probe: Probe, ask: PathBuf, cx: &mut Ap
     .detach();
 }
 
-/// The answer to one question.
-fn reply_to(question: &str, shell: &Entity<Shell>, probe: &Probe, cx: &mut App) -> Value {
+/// The answer to a question about the mock alone (asked with the window closed too), or `None` for one about the window.
+fn mock_reply(question: &str, probe: &Probe) -> Option<Value> {
     let (verb, rest) = question.split_once(' ').unwrap_or((question, ""));
     let mock = &probe.mock;
-    match verb {
-        "state" => state_of(shell, cx),
+    Some(match verb {
         "server" => server_copy(mock, rest),
         "push-reaction" => push_reaction(mock),
         "push-mention" => push_mention(mock),
@@ -2010,6 +2026,15 @@ fn reply_to(question: &str, shell: &Entity<Shell>, probe: &Probe, cx: &mut App) 
         "push-chat" => push_chat(mock),
         "prefs" => probe.prefs(),
         "refuse" => probe.refuse(rest),
+        _ => return None,
+    })
+}
+
+/// The answer to a question about the window.
+fn reply_to(question: &str, shell: &Entity<Shell>, cx: &mut App) -> Value {
+    let (verb, rest) = question.split_once(' ').unwrap_or((question, ""));
+    match verb {
+        "state" => state_of(shell, cx),
         "theme" => {
             let key = if rest == "dark" {
                 teams_ui::theme::DARK_KEY
@@ -2032,9 +2057,9 @@ fn reply_to(question: &str, shell: &Entity<Shell>, probe: &Probe, cx: &mut App) 
     }
 }
 
-/// What the window holds: the list's place, the rail's count, the pane's chip, search and menus, its items as listed
-/// (each with its read state as the pane draws it and a meeting's time line), the main view, the chat open and the
-/// message it was opened at, the settings' page and the toast.
+/// What the window holds: the list's place, the rail's count, the pane's chip, search, selected item and menus, its
+/// items as listed (each with its read state as the pane draws it and a meeting's time line), the main view, the chat
+/// open and the message it was opened at, the settings' page and the toast.
 fn state_of(shell: &Entity<Shell>, cx: &App) -> Value {
     let shell = shell.read(cx);
     let view = shell.activity_view().read(cx);
@@ -2059,6 +2084,7 @@ fn state_of(shell: &Entity<Shell>, cx: &App) -> Value {
     json!({
         "list": format!("{:?}", shell.list_place()),
         "pane_shown": view.shown(),
+        "selected": view.selected(),
         "unseen": view.unseen(),
         "filter": view.filter().key(),
         "items": listed,
@@ -2185,7 +2211,13 @@ fn push_mention(mock: &ChatServiceMock) -> Value {
 /// A later note of the app ([`app_note`]'s), `which` in its words, as the feed then tells a.
 fn push_app(mock: &ChatServiceMock, which: &str) -> Value {
     let mut item = app_note();
-    item["activityId"] = json!(if which == "later" { 10 } else { 9 });
+    item["activityId"] = json!(match which {
+        "later" => 10,
+        "tray" => 11,
+        "tray-dark" => 12,
+        "undone" => 13,
+        _ => 9,
+    });
     item["messagePreview"] = json!(format!("Made-up {which} reminder"));
     mock.add_activity(LAB_A, &item, false)
         .map_or_else(|| json!({"error": "no feed"}), |id| json!({"id": id}))

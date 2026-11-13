@@ -1,8 +1,9 @@
 //! An app item's "Turn off <app>" (#27) as a user meets it: the red row after Notification settings in an app item's
 //! menu (none on a person's item, none in the read-only mode), the success card with Undo and Dismiss, Undo putting the
 //! app's earlier preferences back on the mock, a refused write showing the error and no success, Ctrl+Alt+Shift+O on
-//! the selected item, a banner for a new item of the app while it is on (its click opening the item), and none for a
-//! later item of the app turned off.
+//! the selected item, a banner for a new item of the app while it is on (its click opening the item, also in a window
+//! closed into the tray and opened again by the click), one again after Undo, and none for a later item of the app
+//! turned off.
 //!
 //! The mock starts with a's `userGraphSettings` holding a made-up preference for the app (an unknown key among it)
 //! and one for another app; the child answers `prefs` with what the mock holds and every `PUT` it got.
@@ -51,10 +52,11 @@ pub(super) fn seeded_prefs() -> Value {
 }
 
 /// The flows, after the pane's own (each leaves the window as the next expects it).
-pub(super) const CHECKS: [super::Check; 7] = [
+pub(super) const CHECKS: [super::Check; 8] = [
     ("app_item_menu_offers_turn_off_in_red", app_menu_offers_turn_off),
     ("person_item_offers_no_turn_off", person_item_offers_none),
     ("turn_off_writes_the_app_off_and_undo_restores", turn_off_and_undo),
+    ("app_item_after_undo_shows_a_banner_again", banner_after_undo),
     ("refused_turn_off_shows_the_error_and_no_success", refused_turn_off),
     ("ctrl_alt_shift_o_turns_off_and_dismiss_closes", keyboard_and_dismiss),
     ("later_item_of_the_app_turned_off_shows_no_banner", no_banner_after),
@@ -297,7 +299,8 @@ fn no_banner_after(qa: &mut Qa<'_>) -> SandboxResult {
 }
 
 /// A new app item while its app's notifications are on (the seeded preference saves no choice for its type): one
-/// banner with the item's title and preview, as Teams shows one; its click shows the Activity pane with the item read.
+/// banner with the item's title and preview, as Teams shows one; its click shows the Activity pane with the item
+/// selected and read.
 pub(super) fn banner_while_on(qa: &mut Qa<'_>) -> SandboxResult {
     qa.ctl_json(&["open", "chat", ABC_CHAT])?;
     let shown = qa.sandbox.bus().notifications().len();
@@ -320,8 +323,9 @@ pub(super) fn banner_while_on(qa: &mut Qa<'_>) -> SandboxResult {
         || format!("the banner says {:?}: {:?}", banner.summary, banner.body),
     )?;
     qa.sandbox.bus().invoke_action(banner.id, "default")?;
-    let state = qa.state_until("the Activity pane at the item, read", |state| {
+    let state = qa.state_until("the Activity pane at the item, selected and read", |state| {
         state["pane_shown"] == true
+            && state["selected"] == id.as_str()
             && items(state)
                 .iter()
                 .any(|item| text(item, "id") == id && item["read"] == true)
@@ -330,6 +334,97 @@ pub(super) fn banner_while_on(qa: &mut Qa<'_>) -> SandboxResult {
         "the banner's click: list {}, main {}",
         state["list"], state["main"]
     ));
+    Ok(())
+}
+
+/// The window closed into the tray: a new app item's banner, clicked, opens the window again with the Activity pane
+/// at the item, selected and read, once the new pane has read its feed; nothing else opens after it.
+pub(super) fn banner_reopens_the_window(qa: &mut Qa<'_>) -> SandboxResult {
+    banner_into_closed_window(qa, "tray", "banner-opened-light")
+}
+
+/// The same in Teams Dark.
+pub(super) fn dark_banner_reopens_the_window(qa: &mut Qa<'_>) -> SandboxResult {
+    qa.ask("theme dark")?;
+    let outcome = banner_into_closed_window(qa, "tray-dark", "banner-opened-dark");
+    qa.ask("theme light")?;
+    outcome
+}
+
+fn banner_into_closed_window(qa: &mut Qa<'_>, which: &str, shot: &str) -> SandboxResult {
+    qa.sandbox.niri_msg(&["action", "close-window"])?;
+    wait_until(WAIT, || qa.ask("state").ok().filter(|state| state["window"] == false))
+        .ok_or("the window didn't close into the tray")?;
+    let shown = qa.sandbox.bus().notifications().len();
+    let pushed = qa.ask(&format!("push-app {which}"))?;
+    let id = text(&pushed, "id");
+    let banner = wait_until(BANNER_WAIT, || qa.sandbox.bus().notifications().get(shown).cloned())
+        .ok_or("no banner for a new app item with the window closed")?;
+    ensure(banner.body == format!("Made-up {which} reminder"), || {
+        format!("the banner says {:?}: {:?}", banner.summary, banner.body)
+    })?;
+    qa.trace.drain();
+    let from = qa.trace.seen.len();
+    qa.sandbox.bus().invoke_action(banner.id, "default")?;
+    qa.trace.next_where("the app item opened", |line| {
+        line["view"] == "activity" && line["change"] == "opened" && line["kinds"] == json!(["app"])
+    })?;
+    // read already: the earlier Mark all read put the horizon at the wall clock, past the mock's item times
+    let opened = qa.state_until("the window again, the pane at the item, selected and read", |state| {
+        state["list"] == "Activity"
+            && state["pane_shown"] == true
+            && state["selected"] == id.as_str()
+            && items(state)
+                .iter()
+                .any(|item| text(item, "id") == id && item["read"] == true)
+    })?;
+    super::say(&format!(
+        "the banner's click into a closed window: list {}, main {}, chat {}, selected {}",
+        opened["list"], opened["main"], opened["chat"], opened["selected"]
+    ));
+    thread::sleep(QUIET);
+    qa.trace.drain();
+    let opens = qa
+        .trace
+        .seen
+        .iter()
+        .skip(from)
+        .filter(|line| line["view"] == "activity" && line["change"] == "opened")
+        .count();
+    let after = qa.state()?;
+    ensure(
+        opens == 1
+            && after["selected"] == opened["selected"]
+            && after["chat"] == opened["chat"]
+            && after["main"] == opened["main"]
+            && after["list"] == "Activity",
+        || format!("something else opened after the item ({opens} opens since the click): {after}"),
+    )?;
+    qa.hover((900, 500))?;
+    qa.shot(shot)?;
+    Ok(())
+}
+
+/// After Undo the app's banners are on again: its next item shows one.
+fn banner_after_undo(qa: &mut Qa<'_>) -> SandboxResult {
+    qa.ctl_json(&["open", "chat", ABC_CHAT])?;
+    let shown = qa.sandbox.bus().notifications().len();
+    let pushed = qa.ask("push-app undone")?;
+    let id = text(&pushed, "id");
+    qa.state_until("the app's item after Undo listed", |state| {
+        items(state).iter().any(|item| text(item, "id") == id)
+    })?;
+    let banner = wait_until(BANNER_WAIT, || qa.sandbox.bus().notifications().get(shown).cloned())
+        .ok_or("no banner for the app's item after Undo")?;
+    thread::sleep(BANNER_WAIT);
+    let banners = qa.sandbox.bus().notifications().len() - shown;
+    super::say(&format!(
+        "banners for the app's item after Undo: {banners} ({:?}: {:?})",
+        banner.summary, banner.body
+    ));
+    ensure(banners == 1 && banner.body == "Made-up undone reminder", || {
+        format!("{banners} banners, the first {:?}: {:?}", banner.summary, banner.body)
+    })?;
     Ok(())
 }
 
