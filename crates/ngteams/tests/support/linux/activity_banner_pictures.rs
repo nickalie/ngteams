@@ -12,6 +12,8 @@
 //! - Made-up Square's first item, its app never read this run, comes with no picture and has its tile read after; the
 //!   next one carries the tile, square to its corners; Made-up Slow's two items come promptly while its tile read
 //!   hangs, with no picture;
+//! - b's Meet now in the group chat: its banner ("Lab B started a meeting") carries b's picture, round (#125); the
+//!   meeting's end closes it;
 //! - no window toast says anything went wrong, and on Linux no banner picture file is ever written (the pixels go in
 //!   the `image-data` hint), during the run nor after it.
 //!
@@ -61,7 +63,7 @@ const PROMPT: Duration = Duration::from_secs(4);
 const SETTLE_BANNERS: Duration = Duration::from_secs(3);
 
 /// The flows (each leaves the window as the next expects it).
-const CHECKS: [Check; 9] = [
+const CHECKS: [Check; 10] = [
     // first: the outsider's read is held from about the app's start, for HANG only
     ("hanging_picture_read_doesnt_hold_the_banner", hanging_person),
     ("message_banner_shows_the_sender_s_round_picture", message),
@@ -84,6 +86,7 @@ const CHECKS: [Check; 9] = [
         app_first_then_tile,
     ),
     ("hanging_tile_read_doesnt_hold_the_app_s_banners", hanging_tile),
+    ("meet_now_banner_shows_the_starter_s_round_picture", meet_now_starter),
 ];
 
 /// The flows that passed, and those that failed with why.
@@ -494,6 +497,48 @@ fn message(qa: &mut Qa<'_>) -> SandboxResult {
     qa.hover(super::AWAY)?;
     qa.shot("banner-picture-message-opened-light")?;
     Ok(())
+}
+
+/// b's Meet now in the group chat: the meeting's banner carries its starter's (b's) picture, round; its end closes
+/// it.
+fn meet_now_starter(qa: &mut Qa<'_>) -> SandboxResult {
+    park(qa)?;
+    let shown = qa.sandbox.bus().notifications().len();
+    let asked = Instant::now();
+    let posted = qa.ask("push-meet-now b 7")?;
+    ensure(posted.get("error").is_none(), || format!("b's Meet now: {posted}"))?;
+    let banner = wait_until(super::WAIT, || {
+        qa.sandbox
+            .bus()
+            .notifications()
+            .into_iter()
+            .skip(shown)
+            .find(|banner| banner.body.contains(" started "))
+    })
+    .ok_or("no banner for b's Meet now")?;
+    let took = asked.elapsed();
+    say(&format!(
+        "b's Meet now banner in {} ms: {:?}: {:?}; actions {:?}; hints {:?}; picture {:?}",
+        took.as_millis(),
+        banner.summary,
+        banner.body,
+        banner.actions,
+        banner.hints,
+        banner.image.as_ref().map(|(width, height, _)| (width, height))
+    ));
+    keep(&banner, "meeting")?;
+    let checked = round_of(&banner, B_COLOUR).and_then(|()| prompt(took, "b's Meet now banner"));
+    qa.ask("push-meet-now-end 7")?;
+    wait_until(super::WAIT, || {
+        qa.sandbox
+            .bus()
+            .closed_notifications()
+            .contains(&banner.id)
+            .then_some(())
+    })
+    .ok_or("the meeting's banner stayed after its end")?;
+    checked?;
+    quiet_window(qa)
 }
 
 /// b's mention of a in the group chat: "… mentioned you", b's picture, round.
