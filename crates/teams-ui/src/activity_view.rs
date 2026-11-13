@@ -92,6 +92,8 @@ pub const IN_CHAT_WITH_YOU: &str = "In chat with you";
 pub const TEAMS_CALL: &str = "Teams call";
 /// The toast an item whose chat is gone (left or deleted) shows instead of opening it.
 pub const CHAT_GONE: &str = "This chat isn't available";
+/// The toast a failed Activity write shows.
+pub const WRITE_FAILED: &str = "Couldn't update activity. Try again.";
 /// How a group chat's item names its chat before its members' first names ("Chat with Dmitry, Nikita").
 pub const CHAT_WITH: &str = "Chat with";
 /// An item's avatar, px.
@@ -124,6 +126,8 @@ pub enum ActivityViewEvent {
     Toast(&'static str),
     /// A confirmed app preference change, with the outbox row Undo restores.
     AppTurnedOff(i64),
+    /// Undo failed: offer it again for the same outbox row, whose saved preference still stands.
+    UndoFailed(i64),
     /// Show the notification settings (an item's "Notification settings").
     NotificationSettings,
     /// What the newest item opens, as the pane opened from the rail opens it: quietly (nothing said when it can't).
@@ -562,9 +566,15 @@ impl ActivityView {
             }
             Operation::Seen => self.feed.seen_ms = self.stored_seen,
             Operation::AllRead => self.feed.bookmark_ms = self.stored_bookmark,
-            Operation::App(_) | Operation::UndoApp(_) => {}
+            Operation::App(_) => {}
+            Operation::UndoApp(row) => {
+                cx.emit(ActivityViewEvent::UndoFailed(*row));
+                self.reload(cx);
+                cx.notify();
+                return;
+            }
         }
-        cx.emit(ActivityViewEvent::Toast("Couldn't update activity. Try again."));
+        cx.emit(ActivityViewEvent::Toast(WRITE_FAILED));
         self.reload(cx);
         cx.notify();
     }

@@ -427,12 +427,11 @@ pub trait Core: Send + Sync + 'static {
     fn team_apps(&self, _team: String) -> Reply<Vec<InstalledApp>> {
         Reply::ready(Ok(Vec::new()))
     }
-    /// The apps the store offers to add to a team. A fake core offers none.
-    /// The account's cached app definition, shared with Activity notification writes.
+    /// The account's cached app definition, shared with Activity notification writes. A fake core has none.
     fn app_definition(&self, _id: String) -> Reply<Option<teams_proto::AppDefinition>> {
         Reply::ready(Ok(None))
     }
-
+    /// The apps the store offers to add to a team. A fake core offers none.
     fn app_store(&self) -> Reply<Vec<StoreApp>> {
         Reply::ready(Ok(Vec::new()))
     }

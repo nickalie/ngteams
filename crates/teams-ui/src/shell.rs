@@ -527,6 +527,10 @@ impl Shell {
                 this.show_toast("Successfully turned-off setting", cx);
                 this.activity_undo = Some(*row);
             }
+            ActivityViewEvent::UndoFailed(row) => {
+                this.show_toast(crate::activity_view::WRITE_FAILED, cx);
+                this.activity_undo = Some(*row);
+            }
             ActivityViewEvent::NotificationSettings => {
                 this.open_settings_page(crate::settings_view::Page::Notifications, window, cx);
             }

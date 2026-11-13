@@ -1277,6 +1277,48 @@ fn rig_with_app() -> Rig {
     rig
 }
 
+/// Undo after a confirmed Turn off: its restoration fails before it sends, so the card offers Undo again for the
+/// same row, and a second Undo sends the same restoration.
+fn undo_offers_itself_again_after_a_failed_restoration(rig: &Rig, shell: &Entity<Shell>, cx: &mut VisualTestContext) {
+    rig.core.write_answers.lock().unwrap().push_back(common::outbox_row(
+        501,
+        teams_store::OutboxKind::ActivityRestoreApp,
+        teams_store::OutboxState::Pending,
+    ));
+    click(cx, "activity-undo-app");
+    assert!(writes(rig).contains(&Action::ActivityUndoTurnOffApp { row: 500 }));
+    assert_eq!(cx.update(|_, cx| shell.read(cx).toast().cloned()), None);
+    rig.cx.update(|cx| {
+        rig.models.apply(
+            teams_core::Event::Outbox(common::outbox_row(
+                501,
+                teams_store::OutboxKind::ActivityRestoreApp,
+                teams_store::OutboxState::Failed,
+            )),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).toast().cloned()),
+        Some("Couldn't update activity. Try again.".into())
+    );
+    assert!(drawn(cx, "activity-undo-app"));
+    rig.core.write_answers.lock().unwrap().push_back(common::outbox_row(
+        502,
+        teams_store::OutboxKind::ActivityRestoreApp,
+        teams_store::OutboxState::Sent,
+    ));
+    click(cx, "activity-undo-app");
+    assert_eq!(
+        writes(rig)
+            .iter()
+            .filter(|action| **action == Action::ActivityUndoTurnOffApp { row: 500 })
+            .count(),
+        2
+    );
+}
+
 #[test]
 fn only_app_item_menus_offer_turn_off_and_it_preserves_the_feed() {
     let rig = rig_with_app();
@@ -1313,12 +1355,7 @@ fn only_app_item_menus_offer_turn_off_and_it_preserves_the_feed() {
         cx.update(|_, cx| shell.read(cx).toast().cloned()),
         Some("Successfully turned-off setting".into())
     );
-    click(cx, "activity-undo-app");
-    assert!(
-        writes(&rig)
-            .iter()
-            .any(|action| matches!(action, Action::ActivityUndoTurnOffApp { .. }))
-    );
+    undo_offers_itself_again_after_a_failed_restoration(&rig, &shell, cx);
     let before = writes(&rig)
         .iter()
         .filter(|action| matches!(action, Action::ActivityTurnOffApp { .. }))

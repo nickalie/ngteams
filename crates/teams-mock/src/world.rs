@@ -106,8 +106,10 @@ pub(crate) struct State {
     pub(crate) changes: watch::Sender<u64>,
     /// The account's own conversation properties it set, by (account MRI, conversation): a channel's
     /// `channelNotificationSettings` and `followAllRc` (`docs/protocol/channels.md`).
-    pub(crate) user_graph_settings: BTreeMap<String, String>,
     pub(crate) own_properties: BTreeMap<(String, String), serde_json::Map<String, Value>>,
+    /// Each account's `userGraphSettings` JSON text, by account MRI
+    /// (`PUT v1/users/ME/properties?name=userGraphSettings`).
+    pub(crate) user_graph_settings: BTreeMap<String, String>,
     /// The conversation list's page size, once a test asked for pages (`startup.rs`).
     pub(crate) list_page: Option<usize>,
     /// The requests a test holds (`startup.rs`).
