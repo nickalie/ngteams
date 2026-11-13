@@ -126,6 +126,10 @@ name = "large_call_window"
 harness = false
 
 [[test]]
+name = "share_window"
+harness = false
+
+[[test]]
 name = "reactors_window"
 harness = false
 

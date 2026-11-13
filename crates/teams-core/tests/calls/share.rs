@@ -141,6 +141,72 @@ async fn a_native_end_shares_its_screen_and_the_other_is_shown_it() {
     assert_eq!(a.ended(call).await, End::HungUp);
 }
 
+/// A 1:1 call's native end shares, stops and shares again, as a user does: the far end is shown the second share's
+/// frames too, not only told that it shares.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_native_end_shares_again_after_stopping_and_the_other_is_shown_it_again() {
+    let lab = Lab::start().await;
+    let mut a = lab.account(LAB_A, A_TONE).await;
+    let mut b = lab.account(LAB_B, B_TONE).await;
+    let call = a
+        .handle
+        .requests()
+        .call(CallAction::Call { chat: AB_CHAT.into() })
+        .await
+        .unwrap();
+    let incoming = b.incoming().await;
+    let answered = b
+        .handle
+        .requests()
+        .call(CallAction::Answer { call: incoming.call })
+        .await
+        .unwrap();
+    a.status(call, &CallStatus::Connected).await;
+    b.status(answered, &CallStatus::Connected).await;
+
+    let share = |on| CallAction::Share { call, on };
+    let mut shown = 0;
+    for round in 1..=2 {
+        // the stop's renegotiation settles first, as it has by the time a user shares again
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match a.handle.requests().call(share(true)).await {
+                Ok(shared) => break assert_eq!(shared, call),
+                Err(error) if std::time::Instant::now() < deadline => {
+                    assert!(format!("{error:?}").contains("NotNow"), "{error:?}");
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                Err(error) => panic!("a can't share again ({round}): {error:?}"),
+            }
+        }
+        assert!(share_told(&mut a, call, true).await, "a shares ({round})");
+        assert!(
+            share_told(&mut b, answered, false).await,
+            "b is told a's share ({round})"
+        );
+        let wanted = shown + FRAMES;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while b.video.share.counts().indexed < wanted {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "share {round}: b was shown {:?} of a's frames, not {wanted} indexed",
+                b.video.share.counts()
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        shown = b.video.share.counts().indexed;
+        last_modalities(&lab, LAB_A, &["Audio", "ScreenSharer"]).await;
+
+        assert_eq!(a.handle.requests().call(share(false)).await.unwrap(), call);
+        assert!(!share_told(&mut a, call, true).await, "a no longer shares ({round})");
+        assert!(!share_told(&mut b, answered, false).await, "b's share gone ({round})");
+        last_modalities(&lab, LAB_A, &["Audio"]).await;
+    }
+
+    a.handle.requests().call(CallAction::HangUp { call }).await.unwrap();
+    assert_eq!(a.ended(call).await, End::HungUp);
+}
+
 /// The bodies of every `updateMediaDescriptions` the mock got, in order.
 async fn descriptions(lab: &Lab) -> Vec<Value> {
     lab.mock
