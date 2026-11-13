@@ -3720,7 +3720,24 @@ async fn answer_blocked_history(lab: &Lab, shapes: &Value) {
             "GET",
             &format!("/conversations/{AB_CHAT}/messages"),
             200,
-            &json!({"messages": [newer, shapes["blocked"]]}),
+            &json!({"messages": [newer, shapes["blocked"]], "_metadata": {
+                "syncState": blocked_sync_link()
+            }}),
+        )
+        .await;
+}
+
+fn blocked_sync_link() -> String {
+    format!("{CHAT_BASE}/v1/users/ME/conversations/{AB_CHAT}/messages?syncState=blocked-recovery")
+}
+
+async fn answer_empty_blocked_sync(lab: &Lab) {
+    lab.mock
+        .answer_next(
+            "GET",
+            &format!("/conversations/{AB_CHAT}/messages"),
+            200,
+            &json!({"messages": [], "_metadata": {"syncState": blocked_sync_link()}}),
         )
         .await;
 }
@@ -3793,13 +3810,26 @@ async fn a_failed_blocked_copy_read_keeps_history_readable_and_retries_later() {
         );
         assert_eq!(copy_reads(&lab, &shapes).await, 1);
 
-        answer_blocked_history(&lab, &shapes).await;
+        answer_empty_blocked_sync(&lab).await;
         lab.mock
             .answer_next("GET", &format!("/messages/{copy_id}"), 200, &shapes["copy"])
             .await;
-        a.handle.sync_conversation(AB_CHAT).await.unwrap();
+        let synced = a.handle.sync_conversation(AB_CHAT).await.unwrap();
+        assert_eq!(synced.changed(), 0);
         assert_eq!(a.stored(AB_CHAT, id).await.content, shapes["copy"]["content"]);
+        assert_eq!(files_of(&a.stored(AB_CHAT, id).await), 1);
         assert_eq!(copy_reads(&lab, &shapes).await, 2);
+        let requests = lab.mock.received_requests().await;
+        let last = requests
+            .iter()
+            .rev()
+            .find(|request| decoded(request.url.path()).ends_with(&format!("/conversations/{AB_CHAT}/messages")))
+            .unwrap();
+        assert!(
+            last.url
+                .query_pairs()
+                .any(|(name, value)| name == "syncState" && value == "blocked-recovery")
+        );
         assert!(
             a.drain()
                 .await
@@ -3808,6 +3838,65 @@ async fn a_failed_blocked_copy_read_keeps_history_readable_and_retries_later() {
         );
         a.shutdown();
     }
+}
+
+#[tokio::test]
+async fn failed_blocked_copy_reads_retry_on_empty_catch_up_and_after_restart() {
+    let lab = Lab::start().await;
+    let shapes = blocked_shapes();
+    let id = shapes["blocked"]["id"].as_str().unwrap();
+    let copy_id = shapes["copy"]["id"].as_str().unwrap();
+    answer_blocked_history(&lab, &shapes).await;
+    lab.mock
+        .answer_next("GET", &format!("/messages/{copy_id}"), 403, &json!({}))
+        .await;
+    let how = How {
+        push: false,
+        ..How::default()
+    };
+    let dir = Arc::new(tempfile::tempdir().unwrap());
+    let a = try_native_in(&lab, LAB_A, how, Arc::clone(&dir)).unwrap();
+    let report = a.handle.sync().await.unwrap();
+    assert!(report.failed.is_empty());
+    assert_eq!(a.stored(AB_CHAT, id).await.content, "");
+    assert_eq!(copy_reads(&lab, &shapes).await, 1);
+
+    lab.mock
+        .answer_next("GET", "/conversations", 200, &json!({"conversations": []}))
+        .await;
+    lab.mock
+        .answer_next("GET", &format!("/messages/{copy_id}"), 403, &json!({}))
+        .await;
+    let report = a.handle.sync().await.unwrap();
+    assert!(report.failed.is_empty());
+    assert_eq!(report.conversations, 0);
+    assert_eq!(a.stored(AB_CHAT, id).await.content, "");
+    assert_eq!(copy_reads(&lab, &shapes).await, 2);
+    a.shutdown();
+
+    lab.mock
+        .answer_next("GET", "/conversations", 200, &json!({"conversations": []}))
+        .await;
+    lab.mock
+        .answer_next("GET", &format!("/messages/{copy_id}"), 200, &shapes["copy"])
+        .await;
+    let a = try_native_in(&lab, LAB_A, how, dir).unwrap();
+    let report = a.handle.sync().await.unwrap();
+    assert!(report.failed.is_empty());
+    assert_eq!(report.conversations, 0);
+    let restored = a.stored(AB_CHAT, id).await;
+    assert_eq!(restored.content, shapes["copy"]["content"]);
+    assert_eq!(files_of(&restored), 1);
+    assert_eq!(copy_reads(&lab, &shapes).await, 3);
+    assert!(
+        a.handle
+            .search("made up line", 10)
+            .await
+            .unwrap()
+            .iter()
+            .any(|hit| hit.message_id == id)
+    );
+    a.shutdown();
 }
 
 #[tokio::test]

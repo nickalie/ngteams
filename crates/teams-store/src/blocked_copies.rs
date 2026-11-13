@@ -7,6 +7,16 @@ use rusqlite::{OptionalExtension as _, params};
 use crate::messages::{MESSAGE_COLUMNS, message_from_row};
 use crate::{Message, Store, StoreError};
 
+const BLOCKED_MESSAGES: &str = "WITH candidates AS (
+    SELECT messages.*,
+        CASE json_type(properties, '$.policyViolation')
+            WHEN 'text' THEN CASE WHEN json_valid(json_extract(properties, '$.policyViolation'))
+                                  THEN json_extract(properties, '$.policyViolation') END
+            ELSE json_extract(properties, '$.policyViolation')
+        END AS verdict
+    FROM messages WHERE sender = ?1 AND delete_time IS NULL AND json_valid(properties)
+)";
+
 /// A copy as the service sent it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockedCopy {
@@ -67,21 +77,36 @@ impl Store {
     /// [`StoreError::Sqlite`] when the read fails.
     pub fn messages_naming_copy(&self, sender: &str, id: &str) -> Result<Vec<Message>, StoreError> {
         let sql = format!(
-            "WITH candidates AS (
-                 SELECT {MESSAGE_COLUMNS},
-                     CASE json_type(properties, '$.policyViolation')
-                         WHEN 'text' THEN CASE WHEN json_valid(json_extract(properties, '$.policyViolation'))
-                                               THEN json_extract(properties, '$.policyViolation') END
-                         ELSE json_extract(properties, '$.policyViolation')
-                     END AS verdict
-                 FROM messages WHERE sender = ?1 AND delete_time IS NULL AND json_valid(properties)
-             )
+            "{BLOCKED_MESSAGES}
              SELECT {MESSAGE_COLUMNS} FROM candidates
              WHERE json_extract(verdict, '$.state') = 1
                AND CAST(json_extract(verdict, '$.genericStreamItemId') AS TEXT) = ?2"
         );
         let mut statement = self.conn.prepare_cached(&sql)?;
         let rows = statement.query_map(params![sender, id], message_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Stored blocked messages from `sender` whose named copies are missing, optionally within one conversation.
+    ///
+    /// # Errors
+    /// [`StoreError::Sqlite`] when the read fails.
+    pub fn messages_missing_blocked_copies(
+        &self,
+        sender: &str,
+        conversation: Option<&str>,
+    ) -> Result<Vec<Message>, StoreError> {
+        let sql = format!(
+            "{BLOCKED_MESSAGES}
+             SELECT {MESSAGE_COLUMNS} FROM candidates
+             WHERE json_extract(verdict, '$.state') = 1
+               AND (?2 IS NULL OR conversation_id = ?2)
+               AND json_extract(verdict, '$.genericStreamItemId') IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM blocked_copies
+                   WHERE blocked_copies.id = CAST(json_extract(verdict, '$.genericStreamItemId') AS TEXT))"
+        );
+        let mut statement = self.conn.prepare_cached(&sql)?;
+        let rows = statement.query_map(params![sender, conversation], message_from_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 

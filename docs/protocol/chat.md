@@ -867,8 +867,10 @@ check; structure only, nothing copied) and read from the web client's message re
   The saved web transport bundle (`precompiled-web-worker-inner~services_i`, message request builder) shows that
   request; the message resolver's generic-stream branch uses its get-message workflow directly. A 404 leaves the
   fallback and notice in place. Missing or rejected copies are tried once per account session; other read failures
-  are logged at debug, leave the chat's sync running and allow a later read to retry. The client never adds `48:generic`
-  as a conversation (deliveries and the conversation list alike), keeps the stored edit time
+  are logged at debug and leave the chat's sync running. Each later catch-up revisits stored messages with missing
+  copies, even when no conversation changed; a conversation sync does so for that chat. Failed reads are retried once
+  per sync, including after a restart, without replaying messages or holding back the sync cursor. The client never
+  adds `48:generic` as a conversation (deliveries and the conversation list alike), keeps the stored edit time
   through a verdict's update, and words the notice as above (`crates/teams-ui/src/policy_notice.rs`).
 
 ## Mentions (mention)

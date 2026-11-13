@@ -484,6 +484,7 @@ pub struct CatchUp<C, T> {
     meanwhile: Option<Arc<dyn Meanwhile>>,
     scheduling: Mutex<Scheduling>,
     tried_blocked_copies: Mutex<HashSet<String>>,
+    failed_blocked_copies: Mutex<HashSet<String>>,
 }
 
 impl<C, T> std::fmt::Debug for CatchUp<C, T> {
@@ -509,6 +510,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             meanwhile: None,
             scheduling: Mutex::default(),
             tried_blocked_copies: Mutex::default(),
+            failed_blocked_copies: Mutex::default(),
         }
     }
 
@@ -699,6 +701,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
     pub async fn catch_up(&self, store: &mut Store) -> Result<CatchUpReport, CatchUpError> {
         self.scheduling.lock().unwrap_or_else(PoisonError::into_inner).completed = Some(HashMap::new());
         let _run = CatchUpRun(&self.scheduling);
+        self.retry_blocked_copies(store, None).await?;
         self.read_app_horizon(store).await?;
         let kept = store.conversation_list_sync_link()?;
         let first = kept.is_none();
@@ -866,6 +869,15 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             return Ok(Synced::default());
         }
         let _active = self.active(conversation);
+        if self
+            .scheduling
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .completed
+            .is_none()
+        {
+            self.retry_blocked_copies(store, Some(conversation)).await?;
+        }
         let result = match self.sync_stored(store, conversation).await {
             Err(error) if conversation == NOTES && not_found(&error) => {
                 log::debug!("sync: the account's notes aren't there yet (404)");
@@ -1118,6 +1130,40 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         let Some(id) = verdict.generic_stream_item.as_deref() else {
             return Ok(());
         };
+        self.read_blocked_copy(store, id).await
+    }
+
+    async fn retry_blocked_copies(&self, store: &mut Store, conversation: Option<&str>) -> Result<(), CatchUpError> {
+        let missing = store.messages_missing_blocked_copies(self.me.as_str(), conversation)?;
+        let ids: HashSet<_> = missing
+            .iter()
+            .filter_map(|message| {
+                let properties = serde_json::from_str::<Value>(message.properties.as_deref()?).ok()?;
+                let Field::Known(verdict) = chat::PolicyViolation::of(properties.get("policyViolation")) else {
+                    return None;
+                };
+                verdict.generic_stream_item
+            })
+            .collect();
+        {
+            let mut failed = self
+                .failed_blocked_copies
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let mut tried = self.tried_blocked_copies.lock().unwrap_or_else(PoisonError::into_inner);
+            for id in &ids {
+                if failed.remove(id) {
+                    tried.remove(id);
+                }
+            }
+        }
+        for id in ids {
+            self.read_blocked_copy(store, &id).await?;
+        }
+        Ok(())
+    }
+
+    async fn read_blocked_copy(&self, store: &mut Store, id: &str) -> Result<(), CatchUpError> {
         if store.blocked_copy(id)?.is_some() {
             return Ok(());
         }
@@ -1136,10 +1182,10 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             }
             Ok(None) => {}
             Err(error) => {
-                self.tried_blocked_copies
+                self.failed_blocked_copies
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .remove(id);
+                    .insert(id.to_owned());
                 log::debug!("sync: blocked copy {id} wasn't read; kept the message's fallback: {error}");
             }
         }

@@ -101,6 +101,29 @@ fn the_messages_naming_a_copy_are_the_senders_own_and_still_blocked() {
         .map(|message| message.id)
         .collect();
     assert_eq!(ids, ["1", "2", "7"]);
+    let ids: Vec<_> = store
+        .messages_missing_blocked_copies(ME, None)
+        .unwrap()
+        .into_iter()
+        .map(|message| message.id)
+        .collect();
+    assert_eq!(ids, ["1", "2", "4", "7"]);
+    assert!(
+        store
+            .messages_missing_blocked_copies(ME, Some("other-chat"))
+            .unwrap()
+            .is_empty()
+    );
+    store.keep_blocked_copy(&copy()).unwrap();
+    drop(store);
+    let store = open(&dir);
+    let ids: Vec<_> = store
+        .messages_missing_blocked_copies(ME, Some(CHAT))
+        .unwrap()
+        .into_iter()
+        .map(|message| message.id)
+        .collect();
+    assert_eq!(ids, ["4"]);
 }
 
 #[test]
