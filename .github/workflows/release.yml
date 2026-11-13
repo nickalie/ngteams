@@ -387,11 +387,11 @@ jobs:
           codesign --verify --strict --deep "$app"
           [[ "$(cat "$app/Contents/Resources/ngteams/update-format")" == macos-app ]]
           [[ "$(cat "$app/Contents/Resources/ngteams/release")" == "$VERSION" ]]
-          # nothing may link the build's GStreamer prefix: the user's Mac has none. otool -L heads each file's list
-          # with "<file>:" (a universal file with a "(architecture ...):" line per slice), which is under RUNNER_TEMP
-          # too: only the linked libraries are checked.
+          # nothing may link the build's GStreamer prefix: the user's Mac has none. Only otool's tab-indented library
+          # lines are checked, whole (a path may hold spaces): its "<file>:" headers are under RUNNER_TEMP too.
           for program in "$app"/Contents/MacOS/*; do
-            linked=$(otool -L "$program" | awk '!/:$/ { print $1 }')
+            linked=$(otool -L -arch all "$program" | awk '/^\t/')
+            [[ -n "$linked" ]] || { echo "::error::otool lists no libraries for ${program#"$app"/}"; exit 1; }
             if grep -F "$RUNNER_TEMP" <<< "$linked"; then
               echo "::error::${program#"$app"/} links the build's GStreamer prefix"
               exit 1

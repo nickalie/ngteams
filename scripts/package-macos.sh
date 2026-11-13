@@ -81,16 +81,20 @@ cp "$gstreamer/libexec/gstreamer-1.0/gst-plugin-scanner" "$frameworks/libexec/"
 for binary in "$contents/MacOS"/*; do
     while read -r rpath; do
         install_name_tool -delete_rpath "$rpath" "$binary"
-    done < <(otool -l "$binary" | awk '/LC_RPATH/ { getline; getline; print $2 }' | grep -F "$gstreamer" || true)
+    done < <(otool -l "$binary" |
+        awk '/LC_RPATH/ { getline; getline; sub(/^ *path /, ""); sub(/ \(offset [0-9]+\)$/, ""); print }' |
+        grep -F "$gstreamer" | sort -u || true)
 done
 for binary in ngteams ngteams-webview; do
     install_name_tool -add_rpath "@executable_path/../Frameworks/gstreamer/lib" \
         "$contents/MacOS/$binary" 2>/dev/null || true
 done
-# a link to a library outside the bundle and the system would fail on the user's Mac. otool -L heads each file's list
-# with "<file>:" lines, which may share the prefix's start (--out beside it): only the linked libraries are checked.
+# a link outside the bundle and the system would fail on the user's Mac. Only otool's tab-indented library lines are
+# checked, whole (a path may hold spaces): its "<file>:" headers may share the prefix's start (--out beside it).
 for binary in "$contents/MacOS"/*; do
-    if otool -L "$binary" | awk '!/:$/ { print $1 }' | grep -F "$gstreamer"; then
+    linked=$(otool -L -arch all "$binary" | awk '/^\t/')
+    [[ -n $linked ]] || { echo "otool lists no libraries for ${binary#"$contents"/}" >&2; exit 1; }
+    if grep -F "$gstreamer" <<< "$linked"; then
         echo "${binary#"$contents"/} still names the build's GStreamer prefix" >&2
         exit 1
     fi
