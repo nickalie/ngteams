@@ -938,6 +938,7 @@ fn resource_type(kind: EventKind) -> Option<&'static str> {
     match kind {
         EventKind::Message | EventKind::Typing => Some("NewMessage"),
         EventKind::Edit | EventKind::Delete | EventKind::Reaction => Some("MessageUpdate"),
+        EventKind::ConversationUpdate => Some("ConversationUpdate"),
         EventKind::ReadReceipt | EventKind::ChatCreated => None,
     }
 }
@@ -947,6 +948,16 @@ fn event_message(event: &ChatEvent, id: u64) -> Value {
     const NOTIFICATIONS: &str = "https://notifications.skype.net/v1/users/ME";
     let chat = &event.conversation;
     let conversation_link = format!("{NOTIFICATIONS}/conversations/{chat}");
+    if event.kind == EventKind::ConversationUpdate {
+        return json!({
+            "time": iso_time(now_ms(), 7),
+            "type": "EventMessage",
+            "resourceLink": conversation_link,
+            "resourceType": "ConversationUpdate",
+            "resource": event.resource,
+            "isactive": true,
+        });
+    }
     let mut resource = if event.kind == EventKind::Typing {
         json!({
             "clientmessageid": id.to_string(), "content": "", "id": id.to_string(), "version": id.to_string(),
@@ -963,17 +974,20 @@ fn event_message(event: &ChatEvent, id: u64) -> Value {
         fields.insert("threadtype".to_owned(), json!("chat"));
     }
     let message_id = resource["id"].as_str().unwrap_or_default().to_owned();
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or_default());
     json!({
-        "time": iso_time(now, 7),
+        "time": iso_time(now_ms(), 7),
         "type": "EventMessage",
         "resourceLink": format!("{conversation_link}/messages/{message_id}"),
         "resourceType": resource_type(event.kind).unwrap_or_default(),
         "resource": resource,
         "isactive": true,
     })
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or_default())
 }
 
 /// The registrar: `POST /registrar/prod/V2/registrations` (see the module docs); `None` for any other path.

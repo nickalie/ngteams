@@ -208,7 +208,8 @@ pub struct ChatEvent {
     pub kind: EventKind,
     /// The message as a read gives it after the write ([`EventKind::Message`], [`EventKind::Edit`],
     /// [`EventKind::Delete`], [`EventKind::Reaction`]); the thread read for [`EventKind::ChatCreated`];
-    /// `{"consumptionhorizon": …}` for [`EventKind::ReadReceipt`]; `{"messagetype": …}` for [`EventKind::Typing`].
+    /// `{"consumptionhorizon": …}` for [`EventKind::ReadReceipt`]; `{"messagetype": …}` for [`EventKind::Typing`]; the
+    /// conversation as the service tells it for [`EventKind::ConversationUpdate`].
     pub resource: Value,
 }
 
@@ -222,6 +223,8 @@ pub enum EventKind {
     Reaction,
     ReadReceipt,
     ChatCreated,
+    /// A conversation changed, delivered as its `ConversationUpdate` (only ever queued by a test).
+    ConversationUpdate,
 }
 
 /// The running mock: a local HTTP server on loopback and the state its answers come from. Dropping it stops serving.

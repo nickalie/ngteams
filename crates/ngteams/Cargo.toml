@@ -134,6 +134,10 @@ name = "first_load_window"
 harness = false
 
 [[test]]
+name = "blocked_window"
+harness = false
+
+[[test]]
 name = "activity_window"
 harness = false
 
