@@ -104,6 +104,8 @@ pub struct ActivityItem {
     /// Every feed message the item stands for, the newest first.
     pub ids: Vec<String>,
     pub kind: ActivityKind,
+    /// The service's subtype of the activity (`activitySubtype`): an app's activity type, as its preferences name it.
+    pub subtype: Option<String>,
     /// The app behind the item (`activityContext.teamsAppId`).
     pub teams_app_id: Option<String>,
     /// The app name, independent of the person attributed to its activity.
@@ -180,6 +182,7 @@ impl ActivityItem {
             activity_id: id_of(activity.get("activityId")),
             ids: vec![message.id.clone()],
             kind,
+            subtype: text("activitySubtype"),
             teams_app_id: context.and_then(|context| context_text(context, "teamsAppId")),
             app_name: text("sourceAppDisplayName"),
             actors: actor.iter().cloned().collect(),

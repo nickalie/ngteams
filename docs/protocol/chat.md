@@ -1061,6 +1061,18 @@ in browser Teams (team-manage, 2026-11-12), and in a lab store's synced feed.
   existing error toast. Undo restores this app's exact saved preference (including absence) into a fresh whole
   setting, preserving changes to other apps since Turn off. The snapshot lasts for the engine's run; the toast is
   transient.
+- **An app item's banner**: the web client (its cached scripts, read 2026-11-13) decides an app activity's banner per
+  activity type from `userGraphSettings`: `<teamsAppId>.toastSettings.<activitySubtype>` and the same type under
+  `activityGenerationSettings`, each `true` when the app saved no value for it. The service's per-app
+  `activityCustomizations.defaultAppSettings` can make an app's default "Show in Activity" (`OnlyFeed`); with none,
+  the default is "Show in Activity and banner". The Apps settings' dropdowns save "Show in Activity and banner" as
+  toast and generation `true`, "Show in Activity" as toast `false`, "Off" as both `false`. Its banner carries the
+  activity's title and text. The native client shows a new app item (one delivered, or a catch-up's unread one after
+  the notifier's cutoff) as a banner while the "notifications" setting is all and the app's preferences, read fresh
+  then, keep its type's banner on; one whose preferences can't be read shows none. Its title is the item's (the app's
+  own, else the app's name), its body the preview; a click opens the Activity pane at the item, as a click there does,
+  not at the newest item a plain open picks.
+  How browser Teams draws the banner (icon, header) was not captured; the native one takes the chat banner's form.
 - **Opening the pane opens its newest item** (team-manage, 2026-11-13, account a): each time the rail's Activity is
   chosen from elsewhere (Chat, say), the chip lets go and the newest item is selected (`aria-selected`) and opened
   beside the pane, whichever item was chosen last time; a chip chosen opens nothing. The newest was a missed call: the

@@ -427,6 +427,10 @@ pub trait Core: Send + Sync + 'static {
     fn team_apps(&self, _team: String) -> Reply<Vec<InstalledApp>> {
         Reply::ready(Ok(Vec::new()))
     }
+    /// The account's app notification preferences, read now. A fake core can't read them.
+    fn app_notification_settings(&self) -> Reply<Option<teams_proto::UserGraphSettings>> {
+        Reply::ready(Ok(None))
+    }
     /// The account's cached app definition, shared with Activity notification writes. A fake core has none.
     fn app_definition(&self, _id: String) -> Reply<Option<teams_proto::AppDefinition>> {
         Reply::ready(Ok(None))
@@ -695,6 +699,10 @@ impl Core for EngineRequests {
 
     fn team_apps(&self, team: String) -> Reply<Vec<InstalledApp>> {
         EngineRequests::team_apps(self, team)
+    }
+
+    fn app_notification_settings(&self) -> Reply<Option<teams_proto::UserGraphSettings>> {
+        EngineRequests::app_notification_settings(self)
     }
 
     fn app_definition(&self, id: String) -> Reply<Option<teams_proto::AppDefinition>> {

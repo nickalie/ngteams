@@ -8,7 +8,8 @@
 //!   The item follows the watcher ([`Hosted`]): a watcher that leaves (a panel restarting, or gone for good) or the
 //!   bus lost takes the item down, and a new watcher brings it up again. Taken down while the window is closed, the
 //!   window opens again: the app is never left running with no window and no item to bring it back.
-//! - A notification activated opens its chat in the window, opened again if it was closed; the tray's "Open" (or a
+//! - A notification activated opens its chat in the window, opened again if it was closed (an app's Activity item's
+//!   opens the Activity pane at the item); the tray's "Open" (or a
 //!   click on the item) shows the window, its "Quit" quits.
 //! - The notifier is told the chat shown in a focused window, which never notifies.
 //! - The account's own presence ([`OwnPresence`], M2 Task 20) lives as long as the app, not the window: its refresh goes
@@ -337,6 +338,7 @@ impl Desktop {
         let opening = cx.subscribe(&notifier, move |this: &mut Self, _, event, cx| match event {
             NotifierEvent::Open(id) => this.open_chat_of(&opened, id.clone(), cx),
             NotifierEvent::OpenChannel(id) => this.open_channel_of(&opened, id.clone(), cx),
+            NotifierEvent::OpenActivity(item) => this.open_activity_item_of(&opened, item, cx),
             NotifierEvent::Shown { .. } => {}
         });
         let call_alert = cx.new(|cx| {
@@ -697,6 +699,15 @@ impl Desktop {
     pub fn show_activity_of(&mut self, key: &str, cx: &mut Context<Self>) {
         self.switch(key, cx);
         self.in_shell(cx, Shell::show_activity);
+    }
+
+    /// Shows account `key`'s Activity pane at its item `item`, opened as a click on it there opens it.
+    pub fn open_activity_item_of(&mut self, key: &str, item: &str, cx: &mut Context<Self>) {
+        self.switch(key, cx);
+        self.in_shell(cx, |shell, window, cx| {
+            shell.show_activity(window, cx);
+            shell.activity_view().clone().update(cx, |view, cx| view.open(item, cx));
+        });
     }
 
     /// Shows account `key`'s settings in the window on `page`, or where they were left without one, that account shown,

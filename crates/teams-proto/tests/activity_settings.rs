@@ -141,3 +141,43 @@ fn activity_settings_only_the_known_no_properties_error_is_empty() {
         assert!(!UserGraphSettingsRead::is_absent_answer(body.as_bytes()));
     }
 }
+
+#[test]
+fn activity_settings_banner_follows_each_type_s_choice_and_shows_one_by_default() {
+    let answer = json!({"userGraphSettings": json!({
+        "app": {
+            "activityGenerationSettings": {"banner": true, "feedOnly": true, "off": false, "odd": true},
+            "toastSettings": {"banner": true, "feedOnly": false, "off": false, "odd": "yes", "systemDefault": false},
+        },
+        "not-an-object": "made up",
+    }).to_string()});
+    let settings = UserGraphSettings::read_answer(answer.to_string().as_bytes()).unwrap();
+    assert!(settings.banner("app", "banner"));
+    assert!(!settings.banner("app", "feedOnly"), "Show in Activity");
+    assert!(!settings.banner("app", "off"), "Off");
+    assert!(!settings.banner("app", "odd"), "an unfamiliar value shows none");
+    assert!(settings.banner("app", "noChoice"), "a type with no choice of its own");
+    assert!(settings.banner("other-app", "anything"), "an app with no saved choice");
+    assert!(settings.banner("not-an-object", "anything"));
+    let mut off = UserGraphSettings::default();
+    off.turn_off("app", &["customNotification".to_owned()]).unwrap();
+    assert!(!off.banner("app", "customNotification"));
+}
+
+#[test]
+fn activity_settings_read_answers_by_status() {
+    let absent = br#"{"errorCode":404,"standardizedError":{"errorCode":404,"errorSubCode":1}}"#;
+    assert_eq!(
+        UserGraphSettingsRead::settings_of(404, absent),
+        Ok(UserGraphSettings::default())
+    );
+    assert_eq!(
+        UserGraphSettingsRead::settings_of(200, b"{}"),
+        Ok(UserGraphSettings::default())
+    );
+    let held = json!({"userGraphSettings": "{\"app\":{}}"}).to_string();
+    assert!(UserGraphSettingsRead::settings_of(204, held.as_bytes()).is_ok());
+    assert!(UserGraphSettingsRead::settings_of(404, b"{}").is_err());
+    assert!(UserGraphSettingsRead::settings_of(500, absent).is_err());
+    assert!(UserGraphSettingsRead::settings_of(200, b"broken").is_err());
+}

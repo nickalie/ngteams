@@ -18,6 +18,18 @@ impl UserGraphSettingsRead {
                 && error["standardizedError"]["errorSubCode"] == 1
         })
     }
+
+    /// The setting an answer of `status` carries: the known empty-account 404 is empty; any other failure is unread.
+    ///
+    /// # Errors
+    /// Returns [`UserGraphSettingsError`] for a failed read or an unknown answer.
+    pub fn settings_of(status: u16, body: &[u8]) -> Result<UserGraphSettings, UserGraphSettingsError> {
+        match status {
+            404 if Self::is_absent_answer(body) => Ok(UserGraphSettings::default()),
+            200..=299 => UserGraphSettings::read_answer(body),
+            _ => Err(UserGraphSettingsError),
+        }
+    }
 }
 
 impl Read for UserGraphSettingsRead {
@@ -91,6 +103,23 @@ impl UserGraphSettings {
             .or_insert_with(|| Value::Object(Map::new()));
         self.0.insert(app.to_owned(), setting);
         Ok(())
+    }
+
+    /// Whether the app's activity of `activity_type` shows a banner. As Teams reads it, a type the app saved no choice
+    /// for shows one ("Show in Activity and banner"); "Show in Activity" saves its toast `false`, "Off" its generation
+    /// too, and an unfamiliar value shows none.
+    #[must_use]
+    pub fn banner(&self, app: &str, activity_type: &str) -> bool {
+        let Some(setting) = self.0.get(app) else {
+            return true;
+        };
+        ["activityGenerationSettings", "toastSettings"].iter().all(|category| {
+            match setting.get(*category).and_then(|category| category.get(activity_type)) {
+                None => true,
+                Some(Value::Bool(on)) => *on,
+                Some(_) => false,
+            }
+        })
     }
 
     /// The app's current preference, for Undo.

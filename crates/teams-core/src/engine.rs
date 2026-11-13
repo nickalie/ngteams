@@ -1548,6 +1548,11 @@ impl EngineRequests {
         self.ask(|reply| Request::TeamApps(Box::new(TeamAppsAsk::Apps { team, reply })))
     }
 
+    /// The account's app notification preferences (`userGraphSettings`), read now; `None` when unreadable.
+    pub fn app_notification_settings(&self) -> Reply<Option<teams_proto::UserGraphSettings>> {
+        self.ask(|reply| Request::TeamApps(Box::new(TeamAppsAsk::NotificationSettings { reply })))
+    }
+
     /// An app definition, cached for this account by `teamsAppId` and shared with Activity writes.
     pub fn app_definition(&self, id: String) -> Reply<Option<teams_proto::AppDefinition>> {
         self.ask(|reply| Request::TeamApps(Box::new(TeamAppsAsk::Definition { id, reply })))

@@ -27,6 +27,14 @@
 //! when the next message comes. Whether a chat is shown in a focused window is asked again just before its
 //! notifications are shown, and a chat opened or read while its messages were being looked at shows none of them.
 //!
+//! **An app's Activity item** (a new item of the account's own feed, `48:notifications`, that carries
+//! `activityContext.teamsAppId`) shows a banner as Teams' does for an app's activity: its title (the app's own, else
+//! the app's name) and the item's preview, while the "notifications" setting is all, and only when the app's
+//! preferences, read then ([`teams_proto::UserGraphSettings::banner`]), keep its activity type's banner on: an app
+//! with no saved choice shows one, an app turned off (or set to "Show in Activity") none, nor one whose preferences
+//! couldn't be read. A catch-up's or a replayed one notifies only when unread and after the cutoff, as a chat's.
+//! Activating it opens the Activity pane at the item ([`NotifierEvent::OpenActivity`]).
+//!
 //! **Activating one** (its body, the `default` action) opens its chat: [`NotifierEvent::Open`], or for a team's
 //! channel (the stored conversation's kind when it was shown) [`NotifierEvent::OpenChannel`], which the
 //! [`Desktop`](crate::desktop::Desktop) acts on. Each one shown is told too ([`NotifierEvent::Shown`]: its chat and
@@ -47,7 +55,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::future::BoxFuture;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, WeakEntity};
+use teams_core::activity::{ActivityFeed, ActivityItem};
 use teams_core::{CLOCK_SKEW_MS, Source};
+use teams_proto::ACTIVITY_FEED;
 use teams_proto::chat::RichText;
 use teams_store::{Conversation, ConversationKind, Message};
 
@@ -90,6 +100,8 @@ pub enum NoticeKind {
     Collapsed,
     /// An incoming call, with Answer and Decline ([`crate::call_alert`]).
     Call,
+    /// An app's Activity item.
+    Activity,
 }
 
 impl NoticeKind {
@@ -101,6 +113,7 @@ impl NoticeKind {
             Self::Mention => "mention",
             Self::Collapsed => "collapsed",
             Self::Call => "call",
+            Self::Activity => "activity",
         }
     }
 }
@@ -129,6 +142,8 @@ pub enum NotifierEvent {
     Open(String),
     /// A notification of a team's channel was activated: open the channel (never in a chat view).
     OpenChannel(String),
+    /// An app's Activity item's notification was activated: open the Activity pane at the item (its feed id).
+    OpenActivity(String),
     /// A notification was shown (the control socket's `notification`): its chat and its title.
     Shown { conversation: String, title: String },
 }
@@ -193,6 +208,8 @@ pub struct Notifier {
     ids: HashMap<u32, String>,
     /// The conversations shown that were stored as a team's channel.
     channels: HashSet<String>,
+    /// The app items' notifications shown, by the server's id: the item's feed id.
+    app_items: HashMap<u32, String>,
     /// How many times a chat's notifications were forgotten (closed, its count started again), and per chat that
     /// count when it last was.
     forgets: u64,
@@ -262,6 +279,7 @@ impl Notifier {
             shown: HashMap::new(),
             ids: HashMap::new(),
             channels: HashSet::new(),
+            app_items: HashMap::new(),
             forgets: 0,
             forgotten: HashMap::new(),
             calls: models.calls.clone(),
@@ -312,6 +330,12 @@ impl Notifier {
 
     /// Notification `id` was activated (its body): its chat opens, and the chat's notifications close.
     pub fn activated(&mut self, id: u32, cx: &mut Context<Self>) {
+        if let Some(item) = self.app_items.remove(&id) {
+            self.trace
+                .record(&TraceLine::new("notification", "opened").conversation(ACTIVITY_FEED));
+            cx.emit(NotifierEvent::OpenActivity(item));
+            return;
+        }
         let Some(conversation) = self.ids.get(&id).cloned() else {
             return;
         };
@@ -326,6 +350,10 @@ impl Notifier {
     }
 
     fn arrived(&mut self, conversation: &str, message: &Message, source: Source, cx: &mut Context<Self>) {
+        if conversation == ACTIVITY_FEED {
+            self.app_item_arrived(message, source, cx);
+            return;
+        }
         if self.settings.read(cx).settings().notifications == Notifications::Off
             || muted_in_call(cx)
             || !may_notify(self.core.me(), conversation, message, source)
@@ -342,6 +370,55 @@ impl Notifier {
             cx.spawn(async move |this, cx: &mut AsyncApp| gather(this, cx).await)
                 .detach();
         }
+    }
+
+    /// Whether an app item's banner may be shown now: notifications on for all messages, not muted in a call, a server.
+    fn app_banners_on(&self, cx: &App) -> Option<Arc<dyn NotificationServer>> {
+        let on = self.settings.read(cx).settings().notifications == Notifications::All && !muted_in_call(cx);
+        self.server.clone().filter(|_| on)
+    }
+
+    /// A feed message newly stored: an app's item shows its banner when its app's preferences keep it on (see the
+    /// module docs).
+    fn app_item_arrived(&mut self, message: &Message, source: Source, cx: &mut Context<Self>) {
+        let Some(item) = app_item(message, source, self.cutoff) else {
+            return;
+        };
+        if self.app_banners_on(cx).is_none() {
+            return;
+        }
+        let settings = self.core.app_notification_settings();
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let app = item.teams_app_id.clone().unwrap_or_default();
+            let on = settings
+                .await
+                .ok()
+                .flatten()
+                .is_some_and(|settings| settings.banner(&app, item.subtype.as_deref().unwrap_or_default()));
+            if !on {
+                return;
+            }
+            let Ok(Some(server)) = this.update(cx, |this, cx| this.app_banners_on(cx)) else {
+                return;
+            };
+            let notice = app_notice(&item);
+            if let Ok(id) = server.show(&notice, 0).await {
+                let _ = this.update(cx, |this, cx| this.shown_app_item(&notice, id, item.id.clone(), cx));
+            }
+        })
+        .detach();
+    }
+
+    /// `notice`, an app item's, shown as notification `id`.
+    fn shown_app_item(&mut self, notice: &Notice, id: u32, item: String, cx: &mut Context<Self>) {
+        self.app_items.insert(id, item);
+        self.trace.record(
+            &TraceLine::new("notification", "shown")
+                .conversation(ACTIVITY_FEED)
+                .kind(NoticeKind::Activity.name()),
+        );
+        self.sound(notice, false, cx);
+        Self::tell_shown(notice, cx);
     }
 
     /// The account's read horizon in `conversation` moved: once nothing in it is unread, its notifications close.
@@ -463,6 +540,38 @@ impl Notifier {
                 .kind(NoticeKind::Collapsed.name()),
         );
         Self::tell_shown(notice, cx);
+    }
+}
+
+/// The app item `message` (newly stored in the account's feed, brought by `source`) tells, when it may show a banner:
+/// one delivered, or a catch-up's or a replayed one unread that arrived after `cutoff`.
+fn app_item(message: &Message, source: Source, cutoff: i64) -> Option<ActivityItem> {
+    let item = ActivityItem::from_message(message).filter(|item| item.teams_app_id.is_some())?;
+    let due = match source {
+        Source::Delivery => true,
+        Source::CatchUp | Source::Replay => {
+            message.arrival_time > cutoff
+                && !ActivityFeed::new(std::slice::from_ref(message), None, None).is_read(&item)
+        }
+        Source::History => false,
+    };
+    due.then_some(item)
+}
+
+/// What an app item's banner says: its title, then its preview (else where it came from, the app).
+fn app_notice(item: &ActivityItem) -> Notice {
+    let summary = item.title();
+    let app = item.app_name.clone().unwrap_or_default();
+    let body = if item.preview.is_empty() && app != summary {
+        app
+    } else {
+        item.preview.clone()
+    };
+    Notice {
+        conversation: ACTIVITY_FEED.to_owned(),
+        kind: NoticeKind::Activity,
+        summary,
+        body,
     }
 }
 

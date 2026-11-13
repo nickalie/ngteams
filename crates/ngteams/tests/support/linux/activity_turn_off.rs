@@ -1,7 +1,8 @@
 //! An app item's "Turn off <app>" (#27) as a user meets it: the red row after Notification settings in an app item's
 //! menu (none on a person's item, none in the read-only mode), the success card with Undo and Dismiss, Undo putting the
 //! app's earlier preferences back on the mock, a refused write showing the error and no success, Ctrl+Alt+Shift+O on
-//! the selected item, and no banner for a later item of the app turned off.
+//! the selected item, a banner for a new item of the app while it is on (its click opening the item), and none for a
+//! later item of the app turned off.
 //!
 //! The mock starts with a's `userGraphSettings` holding a made-up preference for the app (an unknown key among it)
 //! and one for another app; the child answers `prefs` with what the mock holds and every `PUT` it got.
@@ -295,7 +296,8 @@ fn no_banner_after(qa: &mut Qa<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// What a user sees of an app item's banner while its notifications are on (Teams shows one): said, not checked.
+/// A new app item while its app's notifications are on (the seeded preference saves no choice for its type): one
+/// banner with the item's title and preview, as Teams shows one; its click shows the Activity pane with the item read.
 pub(super) fn banner_while_on(qa: &mut Qa<'_>) -> SandboxResult {
     qa.ctl_json(&["open", "chat", ABC_CHAT])?;
     let shown = qa.sandbox.bus().notifications().len();
@@ -304,10 +306,29 @@ pub(super) fn banner_while_on(qa: &mut Qa<'_>) -> SandboxResult {
     qa.state_until("the app's new item listed", |state| {
         items(state).iter().any(|item| text(item, "id") == id)
     })?;
+    let banner = wait_until(BANNER_WAIT, || qa.sandbox.bus().notifications().get(shown).cloned())
+        .ok_or("no banner for a new app item while its notifications are on")?;
     thread::sleep(BANNER_WAIT);
     let banners = qa.sandbox.bus().notifications().len() - shown;
     super::say(&format!(
-        "banners for a new app item while its notifications are on: {banners}"
+        "banners for a new app item while its notifications are on: {banners} ({:?}: {:?})",
+        banner.summary, banner.body
+    ));
+    ensure(banners == 1, || format!("{banners} banners for one app item"))?;
+    ensure(
+        banner.summary == "Follow up on a message" && banner.body == "Made-up earlier reminder",
+        || format!("the banner says {:?}: {:?}", banner.summary, banner.body),
+    )?;
+    qa.sandbox.bus().invoke_action(banner.id, "default")?;
+    let state = qa.state_until("the Activity pane at the item, read", |state| {
+        state["pane_shown"] == true
+            && items(state)
+                .iter()
+                .any(|item| text(item, "id") == id && item["read"] == true)
+    })?;
+    super::say(&format!(
+        "the banner's click: list {}, main {}",
+        state["list"], state["main"]
     ));
     Ok(())
 }

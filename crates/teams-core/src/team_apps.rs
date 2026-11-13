@@ -11,7 +11,7 @@ use std::sync::Arc;
 use teams_proto::{
     AnalyticsPeriod, AppDefinitions, AppStore, ChannelAnalyticsRead, Credentials, DEFINITIONS_PAGE, DefaultTeamPicture,
     HttpError, InstalledApp, OwnedGroups, StoreApp, TeamAnalytics, TeamApps, TeamTemplateCard, TeamTemplateDetails,
-    TeamTemplateRead, TeamTemplates, Transport,
+    TeamTemplateRead, TeamTemplates, Transport, UserGraphSettingsRead,
 };
 
 use crate::channels::Channels;
@@ -20,6 +20,9 @@ use crate::team_admin::{read_body, send_body};
 
 /// What these pages ask (see the module docs).
 pub(crate) enum TeamAppsAsk {
+    NotificationSettings {
+        reply: Responder<Option<teams_proto::UserGraphSettings>>,
+    },
     Definition {
         id: String,
         reply: Responder<Option<teams_proto::AppDefinition>>,
@@ -61,6 +64,7 @@ where
     /// Answers `ask`.
     pub(crate) fn team_apps_ask(&mut self, ask: TeamAppsAsk) {
         match ask {
+            TeamAppsAsk::NotificationSettings { reply } => self.spawn_read(reply, notification_settings),
             TeamAppsAsk::Definition { id, reply } => {
                 let cache = Arc::clone(&self.app_definitions);
                 self.spawn_read(reply, async move |client| definition(client, &cache, &id).await);
@@ -116,6 +120,21 @@ where
             }),
         }
     }
+}
+
+/// The account's app notification preferences, read now; `None` when they couldn't be read.
+async fn notification_settings<C: Credentials + 'static>(
+    client: &teams_proto::Client<teams_proto::HttpTransport<C>>,
+) -> Option<teams_proto::UserGraphSettings> {
+    let answer = match client.read(&UserGraphSettingsRead).await {
+        Ok(answer) => answer,
+        Err(HttpError::Status(answer)) => *answer,
+        Err(error) => {
+            log::info!("the app notification preferences' read failed: {error}");
+            return None;
+        }
+    };
+    UserGraphSettingsRead::settings_of(answer.status(), answer.body()).ok()
 }
 
 /// Account-scoped definitions shared by Activity writes and readers such as app icons.

@@ -444,6 +444,64 @@ fn activating_a_notification_opens_its_chat_in_a_window_opened_again() {
 }
 
 #[test]
+fn activating_an_app_item_s_notification_shows_the_activity_pane_at_the_item() {
+    let d = OnDesktop::start();
+    d.open();
+    let activity = serde_json::json!({
+        "activityType": "msGraph", "activitySubtype": "customNotification", "activityId": 7,
+        "sourceAppDisplayName": "Made-up flows", "messagePreview": "a made-up reminder",
+        "activityContext": {"teamsAppId": "00000000-0000-4000-8000-00000000a0aa"},
+    });
+    let mut item = message("48:notifications", "7", LAB_A, "", 5_000);
+    item.message_type = "Text".to_owned();
+    item.properties = Some(serde_json::json!({"activity": activity, "isread": false}).to_string());
+    *d.rig.core.activity.lock().unwrap() =
+        teams_core::activity::ActivityFeed::new(std::slice::from_ref(&item), None, None);
+    *d.rig.core.app_settings.lock().unwrap() = Some(teams_proto::UserGraphSettings::default());
+    d.rig.send(Event::Message {
+        conversation: item.conversation_id.clone(),
+        id: item.id.clone(),
+        change: MessageChange::New,
+        applied: Applied::Inserted,
+        message: Some(Box::new(item)),
+        source: Source::Delivery,
+    });
+    d.rig.cx.run_until_parked();
+    let asked = d.server.asked();
+    let [Asked::Show { notice, id, .. }] = asked.as_slice() else {
+        panic!("not one notification shown: {asked:?}");
+    };
+    assert_eq!(
+        (notice.kind, notice.summary.as_str(), notice.body.as_str()),
+        (NoticeKind::Activity, "Made-up flows", "a made-up reminder")
+    );
+    let notifier = d.rig.cx.read(|cx| d.desktop.read(cx).notifier().clone());
+    let id = *id;
+    d.rig
+        .cx
+        .update(|cx| notifier.update(cx, |notifier, cx| notifier.activated(id, cx)));
+    d.rig.cx.run_until_parked();
+    let window = d.window().unwrap();
+    let (place, shown) = d.rig.cx.update(|cx| {
+        let root = window::content(window, cx).unwrap();
+        let shell = root.read(cx).shell().unwrap().read(cx);
+        (
+            format!("{:?}", shell.list_place()),
+            shell.activity_view().read(cx).shown(),
+        )
+    });
+    assert_eq!((place.as_str(), shown), ("Activity", true));
+    let actions = d.rig.core.actions.lock().unwrap().clone();
+    assert!(
+        actions.iter().any(|action| matches!(
+            action,
+            teams_core::Action::ActivityRead { item, read: true } if item == "7"
+        )),
+        "the item opened as a click in the pane opens it: {actions:?}"
+    );
+}
+
+#[test]
 fn the_chat_shown_in_the_focused_window_never_notifies() {
     let d = OnDesktop::start();
     let window = d.open();

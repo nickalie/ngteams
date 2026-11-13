@@ -108,6 +108,7 @@ impl Notifying {
             cx.subscribe(&notifier, move |_, event, _| match event {
                 NotifierEvent::Open(id) => recorded.lock().unwrap().push(id.clone()),
                 NotifierEvent::OpenChannel(id) => recorded.lock().unwrap().push(format!("channel {id}")),
+                NotifierEvent::OpenActivity(item) => recorded.lock().unwrap().push(format!("activity {item}")),
                 NotifierEvent::Shown { conversation, title } => {
                     telling.lock().unwrap().push((conversation.clone(), title.clone()));
                 }
@@ -928,4 +929,141 @@ fn collapsed_mentions_sound_for_this_batch_and_later_plain_messages_use_their_ow
             [SoundEvent::Mention, plain, SoundEvent::Mention]
         );
     }
+}
+
+/// The account's feed.
+const FEED: &str = "48:notifications";
+/// A made-up app and the activity types its definition declares.
+const APP: &str = "00000000-0000-4000-8000-00000000a0aa";
+const APP_TYPE: &str = "customNotification";
+
+/// An app's item of the feed: its own title, a preview, `subtype` its activity type.
+fn app_item(id: &str, subtype: &str, arrival: i64, read: bool) -> Message {
+    let activity = serde_json::json!({
+        "activityType": "msGraph", "activitySubtype": subtype, "activityId": id,
+        "sourceUserId": "28:app:made-up", "sourceAppDisplayName": "Made-up flows",
+        "messagePreview": "the made-up build passed",
+        "activityContext": {
+            "teamsAppId": APP,
+            "templateParameters": "{\"customMessage\":\"Build finished\"}",
+        },
+    });
+    let mut item = message(FEED, id, LAB_A, "", arrival);
+    item.message_type = "Text".to_owned();
+    item.properties = Some(serde_json::json!({"activity": activity, "isread": read}).to_string());
+    item
+}
+
+/// App preferences as the account's own properties carry them.
+fn app_settings(setting: &serde_json::Value) -> teams_proto::UserGraphSettings {
+    let answer = serde_json::json!({"userGraphSettings": setting.to_string()});
+    teams_proto::UserGraphSettings::read_answer(answer.to_string().as_bytes()).unwrap()
+}
+
+#[test]
+fn an_app_item_shows_its_banner_until_its_app_is_turned_off() {
+    let n = Notifying::start(Settings::default());
+    // no saved choice for the app: Teams' "Show in Activity and banner"
+    *n.rig.core.app_settings.lock().unwrap() = Some(teams_proto::UserGraphSettings::default());
+    n.arrive(app_item("1", APP_TYPE, 5_000, false), Source::Delivery);
+    n.settle();
+    assert_eq!(
+        n.server.shown(),
+        [Notice {
+            conversation: FEED.to_owned(),
+            kind: NoticeKind::Activity,
+            summary: "Build finished".to_owned(),
+            body: "the made-up build passed".to_owned(),
+        }]
+    );
+    assert_eq!(
+        *n.told.lock().unwrap(),
+        [(FEED.to_owned(), "Build finished".to_owned())]
+    );
+    assert_eq!(n.shown_lines(), [(FEED.to_owned(), "activity".to_owned())]);
+    assert!(
+        !n.written.text().contains("Build finished"),
+        "the trace never carries the text"
+    );
+    // activated, it opens the Activity pane at the item
+    let Asked::Show { id, .. } = n.server.asked()[0].clone() else {
+        panic!("not shown")
+    };
+    n.rig
+        .cx
+        .update(|cx| n.notifier.update(cx, |notifier, cx| notifier.activated(id, cx)));
+    assert_eq!(*n.opened.lock().unwrap(), ["activity 1".to_owned()]);
+    // the app turned off (#27's write): no banner for its later item
+    let mut off = teams_proto::UserGraphSettings::default();
+    off.turn_off(APP, &["messageNotify".to_owned(), APP_TYPE.to_owned()])
+        .unwrap();
+    *n.rig.core.app_settings.lock().unwrap() = Some(off);
+    n.arrive(app_item("2", APP_TYPE, 6_000, false), Source::Delivery);
+    n.settle();
+    assert_eq!(n.server.shown().len(), 1);
+}
+
+#[test]
+fn an_app_item_follows_its_activity_type_s_choice() {
+    let n = Notifying::start(Settings::default());
+    // "Show in Activity" for one type, banner kept for another, "Off" for a third
+    *n.rig.core.app_settings.lock().unwrap() = Some(app_settings(&serde_json::json!({
+        APP: {
+            "activityGenerationSettings": {"messageNotify": true, "taskDone": false},
+            "toastSettings": {"messageNotify": false, "systemDefault": false, "taskDone": false},
+            "emailSettings": {},
+        },
+    })));
+    n.arrive(app_item("1", "messageNotify", 5_000, false), Source::Delivery);
+    n.arrive(app_item("2", "taskDone", 5_100, false), Source::Delivery);
+    n.settle();
+    assert_eq!(n.server.shown(), []);
+    n.arrive(app_item("3", APP_TYPE, 5_200, false), Source::Delivery);
+    n.settle();
+    assert_eq!(n.server.shown().len(), 1, "a type with no choice of its own shows one");
+}
+
+#[test]
+fn an_app_item_shows_none_unread_preferences_mentions_only_or_off() {
+    let n = Notifying::start(Settings::default());
+    // preferences that can't be read: the app may be turned off, so nothing
+    n.arrive(app_item("1", APP_TYPE, 5_000, false), Source::Delivery);
+    n.settle();
+    assert_eq!(n.server.asked(), []);
+    assert!(n.rig.core.asked().contains(&"app_notification_settings"));
+    // a person's item of the feed isn't an app's: its message notifies in its chat, the item never
+    *n.rig.core.app_settings.lock().unwrap() = Some(teams_proto::UserGraphSettings::default());
+    let mut person = app_item("2", "person", 5_100, false);
+    person.properties = Some(
+        serde_json::json!({"activity": {"activityType": "mentionInChat", "activitySubtype": "person"}}).to_string(),
+    );
+    n.arrive(person, Source::Delivery);
+    // history and the account's settings
+    n.arrive(app_item("3", APP_TYPE, 5_200, false), Source::History);
+    n.settle();
+    assert_eq!(n.server.asked(), []);
+    for level in [Notifications::Mentions, Notifications::Off] {
+        n.rig.cx.update(|cx| {
+            n.settings.update(cx, |settings, cx| {
+                settings.change(|settings| settings.notifications = level, cx);
+            });
+        });
+        n.arrive(app_item("4", APP_TYPE, 5_300, false), Source::Delivery);
+        n.settle();
+        assert_eq!(n.server.asked(), [], "{level:?}");
+    }
+}
+
+#[test]
+fn a_catch_up_s_app_item_notifies_only_unread_and_after_the_cutoff() {
+    let n = Notifying::start(Settings::default());
+    *n.rig.core.app_settings.lock().unwrap() = Some(teams_proto::UserGraphSettings::default());
+    let cutoff = n.rig.cx.read(|cx| n.notifier.read(cx).cutoff());
+    n.arrive(app_item("1", APP_TYPE, cutoff - 1_000, false), Source::CatchUp);
+    n.arrive(app_item("2", APP_TYPE, cutoff + 1_000, true), Source::Replay);
+    n.settle();
+    assert_eq!(n.server.asked(), []);
+    n.arrive(app_item("3", APP_TYPE, cutoff + 2_000, false), Source::CatchUp);
+    n.settle();
+    assert_eq!(n.server.shown().len(), 1);
 }

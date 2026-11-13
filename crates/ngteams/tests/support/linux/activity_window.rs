@@ -290,7 +290,7 @@ fn run_checks(sandbox: &Sandbox) -> SandboxResult<usize> {
     qa.check("dark_theme_gone_chat_group_place_missed_call", dark_fixed_states);
     // an app item's "Turn off <app>" (#27)
     qa.check(
-        "app_item_banner_while_its_notifications_are_on",
+        "app_item_shows_a_banner_while_its_notifications_are_on",
         turn_off::banner_while_on,
     );
     for (name, check) in turn_off::CHECKS {

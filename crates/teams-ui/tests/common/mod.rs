@@ -153,6 +153,8 @@ pub struct FakeCore {
     pub unsettled_before_hold: Mutex<usize>,
     /// The rows earlier runs left.
     pub earlier: Mutex<Vec<OutboxEntry>>,
+    /// The account's app notification preferences; `None`: they can't be read.
+    pub app_settings: Mutex<Option<teams_proto::UserGraphSettings>>,
     /// Every search asked for, its query, in order.
     pub searches: Mutex<Vec<String>>,
     /// What the service's search answers, whatever is asked.
@@ -746,6 +748,11 @@ impl Core for FakeCore {
         }
         let feed = locked(&self.activity).clone();
         self.answer("activity", || feed)
+    }
+
+    fn app_notification_settings(&self) -> Reply<Option<teams_proto::UserGraphSettings>> {
+        let settings = locked(&self.app_settings).clone();
+        self.answer("app_notification_settings", || settings)
     }
 
     fn write(&self, action: Action) -> Reply<OutboxEntry> {
