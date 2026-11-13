@@ -12,8 +12,11 @@ mod registration;
 mod toasts;
 #[path = "../../src/desktop/windows/tray.rs"]
 mod tray;
+use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
-use teams_ui::notify::{Notice, NoticeKind, NotificationServer as _};
+use teams_ui::notify::picture::{BANNER_DIR, file_uri};
+use teams_ui::notify::{BannerFiles, BannerPicture, Notice, NoticeKind, NotificationServer as _, PictureShape};
 use teams_ui::tray::{TrayEvent, TrayIcon as _};
 use windows::{
     UI::Notifications::{ToastNotificationHistory, ToastNotificationManager},
@@ -41,9 +44,11 @@ pub fn main() -> std::process::ExitCode {
 async fn contract() {
     let app_id = format!("com.nickalie.ngteams.synthetic.{}", std::process::id());
     teams_platform::windows_desktop::set_app_id(&app_id).unwrap();
-    let (server, activations) = toasts::Notifications::start(app_id.clone(), "NGTEAMS SYNTHETIC DESKTOP".into(), None)
-        .await
-        .unwrap();
+    let (files, folder) = banner_folder();
+    let (server, activations) =
+        toasts::Notifications::start(app_id.clone(), "NGTEAMS SYNTHETIC DESKTOP".into(), Some(files))
+            .await
+            .unwrap();
     notification_setting(&app_id);
     let (tray, events) = tray::NativeTray::start("NGTEAMS SYNTHETIC DESKTOP".into())
         .await
@@ -68,11 +73,9 @@ async fn contract() {
     history_contract(&server, &app_id, &notice).await;
     notification_setting(&app_id);
     stale_activation_contract(&server, &activations, &app_id, &notice).await;
+    picture_contract(&server, &activations, &app_id, &folder, &notice).await;
     tray_contract(&tray, &events).await;
-    server.show(&notice, 0).await.unwrap();
-    let history = ToastNotificationManager::History().unwrap();
-    drop(server);
-    wait_history(&history, &app_id, 0).await;
+    stop_contract(server, &app_id, &folder, &notice).await;
     drop(tray);
     while events.recv().await.is_ok() {}
     println!("native desktop contract passed");
@@ -291,4 +294,254 @@ fn notification_setting(app_id: &str) {
             error.code().0
         ),
     }
+}
+
+/// #114: a toast with a picture shows it in the app logo's place, a person's cropped to a circle and an app's square;
+/// its PNG is in the banner folder while the toast is shown and is removed on close, replace and activation.
+async fn picture_contract(
+    server: &toasts::Notifications,
+    activations: &async_channel::Receiver<(u32, String)>,
+    app_id: &str,
+    folder: &Path,
+    notice: &Notice,
+) {
+    let toasts = Pictured {
+        server,
+        history: ToastNotificationManager::History().unwrap(),
+        app_id,
+        folder,
+    };
+    wait_history(&toasts.history, app_id, 0).await;
+    let person = Notice {
+        summary: "NGTEAMS SYNTHETIC PERSON".into(),
+        picture: Some(picture(PictureShape::Circle)),
+        ..notice.clone()
+    };
+    let app = Notice {
+        kind: NoticeKind::Activity,
+        summary: "NGTEAMS SYNTHETIC APP".into(),
+        body: "Synthetic app item".into(),
+        picture: Some(picture(PictureShape::Square)),
+        ..notice.clone()
+    };
+    let (person_id, person_file) = toasts.show(&person, PictureShape::Circle).await;
+    let (app_toast, app_file) = toasts.show(&app, PictureShape::Square).await;
+    toasts.close_removes(person_id, &person_file, &app_file).await;
+    let replaced = toasts.replace_removes(&app, app_toast, &app_file).await;
+    picture_activation_contract(activations, app_id, app_toast, folder, &replaced).await;
+    server.close(app_toast).await;
+    wait_history(&toasts.history, app_id, 0).await;
+    assert!(banner_files(folder).is_empty());
+}
+
+/// The toasts with pictures of [`picture_contract`].
+struct Pictured<'a> {
+    server: &'a toasts::Notifications,
+    history: ToastNotificationHistory,
+    app_id: &'a str,
+    folder: &'a Path,
+}
+
+impl Pictured<'_> {
+    /// Shows `notice` as a new toast: its ID and its picture's file, checked in its XML (`shape`) and as a 96-pixel
+    /// PNG of its own in the banner folder.
+    async fn show(&self, notice: &Notice, shape: PictureShape) -> (u32, String) {
+        let before = banner_files(self.folder).len();
+        let id = self.server.show(notice, 0).await.unwrap();
+        wait_history(&self.history, self.app_id, u32::try_from(before).unwrap() + 1).await;
+        let file = picture_file(&toast_xml(&self.history, self.app_id, id), self.folder, shape);
+        let png = image::open(self.folder.join(&file)).expect("a PNG").into_rgba8();
+        assert_eq!(png.dimensions(), (96, 96), "{file}");
+        assert_eq!(
+            banner_files(self.folder).len(),
+            before + 1,
+            "each toast's picture is a file of its own"
+        );
+        println!("synthetic toast shows its {shape:?} picture {file}");
+        (id, file)
+    }
+
+    /// Closing toast `id` removes its `file` and keeps the other toast's `kept`.
+    async fn close_removes(&self, id: u32, file: &str, kept: &str) {
+        self.server.close(id).await;
+        wait_history(&self.history, self.app_id, 1).await;
+        wait_gone(self.folder, file).await;
+        assert_eq!(
+            banner_files(self.folder),
+            vec![kept.to_owned()],
+            "closing one toast keeps the other's picture"
+        );
+        println!("synthetic banner picture removed at the close");
+    }
+
+    /// Replacing toast `id` (of `app`, its picture `old`) writes a new file and removes `old`; the new file.
+    async fn replace_removes(&self, app: &Notice, id: u32, old: &str) -> String {
+        let updated = Notice {
+            body: "Synthetic app item, updated".into(),
+            ..app.clone()
+        };
+        assert_eq!(self.server.show(&updated, id).await.unwrap(), id);
+        wait_gone(self.folder, old).await;
+        let replaced = replaced_picture(&self.history, self.app_id, id, self.folder).await;
+        assert_ne!(replaced, old, "the replacement's picture is a new file");
+        assert_eq!(
+            banner_files(self.folder),
+            vec![replaced.clone()],
+            "replacing removes the old picture"
+        );
+        println!("synthetic banner picture removed at the replace");
+        replaced
+    }
+}
+
+/// The picture file of toast `id` once the history holds its replacement (its body "updated").
+async fn replaced_picture(history: &ToastNotificationHistory, app_id: &str, id: u32, folder: &Path) -> String {
+    for _ in 0..100 {
+        let xml = toast_xml(history, app_id, id);
+        if xml.contains("updated") {
+            return picture_file(&xml, folder, PictureShape::Square);
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    panic!("the replacement is not in the toast history");
+}
+
+/// Activating the shown toast `id` (its own launch argument, through the real COM class) removes its `file`.
+async fn picture_activation_contract(
+    activations: &async_channel::Receiver<(u32, String)>,
+    app_id: &str,
+    id: u32,
+    folder: &Path,
+    file: &str,
+) {
+    use windows::Win32::System::Com::{CLSCTX_LOCAL_SERVER, CoCreateInstance};
+    use windows::Win32::UI::Notifications::INotificationActivationCallback;
+    let clsid = registration::activator_id(app_id);
+    // SAFETY: this initialized MTA connects only to our exact synthetic COM class.
+    let callback: INotificationActivationCallback =
+        unsafe { CoCreateInstance(&raw const clsid, None, CLSCTX_LOCAL_SERVER) }.unwrap();
+    let launch = launch_argument(&ToastNotificationManager::History().unwrap(), app_id);
+    // SAFETY: terminated synthetic strings; the shown synthetic toast's own launch argument.
+    unsafe { callback.Activate(&HSTRING::from(app_id), &HSTRING::from(launch), &[]) }.unwrap();
+    let activated = tokio::time::timeout(Duration::from_secs(3), activations.recv())
+        .await
+        .expect("toast activation callback deadline")
+        .unwrap();
+    assert_eq!(activated, (id, teams_ui::notify::DEFAULT_ACTION.to_owned()));
+    wait_gone(folder, file).await;
+    println!("synthetic banner picture removed at the activation");
+}
+
+/// A shown toast's picture is removed when the toasts stop.
+async fn stop_contract(server: toasts::Notifications, app_id: &str, folder: &Path, notice: &Notice) {
+    let pictured = Notice {
+        picture: Some(picture(PictureShape::Circle)),
+        ..notice.clone()
+    };
+    server.show(&pictured, 0).await.unwrap();
+    let history = ToastNotificationManager::History().unwrap();
+    wait_history(&history, app_id, 1).await;
+    assert_eq!(
+        banner_files(folder).len(),
+        1,
+        "the shown toast's picture is in the banner folder"
+    );
+    drop(server);
+    assert!(
+        banner_files(folder).is_empty(),
+        "the stop removes a shown toast's picture"
+    );
+    println!("synthetic banner picture removed at the stop");
+    wait_history(&history, app_id, 0).await;
+}
+
+/// The app's own banner folder (#114), in the console helper's private run directory: its files, and its path.
+fn banner_folder() -> (BannerFiles, std::path::PathBuf) {
+    let data = Path::new(&std::env::var_os("UI_SANDBOX_DIR").expect("private run directory")).join("banner-data");
+    let files = BannerFiles::open(&data).expect("banner folder");
+    (files, data.join(BANNER_DIR))
+}
+
+/// A one-colour synthetic picture: a person's (`Circle`) as the notifier makes it from a stored photo, an app's tile
+/// (`Square`) from its tile's bytes.
+fn picture(shape: PictureShape) -> BannerPicture {
+    let rgba = image::RgbaImage::from_pixel(120, 120, image::Rgba([200, 30, 30, 255]));
+    let mut png = Vec::new();
+    rgba.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    match shape {
+        PictureShape::Circle => BannerPicture::of_person(&teams_store::StoredPicture {
+            media_type: "image/png".into(),
+            bytes: png,
+        }),
+        PictureShape::Square => BannerPicture::of_app(&Arc::new(teams_proto::PastedPicture {
+            format: teams_proto::PastedFormat::Png,
+            bytes: png,
+        })),
+    }
+    .expect("synthetic picture")
+}
+
+/// The names of the PNG files in the banner folder, sorted.
+fn banner_files(folder: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| {
+            Path::new(name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+async fn wait_gone(folder: &Path, file: &str) {
+    for _ in 0..100 {
+        if !folder.join(file).exists() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    panic!("banner picture {file} was not removed");
+}
+
+/// The XML of shown toast `id` (its tag) in the toast history.
+fn toast_xml(history: &ToastNotificationHistory, app_id: &str, id: u32) -> String {
+    let shown = history.GetHistoryWithId(&HSTRING::from(app_id)).unwrap();
+    (0..shown.Size().unwrap())
+        .map(|i| shown.GetAt(i).unwrap())
+        .find(|toast| toast.Tag().unwrap().to_string_lossy() == id.to_string())
+        .expect("toast in the history")
+        .Content()
+        .unwrap()
+        .GetXml()
+        .unwrap()
+        .to_string_lossy()
+}
+
+/// The file name of the picture `xml` shows in the app logo's place, checked to be a file of `folder` and cropped to
+/// a circle for a person's only.
+fn picture_file(xml: &str, folder: &Path, shape: PictureShape) -> String {
+    let start = xml.find("<image ").expect("the toast has a picture");
+    let element = &xml[start..start + xml[start..].find('>').unwrap()];
+    assert!(element.contains(r#"placement="appLogoOverride""#), "{element}");
+    assert_eq!(
+        element.contains(r#"hint-crop="circle""#),
+        shape == PictureShape::Circle,
+        "only a person's picture is cropped to a circle: {element}"
+    );
+    let src = element
+        .split(r#"src=""#)
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap();
+    let name = src.rsplit('/').next().unwrap().to_owned();
+    assert_eq!(
+        src,
+        file_uri(&folder.join(&name)),
+        "the picture is a file of the banner folder"
+    );
+    name
 }
