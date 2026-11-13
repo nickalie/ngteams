@@ -3,6 +3,28 @@ use super::{LAB_A, LAB_B, LAB_C, Lab, Method, TestResult, Value, json};
 use std::time::{Duration, Instant};
 
 #[tokio::test]
+async fn an_injected_channel_reply_keeps_its_post_in_both_reads_and_deliveries() -> TestResult {
+    let lab = Lab::start().await?;
+    let channel = teams_mock::CHANNEL;
+    let chain = format!("{channel};messageid=1760000000999");
+    let id = lab
+        .mock
+        .add_message(&chain, (LAB_B, "Synthetic B"), "Event/Call", "synthetic call event")
+        .ok_or("no channel message")?;
+    let message = lab.message(LAB_A, channel, &id).await?;
+    assert_eq!(message["conversationid"], channel);
+    assert_eq!(
+        message["conversationLink"],
+        format!("{}/v1/users/ME/conversations/{chain}", teams_mock::CHAT_BASE)
+    );
+    let event = lab.mock.take_events(LAB_A).pop().ok_or("no delivery")?;
+    assert_eq!(event.conversation, channel);
+    assert_eq!(event.resource, message);
+    assert!(lab.mock.take_events(LAB_B).is_empty());
+    Ok(())
+}
+
+#[tokio::test]
 async fn ranged_files_preserve_bytes_and_one_shot_refusals_do_not_consume_other_paths() -> TestResult {
     let lab = Lab::start().await?;
     lab.mock

@@ -963,6 +963,11 @@ fn event_message(event: &ChatEvent, id: u64) -> Value {
             "isactive": true,
         });
     }
+    let post = event.resource["conversationLink"]
+        .as_str()
+        .and_then(|link| link.rsplit_once(";messageid="))
+        .map_or_else(String::new, |(_, post)| format!(";messageid={post}"));
+    let conversation_link = format!("{conversation_link}{post}");
     let mut resource = if event.kind == EventKind::Typing {
         json!({
             "clientmessageid": id.to_string(), "content": "", "id": id.to_string(), "version": id.to_string(),

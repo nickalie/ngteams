@@ -372,7 +372,7 @@ impl ChatServiceMock {
     /// `from` (an app's bot too: `28:<app id>`, named `name`) posts a message of `message_type` with `content` to
     /// `conversation`, stored as its newest entry as a read gives it back and queued for its members: a test's
     /// stand-in for a post no client of the mock makes, such as a workflow's card in a channel. Its id, or `None` when
-    /// there is no such conversation.
+    /// there is no such conversation. A channel reply's conversation names its `;messageid=<post>` chain.
     #[must_use = "None says no message was added"]
     pub fn add_message(
         &self,
@@ -381,13 +381,17 @@ impl ChatServiceMock {
         message_type: &str,
         content: &str,
     ) -> Option<String> {
+        let link = format!("{CHAT_BASE}/v1/users/ME/conversations/{conversation}");
+        let conversation = conversation
+            .split_once(";messageid=")
+            .map_or(conversation, |(channel, _)| channel);
         let mut world = self.lock();
         let arrival = world.tick();
         let sequence = world.conversation(conversation)?.next_sequence();
         let message = serde_json::json!({
             "sequenceId": sequence,
             "conversationid": conversation,
-            "conversationLink": format!("{CHAT_BASE}/v1/users/ME/conversations/{conversation}"),
+            "conversationLink": link,
             "type": "Message",
             "id": arrival.to_string(),
             "version": arrival.to_string(),

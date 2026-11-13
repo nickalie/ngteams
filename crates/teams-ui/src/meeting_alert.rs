@@ -140,11 +140,12 @@ pub fn banners_on(settings: &Settings, me: &str, held: bool) -> bool {
 
 /// The account's calendar event of the meeting in `conversation` (a meeting's chat, or a channel) that runs about
 /// `now` (local time): from [`EARLY_MS`] before its start to [`LATE_MS`] after its end. `None` when the calendar holds
-/// no such meeting then.
+/// no such meeting then. A channel's start must belong to the scheduled meeting's `post`.
 #[must_use]
 pub fn scheduled_now<'e>(
     events: &'e [CalendarEvent],
     conversation: &str,
+    post: Option<&str>,
     now: NaiveDateTime,
 ) -> Option<&'e CalendarEvent> {
     let (early, late) = (
@@ -152,11 +153,15 @@ pub fn scheduled_now<'e>(
         chrono::Duration::milliseconds(LATE_MS),
     );
     events.iter().find(|event| {
-        let of_it = event.meeting_chat.as_deref() == Some(conversation)
-            || event
-                .channel_meeting
-                .as_ref()
-                .is_some_and(|channel| channel.channel == conversation);
+        let of_it = if is_team_thread_id(conversation) {
+            post.is_some()
+                && event
+                    .channel_meeting
+                    .as_ref()
+                    .is_some_and(|channel| channel.channel == conversation && channel.post.as_deref() == post)
+        } else {
+            event.meeting_chat.as_deref() == Some(conversation)
+        };
         let start = crate::calendar::local(event.start);
         let end = crate::calendar::local(event.end);
         of_it
@@ -455,7 +460,7 @@ impl MeetingAlert {
     fn decide(&self, pending: Pending, place: StartedIn, starter: Option<String>, cx: &mut Context<Self>) {
         let core = Arc::clone(&self.core);
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let Some(mut banner) = banner(&*core, &pending.conversation, place, starter).await else {
+            let Some(mut banner) = banner(&*core, &pending, place, starter).await else {
                 return;
             };
             // an end that came before a restart is in the store only
@@ -582,9 +587,10 @@ impl MeetingAlert {
     }
 }
 
-/// The banner of a start in `conversation` (`place`, by `starter`), as the reads say; `None` when none is due: a
+/// The banner of `pending`'s start (`place`, by `starter`), as the reads say; `None` when none is due: a
 /// meeting the calendar doesn't hold now, a muted channel, reads that failed.
-async fn banner(core: &dyn Core, conversation: &str, place: StartedIn, starter: Option<String>) -> Option<Banner> {
+async fn banner(core: &dyn Core, pending: &Pending, place: StartedIn, starter: Option<String>) -> Option<Banner> {
+    let conversation = &pending.conversation;
     let (name, picture) = match starter {
         Some(starter) => person(core, starter).await,
         None => (SOMEONE.to_owned(), None),
@@ -602,7 +608,7 @@ async fn banner(core: &dyn Core, conversation: &str, place: StartedIn, starter: 
             if place == StartedIn::Channel && channel_muted(core, conversation).await {
                 return None;
             }
-            let event = calendar_meeting(core, conversation).await?;
+            let event = calendar_meeting(core, conversation, &pending.start).await?;
             let title = if event.subject.trim().is_empty() {
                 chat_name(core, conversation).await
             } else {
@@ -638,16 +644,27 @@ async fn banner(core: &dyn Core, conversation: &str, place: StartedIn, starter: 
 
 /// The account's calendar event of the meeting in `conversation` running now ([`scheduled_now`]): the stored calendar
 /// first, else the service's.
-async fn calendar_meeting(core: &dyn Core, conversation: &str) -> Option<CalendarEvent> {
+async fn calendar_meeting(core: &dyn Core, conversation: &str, start: &str) -> Option<CalendarEvent> {
+    let post = if is_team_thread_id(conversation) {
+        Some(
+            core.reply_roots(conversation.to_owned())
+                .await
+                .ok()?
+                .into_iter()
+                .find_map(|(message, root)| (message == start).then_some(root))?,
+        )
+    } else {
+        None
+    };
     let now = now_ms();
     let local = chrono::Local::now().naive_local();
     let window = (now - 24 * 60 * 60 * 1000, now + 24 * 60 * 60 * 1000);
     let stored = core.stored_calendar(window.0, window.1).await.unwrap_or_default();
-    if let Some(event) = scheduled_now(&stored, conversation, local) {
+    if let Some(event) = scheduled_now(&stored, conversation, post.as_deref(), local) {
         return Some(event.clone());
     }
     let read = core.calendar(window.0, window.1).await.ok()?;
-    scheduled_now(&read, conversation, local).cloned()
+    scheduled_now(&read, conversation, post.as_deref(), local).cloned()
 }
 
 /// Whether the channel `channel`'s notifications are muted; one whose preferences can't be read counts as muted, as a

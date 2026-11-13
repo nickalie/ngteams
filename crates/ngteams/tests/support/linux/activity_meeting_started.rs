@@ -154,7 +154,9 @@ pub(super) fn mock_reply(verb: &str, rest: &str, probe: &Probe) -> Option<Value>
             } else {
                 end(&call, huddle)
             };
-            posted(mock, chat, (LAB_B, "Lab B"), &content)
+            let chain = (place == "channel" && matches!(call.as_str(), "12" | "13"))
+                .then(|| format!("{chat};messageid={CHANNEL_POST}"));
+            posted(mock, chain.as_deref().unwrap_or(chat), (LAB_B, "Lab B"), &content)
         }
         // `calendar`: the calendar's next reads hold the meeting chat's and the channel's meetings, now
         "calendar" => {

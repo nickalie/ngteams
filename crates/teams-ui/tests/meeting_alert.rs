@@ -169,7 +169,7 @@ fn running_meeting(chat: Option<&str>, channel: Option<&str>) -> CalendarEvent {
         channel_meeting: channel.map(|channel| ChannelEventRef {
             channel: channel.to_owned(),
             organizer: None,
-            post: None,
+            post: Some("scheduled-post".to_owned()),
             ical_uid: "made-up-uid".to_owned(),
         }),
     }
@@ -440,6 +440,12 @@ fn a_meeting_s_chat_shows_a_banner_only_while_the_calendar_holds_its_meeting() {
 fn a_channel_s_scheduled_meeting_shows_a_banner_unless_the_channel_is_muted() {
     let a = Alerting::start(Settings::default());
     a.calendar(running_meeting(None, Some(CHANNEL)));
+    a.rig
+        .core
+        .roots
+        .lock()
+        .unwrap()
+        .insert(CHANNEL.to_owned(), vec![("1".to_owned(), "scheduled-post".to_owned())]);
     a.arrive(call_event(CHANNEL, "1", LAB_B, start()), Source::Delivery);
     assert_eq!(a.server.shown().len(), 1);
     assert_eq!(a.server.shown()[0].body, "Bee started the meeting");
@@ -451,6 +457,13 @@ fn a_channel_s_scheduled_meeting_shows_a_banner_unless_the_channel_is_muted() {
 
     let muted = Alerting::start(Settings::default());
     muted.calendar(running_meeting(None, Some(CHANNEL)));
+    muted
+        .rig
+        .core
+        .roots
+        .lock()
+        .unwrap()
+        .insert(CHANNEL.to_owned(), vec![("1".to_owned(), "scheduled-post".to_owned())]);
     muted.rig.core.channel_data.lock().unwrap().insert(
         format!("preferences:{CHANNEL}"),
         teams_proto::ChannelData(serde_json::json!({"id": CHANNEL, "properties": {"alerts": "false"}})),
@@ -569,4 +582,29 @@ fn a_start_whose_end_the_store_held_before_a_restart_shows_no_banner() {
     a.arrive(start, Source::CatchUp);
     assert_eq!(a.server.shown(), []);
     assert!(!a.joinable(TRIO));
+}
+
+#[test]
+fn a_channel_meet_now_does_not_borrow_a_scheduled_meetings_banner() {
+    let a = Alerting::start(Settings::default());
+    a.calendar(running_meeting(Some(CHANNEL), Some(CHANNEL)));
+    a.rig
+        .core
+        .roots
+        .lock()
+        .unwrap()
+        .insert(CHANNEL.to_owned(), vec![("1".to_owned(), "meet-now-post".to_owned())]);
+    a.arrive(call_event(CHANNEL, "1", LAB_B, start()), Source::Delivery);
+    assert_eq!(a.server.shown(), [], "another post's call");
+    a.arrive(call_event(CHANNEL, "2", LAB_B, start()), Source::Delivery);
+    assert_eq!(a.server.shown(), [], "a start with no recorded reply root");
+    a.rig
+        .core
+        .roots
+        .lock()
+        .unwrap()
+        .insert(CHANNEL.to_owned(), vec![("3".to_owned(), "scheduled-post".to_owned())]);
+    a.arrive(call_event(CHANNEL, "3", LAB_B, start()), Source::Delivery);
+    assert_eq!(a.server.shown().len(), 1, "the scheduled post's own call");
+    assert_eq!(a.server.shown()[0].summary, "Weekly sync");
 }

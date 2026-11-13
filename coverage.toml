@@ -622,6 +622,6 @@ sha256 = "f628603547e10947867d75d9b13b8034b8be79c513286a00c85fc21a587d7cf4"
 reason = "macOS-only menu bar, Dock reopen and AppKit terminate routing; no Linux LLVM mapping; compiled and linted by the macOS portability workflow, run on the Mac console"
 
 [unmapped_sources."crates/teams-ui/src/meeting_alert/tests.rs"]
-sha256 = "6fd374c5d83c417ea1a58c3b58de22173c511ecdf1067417f33631151bee6905"
+sha256 = "63bb8f8ab6aaaec1cfac0b5eb49a7f3eb65a9795065e7742a356adf6bfd2fbab"
 reason = "unit-test module included only by meeting_alert.rs cfg(test); omitted by cargo-llvm-cov's test-file filter"
-context = { "crates/teams-ui/src/meeting_alert.rs" = "c25d0e5a5bdbe36037dbd044641c12e11b47cec16933c5148f7a37a15526c2ee" }
+context = { "crates/teams-ui/src/meeting_alert.rs" = "be5825947b396fe792bc9f0fe9d4f284a47a3156292b503e78dc6374372d41eb" }

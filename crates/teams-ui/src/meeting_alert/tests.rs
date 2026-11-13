@@ -178,7 +178,7 @@ fn scheduled(chat: Option<&str>, channel: Option<&str>) -> CalendarEvent {
         channel_meeting: channel.map(|channel| ChannelEventRef {
             channel: channel.to_owned(),
             organizer: None,
-            post: None,
+            post: Some("scheduled-post".to_owned()),
             ical_uid: "made-up".to_owned(),
         }),
     }
@@ -187,16 +187,35 @@ fn scheduled(chat: Option<&str>, channel: Option<&str>) -> CalendarEvent {
 #[test]
 fn a_meeting_shows_its_banner_only_while_the_calendar_holds_it_about_now() {
     let events = [scheduled(Some(MEETING), None), scheduled(None, Some(CHANNEL))];
-    assert!(scheduled_now(&events, MEETING, local(10, 2)).is_some());
-    assert!(scheduled_now(&events, CHANNEL, local(10, 2)).is_some());
+    assert!(scheduled_now(&events, MEETING, None, local(10, 2)).is_some());
+    assert!(scheduled_now(&events, CHANNEL, Some("scheduled-post"), local(10, 2)).is_some());
     // started early, or running late
-    assert!(scheduled_now(&events, MEETING, local(9, 45)).is_some());
-    assert!(scheduled_now(&events, MEETING, local(10, 45)).is_some());
-    assert!(scheduled_now(&events, MEETING, local(9, 44)).is_none());
-    assert!(scheduled_now(&events, MEETING, local(10, 46)).is_none());
+    assert!(scheduled_now(&events, MEETING, None, local(9, 45)).is_some());
+    assert!(scheduled_now(&events, MEETING, None, local(10, 45)).is_some());
+    assert!(scheduled_now(&events, MEETING, None, local(9, 44)).is_none());
+    assert!(scheduled_now(&events, MEETING, None, local(10, 46)).is_none());
     // a meeting not on the calendar (a channel's ad-hoc Meet now), or one cancelled
-    assert!(scheduled_now(&events, "19:meeting_Other@thread.v2", local(10, 2)).is_none());
+    assert!(scheduled_now(&events, "19:meeting_Other@thread.v2", None, local(10, 2)).is_none());
     let mut cancelled = scheduled(Some(MEETING), None);
     cancelled.cancelled = true;
-    assert!(scheduled_now(&[cancelled], MEETING, local(10, 2)).is_none());
+    assert!(scheduled_now(&[cancelled], MEETING, None, local(10, 2)).is_none());
+}
+
+#[test]
+fn a_channel_start_matches_only_its_scheduled_post_even_when_other_meetings_overlap() {
+    let mut first = scheduled(Some(CHANNEL), Some(CHANNEL));
+    let mut second = first.clone();
+    second.id = "second-meeting".to_owned();
+    second.channel_meeting.as_mut().unwrap().post = Some("second-post".to_owned());
+    let events = [first.clone(), second];
+    assert_eq!(
+        scheduled_now(&events, CHANNEL, Some("second-post"), local(9, 50))
+            .unwrap()
+            .id,
+        "second-meeting"
+    );
+    assert!(scheduled_now(&events, CHANNEL, Some("meet-now-post"), local(9, 50)).is_none());
+    assert!(scheduled_now(&events, CHANNEL, None, local(9, 50)).is_none());
+    first.channel_meeting.as_mut().unwrap().post = None;
+    assert!(scheduled_now(&[first], CHANNEL, None, local(9, 50)).is_none());
 }

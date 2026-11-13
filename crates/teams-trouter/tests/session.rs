@@ -382,6 +382,32 @@ async fn sent_only_own_frames(lab: &Lab) {
 }
 
 #[tokio::test]
+async fn a_channel_delivery_keeps_the_post_its_message_belongs_to() {
+    let lab = Lab::start().await;
+    let mut push = lab.client().spawn();
+    connected(&mut push).await;
+    registered(&mut push).await;
+    let channel = teams_mock::TEAM_CHANNEL;
+    let id = lab
+        .mock
+        .add_message(
+            &format!("{channel};messageid=1760000000999"),
+            (LAB_A, "Lab A"),
+            "Event/Call",
+            "<callEventType>callStarted</callEventType>",
+        )
+        .unwrap();
+    let (_, event) = chat_event(&mut push).await;
+    push.stop().await;
+    let ChatEvent::Message { conversation, message } = event else {
+        panic!("not a message: {event:?}");
+    };
+    assert_eq!(conversation, channel);
+    assert_eq!(message.id, id);
+    assert_eq!(message.reply_root(channel).as_deref(), Some("1760000000999"));
+}
+
+#[tokio::test]
 async fn a_client_authenticates_first_registers_and_gets_a_delivery_it_never_answers() {
     let lab = Lab::start().await;
     let client = lab.client();
