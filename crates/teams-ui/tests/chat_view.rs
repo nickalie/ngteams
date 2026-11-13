@@ -17,6 +17,9 @@ mod parts;
 // a 1:1 call's recording and transcript, as their recap cards
 #[path = "chat_view/call_recap.rs"]
 mod call_recap;
+// messages a tenant's policy blocked, under Teams' notice
+#[path = "chat_view/blocked.rs"]
+mod blocked;
 // the files a message carries, as cards
 #[path = "chat_view/cards.rs"]
 mod cards;
@@ -366,6 +369,7 @@ fn row(id: &str, sender: &str, at: i64) -> MessageItem {
         body: Body::Text(RenderedText(Arc::new(Rendered::default()))),
         message_type: "RichText/Html".to_owned(),
         edited: false,
+        policy: None,
         reactions: Vec::new(),
         outbox: Vec::new(),
         files: Arc::default(),

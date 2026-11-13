@@ -36,6 +36,7 @@
 pub mod account;
 pub mod activity;
 mod attachments;
+pub mod blocked;
 pub mod call_floor;
 pub use call_floor::CallFloor;
 pub mod calendar;

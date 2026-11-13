@@ -21,6 +21,8 @@
 //!   the account's own messages as written when they were sent translated (schema 20), and each translated chat's
 //!   glossary of chosen renderings (schema 22);
 //! - [`call_transcripts`]: calls' live captions saved on this computer, a transcript per call by its chat (schema 21);
+//! - [`BlockedCopy`]: the service's copies of the account's own messages a policy blocked, which put their text back
+//!   (schema 25);
 //! - [`schema`]: the migrations, applied in order on open.
 //!
 //! Every versioned write is an upsert that never lets an older version overwrite a newer one, so a Trouter delivery
@@ -29,6 +31,7 @@
 //!
 //! M1 Task 11 (`docs/plans/20261020-native-teams-m1-headless-chat-core.md`).
 
+mod blocked_copies;
 pub mod calendar;
 pub mod call_transcripts;
 pub mod conversations;
@@ -52,6 +55,7 @@ use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 
+pub use blocked_copies::BlockedCopy;
 pub use calendar::StoredEvent;
 pub use call_transcripts::{CallTranscript, TranscriptLine};
 pub use conversations::{Conversation, ConversationKind, Forgotten, ForgottenThread, Member};

@@ -24,6 +24,7 @@ mod files;
 mod html;
 mod links;
 mod model;
+mod policy;
 mod read;
 
 pub use code::{CODE_BLOCK_ITEMTYPE, Code, CodeRun, Token, language_of};
@@ -47,4 +48,5 @@ pub use model::{
     Malformed, MemberList, Mention, MentionKind, Message, MessagePage, MessageType, QuotedMessage, Reaction,
     ReactionUser, Thread, ThreadMember, Unshown, WEB_CLIENT, forwarded, iso_millis, unshown_parts, web_chat_link,
 };
+pub use policy::{GENERIC_STREAM, PolicyNotice, PolicyState, PolicyViolation, ViolationKind, is_generic_stream};
 pub use read::{ChatReadError, ChatReads, MAX_PAGE_SIZE, link_endpoint};

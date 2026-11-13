@@ -250,19 +250,33 @@ fn first_line(text: &str) -> String {
 
 /// A text message's first line with something in it, at most [`PREVIEW_CHARS`] characters: read from its sanitized
 /// rich text, or as it came for a `Text` message; [`DELETED`] for a deleted one; Teams' "Sent a card" for a card
-/// ([`crate::card_view::SENT_A_CARD`]: its fallback text is never shown).
+/// ([`crate::card_view::SENT_A_CARD`]: its fallback text is never shown); a policy's notice for one whose text a
+/// policy withheld ([`crate::policy_notice`]).
 #[must_use]
 pub fn message_line(message: &Message) -> String {
     if message.delete_time.is_some() {
         DELETED.to_owned()
     } else if message.message_type == teams_proto::chat::card::CARD_TYPE {
         crate::card_view::SENT_A_CARD.to_owned()
-    } else if message.message_type == "Text" {
-        // plain text: its `<` and `&` are the text's own
-        first_line(&message.content)
     } else {
-        first_line(&parse_html(&message.content).plain_text())
+        let line = if message.message_type == "Text" {
+            // plain text: its `<` and `&` are the text's own
+            first_line(&message.content)
+        } else {
+            first_line(&parse_html(&message.content).plain_text())
+        };
+        if line.is_empty()
+            && let Some(notice) = withheld(message)
+        {
+            return first_line(crate::policy_notice::words(notice, false));
+        }
+        line
     }
+}
+
+/// The notice of a message whose text a policy withheld, as anyone but its sender reads it.
+fn withheld(message: &Message) -> Option<crate::policy_notice::PolicyNotice> {
+    crate::policy_notice::of(message.properties.as_deref(), false)
 }
 
 /// What a chat is called, as its row in the list names it (see the module docs).

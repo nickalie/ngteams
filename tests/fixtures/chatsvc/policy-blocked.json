@@ -1,0 +1,131 @@
+{
+  "_synthetic": "Made up, shaped like what a sender's client is delivered when a tenant's policy blocks its 1:1 message with a file of a type the tenant doesn't permit, as a user's own debug log recorded it (structure only, read locally, nothing copied: every id, name, text, link and time here is made up). 'sent' is the message as sent and read back; 'copy' the NewMessage of the service's copy in the account's stream 48:generic (a new clientmessageid, the original HTML and files, threadtype streamofgeneric, no reference to the original); 'stream' the ConversationUpdate of 48:generic before it; 'blocked' the MessageUpdate of the original (empty content, no files, properties.policyViolation naming the copy by genericStreamItemId, edittime equal to its version); 'blocked_atp' the later one adding properties.atp. <guid:a>, <guid:b> are lab accounts' object ids, <region> the chat service's region; tests fill them in. See docs/protocol/chat.md, Messages a policy blocked.",
+  "sent": {
+    "id": "1760000100000",
+    "clientmessageid": "7100000000000000001",
+    "version": "1760000100000",
+    "sequenceId": 5,
+    "conversationid": "19:<guid:a>_<guid:b>@unq.gbl.spaces",
+    "conversationLink": "https://teams.microsoft.com/api/chatsvc/<region>/v1/users/ME/conversations/19:<guid:a>_<guid:b>@unq.gbl.spaces",
+    "type": "Message",
+    "messagetype": "RichText/Html",
+    "contenttype": "Text",
+    "content": "<p>made up line one</p>\r\n<p>made up line two</p>",
+    "from": "https://teams.microsoft.com/api/chatsvc/<region>/v1/users/ME/contacts/8:orgid:<guid:a>",
+    "imdisplayname": "Made Up Sender",
+    "composetime": "2026-01-01T00:00:00.0000000Z",
+    "originalarrivaltime": "2026-01-01T00:00:00.0000000Z",
+    "properties": {
+      "files": "[{\"itemid\": \"<guid:file-1>\", \"fileName\": \"made-up-tool_0.1.0_amd64.deb\", \"fileType\": \"deb\", \"fileInfo\": {\"itemId\": null, \"fileUrl\": \"https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/Documents/Microsoft Teams Chat Files/made-up-tool_0.1.0_amd64.deb\", \"siteUrl\": \"https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/\", \"serverRelativeUrl\": \"\", \"shareUrl\": \"https://contoso-my.sharepoint.com/:u:/g/personal/made_up_user_contoso_test/MadeUpShareLinkForTheToolPackage01\", \"shareId\": \"<guid:share-1>\"}, \"fileChicletState\": {\"serviceName\": \"p2p\", \"state\": \"active\"}, \"@type\": \"http://schema.skype.com/File\", \"version\": 2, \"id\": \"<guid:file-1>\", \"baseUrl\": \"https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/\", \"objectUrl\": \"https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/Documents/Microsoft Teams Chat Files/made-up-tool_0.1.0_amd64.deb\", \"openUrl\": null, \"type\": \"deb\", \"title\": \"made-up-tool_0.1.0_amd64.deb\", \"state\": \"active\", \"chicletBreadcrumbs\": null, \"providerData\": \"\", \"botFileProperties\": {}, \"isUploadError\": null, \"progressComplete\": null, \"permissionScope\": \"Anyone\", \"filePreview\": {\"previewUrl\": \"\", \"previewHeight\": 0, \"previewWidth\": 0}, \"sharepointIds\": {\"driveId\": null, \"listId\": \"<guid:list>\", \"listItemUniqueId\": \"<guid:file-1>\", \"siteId\": \"<guid:site>\", \"siteUrl\": \"https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test\", \"webId\": \"<guid:web>\"}, \"publication\": {\"level\": \"published\", \"versionId\": \"1.0\"}, \"site\": {\"dataLocationCode\": \"NAM\", \"template\": {\"id\": \"21\"}}}]",
+      "importance": "",
+      "subject": ""
+    }
+  },
+  "copy": {
+    "clientmessageid": "7100000000000000002",
+    "content": "<p>made up line one</p>\r\n<p>made up line two</p>",
+    "from": "https://teams.microsoft.com/api/chatsvc/<region>/v1/users/ME/contacts/8:orgid:<guid:a>",
+    "imdisplayname": null,
+    "id": "1760000100900",
+    "messagetype": "RichText/Html",
+    "properties": {
+      "files": "[{\"itemid\": \"<guid:file-1>\", \"fileName\": \"made-up-tool_0.1.0_amd64.deb\", \"fileType\": \"deb\", \"fileInfo\": {\"itemId\": null, \"fileUrl\": \"https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/Documents/Microsoft Teams Chat Files/made-up-tool_0.1.0_amd64.deb\", \"siteUrl\": \"https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/\", \"serverRelativeUrl\": \"\", \"shareUrl\": \"https://contoso-my.sharepoint.com/:u:/g/personal/made_up_user_contoso_test/MadeUpShareLinkForTheToolPackage01\", \"shareId\": \"<guid:share-1>\"}, \"fileChicletState\": {\"serviceName\": \"p2p\", \"state\": \"active\"}, \"@type\": \"http://schema.skype.com/File\", \"version\": 2, \"id\": \"<guid:file-1>\", \"baseUrl\": \"https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/\", \"objectUrl\": \"https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/Documents/Microsoft Teams Chat Files/made-up-tool_0.1.0_amd64.deb\", \"openUrl\": null, \"type\": \"deb\", \"title\": \"made-up-tool_0.1.0_amd64.deb\", \"state\": \"active\", \"chicletBreadcrumbs\": null, \"providerData\": \"\", \"botFileProperties\": {}, \"isUploadError\": null, \"progressComplete\": null, \"permissionScope\": \"Anyone\", \"filePreview\": {\"previewUrl\": \"\", \"previewHeight\": 0, \"previewWidth\": 0}, \"sharepointIds\": {\"driveId\": null, \"listId\": \"<guid:list>\", \"listItemUniqueId\": \"<guid:file-1>\", \"siteId\": \"<guid:site>\", \"siteUrl\": \"https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test\", \"webId\": \"<guid:web>\"}, \"publication\": {\"level\": \"published\", \"versionId\": \"1.0\"}, \"site\": {\"dataLocationCode\": \"NAM\", \"template\": {\"id\": \"21\"}}}]",
+      "languageStamp": "languages=en:100;length=30;",
+      "importance": "",
+      "subject": ""
+    },
+    "sequenceId": 1,
+    "version": "1760000100900",
+    "composetime": "2026-01-01T00:00:00.9000000Z",
+    "originalarrivaltime": "2026-01-01T00:00:00.9000000Z",
+    "conversationLink": "https://teams.microsoft.com/api/chatsvc/<region>/v1/users/ME/conversations/48:generic",
+    "to": "48:generic",
+    "type": "Message",
+    "contenttype": "Text",
+    "threadtype": "streamofgeneric",
+    "isactive": true
+  },
+  "stream": {
+    "id": "48:generic",
+    "type": "Conversation",
+    "version": 1760000100800,
+    "lastMessage": {},
+    "properties": {},
+    "threadProperties": {
+      "originalThreadId": "19:teamsstream_generic_<guid:a>@thread.v2",
+      "threadType": "streamofgeneric",
+      "isCreator": true
+    }
+  },
+  "blocked": {
+    "id": "1760000100000",
+    "clientmessageid": "7100000000000000001",
+    "version": "1760000101500",
+    "sequenceId": 5,
+    "conversationid": "19:<guid:a>_<guid:b>@unq.gbl.spaces",
+    "conversationLink": "https://teams.microsoft.com/api/chatsvc/<region>/v1/users/ME/conversations/19:<guid:a>_<guid:b>@unq.gbl.spaces",
+    "to": "19:<guid:a>_<guid:b>@unq.gbl.spaces",
+    "type": "Message",
+    "messagetype": "RichText/Html",
+    "contenttype": "Text",
+    "content": "",
+    "from": "https://teams.microsoft.com/api/chatsvc/<region>/v1/users/ME/contacts/8:orgid:<guid:a>",
+    "imdisplayname": "Made Up Sender",
+    "composetime": "2026-01-01T00:00:00.0000000Z",
+    "originalarrivaltime": "2026-01-01T00:00:00.0000000Z",
+    "properties": {
+      "mentions": "[]",
+      "cards": "[]",
+      "importance": "",
+      "subject": "",
+      "title": "",
+      "policyViolation": {
+        "verdictDetails": 0,
+        "dlpAction": 2,
+        "state": 1,
+        "justificationText": "LinkScannerViolationHandler",
+        "genericStreamItemId": 1760000100900,
+        "violationType": "wft"
+      },
+      "formatVariant": "TEAMS",
+      "languageStamp": "languages=en:100;length=30;",
+      "edittime": "1760000101500"
+    }
+  },
+  "blocked_atp": {
+    "id": "1760000100000",
+    "clientmessageid": "7100000000000000001",
+    "version": "1760000103500",
+    "sequenceId": 5,
+    "conversationid": "19:<guid:a>_<guid:b>@unq.gbl.spaces",
+    "conversationLink": "https://teams.microsoft.com/api/chatsvc/<region>/v1/users/ME/conversations/19:<guid:a>_<guid:b>@unq.gbl.spaces",
+    "to": "19:<guid:a>_<guid:b>@unq.gbl.spaces",
+    "type": "Message",
+    "messagetype": "RichText/Html",
+    "contenttype": "Text",
+    "content": "",
+    "from": "https://teams.microsoft.com/api/chatsvc/<region>/v1/users/ME/contacts/8:orgid:<guid:a>",
+    "imdisplayname": "Made Up Sender",
+    "composetime": "2026-01-01T00:00:00.0000000Z",
+    "originalarrivaltime": "2026-01-01T00:00:00.0000000Z",
+    "properties": {
+      "mentions": "[]",
+      "cards": "[]",
+      "importance": "",
+      "subject": "",
+      "title": "",
+      "policyViolation": {
+        "verdictDetails": 0,
+        "dlpAction": 2,
+        "state": 1,
+        "justificationText": "LinkScannerViolationHandler",
+        "genericStreamItemId": 1760000100900,
+        "violationType": "wft"
+      },
+      "formatVariant": "TEAMS",
+      "languageStamp": "languages=en:100;length=30;",
+      "edittime": "1760000101500",
+      "atp": "[{\"URL\": \"https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/Documents/Microsoft Teams Chat Files/made-up-tool_0.1.0_amd64.deb\", \"Xsdata\": \"<made-up-atp-data>\", \"Sdata\": \"<made-up-atp-signature>\"}]"
+    }
+  }
+}

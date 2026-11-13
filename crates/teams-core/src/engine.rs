@@ -3249,6 +3249,14 @@ where
         message: &chat::Message,
         source: Source,
     ) {
+        // the service's copy of the account's own blocked message: no chat, its text goes back into the message
+        if chat::is_generic_stream(&conversation) {
+            match self.catch_up.receive_blocked_copy(&mut self.store, message) {
+                Ok(_) => self.brought(source),
+                Err(error) => self.missed("keeping a blocked message's copy", error),
+            }
+            return;
+        }
         self.notice(&conversation);
         // a team's own activity (people added or gone, a channel made, renamed or deleted) changes what its list shows
         if teams_proto::is_team_thread_id(&conversation) && message.message_type.as_str().starts_with("ThreadActivity/")
@@ -3314,6 +3322,10 @@ where
     /// A conversation changed: one the store doesn't know is added and synced (missed when it can't be, [`Core::missed`]),
     /// and told as the reads' change ([`Core::brought`]); the rest comes with the next catch-up.
     async fn on_conversation(&mut self, conversation: String) {
+        // the service's stream of blocked messages' copies is no chat: its thread can't be read
+        if chat::is_generic_stream(&conversation) {
+            return;
+        }
         self.notice(&conversation);
         match self.add_if_unknown(&conversation).await {
             Ok(true) => {

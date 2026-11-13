@@ -3475,3 +3475,157 @@ async fn activity_turn_off_keeps_queries_responsive_while_reading_the_definition
     assert_eq!(write.await.unwrap().state, OutboxState::Sent);
     a.shutdown();
 }
+
+/// The synthetic shapes of a message a policy blocked (`tests/fixtures/chatsvc/policy-blocked.json`), with the mock's
+/// ids filled in.
+fn blocked_shapes() -> Value {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/fixtures/chatsvc/policy-blocked.json"
+    );
+    let text = std::fs::read_to_string(path)
+        .unwrap()
+        .replace("<region>", "amer")
+        .replace("<guid:a>", LAB_A.trim_start_matches("8:orgid:"))
+        .replace("<guid:b>", LAB_B.trim_start_matches("8:orgid:"));
+    serde_json::from_str(&text).unwrap()
+}
+
+/// The policy's update of message `id` (sent as `client_id`), at a version later than any the mock gave.
+fn blocked_update(shapes: &Value, id: &str, client_id: &str) -> Value {
+    let mut blocked = shapes["blocked"].clone();
+    let version = (now_ms() + 60_000).to_string();
+    blocked["id"] = json!(id);
+    blocked["clientmessageid"] = json!(client_id);
+    blocked["version"] = json!(version);
+    blocked["properties"]["edittime"] = json!(version);
+    json!({"type": "EventMessage", "resourceType": "MessageUpdate", "resource": blocked})
+}
+
+/// The service's copy of the blocked message, and its stream's own updates before it.
+fn deliver_copy(lab: &Lab, shapes: &Value) {
+    let stream = &shapes["stream"];
+    lab.trouter.deliver_chat(
+        LAB_A,
+        &json!({"type": "EventMessage", "resourceType": "ThreadUpdate", "resource": {"id": stream["id"]}}),
+    );
+    lab.trouter.deliver_chat(
+        LAB_A,
+        &json!({"type": "EventMessage", "resourceType": "ConversationUpdate", "resource": stream}),
+    );
+    lab.trouter.deliver_chat(
+        LAB_A,
+        &json!({"type": "EventMessage", "resourceType": "NewMessage", "resource": shapes["copy"]}),
+    );
+}
+
+/// Whether the engine read anything of the copies' stream (its thread can't be read).
+async fn read_the_stream(lab: &Lab) -> bool {
+    lab.mock
+        .received_requests()
+        .await
+        .iter()
+        .any(|request| decoded(request.url.path()).contains("48:generic"))
+}
+
+fn files_of(message: &Message) -> usize {
+    let properties: Value = serde_json::from_str(message.properties.as_deref().unwrap_or("{}")).unwrap();
+    teams_proto::chat::shared_files(properties.get("files")).files.len()
+}
+
+#[tokio::test]
+async fn a_blocked_message_keeps_its_text_and_files_from_the_copy_that_came_first_and_is_not_edited() {
+    let lab = Lab::start().await;
+    let mut a = native(&lab, LAB_A, How::default());
+    a.ready().await;
+    let row = a.send(AB_CHAT, "made up text as sent").await;
+    let id = id_of(&row);
+    let shapes = blocked_shapes();
+    a.message_event(AB_CHAT, &id).await;
+
+    deliver_copy(&lab, &shapes);
+    lab.trouter
+        .deliver_chat(LAB_A, &blocked_update(&shapes, &id, &row.client_message_id));
+    let (_, applied, message) = a.message_event(AB_CHAT, &id).await;
+    assert_eq!(applied, Applied::Updated);
+    assert_eq!(message.content, shapes["copy"]["content"].as_str().unwrap());
+    assert_eq!(files_of(&message), 1, "{:?}", message.properties);
+    assert!(message.properties.as_deref().unwrap().contains("policyViolation"));
+    assert_eq!(message.edit_time, None, "the verdict's update is no edit");
+
+    // the later update (the link scan's data added) keeps it as it was put back
+    let mut later = blocked_update(&shapes, &id, &row.client_message_id);
+    later["resource"]["version"] = json!((now_ms() + 120_000).to_string());
+    later["resource"]["properties"]["atp"] = shapes["blocked_atp"]["properties"]["atp"].clone();
+    lab.trouter.deliver_chat(LAB_A, &later);
+    let (_, applied, message) = a.message_event(AB_CHAT, &id).await;
+    assert_eq!(applied, Applied::Updated);
+    assert_eq!(message.content, shapes["copy"]["content"].as_str().unwrap());
+    assert_eq!((files_of(&message), message.edit_time), (1, None));
+    assert!(!read_the_stream(&lab).await, "the stream is never read as a chat");
+    assert!(a.handle.conversation(GENERIC.to_owned()).await.unwrap().is_none());
+    a.shutdown();
+}
+
+const GENERIC: &str = teams_proto::chat::GENERIC_STREAM;
+
+#[tokio::test]
+async fn a_blocked_message_keeps_its_text_as_sent_and_takes_a_copy_that_comes_after() {
+    let lab = Lab::start().await;
+    let mut a = native(&lab, LAB_A, How::default());
+    a.ready().await;
+    let shapes = blocked_shapes();
+
+    // sent as written: the update before any copy keeps what the store had
+    let row = a.send(AB_CHAT, "made up text kept").await;
+    let id = id_of(&row);
+    a.message_event(AB_CHAT, &id).await;
+    lab.trouter
+        .deliver_chat(LAB_A, &blocked_update(&shapes, &id, &row.client_message_id));
+    let (_, _, message) = a.message_event(AB_CHAT, &id).await;
+    assert!(message.content.contains("made up text kept"), "{}", message.content);
+    assert_eq!(message.edit_time, None);
+
+    // sent from another client: the update comes first without any text, its copy after puts it back
+    let other = lab.mock.post_as(LAB_A, AB_CHAT, "<p>from another client</p>").unwrap();
+    lab.trouter
+        .deliver_chat(LAB_A, &blocked_update(&shapes, &other, "7100000000000000009"));
+    let (_, _, message) = a.message_event(AB_CHAT, &other).await;
+    assert_eq!((message.content.as_str(), files_of(&message)), ("", 0));
+    deliver_copy(&lab, &shapes);
+    let (_, _, message) = a.message_event(AB_CHAT, &other).await;
+    assert_eq!(message.content, shapes["copy"]["content"].as_str().unwrap());
+    assert_eq!(files_of(&message), 1);
+    assert_eq!(a.stored(AB_CHAT, &other).await, message, "stored as told");
+    assert!(!read_the_stream(&lab).await);
+    a.shutdown();
+}
+
+#[tokio::test]
+async fn someone_else_s_blocked_message_keeps_no_text_and_takes_no_copy() {
+    let lab = Lab::start().await;
+    let mut a = native(&lab, LAB_A, How::default());
+    let mut b = native(&lab, LAB_B, How::default());
+    a.ready().await;
+    b.ready().await;
+    let row = a.send(AB_CHAT, "made up text b must not keep").await;
+    let id = id_of(&row);
+    b.message_event(AB_CHAT, &id).await;
+    let shapes = blocked_shapes();
+    lab.trouter
+        .deliver_chat(LAB_B, &blocked_update(&shapes, &id, &row.client_message_id));
+    let (_, applied, message) = b.message_event(AB_CHAT, &id).await;
+    assert_eq!(applied, Applied::Updated);
+    assert_eq!((message.content.as_str(), message.edit_time), ("", None));
+    // even a copy of b's own naming it puts nothing back into a's message
+    let mut copy = shapes["copy"].clone();
+    copy["from"] = json!(format!("{CHAT_BASE}/v1/users/ME/contacts/{LAB_B}"));
+    lab.trouter.deliver_chat(
+        LAB_B,
+        &json!({"type": "EventMessage", "resourceType": "NewMessage", "resource": copy}),
+    );
+    b.drain().await;
+    assert_eq!(b.stored(AB_CHAT, &id).await.content, "");
+    a.shutdown();
+    b.shutdown();
+}

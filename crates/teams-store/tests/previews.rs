@@ -151,7 +151,7 @@ fn schema_23_previews_survive_the_activity_bookmark_migration() {
 
     // Main's schema 23 already has list-page previews, but no Activity bookmarks.
     let raw = rusqlite::Connection::open(dir.path().join("store.sqlite")).unwrap();
-    raw.execute_batch("DROP TABLE horizon_bookmarks; PRAGMA user_version = 23;")
+    raw.execute_batch("DROP TABLE blocked_copies; DROP TABLE horizon_bookmarks; PRAGMA user_version = 23;")
         .unwrap();
     drop(raw);
 

@@ -140,6 +140,7 @@ pub mod notify;
 pub mod own_presence;
 pub mod people;
 pub mod picture_viewer;
+pub mod policy_notice;
 pub mod prejoin;
 pub mod presence;
 pub mod presence_badge;

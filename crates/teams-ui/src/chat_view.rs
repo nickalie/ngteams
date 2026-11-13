@@ -137,6 +137,7 @@ use crate::meeting_recap::{self, RecapCard};
 use crate::models::Models;
 use crate::people::{Face, Shown};
 use crate::picture_viewer::{self, OpenPicture, Viewed, Viewing};
+use crate::policy_notice;
 use crate::profile_card;
 use crate::reaction_picker::{ReactionPicker, ReactionPickerEvent};
 use crate::reactions;
@@ -560,6 +561,8 @@ pub struct MessageItem {
     /// shows it.
     pub message_type: String,
     pub edited: bool,
+    /// What a tenant's policy did to it, told over its text as Teams tells it ([`crate::policy_notice`]).
+    pub policy: Option<policy_notice::PolicyNotice>,
     pub reactions: Vec<ReactionCount>,
     /// The account's writes on it that aren't sent (an edit, a delete, a reaction) and that no newer write on the same
     /// thing made out of date, as they stand, the oldest first.
@@ -2926,17 +2929,23 @@ impl ChatView {
         let translation = matches!(body, Body::Text(_))
             .then(|| self.translated.0.mark_of(message))
             .flatten();
+        let own = message.sender.as_deref() == Some(me.as_str());
+        let policy = matches!(body, Body::Text(_))
+            .then(|| policy_notice::of(message.properties.as_deref(), own))
+            .flatten();
         Some(MessageItem {
             id: message.id.clone(),
             version: message.version,
-            own: message.sender.as_deref() == Some(me.as_str()),
+            own,
             sender: message.sender.clone(),
             face: Face { named, picture },
             sender_name: sender_name.into(),
             header: true,
             arrival_time: message.arrival_time,
             message_type: message.message_type.clone(),
-            edited: message.edit_time.is_some() && !matches!(body, Body::Deleted),
+            // the verdict's own update sets an edit time Teams doesn't show
+            edited: message.edit_time.is_some() && !matches!(body, Body::Deleted) && policy.is_none(),
+            policy,
             body,
             reactions,
             outbox: notes.get(&message.id).cloned().unwrap_or_default(),
@@ -4953,9 +4962,13 @@ fn bubble(
         .min_w_0();
     // a message drawn bare (only an emoticon or a sticker, `Rendered::bare`) or of files alone has no bubble behind
     // it, as in Teams
-    let bare = matches!(&item.body, Body::Text(text) if text.0.bare || (text.0.blocks.is_empty() && files.is_some()))
-        // a card (a channel meeting's too) is its own surface
-        || matches!(&item.body, Body::Cards(_) | Body::Meeting(_));
+    let bare = item.policy.is_none()
+        && (matches!(&item.body, Body::Text(text) if text.0.bare || (text.0.blocks.is_empty() && files.is_some()))
+            // a card (a channel meeting's too) is its own surface
+            || matches!(&item.body, Body::Cards(_) | Body::Meeting(_)));
+    let notice = item
+        .policy
+        .map(|notice| policy_notice::line(&item.id, notice, item.own, palette));
     let bubble = if bare {
         bubble
     } else {
@@ -4969,6 +4982,7 @@ fn bubble(
     // the account's own keep Teams' margin on their left; someone else's reach the mark's column
     let bubble = if item.own { bubble.max_w(relative(0.8)) } else { bubble };
     bubble
+        .children(notice)
         .child(content)
         .children(links)
         .children(files)

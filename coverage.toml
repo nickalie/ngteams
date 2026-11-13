@@ -67,7 +67,7 @@ context = { "crates/teams-media/src/video/effects.rs" = "787856448e591791db31587
 
 
 [unmapped_sources."crates/teams-proto/src/chat/mod.rs"]
-sha256 = "e4490d6275159cc2d7bfb4546609c1dd0cbe60874ab0b4233b3ee1a2020277a3"
+sha256 = "e3319d9851ab5ab88e506d4a9724f64fc95f17f709c61e7564248412db76a1c8"
 reason = "module declarations, re-exports and documentation only; no executable items"
 
 
@@ -88,7 +88,7 @@ sha256 = "eac1126557b554aae9c187daa89a44640a3a08fae132c60468def9156fd01f70"
 reason = "module declarations and documentation only; no executable bodies"
 
 [unmapped_sources."crates/teams-core/src/lib.rs"]
-sha256 = "5026bcc13174a9425e4492f8220a5cbc3e57be7ba4aed702a59425495c09699a"
+sha256 = "bdf5733cf64171e3a666b8d3ccea3ad644d979fec6ff22687b1e2fc60bf5d574"
 reason = "module declarations, re-exports and documentation only; no executable bodies"
 
 [unmapped_sources."crates/teams-media/src/lib.rs"]
@@ -100,7 +100,7 @@ sha256 = "4f27776ff2e3d9d662467a5ecb6542670137e2e47658e9d5b3dc26196987a972"
 reason = "module declarations, documentation and an integer constant only; no executable bodies"
 
 [unmapped_sources."crates/teams-ui/src/lib.rs"]
-sha256 = "558e475cbb1d9ab866224391104a64025c16307e4d109697b293705e4446cd0a"
+sha256 = "868296a45a464c00ac5c28dd0c484b72437302c195bfa5bce4e92834f51d32f6"
 reason = "module declarations, re-exports, documentation and the `ctrl!` hint macro (a string literal per platform) only; no executable bodies"
 
 [unmapped_sources."crates/teams-wpe-client/src/event.rs"]
@@ -570,12 +570,12 @@ context = { "crates/teams-signin/src/lib.rs" = "a7b946e05829938c67d8c83c2f95877b
 [unmapped_sources_windows."crates/teams-ui/src/notify/linux.rs"]
 sha256 = "b8f61b3c4e85a501b4fded150d3552df0a7aea10ec9412c8e71310b4feb8e67c"
 reason = "Linux-only freedesktop notification D-Bus transport; notify.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
-context = { "crates/teams-ui/src/lib.rs" = "558e475cbb1d9ab866224391104a64025c16307e4d109697b293705e4446cd0a", "crates/teams-ui/src/notify.rs" = "2ac8085ca8faeeff7aa18b251cca8327fb8d7d32ea19165cfe74fe16dfdce63d" }
+context = { "crates/teams-ui/src/lib.rs" = "868296a45a464c00ac5c28dd0c484b72437302c195bfa5bce4e92834f51d32f6", "crates/teams-ui/src/notify.rs" = "2ac8085ca8faeeff7aa18b251cca8327fb8d7d32ea19165cfe74fe16dfdce63d" }
 
 [unmapped_sources_windows."crates/teams-ui/src/tray/linux.rs"]
 sha256 = "ceed6565f30d059be5e8b6c0901fcba714248fe4ba0998e40c912d90db539ade"
 reason = "Linux-only StatusNotifierItem, D-Bus menu and launcher unread transport; tray.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
-context = { "crates/teams-ui/src/lib.rs" = "558e475cbb1d9ab866224391104a64025c16307e4d109697b293705e4446cd0a", "crates/teams-ui/src/tray.rs" = "761e00a9301f59539a3edca854dfd467ac83a8f68dcd509ef18e4eaa07d7a1ab" }
+context = { "crates/teams-ui/src/lib.rs" = "868296a45a464c00ac5c28dd0c484b72437302c195bfa5bce4e92834f51d32f6", "crates/teams-ui/src/tray.rs" = "761e00a9301f59539a3edca854dfd467ac83a8f68dcd509ef18e4eaa07d7a1ab" }
 
 [unmapped_sources_windows."crates/ngteams/src/ctl/socket/unix.rs"]
 sha256 = "ea79c3378f2968223f72f282f2514e5cd6cb8ff57c9d0dc46b9130aa2b7bc50e"

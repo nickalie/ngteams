@@ -828,6 +828,42 @@ its shape (two files, made-up names and links). No lab capture holds a received 
   `MessagePicture::of`), reads it as it reads a pasted picture (the account's AMS, its skypetoken), draws it scaled
   down into 360 by 252, and draws the card (with Graph's thumbnail) when the preview can't be had.
 
+## Messages a policy blocked
+
+Seen in the user's own debug log (2026-11-13, a 1:1 message with a `.deb` file, blocked by the tenant's file type
+check; structure only, nothing copied) and read from the web client's message renderer; the synthetic shapes are in
+`tests/fixtures/chatsvc/policy-blocked.json`. Lab accounts can't trigger a tenant's policy.
+
+- **The post succeeds** (201) as any other. About a second later the sender's endpoints get, in this order: a
+  `ThreadUpdate` and a `ConversationUpdate` of `48:generic` (`threadType` `streamofgeneric`, the sender its only member,
+  `threadProperties.originalThreadId` `19:teamsstream_generic_<sender's object id>@thread.v2`), then a `NewMessage` in
+  `48:generic`: the **copy**. It has its own id and a new `clientmessageid`, the original `content` and
+  `properties.files`, `threadtype` `streamofgeneric`, and nothing that names the original chat or message. Reading
+  `48:generic` as a thread answers 400 ("The Thread Id is invalid").
+- **The original message is then updated** (`MessageUpdate`, same id and `clientmessageid`): `content` empty, no
+  `files`, `mentions` and `cards` `"[]"`, `properties.edittime` equal to its new `version`, and
+  `properties.policyViolation`, an object: `state` (0 none, 1 blocked, 2 warning), `violationType` (`dlp`, `zap`
+  after-delivery purge, `wft` file type, `mu` link reputation, `pd` phishing, `cc`), `verdictDetails` (flags: 1 may
+  report a mistake, 2 may override, 4 may override with a reason), `dlpAction` (flags: 1 notify the sender, 2 block
+  everyone, 4 block outsiders), `userAction` (flags: 1 overridden, 2 reported as a mistake), `justificationText`
+  (seen: the check's own name) and `genericStreamItemId`, the copy's id as a number. A second update a little later adds
+  `properties.atp` (the file's Safe Links data) at a newer version.
+- **What the web client shows**: the sender's message as written, its text and files taken from the copy whose id the
+  verdict names (it fetches `48:generic`'s message by that id when it lacks it), with the verdict over it; everyone else
+  sees the verdict alone. No "Edited". By verdict: file type blocked, "This message was blocked because it contains a
+  file type that is not permitted." with "Learn about file and link safety"; purge, "This message was blocked due to
+  potentially harmful content." with "Learn more."; link warning, "This message contains a link that might be
+  harmful."; phishing warning, "This message could be a phishing attempt." (no link); any other block, "This message
+  was blocked." to the sender ("Blocked. You've reported this to your admin." once reported) with "Learn more.", and
+  "This message was blocked due to organization policy." with "What's this?" to the others; any other warning,
+  "This message was flagged." to the sender alone. The file type, link and phishing lines and the sender's are red,
+  the others' block muted. The sender's "What can I do?" (override and report) needs a policy tip from the compliance
+  service, which no chat service shape carries.
+- **The native client** keeps each copy of the account's own (`blocked_copies`, schema 25) and puts its text and files
+  back into the blocked message as stored, whichever comes first; without a copy it keeps the text the store had. It
+  never adds `48:generic` as a conversation (deliveries and the conversation list alike), keeps the stored edit time
+  through a verdict's update, and words the notice as above (`crates/teams-ui/src/policy_notice.rs`).
+
 ## Mentions (mention)
 
 Typing `@` in the compose box opens the mention picker (`AutocompletePopup-Mentions`); in the 1:1 chat its highlighted

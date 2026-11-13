@@ -20,6 +20,7 @@ use time::format_description::well_known::Rfc3339;
 use crate::chat::files::{SharedFiles, shared_files};
 use crate::chat::html::{self, RichText, ThreadActivity};
 use crate::chat::links::{LinkPreview, link_previews};
+use crate::chat::policy::PolicyViolation;
 
 /// A value that may be missing, in a form a capture showed ([`Field::Known`]), or in another one, kept as it came
 /// ([`Field::Unknown`]). A named field that came as `null` is `Unknown(Value::Null)`: no capture showed one.
@@ -560,6 +561,12 @@ impl Message {
     #[must_use]
     pub fn files(&self) -> SharedFiles {
         shared_files(self.properties.get("files"))
+    }
+
+    /// `properties.policyViolation`: what a tenant's policy did to the message ([`PolicyViolation::of`]).
+    #[must_use]
+    pub fn policy_violation(&self) -> Field<PolicyViolation> {
+        PolicyViolation::of(self.properties.get("policyViolation"))
     }
 
     /// `properties.links`, a JSON string of a list: the previews of the links the message carries ([`link_previews`]),

@@ -109,6 +109,7 @@ use teams_store::{
     SyncState,
 };
 
+use crate::blocked;
 use crate::outbox::{Arrival, Clock, ConversationSync, Outbox, OutboxError, Received, SyncError, now_ms};
 
 /// The most pages one read follows: the conversation list's `forwardLink`s, a sync answer's `backwardLink`s, or the
@@ -753,7 +754,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             None => self.waiting(store, reads.conversations()).await?,
         };
         let sync_link = list.sync_state().map(str::to_owned).or(kept);
-        let mut conversations = std::mem::take(&mut list.conversations);
+        let mut conversations = listed_chats(&mut list);
         let mut report = CatchUpReport {
             skipped: list.unreadable.len(),
             ..CatchUpReport::default()
@@ -766,8 +767,9 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             }
             list = self.waiting(store, reads.conversations_from(&next)).await?;
             pages += 1;
-            self.stage_listed(store, &list.conversations)?;
-            conversations.append(&mut list.conversations);
+            let mut page = listed_chats(&mut list);
+            self.stage_listed(store, &page)?;
+            conversations.append(&mut page);
             report.skipped += list.unreadable.len();
         }
         report.conversations = conversations.len();
@@ -1065,6 +1067,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             }
             return Ok(None);
         };
+        let row = blocked::with_text_put_back(store, row, message, self.me.as_str())?;
         let reactions = reaction_set(message);
         let received = self.outbox.receive(store, &row, reactions.as_deref())?;
         // a channel's message names its post (M2 Task 16): kept beside it, whatever version the store took
@@ -1072,6 +1075,26 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             store.set_reply_root(conversation, &message.id, &root)?;
         }
         Ok(Some(received))
+    }
+
+    /// A message of the account's stream of blocked messages' copies ([`chat::GENERIC_STREAM`]): kept when it is a copy
+    /// of the account's own, and its text put back into the stored messages that name it; those messages.
+    ///
+    /// # Errors
+    /// [`CatchUpError::Store`] when the store can't be read or written.
+    pub fn receive_blocked_copy(
+        &self,
+        store: &mut Store,
+        message: &chat::Message,
+    ) -> Result<Vec<Message>, CatchUpError> {
+        let Some(copy) = blocked::copy_of(message, self.me.as_str()) else {
+            return Ok(Vec::new());
+        };
+        let restored = blocked::keep_copy(store, &copy, self.me.as_str())?;
+        for message in &restored {
+            self.message_stored(&message.conversation_id, &message.id, Applied::Updated);
+        }
+        Ok(restored)
     }
 
     /// The first read of a conversation's messages: its newest page, with the page's `backwardLink` kept for older
@@ -1603,6 +1626,14 @@ fn still_forgotten(store: &Store, listed: &chat::Conversation, version: Option<i
     let last_activity = listed.last_message().and_then(|message| message.arrival_time_ms());
     let newer = version.is_none_or(|version| version > forgotten.version);
     Ok(!newer && !advances(last_activity, forgotten.last_activity))
+}
+
+/// The conversations a list page brought, without the service's stream of blocked messages' copies
+/// ([`chat::GENERIC_STREAM`]): no chat, and its thread can't be read.
+fn listed_chats(list: &mut chat::ConversationList) -> Vec<chat::Conversation> {
+    let mut conversations = std::mem::take(&mut list.conversations);
+    conversations.retain(|conversation| !chat::is_generic_stream(&conversation.id));
+    conversations
 }
 
 /// Whether `state` is the mark of a conversation the account couldn't read and no sync ever read

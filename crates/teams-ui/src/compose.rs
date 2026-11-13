@@ -341,7 +341,12 @@ pub fn rich_text_of(message: &Message) -> RichText {
 /// A message's text on one line (what it quotes left out; a forward's content is the message's own, kept), at most
 /// [`PREVIEW_MAX`] characters.
 fn preview(message: &Message) -> String {
-    one_line_of(rich_text_of(message))
+    let line = one_line_of(rich_text_of(message));
+    // a message whose text a policy withheld is quoted by its notice, as anyone but its sender reads it
+    match crate::policy_notice::of(message.properties.as_deref(), false) {
+        Some(notice) if line.is_empty() => crate::policy_notice::words(notice, false).to_owned(),
+        _ => line,
+    }
 }
 
 /// A text on one line (what it quotes left out; a forward's content kept), at most [`PREVIEW_MAX`] characters.

@@ -115,12 +115,12 @@ fn the_call_transcripts_migration_starts_with_none() -> Result<(), StoreError> {
     drop(Store::open(&store_path(&dir))?);
     // the store as schema 20 left it
     let raw = rusqlite::Connection::open(store_path(&dir)).expect("open directly");
-    raw.execute_batch("DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; DROP TABLE translation_glossary; DROP TABLE horizon_bookmarks; DROP VIEW pending_conversation_previews; DROP TABLE conversation_previews; PRAGMA user_version = 20;")
+    raw.execute_batch("DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; DROP TABLE translation_glossary; DROP TABLE blocked_copies; DROP TABLE horizon_bookmarks; DROP VIEW pending_conversation_previews; DROP TABLE conversation_previews; PRAGMA user_version = 20;")
         .expect("back to schema 20");
     drop(raw);
     let store = Store::open(&store_path(&dir))?;
     assert_eq!(store.schema_version()?, SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 24);
+    assert_eq!(SCHEMA_VERSION, 25);
     assert!(store.call_transcripts(CHAT)?.is_empty());
     Ok(())
 }

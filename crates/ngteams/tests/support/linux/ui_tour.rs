@@ -189,7 +189,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 303] = [
+const STEPS: [Step; 5 + 305] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -1763,6 +1763,16 @@ const STEPS: [Step; 5 + 303] = [
             model.change(|settings| settings.appearance.theme = teams_ui::theme::LIGHT_KEY, cx);
         });
     }),
+    // messages a tenant's policy blocked, as Teams shows them: a's own with its text and file put back from the
+    // service's copy under the red notice and its link, b's with the notice alone (a file type, then a policy); in
+    // Teams Dark, then in Teams Light
+    ("chat-blocked-dark", |shell, window, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+        if let Some(chat) = BLOCKED_CHAT.get().cloned() {
+            shell.update(cx, |shell, cx| shell.open_chat(chat, window, cx));
+        }
+    }),
+    ("chat-blocked", |shell, _, cx| fixed_theme(shell, None, cx)),
     // a person's profile card (`seed_profile_cards`), in Teams Dark then Light: the compact card beside c's face in
     // the a–b–c chat, the full card's Overview, Profile and Organization, and the compact card beside b's channel post
     ("profile-card-compact-dark", |shell, window, cx| {
@@ -4017,6 +4027,7 @@ impl MockLab {
         seed_activity(&mock)?;
         seed_forwards(&mock, &runtime)?;
         seed_cards(&mock)?;
+        seed_blocked(&mock)?;
         seed_profile_cards(&mock, &runtime);
         let dir = tempfile::tempdir()?;
         let tokens = Arc::new(Tokens {
@@ -4652,6 +4663,71 @@ fn seed_cards(mock: &ChatServiceMock) -> SandboxResult {
     )
     .ok_or("the chat's card refused")?;
     CARD_CHAT.set(chat).map_err(|_| "the card chat was set twice")?;
+    Ok(())
+}
+
+static BLOCKED_CHAT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The made-up id of the service's copy of a's blocked message.
+const BLOCKED_COPY: &str = "1760000500900";
+
+/// A chat of a and b ("Made-up release") with messages a tenant's policy blocked, in the shapes
+/// `tests/fixtures/chatsvc/policy-blocked.json` has: b's (a file type), a's own (a file type: the service took its text
+/// and file out, its copy queued for a's push channel puts them back), and b's again (a policy).
+fn seed_blocked(mock: &ChatServiceMock) -> SandboxResult {
+    let chat = mock
+        .add_group("Made-up release", &[LAB_A, LAB_B])
+        .ok_or("no chat made")?;
+    let verdict = |kind: &str, copy: Option<&str>| {
+        let mut verdict = serde_json::json!({
+            "verdictDetails": 0, "dlpAction": 2, "state": 1, "violationType": kind,
+            "justificationText": "MadeUpHandler",
+        });
+        if let Some(copy) = copy {
+            verdict["genericStreamItemId"] = serde_json::json!(copy.parse::<u64>().unwrap_or_default());
+        }
+        verdict
+    };
+    let block = |from: &str, html: &str, verdict: serde_json::Value| -> SandboxResult {
+        let id = mock.post_as(from, &chat, html).ok_or("the post refused")?;
+        let client_message_id = (9_000_000_000_000_000_000_u64 + id.parse::<u64>()?).to_string();
+        let changed = mock.change_message(&chat, &client_message_id, |message| {
+            message["content"] = serde_json::json!("");
+            message["properties"]["policyViolation"] = verdict;
+            message["properties"]["edittime"] = message["version"].clone();
+        });
+        changed.then_some(()).ok_or_else(|| "the post isn't in the mock".into())
+    };
+    block(LAB_B, "<p>Made-up build attached</p>", verdict("wft", None))?;
+    let html = "<p>sudo apt install ./made-up-tool_0.1.0_amd64.deb</p>\r\n<p>sudo made-up-tool --setup</p>";
+    block(LAB_A, html, verdict("wft", Some(BLOCKED_COPY)))?;
+    block(LAB_B, "<p>Made-up figures for the quarter</p>", verdict("dlp", None))?;
+    let package = MadeUpFile {
+        name: "made-up-tool_0.1.0_amd64.deb",
+        extension: "deb",
+        kind: 'u',
+        share: "MadeUpShareLinkToolPackage0004",
+        frame: None,
+    };
+    let files = serde_json::Value::Array(vec![file_entry(&package, 0)]).to_string();
+    mock.queue_event(
+        LAB_A,
+        teams_mock::ChatEvent {
+            conversation: teams_proto::chat::GENERIC_STREAM.to_owned(),
+            from: LAB_A.to_owned(),
+            kind: teams_mock::EventKind::Message,
+            resource: serde_json::json!({
+                "id": BLOCKED_COPY, "version": BLOCKED_COPY, "clientmessageid": "7100000000000000002",
+                "messagetype": "RichText/Html", "contenttype": "Text", "type": "Message", "content": html,
+                "from": format!("{CHAT_BASE}/v1/users/ME/contacts/{LAB_A}"), "imdisplayname": null,
+                "originalarrivaltime": "2026-01-01T00:00:00.9000000Z", "sequenceId": 1,
+                "conversationLink": format!("{CHAT_BASE}/v1/users/ME/conversations/48:generic"),
+                "to": teams_proto::chat::GENERIC_STREAM, "threadtype": "streamofgeneric", "isactive": true,
+                "properties": {"files": files, "importance": "", "subject": ""},
+            }),
+        },
+    );
+    BLOCKED_CHAT.set(chat).map_err(|_| "the blocked chat was set twice")?;
     Ok(())
 }
 
