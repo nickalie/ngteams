@@ -868,8 +868,9 @@ check; structure only, nothing copied) and read from the web client's message re
   request; the message resolver's generic-stream branch uses its get-message workflow directly. A 404 leaves the
   fallback and notice in place. Missing or rejected copies are tried once per account session; other read failures
   are logged at debug and leave the chat's sync running. Each later catch-up revisits stored messages with missing
-  copies, even when no conversation changed; a conversation sync does so for that chat. These retries follow the
-  normal list and message reads and their progress publications, including when those reads fail. Recovery errors
+  copies, even when no conversation changed; a conversation sync does so for that chat. Syncs queue the stored
+  missing copies before their normal reads. The engine retries them after publishing messages, outbox arrivals,
+  replies and catch-up completion events, including when the normal reads fail. Recovery errors
   do not change the normal sync result. Failed reads are retried once per sync, including after a restart, without
   replaying messages or holding back the sync cursor. The client never
   adds `48:generic` as a conversation (deliveries and the conversation list alike), keeps the stored edit time

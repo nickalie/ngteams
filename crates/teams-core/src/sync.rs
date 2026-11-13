@@ -485,6 +485,7 @@ pub struct CatchUp<C, T> {
     scheduling: Mutex<Scheduling>,
     tried_blocked_copies: Mutex<HashSet<String>>,
     failed_blocked_copies: Mutex<HashSet<String>>,
+    pending_blocked_copies: Mutex<HashMap<String, bool>>,
 }
 
 impl<C, T> std::fmt::Debug for CatchUp<C, T> {
@@ -511,6 +512,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             scheduling: Mutex::default(),
             tried_blocked_copies: Mutex::default(),
             failed_blocked_copies: Mutex::default(),
+            pending_blocked_copies: Mutex::default(),
         }
     }
 
@@ -692,6 +694,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
 
     /// Reads the conversation list (the whole one the first time, what changed since the last catch-up after that)
     /// and syncs every conversation it brought (see the module docs).
+    /// Queues stored missing copies for [`Self::retry_blocked_copies`] after the caller publishes completion.
     ///
     /// # Errors
     ///
@@ -699,16 +702,10 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
     /// [`CatchUpError::Store`] when the store fails to keep its sync link. A conversation that can't be synced is in
     /// [`CatchUpReport::failed`] instead.
     pub async fn catch_up(&self, store: &mut Store) -> Result<CatchUpReport, CatchUpError> {
+        self.queue_blocked_copies(store, None);
         self.scheduling.lock().unwrap_or_else(PoisonError::into_inner).completed = Some(HashMap::new());
         let _run = CatchUpRun(&self.scheduling);
-        let retry_failed = self
-            .failed_blocked_copies
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        let result = self.catch_up_list(store).await;
-        self.retry_blocked_copies(store, None, &retry_failed).await;
-        result
+        self.catch_up_list(store).await
     }
 
     async fn catch_up_list(&self, store: &mut Store) -> Result<CatchUpReport, CatchUpError> {
@@ -866,6 +863,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
 
     /// Syncs one conversation's messages from the service (see the module docs): the newest page the first time, what
     /// changed since after that. A conversation the store doesn't know is read as a thread first.
+    /// Queues stored missing copies for [`Self::retry_blocked_copies`] after the caller publishes completion.
     ///
     /// # Errors
     ///
@@ -879,18 +877,15 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             return Ok(Synced::default());
         }
         let _active = self.active(conversation);
-        let retry_failed = self
+        if self
             .scheduling
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .completed
             .is_none()
-            .then(|| {
-                self.failed_blocked_copies
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .clone()
-            });
+        {
+            self.queue_blocked_copies(store, Some(conversation));
+        }
         let result = match self.sync_stored(store, conversation).await {
             Err(error) if conversation == NOTES && not_found(&error) => {
                 log::debug!("sync: the account's notes aren't there yet (404)");
@@ -908,10 +903,6 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             && let Some(meanwhile) = &self.meanwhile
         {
             meanwhile.synced(store, conversation, *synced);
-        }
-        if let Some(retry_failed) = retry_failed {
-            self.retry_blocked_copies(store, Some(conversation), &retry_failed)
-                .await;
         }
         result
     }
@@ -1150,12 +1141,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         self.read_blocked_copy(store, id).await
     }
 
-    async fn retry_blocked_copies(
-        &self,
-        store: &mut Store,
-        conversation: Option<&str>,
-        retry_failed: &HashSet<String>,
-    ) {
+    fn queue_blocked_copies(&self, store: &Store, conversation: Option<&str>) {
         let missing = match store.messages_missing_blocked_copies(self.me.as_str(), conversation) {
             Ok(missing) => missing,
             Err(error) => {
@@ -1163,29 +1149,48 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
                 return;
             }
         };
-        let ids: HashSet<_> = missing
-            .iter()
-            .filter_map(|message| {
-                let properties = serde_json::from_str::<Value>(message.properties.as_deref()?).ok()?;
-                let Field::Known(verdict) = chat::PolicyViolation::of(properties.get("policyViolation")) else {
-                    return None;
-                };
-                verdict.generic_stream_item
-            })
-            .collect();
-        {
-            let mut failed = self
-                .failed_blocked_copies
+        let ids = missing.iter().filter_map(|message| {
+            let properties = serde_json::from_str::<Value>(message.properties.as_deref()?).ok()?;
+            let Field::Known(verdict) = chat::PolicyViolation::of(properties.get("policyViolation")) else {
+                return None;
+            };
+            verdict.generic_stream_item
+        });
+        let failed = self
+            .failed_blocked_copies
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut pending = self
+            .pending_blocked_copies
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        for id in ids {
+            let retry = failed.contains(&id);
+            *pending.entry(id).or_default() |= retry;
+        }
+    }
+
+    /// Retries stored missing copies queued by syncs, after their caller has published changes and completion.
+    /// Read and storage failures leave the normal sync result unchanged. A copy that first failed during the sync
+    /// stays suppressed until a later sync; missing or rejected copies stay suppressed for the account session.
+    pub async fn retry_blocked_copies(&self, store: &mut Store) {
+        let pending = std::mem::take(
+            &mut *self
+                .pending_blocked_copies
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            let mut tried = self.tried_blocked_copies.lock().unwrap_or_else(PoisonError::into_inner);
-            for id in &ids {
-                if retry_failed.contains(id) && failed.remove(id) {
-                    tried.remove(id);
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        for (id, retry) in pending {
+            {
+                let mut failed = self
+                    .failed_blocked_copies
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                let mut tried = self.tried_blocked_copies.lock().unwrap_or_else(PoisonError::into_inner);
+                if retry && failed.remove(&id) {
+                    tried.remove(&id);
                 }
             }
-        }
-        for id in ids {
             if let Err(error) = self.read_blocked_copy(store, &id).await {
                 log::debug!("sync: blocked copy {id} wasn't recovered: {error}");
             }

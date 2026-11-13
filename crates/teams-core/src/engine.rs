@@ -2138,9 +2138,7 @@ where
 
     async fn run(mut self) {
         let mut push = self.push.take().map(Push::spawn);
-        if push.is_none() && self.options.poll.is_some() {
-            self.poll_at = Some(Instant::now());
-        }
+        self.start_polling(push.is_some());
         self.start_calling();
         let mut tick = tokio::time::interval(self.options.tick);
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -2177,8 +2175,16 @@ where
             }
             // whatever a read settled on its way (a sync after a write, a new conversation's sync, …)
             self.arrived(&[]);
+            self.catch_up.retry_blocked_copies(&mut self.store).await;
+            self.arrived(&[]);
         }
         self.stop(push).await;
+    }
+
+    fn start_polling(&mut self, has_push: bool) {
+        if !has_push && self.options.poll.is_some() {
+            self.poll_at = Some(Instant::now());
+        }
     }
 
     /// Starts the calling, its actions handed to the inbox too: a call pressed while a catch-up's read waits goes at

@@ -2874,6 +2874,7 @@ async fn missing_blocked_copies_wait_for_catch_up_messages_and_progress() {
     ))
     .respond_with({
         let published_before_copy = Arc::clone(&published_before_copy);
+        let published = Arc::clone(&published);
         move |_: &Request| {
             published_before_copy.store(published.load(Ordering::SeqCst), Ordering::SeqCst);
             ResponseTemplate::new(403)
@@ -2884,6 +2885,14 @@ async fn missing_blocked_copies_wait_for_catch_up_messages_and_progress() {
     .await;
     let report = a.catch_up.catch_up(&mut a.store).await.unwrap();
     assert!(report.failed.is_empty(), "{report:?}");
+    assert!(published.load(Ordering::SeqCst));
+    assert!(
+        !paths_read(&server)
+            .await
+            .iter()
+            .any(|path| path.ends_with("/messages/900"))
+    );
+    a.catch_up.retry_blocked_copies(&mut a.store).await;
     assert!(published_before_copy.load(Ordering::SeqCst));
     assert_copy_after(&server, "/conversations").await;
     assert_copy_after(&server, "/messages").await;
@@ -2902,6 +2911,13 @@ async fn missing_blocked_copies_follow_successful_and_failed_chat_reads() {
         keep_message_missing_copy(&mut a);
         let result = a.catch_up.sync_messages(&mut a.store, CHAT).await;
         assert_eq!(result.is_ok(), status == 200, "{result:?}");
+        assert!(
+            !paths_read(&server)
+                .await
+                .iter()
+                .any(|path| path.ends_with("/messages/900"))
+        );
+        a.catch_up.retry_blocked_copies(&mut a.store).await;
         assert_copy_after(&server, "/messages").await;
     }
 }
@@ -2916,6 +2932,13 @@ async fn missing_blocked_copies_are_retried_even_when_the_list_read_fails() {
     let mut a = plain_account(&server);
     keep_message_missing_copy(&mut a);
     assert!(a.catch_up.catch_up(&mut a.store).await.is_err());
+    assert!(
+        !paths_read(&server)
+            .await
+            .iter()
+            .any(|path| path.ends_with("/messages/900"))
+    );
+    a.catch_up.retry_blocked_copies(&mut a.store).await;
     assert_copy_after(&server, "/conversations").await;
 }
 
@@ -2930,4 +2953,5 @@ async fn a_blocked_copy_store_error_does_not_change_the_normal_sync_result() {
         .unwrap();
     a.catch_up.catch_up(&mut a.store).await.unwrap();
     a.catch_up.sync_messages(&mut a.store, CHAT).await.unwrap();
+    a.catch_up.retry_blocked_copies(&mut a.store).await;
 }

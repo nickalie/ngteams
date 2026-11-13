@@ -3755,6 +3755,20 @@ async fn copy_reads(lab: &Lab, shapes: &Value) -> usize {
         .count()
 }
 
+async fn restored_copy_event(a: &mut Native, shapes: &Value) {
+    a.event(|event| match event {
+        Event::Message {
+            id,
+            message: Some(message),
+            ..
+        } if id == shapes["blocked"]["id"].as_str().unwrap() && message.content == shapes["copy"]["content"] => {
+            Some(())
+        }
+        _ => None,
+    })
+    .await;
+}
+
 async fn delivery_finished(lab: &Lab, a: &mut Native) {
     lab.trouter
         .deliver_chat(LAB_A, &control_delivery(AB_CHAT, LAB_B, "Control/Typing"));
@@ -3816,6 +3830,7 @@ async fn a_failed_blocked_copy_read_keeps_history_readable_and_retries_later() {
             .await;
         let synced = a.handle.sync_conversation(AB_CHAT).await.unwrap();
         assert_eq!(synced.changed(), 0);
+        restored_copy_event(&mut a, &shapes).await;
         assert_eq!(a.stored(AB_CHAT, id).await.content, shapes["copy"]["content"]);
         assert_eq!(files_of(&a.stored(AB_CHAT, id).await), 1);
         assert_eq!(copy_reads(&lab, &shapes).await, 2);
@@ -3871,8 +3886,8 @@ async fn failed_blocked_copy_reads_retry_on_empty_catch_up_and_after_restart() {
     assert!(report.failed.is_empty());
     assert_eq!(report.conversations, 0);
     assert_eq!(a.stored(AB_CHAT, id).await.content, "");
-    assert_eq!(copy_reads(&lab, &shapes).await, 2);
     a.shutdown();
+    assert_eq!(copy_reads(&lab, &shapes).await, 2);
 
     lab.mock
         .answer_next("GET", "/conversations", 200, &json!({"conversations": []}))
@@ -3880,10 +3895,11 @@ async fn failed_blocked_copy_reads_retry_on_empty_catch_up_and_after_restart() {
     lab.mock
         .answer_next("GET", &format!("/messages/{copy_id}"), 200, &shapes["copy"])
         .await;
-    let a = try_native_in(&lab, LAB_A, how, dir).unwrap();
+    let mut a = try_native_in(&lab, LAB_A, how, dir).unwrap();
     let report = a.handle.sync().await.unwrap();
     assert!(report.failed.is_empty());
     assert_eq!(report.conversations, 0);
+    restored_copy_event(&mut a, &shapes).await;
     let restored = a.stored(AB_CHAT, id).await;
     assert_eq!(restored.content, shapes["copy"]["content"]);
     assert_eq!(files_of(&restored), 1);
@@ -3969,4 +3985,145 @@ async fn missing_or_rejected_blocked_copies_are_read_once_per_session_and_push_c
         assert_eq!(files_of(&message), 1);
         a.shutdown();
     }
+}
+
+fn native_with_stored_missing_copy(lab: &Lab, how: How) -> Native {
+    let dir = Arc::new(tempfile::tempdir().unwrap());
+    let shapes = blocked_shapes();
+    {
+        let mut store = Store::open(&dir.path().join("store").join("lab.sqlite")).unwrap();
+        for id in [AB_CHAT, teams_core::NOTES] {
+            store
+                .upsert_conversation(&Conversation {
+                    id: id.to_owned(),
+                    kind: ConversationKind::OneToOne,
+                    topic: None,
+                    version: 0,
+                    last_activity: None,
+                })
+                .unwrap();
+        }
+        store
+            .upsert_message(
+                &Message {
+                    conversation_id: AB_CHAT.to_owned(),
+                    id: shapes["blocked"]["id"].as_str().unwrap().to_owned(),
+                    version: 1,
+                    client_message_id: None,
+                    sender: Some(LAB_A.to_owned()),
+                    sender_name: None,
+                    message_type: "RichText/Html".to_owned(),
+                    content: String::new(),
+                    properties: Some(shapes["blocked"]["properties"].to_string()),
+                    arrival_time: 1_760_000_100_000,
+                    compose_time: None,
+                    edit_time: None,
+                    delete_time: None,
+                },
+                None,
+            )
+            .unwrap();
+    }
+    try_native_in(lab, LAB_A, how, dir).unwrap()
+}
+
+async fn delay_stored_copy(lab: &Lab) {
+    let shapes = blocked_shapes();
+    let copy_id = shapes["copy"]["id"].as_str().unwrap();
+    lab.mock
+        .refuse_next_after("GET", &format!("/messages/{copy_id}"), 403, Duration::from_secs(8))
+        .await;
+}
+
+#[tokio::test]
+async fn standalone_sync_replies_and_publishes_before_slow_stored_copy_retries() {
+    for status in [200, 403] {
+        let lab = Lab::start().await;
+        let mut a = native_with_stored_missing_copy(&lab, QUIET);
+        delay_stored_copy(&lab).await;
+        let mut message = blocked_shapes()["sent"].clone();
+        message["id"] = json!("1760000103000");
+        lab.mock
+            .answer_next(
+                "GET",
+                &format!("/conversations/{AB_CHAT}/messages"),
+                status,
+                &json!({"messages": [message]}),
+            )
+            .await;
+        tokio::time::timeout(Duration::from_secs(4), async {
+            let result = a.handle.sync_conversation(AB_CHAT).await;
+            assert_eq!(result.is_ok(), status == 200, "{result:?}");
+            if status == 200 {
+                a.message_event(AB_CHAT, "1760000103000").await;
+            }
+        })
+        .await
+        .expect("normal sync completion waited for the copy retry");
+        a.shutdown();
+        assert_eq!(copy_reads(&lab, &blocked_shapes()).await, 1);
+    }
+}
+
+#[tokio::test]
+async fn a_write_replies_and_publishes_its_message_and_outbox_before_slow_stored_copy_retries() {
+    let lab = Lab::start().await;
+    let mut a = native_with_stored_missing_copy(&lab, QUIET);
+    delay_stored_copy(&lab).await;
+    tokio::time::timeout(Duration::from_secs(4), async {
+        let row = a.send(AB_CHAT, "made up prompt send").await;
+        let mut message_seen = false;
+        let mut outbox_seen = false;
+        a.event(|event| {
+            match event {
+                Event::Message { id, .. } if Some(id) == row.message_id.as_ref() => message_seen = true,
+                Event::Outbox(entry) if entry.id == row.id => outbox_seen = true,
+                _ => {}
+            }
+            (message_seen && outbox_seen).then_some(())
+        })
+        .await;
+    })
+    .await
+    .expect("write completion waited for the copy retry");
+    a.shutdown();
+    assert_eq!(copy_reads(&lab, &blocked_shapes()).await, 1);
+}
+
+#[tokio::test]
+async fn catch_up_publishes_notes_and_completion_before_slow_stored_copy_retries() {
+    let lab = Lab::start().await;
+    delay_stored_copy(&lab).await;
+    let mut note = blocked_shapes()["sent"].clone();
+    note["conversationid"] = json!(teams_core::NOTES);
+    note["conversationLink"] = json!(format!("{CHAT_BASE}/v1/users/ME/conversations/{}", teams_core::NOTES));
+    lab.mock
+        .answer_next(
+            "GET",
+            &format!("/conversations/{}/messages", teams_core::NOTES),
+            200,
+            &json!({"messages": [note]}),
+        )
+        .await;
+    let mut a = native_with_stored_missing_copy(&lab, How::default());
+    tokio::time::timeout(Duration::from_secs(4), async {
+        let mut notes_seen = false;
+        let mut completion_seen = false;
+        a.event(|event| {
+            match event {
+                Event::Message { conversation, .. } if conversation == teams_core::NOTES => notes_seen = true,
+                Event::CaughtUp { report, .. } => {
+                    assert!(report.failed.is_empty(), "{report:?}");
+                    completion_seen = true;
+                }
+                _ => {}
+            }
+            (notes_seen && completion_seen).then_some(())
+        })
+        .await;
+    })
+    .await
+    .expect("notes or catch-up completion waited for the copy retry");
+    a.shutdown();
+    assert_eq!(copy_reads(&lab, &blocked_shapes()).await, 1);
 }
