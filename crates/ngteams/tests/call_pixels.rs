@@ -52,3 +52,21 @@ fn a_menu_left_open_is_still_counted_beside_the_moving_shared_image() {
         assert!(pixels::changed_still(&shared_frame(0, None), &shared_frame(32, Some(colour)), WINDOW) >= 4_000);
     }
 }
+
+#[test]
+fn a_menu_inside_the_shares_vertical_span_is_still_counted() {
+    for colour in [255, 41] {
+        for (left, right) in [(280, 380), (350, 390), (5, 105)] {
+            let mut after = shared_frame(32, None);
+            for y in 60..180 {
+                for x in left..right {
+                    after.put_pixel(x, y, Rgb([colour; 3]));
+                }
+            }
+            assert!(
+                pixels::changed_still(&shared_frame(0, None), &after, WINDOW) >= 2_500,
+                "menu colour {colour}, x {left}..{right}"
+            );
+        }
+    }
+}

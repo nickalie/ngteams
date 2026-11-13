@@ -144,8 +144,14 @@ pub fn changed_pixels(before: &RgbImage, after: &RgbImage, within: Rect) -> i64 
 /// (a shared screen: its dark grey areas), which changes on its own.
 pub fn changed_still(before: &RgbImage, after: &RgbImage, within: Rect) -> i64 {
     let video = picture_bounds(before, within).map(|before| {
-        let after = picture_bounds(after, within)
-            .filter(|after| before.y.abs_diff(after.y) <= 6 && before.bottom().abs_diff(after.bottom()) <= 6);
+        // Recover only the pattern's 16px bar at its 720px source height, never a menu-sized extension.
+        let edge_slack = 16.max(before.h * 16 / 720) + 6;
+        let after = picture_bounds(after, within).filter(|after| {
+            before.y.abs_diff(after.y) <= 6
+                && before.bottom().abs_diff(after.bottom()) <= 6
+                && before.x.abs_diff(after.x) <= edge_slack.cast_unsigned()
+                && before.right().abs_diff(after.right()) <= edge_slack.cast_unsigned()
+        });
         // The other frame reveals an edge hidden by the moving bright bar.
         let bounds = after.map_or(before, |after| before.union(after));
         Rect {
