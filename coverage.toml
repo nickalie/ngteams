@@ -67,7 +67,7 @@ context = { "crates/teams-media/src/video/effects.rs" = "787856448e591791db31587
 
 
 [unmapped_sources."crates/teams-proto/src/chat/mod.rs"]
-sha256 = "baaa6ee1fe23952c36b4c78c33b8beecfaf020c5301dfcd56e939abf9c968a0d"
+sha256 = "e4490d6275159cc2d7bfb4546609c1dd0cbe60874ab0b4233b3ee1a2020277a3"
 reason = "module declarations, re-exports and documentation only; no executable items"
 
 
@@ -88,7 +88,7 @@ sha256 = "eac1126557b554aae9c187daa89a44640a3a08fae132c60468def9156fd01f70"
 reason = "module declarations and documentation only; no executable bodies"
 
 [unmapped_sources."crates/teams-core/src/lib.rs"]
-sha256 = "1aa217edee9d5728e2cffbb31d221bb819c3817673ba699bea053b69436efcb1"
+sha256 = "5026bcc13174a9425e4492f8220a5cbc3e57be7ba4aed702a59425495c09699a"
 reason = "module declarations, re-exports and documentation only; no executable bodies"
 
 [unmapped_sources."crates/teams-media/src/lib.rs"]
@@ -100,7 +100,7 @@ sha256 = "4f27776ff2e3d9d662467a5ecb6542670137e2e47658e9d5b3dc26196987a972"
 reason = "module declarations, documentation and an integer constant only; no executable bodies"
 
 [unmapped_sources."crates/teams-ui/src/lib.rs"]
-sha256 = "f3a5540d2a68b3b0e6b88acd03fac3e3106babfd97fb2f3ffff037a0d6c181cb"
+sha256 = "558e475cbb1d9ab866224391104a64025c16307e4d109697b293705e4446cd0a"
 reason = "module declarations, re-exports, documentation and the `ctrl!` hint macro (a string literal per platform) only; no executable bodies"
 
 [unmapped_sources."crates/teams-wpe-client/src/event.rs"]
@@ -520,27 +520,27 @@ context = { "crates/proto-lab/src/lib.rs" = "8d3871c865c472e3b5bcd76d93027c67ff8
 [unmapped_sources_windows."crates/teams-media/src/devices/pipewire.rs"]
 sha256 = "1fae171a9ed3d78a21dfa7244cc4f7156fcb3ae805d86c0dad35828bb1d321e7"
 reason = "Linux-only PipeWire device and loop-thread backend, selected by the cfg(target_os = \"linux\") module in devices.rs; absent from native Windows compilation and still required by the Linux inventory."
-context = { "crates/teams-media/src/devices.rs" = "5fed11f313cc1cbd20c29a3c847a53176650e9715e2958591088f988e9d448c8" }
+context = { "crates/teams-media/src/devices.rs" = "438c10fec354d5a722c2d2b548341c88ab68dee298e7cc6ce78d1e449f0e39b3" }
 
 [unmapped_sources_windows."crates/teams-media/src/devices/pipewire/listing.rs"]
 sha256 = "b8ad34b4f46e935c7ed2b28a92ee32dc8eed5cd564170b99ddf307ed0e8e30ea"
 reason = "Linux-only PipeWire registry and default-device watcher, reached through the Linux-selected pipewire module; both module roots are hash-pinned and Linux still requires this source."
-context = { "crates/teams-media/src/devices.rs" = "5fed11f313cc1cbd20c29a3c847a53176650e9715e2958591088f988e9d448c8", "crates/teams-media/src/devices/pipewire.rs" = "1fae171a9ed3d78a21dfa7244cc4f7156fcb3ae805d86c0dad35828bb1d321e7" }
+context = { "crates/teams-media/src/devices.rs" = "438c10fec354d5a722c2d2b548341c88ab68dee298e7cc6ce78d1e449f0e39b3", "crates/teams-media/src/devices/pipewire.rs" = "1fae171a9ed3d78a21dfa7244cc4f7156fcb3ae805d86c0dad35828bb1d321e7" }
 
 [unmapped_sources_windows."crates/teams-media/src/devices/pipewire/serve.rs"]
 sha256 = "f8dee682c0c58b16a9edb653a8fa6853bd17f4a14c974ccec8937f710e508781"
 reason = "Linux-only PipeWire loop-thread command handler, reached through the Linux-selected pipewire module; both module roots are hash-pinned and Linux still requires this source."
-context = { "crates/teams-media/src/devices.rs" = "5fed11f313cc1cbd20c29a3c847a53176650e9715e2958591088f988e9d448c8", "crates/teams-media/src/devices/pipewire.rs" = "1fae171a9ed3d78a21dfa7244cc4f7156fcb3ae805d86c0dad35828bb1d321e7" }
+context = { "crates/teams-media/src/devices.rs" = "438c10fec354d5a722c2d2b548341c88ab68dee298e7cc6ce78d1e449f0e39b3", "crates/teams-media/src/devices/pipewire.rs" = "1fae171a9ed3d78a21dfa7244cc4f7156fcb3ae805d86c0dad35828bb1d321e7" }
 
 [unmapped_sources_windows."crates/teams-media/src/devices/pipewire/streams.rs"]
 sha256 = "a2a5dd46a427243f8dbc3118088c34e489b0e7258c3d554e909ec9c59779d014"
 reason = "Linux-only PipeWire audio/video stream callbacks, reached through the Linux-selected pipewire module; both module roots are hash-pinned and Linux still requires this source."
-context = { "crates/teams-media/src/devices.rs" = "5fed11f313cc1cbd20c29a3c847a53176650e9715e2958591088f988e9d448c8", "crates/teams-media/src/devices/pipewire.rs" = "1fae171a9ed3d78a21dfa7244cc4f7156fcb3ae805d86c0dad35828bb1d321e7" }
+context = { "crates/teams-media/src/devices.rs" = "438c10fec354d5a722c2d2b548341c88ab68dee298e7cc6ce78d1e449f0e39b3", "crates/teams-media/src/devices/pipewire.rs" = "1fae171a9ed3d78a21dfa7244cc4f7156fcb3ae805d86c0dad35828bb1d321e7" }
 
 [unmapped_sources_windows."crates/teams-media/src/devices/portal.rs"]
 sha256 = "0bfffc1309a9cea78bdcdfd4d00e8847097a758fa6fc3b87dff8ea8b2b0e9b44"
 reason = "Linux-only D-Bus camera and screen-cast portal boundary, selected by cfg(target_os = \"linux\") in devices.rs; absent from native Windows compilation and still required by the Linux inventory."
-context = { "crates/teams-media/src/devices.rs" = "5fed11f313cc1cbd20c29a3c847a53176650e9715e2958591088f988e9d448c8" }
+context = { "crates/teams-media/src/devices.rs" = "438c10fec354d5a722c2d2b548341c88ab68dee298e7cc6ce78d1e449f0e39b3" }
 
 [unmapped_sources_windows."crates/teams-signin/src/engine.rs"]
 sha256 = "4770ca42f017d9a03fe9782ba5b624a7eef7f67d8831178a0a3eb6cd0fd22c8b"
@@ -570,12 +570,12 @@ context = { "crates/teams-signin/src/lib.rs" = "a7b946e05829938c67d8c83c2f95877b
 [unmapped_sources_windows."crates/teams-ui/src/notify/linux.rs"]
 sha256 = "75e4b9c21cbc5bd38e1650aa1ebda84806b8369b8486de59304a9ad3557fc41f"
 reason = "Linux-only freedesktop notification D-Bus transport; notify.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
-context = { "crates/teams-ui/src/lib.rs" = "f3a5540d2a68b3b0e6b88acd03fac3e3106babfd97fb2f3ffff037a0d6c181cb", "crates/teams-ui/src/notify.rs" = "97b20cd97a527d5d67963924ab6ca7756092ea28340038e7820bbc4784212d94" }
+context = { "crates/teams-ui/src/lib.rs" = "558e475cbb1d9ab866224391104a64025c16307e4d109697b293705e4446cd0a", "crates/teams-ui/src/notify.rs" = "2ce9e97168bb12195ef8576531ba3ea97def0e3f6ebea98ef88d0666f8cd4568" }
 
 [unmapped_sources_windows."crates/teams-ui/src/tray/linux.rs"]
 sha256 = "ceed6565f30d059be5e8b6c0901fcba714248fe4ba0998e40c912d90db539ade"
 reason = "Linux-only StatusNotifierItem, D-Bus menu and launcher unread transport; tray.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
-context = { "crates/teams-ui/src/lib.rs" = "f3a5540d2a68b3b0e6b88acd03fac3e3106babfd97fb2f3ffff037a0d6c181cb", "crates/teams-ui/src/tray.rs" = "761e00a9301f59539a3edca854dfd467ac83a8f68dcd509ef18e4eaa07d7a1ab" }
+context = { "crates/teams-ui/src/lib.rs" = "558e475cbb1d9ab866224391104a64025c16307e4d109697b293705e4446cd0a", "crates/teams-ui/src/tray.rs" = "761e00a9301f59539a3edca854dfd467ac83a8f68dcd509ef18e4eaa07d7a1ab" }
 
 [unmapped_sources_windows."crates/ngteams/src/ctl/socket/unix.rs"]
 sha256 = "ea79c3378f2968223f72f282f2514e5cd6cb8ff57c9d0dc46b9130aa2b7bc50e"
@@ -614,7 +614,7 @@ sha256 = "f8695424981879c878659211b5b8b47c7cec742923f8ef5a61bc44e04f6a7fef"
 reason = "macOS-only AppKit/WebKit sign-in window; no Linux LLVM mapping; compiled and linted by the macOS portability workflow, run on the Mac console"
 
 [unmapped_sources."crates/teams-ui/src/desktop/macos.rs"]
-sha256 = "18a0f45452dbc1e3a55869fdb7f18d2b41858e04fdc09ca3b862f1449b710c10"
+sha256 = "6c9d7429f4575f37660be1d4204326d694d7a870e1e92ff6cf7f3553db6e154e"
 reason = "macOS-only notifications (GPUI's notification center binding) and Dock badge; no Linux LLVM mapping; its tags and actions are tested natively by the macOS portability workflow, the notification center and the Dock on the Mac console"
 
 [unmapped_sources."crates/ngteams/src/mac_app.rs"]
