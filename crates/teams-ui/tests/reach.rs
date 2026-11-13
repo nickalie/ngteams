@@ -653,7 +653,7 @@ fn no_message_html_reaches_a_markdown_or_html_view() {
 
 /// What reaches a bus other than the one the app is given: `zbus`'s session-bus constructors (an address from the
 /// environment, else `$XDG_RUNTIME_DIR/bus`), GPUI's own system notifications (which use them, a connection each),
-/// and the blocking API's (its own constructors alike).
+/// and the blocking API's (its own constructors alike). macOS's desktop transport uses GPUI's notification center.
 const OTHER_BUSES: [&str; 6] = [
     "Connection::session(",
     "Builder::session(",
@@ -673,7 +673,13 @@ fn the_desktop_is_reached_only_on_the_bus_given() {
         for (path, text) in sources(&workspace_root().join("crates").join(package).join("src")) {
             read += 1;
             for other in OTHER_BUSES {
-                assert!(!text.contains(other), "{} names {other}", path.display());
+                let macos_notification = path.ends_with("teams-ui/src/desktop/macos.rs")
+                    && matches!(other, "show_system_notification" | "on_system_notification_response");
+                assert!(
+                    macos_notification || !text.contains(other),
+                    "{} names {other}",
+                    path.display()
+                );
             }
             let connects = text.matches("connection::Builder::").count();
             let reads_env = text.contains("bus::ADDRESS_ENV") || text.contains("var_os(ADDRESS_ENV)");
