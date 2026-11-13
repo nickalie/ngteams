@@ -357,6 +357,7 @@ opt-level = 3
 # pinned 0.3.9 plus build/patches/gpui-pre{,-wgpu} (scripts/vendor-crates.sh; `--check` verifies them); so is
 # vendor/gpui-pre-linux, whose Wayland clipboard keeps another program's HTML for the rich-text editor's paste.
 [patch.crates-io]
+image-webp = { path = "vendor/image-webp" }
 gpui-pre = { path = "vendor/gpui-pre" }
 gpui-pre-wgpu = { path = "vendor/gpui-pre-wgpu" }
 gpui-pre-linux = { path = "vendor/gpui-pre-linux" }

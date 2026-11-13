@@ -1,0 +1,3 @@
+# Preserve upstream source whitespace and unified patch context for reproducible vendoring.
+vendor/image-webp/** -whitespace
+build/patches/image-webp/*.patch -whitespace

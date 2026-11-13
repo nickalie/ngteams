@@ -401,7 +401,8 @@ fn decode_limited(
         return None;
     }
     limits.reserve(decoder.total_bytes()).ok()?;
-    if still_peak_bytes(natural, decoder.color_type(), format, max_side) > max_alloc {
+    let codec = codec_peak_bytes(natural, decoder.total_bytes(), format, &picture.bytes);
+    if still_peak_bytes(natural, decoder.color_type(), codec, max_side) > max_alloc {
         return None;
     }
     decoder.set_limits(limits).ok()?;
@@ -411,11 +412,10 @@ fn decode_limited(
     Some((RenderImage::new(vec![Frame::new(shown)]), natural))
 }
 
-fn still_peak_bytes(natural: (u32, u32), color: image::ColorType, format: image::ImageFormat, max_side: u32) -> u64 {
+fn still_peak_bytes(natural: (u32, u32), color: image::ColorType, codec: u64, max_side: u32) -> u64 {
     let pixels = u64::from(natural.0) * u64::from(natural.1);
     let rgba = pixels * 4;
     let decoded = pixels * u64::from(color.bytes_per_pixel());
-    let codec = codec_peak_bytes(natural, decoded, format);
     let conversion = if color == image::ColorType::Rgba8 {
         rgba
     } else {
@@ -433,18 +433,50 @@ fn still_peak_bytes(natural: (u32, u32), color: image::ColorType, format: image:
     peak.max(rgba + scratch + output + weights)
 }
 
-fn codec_peak_bytes((width, height): (u32, u32), decoded: u64, format: image::ImageFormat) -> u64 {
+fn codec_peak_bytes((width, height): (u32, u32), decoded: u64, format: image::ImageFormat, bytes: &[u8]) -> u64 {
     let width = u64::from(width).div_ceil(32) * 32;
     let height = u64::from(height).div_ceil(32) * 32;
-    let scratch_per_pixel = match format {
+    match format {
+        image::ImageFormat::Jpeg if interleaved_baseline_jpeg(bytes) => decoded + width * 1024 + (1 << 20),
         // zune-jpeg keeps i16 coefficients for up to four input components, even when it outputs RGB.
-        image::ImageFormat::Jpeg => 8,
+        image::ImageFormat::Jpeg => decoded + width * height * 8 + width * 256 + (1 << 20),
         // WebP can overlap YUV, compressed alpha, lossless transforms and a first-frame canvas.
-        image::ImageFormat::WebP => 16,
-        _ => return decoded,
-    };
-    // The codec wrappers do not enforce max_alloc; include padded blocks and space for row buffers and tables.
-    decoded + width * height * scratch_per_pixel + width * 256 + (1 << 20)
+        // The vendored decoder caps retained Huffman structures at 16 MiB, including compressed alpha.
+        image::ImageFormat::WebP => decoded + width * height * 16 + width * 256 + (17 << 20),
+        _ => decoded,
+    }
+}
+
+fn interleaved_baseline_jpeg(mut bytes: &[u8]) -> bool {
+    if !bytes.starts_with(&[0xff, 0xd8]) {
+        return false;
+    }
+    bytes = &bytes[2..];
+    let mut components = None;
+    while let Some((&0xff, rest)) = bytes.split_first() {
+        bytes = rest;
+        while bytes.first() == Some(&0xff) {
+            bytes = &bytes[1..];
+        }
+        let Some((&marker, rest)) = bytes.split_first() else {
+            return false;
+        };
+        let Some(length) = rest.get(..2) else {
+            return false;
+        };
+        let length = usize::from(u16::from_be_bytes([length[0], length[1]]));
+        let Some(segment) = rest.get(2..length) else {
+            return false;
+        };
+        match marker {
+            0xc0 | 0xc1 if components.is_none() => components = segment.get(5).copied(),
+            0x00 | 0x01 | 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf | 0xd0..=0xd9 => return false,
+            0xda => return components.is_some_and(|count| segment.first() == Some(&count)),
+            _ => {}
+        }
+        bytes = &rest[length..];
+    }
+    false
 }
 
 /// A GIF's frames, each scaled down as a still picture is, up to the first that doesn't decode (a truncated file's

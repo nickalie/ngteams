@@ -9,6 +9,9 @@
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
 
+#[path = "support/inline_webp.rs"]
+mod webp;
+
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -84,6 +87,29 @@ fn a_large_screenshot_decodes_for_messages_the_viewer_and_pasting() {
     assert_eq!(pasted.own, (7680, 2160));
     assert_eq!(pasted.given, (3840, 1080));
     assert_eq!(pasted.image.size(0), size(DevicePixels(2048), DevicePixels(576)));
+}
+
+#[test]
+fn baseline_24_megapixel_camera_photos_decode_for_messages_the_viewer_and_pasting() {
+    for (width, height) in [(5712, 4284), (6048, 4032)] {
+        let picture = still(PastedFormat::Jpeg, width, height);
+        let (image, natural) = inline::decode(&picture).unwrap();
+        assert_eq!(natural, (width, height));
+        assert_eq!(image.size(0).width, DevicePixels(2048));
+        drop(image);
+        let (image, natural) = inline::decode_within(&picture, teams_ui::picture_viewer::MAX_VIEWER_SIDE).unwrap();
+        assert_eq!(natural, (width, height));
+        assert_eq!(
+            image.size(0),
+            size(
+                DevicePixels(width.try_into().unwrap()),
+                DevicePixels(height.try_into().unwrap())
+            )
+        );
+    }
+    let picture = still(PastedFormat::Jpeg, 5712, 4284);
+    let pasted = teams_ui::editor::pictures::Picture::of(picture.bytes.clone(), 1.0).unwrap();
+    assert_eq!(pasted.own, (5712, 4284));
 }
 
 #[test]
@@ -180,6 +206,50 @@ fn progressive_jpeg_coefficients_must_fit_beside_the_decoder_output() {
         assert!(inline::decode(&picture).is_none());
         assert!(inline::decode_within(&picture, teams_ui::picture_viewer::MAX_VIEWER_SIDE).is_none());
     }
+}
+
+fn multiscan_baseline_jpeg(width: u16, height: u16) -> teams_core::PictureBytes {
+    let mut bytes = vec![0xff, 0xd8];
+    let segment = |bytes: &mut Vec<u8>, marker, data: &[u8]| {
+        bytes.extend([0xff, marker]);
+        bytes.extend(u16::try_from(data.len() + 2).unwrap().to_be_bytes());
+        bytes.extend(data);
+    };
+    let mut quantization = vec![0];
+    quantization.extend([1; 64]);
+    segment(&mut bytes, 0xdb, &quantization);
+    let mut frame = vec![8];
+    frame.extend(height.to_be_bytes());
+    frame.extend(width.to_be_bytes());
+    frame.extend([3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0]);
+    segment(&mut bytes, 0xc0, &frame);
+    for table in [0, 0x10] {
+        let mut huffman = vec![table, 1];
+        huffman.extend([0; 16]);
+        segment(&mut bytes, 0xc4, &huffman);
+    }
+    for component in 1..=3 {
+        segment(&mut bytes, 0xda, &[1, component, 0, 0, 63, 0]);
+        let bits = usize::from(width).div_ceil(8) * usize::from(height).div_ceil(8) * 2;
+        bytes.resize(bytes.len() + bits / 8, 0);
+        if bits % 8 != 0 {
+            bytes.push((1 << (8 - bits % 8)) - 1);
+        }
+    }
+    bytes.extend([0xff, 0xd9]);
+    Arc::new(PastedPicture {
+        format: PastedFormat::Jpeg,
+        bytes,
+    })
+}
+
+#[test]
+fn baseline_jpegs_with_separate_component_scans_keep_the_coefficient_budget() {
+    let (_, natural) = inline::decode(&multiscan_baseline_jpeg(16, 16)).unwrap();
+    assert_eq!(natural, (16, 16));
+    let picture = multiscan_baseline_jpeg(8000, 4000);
+    assert!(inline::decode(&picture).is_none());
+    assert!(inline::decode_within(&picture, teams_ui::picture_viewer::MAX_VIEWER_SIDE).is_none());
 }
 
 #[test]
