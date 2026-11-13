@@ -74,7 +74,7 @@ $scenes=@(
 # Keep the shared contracts complete as Cargo discovers new integration tests. The Linux compositor harnesses
 # and native Windows fixtures have their own drivers; the scene targets below use their own main functions.
 $separate=@{
- 'ngteams'=@('window','accounts_window','call_window','ui_tour')
+ 'ngteams'=@('window','accounts_window','call_window','deferred_devices_window','ui_tour')
  'teams-ui'=@('kit_window','attachment_window','gpui_notification','calendar_window','desktop_bus',
               'native_video','native_desktop','native_shell')+@($scenes|ForEach-Object {$_[2]})
 }
