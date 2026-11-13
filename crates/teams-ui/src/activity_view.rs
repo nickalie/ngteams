@@ -5,7 +5,8 @@
 //!   (the search's box, "Filter by name or group name", which keeps the items whose title, preview or place contains
 //!   what was typed (case and spaces folded); Esc closes it).
 //! - **Filter chips** ([`ActivityFilter::CHIPS`]): Unread, @Mentions, Reactions, Missed calls, Replies, Voicemail and
-//!   Apps; one is chosen at a time, chosen again it lets go. Ctrl+Alt+U and Ctrl+Alt+M toggle the first two, as Teams'.
+//!   Apps; one is chosen at a time, chosen again it lets go. Ctrl+Alt+U and Ctrl+Alt+M (⌘ on macOS) toggle the first
+//!   two, as Teams'.
 //! - **An item**: the person's avatar (their picture, else initials; an app's tile) with a badge for its kind (the
 //!   reaction's emoji, "@" for a mention, people for a group mention or a team, a missed call's phone, a meeting's
 //!   calendar), its title (semibold while unread, a dot at the left edge), its date (the time today), the preview and
@@ -73,7 +74,7 @@ actions!(
         ToggleUnread,
         /// Teams' Ctrl+Alt+M: the @Mentions chip.
         ToggleMentions,
-        /// Turns off notifications for the selected item's app.
+        /// Turns off notifications for the selected item's app: Ctrl+Alt+Shift+O (⌘ on macOS).
         TurnOffApp
     ]
 );
@@ -107,9 +108,9 @@ const BADGE: f32 = 16.0;
 pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("shift-escape", MarkAllRead, Some(CONTEXT)),
-        KeyBinding::new("ctrl-alt-u", ToggleUnread, Some(CONTEXT)),
-        KeyBinding::new("ctrl-alt-m", ToggleMentions, Some(CONTEXT)),
-        KeyBinding::new("ctrl-alt-shift-o", TurnOffApp, Some(CONTEXT)),
+        KeyBinding::new("secondary-alt-u", ToggleUnread, Some(CONTEXT)),
+        KeyBinding::new("secondary-alt-m", ToggleMentions, Some(CONTEXT)),
+        KeyBinding::new("secondary-alt-shift-o", TurnOffApp, Some(CONTEXT)),
     ]);
 }
 

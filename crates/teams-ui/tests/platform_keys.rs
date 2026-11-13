@@ -1,8 +1,9 @@
 //! The shortcuts on each platform's own key, as a user presses them: Cmd (⌘) on macOS, Ctrl on Linux and Windows.
 //! The message box's formatting, select-all, copy, paste, undo and send, the shell's switcher, new chat, panes and
-//! font size all answer to the platform's key and not to the other one; the hints name it ("Cmd" or "Ctrl"); on
-//! macOS the message box also takes the system's Option and Command arrow keys. GPUI's test context, the fake engine
-//! (`common`); every id and text is made up. These run on macOS too (the other view tests press Ctrl itself).
+//! font size, Activity with its Unread and @Mentions chips, and the Translate and Turn off keys all answer to the
+//! platform's key and not to the other one; the hints name it ("Cmd" or "Ctrl"); on macOS the message box also takes
+//! the system's Option and Command arrow keys. GPUI's test context, the fake engine (`common`); every id and text is
+//! made up. These run on macOS too (the other view tests press Ctrl itself).
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -17,12 +18,15 @@ use std::sync::Arc;
 
 use common::{LAB_A, LAB_B, Rig};
 use gpui::{
-    AppContext as _, Context, Entity, Focusable as _, IntoElement, ParentElement as _, Render, Styled as _,
+    Action, AppContext as _, Context, Entity, Focusable as _, IntoElement, ParentElement as _, Render, Styled as _,
     TestAppContext, VisualTestContext, Window, div, px,
 };
+use teams_core::activity::ActivityFilter;
 use teams_proto::chat::Marks;
 use teams_store::{Conversation, ConversationKind, Member};
 use teams_ui::ViewTrace;
+use teams_ui::activity_view::TurnOffApp;
+use teams_ui::compose::TranslateDraft;
 use teams_ui::editor::{Editor, EditorEvent};
 use teams_ui::settings::{Settings, SettingsModel};
 use teams_ui::shell::{Main, Shell, ShellParts};
@@ -349,4 +353,73 @@ fn hints_name_the_platform_key() {
         teams_ui::global_search::PLACEHOLDER,
         format!("Press {HINT}+Alt+G to go right to a chat or channel")
     );
+}
+
+/// The Activity shown (`shown`) and its chip.
+fn activity_of(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> (bool, ActivityFilter) {
+    cx.update(|_, cx| {
+        let view = shell.read(cx).activity_view().read(cx);
+        (view.shown(), view.filter())
+    })
+}
+
+#[test]
+fn activity_and_its_chips_open_with_the_platform_key() {
+    let (shell, cx) = shell_window();
+    cx.simulate_keystrokes(&off("@-1"));
+    draw(cx);
+    assert!(!activity_of(&shell, cx).0, "{OTHER}+1 opens nothing");
+    cx.simulate_keystrokes(&on("@-1"));
+    draw(cx);
+    assert_eq!(
+        activity_of(&shell, cx),
+        (true, ActivityFilter::All),
+        "{KEY}+1 opens Activity"
+    );
+
+    cx.simulate_keystrokes(&off("@-alt-u"));
+    draw(cx);
+    assert_eq!(
+        activity_of(&shell, cx).1,
+        ActivityFilter::All,
+        "{OTHER}+Alt+U changes nothing"
+    );
+    cx.simulate_keystrokes(&on("@-alt-u"));
+    draw(cx);
+    assert_eq!(activity_of(&shell, cx).1, ActivityFilter::Unread, "{KEY}+Alt+U: Unread");
+    cx.simulate_keystrokes(&on("@-alt-m"));
+    draw(cx);
+    assert_eq!(
+        activity_of(&shell, cx).1,
+        ActivityFilter::Mentions,
+        "{KEY}+Alt+M: @Mentions"
+    );
+}
+
+/// Whether every key bound to `action` is held with the platform's key and none with the other one.
+fn on_the_platform_key(action: &dyn Action, cx: &mut VisualTestContext) -> bool {
+    cx.update(|_, cx| {
+        let keymap = cx.key_bindings();
+        let keymap = keymap.borrow();
+        let mut bindings = keymap.bindings_for_action(action).peekable();
+        bindings.peek().is_some()
+            && bindings.all(|binding| {
+                binding.keystrokes().iter().all(|keystroke| {
+                    let modifiers = keystroke.modifiers();
+                    let other = if cfg!(target_os = "macos") {
+                        modifiers.control
+                    } else {
+                        modifiers.platform
+                    };
+                    modifiers.secondary() && !other
+                })
+            })
+    })
+}
+
+#[test]
+fn translate_and_turn_off_are_bound_to_the_platform_key() {
+    let (_shell, cx) = shell_window();
+    assert!(on_the_platform_key(&TranslateDraft, cx), "Translate is {KEY}+Shift+Y");
+    assert!(on_the_platform_key(&TurnOffApp, cx), "Turn off is {KEY}+Alt+Shift+O");
 }

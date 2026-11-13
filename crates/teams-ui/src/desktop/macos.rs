@@ -281,6 +281,21 @@ mod tests {
     }
 
     #[test]
+    fn an_app_activity_item_shows_as_a_plain_banner() {
+        let (server, queue) = server();
+        let id = server
+            .show(&notice(NoticeKind::Activity), 0)
+            .now_or_never()
+            .expect("ready");
+        let Ok(Command::Show(shown)) = queue.try_recv() else {
+            panic!("nothing shown")
+        };
+        assert_eq!((shown.title.as_ref(), shown.body.as_ref()), ("Ada", "<b>hi</b>"));
+        assert!(shown.actions.is_empty(), "its body opens it, as a chat's banner");
+        assert_eq!(id.ok().and_then(|id| server.id(&server.tag(id))), Some(1));
+    }
+
+    #[test]
     fn closing_withdraws_only_what_is_shown() {
         let (server, queue) = server();
         let _ = server

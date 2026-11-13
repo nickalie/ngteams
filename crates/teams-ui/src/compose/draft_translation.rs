@@ -44,9 +44,13 @@ actions!(
 /// The language button's longest label, in characters, before it is cut short.
 const LANGUAGE_LABEL: usize = 12;
 
-/// Binds the key of translating a draft.
+/// Binds the key of translating a draft: Ctrl+Shift+Y, ⌘⇧Y on macOS.
 pub(super) fn bind_keys(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("ctrl-shift-y", TranslateDraft, Some(super::CONTEXT))]);
+    cx.bind_keys([KeyBinding::new(
+        "secondary-shift-y",
+        TranslateDraft,
+        Some(super::CONTEXT),
+    )]);
 }
 
 /// Where a box's translation stands.

@@ -188,6 +188,8 @@ To add another account, press **+** under your avatar on the left.
 | <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> | Live captions |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd> | Leave the call |
 
+On a Mac, press <kbd>⌘</kbd> (Cmd) where the table says <kbd>Ctrl</kbd>.
+
 ## Automate it
 
 `ngteamsctl` talks to the running app from your terminal or scripts:
