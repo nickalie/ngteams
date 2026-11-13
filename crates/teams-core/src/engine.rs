@@ -921,6 +921,7 @@ enum Query {
     Members(String, Responder<Vec<Member>>),
     GroupChatWith(Vec<String>, Responder<Option<String>>),
     CallRuns(String, Responder<bool>),
+    CallEnded(String, String, Responder<bool>),
     RecentReactions(usize, Responder<Vec<String>>),
     FrequentReactions(usize, Responder<Vec<String>>),
     UnreadCount(String, Responder<u64>),
@@ -1219,6 +1220,13 @@ impl EngineRequests {
     pub fn call_runs(&self, chat: impl Into<String>) -> Reply<bool> {
         let chat = chat.into();
         self.query(|reply| Query::CallRuns(chat, reply))
+    }
+
+    /// Whether the call that `conversation`'s stored call event `start` (its message id) started has ended, as the
+    /// chat's own newest stored call events say ([`teams_proto::start_ended`]); `false` when they don't hold the start.
+    pub fn call_ended(&self, conversation: impl Into<String>, start: impl Into<String>) -> Reply<bool> {
+        let (conversation, start) = (conversation.into(), start.into());
+        self.query(|reply| Query::CallEnded(conversation, start, reply))
     }
 
     /// How many stored messages of a conversation the account hasn't read ([`Store::unread_count`]).
@@ -3517,6 +3525,22 @@ fn posted_running_call(store: &Store, chat: &str) -> Result<Option<teams_proto::
 /// Whether group chat `chat`'s call runs, as its newest stored call events say ([`posted_running_call`]).
 fn call_runs(store: &Store, chat: &str) -> Result<bool, StoreError> {
     Ok(posted_running_call(store, chat)?.is_some())
+}
+
+/// Whether the call `conversation`'s stored call event `start` started has ended, as its newest stored call events
+/// say ([`teams_proto::start_ended`]).
+fn call_ended(store: &Store, conversation: &str, start: &str) -> Result<bool, StoreError> {
+    let events = store.call_events(conversation, POSTED_CALL_LOOKBACK)?;
+    Ok(teams_proto::start_ended(
+        events.iter().map(|message| {
+            (
+                message.id.as_str(),
+                message.message_type.as_str(),
+                message.content.as_str(),
+            )
+        }),
+        start,
+    ))
 }
 
 /// How many of a group chat's newest call events a join looks through for its running call's start.

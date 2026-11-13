@@ -625,3 +625,50 @@ fn a_group_chat_s_running_call_is_where_its_newest_unended_start_says() {
     assert_eq!(teams_proto::running_call([("Event/Call", elsewhere.as_str())]), None);
     assert_eq!(teams_proto::running_call([text]), None);
 }
+
+#[test]
+fn a_start_has_ended_when_a_newer_end_names_its_call_or_none() {
+    let event = |kind: &str, call: Option<&str>| {
+        let call = call.map(|call| format!("<callId>{call}</callId>")).unwrap_or_default();
+        format!("<partlist alt=\"\"></partlist><callEventType>{kind}</callEventType>{call}")
+    };
+    let (start, other_start) = (
+        event("callStarted", Some("call-1")),
+        event("callStarted", Some("call-2")),
+    );
+    let (end, other_end, bare_end) = (
+        event("callEnded", Some("call-1")),
+        event("callEnded", Some("call-2")),
+        event("callEnded", None),
+    );
+    let ended = |events: &[(&str, &str)], start: &str| {
+        teams_proto::start_ended(events.iter().map(|(id, content)| (*id, "Event/Call", *content)), start)
+    };
+    // newest first
+    assert!(ended(&[("3", &end), ("1", &start)], "1"));
+    assert!(!ended(&[("3", &other_end), ("1", &start)], "1"), "another call's end");
+    assert!(
+        ended(&[("3", &bare_end), ("1", &start)], "1"),
+        "an end naming no call ends whatever ran"
+    );
+    assert!(
+        !ended(&[("1", &start), ("0", &end)], "1"),
+        "an older end is an earlier call's"
+    );
+    assert!(!ended(&[("3", &end)], "1"), "a start not among them");
+    let callless = event("callStarted", None);
+    assert!(
+        ended(&[("3", &other_end), ("2", &callless)], "2"),
+        "a start naming no call ends at any end"
+    );
+    assert!(!ended(&[("4", &other_start), ("2", &callless)], "2"));
+    // other messages between change nothing
+    assert!(teams_proto::start_ended(
+        [
+            ("3", "Event/Call", end.as_str()),
+            ("2", "RichText/Html", "<p>hi</p>"),
+            ("1", "Event/Call", start.as_str())
+        ],
+        "1"
+    ));
+}

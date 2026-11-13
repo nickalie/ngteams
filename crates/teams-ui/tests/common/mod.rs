@@ -912,6 +912,28 @@ impl Core for FakeCore {
         })
     }
 
+    /// Whether the chat's stored call events say the call `start` started ended, as the engine reads them.
+    fn call_ended(&self, conversation: String, start: String) -> Reply<bool> {
+        self.answer("call_ended", || {
+            let messages = locked(&self.messages);
+            let page = page_of(
+                messages.get(&conversation).map_or(&[][..], Vec::as_slice),
+                None,
+                usize::MAX,
+            );
+            teams_proto::start_ended(
+                page.messages.iter().map(|message| {
+                    (
+                        message.id.as_str(),
+                        message.message_type.as_str(),
+                        message.content.as_str(),
+                    )
+                }),
+                &start,
+            )
+        })
+    }
+
     fn unread_count(&self, conversation: String) -> Reply<u64> {
         self.answer("unread_count", || {
             locked(&self.unread).get(&conversation).copied().unwrap_or(0)

@@ -16,8 +16,10 @@
 //! once, and none for a call whose end came first (a catch-up brings a page's messages in no set order).
 //!
 //! **Its actions.** Join goes in as the chat's or the calendar's Join does ([`MeetingJoin`]); its body opens the chat
-//! or the channel. It closes once activated, once the chat's call ends (its `Event/Call` end, however late it came),
-//! and once the account is in that call; one whose call ended while it was being decided or shown is withdrawn.
+//! or the channel. It closes once activated, once its call ends (its `Event/Call` end, however late it came, or an
+//! end naming no call), and once the account is in that call; another call's end in the chat leaves it. One whose
+//! call ended while it was being decided or shown is withdrawn, and none shows for a start whose end the store holds
+//! already (one that came before a restart).
 //!
 //! **A group chat's running call.** Whether a group chat's call runs is read from its stored call events, which the
 //! engine joins by (`Core::call_runs`, `teams_proto::running_call`), not from the order the events came in: at start
@@ -185,10 +187,11 @@ pub enum MeetingAlertEvent {
     Join(MeetingJoin),
 }
 
-/// One banner shown.
+/// One banner shown: its chat, its call (as its start named it), and where its Join goes.
 #[derive(Clone, Debug)]
 struct ShownBanner {
     conversation: String,
+    call: Option<String>,
     join: MeetingJoin,
 }
 
@@ -198,11 +201,20 @@ struct Banner {
     join: MeetingJoin,
 }
 
-/// The start a banner is being decided for: its chat, its call, and how many of the chat's ends had come then.
+/// The start a banner is being decided for: its chat, its message, its call, and how many of the chat's ends (and of
+/// its ends naming no call) had come then.
 struct Pending {
     conversation: String,
+    start: String,
     call: Option<String>,
-    ends: u64,
+    ends: Ends,
+}
+
+/// How many call ends a chat had: all of them, and those naming no call (which end whatever call ran).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Ends {
+    all: u64,
+    bare: u64,
 }
 
 /// A read of whether a group chat's call runs, asked for: the newest one asked is the one applied.
@@ -225,7 +237,7 @@ pub struct MeetingAlert {
     /// The starts a banner was decided for (their chat and message), so each shows once.
     seen: HashSet<(String, String)>,
     /// How many call ends each chat had.
-    ends: HashMap<String, u64>,
+    ends: HashMap<String, Ends>,
     /// The calls that ended, by their chat and call id.
     ended: HashSet<(String, String)>,
     /// The reads of the group chats' running calls.
@@ -322,16 +334,19 @@ impl MeetingAlert {
         let ended = news == CallNews::Ended;
         match news {
             CallNews::Ended => {
-                *self.ends.entry(conversation.to_owned()).or_default() += 1;
+                let ends = self.ends.entry(conversation.to_owned()).or_default();
+                ends.all += 1;
+                ends.bare += u64::from(call.is_none());
+                self.close_ended(conversation, call.as_deref(), cx);
                 if let Some(call) = call {
                     self.ended.insert((conversation.to_owned(), call));
                 }
-                self.close_in(conversation, cx);
             }
             CallNews::Started { place, starter } => {
                 let pending = Pending {
                     ends: self.ends_in(conversation),
                     conversation: conversation.to_owned(),
+                    start: message.id.clone(),
                     call,
                 };
                 let due = fresh(source, message.arrival_time, now_ms())
@@ -346,16 +361,19 @@ impl MeetingAlert {
         self.read_running(conversation, ended, cx);
     }
 
-    fn ends_in(&self, conversation: &str) -> u64 {
+    fn ends_in(&self, conversation: &str) -> Ends {
         self.ends.get(conversation).copied().unwrap_or_default()
     }
 
-    /// Whether the call of `pending` ended since: its call's end came, or, for a start naming no call, any end in its
-    /// chat.
+    /// Whether the call of `pending` ended since: its call's end came, or an end naming no call; for a start naming no
+    /// call, any end in its chat.
     fn ended_since(&self, pending: &Pending) -> bool {
+        let now = self.ends_in(&pending.conversation);
         match &pending.call {
-            Some(call) => self.ended.contains(&(pending.conversation.clone(), call.clone())),
-            None => self.ends_in(&pending.conversation) != pending.ends,
+            Some(call) => {
+                now.bare != pending.ends.bare || self.ended.contains(&(pending.conversation.clone(), call.clone()))
+            }
+            None => now.all != pending.ends.all,
         }
     }
 
@@ -434,6 +452,13 @@ impl MeetingAlert {
             let Some(banner) = banner(&*core, &pending.conversation, place, starter).await else {
                 return;
             };
+            // an end that came before a restart is in the store only
+            let stored_end = core
+                .call_ended(pending.conversation.clone(), pending.start.clone())
+                .await;
+            if stored_end.unwrap_or(false) {
+                return;
+            }
             let server = this
                 .update(cx, |this, cx| {
                     this.on_now(cx)
@@ -450,7 +475,7 @@ impl MeetingAlert {
             let kept = this.update(cx, |this, cx| {
                 let due = !this.ended_since(&pending) && !this.in_call(&pending.conversation, cx);
                 if due {
-                    this.shown_banner(id, banner, cx);
+                    this.shown_banner(id, banner, pending.call.clone(), cx);
                 }
                 due
             });
@@ -461,7 +486,7 @@ impl MeetingAlert {
         .detach();
     }
 
-    fn shown_banner(&mut self, id: u32, banner: Banner, cx: &mut Context<Self>) {
+    fn shown_banner(&mut self, id: u32, banner: Banner, call: Option<String>, cx: &mut Context<Self>) {
         let conversation = banner.notice.conversation.clone();
         let kind = match banner.join {
             MeetingJoin::GroupChat { .. } => "group-chat",
@@ -484,12 +509,28 @@ impl MeetingAlert {
             id,
             ShownBanner {
                 conversation,
+                call,
                 join: banner.join,
             },
         );
     }
 
-    /// Closes the banners of `conversation`: its call ended, or the account is in it.
+    /// Closes the banners of `conversation` whose call ended (`call`, the call its end named): that call's, or every
+    /// one when the end named no call; a banner whose start named no call closes at any end.
+    fn close_ended(&mut self, conversation: &str, call: Option<&str>, cx: &App) {
+        let ids: Vec<u32> = self
+            .shown
+            .iter()
+            .filter(|(_, shown)| {
+                shown.conversation == conversation
+                    && (call.is_none() || shown.call.is_none() || shown.call.as_deref() == call)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        self.close_ids(conversation, ids, cx);
+    }
+
+    /// Closes the banners of `conversation`: the account is in its call.
     fn close_in(&mut self, conversation: &str, cx: &App) {
         let ids: Vec<u32> = self
             .shown
@@ -497,6 +538,10 @@ impl MeetingAlert {
             .filter(|(_, shown)| shown.conversation == conversation)
             .map(|(id, _)| *id)
             .collect();
+        self.close_ids(conversation, ids, cx);
+    }
+
+    fn close_ids(&mut self, conversation: &str, ids: Vec<u32>, cx: &App) {
         for id in ids {
             self.shown.remove(&id);
             self.trace

@@ -108,6 +108,13 @@ pub trait Core: Send + Sync + 'static {
         let _ = chat;
         Reply::ready(Ok(false))
     }
+    /// Whether the call that `conversation`'s stored call event `start` (its message id) started has ended, as the
+    /// chat's own newest stored call events say: what a meeting's banner checks before it shows. A fake core has none
+    /// ended.
+    fn call_ended(&self, conversation: String, start: String) -> Reply<bool> {
+        let _ = (conversation, start);
+        Reply::ready(Ok(false))
+    }
     /// The reaction keys the account set most recently, the newest first; at most `limit`.
     fn recent_reactions(&self, limit: usize) -> Reply<Vec<String>>;
     /// The reaction keys the account uses most, the most used first; at most `limit`.
@@ -850,6 +857,9 @@ impl Core for EngineRequests {
     }
     fn call_runs(&self, chat: String) -> Reply<bool> {
         EngineRequests::call_runs(self, chat)
+    }
+    fn call_ended(&self, conversation: String, start: String) -> Reply<bool> {
+        EngineRequests::call_ended(self, conversation, start)
     }
 
     fn unread_count(&self, conversation: String) -> Reply<u64> {

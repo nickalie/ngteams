@@ -598,7 +598,9 @@ group chat's meeting goes where its start says it runs (`<conversationUrl>`, `te
 rung, so no invitation named the conversation, and the join is the one a callee makes after its ring ended
 ([Joining a running call](#joining-a-running-call)). The chat's header shows Join while the chat's stored call
 events hold a start no newer end ends, read from the store (at start, and after each start or end), since a catch-up
-brings a page's messages in no set order.
+brings a page's messages in no set order. The banner closes at its own call's end (one naming its start's `<callId>`,
+or one naming no call), not at another call's in the same chat, and none shows for a start whose end the store holds
+already (`teams_proto::start_ended`).
 
 ## The lobby
 

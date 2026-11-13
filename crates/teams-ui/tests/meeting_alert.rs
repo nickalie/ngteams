@@ -2,9 +2,10 @@
 //! that records what it is asked: someone else's Meet now in a group chat, and a meeting's chat's or a channel's
 //! meeting the calendar holds about now, show one with Join; the account's own start, a group call (it rings), a 1:1
 //! call, history, a meeting not on the calendar, a muted channel, the switch off, notifications off and Do not disturb
-//! show none; its Join and its body ask the desktop to go in or to open the chat; the call's end closes it, however
-//! late it comes and even while the banner is being shown; the chat's header offers Join as its stored call events
-//! say, after a restart and whatever order a catch-up brings them in. Every id and name is made up.
+//! show none; its Join and its body ask the desktop to go in or to open the chat; the call's end (or an end naming no
+//! call) closes it, however late it comes, even while the banner is being shown and when the store held it before a
+//! restart, while another call's end leaves it; the chat's header offers Join as its stored call events say, after a
+//! restart and whatever order a catch-up brings them in. Every id and name is made up.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -491,4 +492,51 @@ fn the_chat_s_header_offers_join_for_a_meet_now_that_ran_before_a_restart_or_cam
     b.arrive(late, Source::CatchUp);
     assert!(b.joinable(TRIO), "a late start still runs");
     assert_eq!(b.server.shown(), [], "too late for a banner");
+}
+
+/// An end of the chat's call `call`; `None`: one naming no call, as the oldest shape's does.
+fn end_of(call: Option<&str>) -> String {
+    let call = call.map(|call| format!("<callId>{call}</callId>")).unwrap_or_default();
+    format!("<ended/><partlist alt=\"\" count=\"0\"></partlist><callEventType>callEnded</callEventType>{call}")
+}
+
+#[test]
+fn an_earlier_call_s_late_end_leaves_the_running_call_s_banner_and_an_end_naming_no_call_closes_it() {
+    let a = Alerting::start(Settings::default());
+    a.arrive(call_event(TRIO, "1", LAB_B, huddle(LAB_B)), Source::Delivery);
+    assert_eq!(a.server.shown().len(), 1);
+    // an earlier Meet now's end, missed while the push channel was down, comes with the catch-up
+    let mut earlier = call_event(TRIO, "0", LAB_B, end_of(Some("huddle-0")));
+    earlier.arrival_time -= 10 * 60_000;
+    a.arrive(earlier, Source::CatchUp);
+    assert!(a.server.closed().is_empty(), "another call's end");
+    assert!(a.joinable(TRIO));
+    a.arrive(call_event(TRIO, "2", LAB_B, end_of(None)), Source::Delivery);
+    assert_eq!(a.server.closed(), [1]);
+    assert!(!a.joinable(TRIO));
+}
+
+#[test]
+fn an_end_naming_no_call_while_a_banner_is_shown_has_it_withdrawn() {
+    let gate = Arc::new(Gate::default());
+    let a = Alerting::start_over(Settings::default(), Some(Arc::clone(&gate)), Vec::new());
+    a.arrive(call_event(TRIO, "1", LAB_B, huddle(LAB_B)), Source::Delivery);
+    assert_eq!(a.server.shown().len(), 1, "being shown");
+    a.arrive(call_event(TRIO, "2", LAB_B, end_of(None)), Source::Delivery);
+    gate.open();
+    a.rig.cx.run_until_parked();
+    assert_eq!(a.server.closed(), [1]);
+    assert!(!a.activate(1, JOIN_ACTION), "never kept");
+}
+
+#[test]
+fn a_start_whose_end_the_store_held_before_a_restart_shows_no_banner() {
+    // the end came first, then the app restarted before the start did
+    let start = call_event(TRIO, "1", LAB_B, huddle(LAB_B));
+    let mut end = call_event(TRIO, "2", LAB_B, end());
+    end.arrival_time += 1;
+    let a = Alerting::start_over(Settings::default(), None, vec![end]);
+    a.arrive(start, Source::CatchUp);
+    assert_eq!(a.server.shown(), []);
+    assert!(!a.joinable(TRIO));
 }

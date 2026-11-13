@@ -427,6 +427,28 @@ pub fn running_call<'m>(events: impl IntoIterator<Item = (&'m str, &'m str)>) ->
     None
 }
 
+/// Whether the call that a chat's call event `start` (its message id) started has ended, as the chat's own call events
+/// tell it, newest first (`events`: each message's id, `messagetype` and content): an end (`callEnded`) newer than the
+/// start names its call (`<callId>`) or names none; for a start naming no call, any newer end does. `false` when
+/// `start` isn't among them.
+#[must_use]
+pub fn start_ended<'m>(events: impl IntoIterator<Item = (&'m str, &'m str, &'m str)>, start: &str) -> bool {
+    let mut ends: Vec<Option<&str>> = Vec::new();
+    for (id, message_type, content) in events {
+        if message_type != "Event/Call" {
+            continue;
+        }
+        if id == start {
+            let call = xml_text(content, "callId");
+            return ends.iter().any(|end| end.is_none() || call.is_none() || *end == call);
+        }
+        if xml_text(content, "callEventType") == Some("callEnded") {
+            ends.push(xml_text(content, "callId"));
+        }
+    }
+    false
+}
+
 /// The text of the first `<tag>…</tag>` in `content`, trimmed; `None` when there is none or it is empty.
 fn xml_text<'c>(content: &'c str, tag: &str) -> Option<&'c str> {
     let open = format!("<{tag}>");

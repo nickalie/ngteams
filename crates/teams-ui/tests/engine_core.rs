@@ -260,6 +260,7 @@ fn ask_chat(core: &dyn Core) {
     stopped(core.members(chat()));
     stopped(core.group_chat_with(vec![LAB_B.into()]));
     stopped(core.call_runs(chat()));
+    stopped(core.call_ended(chat(), "1".into()));
     stopped(core.unread_count(chat()));
     stopped(core.person(LAB_B.into()));
     stopped(core.presence(LAB_B.into()));
