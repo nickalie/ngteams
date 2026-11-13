@@ -16,7 +16,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use teams_ui::notify::picture::{BANNER_DIR, file_uri};
-use teams_ui::notify::{BannerFiles, BannerPicture, Notice, NoticeKind, NotificationServer as _, PictureShape};
+use teams_ui::notify::{
+    BannerFiles, BannerPicture, JOIN_ACTION, Notice, NoticeKind, NotificationServer as _, PictureShape,
+};
 use teams_ui::tray::{TrayEvent, TrayIcon as _};
 use windows::{
     UI::Notifications::{ToastNotificationHistory, ToastNotificationManager},
@@ -74,6 +76,7 @@ async fn contract() {
     notification_setting(&app_id);
     stale_activation_contract(&server, &activations, &app_id, &notice).await;
     picture_contract(&server, &activations, &app_id, &folder, &notice).await;
+    meeting_contract(&server, &activations, &app_id, &folder, &notice).await;
     tray_contract(&tray, &events).await;
     stop_contract(server, &app_id, &folder, &notice).await;
     drop(tray);
@@ -332,6 +335,56 @@ async fn picture_contract(
     server.close(app_toast).await;
     wait_history(&toasts.history, app_id, 0).await;
     assert!(banner_files(folder).is_empty());
+}
+
+/// #125: a started meeting's toast shows its starter's picture cropped to a circle and a Join button; Join, clicked on
+/// the real toast, reaches the app as the toast's own `join` and removes the picture's PNG.
+async fn meeting_contract(
+    server: &toasts::Notifications,
+    activations: &async_channel::Receiver<(u32, String)>,
+    app_id: &str,
+    folder: &Path,
+    notice: &Notice,
+) {
+    const TITLE: &str = "NGTEAMS SYNTHETIC MEETING";
+    let toasts = Pictured {
+        server,
+        history: ToastNotificationManager::History().unwrap(),
+        app_id,
+        folder,
+    };
+    wait_history(&toasts.history, app_id, 0).await;
+    let meeting = Notice {
+        kind: NoticeKind::Meeting,
+        summary: TITLE.into(),
+        body: "Synthetic starter started the meeting".into(),
+        picture: Some(picture(PictureShape::Circle)),
+        ..notice.clone()
+    };
+    let (id, file) = toasts.show(&meeting, PictureShape::Circle).await;
+    let xml = toast_xml(&toasts.history, app_id, id);
+    assert!(
+        xml.contains(r#"<action content="Join""#) && xml.contains(&format!(":{JOIN_ACTION}\"")),
+        "the meeting toast offers Join: {xml}"
+    );
+    assert!(!xml.contains("incomingCall"), "a meeting toast is no call: {xml}");
+    println!("synthetic toast ready: {TITLE}");
+    driver::click(TITLE, JOIN_ACTION).await;
+    let actual = tokio::time::timeout(Duration::from_secs(3), activations.recv())
+        .await
+        .expect("toast activation callback deadline")
+        .unwrap();
+    assert_eq!(
+        actual,
+        (id, JOIN_ACTION.to_owned()),
+        "the real toast's Join carries its own ID"
+    );
+    wait_gone(folder, &file).await;
+    assert!(banner_files(folder).is_empty(), "Join removes the starter's picture");
+    println!("synthetic meeting toast's Join reached the app; its picture {file} removed");
+    server.close(id).await;
+    driver::closed(TITLE).await;
+    wait_history(&toasts.history, app_id, 0).await;
 }
 
 /// The toasts with pictures of [`picture_contract`].

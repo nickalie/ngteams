@@ -128,7 +128,12 @@ fn target(
             let target = if action == "default" {
                 Some(parent.clone())
             } else {
-                find(client, &parent, if action == "answer" { "Answer" } else { "Decline" }).ok()
+                let button = match action {
+                    "answer" => "Answer",
+                    "join" => "Join",
+                    _ => "Decline",
+                };
+                find(client, &parent, button).ok()
             };
             if let Some(target) = target
                 && visible(&target)?

@@ -18,7 +18,7 @@ if ($Serve) {
         Set-Content -LiteralPath (Join-Path $RunDirectory 'fixture-process.json')
     $deadline=[DateTime]::UtcNow.AddSeconds(85)
     try {
-        foreach ($action in @('default','answer','decline')) {
+        foreach ($action in @('default','answer','decline','join')) {
             $captured=$false
             do {
                 $process.Refresh()
