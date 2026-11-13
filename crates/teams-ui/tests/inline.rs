@@ -1,8 +1,10 @@
 //! A message's pasted GIF decoded as `inline::decode` keeps it for the run: every frame of a normal one, the frames
 //! before the first that doesn't decode (a truncated file ends at once, never spins), at most `MAX_GIF_FRAMES` and
 //! `MAX_GIF_BYTES` of them, each scaled down to `MAX_DECODED_SIDE`, and none for a canvas past `MAX_GIF_SIDE`. Every
-//! GIF here is made up in the test. Synthetic PNG/JPEG/WebP sources past `MAX_STILL_SIDE` are refused before scaling;
-//! accepted pictures retain their natural dimensions. A picture is shaped as Teams sizes one (`inline::Shape`).
+//! GIF here is made up in the test. Synthetic PNG/JPEG sources past `MAX_STILL_SIDE` are refused before scaling;
+//! accepted pictures retain their natural dimensions. Large screenshots decode for messages, the viewer and pastes,
+//! while sources exceeding the RGBA8 allocation budget are refused. A picture is shaped as Teams sizes one
+//! (`inline::Shape`).
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -38,8 +40,8 @@ fn still(format: PastedFormat, width: u32, height: u32) -> teams_core::PictureBy
 }
 
 #[test]
-fn still_source_dimensions_are_bounded_before_scaling_even_for_a_small_tile() {
-    for format in [PastedFormat::Png, PastedFormat::Jpeg, PastedFormat::Webp] {
+fn still_source_dimensions_are_bounded_before_scaling() {
+    for format in [PastedFormat::Png, PastedFormat::Jpeg] {
         for (width, height) in [(MAX_STILL_SIDE + 1, 1), (1, MAX_STILL_SIDE + 1)] {
             let picture = still(format, width, height);
             assert!(inline::decode(&picture).is_none(), "{format:?}: {width}x{height}");
@@ -53,6 +55,48 @@ fn still_source_dimensions_are_bounded_before_scaling_even_for_a_small_tile() {
             assert_eq!(image.size(0), size(DevicePixels(shown.0), DevicePixels(shown.1)));
         }
     }
+}
+
+#[test]
+fn webp_sources_up_to_the_format_s_16383_pixel_limit_still_decode() {
+    for (width, height) in [(16383, 1), (1, 16383)] {
+        let (image, natural) = inline::decode(&still(PastedFormat::Webp, width, height)).unwrap();
+        assert_eq!(natural, (width, height));
+        let shown = if width > height { (2048, 1) } else { (1, 2048) };
+        assert_eq!(image.size(0), size(DevicePixels(shown.0), DevicePixels(shown.1)));
+    }
+}
+
+#[test]
+fn a_large_screenshot_decodes_for_messages_the_viewer_and_pasting() {
+    let picture = still(PastedFormat::Png, 7680, 2160);
+    {
+        let (image, natural) = inline::decode(&picture).unwrap();
+        assert_eq!(natural, (7680, 2160));
+        assert_eq!(image.size(0), size(DevicePixels(2048), DevicePixels(576)));
+    }
+    {
+        let (image, natural) = inline::decode_within(&picture, teams_ui::picture_viewer::MAX_VIEWER_SIDE).unwrap();
+        assert_eq!(natural, (7680, 2160));
+        assert_eq!(image.size(0), size(DevicePixels(7680), DevicePixels(2160)));
+    }
+    let pasted = teams_ui::editor::pictures::Picture::of(picture.bytes.clone(), 2.0).unwrap();
+    assert_eq!(pasted.own, (7680, 2160));
+    assert_eq!(pasted.given, (3840, 1080));
+    assert_eq!(pasted.image.size(0), size(DevicePixels(2048), DevicePixels(576)));
+}
+
+#[test]
+fn a_grayscale_source_within_the_decoder_budget_but_past_the_rgba_budget_is_refused() {
+    let mut bytes = Vec::new();
+    image::GrayImage::new(8193, 8192)
+        .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .unwrap();
+    let picture = Arc::new(PastedPicture {
+        format: PastedFormat::Png,
+        bytes,
+    });
+    assert!(inline::decode(&picture).is_none());
 }
 
 #[test]

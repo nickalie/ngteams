@@ -68,7 +68,7 @@ impl std::fmt::Debug for Picture {
 
 impl Picture {
     /// The picture `bytes` hold (a PNG, JPEG, GIF or WebP picture, by their signature) on a screen of `scale`; `None`
-    /// when they hold none, or it doesn't decode.
+    /// when they hold none, it doesn't decode, or it exceeds [`crate::inline::decode`]'s source limits.
     #[must_use]
     pub fn of(bytes: Vec<u8>, scale: f32) -> Option<Self> {
         let format = PastedFormat::sniff(&bytes)?;
@@ -79,7 +79,7 @@ impl Picture {
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
             clippy::cast_precision_loss,
-            reason = "a picture's side is at most a few thousand pixels, and positive"
+            reason = "a picture's side is at most 16384 pixels, and positive"
         )]
         let given = (
             ((own.0 as f32 / scale).round() as u32).max(1),

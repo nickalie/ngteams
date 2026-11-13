@@ -13,7 +13,7 @@ use gpui::{
 use teams_core::activity::ActivityItem;
 
 use super::{AVATAR, ActivityView};
-use crate::inline::decode_within;
+use crate::inline::decode_app_tile;
 use crate::theme::Palette;
 
 /// The longest side a tile is decoded at: thrice the avatar, for scaled screens.
@@ -49,7 +49,7 @@ impl ActivityView {
                 };
                 let decoded = cx
                     .background_executor()
-                    .spawn(async move { decode_within(&bytes, DECODED_SIDE) })
+                    .spawn(async move { decode_app_tile(&bytes, DECODED_SIDE) })
                     .await;
                 let Some((image, _)) = decoded else { return };
                 let _ = this.update(cx, |view, cx| {

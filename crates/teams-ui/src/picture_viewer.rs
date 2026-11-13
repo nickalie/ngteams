@@ -9,7 +9,8 @@
 //! - **The picture** is the bytes the message's picture is drawn from, asked of the account's engine again
 //!   ([`PictureEngine::message_picture`]: the engine keeps them for the run and on disk, so nothing is read twice; the
 //!   message names the picture's original, `imgo`, or its full-size view), decoded here off the foreground at up to
-//!   [`MAX_VIEWER_SIDE`] on its longer side, never by a request of the view's own.
+//!   [`MAX_VIEWER_SIDE`] on its longer side, within [`crate::inline::decode`]'s source limits, never by a request of
+//!   the view's own.
 //! - **Fitted** to the stage (the window under its header, less a margin) and never drawn larger than its own size
 //!   (one of its pixels to one of the window's), its aspect ratio kept, centred. Zoom in and out by the header's
 //!   buttons, `Ctrl+=`/`Ctrl+-` (`+`/`-` too), `Ctrl+` the wheel (about the pointer); `Ctrl+0` fits it again and the
@@ -68,7 +69,8 @@ actions!(
 const CONTEXT: &str = "PictureViewer";
 
 /// The longest side a picture is decoded at for the viewer: a larger one is scaled down to it (and drawn at its own
-/// size from that), within what every GPU's textures hold.
+/// size from that), within what every GPU's textures hold. Still sources may be up to
+/// [`crate::inline::MAX_STILL_SIDE`] per side within the decoder's 256 MiB allocation and RGBA8 budgets.
 pub const MAX_VIEWER_SIDE: u32 = 8192;
 
 /// The header's height.
