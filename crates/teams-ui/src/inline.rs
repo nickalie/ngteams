@@ -7,7 +7,8 @@
 //!   ([`Core::message_picture`]), decoded here off the foreground (every frame scaled down to at most
 //!   [`MAX_DECODED_SIDE`] on its longer side; a GIF with its frames up to the first that doesn't decode, at most
 //!   [`MAX_GIF_FRAMES`] and [`MAX_GIF_BYTES`] of them, its canvas at most [`MAX_GIF_SIDE`]; a still picture's source
-//!   at most [`MAX_STILL_SIDE`] per side and 256 MiB across overlapping pixel buffers) and kept for the run. It is
+//!   at most [`MAX_STILL_SIDE`] per side and 256 MiB across overlapping pixel buffers and codec scratch) and kept for
+//!   the run. It is
 //!   drawn as Teams draws a picture in a message ([`Shape::of`]): sized by the size the message gives it (else its
 //!   own), never upscaled, its aspect ratio kept, in a frame of the border colour (1 px, rounded) at the start of its
 //!   line, never wider than the width there is. A tall one (twice as high as wide) or a small one (lower than
@@ -55,7 +56,7 @@ pub const MAX_DECODED_SIDE: u32 = 2048;
 /// The largest source side of a still picture, before downscaling; the pixel budget also bounds its area.
 pub const MAX_STILL_SIDE: u32 = 16384;
 
-/// The decoder's allocation budget and the peak of the conversion and scaling pixel buffers.
+/// The decoder's allocation budget and the peak of codec scratch, conversion and scaling buffers.
 const MAX_STILL_ALLOC: u64 = 256 << 20;
 
 /// App tiles keep the smaller source bounds, regardless of the size they are drawn at.
@@ -400,7 +401,7 @@ fn decode_limited(
         return None;
     }
     limits.reserve(decoder.total_bytes()).ok()?;
-    if still_peak_bytes(natural, decoder.color_type(), max_side) > max_alloc {
+    if still_peak_bytes(natural, decoder.color_type(), format, max_side) > max_alloc {
         return None;
     }
     decoder.set_limits(limits).ok()?;
@@ -410,23 +411,40 @@ fn decode_limited(
     Some((RenderImage::new(vec![Frame::new(shown)]), natural))
 }
 
-fn still_peak_bytes(natural: (u32, u32), color: image::ColorType, max_side: u32) -> u64 {
+fn still_peak_bytes(natural: (u32, u32), color: image::ColorType, format: image::ImageFormat, max_side: u32) -> u64 {
     let pixels = u64::from(natural.0) * u64::from(natural.1);
     let rgba = pixels * 4;
+    let decoded = pixels * u64::from(color.bytes_per_pixel());
+    let codec = codec_peak_bytes(natural, decoded, format);
     let conversion = if color == image::ColorType::Rgba8 {
         rgba
     } else {
-        pixels * u64::from(color.bytes_per_pixel()) + rgba
+        decoded + rgba
     };
+    let peak = codec.max(conversion);
     let shown = scaled_size(natural, max_side);
     if shown == natural {
-        return conversion;
+        return peak;
     }
     // Triangle resizing keeps a full-width float RGBA intermediate beside its source and output.
     let scratch = u64::from(natural.0) * u64::from(shown.1) * 16;
     let output = u64::from(shown.0) * u64::from(shown.1) * 4;
     let weights = u64::from(natural.0.max(natural.1)) * 8;
-    conversion.max(rgba + scratch + output + weights)
+    peak.max(rgba + scratch + output + weights)
+}
+
+fn codec_peak_bytes((width, height): (u32, u32), decoded: u64, format: image::ImageFormat) -> u64 {
+    let width = u64::from(width).div_ceil(32) * 32;
+    let height = u64::from(height).div_ceil(32) * 32;
+    let scratch_per_pixel = match format {
+        // zune-jpeg keeps i16 coefficients for up to four input components, even when it outputs RGB.
+        image::ImageFormat::Jpeg => 8,
+        // WebP can overlap YUV, compressed alpha, lossless transforms and a first-frame canvas.
+        image::ImageFormat::WebP => 16,
+        _ => return decoded,
+    };
+    // The codec wrappers do not enforce max_alloc; include padded blocks and space for row buffers and tables.
+    decoded + width * height * scratch_per_pixel + width * 256 + (1 << 20)
 }
 
 /// A GIF's frames, each scaled down as a still picture is, up to the first that doesn't decode (a truncated file's

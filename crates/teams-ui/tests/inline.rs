@@ -3,7 +3,7 @@
 //! `MAX_GIF_BYTES` of them, each scaled down to `MAX_DECODED_SIDE`, and none for a canvas past `MAX_GIF_SIDE`. Every
 //! GIF here is made up in the test. Synthetic PNG/JPEG sources past `MAX_STILL_SIDE` are refused before scaling;
 //! accepted pictures retain their natural dimensions. Large screenshots decode for messages, the viewer and pastes,
-//! while sources exceeding the decoder or overlapping conversion/scaling allocation budget are refused. A picture
+//! while sources exceeding the codec scratch or overlapping conversion/scaling allocation budget are refused. A picture
 //! is shaped as Teams sizes one (`inline::Shape`).
 
 // test code throughout (its helpers unwrap like the tests do)
@@ -127,6 +127,81 @@ fn scaling_scratch_and_output_must_fit_beside_the_source() {
     let picture = png(&image::DynamicImage::ImageRgba8(RgbaImage::new(6000, 6000)));
     assert!(inline::decode(&picture).is_none());
     let picture = png(&image::DynamicImage::ImageRgba8(RgbaImage::new(16384, 4096)));
+    assert!(inline::decode_within(&picture, teams_ui::picture_viewer::MAX_VIEWER_SIDE).is_none());
+}
+
+fn progressive_jpeg(width: u16, height: u16, components: u8) -> teams_core::PictureBytes {
+    let mut bytes = vec![0xff, 0xd8];
+    let mut segment = |marker, data: &[u8]| {
+        bytes.extend([0xff, marker]);
+        bytes.extend(u16::try_from(data.len() + 2).unwrap().to_be_bytes());
+        bytes.extend(data);
+    };
+    let mut quantization = vec![0];
+    quantization.extend([1; 64]);
+    segment(0xdb, &quantization);
+    let mut frame = vec![8];
+    frame.extend(height.to_be_bytes());
+    frame.extend(width.to_be_bytes());
+    frame.push(components);
+    for component in 1..=components {
+        frame.extend([component, 0x11, 0]);
+    }
+    segment(0xc2, &frame);
+    let mut huffman = vec![0, 1];
+    huffman.extend([0; 16]);
+    segment(0xc4, &huffman);
+    let mut scan = vec![components];
+    for component in 1..=components {
+        scan.extend([component, 0]);
+    }
+    scan.extend([0, 0, 0]);
+    segment(0xda, &scan);
+    // A DC-only scan of zero differences makes a synthetic constant picture with no AC coefficients.
+    let bits = usize::from(width).div_ceil(8) * usize::from(height).div_ceil(8) * usize::from(components);
+    bytes.resize(bytes.len() + bits / 8, 0);
+    if bits % 8 != 0 {
+        bytes.push((1 << (8 - bits % 8)) - 1);
+    }
+    bytes.extend([0xff, 0xd9]);
+    Arc::new(PastedPicture {
+        format: PastedFormat::Jpeg,
+        bytes,
+    })
+}
+
+#[test]
+fn progressive_jpeg_coefficients_must_fit_beside_the_decoder_output() {
+    for components in [3, 4] {
+        let small = progressive_jpeg(17, 19, components);
+        let (_, natural) = inline::decode(&small).unwrap();
+        assert_eq!(natural, (17, 19));
+        let picture = progressive_jpeg(8000, 4000, components);
+        assert!(inline::decode(&picture).is_none());
+        assert!(inline::decode_within(&picture, teams_ui::picture_viewer::MAX_VIEWER_SIDE).is_none());
+    }
+}
+
+#[test]
+fn a_24_megapixel_progressive_phone_photo_still_decodes() {
+    let picture = progressive_jpeg(6000, 4000, 3);
+    let (image, natural) = inline::decode(&picture).unwrap();
+    assert_eq!(natural, (6000, 4000));
+    assert_eq!(image.size(0), size(DevicePixels(2048), DevicePixels(1365)));
+    assert_eq!(&image.as_bytes(0).unwrap()[..4], [128, 128, 128, 255]);
+}
+
+#[test]
+fn webp_codec_scratch_must_fit_beside_the_decoder_output() {
+    let mut bytes = Vec::new();
+    RgbaImage::from_pixel(8192, 8192, Rgba([10, 20, 30, 40]))
+        .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::WebP)
+        .unwrap();
+    let picture = Arc::new(PastedPicture {
+        format: PastedFormat::Webp,
+        bytes,
+    });
+    assert!(inline::decode(&picture).is_none());
     assert!(inline::decode_within(&picture, teams_ui::picture_viewer::MAX_VIEWER_SIDE).is_none());
 }
 
