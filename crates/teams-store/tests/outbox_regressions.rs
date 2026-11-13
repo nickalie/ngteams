@@ -530,6 +530,16 @@ fn a_failed_lock_sweep_refuses_open_without_disturbing_an_existing_run() {
     );
 }
 
+/// A lock-shaped name the sweep can't read as a run. Elsewhere it isn't UTF-8 at all; APFS stores only UTF-8 names
+/// (creating any other fails), so on Apple platforms it is the name such a file would read as, which is no run either.
+fn unreadable_name() -> std::ffi::OsString {
+    if cfg!(target_vendor = "apple") {
+        "invalid-\u{fffd}.lock".into()
+    } else {
+        invalid_path::name("invalid-", ".lock")
+    }
+}
+
 #[test]
 fn lock_cleanup_preserves_files_that_do_not_name_a_run() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -538,12 +548,7 @@ fn lock_cleanup_preserves_files_that_do_not_name_a_run() {
     let runs = run_directory(&path);
     let owner_lock = runs.join(format!("{}.lock", owner.run_id()));
     assert!(owner_lock.exists(), "the run holds a lock file before it ends");
-    let names = [
-        "not-a-run.lock".into(),
-        ".lock".into(),
-        "123".into(),
-        invalid_path::name("invalid-", ".lock"),
-    ];
+    let names = ["not-a-run.lock".into(), ".lock".into(), "123".into(), unreadable_name()];
     for name in &names {
         fs::write(runs.join(name), b"synthetic unrelated data").expect("unrelated file");
     }

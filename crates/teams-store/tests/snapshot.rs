@@ -245,6 +245,10 @@ fn an_invalid_destination_returns_an_error_and_leaves_the_source_readable() {
 }
 
 #[test]
+#[cfg_attr(
+    target_vendor = "apple",
+    ignore = "APFS stores only UTF-8 names: no source can have a non-UTF-8 name there"
+)]
 fn a_non_utf8_source_never_reads_a_different_file_with_the_lossy_name() {
     let dir = tempfile::tempdir().expect("tempdir");
     let original = dir.path().join("original.sqlite");
