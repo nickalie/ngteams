@@ -27,6 +27,9 @@ pub(super) fn meet_now(rig: &mut Rig<'_>) -> SandboxResult {
 
 /// b's Meet now: a's banner, its Join joins the mock's call, the banner closes; b ends it.
 fn joined_from_the_banner(rig: &mut Rig<'_>) -> SandboxResult {
+    // Notifications connect before the tray registers.
+    wait_until(WAIT, || (!rig.sandbox.bus().tray_items().is_empty()).then_some(()))
+        .ok_or("the desktop notification connection isn't ready")?;
     let seen = rig.sandbox.bus().notifications().len();
     let call = rig.mock.ring_group(LAB_B, ABC_CHAT, &[]);
     // nobody rung: the meeting runs with b in it, to be joined

@@ -131,7 +131,11 @@ pub(super) fn mock_reply(verb: &str, rest: &str, probe: &Probe) -> Option<Value>
             } else {
                 (LAB_B, "Lab B")
             };
-            posted(mock, ABC_CHAT, who, &start(who.0, &next(), true))
+            let posted = posted(mock, ABC_CHAT, who, &start(who.0, &next(), true));
+            if who.0 == LAB_A {
+                echo_own_post(mock, &posted);
+            }
+            posted
         }
         "push-meet-now-end" => posted(mock, ABC_CHAT, (LAB_B, "Lab B"), &end(&next(), true)),
         // `push-start <place> <n>`, `push-end <place> <n>`: b's call in the place
@@ -247,6 +251,15 @@ pub(super) fn window_reply(verb: &str, rest: &str, shell: &Entity<Shell>, cx: &m
 fn posted(mock: &ChatServiceMock, chat: &str, from: (&str, &str), content: &str) -> Value {
     mock.add_message(chat, from, "Event/Call", content)
         .map_or_else(|| json!({"error": format!("no chat {chat}")}), |id| json!({"id": id}))
+}
+
+fn echo_own_post(mock: &ChatServiceMock, posted: &Value) {
+    for event in mock.take_events(LAB_C) {
+        if event.conversation == ABC_CHAT && event.resource["id"] == posted["id"] {
+            mock.queue_event(LAB_A, event.clone());
+        }
+        mock.queue_event(LAB_C, event);
+    }
 }
 
 /// A call's start by `starter`: a group chat's meeting (Meet now) when `huddle`, else a call.
@@ -441,9 +454,16 @@ fn open_chat(qa: &mut Qa<'_>) -> SandboxResult {
 
 /// a's own Meet now (another client of a's started it): no banner.
 fn own_meet_now(qa: &mut Qa<'_>) -> SandboxResult {
-    none_for(qa, "push-meet-now a 2", "a's own Meet now")?;
+    joinable_until(qa, false)?;
+    let seen = qa.sandbox.bus().notifications().len();
+    let posted = qa.ask("push-meet-now a 2")?;
+    ensure(posted.get("error").is_none(), || format!("a's own Meet now: {posted}"))?;
+    joinable_until(qa, true)?;
+    thread::sleep(BANNER_WAIT);
+    let banners = meeting_banners(qa, seen);
     qa.ask("push-meet-now-end 2")?;
-    Ok(())
+    joinable_until(qa, false)?;
+    ensure(banners.is_empty(), || format!("a's own Meet now: {banners:?}"))
 }
 
 /// A banner not acted on closes once the meeting ends.
