@@ -296,11 +296,9 @@ impl CallStage {
         let end = (active.organizer && active.kind == CallKind::Meeting && !self.core.read_only()).then(|| {
             selected_by(
                 "call-leave-options",
-                Button::new("call-leave-options")
-                    .ghost()
+                frame_button("call-leave-options", theme::current(cx), cx)
                     .xsmall()
                     .icon(Glyph::CHEVRON_DOWN.icon())
-                    .text_color(rgb(theme::current(cx).on_frame))
                     .tooltip("Leave options")
                     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu: PopupMenu, _, _| {
                         let (leave, end) = (stage.clone(), stage.clone());
@@ -401,10 +399,8 @@ impl CallStage {
         let stage = cx.weak_entity();
         selected_by(
             "call-react",
-            Button::new("call-react")
-                .ghost()
+            frame_button("call-react", palette, cx)
                 .h(px(48.0))
-                .text_color(rgb(palette.on_frame))
                 .child(tool_face(Glyph::REACT, caption))
                 .tooltip("Send a reaction")
                 .dropdown_menu_with_anchor(Anchor::TopCenter, move |menu: PopupMenu, _, _| {
@@ -453,10 +449,8 @@ impl CallStage {
         };
         selected_by(
             "call-view",
-            Button::new("call-view")
-                .ghost()
+            frame_button("call-view", palette, cx)
                 .h(px(48.0))
-                .text_color(rgb(palette.on_frame))
                 .child(tool_face(Glyph::GALLERY, self.caption("View")))
                 .tooltip("Change view")
                 .dropdown_menu_with_anchor(Anchor::TopRight, move |menu: PopupMenu, window, cx| {
@@ -469,7 +463,10 @@ impl CallStage {
                     let first = stage.clone();
                     let more = stage.clone();
                     let sizes = stage.clone();
+                    // its real widest: the kit opens a submenu on the side its max width leaves room on, and its
+                    // arrow keys follow that side
                     menu.min_w(px(220.0))
+                        .max_w(px(MENU_MAX_WIDTH))
                         .item(
                             menu_item("call-view-gallery", Some(Glyph::GALLERY), "Gallery")
                                 .checked(layout == Layout::Gallery)
@@ -520,10 +517,8 @@ impl CallStage {
         let record = self.record_tools(cx);
         selected_by(
             "call-more",
-            Button::new("call-more")
-                .ghost()
+            frame_button("call-more", palette, cx)
                 .h(px(48.0))
-                .text_color(rgb(palette.on_frame))
                 .child(tool_face(Glyph::MORE, self.caption("More")))
                 .tooltip("More actions")
                 .dropdown_menu_with_anchor(Anchor::TopRight, move |menu: PopupMenu, window, cx| {
@@ -541,7 +536,9 @@ impl CallStage {
                     );
                     let menu = captions::more(menu, stage.clone(), caption_visible, caption_available, window, cx);
                     let menu = meeting::settings_submenu(menu, &stage, tools, window, cx);
-                    meeting::help_item(menu, tools).min_w(px(240.0))
+                    meeting::help_item(menu, tools)
+                        .min_w(px(240.0))
+                        .max_w(px(MENU_MAX_WIDTH))
                 }),
         )
         .into_any_element()
@@ -557,18 +554,16 @@ impl CallStage {
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
         self.settings.read(cx).devices()?;
-        let on_frame = theme::current(cx).on_frame;
+        let palette = theme::current(cx);
         let model = self.settings.clone();
         let stage = cx.weak_entity();
         let effects = kinds == CAMERAS;
         Some(
             selected_by(
                 id,
-                Button::new(id)
-                    .ghost()
+                frame_button(id, palette, cx)
                     .xsmall()
                     .icon(Glyph::CHEVRON_DOWN.icon())
-                    .text_color(rgb(on_frame))
                     .tooltip(tip)
                     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu: PopupMenu, _, cx| {
                         let menu = device_items(menu, kinds, &model, cx).separator();
@@ -675,6 +670,9 @@ fn divider(palette: Palette) -> gpui::Div {
         .mx_1()
         .bg(rgb(palette.on_frame).opacity(0.25))
 }
+
+/// The widest View and More get, px: what their longest rows need.
+const MENU_MAX_WIDTH: f32 = 320.0;
 
 /// A row of a call menu, its test selector `selector`: its icon (when it has one) and its label.
 pub(super) fn menu_item(selector: &'static str, glyph: Option<Glyph>, label: &'static str) -> PopupMenuItem {
@@ -823,6 +821,18 @@ pub(super) fn tool(
         .on_click(cx.listener(move |this, _, window, cx| on(this, window, cx)))
         .child(tool_face(glyph, caption))
         .into_any_element()
+}
+
+/// A toolbar button that opens a menu, on the frame: its ink, lit while hovered and as the marked controls are while
+/// its menu is open (the kit's own open look is pale under the frame's white ink).
+pub(super) fn frame_button(id: &'static str, palette: Palette, cx: &App) -> Button {
+    let ink = rgb(palette.on_frame);
+    Button::new(id).custom(
+        ButtonCustomVariant::new(cx)
+            .foreground(ink.into())
+            .hover(ink.opacity(0.12).into())
+            .active(ink.opacity(0.2).into()),
+    )
 }
 
 /// A toolbar control's face: its icon over its caption (none in a narrow window), in the control's own text colour.

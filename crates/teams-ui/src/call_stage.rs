@@ -80,7 +80,7 @@ use gpui::{
 };
 use gpui_component::Sizable as _;
 use gpui_component::Size;
-use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_component::tooltip::Tooltip;
 use teams_core::{CallId, CallParticipant, CallStatus, CallView};

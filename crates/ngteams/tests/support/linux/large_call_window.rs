@@ -335,7 +335,12 @@ fn gallery_sizes(rig: &mut Rig<'_>) -> SandboxResult {
                 rig.click(pager.next)?;
             }
         }
-        rig.gallery_size(size, others)?;
+        // the pointer picks the larger sizes, the keyboard the smaller, as Teams takes both
+        if size <= 9 {
+            rig.gallery_size_by_keys(size, others)?;
+        } else {
+            rig.gallery_size(size, others)?;
+        }
         let case = format!("max gallery size {size} with {}", others + 1);
         let stage = rig.stage()?;
         if let Some(pager) = stage.pager {
@@ -421,8 +426,11 @@ fn strips(rig: &mut Rig<'_>) -> SandboxResult {
 /// The strip beside a share: everyone once across its pages, the account's own tile last on each.
 fn share_strip(rig: &mut Rig<'_>) -> SandboxResult {
     rig.join(24)?;
-    rig.resize((1280, 800))?;
     rig.show(View::Share)?;
+    for size in [(800, 560), (1920, 1080), (1280, 800)] {
+        rig.resize(size)?;
+        share_named_on_picture(rig, size)?;
+    }
     // the strip: the column the account's own tile stands in, right of the shared screen (which plays on)
     let first = rig.stage_with_own()?;
     let own = first
@@ -477,6 +485,47 @@ fn share_strip(rig: &mut Rig<'_>) -> SandboxResult {
         return Err(format!("the share strip's {turned} pages showed {shown} others of {others}").into());
     }
     Ok(())
+}
+
+/// The sharer's name sits on the shared picture's bottom left, as Teams places it, not under the picture on the stage.
+fn share_named_on_picture(rig: &mut Rig<'_>, (width, height): (i32, i32)) -> SandboxResult {
+    let case = format!("the share at {width}x{height}");
+    // the shared screen plays on: its white bars may run into the name for a frame
+    for _ in 0..8 {
+        let stage = rig.stage_with_own()?;
+        let own = stage.own.ok_or_else(|| format!("{case}: no own tile: {stage:?}"))?;
+        let room = Rect {
+            w: own.x - 6 - stage.panel.x,
+            ..stage.panel
+        };
+        let shot = rig.shot()?;
+        let picture = pixels::dark_bounds(&shot, room).ok_or_else(|| format!("{case}: no shared picture"))?;
+        let under = Rect {
+            y: picture.bottom() + 2,
+            h: (room.bottom() - picture.bottom() - 2).max(0),
+            ..room
+        };
+        if !pixels::labels(&shot, under).is_empty() {
+            rig.save("failed-share-name")?;
+            return Err(format!("{case}: the sharer's name sits under the picture {picture:?}").into());
+        }
+        let corner = Rect {
+            y: picture.bottom() - 40,
+            w: 260,
+            h: 40,
+            ..picture
+        };
+        let on_corner = pixels::labels(&shot, corner).into_iter().any(|label| {
+            (4..=14).contains(&(label.x - picture.x)) && (4..=14).contains(&(picture.bottom() - label.bottom()))
+        });
+        if on_corner {
+            rig.save(&format!("large-call-share-name-{width}x{height}"))?;
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(400));
+    }
+    rig.save("failed-share-name")?;
+    Err(format!("{case}: no name on the shared picture's bottom left").into())
 }
 
 /// The strip under the speaker turns its pages; the speaker stays large.
@@ -558,6 +607,18 @@ fn themes(rig: &mut Rig<'_>) -> SandboxResult {
         rig.show(view)?;
         rig.save(&format!("large-call-{}-50-dark", view.name()))?;
     }
+    // View on Max gallery size, the keyboard in its sizes (dark on dark: no submenu found by its change)
+    rig.show(View::Gallery)?;
+    let view = rig.toolbar_view()?;
+    rig.click(view)?;
+    for key in ["down", "down", "down", "down", "right"] {
+        rig.key(key)?;
+    }
+    thread::sleep(SETTLE);
+    rig.save("large-call-view-max-gallery-size-menu-dark")?;
+    rig.key("escape")?;
+    rig.key("escape")?;
+    thread::sleep(SETTLE);
     rig.theme(teams_ui::theme::LIGHT_KEY)?;
     rig.show(View::Gallery)
 }
@@ -1085,6 +1146,45 @@ impl Rig<'_> {
         };
         self.click(row)?;
         self.debug("size-enter")?;
+        self.first_page_shows(size, others)
+    }
+
+    /// Chooses `size` in View > Max gallery size by the keyboard, as Teams takes it: Right into the sizes, Down to
+    /// `size`, Enter. Escape in the sizes first goes back to View's rows, View still open.
+    fn gallery_size_by_keys(&mut self, size: usize, others: usize) -> SandboxResult {
+        let index = [4, 9, 16, 49]
+            .iter()
+            .position(|choice| *choice == size)
+            .ok_or("no such size")?;
+        let window = self.window()?;
+        let below = Rect {
+            y: window.y + TOOLBAR_BAND,
+            h: window.h - TOOLBAR_BAND,
+            ..window
+        };
+        self.park()?;
+        let closed = self.shot()?;
+        self.view_menu_open_on_sizes()?;
+        self.key("right")?;
+        self.key("escape")?;
+        thread::sleep(SETTLE);
+        self.debug("sizes-escape")?;
+        if pixels::changed_pixels(&closed, &self.shot()?, below) < 1_000 {
+            self.save("failed-sizes-escape")?;
+            return Err("Escape in Max gallery size closed View too".into());
+        }
+        self.key("right")?;
+        for _ in 0..index {
+            self.key("down")?;
+        }
+        self.save(&format!("large-call-view-max-gallery-size-{size}-by-keys"))?;
+        self.key("enter")?;
+        thread::sleep(SETTLE);
+        self.first_page_shows(size, others)
+    }
+
+    /// At full HD the first page shows `min(size, others + 1)` tiles.
+    fn first_page_shows(&mut self, size: usize, others: usize) -> SandboxResult {
         let stage = self.stage()?;
         let window = self.window()?;
         if window.w == 1920 && stage.tiles.len() != size.min(others + 1) {
@@ -1329,6 +1429,12 @@ impl Rig<'_> {
         let opened = pixels::changed_pixels(&before, &open, below);
         if opened < 1_000 {
             return Err(format!("{case}: its click opened no menu").into());
+        }
+        // the open button stays readable: its white icon and caption on a lit chip, not a pale one
+        let contrast = pixels::ink_contrast(&open, button);
+        if contrast < 80 {
+            self.keep_failed("menu-button", [&before, &open, &open])?;
+            return Err(format!("{case}: its button is unreadable while its menu is open ({contrast})").into());
         }
         self.key("escape")?;
         let closed = self.shot_until(|closed| {

@@ -6,6 +6,7 @@
 //! each tile's own menu (Pin for me, Unpin). While the far end shares its screen, the share fills the stage with the people's tiles (the account's own among them) in a strip on its right, paged when they
 //! don't fit, as Teams shows a share; View's Focus on content shows the share alone. Nothing leaves the stage: the
 //! call's controls above it stay in sight and take every click, however many are in the call.
+use gpui::{Bounds, Pixels};
 use gpui_component::Disableable as _;
 
 use super::pages::{self, PAGER_HEIGHT, PAGER_WIDTH, Page, Strip, TILE_GAP};
@@ -39,6 +40,8 @@ const STRIP_HEIGHT: f32 = 112.0;
 const STRIP_TILE: f32 = 184.0;
 /// The width of the people's strip beside a share, and the tallest a tile in it gets, px (Teams' 16:9 tiles).
 const SHARE_STRIP: (f32, f32) = (236.0, 132.0);
+/// The gap between a share and the people's strip, px.
+const SHARE_GAP: f32 = 8.0;
 
 impl CallStage {
     /// The stage of the call up: who rings while nobody is in it, else the tiles as View lays them out.
@@ -163,9 +166,21 @@ impl CallStage {
             .find(|tile| sharing.is_some() && tile.mri.as_deref() == sharing)
             .or(tiles.first())
             .map_or_else(|| title.clone(), |tile| tile.name.clone());
+        let shape = self.tiles.as_ref().and_then(|tiles| tiles.feed().picture(Tile::Share));
         let picture = self.tiles.as_mut().and_then(|tiles| tiles.fill(Tile::Share, call));
-        let content = share_content(picture, sharer, palette);
-        if self.layout == Layout::Focus {
+        let focus = self.layout == Layout::Focus;
+        let room = if focus {
+            area
+        } else {
+            (area.0 - SHARE_STRIP.0 - SHARE_GAP, area.1)
+        };
+        // the picture as it is drawn in its room, letterboxed: the sharer's name goes on its corner
+        let drawn = picture.as_ref().and(shape).map(|shape| {
+            let room = Bounds::new(gpui::Point::default(), gpui::size(px(room.0), px(room.1)));
+            crate::video_surface::fitted(room, shape.width, shape.height)
+        });
+        let content = share_content(picture, (sharer, drawn), palette);
+        if focus {
             return div()
                 .debug_selector(|| "call-share-focus".to_owned())
                 .size_full()
@@ -185,7 +200,7 @@ impl CallStage {
             .debug_selector(|| "call-share-stage".to_owned())
             .size_full()
             .flex()
-            .gap_2()
+            .gap(px(SHARE_GAP))
             .child(div().flex_1().min_w_0().h_full().child(content))
             .child(
                 div()
@@ -821,8 +836,13 @@ fn name_tag(
 }
 
 /// The share as the stage shows it: its picture fitted in (on the stage's own ground, as Teams letterboxes it), or
-/// while its first frame is coming the sharer's screen's mark and who shares; the sharer named at its bottom left.
-fn share_content(picture: Option<AnyElement>, sharer: SharedString, palette: Palette) -> AnyElement {
+/// while its first frame is coming the sharer's screen's mark and who shares; the sharer named at the bottom left of
+/// the picture where it is `drawn` in the share's room, else of the room.
+fn share_content(
+    picture: Option<AnyElement>,
+    (sharer, drawn): (SharedString, Option<Bounds<Pixels>>),
+    palette: Palette,
+) -> AnyElement {
     let face = picture.unwrap_or_else(|| {
         div()
             .size_full()
@@ -842,7 +862,20 @@ fn share_content(picture: Option<AnyElement>, sharer: SharedString, palette: Pal
         .size_full()
         .overflow_hidden()
         .child(face)
-        .child(name_tag(sharer, (false, false, false, false), palette))
+        .child(
+            div()
+                .debug_selector(|| "call-share-picture".to_owned())
+                .absolute()
+                .map(|corner| match drawn {
+                    Some(drawn) => corner
+                        .left(drawn.origin.x)
+                        .top(drawn.origin.y)
+                        .w(drawn.size.width)
+                        .h(drawn.size.height),
+                    None => corner.inset_0(),
+                })
+                .child(name_tag(sharer, (false, false, false, false), palette)),
+        )
         .into_any_element()
 }
 

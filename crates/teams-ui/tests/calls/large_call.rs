@@ -185,7 +185,7 @@ fn pick_gallery_size(stage: &mut VisualTestContext, size: usize) {
             click(stage, &item);
             return;
         }
-        stage.simulate_keystrokes("escape");
+        stage.simulate_keystrokes("escape escape");
         draw(stage);
     }
     panic!("Max gallery size isn't in View");
@@ -406,4 +406,61 @@ fn the_caption_language_confirmation_s_actions_stay_in_a_short_window() {
         matches!(actions(&rig).last(), Some(CallAction::CaptionLanguage { language, .. }) if language == "sq-al"),
         "Update took the click"
     );
+}
+
+/// Opens View with the keyboard on Max gallery size, its submenu shown beside it.
+fn view_on_gallery_sizes(stage: &mut VisualTestContext) {
+    for downs in 1..=6 {
+        click(stage, "call-view");
+        stage.simulate_keystrokes(&vec!["down"; downs].join(" "));
+        draw(stage);
+        if drawn(stage, "call-view-gallery-size-4") {
+            return;
+        }
+        stage.simulate_keystrokes("escape");
+        draw(stage);
+    }
+    panic!("Max gallery size isn't in View");
+}
+
+#[test]
+fn view_s_max_gallery_size_is_picked_by_the_keyboard() {
+    let rig = super::calling();
+    let stage = large_call(&rig, 16);
+    for window in [(1920.0, 1080.0), (800.0, 560.0), (560.0, 400.0)] {
+        resize(stage, window);
+        // the arrow toward the sizes goes in (Right where they open on the right, as Teams' do), Down moves on,
+        // Enter picks
+        view_on_gallery_sizes(stage);
+        let parent = bounds(stage, "call-view-videos-first").expect("View's rows");
+        let sizes = bounds(stage, "call-view-gallery-size-4").expect("the sizes");
+        let (into, back) = if sizes.origin.x > parent.right() {
+            ("right", "left")
+        } else {
+            assert!(
+                window.0 < 800.0,
+                "{window:?}: the sizes open on the right where there is room"
+            );
+            ("left", "right")
+        };
+        stage.simulate_keystrokes(&format!("{into} down enter"));
+        draw(stage);
+        assert!(!drawn(stage, "call-view-gallery"), "{window:?}: picking closes View");
+        if window.0 >= 800.0 {
+            assert_eq!(shown(stage, 16).len(), 8, "{window:?}: 9 picked");
+        }
+        // Escape and the arrow back go back to View's rows, still open, and the arrow in goes in again
+        view_on_gallery_sizes(stage);
+        stage.simulate_keystrokes(&format!("{into} escape"));
+        draw(stage);
+        assert!(drawn(stage, "call-view-gallery"), "{window:?}: Escape leaves View open");
+        stage.simulate_keystrokes(&format!("{into} {back} {into} enter"));
+        draw(stage);
+        assert!(
+            !drawn(stage, "call-view-gallery"),
+            "{window:?}: picked after going back"
+        );
+        assert_eq!(shown(stage, 16).len(), 3, "{window:?}: 4 picked after going back");
+        pick_gallery_size(stage, 49);
+    }
 }

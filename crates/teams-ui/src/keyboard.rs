@@ -8,6 +8,8 @@
 //! - [`menu_keys`]: a popup menu of focusable rows (the rows are [`stop`]s): Up and Down move through them, Home and End
 //!   to the first and the last, Enter or Space picks, Escape and Tab close it. The opener keeps where the focus was
 //!   ([`Return`]) and gives it back on close, as Teams returns it to what opened the menu.
+//! - [`submenu_escape`]: Escape in one of the kit's submenus closes that submenu alone and gives the keyboard back to
+//!   the menu it opened from, as Teams' menus do (the kit closes every level at once).
 //!
 //! Tab and Shift+Tab are the kit's root's ([`gpui_component::Root`]): a dialog traps them with the kit's `focus_trap`.
 
@@ -17,8 +19,8 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    App, ElementId, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, RenderOnce, Stateful, Styled as _,
-    Window, rgb,
+    App, ElementId, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, KeystrokeEvent, RenderOnce,
+    Stateful, Styled as _, Window, rgb,
 };
 
 use crate::theme::Palette;
@@ -100,6 +102,37 @@ impl RenderOnce for Stop {
             Ring::Fill => element.focus_visible(move |style| style.bg(rgb(palette.hover))),
             Ring::Edge => element.focus_visible(move |style| style.border_color(rgb(palette.brand))),
         })
+    }
+}
+
+/// The kit's popup menu's key context.
+const POPUP_MENU: &str = "PopupMenu";
+
+/// Makes Escape in a submenu go back to the menu it opened from instead of closing every level; once, at start.
+pub fn submenu_escape(cx: &mut App) {
+    cx.intercept_keystrokes(escape_in_submenu).detach();
+}
+
+fn escape_in_submenu(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
+    let menus = event
+        .context_stack
+        .iter()
+        .filter(|context| context.contains(POPUP_MENU))
+        .count();
+    if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() || menus < 2 {
+        return;
+    }
+    let Some(submenu) = window.focused(cx) else { return };
+    cx.stop_propagation();
+    // the kit's arrow toward the parent goes back; which arrow that is depends on the side the submenu opened on
+    for back in ["ui::SelectLeft", "ui::SelectRight"] {
+        if !submenu.contains_focused(window, cx) {
+            return;
+        }
+        submenu.focus(window, cx);
+        if let Ok(action) = cx.build_action(back, None) {
+            submenu.dispatch_action(action.as_ref(), window, cx);
+        }
     }
 }
 

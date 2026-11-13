@@ -615,6 +615,7 @@ pub fn init(cx: &mut App) {
         return;
     }
     gpui_component::init(cx);
+    crate::keyboard::submenu_escape(cx);
     let appearance = Appearance::default();
     let active = appearance.active(WindowAppearance::Light);
     cx.set_global(Current {

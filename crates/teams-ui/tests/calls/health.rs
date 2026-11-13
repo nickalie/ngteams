@@ -59,7 +59,7 @@ fn open_settings(window: &mut VisualTestContext) {
         if drawn(window, "call-more-call-health") {
             return;
         }
-        window.simulate_keystrokes("escape");
+        window.simulate_keystrokes("escape escape");
         draw(window);
     }
     panic!("Call health isn't in More's Settings");

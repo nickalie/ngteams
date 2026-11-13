@@ -429,3 +429,40 @@ pub fn white_groups(image: &RgbImage, band: Rect) -> Vec<Rect> {
     groups.retain(|group| group.w >= 6);
     groups
 }
+
+/// How far a control's ink stands out from its ground in `rect`: its brightest pixels' luminance (the 98th
+/// percentile, white icons and captions) less the median's (the ground under them).
+pub fn ink_contrast(image: &RgbImage, rect: Rect) -> i32 {
+    let mut seen: Vec<i32> = (rect.y..rect.bottom())
+        .flat_map(|y| (rect.x..rect.right()).map(move |x| (x, y)))
+        .filter_map(|(x, y)| pixel(image, x, y).map(luminance))
+        .collect();
+    if seen.is_empty() {
+        return 0;
+    }
+    seen.sort_unstable();
+    let at = |share: usize| seen[(seen.len() - 1) * share / 100];
+    at(98) - at(50)
+}
+
+/// The bounds of the dark pixels in `within` (a shared screen: the mock's is dark grey and black).
+pub fn dark_bounds(image: &RgbImage, within: Rect) -> Option<Rect> {
+    blobs(within, |x, y| {
+        pixel(image, x, y).is_some_and(|colour| luminance(colour) < 90)
+    })
+    .into_iter()
+    .filter(|blob| blob.bounds.w >= 12 && blob.bounds.h >= 12)
+    .map(|blob| blob.bounds)
+    .reduce(Rect::union)
+}
+
+/// The name labels in `within`: white boxes a line of text tall, as a tile's or a share's name sits in.
+pub fn labels(image: &RgbImage, within: Rect) -> Vec<Rect> {
+    blobs(within, |x, y| {
+        pixel(image, x, y).is_some_and(|colour| luminance(colour) > 245)
+    })
+    .into_iter()
+    .map(|blob| blob.bounds)
+    .filter(|bounds| (14..=30).contains(&bounds.h) && (30..=250).contains(&bounds.w))
+    .collect()
+}

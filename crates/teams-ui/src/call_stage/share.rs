@@ -31,10 +31,8 @@ impl CallStage {
         Some(
             selected_by(
                 "call-share",
-                Button::new("call-share")
-                    .ghost()
+                toolbar::frame_button("call-share", palette, cx)
                     .h(px(48.0))
-                    .text_color(rgb(palette.on_frame))
                     .child(toolbar::tool_face(Glyph::SCREEN_SHARE, self.caption("Share")))
                     .tooltip("Share content")
                     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu: PopupMenu, _, _| {

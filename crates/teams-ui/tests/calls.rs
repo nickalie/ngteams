@@ -3313,7 +3313,7 @@ fn open_language_and_speech(window: &mut VisualTestContext) {
         if drawn(window, "call-toggle-captions") {
             return;
         }
-        window.simulate_keystrokes("escape");
+        window.simulate_keystrokes("escape escape");
         draw(window);
     }
     panic!("Language and speech isn't in More");
@@ -3334,7 +3334,7 @@ fn open_view_more_options(window: &mut VisualTestContext) {
         if drawn(window, "call-view-hide-me") {
             return;
         }
-        window.simulate_keystrokes("escape");
+        window.simulate_keystrokes("escape escape");
         draw(window);
     }
     panic!("More options isn't in View");
@@ -3663,6 +3663,31 @@ fn a_one_to_one_call_shares_its_screen_from_share_content_and_stops_as_teams_sho
     assert!(drawn(stage, "call-held-controls") && drawn(stage, "call-share"));
 }
 
+/// The sharer's name sits on the shared picture's bottom left, where the 16:9 picture is drawn letterboxed in the
+/// share's room, not on the room's.
+fn share_named_on_its_picture(stage: &mut VisualTestContext) {
+    for window in [(1280.0, 800.0), (800.0, 560.0)] {
+        stage.simulate_resize(gpui::size(gpui::px(window.0), gpui::px(window.1)));
+        draw(stage);
+        draw(stage);
+        let room = stage.debug_bounds("call-share").expect("the share");
+        let picture = stage.debug_bounds("call-share-picture").expect("the picture's corner");
+        let ratio = f32::from(picture.size.width) / f32::from(picture.size.height);
+        assert!((ratio - 16.0 / 9.0).abs() < 0.02, "{window:?}: {picture:?}");
+        let (dx, dy) = (
+            picture.center().x - room.center().x,
+            picture.center().y - room.center().y,
+        );
+        assert!(
+            dx.abs() < gpui::px(1.0) && dy.abs() < gpui::px(1.0),
+            "{window:?}: {picture:?} in {room:?}"
+        );
+        let fills_width = (picture.size.width - room.size.width).abs() < gpui::px(1.0);
+        let fills_height = (picture.size.height - room.size.height).abs() < gpui::px(1.0);
+        assert!(fills_width || fills_height, "{window:?}: {picture:?} in {room:?}");
+    }
+}
+
 #[test]
 fn the_far_end_s_share_takes_the_stage_with_the_people_beside_it_and_view_focuses_on_it() {
     let feed = VideoFeed::new();
@@ -3687,10 +3712,12 @@ fn the_far_end_s_share_takes_the_stage_with_the_people_beside_it_and_view_focuse
         .unwrap();
     assert!(drawn(stage, "video-tile-share"));
     assert!(feed.picture(Tile::REMOTE).is_none(), "no camera's frame");
+    share_named_on_its_picture(stage);
     // View's Focus on content: the share alone
     click(stage, "call-view");
     click(stage, "call-view-focus");
     assert!(drawn(stage, "call-share-focus"));
+    share_named_on_its_picture(stage);
     assert!(!drawn(stage, "call-share-strip") && !drawn(stage, "call-participant-self"));
     // the share ends: the call as it was
     rig.send(Event::CallRemoteShare {
@@ -4045,7 +4072,7 @@ fn open_record_menu(stage: &mut VisualTestContext, item: &'static str) {
         if drawn(stage, item) {
             return;
         }
-        stage.simulate_keystrokes("escape");
+        stage.simulate_keystrokes("escape escape");
         draw(stage);
     }
     panic!("Record and transcribe doesn't offer {item}");
