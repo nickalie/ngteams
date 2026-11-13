@@ -16,7 +16,7 @@ use ngteams::accounts::{Runner, Started};
 use ngteams::accounts_file::{PersonalAccount, PersonalPaths};
 use ngteams::app::{self, Launch, Launched};
 use ngteams::setup::Setup;
-use teams_auth::secrets::MemorySecretStore;
+use teams_auth::secrets::{MemorySecretStore, SecretStore};
 use teams_core::{CallFloor, EngineRequests};
 use teams_ctl::protocol::{Request, Response};
 use teams_ctl::{Client, ClientError, Timeouts};
@@ -82,12 +82,30 @@ pub fn launched_with_others(
     seed: impl Fn(&mut Store),
     others: &[(&str, &str)],
 ) -> (Launched, EngineRequests) {
+    launched_with_others_on(
+        cx,
+        dir,
+        socket,
+        asked,
+        |setup, account| started(setup, account, &seed, MemorySecretStore::new()),
+        others,
+    )
+}
+
+pub fn launched_with_others_on<S: SecretStore + 'static>(
+    cx: &TestAppContext,
+    dir: &Path,
+    socket: &Path,
+    asked: &Rc<Cell<u32>>,
+    start: impl Fn(&Setup, PersonalAccount) -> Started<S>,
+    others: &[(&str, &str)],
+) -> (Launched, EngineRequests) {
     let (setup, account) = signed_in_setup(dir);
-    let first = started(&setup, account, &seed);
+    let first = start(&setup, account);
     let requests = first.engine.handle.requests();
     let others = others
         .iter()
-        .map(|(upn, oid)| started(&setup, signed_in(&setup, upn, oid), &seed))
+        .map(|(upn, oid)| start(&setup, signed_in(&setup, upn, oid)))
         .collect();
     let asked = Rc::clone(asked);
     let launch = Launch {
@@ -116,19 +134,16 @@ pub fn launched_with_others(
 }
 
 /// `account`'s engine started over a store `seed` filled, without a push channel or calling.
-fn started(setup: &Setup, account: PersonalAccount, seed: &impl Fn(&mut Store)) -> Started<MemorySecretStore> {
+pub fn started<S: SecretStore + 'static>(
+    setup: &Setup,
+    account: PersonalAccount,
+    seed: &impl Fn(&mut Store),
+    secrets: S,
+) -> Started<S> {
     let store_file = setup.paths.store_file(&account).unwrap();
     fs::create_dir_all(store_file.parent().unwrap()).unwrap();
     seed(&mut Store::open(&store_file).unwrap());
-    let engine = ngteams::engine::start(
-        &setup.paths,
-        &account,
-        CallFloor::new(),
-        MemorySecretStore::new(),
-        false,
-        None,
-    )
-    .unwrap();
+    let engine = ngteams::engine::start(&setup.paths, &account, CallFloor::new(), secrets, false, None).unwrap();
     Started {
         account,
         engine,

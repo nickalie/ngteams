@@ -15,10 +15,11 @@ use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use ctl_support::{ME, UPN, WAIT, connect, launched_with_others, pump_until, pumped, quit, socket_in};
+use ctl_support::{ME, UPN, WAIT, connect, launched_with_others_on, pump_until, pumped, quit, socket_in};
 use gpui::{AppContext as _, Entity, TestAppContext};
 use ngteams::ctl::events::{self, outbox_row};
 use serde_json::json;
+use teams_auth::secrets::{MemorySecretStore, Secret, SecretError, SecretKey, SecretStore};
 use teams_core::{
     Availability, CLOCK_SKEW_MS, CallId, CallParticipant, CallStatus, CallView, End, EngineError, Event, IncomingCall,
     LobbyPerson, MessageChange, RemoteEnd, Source,
@@ -182,11 +183,22 @@ struct App {
 
 impl App {
     fn start() -> Self {
+        Self::with_secrets(MemorySecretStore::new)
+    }
+
+    fn with_secrets<S: SecretStore + 'static>(secrets: impl Fn() -> S) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let socket = socket_in(&dir);
         let cx = TestAppContext::single();
         let others = [(OTHER_UPN, "00000000-0000-4000-8000-0000000000fe")];
-        let (launched, _) = launched_with_others(&cx, dir.path(), &socket, &Rc::new(Cell::new(0)), seed, &others);
+        let (launched, _) = launched_with_others_on(
+            &cx,
+            dir.path(),
+            &socket,
+            &Rc::new(Cell::new(0)),
+            |setup, account| ctl_support::started(setup, account, &seed, secrets()),
+            &others,
+        );
         Self {
             cx,
             socket,
@@ -301,6 +313,7 @@ impl App {
     }
 
     /// The events `subscriber` reads up to the first `last` lets through (that one included), or to the stream's end.
+    #[track_caller]
     fn read_until(&self, subscriber: &Subscriber, mut last: impl FnMut(&EventLine) -> bool) -> Vec<EventLine> {
         let start = Instant::now();
         let mut read = Vec::new();
@@ -1173,9 +1186,26 @@ fn shown(lines: &[EventLine]) -> Vec<(Option<String>, UiState)> {
         .collect()
 }
 
+/// A credential service that is offline: sync-on-open fails without signing the fixture out.
+struct UnavailableSecrets;
+
+impl SecretStore for UnavailableSecrets {
+    fn put(&self, _: &SecretKey, _: &Secret) -> impl Future<Output = Result<(), SecretError>> + Send {
+        std::future::ready(Err(teams_auth::broker::BrokerError::Closed.into()))
+    }
+
+    fn get(&self, _: &SecretKey) -> impl Future<Output = Result<Option<Secret>, SecretError>> + Send {
+        std::future::ready(Err(teams_auth::broker::BrokerError::Closed.into()))
+    }
+
+    fn delete(&self, _: &SecretKey) -> impl Future<Output = Result<(), SecretError>> + Send {
+        std::future::ready(Err(teams_auth::broker::BrokerError::Closed.into()))
+    }
+}
+
 #[test]
 fn navigation_is_told_as_what_the_window_shows() {
-    let app = App::start();
+    let app = App::with_secrets(|| UnavailableSecrets);
     let ui = app.subscribe(None, kinds(&["ui"]), false).unwrap();
     let in_view =
         |view: View| move |line: &EventLine| matches!(&line.event, CtlEvent::Ui { state } if state.view == view);
