@@ -287,13 +287,13 @@ mod tests {
             told.send(list.clone()).unwrap();
         }));
         let opener = devices.clone();
-        let (opened, result) = mpsc::channel();
+        let (completed, result) = mpsc::channel();
         let worker = std::thread::spawn(move || {
             let result = opener
                 .microphone()
                 .and_then(|_| opener.speaker())
                 .and_then(|_| opener.camera());
-            opened.send(result.is_ok()).unwrap();
+            completed.send(result.is_ok()).unwrap();
         });
         assert!(matches!(
             result.recv_timeout(Duration::from_millis(50)),

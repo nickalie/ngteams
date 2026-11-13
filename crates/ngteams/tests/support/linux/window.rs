@@ -263,14 +263,7 @@ fn an_empty_window_opens_on_the_mock(sandbox: &Sandbox) -> SandboxResult {
     drop(writer);
     let mut running = Running::new(child)?;
     let mut trace = TraceReader::start(reader);
-    if !mode.is_empty() {
-        for milestone in ["startup-engine", "startup-window"] {
-            let timing = running
-                .line_where(STARTUP, |line| line.starts_with(milestone))
-                .map_err(|error| running.fail(&format!("no {milestone}: {error:?}")))?;
-            say(&format!("{mode} {timing}"));
-        }
-    }
+    startup_timings(&mut running, &mode)?;
     let rem = running
         .line_where(STARTUP, |line| line.starts_with("rem-size "))
         .map_err(|error| running.fail(&format!("no rem-size line: {error:?}")))?;
@@ -330,6 +323,19 @@ fn an_empty_window_opens_on_the_mock(sandbox: &Sandbox) -> SandboxResult {
     }
     if let Some(odd) = trace.seen.iter().find(|line| !line.is_object()) {
         return Err(format!("a trace line isn't JSON: {odd}").into());
+    }
+    Ok(())
+}
+
+fn startup_timings(running: &mut Running, mode: &str) -> SandboxResult {
+    if mode.is_empty() {
+        return Ok(());
+    }
+    for milestone in ["startup-engine", "startup-window"] {
+        let timing = running
+            .line_where(STARTUP, |line| line.starts_with(milestone))
+            .map_err(|error| running.fail(&format!("no {milestone}: {error:?}")))?;
+        say(&format!("{mode} {timing}"));
     }
     Ok(())
 }
@@ -789,11 +795,7 @@ fn child_window() -> SandboxResult {
                 post_when_asked(mock, cx);
                 let _ = launched.window.update(cx, |_, window, _| {
                     after_frames(window, READY_FRAMES, move |window, _| {
-                        if !mode.is_empty() {
-                            say(&format!("startup-window {} ms", started.elapsed().as_millis()));
-                        }
-                        say(&format!("rem-size {}", window.rem_size().as_f32()));
-                        say("ready");
+                        window_ready(window, &mode, started);
                     });
                 });
             }
@@ -810,6 +812,14 @@ fn child_window() -> SandboxResult {
         say("engine-released");
     }
     Ok(())
+}
+
+fn window_ready(window: &Window, mode: &str, started: Instant) {
+    if !mode.is_empty() {
+        say(&format!("startup-window {} ms", started.elapsed().as_millis()));
+    }
+    say(&format!("rem-size {}", window.rem_size().as_f32()));
+    say("ready");
 }
 
 /// Once the parent writes a chat's id to [`POST_TRIGGER`] in the sandbox dir, c posts [`C_SAYS`] there on the mock,

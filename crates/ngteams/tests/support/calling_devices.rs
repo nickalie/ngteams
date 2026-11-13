@@ -14,6 +14,7 @@ pub(super) struct SystemDevices {
 }
 
 impl SystemDevices {
+    #[expect(clippy::unnecessary_wraps, reason = "matches the native device backend's signature")]
     pub(super) fn connect(reach: Reach) -> Result<Self, DeviceError> {
         Ok(Self {
             files: FileDevices {
