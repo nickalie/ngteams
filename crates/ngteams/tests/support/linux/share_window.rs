@@ -276,8 +276,7 @@ fn one_to_one(user: &mut User<'_>, a: &mut AppUnderTest, b: &mut AppUnderTest) -
         }
     }
 
-    user.a_keys("ctrl+shift+h")?;
-    a.in_call(&["ended", "hung-up"])?;
+    hang_up(&mut user.a_input, a)?;
     b.in_call(&["ended", "remote"])?;
     Ok(())
 }
@@ -309,10 +308,8 @@ fn group_call(user: &mut User<'_>, a: &mut AppUnderTest, b: &mut AppUnderTest) -
         user.described(described, "recvonly")?;
     }
 
-    user.a_keys("ctrl+shift+h")?;
-    a.in_call(&["ended", "hung-up"])?;
-    user.b_keys("ctrl+shift+h")?;
-    b.in_call(&["ended", "hung-up"])?;
+    hang_up(&mut user.a_input, a)?;
+    hang_up(&mut user.b_input, b)?;
     Ok(())
 }
 
@@ -350,10 +347,6 @@ impl<'a> User<'a> {
 
     fn a_keys(&mut self, spec: &str) -> SandboxResult {
         key(&mut self.a_input, spec)
-    }
-
-    fn b_keys(&mut self, spec: &str) -> SandboxResult {
-        key(&mut self.b_input, spec)
     }
 
     /// a's screen as it is now.
@@ -660,6 +653,19 @@ fn red_blobs(image: &RgbImage, within: Rect) -> Vec<Rect> {
 fn key(input: &mut VirtualInput, spec: &str) -> SandboxResult {
     let (modifiers, code) = parse_key(spec, input.keymap()).ok_or_else(|| format!("no key {spec}"))?;
     input.key_with(&modifiers, code)
+}
+
+fn hang_up(input: &mut VirtualInput, app: &mut AppUnderTest) -> SandboxResult {
+    let before = app.trace.asked("hang-up");
+    key(input, "ctrl+shift+h")?;
+    app.in_call(&["ended", "hung-up"])?;
+    thread::sleep(Duration::from_secs(1));
+    let asked = app.trace.asked("hang-up") - before;
+    if asked != 1 {
+        return Err(format!("one hang-up key press produced {asked} hang-up actions").into());
+    }
+    say("hang-up: one key press produced one action after the call window closed");
+    Ok(())
 }
 
 fn u32_of(value: i32) -> u32 {

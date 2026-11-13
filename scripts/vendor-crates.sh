@@ -10,7 +10,8 @@
 #   gpui-pre-linux our own: the HTML another program puts on the Wayland clipboard beside its text, kept as the
 #                  item's metadata for the rich-text editor's paste (0001); immediate reads of local clipboard
 #                  writes, source generations, and validated private rich-copy recovery after a manager handoff (0002);
-#                  every form a clipboard offer holds read into one item: text, picture and uri-list files (0003)
+#                  every form a clipboard offer holds read into one item: text, picture and uri-list files (0003);
+#                  cancel key repeat when its focused window closes or its key is released without focus (0004)
 #   gpui-pre-windows our own: test-support `contains` on the DirectX atlas so atlas-inspection tests query
 #                  the real atlas (0001)
 #   libwebrtc      our own: `RtpTransceiver::set_direction`, which LiveKit's bindings leave out though `webrtc-sys`
