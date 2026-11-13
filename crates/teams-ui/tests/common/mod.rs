@@ -130,6 +130,8 @@ pub struct FakeCore {
     pub actions: Mutex<Vec<Action>>,
     /// The activity feed `activity` answers.
     pub activity: Mutex<teams_core::activity::ActivityFeed>,
+    /// The feed's read fails (the engine stopped) while set.
+    pub activity_unread: Mutex<bool>,
     pub write_answers: Mutex<std::collections::VecDeque<OutboxEntry>>,
     pub write_errors: Mutex<VecDeque<EngineError>>,
     pub outbox_answers: Mutex<std::collections::VecDeque<OutboxEntry>>,
@@ -738,6 +740,10 @@ impl Core for FakeCore {
     }
 
     fn activity(&self) -> Reply<teams_core::activity::ActivityFeed> {
+        if *locked(&self.activity_unread) {
+            locked(&self.asked).push("activity");
+            return Reply::ready(Err(EngineError::Stopped));
+        }
         let feed = locked(&self.activity).clone();
         self.answer("activity", || feed)
     }

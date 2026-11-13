@@ -196,6 +196,29 @@ fn a_meeting_item_carries_its_time_and_the_person_behind_the_calendar_app() {
 }
 
 #[test]
+fn a_meeting_item_names_the_event_its_details_link_opens() {
+    let mut properties = activity("msGraph", "privateMeetingUpdated", "28:app:made-up", "Lab B", "", 1);
+    // the id percent-encoded in the link, `+` kept as itself (made up)
+    properties["customTapAction"] =
+        json!("https://teams.microsoft.com/l/meeting/details/?eventId=AAMk%2BMadeUp%2Fid%3D%3D+x&tenantId=made-up");
+    let parsed = ActivityItem::from_message(&item(1, &properties, false)).expect("an item");
+    assert_eq!(parsed.meeting_event.as_deref(), Some("AAMk+MadeUp/id==+x"));
+
+    // another link, no id, an empty one or no link: none
+    for link in [
+        json!("https://teams.microsoft.com/l/message/19%3Amade-up/1?tenantId=made-up"),
+        json!("https://teams.microsoft.com/l/meeting/details/?tenantId=made-up"),
+        json!("https://teams.microsoft.com/l/meeting/details/?eventId="),
+        json!("https://teams.microsoft.com/l/meeting/details/"),
+        json!(""),
+    ] {
+        properties["customTapAction"] = link.clone();
+        let parsed = ActivityItem::from_message(&item(1, &properties, false)).expect("an item");
+        assert_eq!(parsed.meeting_event, None, "{link}");
+    }
+}
+
+#[test]
 fn a_message_with_no_activity_or_removed_is_no_item() {
     assert_eq!(
         ActivityItem::from_message(&message(1, 1, &json!({"isread": false}))),

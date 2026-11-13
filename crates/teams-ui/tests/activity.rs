@@ -15,6 +15,7 @@ use teams_core::activity::{ActivityFeed, ActivityFilter, FEED};
 use teams_store::{Conversation, ConversationKind, Member, Message};
 use teams_ui::ViewTrace;
 use teams_ui::activity_view::{ActivityView, CHAT_GONE, activity_time, meeting_span};
+use teams_ui::calendar_view::CalendarView;
 use teams_ui::settings::{Settings, SettingsModel};
 use teams_ui::shell::{ListPlace, Main, Shell, ShellParts};
 
@@ -320,8 +321,9 @@ fn chips_and_the_search_narrow_the_items() {
                 .collect()
         })
     };
+    // the newest (3000) was opened with the pane, so read
     click(cx, "activity-chip-unread");
-    assert_eq!(shown(cx), ["3000", "2000"]);
+    assert_eq!(shown(cx), ["2000"]);
     click(cx, "activity-chip-mentions");
     assert_eq!(shown(cx), ["1000"]);
     click(cx, "activity-chip-mentions");
@@ -359,7 +361,8 @@ fn the_keyboard_walks_the_items_and_opens_one() {
     let rig = rig();
     let (shell, cx) = shell_window(&rig);
     click(cx, "rail-activity");
-    cx.simulate_keystrokes("down down enter");
+    // the pane opened on its newest item (3000): the next one down is 2000
+    cx.simulate_keystrokes("down enter");
     assert!(writes(&rig).contains(&Action::ActivityRead {
         item: "2000".to_owned(),
         read: true,
@@ -844,4 +847,209 @@ fn a_missed_call_s_chat_and_call_read_it() {
         read: true
     }));
     assert!(read(&pane, "3000", cx));
+}
+
+/// A meeting item as the Calendar app's came (made up): its time, and its details link naming `event`.
+fn meeting_item(id: i64, event: &str, (start, end): (i64, i64), read: bool) -> Message {
+    let utc = |ms: i64| {
+        chrono::DateTime::from_timestamp_millis(ms)
+            .unwrap()
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string()
+    };
+    let custom = format!(
+        "<DateTimeRange><StartDateTime>{}</StartDateTime><EndDateTime>{}</EndDateTime></DateTimeRange>",
+        utc(start),
+        utc(end)
+    );
+    let activity = json!({
+        "activityType": "msGraph", "activitySubtype": "privateMeetingUpdated", "activityId": id,
+        "sourceThreadId": "", "sourceMessageId": 1, "sourceUserId": "28:app:made-up",
+        "sourceAppDisplayName": "Calendar", "messagePreview": "Synthetic meeting",
+        "customTapAction": format!("https://teams.microsoft.com/l/meeting/details/?eventId={}", event.replace('/', "%2F")),
+        "activityContext": {
+            "location": json!({ "Custom": custom }).to_string(),
+            "attributedToActorId": LAB_B,
+        },
+    });
+    Message {
+        properties: Some(json!({"activity": activity, "isread": read}).to_string()),
+        ..item(id, "msGraph", "privateMeetingUpdated", (LAB_B, "Lab B"), 1, read)
+    }
+}
+
+/// 2026-10-27 at `hour` local time, as the calendar fixtures' floating times are placed, ms.
+fn local_ms(hour: u32) -> i64 {
+    use chrono::TimeZone as _;
+    chrono::Local
+        .with_ymd_and_hms(2026, 10, 27, hour, 0, 0)
+        .single()
+        .unwrap()
+        .timestamp_millis()
+}
+
+fn calendar_event(id: &str, hour: u8, series: Option<&str>) -> teams_core::CalendarEvent {
+    let body = json!({
+        "objectId": id,
+        "subject": format!("Synthetic event {id}"),
+        "startTime": format!("2026-10-27T{hour:02}:00:00"),
+        "endTime": format!("2026-10-27T{:02}:00:00", hour + 1),
+        "isOnlineMeeting": true,
+        "seriesMasterId": series,
+        "myResponseType": "Accepted",
+        "showAs": "Busy",
+    });
+    teams_proto::EventRead::new(id)
+        .unwrap()
+        .read_answer(&serde_json::to_vec(&body).unwrap())
+        .unwrap()
+        .event
+}
+
+fn calendar(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> Entity<CalendarView> {
+    cx.update(|_, cx| shell.read(cx).calendar_view().clone())
+}
+
+fn carded(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> Option<String> {
+    let calendar = calendar(shell, cx);
+    cx.update(|_, cx| calendar.read(cx).card().map(|shown| shown.event.id.clone()))
+}
+
+#[test]
+fn opening_the_pane_from_the_rail_opens_its_newest_item_as_teams_does() {
+    let rig = rig();
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    // the newest item is the missed call from b: Teams opens its Calls page, the app its chat with the caller
+    click(cx, "rail-activity");
+    assert_eq!(cx.update(|_, cx| shell.read(cx).list_place()), ListPlace::Activity);
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).main().clone()),
+        Main::Chat(AB.to_owned())
+    );
+    assert!(read(&pane, "3000", cx), "opened, so read");
+    assert!(writes(&rig).contains(&Action::ActivityRead {
+        item: "3000".to_owned(),
+        read: true
+    }));
+    assert!(!read(&pane, "2000", cx), "only the newest");
+    // another item, a chip, then away and back from the rail: the chip lets go and the newest opens again
+    click(cx, "activity-item-2000");
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).main().clone()),
+        Main::Chat(GROUP.to_owned())
+    );
+    click(cx, "activity-chip-mentions");
+    click(cx, "rail-chats");
+    click(cx, "rail-activity");
+    assert_eq!(cx.update(|_, cx| pane.read(cx).filter()), ActivityFilter::All);
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).main().clone()),
+        Main::Chat(AB.to_owned())
+    );
+    // the rail's Activity while the pane is shown opens nothing again
+    click(cx, "activity-item-2000");
+    click(cx, "rail-activity");
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).main().clone()),
+        Main::Chat(GROUP.to_owned())
+    );
+}
+
+#[test]
+fn the_newest_item_opens_quietly_and_waits_for_the_feed() {
+    // a mention in a chat that is gone, then nothing: no toast, no chat opened, though it is read
+    let rig = rig();
+    let gone = [in_chat(
+        item(4000, "mentionInChat", "person", (LAB_B, "Lab B"), 700, false),
+        GONE,
+    )];
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(&gone, None, None);
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    click(cx, "rail-activity");
+    assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), Main::Nothing);
+    assert!(!drawn(cx, "toast"), "nothing said");
+    assert!(read(&pane, "4000", cx));
+
+    // the feed not read yet when the pane opens (its first read failed): its newest opens once it is
+    let unread = self::rig();
+    *unread.core.activity_unread.lock().unwrap() = true;
+    let (shell, cx) = shell_window(&unread);
+    click(cx, "rail-activity");
+    assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), Main::Nothing);
+    *unread.core.activity_unread.lock().unwrap() = false;
+    let pane = view(&shell, cx);
+    cx.update(|_, cx| pane.update(cx, ActivityView::reload));
+    cx.run_until_parked();
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).main().clone()),
+        Main::Chat(AB.to_owned())
+    );
+}
+
+#[test]
+fn a_meeting_item_opens_the_calendar_at_its_day_with_its_card() {
+    let rig = rig();
+    let messages = [
+        meeting_item(5000, "AAMk/made-up-occurrence", (local_ms(10), local_ms(11)), false),
+        item(1000, "mentionInChat", "person", (LAB_B, "Lab B"), 500, true),
+    ];
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(&messages, None, None);
+    rig.core.calendar.lock().unwrap().events = vec![
+        calendar_event("made-up-other", 10, None),
+        calendar_event("AAMk/made-up-occurrence", 10, None),
+    ];
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    // the newest is the meeting: opening the pane only selects it (the calendar would cover the pane)
+    click(cx, "rail-activity");
+    assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), Main::Nothing);
+    assert_eq!(cx.update(|_, cx| shell.read(cx).list_place()), ListPlace::Activity);
+    assert!(!read(&pane, "5000", cx));
+    // a click opens the calendar at the meeting's day with its card
+    click(cx, "activity-item-5000");
+    assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), Main::Calendar);
+    let calendar = calendar(&shell, cx);
+    assert_eq!(
+        cx.update(|_, cx| calendar.read(cx).anchor()),
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 27).unwrap()
+    );
+    assert_eq!(carded(&shell, cx).as_deref(), Some("AAMk/made-up-occurrence"));
+    assert!(read(&pane, "5000", cx));
+    assert!(cx.update(|_, cx| calendar.read(cx).revealing().is_none()));
+}
+
+#[test]
+fn a_meeting_is_found_by_its_time_or_its_series_else_its_day_is_shown() {
+    let rig = rig();
+    let messages = [
+        meeting_item(5000, "made-up-unknown-id", (local_ms(14), local_ms(15)), true),
+        meeting_item(6000, "made-up-series", (local_ms(9), local_ms(10)), true),
+        meeting_item(7000, "made-up-gone", (local_ms(16), local_ms(17)), true),
+    ];
+    *rig.core.activity.lock().unwrap() = ActivityFeed::new(&messages, None, None);
+    rig.core.calendar.lock().unwrap().events = vec![
+        calendar_event("made-up-at-two", 14, None),
+        calendar_event("made-up-occurrence", 12, Some("made-up-series")),
+    ];
+    let (shell, cx) = shell_window(&rig);
+    let pane = view(&shell, cx);
+    click(cx, "rail-activity");
+    let open = |id: &str, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| pane.update(cx, |pane, cx| pane.open(id, cx)));
+        cx.run_until_parked();
+    };
+    // an id the calendar doesn't know: the event at the meeting's time
+    open("5000", cx);
+    assert_eq!(carded(&shell, cx).as_deref(), Some("made-up-at-two"));
+    // the series' id: an occurrence of it that day
+    open("6000", cx);
+    assert_eq!(carded(&shell, cx).as_deref(), Some("made-up-occurrence"));
+    // nothing there: the day is shown, no card, nothing left waiting
+    open("7000", cx);
+    assert_eq!(carded(&shell, cx), None);
+    let calendar = calendar(&shell, cx);
+    assert!(cx.update(|_, cx| calendar.read(cx).revealing().is_none()));
+    assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), Main::Calendar);
 }

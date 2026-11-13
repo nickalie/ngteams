@@ -23,6 +23,8 @@ getrandom.workspace = true
 # a lab engine's warning that the region's middle-tier base was refused (never its value); capped at `debug` at compile
 # time like teams-trouter's
 log = { workspace = true, features = ["max_level_debug", "release_max_level_debug"] }
+# a meeting item's details link carries its event's id percent-encoded
+percent-encoding.workspace = true
 serde.workspace = true
 # a command's outbox payload, and a message post's answer (`OriginalArrivalTime`)
 serde_json.workspace = true

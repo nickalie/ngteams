@@ -48,10 +48,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Global,
-    InteractiveElement as _, IntoElement, KeyBinding, MouseDownEvent, MouseMoveEvent, ParentElement as _, Render,
-    ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity,
-    Window, actions, div, prelude::FluentBuilder as _, px, rgb,
+    AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable as _,
+    Global, InteractiveElement as _, IntoElement, KeyBinding, MouseDownEvent, MouseMoveEvent, ParentElement as _,
+    Render, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
+    WeakEntity, Window, actions, div, prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::avatar::Avatar;
 use gpui_component::button::{Button, ButtonVariants as _};
@@ -511,6 +511,11 @@ impl Shell {
                 this.show_toast(crate::activity_view::CHAT_GONE, cx);
             }
             ActivityViewEvent::Open(target) => this.open_message(target.clone(), window, cx),
+            ActivityViewEvent::OpenMeeting(reveal) => {
+                this.show_calendar(window, cx);
+                this.calendar
+                    .update(cx, |calendar, cx| calendar.reveal(reveal.clone(), cx));
+            }
             ActivityViewEvent::ChatWith(mri) => {
                 this.chat_with(mri, window, cx);
             }
@@ -523,24 +528,50 @@ impl Shell {
             ActivityViewEvent::NotificationSettings => {
                 this.open_settings_page(crate::settings_view::Page::Notifications, window, cx);
             }
+            ActivityViewEvent::OpenNewest(event) => this.open_newest(event, window, cx),
         });
         (view, events)
     }
 
     /// Opens the 1:1 chat with `mri`, when the list has one; whether it did.
     fn chat_with(&mut self, mri: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let found = self
-            .list
-            .read(cx)
-            .findable_rows()
-            .find(|row| row.partner.as_deref() == Some(mri) && row.id.ends_with("@unq.gbl.spaces"))
-            .map(|row| row.id.clone());
-        let Some(id) = found else {
+        let Some(id) = self.one_to_one(mri, cx) else {
             self.show_toast("There's no chat with them yet", cx);
             return false;
         };
         self.open_chat(id, window, cx);
         true
+    }
+
+    /// The 1:1 chat with `mri`, when the list has one.
+    fn one_to_one(&self, mri: &str, cx: &App) -> Option<String> {
+        self.list
+            .read(cx)
+            .findable_rows()
+            .find(|row| row.partner.as_deref() == Some(mri) && row.id.ends_with("@unq.gbl.spaces"))
+            .map(|row| row.id.clone())
+    }
+
+    /// Opens what the Activity pane's newest item opens, as the pane opened from the rail does: a chat or a channel
+    /// that is there, a missed call's chat with the caller when there is one; nothing said otherwise. The pane keeps
+    /// the keyboard.
+    fn open_newest(&mut self, event: &ActivityViewEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event {
+            ActivityViewEvent::Open(target)
+                if teams_proto::is_team_thread_id(&target.conversation)
+                    || self.list.read(cx).row(&target.conversation).is_some() =>
+            {
+                self.open_message(target.clone(), window, cx);
+            }
+            ActivityViewEvent::ChatWith(mri) => {
+                if let Some(id) = self.one_to_one(mri, cx) {
+                    self.open_chat(id, window, cx);
+                }
+            }
+            _ => {}
+        }
+        // the keyboard stays on the pane, where the rail's Activity put it
+        self.activity.0.read(cx).focus_handle(cx).focus(window, cx);
     }
 
     /// The Activity pane.
@@ -556,7 +587,8 @@ impl Shell {
     }
 
     /// The rail's Activity (and Ctrl+1): the Activity pane in the list pane's place, leaving the settings, the
-    /// calendar or the search's results for what they hid; the keyboard goes to the pane.
+    /// calendar or the search's results for what they hid; the keyboard goes to the pane. Coming on screen, the pane
+    /// opens its newest item ([`ActivityView::opened`]).
     pub fn show_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_chats_pane(window, cx);
         self.list_shown = true;
@@ -564,7 +596,11 @@ impl Shell {
             self.trace.record(&TraceLine::new("activity", "shown"));
             self.list_place = ListPlace::Activity;
         }
+        let was_shown = self.activity.0.read(cx).shown();
         self.sync_activity_shown(window, cx);
+        if !was_shown && self.activity.0.read(cx).shown() {
+            self.activity.0.update(cx, ActivityView::opened);
+        }
         cx.notify();
     }
 

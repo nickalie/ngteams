@@ -25,7 +25,12 @@ impl CalendarView {
         let cycle = clock::cycle(cx);
         if self.toggles.on(Toggle::ScrollDue) {
             self.toggles.set(Toggle::ScrollDue, false);
-            let hour = if span.contains(now.date()) {
+            let focus = self.focus_at.take().filter(|at| span.contains(at.date()));
+            let hour = if let Some(at) = focus {
+                f32::from(u8::try_from(at.hour()).unwrap_or(8))
+                    + f32::from(u8::try_from(at.minute()).unwrap_or(0)) / 60.0
+                    - 1.0
+            } else if span.contains(now.date()) {
                 f32::from(u8::try_from(now.hour()).unwrap_or(8)) - 1.5
             } else {
                 7.5

@@ -76,12 +76,14 @@ mod join_id;
 mod meet_now;
 mod pane;
 pub mod people;
+mod reveal;
 mod rsvp;
 
 pub use filter::{Hidden, Shows};
 pub use join_id::ID_INVALID;
 pub use meet_now::{MEET_NOW_FAILED, mail_link};
 pub use people::{ALREADY_ADDED, CALENDAR_COLORS, Person};
+pub use reveal::Reveal;
 pub use rsvp::RSVP_NOT_SENT;
 
 /// One hour's height in the time grid, px.
@@ -210,6 +212,10 @@ pub struct CalendarView {
     hidden: Hidden,
     /// The card of the event clicked.
     card: Option<Shown>,
+    /// A meeting shown from elsewhere whose card opens once the events name it (`reveal`).
+    reveal: Option<Reveal>,
+    /// Where the grid scrolls when it next scrolls (`Toggle::ScrollDue`), instead of the working day or now.
+    focus_at: Option<NaiveDateTime>,
     /// The card asks to confirm its Cancel meeting, Delete or Remove from calendar, and one is being sent.
     removal: Removal,
     /// The removal asked is of the whole series (its master's), not of the occurrence carded.
@@ -274,6 +280,8 @@ impl CalendarView {
             selection: None,
             hidden: Hidden::default(),
             card: None,
+            reveal: None,
+            focus_at: None,
             removal: Removal::None,
             removal_series: false,
             removal_note: None,
@@ -864,6 +872,7 @@ impl CalendarView {
         self.loaded.insert(span, Loaded::Stored(Rc::new(shown(events))));
         self.trace
             .record(&TraceLine::new("calendar", "stored").kind(self.mode.key()));
+        self.reveal_found(false, cx);
         cx.notify();
     }
 
@@ -903,6 +912,8 @@ impl CalendarView {
             let again = std::mem::take(&mut self.read_again);
             self.read(again, cx);
         }
+        let settled = self.reading.is_none();
+        self.reveal_found(settled, cx);
         cx.notify();
     }
 

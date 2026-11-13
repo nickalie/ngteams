@@ -39,8 +39,8 @@ use teams_core::Outbox;
 use teams_core::engine::{self, EngineHandle, EngineOptions, Parts, Push};
 use teams_ctl::cli::{self, Cli, Exit};
 use teams_mock::{
-    AB_CHAT, ABC_CHAT, CHAT_BASE, CSA_BASE, ChatServiceMock, LAB_A, LAB_B, LAB_C, NOTIFICATIONS, PRESENCE_BASE,
-    TrouterMock, USER_PROFILE_BASE,
+    AB_CHAT, ABC_CHAT, CHAT_BASE, CSA_BASE, ChatServiceMock, LAB_A, LAB_B, LAB_C, MIDDLE_TIER_BASE, NOTIFICATIONS,
+    PRESENCE_BASE, TrouterMock, USER_PROFILE_BASE,
 };
 use teams_proto::Mri;
 use teams_proto::{Author, Client, Credentials, HttpTransport};
@@ -702,11 +702,24 @@ fn ctl_filters_search_and_limit(qa: &mut Qa<'_>) -> SandboxResult {
 }
 
 /// A click on the rail's Activity shows the pane (the chats' place), the count clears, and the feed's seen horizon
-/// reaches the service.
+/// reaches the service; as Teams' pane does, it opens its newest item (the folded reaction: a's chat with b at the
+/// message), read here and on the service.
 fn rail_click_opens_the_pane(qa: &mut Qa<'_>) -> SandboxResult {
+    let newest = qa.ctl_items(&[])?.first().cloned().ok_or("no items")?;
+    let id = text(&newest, "id");
     qa.click(RAIL_ACTIVITY)?;
     let state = qa.state_until("the pane shown and the count gone", |state| {
         state["list"] == "Activity" && state["unseen"] == 0
+    })?;
+    qa.state_until("the newest item opened beside the pane, read", |state| {
+        state["chat"] == AB_CHAT
+            && state["revealed"] == newest["message"]
+            && items(state)
+                .iter()
+                .any(|item| text(item, "id") == id && item["read"] == true)
+    })?;
+    qa.server_until(&id, "the newest item's isread true on the service", |held| {
+        held["isread"] == true
     })?;
     ensure(state["pane_shown"] == true, || format!("the pane on screen: {state}"))?;
     let ui = qa.ctl_json(&["ui", "state"])?;
@@ -826,22 +839,17 @@ fn hover_and_tooltip(qa: &mut Qa<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// The first row's "More options": Mark as read, then Mark as unread; the pane and the mock follow.
+/// The first row's "More options": Mark as unread (the pane read it, opening it), then Mark as read; the pane and the
+/// mock follow.
 fn item_menu_marks(qa: &mut Qa<'_>) -> SandboxResult {
     let state = qa.plain_pane()?;
     let row = first(&state)?;
     let id = text(&row, "id");
-    ensure(row["read"] == false, || format!("the first row starts unread: {row}"))?;
+    ensure(row["read"] == true, || {
+        format!("the first row read, opened with the pane: {row}")
+    })?;
     qa.open_row_menu()?;
     qa.shot("item-menu-light")?;
-    qa.click_listed(ITEM_MENU_MARK)?;
-    qa.state_until("marked read", |state| {
-        items(state)
-            .iter()
-            .any(|item| text(item, "id") == id && item["read"] == true)
-    })?;
-    qa.server_until(&id, "isread true on the service", |held| held["isread"] == true)?;
-    qa.open_row_menu()?;
     qa.click_listed(ITEM_MENU_MARK)?;
     qa.state_until("marked unread", |state| {
         items(state)
@@ -849,6 +857,14 @@ fn item_menu_marks(qa: &mut Qa<'_>) -> SandboxResult {
             .any(|item| text(item, "id") == id && item["read"] == false)
     })?;
     qa.server_until(&id, "isread false on the service", |held| held["isread"] == false)?;
+    qa.open_row_menu()?;
+    qa.click_listed(ITEM_MENU_MARK)?;
+    qa.state_until("marked read", |state| {
+        items(state)
+            .iter()
+            .any(|item| text(item, "id") == id && item["read"] == true)
+    })?;
+    qa.server_until(&id, "isread true on the service", |held| held["isread"] == true)?;
     Ok(())
 }
 
@@ -961,7 +977,8 @@ fn missed_call_buttons(qa: &mut Qa<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// A meeting's update shows the meeting's time as its third line.
+/// A meeting's update shows the meeting's time as its third line; a click opens the calendar at its day with its card
+/// (the calendar doesn't know its event's id, so found at its time: the mock's Friday "Weekly sync").
 fn meeting_item(qa: &mut Qa<'_>) -> SandboxResult {
     let state = qa.search("weekly sync")?;
     let row = item_with(&state, "weekly sync")?;
@@ -974,6 +991,30 @@ fn meeting_item(qa: &mut Qa<'_>) -> SandboxResult {
     })?;
     qa.hover(AWAY)?;
     qa.shot("meeting-light")?;
+    open_the_meeting(qa, "meeting-opened-light")?;
+    // back to the pane for the flows after
+    qa.chord(&[Modifier::Ctrl], '1')?;
+    qa.state_until("the pane again", |state| state["pane_shown"] == true)?;
+    Ok(())
+}
+
+/// Clicks the meeting row (searched for), sees the calendar at 10 Oct 2025 with the Weekly sync's card, and shoots it.
+fn open_the_meeting(qa: &mut Qa<'_>, shot: &str) -> SandboxResult {
+    let id = text(&item_with(&qa.search("weekly sync")?, "weekly sync")?, "id");
+    qa.click_listed(ROW)?;
+    qa.box_open = false;
+    let state = qa.state_until("the calendar at the meeting's day with its card", |state| {
+        state["main"] == "Calendar" && state["calendar_day"] == "2025-10-10" && state["calendar_card"] == "Weekly sync"
+    })?;
+    ensure(
+        items(&state)
+            .iter()
+            .all(|item| text(item, "id") != id || item["read"] == true),
+        || format!("the meeting read: {state}"),
+    )?;
+    thread::sleep(SETTLE);
+    qa.shot(shot)?;
+    qa.key(keys::ESC)?;
     Ok(())
 }
 
@@ -1185,10 +1226,19 @@ fn gone_chat_item(qa: &mut Qa<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// Teams Dark: the pane, a row hovered, its menu and the header's.
+/// Teams Dark: the pane opened anew on its newest item, a row hovered, its menu and the header's, and the meeting
+/// opened.
 fn dark_theme(qa: &mut Qa<'_>) -> SandboxResult {
     qa.ask("theme dark")?;
-    qa.plain_pane()?;
+    // away and back: the pane opens its newest item again
+    qa.chord(&[Modifier::Ctrl], '2')?;
+    qa.state_until("Ctrl+2: the chats", |state| state["list"] == "Chats")?;
+    let state = qa.plain_pane()?;
+    let newest = first(&state)?;
+    qa.state_until("the newest opened beside the pane", |state| {
+        state["chat"] == newest["thread"] && state["revealed"] == newest["message"]
+    })?;
+    qa.hover(AWAY)?;
     qa.shot("pane-dark")?;
     qa.hover_listed(ROW)?;
     qa.shot("hover-dark")?;
@@ -1200,8 +1250,10 @@ fn dark_theme(qa: &mut Qa<'_>) -> SandboxResult {
     qa.state_until("the header menu open", |state| state["header_menu"] == true)?;
     qa.shot("header-menu-dark")?;
     qa.key(keys::ESC)?;
+    let outcome = open_the_meeting(qa, "meeting-opened-dark");
+    qa.chord(&[Modifier::Ctrl], '1')?;
     qa.ask("theme light")?;
-    Ok(())
+    outcome
 }
 
 /// Teams Dark: the gone chat's toast, a group chat's "Chat with …" third line and the read missed call.
@@ -1333,7 +1385,9 @@ impl MockLab {
                 http()?
                     .with_presence(PRESENCE_BASE)?
                     .with_csa(CSA_BASE)?
-                    .with_user_profile(USER_PROFILE_BASE)?,
+                    .with_user_profile(USER_PROFILE_BASE)?
+                    // the calendar a meeting item opens
+                    .with_middle_tier(MIDDLE_TIER_BASE)?,
             )),
             outbox: Outbox::new(transport, author),
             push: Some(Push::new(trouter_client)),
@@ -1370,15 +1424,17 @@ fn older(mut activity: Value, days: i64) -> Value {
     activity
 }
 
-/// A meeting c updated (the Calendar app's item, attributed to c), on 10 Oct 2025 14:30–15:00 UTC.
+/// A meeting c updated (the Calendar app's item, attributed to c), on Friday 10 Oct 2025 15:30–16:00 UTC (the mock
+/// calendar's Weekly sync), its details link naming an event id the calendar doesn't have.
 fn meeting_update() -> Value {
     json!({
         "activityType": "msGraph", "activitySubtype": "privateMeetingUpdated", "activityId": 8,
         "sourceThreadId": "", "sourceMessageId": 1, "sourceUserId": "28:app:made-up-calendar",
         "sourceUserImDisplayName": "Lab C", "messagePreview": "Made-up weekly sync",
+        "customTapAction": "https://teams.microsoft.com/l/meeting/details/?eventId=AAMkMadeUpSeriesMaster%3D",
         "activityContext": {
             "attributedToActorId": LAB_C,
-            "location": "{\"Custom\":\"<DateTimeRange><StartDateTime>2025-10-10T14:30:00Z</StartDateTime><EndDateTime>2025-10-10T15:00:00Z</EndDateTime></DateTimeRange>\"}",
+            "location": "{\"Custom\":\"<DateTimeRange><StartDateTime>2025-10-10T15:30:00Z</StartDateTime><EndDateTime>2025-10-10T16:00:00Z</EndDateTime></DateTimeRange>\"}",
         },
     })
 }
@@ -1654,6 +1710,7 @@ fn state_of(shell: &Entity<Shell>, cx: &App) -> Value {
         .collect();
     let (header_menu, item_menu) = view.menus();
     let chat = shell.chat().map(|chat| chat.read(cx));
+    let calendar = shell.calendar_view().read(cx);
     json!({
         "list": format!("{:?}", shell.list_place()),
         "pane_shown": view.shown(),
@@ -1667,6 +1724,8 @@ fn state_of(shell: &Entity<Shell>, cx: &App) -> Value {
         "revealed": chat.and_then(teams_ui::chat_view::ChatView::selected),
         "settings_page": format!("{:?}", shell.settings_view().read(cx).page()),
         "toast": shell.toast().map(ToString::to_string),
+        "calendar_day": calendar.anchor().to_string(),
+        "calendar_card": calendar.card().map(|shown| shown.event.subject.clone()),
     })
 }
 

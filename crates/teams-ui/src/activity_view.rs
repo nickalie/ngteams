@@ -15,7 +15,13 @@
 //!   settings (the settings' Notifications page). A missed call
 //!   offers Call and Chat with the caller; either marks it read, as opening it does.
 //! - **Opening an item** (a click, or Enter on the item the keyboard is on) marks it read and opens its conversation
-//!   at its message ([`ActivityViewEvent::Open`]; the shell says so in a toast when the chat is gone).
+//!   at its message ([`ActivityViewEvent::Open`]; the shell says so in a toast when the chat is gone). A meeting item,
+//!   which Teams opens at the meeting's details, opens the calendar at the meeting's day with its card open
+//!   ([`ActivityViewEvent::OpenMeeting`]).
+//! - **Opened from the rail** ([`ActivityView::opened`]): as Teams' pane does each time it is opened, the chip lets go
+//!   and the newest item is selected and opened as a click opens it (marked read, its place shown beside the pane);
+//!   nothing is said when it can't be. Teams opens a missed call's Calls page, which the app doesn't have: its chat
+//!   with the caller opens instead. A meeting's is only selected, since the calendar would cover the pane.
 //! - **Seen**: while the pane is shown, the feed's horizon follows its newest item ([`Action::ActivitySeen`]), which
 //!   clears the rail's count ([`ActivityView::unseen`]), which never counts an item read here (on arrival in the chat
 //!   on screen, say) while its change syncs back.
@@ -27,8 +33,8 @@
 //!   synced, the horizon), shown or not, so the rail's count stays current.
 //! - **Read-only** ([`Core::read_only`]): nothing is marked, removed or seen; items still open.
 //!
-//! Traced: `activity opened` (the item's kind), `activity filter` (the chip's key), `activity marked` (read or
-//! unread), `activity removed`, `activity all-read`.
+//! Traced: `activity opened` (the item's kind), `activity newest` (the kind of the newest item the pane opened with),
+//! `activity filter` (the chip's key), `activity marked` (read or unread), `activity removed`, `activity all-read`.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -105,6 +111,8 @@ pub fn init(cx: &mut App) {
 pub enum ActivityViewEvent {
     /// Open a conversation at a message.
     Open(HitTarget),
+    /// Show a meeting in the calendar (a meeting item's: Teams opens the meeting's details).
+    OpenMeeting(crate::calendar_view::Reveal),
     /// Open the 1:1 chat with someone (a missed call's Chat).
     ChatWith(String),
     /// Call someone back (a missed call's Call).
@@ -113,6 +121,8 @@ pub enum ActivityViewEvent {
     Toast(&'static str),
     /// Show the notification settings (an item's "Notification settings").
     NotificationSettings,
+    /// What the newest item opens, as the pane opened from the rail opens it: quietly (nothing said when it can't).
+    OpenNewest(Box<ActivityViewEvent>),
 }
 
 /// The optimistic state a write owns; horizon operations are independent of item ids.
@@ -126,7 +136,7 @@ enum Operation {
 /// The pane (see the module docs).
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "loading, search, menu, pane visibility and window activation are separate states"
+    reason = "loading, search, menu, visibility, activation and the newest item's opening are separate states"
 )]
 pub struct ActivityView {
     core: Arc<dyn Core>,
@@ -159,6 +169,10 @@ pub struct ActivityView {
     /// The header's "More options" menu, while open.
     header_menu: bool,
     shown: bool,
+    /// The pane was opened from the rail before the feed was read: its newest item opens once it is.
+    open_newest: bool,
+    /// The feed was read at least once.
+    fed: bool,
     /// The conversation the main view shows.
     on_screen: Option<String>,
     /// Only the selected account in an active window can mark activity seen or read automatically.
@@ -238,6 +252,8 @@ impl ActivityView {
             item_menu: None,
             header_menu: false,
             shown: false,
+            open_newest: false,
+            fed: false,
             on_screen: None,
             active: window.is_window_active(),
             considered: HashSet::new(),
@@ -345,9 +361,13 @@ impl ActivityView {
                 .retain(|id, (_, version)| feed.item(id).is_some_and(|item| item.version == *version));
             self.removed.retain(|id| feed.item(id).is_some());
             self.feed = feed;
+            self.fed = true;
             self.ask_pictures(cx);
             if self.shown {
                 self.mark_seen(cx);
+            }
+            if self.open_newest && self.shown {
+                self.open_newest(cx);
             }
             self.read_on_screen(cx);
         }
@@ -365,6 +385,7 @@ impl ActivityView {
         self.shown = shown;
         self.item_menu = None;
         self.header_menu = false;
+        self.open_newest &= shown;
         if shown {
             self.attempted_seen = None;
             self.mark_seen(cx);
@@ -668,15 +689,36 @@ impl ActivityView {
         };
         self.trace
             .record(&TraceLine::new("activity", "opened").kind(kind_key(&item.kind)));
-        let event = target(&item)
-            .map(ActivityViewEvent::Open)
-            .or_else(|| match (&item.kind, &item.actor) {
-                (ActivityKind::MissedCall | ActivityKind::Voicemail, Some(actor)) => {
-                    Some(ActivityViewEvent::ChatWith(actor.clone()))
-                }
-                _ => None,
-            });
+        self.act_on(&item.id, opens(&item), cx);
+    }
+
+    /// The pane opened from the rail (or Ctrl+1), as Teams' opens: the chip lets go and the newest item is opened
+    /// (once the feed is read), its place shown beside the pane. A meeting's is only selected: the calendar would
+    /// cover the pane.
+    pub fn opened(&mut self, cx: &mut Context<Self>) {
+        self.filter = ActivityFilter::All;
+        self.open_newest = true;
+        if self.fed {
+            self.open_newest(cx);
+        }
+        cx.notify();
+    }
+
+    fn open_newest(&mut self, cx: &mut Context<Self>) {
+        self.open_newest = false;
+        let Some(item) = self.shown_items(cx).first().map(|item| (*item).clone()) else {
+            return;
+        };
+        if matches!(item.kind, ActivityKind::Meeting(_)) {
+            self.selected = Some(item.id);
+            self.scroll.scroll_to_item(0);
+            return;
+        }
+        self.trace
+            .record(&TraceLine::new("activity", "newest").kind(kind_key(&item.kind)));
+        let event = opens(&item).map(|event| ActivityViewEvent::OpenNewest(Box::new(event)));
         self.act_on(&item.id, event, cx);
+        self.scroll.scroll_to_item(0);
     }
 
     /// Acts on an item (opens it, or a missed call's Call or Chat): selected and marked read, then `event` told.
@@ -821,6 +863,31 @@ fn target(item: &ActivityItem) -> Option<HitTarget> {
         arrival_time,
         thread: item.reply_chain.clone(),
     })
+}
+
+/// What opening `item` asks the shell for: a meeting's event in the calendar, else its message, else a missed call's or
+/// a voicemail's chat with the caller.
+fn opens(item: &ActivityItem) -> Option<ActivityViewEvent> {
+    meeting(item)
+        .or_else(|| target(item).map(ActivityViewEvent::Open))
+        .or_else(|| match (&item.kind, &item.actor) {
+            (ActivityKind::MissedCall | ActivityKind::Voicemail, Some(actor)) => {
+                Some(ActivityViewEvent::ChatWith(actor.clone()))
+            }
+            _ => None,
+        })
+}
+
+/// What a meeting item opens: its event in the calendar, at its day; `None` for another item, or a meeting's that
+/// names neither its event nor its time.
+fn meeting(item: &ActivityItem) -> Option<ActivityViewEvent> {
+    if !matches!(item.kind, ActivityKind::Meeting(_)) || (item.meeting_event.is_none() && item.meeting_time.is_none()) {
+        return None;
+    }
+    Some(ActivityViewEvent::OpenMeeting(crate::calendar_view::Reveal {
+        event: item.meeting_event.clone(),
+        time: item.meeting_time,
+    }))
 }
 
 /// A kind's key, for the trace.

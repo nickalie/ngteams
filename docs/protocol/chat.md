@@ -1031,8 +1031,10 @@ in browser Teams (team-manage, 2026-11-12), and in a lab store's synced feed.
   names the person behind it in `activityContext.attributedToActorId` (and `attributedToActor`, JSON text with their
   name). Its `activityContext.location` is JSON text whose `Custom` holds
   `<DateTimeRange><StartDateTime>…Z</StartDateTime><EndDateTime>…Z</EndDateTime></DateTimeRange>`: the meeting's time,
-  which the pane's third line shows ("Nov 11, 4:30 PM - 5:00 PM"). Its `customTapAction` is the meeting's details link
-  (`l/meeting/details/?eventId=…`).
+  which the pane's third line shows ("Nov 11, 4:30 PM - 5:00 PM"). Its `activity.customTapAction` is the meeting's
+  details link (`l/meeting/details/?eventId=…`, the id percent-encoded; every item carries a `customTapAction`, a
+  message's being its `l/message/…` link). Which id form `eventId` takes wasn't captured: the native client matches it
+  against the calendar's `objectId`, then the meeting's time, then an occurrence's `seriesMasterId`.
 - **App items** carry `activityContext.teamsAppId`. The pane draws them with the app's own icon and no kind badge
   (Workflows' tile; Teams' own for "A team owner added you to …"); the app definitions Teams reads
   (`aggregatedEntitlements`, `batchedDefinitions`) carry `largeImageUrl`, a picture on `res.cdn.office.net`. The native
@@ -1044,7 +1046,13 @@ in browser Teams (team-manage, 2026-11-12), and in a lab store's synced feed.
   "toastSettings": {…the same…}}}`, Workflows' types being `messageNotify` and `customNotification` (the app
   manifest's `activities.activityTypes`). The run held it, so its answer and what the pane does after it are not
   known; no dialog asks first.
-- **Opening the pane** in the web client also opened its newest item (a missed call: the Calls page).
+- **Opening the pane opens its newest item** (team-manage, 2026-11-13, account a): each time the rail's Activity is
+  chosen from elsewhere (Chat, say), the chip lets go and the newest item is selected (`aria-selected`) and opened
+  beside the pane, whichever item was chosen last time; a chip chosen opens nothing. The newest was a missed call: the
+  Calls page opened with its History filtered to Missed, which put `48:calllogs`'s `consumptionhorizon` (the call
+  log's own horizon), besides the feed's. A missed call's menu offered "Call back", "Chat" and "Remove", no read
+  mark. Whether this open marks an unread newest item read wasn't seen (the newest was read, and a missed call can't
+  be marked unread).
 - **A chat on screen**: an item whose chat was open when it arrived was marked read at once (see "Seen beside it");
   the native client marks unread items on entry and new arrivals while that conversation is shown in the selected
   account's active window. A manual unread mark survives reloads until the conversation is opened again.

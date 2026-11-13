@@ -126,6 +126,8 @@ pub struct ActivityItem {
     pub custom_title: Option<String>,
     /// A meeting item's start and end, ms (`activityContext.location`'s `DateTimeRange`).
     pub meeting_time: Option<(i64, i64)>,
+    /// The calendar event a meeting item opens (its `customTapAction`'s `l/meeting/details/?eventId=`), decoded.
+    pub meeting_event: Option<String>,
     /// When it happened (`activityTimestamp`), else when it arrived, ms.
     pub at_ms: i64,
     /// The feed message's version: moved by every change of its read state.
@@ -188,6 +190,7 @@ impl ActivityItem {
             topic: text("sourceThreadTopic"),
             custom_title: context.and_then(custom_title),
             meeting_time: context.and_then(meeting_time),
+            meeting_event: text("customTapAction").as_deref().and_then(meeting_event),
             at_ms,
             version: message.version,
             read_states: vec![(read_flag(properties.get("isread")), message.version)],
@@ -528,6 +531,18 @@ fn meeting_time(context: &Map<String, Value>) -> Option<(i64, i64)> {
     };
     let (start, end) = (between("StartDateTime")?, between("EndDateTime")?);
     (start <= end).then_some((start, end))
+}
+
+/// The event a meeting's details link names: `…/l/meeting/details/?eventId=<id>&…`, the id percent-decoded.
+fn meeting_event(link: &str) -> Option<String> {
+    let (path, query) = link.split_once('?')?;
+    if !path.trim_end_matches('/').ends_with("/l/meeting/details") {
+        return None;
+    }
+    let id = query.split('&').find_map(|pair| pair.strip_prefix("eventId="))?;
+    let id = percent_encoding::percent_decode_str(id).decode_utf8().ok()?;
+    let id = id.trim();
+    (!id.is_empty()).then(|| id.to_owned())
 }
 
 /// An app item's own title: `templateParameters` (a JSON object or its text) `customMessage`.

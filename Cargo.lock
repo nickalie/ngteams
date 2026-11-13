@@ -11188,6 +11188,7 @@ dependencies = [
  "getrandom 0.4.3",
  "iana-time-zone",
  "log",
+ "percent-encoding",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
