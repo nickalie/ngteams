@@ -596,8 +596,9 @@ from 15 minutes before its start to 15 minutes after its end (Teams' window live
 captured). A group chat's plain group call rings its members instead ([The invitation](#the-invitation)). Join of a
 group chat's meeting goes where its start says it runs (`<conversationUrl>`, `teams_proto::running_call`): nobody was
 rung, so no invitation named the conversation, and the join is the one a callee makes after its ring ended
-([Joining a running call](#joining-a-running-call)). The chat's header shows Join while the start is the chat's
-newest call event.
+([Joining a running call](#joining-a-running-call)). The chat's header shows Join while the chat's stored call
+events hold a start no newer end ends, read from the store (at start, and after each start or end), since a catch-up
+brings a page's messages in no set order.
 
 ## The lobby
 

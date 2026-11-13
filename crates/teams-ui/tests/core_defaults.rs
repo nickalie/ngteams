@@ -263,6 +263,7 @@ fn kept_things_are_none_and_keeping_them_keeps_nothing() {
         ("call_transcripts", empty(core.call_transcripts(CHAT.into()))),
         ("transcript_lines", empty(core.transcript_lines(1))),
         ("group_chat_with", none(core.group_chat_with(vec![ME.into()]))),
+        ("call_runs", now(core.call_runs(CHAT.into())).ok() == Some(false)),
         ("call_health", none(core.call_health(call))),
         ("call_meeting_options", none(core.call_meeting_options(call))),
     ]);

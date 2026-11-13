@@ -908,7 +908,9 @@ async fn new_message_finds_the_stored_group_chat_of_exactly_its_people() {
     let found = b.handle.group_chat_with(people(&[LAB_C, LAB_A, LAB_B])).await.unwrap();
     let pair = b.handle.group_chat_with(people(&[LAB_A, LAB_B])).await.unwrap();
     let nobody = b.handle.group_chat_with(Vec::new()).await.unwrap();
+    let call_runs = b.handle.call_runs(ABC_CHAT).await.unwrap();
     b.shutdown();
+    assert!(!call_runs, "no call started in it");
     assert_eq!(found.as_deref(), Some(ABC_CHAT));
     assert_eq!(pair, None, "the a-b chat is a 1:1 chat");
     assert_eq!(nobody, None);

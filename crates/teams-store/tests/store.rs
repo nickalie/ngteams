@@ -889,6 +889,24 @@ fn a_reaction_on_an_unknown_message_is_an_error() {
 // --- pages and unread counts ---
 
 #[test]
+fn a_chat_s_call_events_come_newest_first_past_its_other_messages() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut store = with_chat(&dir).expect("a store with the chat");
+    for n in 1..=6 {
+        let id = (n * 1000).to_string();
+        let mut stored = message(&id, n * 1000, &id, n * 1000, PEER);
+        if n % 3 == 1 {
+            stored.message_type = "Event/Call".to_owned();
+        }
+        store.upsert_message(&stored, None).expect("insert");
+    }
+    let ids = |events: Vec<Message>| events.into_iter().map(|m| m.id).collect::<Vec<_>>();
+    assert_eq!(ids(store.call_events(CHAT, 10).expect("events")), ["4000", "1000"]);
+    assert_eq!(ids(store.call_events(CHAT, 1).expect("events")), ["4000"]);
+    assert_eq!(ids(store.call_events(GROUP, 10).expect("events")), Vec::<String>::new());
+}
+
+#[test]
 fn messages_come_in_pages_newest_first() {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut store = with_chat(&dir).expect("a store with the chat");

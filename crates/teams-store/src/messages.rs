@@ -518,6 +518,22 @@ impl Store {
         Ok(MessagePage { messages, next })
     }
 
+    /// Up to `limit` of a conversation's call events (`Event/Call`), the newest first: a call's starts and ends however
+    /// many other messages came between them.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlite`] when the read fails.
+    pub fn call_events(&self, conversation_id: &str, limit: usize) -> Result<Vec<Message>, StoreError> {
+        let sql = format!(
+            "SELECT {MESSAGE_COLUMNS} FROM messages WHERE conversation_id = ?1 AND message_type = 'Event/Call'
+             ORDER BY arrival_time DESC, id DESC LIMIT ?2"
+        );
+        let mut statement = self.conn.prepare_cached(&sql)?;
+        let rows = statement.query_map(params![conversation_id, sql_limit(limit)], message_from_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     /// How many messages of a conversation `me` hasn't read: messages from others that [count](counts_unread), not
     /// deleted, that arrived after `me`'s read horizon (all of them without one) and the account's mark-all-read one
     /// ([`Store::app_read_horizon`]). None when the newest message that counts is `me`'s own, as Teams calls such a

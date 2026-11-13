@@ -897,6 +897,21 @@ impl Core for FakeCore {
         })
     }
 
+    /// Whether the chat's stored call events say its call runs, as the engine reads them.
+    fn call_runs(&self, chat: String) -> Reply<bool> {
+        self.answer("call_runs", || {
+            let messages = locked(&self.messages);
+            let page = page_of(messages.get(&chat).map_or(&[][..], Vec::as_slice), None, usize::MAX);
+            teams_proto::is_group_chat_id(&chat)
+                && teams_proto::running_call(
+                    page.messages
+                        .iter()
+                        .map(|message| (message.message_type.as_str(), message.content.as_str())),
+                )
+                .is_some()
+        })
+    }
+
     fn unread_count(&self, conversation: String) -> Reply<u64> {
         self.answer("unread_count", || {
             locked(&self.unread).get(&conversation).copied().unwrap_or(0)

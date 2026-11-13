@@ -13,15 +13,17 @@
 //! started notification" switch is off ([`Settings::meeting_started`]), notifications are off, the account's status
 //! is Do not disturb, a call's Mute notifications holds them back, the channel is muted, or the account is in that
 //! call already; nor where its Join can't go (a build that shows no calls, the read-only mode). Each call shows one
-//! once.
+//! once, and none for a call whose end came first (a catch-up brings a page's messages in no set order).
 //!
 //! **Its actions.** Join goes in as the chat's or the calendar's Join does ([`MeetingJoin`]); its body opens the chat
-//! or the channel. It closes once activated, once the chat's call ends (its `Event/Call` end), and once the account is
-//! in that call.
+//! or the channel. It closes once activated, once the chat's call ends (its `Event/Call` end, however late it came),
+//! and once the account is in that call; one whose call ended while it was being decided or shown is withdrawn.
 //!
-//! **A group chat's running call.** Every start and end of a group chat's call it sees tells [`Calls`] that the chat's
-//! call runs or ran ([`Calls::posted_running`]): the chat's header offers Join while it runs, as Teams' does, and the
-//! engine joins it where its start says it runs (`teams_proto::running_call`).
+//! **A group chat's running call.** Whether a group chat's call runs is read from its stored call events, which the
+//! engine joins by (`Core::call_runs`, `teams_proto::running_call`), not from the order the events came in: at start
+//! for every stored group chat, and again after each start or end that isn't older history. [`Calls`] is told
+//! ([`Calls::posted_running`]) and the chat's header offers Join while it runs, as Teams' does. Only a read after an
+//! end clears it: a start whose read says otherwise leaves what an invitation named.
 //!
 //! What it does is traced (`meeting-notification shown`/`closed`/`joined`/`opened`, with the chat and the kind), never
 //! a name or a title.
@@ -34,7 +36,7 @@ use chrono::NaiveDateTime;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription};
 use teams_core::CalendarEvent;
 use teams_core::Source;
-use teams_proto::chat::{ChatEvent, chat_event};
+use teams_proto::chat::{ChatEvent, chat_event, meeting_times};
 use teams_proto::{MeetingInfo, is_group_chat_id, is_meeting_chat_id, is_team_thread_id};
 use teams_store::Message;
 
@@ -196,6 +198,21 @@ struct Banner {
     join: MeetingJoin,
 }
 
+/// The start a banner is being decided for: its chat, its call, and how many of the chat's ends had come then.
+struct Pending {
+    conversation: String,
+    call: Option<String>,
+    ends: u64,
+}
+
+/// A read of whether a group chat's call runs, asked for: the newest one asked is the one applied.
+#[derive(Default)]
+struct RunningRead {
+    asked: u64,
+    /// Whether a read since the last one applied followed an end, so may clear the running call.
+    may_clear: bool,
+}
+
 /// The started meetings' banners (see the module docs). A GPUI entity the desktop holds, one per account.
 pub struct MeetingAlert {
     core: Arc<dyn Core>,
@@ -207,6 +224,12 @@ pub struct MeetingAlert {
     shown: HashMap<u32, ShownBanner>,
     /// The starts a banner was decided for (their chat and message), so each shows once.
     seen: HashSet<(String, String)>,
+    /// How many call ends each chat had.
+    ends: HashMap<String, u64>,
+    /// The calls that ended, by their chat and call id.
+    ended: HashSet<(String, String)>,
+    /// The reads of the group chats' running calls.
+    running: HashMap<String, RunningRead>,
     _feed: Subscription,
     _calls: Subscription,
 }
@@ -240,7 +263,7 @@ impl MeetingAlert {
             }
         });
         let calls = cx.observe(&models.calls, |this: &mut Self, _, cx| this.close_joined(cx));
-        Self {
+        let this = Self {
             core,
             settings,
             calls: models.calls.clone(),
@@ -248,26 +271,19 @@ impl MeetingAlert {
             server: None,
             shown: HashMap::new(),
             seen: HashSet::new(),
+            ends: HashMap::new(),
+            ended: HashSet::new(),
+            running: HashMap::new(),
             _feed: feed,
             _calls: calls,
-        }
+        };
+        this.read_all_running(cx);
+        this
     }
 
     /// From now on, banners go to `server`.
     pub fn set_server(&mut self, server: Arc<dyn NotificationServer>) {
         self.server = Some(server);
-    }
-
-    /// The banners shown now, by the server's id, with their chats.
-    #[must_use]
-    pub fn shown(&self) -> Vec<(u32, String)> {
-        let mut shown: Vec<(u32, String)> = self
-            .shown
-            .iter()
-            .map(|(id, shown)| (*id, shown.conversation.clone()))
-            .collect();
-        shown.sort_unstable();
-        shown
     }
 
     /// Notification `id` had `action` invoked: whether it is one of this alert's (its Join joins, its body opens the
@@ -299,25 +315,95 @@ impl MeetingAlert {
         let Some(news) = call_news(conversation, message) else {
             return;
         };
-        if !fresh(source, message.arrival_time, now_ms()) {
+        if source == Source::History {
             return;
         }
+        let call = meeting_times(&message.content).and_then(|times| times.call_id);
+        let ended = news == CallNews::Ended;
         match news {
             CallNews::Ended => {
-                self.calls
-                    .update(cx, |calls, cx| calls.posted_running(conversation, false, cx));
+                *self.ends.entry(conversation.to_owned()).or_default() += 1;
+                if let Some(call) = call {
+                    self.ended.insert((conversation.to_owned(), call));
+                }
                 self.close_in(conversation, cx);
             }
             CallNews::Started { place, starter } => {
-                self.calls
-                    .update(cx, |calls, cx| calls.posted_running(conversation, true, cx));
-                let due = may_show(self.core.me(), place, starter.as_deref())
+                let pending = Pending {
+                    ends: self.ends_in(conversation),
+                    conversation: conversation.to_owned(),
+                    call,
+                };
+                let due = fresh(source, message.arrival_time, now_ms())
+                    && may_show(self.core.me(), place, starter.as_deref())
+                    && !self.ended_since(&pending)
                     && self.seen.insert((conversation.to_owned(), message.id.clone()));
                 if due && self.on_now(cx).is_some() && !self.in_call(conversation, cx) {
-                    self.decide(conversation.to_owned(), place, starter, cx);
+                    self.decide(pending, place, starter, cx);
                 }
             }
         }
+        self.read_running(conversation, ended, cx);
+    }
+
+    fn ends_in(&self, conversation: &str) -> u64 {
+        self.ends.get(conversation).copied().unwrap_or_default()
+    }
+
+    /// Whether the call of `pending` ended since: its call's end came, or, for a start naming no call, any end in its
+    /// chat.
+    fn ended_since(&self, pending: &Pending) -> bool {
+        match &pending.call {
+            Some(call) => self.ended.contains(&(pending.conversation.clone(), call.clone())),
+            None => self.ends_in(&pending.conversation) != pending.ends,
+        }
+    }
+
+    /// Reads whether each stored group chat's call runs, as the alert starts.
+    fn read_all_running(&self, cx: &mut Context<Self>) {
+        let core = Arc::clone(&self.core);
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let conversations = core
+                .conversations(crate::chat_list::LIST_LIMIT)
+                .await
+                .unwrap_or_default();
+            let _ = this.update(cx, |this, cx| {
+                for conversation in conversations {
+                    this.read_running(&conversation.id, false, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Reads whether group chat `conversation`'s call runs and tells [`Calls`]; after an end (`ended`) the read may
+    /// clear it.
+    fn read_running(&mut self, conversation: &str, ended: bool, cx: &mut Context<Self>) {
+        if !is_group_chat_id(conversation) || !self.calls.read(cx).shows() {
+            return;
+        }
+        let read = self.running.entry(conversation.to_owned()).or_default();
+        read.asked += 1;
+        read.may_clear |= ended;
+        let asked = read.asked;
+        let core = Arc::clone(&self.core);
+        let conversation = conversation.to_owned();
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let Ok(runs) = core.call_runs(conversation.clone()).await else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                let Some(read) = this.running.get_mut(&conversation).filter(|read| read.asked == asked) else {
+                    return;
+                };
+                if runs || read.may_clear {
+                    this.calls
+                        .update(cx, |calls, cx| calls.posted_running(&conversation, runs, cx));
+                }
+                read.may_clear = false;
+            });
+        })
+        .detach();
     }
 
     /// The server, when a banner may show now: its Join works here (a build that shows calls, not the read-only mode)
@@ -341,24 +427,35 @@ impl MeetingAlert {
     }
 
     /// Reads what the banner needs (the chat's name, the calendar, the channel's preferences), then shows it if it is
-    /// still due.
-    fn decide(&self, conversation: String, place: StartedIn, starter: Option<String>, cx: &mut Context<Self>) {
+    /// still due; one whose call ended while it was being shown is closed again.
+    fn decide(&self, pending: Pending, place: StartedIn, starter: Option<String>, cx: &mut Context<Self>) {
         let core = Arc::clone(&self.core);
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let Some(banner) = banner(&*core, &conversation, place, starter).await else {
+            let Some(banner) = banner(&*core, &pending.conversation, place, starter).await else {
                 return;
             };
             let server = this
                 .update(cx, |this, cx| {
-                    this.on_now(cx).filter(|_| !this.in_call(&conversation, cx))
+                    this.on_now(cx)
+                        .filter(|_| !this.in_call(&pending.conversation, cx) && !this.ended_since(&pending))
                 })
                 .ok()
                 .flatten();
             let Some(server) = server else {
                 return;
             };
-            if let Ok(id) = server.show(&banner.notice, 0).await {
-                let _ = this.update(cx, |this, cx| this.shown_banner(id, banner, cx));
+            let Ok(id) = server.show(&banner.notice, 0).await else {
+                return;
+            };
+            let kept = this.update(cx, |this, cx| {
+                let due = !this.ended_since(&pending) && !this.in_call(&pending.conversation, cx);
+                if due {
+                    this.shown_banner(id, banner, cx);
+                }
+                due
+            });
+            if !kept.unwrap_or(false) {
+                server.close(id).await;
             }
         })
         .detach();

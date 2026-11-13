@@ -402,12 +402,11 @@ impl ChannelMeetup {
     }
 }
 
-/// The text of the first `<tag>…</tag>` in `content`, trimmed; `None` when there is none or it is empty.
 /// The conversation a group chat's call runs at, as the chat's own call events tell it, newest first (`events`: each
 /// message's `messagetype` and content): the newest start (`Event/Call`, `<callEventType>callStarted`) whose call
 /// (`<callId>`) no newer event ends, at its `<conversationUrl>`. A group chat's meeting (Meet now) rings nobody, so its
 /// members' join goes where its start says it runs, as a channel's meeting's does ([`ChannelMeetup::of_posts`]).
-/// `None` when no start reads so, or the newest call event is an end naming no call.
+/// `None` when no start reads so, or an end naming no call comes before any unended start.
 #[must_use]
 pub fn running_call<'m>(events: impl IntoIterator<Item = (&'m str, &'m str)>) -> Option<crate::CallLink> {
     let mut ended: Vec<&str> = Vec::new();
@@ -428,6 +427,7 @@ pub fn running_call<'m>(events: impl IntoIterator<Item = (&'m str, &'m str)>) ->
     None
 }
 
+/// The text of the first `<tag>…</tag>` in `content`, trimmed; `None` when there is none or it is empty.
 fn xml_text<'c>(content: &'c str, tag: &str) -> Option<&'c str> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");

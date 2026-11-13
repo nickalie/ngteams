@@ -10,9 +10,8 @@
 //! - **What is kept**: whether the calling endpoint is registered; the invitation that rings (the engine offered it:
 //!   [`IncomingCall`], its caller's name as the invitation gives it); the call up or being set up ([`ActiveCall`]: its
 //!   kind, its chat, its status, when its media connected, muted, its camera on, taken by voicemail); the group chats
-//!   an invitation
-//!   named a running call in (a join goes there: [`Calls::joinable`]); how the last call ended and the last ask that
-//!   went nowhere, until the next call.
+//!   an invitation, or the chat's own stored call start ([`Calls::posted_running`]), named a running call in (a join
+//!   goes there: [`Calls::joinable`]); how the last call ended and the last ask that went nowhere, until the next call.
 //! - **A meeting's pre-join** ([`Prejoin`]): the calendar's Join opens it, and nothing goes out until its Join now
 //!   ([`join_now`]); what its switches say is the user's, and turns into the call's mute and camera once the call can
 //!   take them ([`Calls::next_choice`]).
@@ -981,14 +980,15 @@ impl Calls {
         cx.notify();
     }
 
-    /// Whether an invitation named a running call in the group chat `chat`, so a join can go there.
+    /// Whether an invitation, or the chat's own stored call start ([`Calls::posted_running`]), named a running call in
+    /// the group chat `chat`, so a join can go there.
     #[must_use]
     pub fn joinable(&self, chat: &str) -> bool {
         self.running.contains(chat)
     }
 
-    /// The group chat `chat`'s own call event says its call `runs` (a start) or ran (an end), as
-    /// [`crate::meeting_alert`] reads it: a group chat's meeting rings nobody, so only its start tells that a join can
+    /// The group chat `chat`'s own stored call events say its call `runs` (an unended start) or not, as
+    /// [`crate::meeting_alert`] reads them: a group chat's meeting rings nobody, so only its start tells that a join can
     /// go there (the engine joins where the start says it runs). Nothing for any other chat.
     pub fn posted_running(&mut self, chat: &str, runs: bool, cx: &mut Context<Self>) {
         if !self.shown || !teams_proto::is_group_chat_id(chat) {

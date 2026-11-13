@@ -2,8 +2,9 @@
 //! that records what it is asked: someone else's Meet now in a group chat, and a meeting's chat's or a channel's
 //! meeting the calendar holds about now, show one with Join; the account's own start, a group call (it rings), a 1:1
 //! call, history, a meeting not on the calendar, a muted channel, the switch off, notifications off and Do not disturb
-//! show none; its Join and its body ask the desktop to go in or to open the chat; the call's end closes it. Every id
-//! and name is made up.
+//! show none; its Join and its body ask the desktop to go in or to open the chat; the call's end closes it, however
+//! late it comes and even while the banner is being shown; the chat's header offers Join as its stored call events
+//! say, after a restart and whatever order a catch-up brings them in. Every id and name is made up.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -14,10 +15,13 @@ mod common;
 #[path = "common/notices.rs"]
 mod notices;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Poll, Waker};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::{LAB_A, LAB_B, Rig, Written};
+use futures_util::future::BoxFuture;
 use gpui::{AppContext as _, Entity};
 use notices::{FakeServer, chat};
 use teams_core::{
@@ -28,7 +32,7 @@ use teams_store::{Applied, ConversationKind, Member, Message};
 use teams_ui::ViewTrace;
 use teams_ui::meeting_alert::{MeetingAlert, MeetingAlertEvent, MeetingJoin};
 use teams_ui::models::Models;
-use teams_ui::notify::{DEFAULT_ACTION, JOIN_ACTION, Notice, NoticeKind};
+use teams_ui::notify::{DEFAULT_ACTION, JOIN_ACTION, Notice, NoticeKind, NotificationServer};
 use teams_ui::settings::{ManualStatus, Notifications, Settings, SettingsModel};
 
 const TRIO: &str = "19:0000000000000000000000000000trio@thread.v2";
@@ -89,6 +93,48 @@ fn end() -> String {
         .to_owned()
 }
 
+/// What holds the fake server's banners back until it opens.
+#[derive(Default)]
+struct Gate {
+    open: AtomicBool,
+    waiting: Mutex<Vec<Waker>>,
+}
+
+impl Gate {
+    fn open(&self) {
+        self.open.store(true, Ordering::SeqCst);
+        for waker in self.waiting.lock().unwrap().drain(..) {
+            waker.wake();
+        }
+    }
+}
+
+/// The fake server, its banners shown only once the gate opens.
+struct Gated(Arc<FakeServer>, Arc<Gate>);
+
+impl NotificationServer for Gated {
+    fn show(&self, notice: &Notice, replaces: u32) -> BoxFuture<'static, Result<u32, String>> {
+        let shown = self.0.show(notice, replaces);
+        let gate = Arc::clone(&self.1);
+        Box::pin(async move {
+            std::future::poll_fn(|cx| {
+                if gate.open.load(Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    gate.waiting.lock().unwrap().push(cx.waker().clone());
+                    Poll::Pending
+                }
+            })
+            .await;
+            shown.await
+        })
+    }
+
+    fn close(&self, id: u32) -> BoxFuture<'static, ()> {
+        self.0.close(id)
+    }
+}
+
 /// The account's calendar event of a meeting running now, in `chat` or `channel`.
 fn running_meeting(chat: Option<&str>, channel: Option<&str>) -> CalendarEvent {
     let now = now_ms();
@@ -130,6 +176,11 @@ fn running_meeting(chat: Option<&str>, channel: Option<&str>) -> CalendarEvent {
 
 impl Alerting {
     fn start(settings: Settings) -> Self {
+        Self::start_over(settings, None, Vec::new())
+    }
+
+    /// The alert over a store that holds `stored` already, its banners held back by `gate`.
+    fn start_over(settings: Settings, gate: Option<Arc<Gate>>, stored: Vec<Message>) -> Self {
         let rig = Rig::start_with(|cx| Models::with_calls(None, cx));
         rig.core.conversations.lock().unwrap().extend([
             chat(AB, ConversationKind::OneToOne, None),
@@ -146,6 +197,9 @@ impl Alerting {
             .lock()
             .unwrap()
             .insert(LAB_B.to_owned(), "Bee".to_owned());
+        for message in stored {
+            store(&rig, message);
+        }
         let written = Written::default();
         let trace = Arc::new(ViewTrace::new(written.clone()));
         let server = Arc::new(FakeServer::default());
@@ -153,7 +207,11 @@ impl Alerting {
         let settings = rig.cx.update(|cx| cx.new(|_| SettingsModel::in_memory(settings)));
         let models = rig.models.clone();
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let (given, recorded) = (Arc::clone(&server), Arc::clone(&asked));
+        let given: Arc<dyn NotificationServer> = match gate {
+            Some(gate) => Arc::new(Gated(Arc::clone(&server), gate)),
+            None => server.clone(),
+        };
+        let recorded = Arc::clone(&asked);
         let alert = rig.cx.update(|cx| {
             let alert = cx.new(|cx| {
                 let mut alert = MeetingAlert::new(core, &models, settings, trace, cx);
@@ -164,6 +222,7 @@ impl Alerting {
                 .detach();
             alert
         });
+        rig.cx.run_until_parked();
         Self {
             rig,
             alert,
@@ -174,14 +233,25 @@ impl Alerting {
     }
 
     fn arrive(&self, message: Message, source: Source) {
-        self.rig.send(Event::Message {
-            conversation: message.conversation_id.clone(),
-            id: message.id.clone(),
-            change: MessageChange::New,
-            applied: Applied::Inserted,
-            message: Some(Box::new(message)),
-            source,
-        });
+        self.arrive_together(vec![message], source);
+    }
+
+    /// `messages` stored and told in this order, before anything they set off runs.
+    fn arrive_together(&self, messages: Vec<Message>, source: Source) {
+        for message in messages {
+            store(&self.rig, message.clone());
+            self.rig
+                .events
+                .send(Event::Message {
+                    conversation: message.conversation_id.clone(),
+                    id: message.id.clone(),
+                    change: MessageChange::New,
+                    applied: Applied::Inserted,
+                    message: Some(Box::new(message)),
+                    source,
+                })
+                .unwrap();
+        }
         self.rig.cx.run_until_parked();
     }
 
@@ -201,6 +271,16 @@ impl Alerting {
     fn calendar(&self, event: CalendarEvent) {
         self.rig.core.calendar.lock().unwrap().events.push(event);
     }
+}
+
+fn store(rig: &Rig, message: Message) {
+    rig.core
+        .messages
+        .lock()
+        .unwrap()
+        .entry(message.conversation_id.clone())
+        .or_default()
+        .push(message);
 }
 
 #[test]
@@ -346,4 +426,69 @@ fn a_channel_s_scheduled_meeting_shows_a_banner_unless_the_channel_is_muted() {
     );
     muted.arrive(call_event(CHANNEL, "1", LAB_B, start()), Source::Delivery);
     assert_eq!(muted.server.shown(), []);
+}
+
+#[test]
+fn an_end_a_catch_up_brings_late_still_closes_the_banner_and_the_chat_s_join() {
+    let a = Alerting::start(Settings::default());
+    // delivered live; the push channel then went down for longer than a banner stays news
+    let mut start = call_event(TRIO, "1", LAB_B, huddle(LAB_B));
+    start.arrival_time -= 12 * 60_000;
+    a.arrive(start, Source::Delivery);
+    assert!(a.joinable(TRIO));
+    let mut late = call_event(TRIO, "2", LAB_B, end());
+    late.arrival_time -= 10 * 60_000;
+    a.arrive(late, Source::CatchUp);
+    assert_eq!(a.server.closed(), [1]);
+    assert!(!a.joinable(TRIO));
+}
+
+#[test]
+fn a_call_that_ends_while_its_banner_is_shown_has_it_withdrawn() {
+    let gate = Arc::new(Gate::default());
+    let a = Alerting::start_over(Settings::default(), Some(Arc::clone(&gate)), Vec::new());
+    a.arrive(call_event(TRIO, "1", LAB_B, huddle(LAB_B)), Source::Delivery);
+    assert_eq!(a.server.shown().len(), 1, "being shown");
+    a.arrive(call_event(TRIO, "2", LAB_B, end()), Source::Delivery);
+    gate.open();
+    a.rig.cx.run_until_parked();
+    assert_eq!(a.server.closed(), [1]);
+    assert!(!a.activate(1, JOIN_ACTION), "never kept");
+    assert!(!a.joinable(TRIO));
+}
+
+#[test]
+fn a_start_and_its_end_told_together_show_no_banner_whichever_comes_first() {
+    let a = Alerting::start(Settings::default());
+    // the end told first, as a catch-up's page can
+    let start = call_event(TRIO, "1", LAB_B, huddle(LAB_B));
+    let mut end = call_event(TRIO, "2", LAB_B, end());
+    end.arrival_time += 1;
+    a.arrive_together(vec![end.clone(), start.clone()], Source::CatchUp);
+    assert_eq!(a.server.shown(), []);
+    assert!(!a.joinable(TRIO));
+
+    // the start first: the end comes while the banner's reads run
+    let b = Alerting::start(Settings::default());
+    b.arrive_together(vec![start, end], Source::Delivery);
+    assert_eq!(b.server.shown(), []);
+    assert!(!b.joinable(TRIO));
+}
+
+#[test]
+fn the_chat_s_header_offers_join_for_a_meet_now_that_ran_before_a_restart_or_came_late() {
+    let a = Alerting::start_over(
+        Settings::default(),
+        None,
+        vec![call_event(TRIO, "1", LAB_B, huddle(LAB_B))],
+    );
+    assert!(a.joinable(TRIO), "read from the store as it starts");
+    assert_eq!(a.server.shown(), [], "no banner for what the store held");
+
+    let b = Alerting::start(Settings::default());
+    let mut late = call_event(TRIO, "1", LAB_B, huddle(LAB_B));
+    late.arrival_time -= 10 * 60_000;
+    b.arrive(late, Source::CatchUp);
+    assert!(b.joinable(TRIO), "a late start still runs");
+    assert_eq!(b.server.shown(), [], "too late for a banner");
 }

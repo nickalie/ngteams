@@ -402,6 +402,7 @@ impl<C: Credentials + 'static> Inbox<C> {
             } => give(reply, store.reactions(&conversation, &id)),
             Query::Members(conversation, reply) => give(reply, store.members(&conversation)),
             Query::GroupChatWith(members, reply) => give(reply, store.group_chat_with(&members)),
+            Query::CallRuns(chat, reply) => give(reply, super::call_runs(store, &chat)),
             Query::RecentReactions(limit, reply) => give(reply, store.recent_reactions(me, limit)),
             Query::FrequentReactions(limit, reply) => give(reply, store.frequent_reactions(me, limit)),
             Query::UnreadCount(conversation, reply) => give(reply, store.unread_count(&conversation, me)),

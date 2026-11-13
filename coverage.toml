@@ -624,4 +624,4 @@ reason = "macOS-only menu bar, Dock reopen and AppKit terminate routing; no Linu
 [unmapped_sources."crates/teams-ui/src/meeting_alert/tests.rs"]
 sha256 = "6fd374c5d83c417ea1a58c3b58de22173c511ecdf1067417f33631151bee6905"
 reason = "unit-test module included only by meeting_alert.rs cfg(test); omitted by cargo-llvm-cov's test-file filter"
-context = { "crates/teams-ui/src/meeting_alert.rs" = "90a64d1ddc3ca510a39259ed43dc20f97960876d4a9983b57a6ff96246f08e21" }
+context = { "crates/teams-ui/src/meeting_alert.rs" = "5c0d5922a8d55330cc1772e581850b83d20c34c5c95edf4583fa69117c3cd91c" }

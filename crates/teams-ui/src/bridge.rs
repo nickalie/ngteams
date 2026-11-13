@@ -102,6 +102,12 @@ pub trait Core: Send + Sync + 'static {
         let _ = members;
         Reply::ready(Ok(None))
     }
+    /// Whether group chat `chat`'s call runs, as its own newest stored call events say (a Meet now rings nobody): what
+    /// the chat's header offers Join by. A fake core has none running.
+    fn call_runs(&self, chat: String) -> Reply<bool> {
+        let _ = chat;
+        Reply::ready(Ok(false))
+    }
     /// The reaction keys the account set most recently, the newest first; at most `limit`.
     fn recent_reactions(&self, limit: usize) -> Reply<Vec<String>>;
     /// The reaction keys the account uses most, the most used first; at most `limit`.
@@ -841,6 +847,9 @@ impl Core for EngineRequests {
 
     fn group_chat_with(&self, members: Vec<String>) -> Reply<Option<String>> {
         EngineRequests::group_chat_with(self, members)
+    }
+    fn call_runs(&self, chat: String) -> Reply<bool> {
+        EngineRequests::call_runs(self, chat)
     }
 
     fn unread_count(&self, conversation: String) -> Reply<u64> {

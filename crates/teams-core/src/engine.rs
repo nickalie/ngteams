@@ -920,6 +920,7 @@ enum Query {
     },
     Members(String, Responder<Vec<Member>>),
     GroupChatWith(Vec<String>, Responder<Option<String>>),
+    CallRuns(String, Responder<bool>),
     RecentReactions(usize, Responder<Vec<String>>),
     FrequentReactions(usize, Responder<Vec<String>>),
     UnreadCount(String, Responder<u64>),
@@ -1211,6 +1212,13 @@ impl EngineRequests {
     /// ([`Store::group_chat_with`]): what New message opens for those people.
     pub fn group_chat_with(&self, members: Vec<String>) -> Reply<Option<String>> {
         self.query(|reply| Query::GroupChatWith(members, reply))
+    }
+
+    /// Whether group chat `chat`'s call runs, as its own newest stored call events say ([`teams_proto::running_call`]):
+    /// a group chat's meeting rings nobody, so its start is what tells a join can go there.
+    pub fn call_runs(&self, chat: impl Into<String>) -> Reply<bool> {
+        let chat = chat.into();
+        self.query(|reply| Query::CallRuns(chat, reply))
     }
 
     /// How many stored messages of a conversation the account hasn't read ([`Store::unread_count`]).
@@ -3462,7 +3470,7 @@ fn call_act(store: &Store, me: &str, action: CallAction) -> Result<Act, CallActi
         CallAction::Call { chat } => Act::Place(placement(store, me, &chat)?),
         CallAction::TestCall { echo } => Act::Place(Placement::TestCall { echo }),
         CallAction::Join { chat } => {
-            let posted = posted_running_call(store, &chat);
+            let posted = posted_running_call(store, &chat).ok().flatten();
             Act::Join(chat, posted)
         }
         // a channel's meeting is joined at the conversation its channel names it runs at, read as it goes
@@ -3494,24 +3502,28 @@ fn call_act(store: &Store, me: &str, action: CallAction) -> Result<Act, CallActi
     })
 }
 
-/// Whom a call from `chat` calls: a 1:1 chat's other member (from its id), or a group chat's other members as the
-/// store holds them.
-/// Where group chat `chat`'s call runs, as its newest stored call events say ([`teams_proto::running_call`]).
-fn posted_running_call(store: &Store, chat: &str) -> Option<teams_proto::CallLink> {
+/// Where group chat `chat`'s call runs, as its newest stored call events say ([`teams_proto::running_call`]); `None`
+/// for any other chat.
+fn posted_running_call(store: &Store, chat: &str) -> Result<Option<teams_proto::CallLink>, StoreError> {
     if !teams_proto::is_group_chat_id(chat) {
-        return None;
+        return Ok(None);
     }
-    let page = store.messages_before(chat, None, POSTED_CALL_LOOKBACK).ok()?;
-    teams_proto::running_call(
-        page.messages
-            .iter()
-            .map(|message| (message.message_type.as_str(), message.content.as_str())),
-    )
+    let events = store.call_events(chat, POSTED_CALL_LOOKBACK)?;
+    Ok(teams_proto::running_call(events.iter().map(|message| {
+        (message.message_type.as_str(), message.content.as_str())
+    })))
 }
 
-/// How many of a group chat's newest messages a join looks through for its running call's start.
-const POSTED_CALL_LOOKBACK: usize = 200;
+/// Whether group chat `chat`'s call runs, as its newest stored call events say ([`posted_running_call`]).
+fn call_runs(store: &Store, chat: &str) -> Result<bool, StoreError> {
+    Ok(posted_running_call(store, chat)?.is_some())
+}
 
+/// How many of a group chat's newest call events a join looks through for its running call's start.
+const POSTED_CALL_LOOKBACK: usize = 50;
+
+/// Whom a call from `chat` calls: a 1:1 chat's other member (from its id), or a group chat's other members as the
+/// store holds them.
 fn placement(store: &Store, me: &str, chat: &str) -> Result<Placement, CallActionError> {
     if let Some(other) = one_to_one_other(chat, me) {
         return Ok(Placement::Chat {
@@ -3717,6 +3729,17 @@ mod start_within {
             delete_time: None,
         };
         store.upsert_message(&started, None).unwrap();
+        // a long meeting's chat: its start far behind the messages posted during it
+        for n in 1..=250 {
+            let said = teams_store::Message {
+                id: (1_700_000_000_001_i64 + n).to_string(),
+                message_type: "RichText/Html".to_owned(),
+                content: "<p>made up</p>".to_owned(),
+                arrival_time: 1_700_000_000_001 + n,
+                ..started.clone()
+            };
+            store.upsert_message(&said, None).unwrap();
+        }
         let Ok(Act::Join(at, Some(posted))) = call_act(&store, ME, join()) else {
             panic!("the stored start's link")
         };
