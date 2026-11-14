@@ -3,7 +3,7 @@ use diesel_async::{AsyncConnection as _, RunQueryDsl};
 use serde_json::{Map, Value};
 
 use super::repo::advance;
-use super::schema::{chat_members, chat_properties, chats};
+use super::schema::{chat_members, chat_properties, chats, user_chat_properties};
 use super::wire;
 use crate::db::{Db, DbError, with_conn};
 
@@ -75,6 +75,45 @@ pub(super) async fn set_conversation(
                 .execute(conn)
                 .await?;
             Ok(true)
+        })
+        .await)
+}
+
+pub(super) async fn user(db: &Db, user: &str) -> Result<Option<Map<String, Value>>, DbError> {
+    let body = with_conn!(db, |conn| user_chat_properties::table
+        .find(user)
+        .select(user_chat_properties::body)
+        .first::<String>(conn)
+        .await
+        .optional()?);
+    body.map(|body| decode(Some(body))).transpose()
+}
+
+pub(super) async fn set_user(db: &Db, user: &str, name: &str, value: &Value) -> Result<(), DbError> {
+    let at = wire::now();
+    with_conn!(db, |conn| conn
+        .transaction::<_, DbError, _>(async |conn| {
+            let _version: i64 = advance!(conn, at);
+            let body = user_chat_properties::table
+                .find(user)
+                .select(user_chat_properties::body)
+                .first(conn)
+                .await
+                .optional()?;
+            let mut properties = decode(body)?;
+            properties.insert(name.into(), value.clone());
+            let body = serde_json::to_string(&properties).map_err(|_| corrupt())?;
+            diesel::insert_into(user_chat_properties::table)
+                .values((
+                    user_chat_properties::user_id.eq(user),
+                    user_chat_properties::body.eq(&body),
+                ))
+                .on_conflict(user_chat_properties::user_id)
+                .do_update()
+                .set(user_chat_properties::body.eq(&body))
+                .execute(conn)
+                .await?;
+            Ok(())
         })
         .await)
 }

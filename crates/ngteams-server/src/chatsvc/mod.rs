@@ -59,6 +59,10 @@ pub(super) fn router() -> Router<Arc<App>> {
             "/api/chatsvc/{region}/v1/users/ME/conversations/{chat}/properties",
             put(properties::set_conversation),
         )
+        .route(
+            "/api/chatsvc/{region}/v1/users/ME/properties",
+            get(properties::user).put(properties::set_user),
+        )
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
 }
 
