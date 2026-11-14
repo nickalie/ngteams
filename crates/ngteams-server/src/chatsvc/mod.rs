@@ -6,6 +6,7 @@ mod create;
 mod events;
 mod message_repo;
 mod messages;
+mod mutations;
 mod reads;
 mod repo;
 mod schema;
@@ -17,7 +18,7 @@ use std::sync::Arc;
 use axum::extract::{FromRequestParts, Path};
 use axum::http::{StatusCode, request::Parts};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde_json::json;
 
@@ -42,6 +43,10 @@ pub(super) fn router() -> Router<Arc<App>> {
         .route(
             "/api/chatsvc/{region}/v1/users/ME/conversations/{chat}/messages",
             get(messages::page).post(messages::post),
+        )
+        .route(
+            "/api/chatsvc/{region}/v1/users/ME/conversations/{chat}/messages/{message}",
+            put(mutations::edit),
         )
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
 }

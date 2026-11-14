@@ -119,7 +119,8 @@ hands out its GTM.
 
 Chat creation publishes to every other member on `push:<mri>`. The internal JSON envelope is
 `{"resourceType":"ThreadUpdate","resource":<thread>}`; the resource has the thread-read shape. Trouter delivery
-wraps this internal event separately. A message post publishes `NewMessage` with the stored message as `resource`. Publication happens after the transaction commits. The fan-out is at most
+wraps this internal event separately. A message post publishes `NewMessage` with the stored message as `resource`; an edit publishes `MessageUpdate`.
+Edits require message ownership and preserve its ID, client message ID, original arrival time and reactions. Publication happens after the transaction commits. The fan-out is at most
 once; clients catch up through conversation sync after a missed event.
 
 Database versions advance a shared row inside the write transaction. A conversation page keeps its upper bound

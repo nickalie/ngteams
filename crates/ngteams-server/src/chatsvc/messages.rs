@@ -41,7 +41,7 @@ pub(super) async fn post(
         .into_response())
 }
 
-fn draft(app: &App, caller: &Caller, chat: &str, sent: &Value) -> Result<message_repo::Message, Error> {
+pub(super) fn draft(app: &App, caller: &Caller, chat: &str, sent: &Value) -> Result<message_repo::Message, Error> {
     let kind = sent["messagetype"].as_str().ok_or(Error::BadRequest)?;
     if !(kind == "Text" || kind == "RichText" || kind.starts_with("RichText/")) {
         return Err(Error::BadRequest);

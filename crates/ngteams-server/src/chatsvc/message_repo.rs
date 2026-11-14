@@ -119,3 +119,64 @@ pub(super) async fn latest(db: &Db, chat: &str) -> Result<Option<Message>, DbErr
         .await
         .optional()?))
 }
+
+pub(super) enum Updated {
+    Missing,
+    Denied,
+    Message(Message),
+}
+
+pub(super) async fn update<F>(
+    db: &Db,
+    chat: &str,
+    id: i64,
+    actor: &str,
+    owner_only: bool,
+    transform: F,
+) -> Result<Updated, DbError>
+where
+    F: Fn(&mut Value, i64) -> Result<(), DbError> + Sync,
+{
+    let at = wire::now();
+    with_conn!(db, |conn| conn
+        .transaction::<_, DbError, _>(async |conn| {
+            let version: i64 = advance!(conn, at);
+            let member: bool = diesel::select(diesel::dsl::exists(
+                chat_members::table
+                    .filter(chat_members::chat_id.eq(chat))
+                    .filter(chat_members::user_id.eq(actor)),
+            ))
+            .get_result(conn)
+            .await?;
+            if !member {
+                return Ok(Updated::Denied);
+            }
+            let Some(mut row) = chat_messages::table
+                .find((chat, id))
+                .select(Message::as_select())
+                .first(conn)
+                .await
+                .optional()?
+            else {
+                return Ok(Updated::Missing);
+            };
+            if owner_only && row.owner_id != actor {
+                return Ok(Updated::Denied);
+            }
+            let mut body = row.value()?;
+            transform(&mut body, version)?;
+            row.version = version;
+            body["version"] = version.to_string().into();
+            row.body = body.to_string();
+            diesel::update(chat_messages::table.find((chat, id)))
+                .set((chat_messages::version.eq(version), chat_messages::body.eq(&row.body)))
+                .execute(conn)
+                .await?;
+            diesel::update(chats::table.find(chat))
+                .set(chats::version.eq(version))
+                .execute(conn)
+                .await?;
+            Ok(Updated::Message(row))
+        })
+        .await)
+}
