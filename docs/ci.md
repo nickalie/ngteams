@@ -85,8 +85,9 @@ The image sets `TZ=Etc/UTC` so calendar fixtures do not depend on the host's `/e
 Tool installation uses the network; test traffic stays synthetic and offline from the tenant. No lab configuration
 or secret is required. The workflow frees unused hosted SDKs to make space for the instrumented native binaries.
 The shared build disables incremental compilation and DWARF debug information while retaining LLVM coverage maps and
-debug assertions. Each shard downloads only its assigned test executables and a common bundle of helper binaries and shared
-libraries, without dependency rlibs or object files. Shards need only a small disk cleanup; build and report jobs
+debug assertions. Each shard downloads only its assigned test executables and a common bundle of helper binaries, shared
+libraries and Cargo feature fingerprints, without dependency rlibs or object files. Compile-contract tests use the
+fingerprints to reproduce their parent executable’s enabled features. Shards need only a small disk cleanup; build and report jobs
 free more space. The report job collects every bundle before merging profiles. Zstandard uses a 1 GiB history window to compress
 repeated native code across executables; extraction permits that same window. Every shard uses `/workspace`, so compile-time fixture paths and source maps stay valid.
 
