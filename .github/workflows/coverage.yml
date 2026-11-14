@@ -53,6 +53,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/coverage-env
+        id: environment
         with:
           save-cache: 'true'
       - name: Restore registry and Git sources
@@ -73,7 +74,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .ci-cache/build
-          key: coverage-build-v1-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.github/ci/**', '.cargo/**', 'vendor/**') }}
+          key: coverage-build-v1-${{ steps.environment.outputs.image-id }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.github/ci/**', '.cargo/**', 'vendor/**') }}
       - name: Unpack compatible dependencies
         run: |
           if [[ -f .ci-cache/build/dependencies.tar.zst ]]; then
