@@ -22,7 +22,7 @@ PY
         for list in target/bundle-*-files; do
             name=${list#target/bundle-}
             name=${name%-files}
-            tar -I 'zstd -T2 -3' -cf "target/coverage-$name.tar.zst" -T "$list"
+            tar -I 'zstd --long=30 -T2 -3' -cf "target/coverage-$name.tar.zst" -T "$list"
         done
         du -h target/coverage-*.tar.zst
         ;;
@@ -38,7 +38,7 @@ PY
         find target/coverage-continuous-build -name '*.profdata' -delete
         find target/coverage-continuous-build -type d -name livekit_webrtc -prune -exec rm -rf -- {} +
         mkdir -p .ci-cache/build
-        tar -I 'zstd -T2 -3' -cf .ci-cache/build/dependencies.tar.zst target/coverage-continuous-build
+        tar -I 'zstd --long=30 -T2 -3' -cf .ci-cache/build/dependencies.tar.zst target/coverage-continuous-build
         bytes=$(stat -c %s .ci-cache/build/dependencies.tar.zst)
         echo "Compressed dependency cache: $bytes bytes (limit 1 GiB)"
         if ((bytes > 1073741824)); then
