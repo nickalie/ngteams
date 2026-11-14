@@ -44,7 +44,7 @@ pub(super) async fn edit(
             }
         }
         current["properties"]["edittime"] = json!(at);
-        Ok(())
+        Ok(true)
     })
     .await?;
     let row = updated(changed)?;
@@ -63,7 +63,7 @@ pub(super) fn updated(result: message_repo::Updated) -> Result<message_repo::Mes
     match result {
         message_repo::Updated::Missing => Err(Error::Missing),
         message_repo::Updated::Denied => Err(Error::Denied),
-        message_repo::Updated::Message(row) => Ok(row),
+        message_repo::Updated::Message(row) | message_repo::Updated::Unchanged(row) => Ok(row),
     }
 }
 
@@ -89,7 +89,7 @@ pub(super) async fn delete(
             object.remove("amsreferences");
             object.remove("annotationsSummary");
         }
-        Ok(())
+        Ok(true)
     })
     .await?;
     let row = updated(result)?;

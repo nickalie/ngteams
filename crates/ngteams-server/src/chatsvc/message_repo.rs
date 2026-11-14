@@ -124,6 +124,7 @@ pub(super) enum Updated {
     Missing,
     Denied,
     Message(Message),
+    Unchanged(Message),
 }
 
 pub(super) async fn update<F>(
@@ -135,7 +136,7 @@ pub(super) async fn update<F>(
     transform: F,
 ) -> Result<Updated, DbError>
 where
-    F: Fn(&mut Value, i64) -> Result<(), DbError> + Sync,
+    F: Fn(&mut Value, i64) -> Result<bool, DbError> + Sync,
 {
     let at = wire::now();
     with_conn!(db, |conn| conn
@@ -164,7 +165,9 @@ where
                 return Ok(Updated::Denied);
             }
             let mut body = row.value()?;
-            transform(&mut body, version)?;
+            if !transform(&mut body, version)? {
+                return Ok(Updated::Unchanged(row));
+            }
             row.version = version;
             body["version"] = version.to_string().into();
             row.body = body.to_string();

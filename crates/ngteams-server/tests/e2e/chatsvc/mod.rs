@@ -3,6 +3,7 @@
 mod messages;
 mod mutations;
 mod paging;
+mod reactions;
 mod security;
 
 use std::sync::Arc;
