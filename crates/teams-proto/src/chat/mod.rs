@@ -47,7 +47,8 @@ pub use links::{HYPERLINK_TYPE, LinkPreview, link_previews};
 pub use model::{
     AppConsumptionHorizon, ConsumptionHorizon, Conversation, ConversationKind, ConversationList, Field, Forwarded,
     Malformed, MemberList, Mention, MentionKind, Message, MessagePage, MessageType, QuotedMessage, Reaction,
-    ReactionUser, Thread, ThreadMember, Unshown, WEB_CLIENT, forwarded, iso_millis, unshown_parts, web_chat_link,
+    ReactionUser, Thread, ThreadMember, Unshown, WEB_CLIENT, forwarded, iso_millis, unshown_parts, unshown_parts_in,
+    web_chat_link,
 };
 pub use policy::{GENERIC_STREAM, PolicyNotice, PolicyState, PolicyViolation, ViolationKind, is_generic_stream};
 pub use read::{ChatReadError, ChatReads, MAX_PAGE_SIZE, link_endpoint, link_endpoint_in};

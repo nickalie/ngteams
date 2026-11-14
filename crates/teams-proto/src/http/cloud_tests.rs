@@ -471,6 +471,60 @@ fn own_files_accept_only_the_selected_origin_and_file_prefix() {
         .unwrap();
     let restored: crate::chat::MessageText = serde_json::from_slice(&serde_json::to_vec(&text).unwrap()).unwrap();
     assert_eq!(restored.files()[0].entry(), entry);
+    assert_eq!(
+        restored.for_cloud(&Cloud::Microsoft),
+        Err(crate::chat::ComposeError::FileCloud)
+    );
+}
+
+#[test]
+fn own_file_classification_keeps_only_unread_entries_cards_and_ams_unshown() {
+    use crate::chat::{Message, Unshown, unshown_parts_in};
+    use serde_json::json;
+
+    let cloud = cloud();
+    let file = json!({
+        "@type": "http://schema.skype.com/File", "fileName": "demo.txt",
+        "objectUrl": "https://chat.example:8443/sp/personal/lab_a/Documents/demo.txt"
+    });
+    let mut message: Message = serde_json::from_value(json!({
+        "id": "1", "properties": {"files": [file.clone()]}
+    }))
+    .unwrap();
+    assert_eq!(message.files_in(&cloud).files.len(), 1);
+    assert!(message.unshown_in(&cloud).is_empty());
+    assert!(unshown_parts_in(&cloud, &message.properties).is_empty());
+    assert_eq!(message.unshown(), vec![Unshown::Files(json!([file.clone()]))]);
+
+    let foreign = json!({
+        "@type": "http://schema.skype.com/File", "fileName": "other.txt",
+        "objectUrl": "https://outside.example/sp/other.txt"
+    });
+    let cards = json!([{"unknownCard": true}]);
+    let references = json!(["synthetic-object"]);
+    for files in [
+        json!([file.clone(), foreign.clone()]),
+        json!([file, foreign.clone()]).to_string().into(),
+    ] {
+        message.properties.insert("files".into(), files);
+        message.properties.insert("cards".into(), cards.clone());
+        message.ams_references = Some(vec![json!("synthetic-object")]);
+        let read = message.files_in(&cloud);
+        assert_eq!(read.files.len(), 1);
+        assert_eq!(read.unread, Some(json!([foreign.clone()])));
+        assert_eq!(
+            unshown_parts_in(&cloud, &message.properties),
+            vec![Unshown::Files(json!([foreign.clone()])), Unshown::Cards(cards.clone())]
+        );
+        assert_eq!(
+            message.unshown_in(&cloud),
+            vec![
+                Unshown::Files(json!([foreign.clone()])),
+                Unshown::Cards(cards.clone()),
+                Unshown::AmsReferences(references.clone())
+            ]
+        );
+    }
 }
 
 #[tokio::test]

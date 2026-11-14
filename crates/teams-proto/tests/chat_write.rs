@@ -481,6 +481,17 @@ fn a_stored_text_is_checked_again_when_read() {
     );
 }
 
+#[test]
+fn a_stored_text_reports_an_invalid_account_origin() {
+    let text = MessageText::plain("no image").unwrap();
+    for origin in ["http://chat.example", "https://chat.example/sp/", "not a URL"] {
+        let mut stored = serde_json::to_value(&text).unwrap();
+        stored["origin"] = origin.into();
+        let error = serde_json::from_value::<MessageText>(stored).unwrap_err();
+        assert_eq!(error.to_string(), ComposeError::Origin.to_string(), "{origin}");
+    }
+}
+
 // --- the bodies sent, as captured ---
 
 /// The synthetic token given to the transport; `None` represents a signed-out account.

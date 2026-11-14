@@ -1296,12 +1296,12 @@ impl<C: Credentials> HttpTransport<C> {
 
     /// Reads the picture of a file's thumbnail at `link`, the link Graph handed out for it
     /// ([`crate::FileThumbnails::read_answer`]): a `GET` on [`Service::FileThumbnail`] with no token of the account's
-    /// (the link carries its own credential), the link checked again before it goes ([`crate::thumbnail::is_thumbnail_link`]), with the
-    /// one retry a 429 or 503 allows, as any read.
+    /// (the link carries its own credential), the link checked against the transport's [`Self::cloud`] before it
+    /// goes (`is_thumbnail_link_in`), with the one retry a 429 or 503 allows, as any read.
     ///
     /// # Errors
-    /// As a read's: [`Refusal::NotAllowed`] for a link off the thumbnail hosts, [`HttpError::Status`] for an answer that
-    /// isn't a success.
+    /// As a read's: [`Refusal::NotAllowed`] for a link outside the cloud's thumbnail service, [`HttpError::Status`]
+    /// for an answer that isn't a success.
     pub async fn file_thumbnail(&self, link: &ThumbnailLink) -> Result<Response, HttpError> {
         let url = link.url();
         if !is_thumbnail_link_in(&self.cloud, url) {
@@ -1320,14 +1320,14 @@ impl<C: Credentials> HttpTransport<C> {
 
     /// Reads `len` bytes of a shared file from `offset`, at the download link Graph handed out for it
     /// ([`crate::FileDownload::read_answer`]): a `GET` on [`Service::FileContent`] with `Range: bytes=<first>-<last>`
-    /// and no token of the account's (the link carries its own credential), the link checked again before it goes
-    /// ([`crate::file_content::is_content_link`]), with the one retry a 429 or 503 allows, as any read. The answer is read as a part of the
-    /// file by [`crate::FileRange::read`].
+    /// and no token of the account's (the link carries its own credential), the link checked against the transport's
+    /// [`Self::cloud`] before it goes (`is_content_link_in`), with the one retry a 429 or 503 allows, as any read.
+    /// The answer is read as a part of the file by [`crate::FileRange::read`].
     ///
     /// # Errors
-    /// As a read's: [`Refusal::NotAllowed`] for a link off SharePoint's hosts, [`Refusal::FileContent`] for a read of
-    /// nothing or of more than [`MAX_RANGE`], [`HttpError::Status`] for an answer that isn't a success (an expired
-    /// link's 401 or 403 among them: the caller asks Graph for a new one).
+    /// As a read's: [`Refusal::NotAllowed`] for a link outside the cloud's file service, [`Refusal::FileContent`] for
+    /// a read of nothing or of more than [`MAX_RANGE`], [`HttpError::Status`] for an answer that isn't a success
+    /// (an expired link's 401 or 403 among them: the caller asks Graph for a new one).
     pub async fn file_range(&self, link: &FileContentLink, offset: u64, len: u32) -> Result<Response, HttpError> {
         let url = link.url();
         if !is_content_link_in(&self.cloud, url) || !self.destination_allowed(url, Auth::None) {
@@ -1378,14 +1378,15 @@ impl<C: Credentials> HttpTransport<C> {
 
     /// Streams `len` bytes (at most [`MAX_STREAM`]) of a shared file from `offset`, at the download link Graph handed
     /// out for it: the [`HttpTransport::file_range`] `GET` (`Range: bytes=<first>-<last>`, no token of the account's,
-    /// the link checked again before it goes), its answer handed back once its headers came and its body read part by
-    /// part as it arrives ([`FileBody`]), never held whole; dropping it stops the read. It may take up to
+    /// the link checked against the transport's [`Self::cloud`] by `is_content_link_in`), its answer
+    /// handed back once its headers came and its body read part by part as it arrives ([`FileBody`]), never held
+    /// whole; dropping it stops the read. It may take up to
     /// [`STREAM_TIMEOUT`], and nothing retries it here (its reader starts another where this one stopped).
     ///
     /// # Errors
-    /// [`Refusal::NotAllowed`] for a link off SharePoint's hosts, [`Refusal::FileContent`] for a read of nothing or of
-    /// more than [`MAX_STREAM`], [`HttpError::Status`] for an answer that isn't a success (an expired link's 401 or 403
-    /// among them: the caller asks Graph for a new one), [`HttpError::Failed`] when it failed on the way.
+    /// [`Refusal::NotAllowed`] for a link outside the cloud's file service, [`Refusal::FileContent`] for a read of
+    /// nothing or of more than [`MAX_STREAM`], [`HttpError::Status`] for an answer that isn't a success (an expired
+    /// link's 401 or 403 among them: the caller asks Graph for a new one), [`HttpError::Failed`] when it failed on the way.
     pub async fn file_stream(&self, link: &FileContentLink, offset: u64, len: u64) -> Result<FileBody, HttpError> {
         let url = link.url();
         if !is_content_link_in(&self.cloud, url) || !self.destination_allowed(url, Auth::None) {

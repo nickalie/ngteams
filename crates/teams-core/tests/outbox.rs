@@ -1853,3 +1853,36 @@ async fn a_stored_picture_for_another_cloud_is_refused_before_delivery() {
     assert_eq!(row.state, OutboxState::Failed);
     assert!(setup.server.received_requests().await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn a_stored_file_for_another_cloud_is_refused_before_delivery() {
+    let setup = setup().await;
+    let mut store = setup.open_store();
+    let cloud = teams_proto::Cloud::own("https://chat.example:8443").unwrap();
+    let base = "https://chat.example:8443/sp/personal/lab_a/";
+    let site = teams_proto::DriveSite::from_web_url_in(&cloud, base).unwrap();
+    let upload = json!({
+        "id": "ABC1", "name": "demo.txt", "size": 3,
+        "webUrl": format!("{base}Documents/demo.txt"),
+        "parentReference": {"driveId": "drive1"},
+        "sharepointIds": {"listItemUniqueId": "00000000-0000-4000-8000-000000000001"}
+    });
+    let file = teams_proto::UploadedFile::from_upload(&site, &serde_json::to_vec(&upload).unwrap()).unwrap();
+    let text = MessageText::plain("file")
+        .unwrap()
+        .with_files(vec![file])
+        .for_cloud(&cloud)
+        .unwrap();
+    let command = Command::Send {
+        conversation: CHAT.to_owned(),
+        text,
+    };
+    let row = enqueue(&mut store, &command).unwrap();
+    let row = send(&setup, &mut store, &row).await;
+    assert_eq!(row.state, OutboxState::Failed);
+    assert_eq!(
+        row.last_error.as_deref(),
+        Some("a file is stored outside this account's cloud")
+    );
+    assert!(setup.server.received_requests().await.unwrap().is_empty());
+}

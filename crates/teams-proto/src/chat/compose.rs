@@ -40,6 +40,9 @@ use crate::chat::html::{
 /// Why a [`MessageText`] can't be built.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ComposeError {
+    /// The stored account origin is not a bare HTTPS origin.
+    #[error("the stored account origin can't be read")]
+    Origin,
     #[error("a file is stored outside this account's cloud")]
     FileCloud,
     /// A mention in the text whose `item_id` names no mentioned MRI.
@@ -274,7 +277,7 @@ impl TryFrom<Stored> for MessageText {
             .origin
             .as_deref()
             .map_or(Ok(crate::Cloud::Microsoft), crate::Cloud::own)
-            .map_err(|_| ComposeError::Image)?;
+            .map_err(|_| ComposeError::Origin)?;
         if stored.files.iter().any(|file| file.site_in(&cloud).is_none()) {
             return Err(ComposeError::FileCloud);
         }

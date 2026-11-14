@@ -17,7 +17,7 @@ use serde_json::{Map, Value};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::chat::files::{SharedFiles, shared_files};
+use crate::chat::files::{SharedFiles, shared_files_in};
 use crate::chat::html::{self, RichText, ThreadActivity};
 use crate::chat::links::{LinkPreview, link_previews};
 use crate::chat::policy::PolicyViolation;
@@ -555,9 +555,9 @@ impl Message {
         forwarded(&self.properties)
     }
 
-    /// `properties.files`, a JSON string of a list: received files ([`shared_files`]), each entry read only in the
-    /// shape `docs/protocol/chat.md` records ("Files: received"); any other is kept as it came, never guessed at (and
-    /// nothing is fetched here).
+    /// `properties.files`, a JSON string of a list: received files ([`crate::chat::shared_files`]), each entry read
+    /// only in the shape `docs/protocol/chat.md` records ("Files: received"); any other is kept as it came, never
+    /// guessed at (and nothing is fetched here).
     #[must_use]
     pub fn files(&self) -> SharedFiles {
         self.files_in(&crate::Cloud::Microsoft)
@@ -587,7 +587,13 @@ impl Message {
     /// every captured message was like, and for one whose files are all read ([`Message::files`]).
     #[must_use]
     pub fn unshown(&self) -> Vec<Unshown> {
-        let mut parts = unshown_parts(&self.properties);
+        self.unshown_in(&crate::Cloud::Microsoft)
+    }
+
+    /// What the message carries that can't be shown within the account's service boundary.
+    #[must_use]
+    pub fn unshown_in(&self, cloud: &crate::Cloud) -> Vec<Unshown> {
+        let mut parts = unshown_parts_in(cloud, &self.properties);
         if let Some(references) = self.ams_references.as_ref().filter(|references| !references.is_empty()) {
             parts.push(Unshown::AmsReferences(Value::Array(references.clone())));
         }
@@ -1029,12 +1035,18 @@ impl Unshown {
 /// JSON string of one, as captured, or a list), each kept as it came. A missing one is nothing to show.
 #[must_use]
 pub fn unshown_parts(properties: &Map<String, Value>) -> Vec<Unshown> {
+    unshown_parts_in(&crate::Cloud::Microsoft, properties)
+}
+
+/// Unread file entries and cards, with file links checked against the account's service boundary.
+#[must_use]
+pub fn unshown_parts_in(cloud: &crate::Cloud, properties: &Map<String, Value>) -> Vec<Unshown> {
     let unknown = |key: &str| match empty_list(properties.get(key)) {
         Field::Unknown(raw) => Some(raw),
         Field::Absent | Field::Known(_) => None,
     };
     let mut parts = Vec::new();
-    if let Some(raw) = shared_files(properties.get("files")).unread {
+    if let Some(raw) = shared_files_in(cloud, properties.get("files")).unread {
         parts.push(Unshown::Files(raw));
     }
     if let Some(raw) = unknown("cards") {

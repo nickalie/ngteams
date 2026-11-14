@@ -81,7 +81,7 @@ context = { "crates/teams-media/src/video/effects.rs" = "787856448e591791db31587
 
 
 [unmapped_sources."crates/teams-proto/src/chat/mod.rs"]
-sha256 = "0a5a70bd09301bf16e5a6b7877de020d357b6aa819c61503a1ab438d1ccbfd1d"
+sha256 = "583d41ef8cb267940c9d6b1b8dd463e8c5da0a5199b01107bedbe592c4b09652"
 reason = "module declarations, re-exports and documentation only; no executable items"
 
 
@@ -142,7 +142,7 @@ context = { "crates/proto-lab/src/action_targets.rs" = "624e25a8a896080702107574
 [unmapped_sources."crates/teams-proto/src/http/attachment_tests.rs"]
 sha256 = "fc4f64d121310a964744b565cd4d0efbd7874f3b5438692d6759a076cfd66c94"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
-context = { "crates/teams-proto/src/http.rs" = "4bcab358e4fdb5ccb1209a2f805ad0230464b55cfa874cc00ca2db600153949b" }
+context = { "crates/teams-proto/src/http.rs" = "6f6d884424dc52eb8c4a4d9b96dfef197eb0ab23e7254085c290cc3c1c8f8c4b" }
 
 [unmapped_sources."crates/teams-core/src/attachments_tests.rs"]
 sha256 = "9dd845ed73f53a7a32137d505c45018d56bf8529060c3cfdee1ebe7059968e96"
@@ -641,9 +641,9 @@ reason = "unit-test module included only by meeting_alert.rs cfg(test); omitted 
 context = { "crates/teams-ui/src/meeting_alert.rs" = "be5825947b396fe792bc9f0fe9d4f284a47a3156292b503e78dc6374372d41eb" }
 
 [unmapped_sources."crates/teams-proto/src/http/cloud_tests.rs"]
-sha256 = "a200a77247a054325bbf929a5861a2f321e6cd7354cccab468578e5d15c49ed5"
+sha256 = "885613503f07f6fabe77ddea168bf3c4e7814f66caef61a3b0b9e338b6c74b40"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
-context = { "crates/teams-proto/src/http.rs" = "4bcab358e4fdb5ccb1209a2f805ad0230464b55cfa874cc00ca2db600153949b" }
+context = { "crates/teams-proto/src/http.rs" = "6f6d884424dc52eb8c4a4d9b96dfef197eb0ab23e7254085c290cc3c1c8f8c4b" }
 
 [unmapped_sources."crates/teams-sdp/src/lib.rs"]
 sha256 = "2dfe9b286b9ebca1a0c6c3ee22c751f4886f6f8bd7d397bc684c79a5eba33862"
