@@ -1350,13 +1350,12 @@ async fn own_cloud_authenticates_locally_but_refuses_microsoft_push_and_reconnec
     let transport = HttpTransport::for_cloud_with_mock_origin(
         Arc::clone(&lab.tokens),
         "https://chat.example:8443/api/chatsvc/amer",
-        cloud.clone(),
+        cloud,
         &lab.mock.origin(),
     )
     .unwrap();
     let client = Trouter::with_mock_origin(Arc::new(transport), Arc::clone(&lab.tokens), lab.trouter.origin())
         .unwrap()
-        .for_cloud(cloud)
         .with_options(options());
     let opened = client.opened_urls();
     let mut push = client.spawn();

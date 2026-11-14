@@ -1,5 +1,5 @@
-//! The socket: where it connects (a fixed host allowlist), how (WSS, the system's certificate verifier), and its two
-//! halves. The write half is wrapped in [`SocketWriter`], the [`FrameWriter`] that only `teams_proto`'s
+//! The socket: where it connects (Microsoft's host allowlist or the account's own origin), how (WSS, the system's
+//! certificate verifier), and its two halves. The write half is wrapped in [`SocketWriter`], the [`FrameWriter`] that only `teams_proto`'s
 //! [`FrameSink`](teams_proto::FrameSink) can feed (it takes nothing but the sink's [`FrameText`]), and it is handed to
 //! the sink at once; nothing else in this crate holds it, so the socket has no other way to send a frame. The read
 //! half only reads.
@@ -106,7 +106,8 @@ pub(crate) type Stream = WebSocketStream<Box<dyn Io>>;
 pub(crate) struct ConnectBase(Url);
 
 impl ConnectBase {
-    /// `wss://go.trouter.teams.microsoft.com/v4/c` (a fixed URL: `None` never comes).
+    /// The cloud's global connect URL: `wss://go.trouter.teams.microsoft.com/v4/c` for Microsoft,
+    /// or `wss://<own origin>/trouter/v4/c`.
     pub(crate) fn global_in(cloud: &Cloud) -> Option<Self> {
         let mut url = cloud
             .service_url(&format!("https://{TROUTER_HOST}{CONNECT_PATH}"), "/trouter/v4/c")
@@ -296,7 +297,7 @@ impl Opener {
     }
 
     /// Opens the socket at `url` (checked against the allowlist first) within `limit`: TCP, TLS, the WebSocket
-    /// handshake with the web client's `Origin`.
+    /// handshake with the cloud's `Origin` (the web client's for Microsoft, the own origin otherwise).
     pub(crate) async fn open(&self, url: &Url, limit: Duration) -> Result<Stream, ConnectError> {
         if !allowed_in(&self.cloud, url) {
             return Err(ConnectError::NotAllowed);

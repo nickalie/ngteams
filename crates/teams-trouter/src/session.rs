@@ -1,7 +1,8 @@
 //! One account's push channel: the socket's life (connect, authenticate, keep-alive, reconnect), the registration of
 //! its endpoint, and the deliveries handed on as typed events. The protocol is `docs/protocol/trouter.md`'s.
 //!
-//! - **Connect** to `wss://go.trouter.teams.microsoft.com/v4/c` (the connect URL's query as the web client's), and
+//! - **Connect** to the transport's cloud (`wss://go.trouter.teams.microsoft.com/v4/c` for Microsoft,
+//!   `wss://<own origin>/trouter/v4/c` otherwise), with the web client's query, and
 //!   after a `trouter.connected` straight to its `reconnectUrl` with its `connectparams`, until those are within an
 //!   hour of their expiry, three connects in a row have failed (any connect that ended before its `trouter.connected`
 //!   but for a renewal) or the service disconnected twice for a `dup` within 10 s.
@@ -272,30 +273,24 @@ where
     K: TrouterCredentials + 'static,
 {
     /// The push channel of the account whose registrations go through `transport` and whose tokens `credentials`
-    /// gives, with a fresh endpoint id.
+    /// gives, with a fresh endpoint id. The transport determines the cloud; credentials must belong to that account.
     ///
     /// # Errors
     /// [`BuildError::Tls`] when the system's certificate verifier can't be set up, [`BuildError::Random`] when no
     /// endpoint id can be made.
     pub fn new(transport: Arc<T>, credentials: Arc<K>) -> Result<Self, BuildError> {
+        let cloud = transport.cloud().clone();
+        let opener = Opener::new(socket::tls_config().map_err(BuildError::Tls)?).for_cloud(cloud.clone());
         Ok(Self {
             transport,
-            cloud: teams_proto::Cloud::Microsoft,
+            cloud,
             credentials,
             clock: Arc::new(SystemClock),
-            opener: Opener::new(socket::tls_config().map_err(BuildError::Tls)?),
+            opener,
             epid: guid().ok_or(BuildError::Random)?,
             options: Options::default(),
             calls: None,
         })
-    }
-
-    /// Selects the account's service boundary before any socket is opened.
-    #[must_use]
-    pub fn for_cloud(mut self, cloud: teams_proto::Cloud) -> Self {
-        self.opener = self.opener.for_cloud(cloud.clone());
-        self.cloud = cloud;
-        self
     }
 
     /// Uses the calling stack's socket, registration and delivery tracking instead of the messaging stack.

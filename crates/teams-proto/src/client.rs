@@ -17,6 +17,11 @@ use crate::request::Request;
 pub trait Transport: Sync {
     type Error: Error + Send + Sync + 'static;
 
+    /// The account's service boundary, also used by its push channel. Microsoft is the default.
+    fn cloud(&self) -> &crate::Cloud {
+        &crate::Cloud::Microsoft
+    }
+
     /// A typed call-scoped operation on Microsoft's built-in caption service.
     fn deliver_caption(
         &self,

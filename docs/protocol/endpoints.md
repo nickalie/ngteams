@@ -36,7 +36,8 @@ all existing constructors' default. No production account selects `Own` yet. The
 query or fragment. Service bases and discovered links must stay on that account's origin; Microsoft tokens must
 never reach it. The transport's test-support loopback override runs only after the service URL has been validated.
 
-Own servers use the same endpoint paths, queries, bodies, token audiences and headers below these bases:
+Own servers use the same endpoint paths, queries, bodies, token audiences and headers below these bases,
+except for the Trouter handshake and calling domain described in its row:
 
 | Service | Own-origin base or endpoint | Current entry |
 | --- | --- | --- |
@@ -51,7 +52,7 @@ Own servers use the same endpoint paths, queries, bodies, token audiences and he
 | Presence | `/ups/<geo>/` | `with_presence`, authz `presenceUPS` |
 | MCPS | `/api/mcps/<region>/` | `with_mcps`, authz `mcpService` |
 | Registrar | `/registrar/prod/V2/registrations` | `EndpointRegistration::messaging_in`, `CallingRegistration::new_in` |
-| Trouter | `wss://<origin>/trouter/v4/c`, push URLs `https://<origin>/trouter/v4/f/<endpoint>/` | `Trouter::for_cloud`, same-origin reconnect validation |
+| Trouter | `wss://<origin>/trouter/v4/c`, push URLs `https://<origin>/trouter/v4/f/<endpoint>/` | `Trouter::new` derives the cloud from its transport; same-origin reconnect validation; handshake `Origin` is the own origin and the calling stack's `dom` is the own host |
 | AMS and URL previews | `/ams/` | `with_ams`, authz `amsV2`; message-borne URL parsing pending |
 | Graph | `/graph/v1.0/` | transport fixed base |
 | Files and thumbnails | `/sp/` | reserved; own-origin link and drive parsing pending |

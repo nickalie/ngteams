@@ -524,10 +524,7 @@ impl<C: Credentials> HttpTransport<C> {
     /// a port and nothing after it; otherwise as [`Self::new`].
     #[cfg(feature = "test-support")]
     pub fn with_mock_origin(credentials: Arc<C>, chat_base: &str, origin: &str) -> Result<Self, BuildError> {
-        let origin = parse_mock_origin(origin).ok_or(BuildError::MockOrigin)?;
-        let mut transport = Self::build(credentials, chat_base, Cloud::Microsoft, false)?;
-        transport.mock_origin = Some(origin);
-        Ok(transport)
+        Self::for_cloud_with_mock_origin(credentials, chat_base, Cloud::Microsoft, origin)
     }
 
     /// The own-server transport through the same loopback-only test override as [`Self::with_mock_origin`].
@@ -638,19 +635,12 @@ impl<C: Credentials> HttpTransport<C> {
     /// partition a lowercase region, `-` and a number: `amer-03`), one trailing slash allowed, no query or fragment.
     /// Without it, every middle-tier request is refused ([`Refusal::NoMiddleTier`]).
     ///
+    /// In an own-server cloud, the same path must be on the account's HTTPS origin, including its TLS port.
+    ///
     /// # Errors
     /// [`BuildError::MiddleTierBase`] for any other base.
     pub fn with_middle_tier(mut self, base: &str) -> Result<Self, BuildError> {
-        self.middle_tier = Some(
-            cloud_base(
-                &self.cloud,
-                base,
-                parse_middle_tier_base,
-                "",
-                "https://teams.microsoft.com",
-            )
-            .ok_or(BuildError::MiddleTierBase)?,
-        );
+        self.middle_tier = Some(self.middle_tier_base(base).ok_or(BuildError::MiddleTierBase)?);
         Ok(self)
     }
 
@@ -659,13 +649,12 @@ impl<C: Credentials> HttpTransport<C> {
     /// lowercase letters: `amer`), one trailing slash allowed, no query or fragment. Without it, every CSA request is
     /// refused ([`Refusal::NoCsa`]).
     ///
+    /// In an own-server cloud, the same path must be on the account's HTTPS origin, including its TLS port.
+    ///
     /// # Errors
-    /// [`BuildError::CsaBase`] for any other base ([`Self::accepts_csa_base`]).
+    /// [`BuildError::CsaBase`] for any other base ([`Self::accepts_csa_base_in`]).
     pub fn with_csa(mut self, base: &str) -> Result<Self, BuildError> {
-        self.csa = Some(
-            cloud_base(&self.cloud, base, parse_csa_base, "", "https://teams.microsoft.com")
-                .ok_or(BuildError::CsaBase)?,
-        );
+        self.csa = Some(self.csa_base(base).ok_or(BuildError::CsaBase)?);
         Ok(self)
     }
 
@@ -674,24 +663,17 @@ impl<C: Credentials> HttpTransport<C> {
     /// letters: `us`), one trailing slash allowed, no query or fragment. Without it, every MCPS read is refused
     /// ([`Refusal::NoMcps`]).
     ///
+    /// In an own-server cloud, the same path must be on the account's HTTPS origin, including its TLS port.
+    ///
     /// # Errors
-    /// [`BuildError::McpsBase`] for any other base ([`Self::accepts_mcps_base`]).
+    /// [`BuildError::McpsBase`] for any other base ([`Self::accepts_mcps_base_in`]).
     pub fn with_mcps(mut self, base: &str) -> Result<Self, BuildError> {
-        self.mcps = Some(
-            cloud_base(
-                &self.cloud,
-                base,
-                |base| parse_service_base(base, is_mcps_path),
-                "",
-                "https://teams.microsoft.com",
-            )
-            .ok_or(BuildError::McpsBase)?,
-        );
+        self.mcps = Some(self.mcps_base(base).ok_or(BuildError::McpsBase)?);
         Ok(self)
     }
 
-    /// The transport with Loki, the persona card service: its configuration read on the fixed global base
-    /// (`https://loki.delve.office.com/`), and its person reads on the account's regional base once
+    /// The transport with Loki, the persona card service: its configuration read on `https://loki.delve.office.com/`
+    /// for Microsoft or `/loki/` on the own origin, and its person reads on the account's regional base once
     /// [`Self::set_loki_region`] took it from the configuration's answer. Without it, every Loki read is refused
     /// ([`Refusal::NoLoki`]).
     #[must_use]
@@ -709,7 +691,8 @@ impl<C: Credentials> HttpTransport<C> {
     /// Sets the account's Loki regional base, as its configuration's `LokiUrl` names it
     /// ([`crate::LokiConfiguration::read_answer`]): `https://<one label>.loki.delve.office.com/` exactly (the label
     /// lowercase letters, digits and inner `-`; the trailing slash optional), no port, user info, path, query or
-    /// fragment. Taken once: setting the same base again is `Ok`, another one is refused and the first kept.
+    /// fragment. For an own-server cloud, the base is `/loki/` on the account's HTTPS origin, including its TLS port.
+    /// Taken once: setting the same base again is `Ok`, another one is refused and the first kept.
     ///
     /// # Errors
     /// [`BuildError::LokiBase`] for a base of any other form, another region than the one set, or a transport not given
@@ -734,13 +717,15 @@ impl<C: Credentials> HttpTransport<C> {
         self.loki.as_ref().and_then(OnceLock::get).map(Url::as_str)
     }
 
-    /// Whether [`Self::with_mcps`] takes `base`.
+    /// Whether a Microsoft-cloud transport's [`Self::with_mcps`] accepts `base`.
+    /// For this account's cloud, use [`Self::accepts_mcps_base_in`].
     #[must_use]
     pub fn accepts_mcps_base(base: &str) -> bool {
         parse_service_base(base, is_mcps_path).is_some()
     }
 
-    /// Whether [`Self::with_csa`] takes `base`.
+    /// Whether a Microsoft-cloud transport's [`Self::with_csa`] accepts `base`.
+    /// For this account's cloud, use [`Self::accepts_csa_base_in`].
     #[must_use]
     pub fn accepts_csa_base(base: &str) -> bool {
         parse_csa_base(base).is_some()
@@ -758,23 +743,17 @@ impl<C: Credentials> HttpTransport<C> {
     /// `/fabric/<region>/templates/api` exactly, one trailing slash allowed, no query or fragment. Without it, every
     /// provisioning request is refused ([`Refusal::NoProvisioning`]).
     ///
+    /// In an own-server cloud, the same path must be on the account's HTTPS origin, including its TLS port.
+    ///
     /// # Errors
     /// [`BuildError::ProvisioningBase`] for any other base.
     pub fn with_provisioning(mut self, base: &str) -> Result<Self, BuildError> {
-        self.provisioning = Some(
-            cloud_base(
-                &self.cloud,
-                base,
-                |base| parse_service_base(base, crate::channel_read::is_provisioning_path),
-                "",
-                "https://teams.microsoft.com",
-            )
-            .ok_or(BuildError::ProvisioningBase)?,
-        );
+        self.provisioning = Some(self.provisioning_base(base).ok_or(BuildError::ProvisioningBase)?);
         Ok(self)
     }
 
-    /// Whether [`Self::with_provisioning`] takes `base`.
+    /// Whether a Microsoft-cloud transport's [`Self::with_provisioning`] accepts `base`.
+    /// For this account's cloud, use [`Self::accepts_provisioning_base_in`].
     #[must_use]
     pub fn accepts_provisioning_base(base: &str) -> bool {
         parse_service_base(base, crate::channel_read::is_provisioning_path).is_some()
@@ -785,23 +764,17 @@ impl<C: Credentials> HttpTransport<C> {
     /// one trailing slash allowed, no query or fragment. Without it, every user profile request is refused
     /// ([`Refusal::NoUserProfile`]).
     ///
+    /// In an own-server cloud, the same path must be on the account's HTTPS origin, including its TLS port.
+    ///
     /// # Errors
     /// [`BuildError::UserProfileBase`] for any other base.
     pub fn with_user_profile(mut self, base: &str) -> Result<Self, BuildError> {
-        self.user_profile = Some(
-            cloud_base(
-                &self.cloud,
-                base,
-                |base| parse_service_base(base, crate::channel_read::is_user_profile_path),
-                "",
-                "https://teams.microsoft.com",
-            )
-            .ok_or(BuildError::UserProfileBase)?,
-        );
+        self.user_profile = Some(self.user_profile_base(base).ok_or(BuildError::UserProfileBase)?);
         Ok(self)
     }
 
-    /// Whether [`Self::with_user_profile`] takes `base`.
+    /// Whether a Microsoft-cloud transport's [`Self::with_user_profile`] accepts `base`.
+    /// For this account's cloud, use [`Self::accepts_user_profile_base_in`].
     #[must_use]
     pub fn accepts_user_profile_base(base: &str) -> bool {
         parse_service_base(base, crate::channel_read::is_user_profile_path).is_some()
@@ -812,23 +785,17 @@ impl<C: Credentials> HttpTransport<C> {
     /// letters: `noam`), one trailing slash allowed, no query or fragment. Without it, every presence request is
     /// refused ([`Refusal::NoPresence`]).
     ///
+    /// In an own-server cloud, the same path must be on the account's HTTPS origin, including its TLS port.
+    ///
     /// # Errors
-    /// [`BuildError::PresenceBase`] for any other base ([`Self::accepts_presence_base`]).
+    /// [`BuildError::PresenceBase`] for any other base ([`Self::accepts_presence_base_in`]).
     pub fn with_presence(mut self, base: &str) -> Result<Self, BuildError> {
-        self.presence = Some(
-            cloud_base(
-                &self.cloud,
-                base,
-                parse_presence_base,
-                "",
-                "https://teams.microsoft.com",
-            )
-            .ok_or(BuildError::PresenceBase)?,
-        );
+        self.presence = Some(self.presence_base(base).ok_or(BuildError::PresenceBase)?);
         Ok(self)
     }
 
-    /// Whether [`Self::with_presence`] takes `base`.
+    /// Whether a Microsoft-cloud transport's [`Self::with_presence`] accepts `base`.
+    /// For this account's cloud, use [`Self::accepts_presence_base_in`].
     #[must_use]
     pub fn accepts_presence_base(base: &str) -> bool {
         parse_presence_base(base).is_some()
@@ -845,23 +812,17 @@ impl<C: Credentials> HttpTransport<C> {
     /// `<name>.asyncgw.teams.microsoft.com` (`<name>` lowercase ASCII letters, digits and `-`: `us-prod`) with no port or
     /// user info, no path but `/`, no query or fragment. Without it, every AMS read is refused ([`Refusal::NoAms`]).
     ///
+    /// In an own-server cloud, the base is `/ams/` on the account's HTTPS origin, including its TLS port.
+    ///
     /// # Errors
-    /// [`BuildError::AmsBase`] for any other base ([`Self::accepts_ams_base`]).
+    /// [`BuildError::AmsBase`] for any other base ([`Self::accepts_ams_base_in`]).
     pub fn with_ams(mut self, base: &str) -> Result<Self, BuildError> {
-        self.ams = Some(
-            cloud_base(
-                &self.cloud,
-                base,
-                parse_ams_base,
-                "/ams",
-                "https://us-prod.asyncgw.teams.microsoft.com",
-            )
-            .ok_or(BuildError::AmsBase)?,
-        );
+        self.ams = Some(self.ams_base(base).ok_or(BuildError::AmsBase)?);
         Ok(self)
     }
 
-    /// Whether [`Self::with_ams`] takes `base`.
+    /// Whether a Microsoft-cloud transport's [`Self::with_ams`] accepts `base`.
+    /// For this account's cloud, use [`Self::accepts_ams_base_in`].
     #[must_use]
     pub fn accepts_ams_base(base: &str) -> bool {
         parse_ams_base(base).is_some()
@@ -924,9 +885,49 @@ impl<C: Credentials> HttpTransport<C> {
         }
     }
 
-    /// Whether this account accepts the service base.
+    /// Whether this account's [`Self::with_middle_tier`] accepts `base` in its cloud.
     #[must_use]
     pub fn accepts_middle_tier_base_in(&self, base: &str) -> bool {
+        self.middle_tier_base(base).is_some()
+    }
+
+    /// Whether this account's [`Self::with_csa`] accepts `base` in its cloud.
+    #[must_use]
+    pub fn accepts_csa_base_in(&self, base: &str) -> bool {
+        self.csa_base(base).is_some()
+    }
+
+    /// Whether this account's [`Self::with_presence`] accepts `base` in its cloud.
+    #[must_use]
+    pub fn accepts_presence_base_in(&self, base: &str) -> bool {
+        self.presence_base(base).is_some()
+    }
+
+    /// Whether this account's [`Self::with_ams`] accepts `base` in its cloud.
+    #[must_use]
+    pub fn accepts_ams_base_in(&self, base: &str) -> bool {
+        self.ams_base(base).is_some()
+    }
+
+    /// Whether this account's [`Self::with_mcps`] accepts `base` in its cloud.
+    #[must_use]
+    pub fn accepts_mcps_base_in(&self, base: &str) -> bool {
+        self.mcps_base(base).is_some()
+    }
+
+    /// Whether this account's [`Self::with_provisioning`] accepts `base` in its cloud.
+    #[must_use]
+    pub fn accepts_provisioning_base_in(&self, base: &str) -> bool {
+        self.provisioning_base(base).is_some()
+    }
+
+    /// Whether this account's [`Self::with_user_profile`] accepts `base` in its cloud.
+    #[must_use]
+    pub fn accepts_user_profile_base_in(&self, base: &str) -> bool {
+        self.user_profile_base(base).is_some()
+    }
+
+    fn middle_tier_base(&self, base: &str) -> Option<Url> {
         cloud_base(
             &self.cloud,
             base,
@@ -934,18 +935,13 @@ impl<C: Credentials> HttpTransport<C> {
             "",
             "https://teams.microsoft.com",
         )
-        .is_some()
     }
 
-    /// Whether this account accepts the service base.
-    #[must_use]
-    pub fn accepts_csa_base_in(&self, base: &str) -> bool {
-        cloud_base(&self.cloud, base, parse_csa_base, "", "https://teams.microsoft.com").is_some()
+    fn csa_base(&self, base: &str) -> Option<Url> {
+        cloud_base(&self.cloud, base, parse_csa_base, "", "https://teams.microsoft.com")
     }
 
-    /// Whether this account accepts the service base.
-    #[must_use]
-    pub fn accepts_presence_base_in(&self, base: &str) -> bool {
+    fn presence_base(&self, base: &str) -> Option<Url> {
         cloud_base(
             &self.cloud,
             base,
@@ -953,12 +949,9 @@ impl<C: Credentials> HttpTransport<C> {
             "",
             "https://teams.microsoft.com",
         )
-        .is_some()
     }
 
-    /// Whether this account accepts the service base.
-    #[must_use]
-    pub fn accepts_ams_base_in(&self, base: &str) -> bool {
+    fn ams_base(&self, base: &str) -> Option<Url> {
         cloud_base(
             &self.cloud,
             base,
@@ -966,12 +959,9 @@ impl<C: Credentials> HttpTransport<C> {
             "/ams",
             "https://us-prod.asyncgw.teams.microsoft.com",
         )
-        .is_some()
     }
 
-    /// Whether this account accepts the service base.
-    #[must_use]
-    pub fn accepts_mcps_base_in(&self, base: &str) -> bool {
+    fn mcps_base(&self, base: &str) -> Option<Url> {
         cloud_base(
             &self.cloud,
             base,
@@ -979,12 +969,9 @@ impl<C: Credentials> HttpTransport<C> {
             "",
             "https://teams.microsoft.com",
         )
-        .is_some()
     }
 
-    /// Whether this account accepts the service base.
-    #[must_use]
-    pub fn accepts_provisioning_base_in(&self, base: &str) -> bool {
+    fn provisioning_base(&self, base: &str) -> Option<Url> {
         cloud_base(
             &self.cloud,
             base,
@@ -992,12 +979,9 @@ impl<C: Credentials> HttpTransport<C> {
             "",
             "https://teams.microsoft.com",
         )
-        .is_some()
     }
 
-    /// Whether this account accepts the service base.
-    #[must_use]
-    pub fn accepts_user_profile_base_in(&self, base: &str) -> bool {
+    fn user_profile_base(&self, base: &str) -> Option<Url> {
         cloud_base(
             &self.cloud,
             base,
@@ -1005,7 +989,6 @@ impl<C: Credentials> HttpTransport<C> {
             "",
             "https://teams.microsoft.com",
         )
-        .is_some()
     }
 
     /// `service`'s base, the one every URL of it is built on.
@@ -1535,6 +1518,10 @@ impl Drop for FileBody {
 
 impl<C: Credentials> Transport for HttpTransport<C> {
     type Error = HttpError;
+
+    fn cloud(&self) -> &Cloud {
+        self.cloud()
+    }
 
     async fn deliver_caption(&self, write: crate::captions::CaptionWrite) -> Option<Result<Response, HttpError>> {
         Some(self.deliver_caption_write(&write).await)
