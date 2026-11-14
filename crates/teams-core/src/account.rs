@@ -189,7 +189,7 @@ pub fn start_for_cloud<S: SecretStore + 'static>(
         read_only,
     } = account;
     let (push, calls) = listening(read_only, push, calls);
-    let tracker = account_tracker(&mri, teams_proto::Cloud::Microsoft);
+    let tracker = account_tracker(&mri, cloud.clone());
     let writable = |transport: HttpTransport<Session<S>>| {
         if read_only { transport.read_only() } else { transport }
     };

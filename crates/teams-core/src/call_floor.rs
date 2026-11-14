@@ -58,6 +58,49 @@ mod tests {
     use teams_mock::{LAB_A, LAB_B, TrouterMock};
     use teams_proto::Mri;
 
+    #[test]
+    fn account_start_binds_its_tracker_to_its_cloud() {
+        use teams_auth::authz::{CHAT_BASE_GTM, Region};
+        use teams_auth::secrets::MemorySecretStore;
+        use teams_proto::{CallState as _, Cloud};
+
+        let own_root = "https://calls.example:8443/trouter/v4/f/Endpoint00001/";
+        let microsoft_root = "https://pub-ent-zz-01-f.trouter.teams.microsoft.com:3443/v4/f/Endpoint00001/";
+        for cloud in [Cloud::Microsoft, Cloud::own("https://calls.example:8443").unwrap()] {
+            let dir = tempfile::tempdir().unwrap();
+            let floor = CallFloor::new();
+            let account = crate::account::Account {
+                upn: "synthetic-unsigned@example.test".into(),
+                mri: LAB_A.into(),
+                display_name: "Lab A".into(),
+                store_file: dir.path().join("account.sqlite"),
+                region: Region {
+                    name: Some("amer".into()),
+                    partition: Some("amer-03".into()),
+                    endpoints: [(
+                        CHAT_BASE_GTM.into(),
+                        cloud
+                            .service_url(teams_mock::CHAT_BASE, "/api/chatsvc/amer")
+                            .unwrap()
+                            .to_string(),
+                    )]
+                    .into(),
+                },
+                secrets: MemorySecretStore::new(),
+                push: false,
+                known_names: Vec::new(),
+                calls: None,
+                read_only: false,
+            };
+            let engine = crate::account::start_for_cloud(account, floor.clone(), &cloud).unwrap();
+            let tracker = super::lock(&floor.inner.accounts)[0].upgrade().unwrap();
+            assert_eq!(tracker.connected("microsoft", microsoft_root), cloud.is_microsoft());
+            assert_eq!(tracker.connected("own", own_root), !cloud.is_microsoft());
+            assert!(!tracker.connected("other-port", "https://calls.example:9443/trouter/v4/f/Endpoint00001/"));
+            engine.handle.shutdown();
+        }
+    }
+
     fn invitation(from: &str, to: &str) -> Delivery {
         Delivery {
             connection: format!("{to}/one"),
