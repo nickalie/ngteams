@@ -42,7 +42,7 @@ impl Create {
         let p = &self.properties;
         if p.thread_type != "chat"
             || p.fixed_roster != p.unique
-            || !(2..=250).contains(&self.members.len())
+            || self.members.len() < 2
             || (p.unique && (self.members.len() != 2 || p.topic.is_some()))
         {
             return Err(Error::BadRequest);

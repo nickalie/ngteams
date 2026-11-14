@@ -102,3 +102,49 @@ async fn two_nodes_creating_the_same_one_to_one_roster_return_one_persisted_thre
         server.stop().await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn groups_supported_by_the_native_builder_are_bounded_by_request_size_without_an_invented_roster_cap() {
+    for backend in backends() {
+        let server = TestServer::start_with(backend, |config| {
+            config.public_origin = url::Url::parse("https://own.example.test").unwrap();
+        })
+        .await;
+        let a = server.add_user("a@own.test", "Ada").await;
+        let password = ngteams_server::db::users::by_id(&server.app.db, &a)
+            .await
+            .unwrap()
+            .unwrap()
+            .password_hash;
+        let mut others = Vec::new();
+        for index in 0..251 {
+            let user = ngteams_server::db::users::add(
+                &server.app.db,
+                &format!("member-{index}@own.test"),
+                "Synthetic member",
+                &password,
+            )
+            .await
+            .unwrap();
+            others.push(Mri::new(format!("8:orgid:{}", user.id)));
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let engine = super::engine(&server, "a@own.test", &a, dir.path()).await;
+        let row = engine
+            .write(teams_core::engine::Action::CreateChat {
+                others,
+                topic: Some("Native roster".into()),
+            })
+            .await
+            .unwrap();
+        assert_eq!(row.state, teams_store::OutboxState::Sent, "{:?}", row.last_error);
+        let reader = client(&server, "a@own.test", &a).await;
+        let members = ChatReads::new(&reader)
+            .members(row.message_id.as_deref().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(members.members.len(), 252);
+        engine.shutdown();
+        server.stop().await;
+    }
+}
