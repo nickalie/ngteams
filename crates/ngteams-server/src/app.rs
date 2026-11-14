@@ -90,6 +90,7 @@ impl App {
 pub fn router(app: Arc<App>) -> Router {
     let auth = Router::new()
         .route("/oauth2/v2.0/token", post(crate::routes::token::token))
+        .route("/api/authsvc/v1.0/authz", post(crate::routes::authz::authz))
         .layer(DefaultBodyLimit::max(AUTH_BODY_LIMIT));
     Router::new()
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
