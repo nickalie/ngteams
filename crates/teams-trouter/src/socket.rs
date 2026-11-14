@@ -24,6 +24,7 @@ use std::time::Duration;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt as _, StreamExt as _};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+use teams_proto::Cloud;
 use teams_proto::{CLIENT_BUILD, FrameText, FrameWriter, TROUTER_DOMAIN, TROUTER_HOST};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
@@ -106,10 +107,12 @@ pub(crate) struct ConnectBase(Url);
 
 impl ConnectBase {
     /// `wss://go.trouter.teams.microsoft.com/v4/c` (a fixed URL: `None` never comes).
-    pub(crate) fn global() -> Option<Self> {
-        Url::parse(&format!("wss://{TROUTER_HOST}{CONNECT_PATH}"))
-            .ok()
-            .map(Self)
+    pub(crate) fn global_in(cloud: &Cloud) -> Option<Self> {
+        let mut url = cloud
+            .service_url(&format!("https://{TROUTER_HOST}{CONNECT_PATH}"), "/trouter/v4/c")
+            .ok()?;
+        url.set_scheme("wss").ok()?;
+        Some(Self(url))
     }
 
     /// A `reconnectUrl` as `trouter.connected` handed it over, if it is on the allowlist ([`allowed`]); its port `443`
@@ -133,6 +136,14 @@ impl ConnectBase {
         (regional && plain).then_some(Self(url))
     }
 
+    pub(crate) fn regional_in(cloud: &Cloud, reconnect_url: &str) -> Option<Self> {
+        if cloud.is_microsoft() {
+            return Self::regional(reconnect_url);
+        }
+        let url = Url::parse(reconnect_url).ok()?;
+        (allowed_in(cloud, &url) && url.query().is_none()).then_some(Self(url))
+    }
+
     /// The connect URL of `stack`'s socket: the base and the web client's query (`tc`, `timeout`, `epid`, the calling
     /// stack's `dom`, `cor_id`, `con_num`), `tc` naming the stack's client.
     pub(crate) fn connect_url(&self, stack: Stack, epid: &str, cor_id: &str, con_num: &str) -> Url {
@@ -140,7 +151,14 @@ impl ConnectBase {
         let tc = format!(r#"{{"cv":"{CLIENT_VERSION}","ua":"{client}","hr":"","v":"{CLIENT_BUILD}"}}"#);
         let dom = match stack {
             Stack::Messaging => String::new(),
-            Stack::Calling => format!("&dom={CALLING_DOMAIN}"),
+            Stack::Calling => {
+                let domain = if self.0.path() == CONNECT_PATH {
+                    CALLING_DOMAIN
+                } else {
+                    self.0.host_str().unwrap_or_default()
+                };
+                format!("&dom={domain}")
+            }
         };
         let query = format!(
             "tc={}&timeout={PING_SECONDS}&epid={epid}{dom}&cor_id={cor_id}&con_num={con_num}",
@@ -166,6 +184,22 @@ pub fn allowed(url: &Url) -> bool {
         && url.fragment().is_none()
         && url.username().is_empty()
         && url.password().is_none()
+}
+
+/// Whether a socket URL belongs to this account's cloud.
+#[must_use]
+pub fn allowed_in(cloud: &Cloud, url: &Url) -> bool {
+    if cloud.is_microsoft() {
+        return allowed(url);
+    }
+    if url.scheme() != "wss" || url.path() != "/trouter/v4/c" {
+        return false;
+    }
+    let mut https = url.clone();
+    if https.set_scheme("https").is_err() {
+        return false;
+    }
+    cloud.contains(&https)
 }
 
 /// Why a socket couldn't be opened. Nothing in it carries a token (the handshake carries none) or a body.
@@ -225,6 +259,7 @@ impl OpenedUrls {
 #[derive(Clone)]
 pub(crate) struct Opener {
     tls: Arc<ClientConfig>,
+    cloud: Cloud,
     #[cfg(feature = "test-support")]
     mock_origin: Option<Url>,
     #[cfg(feature = "test-support")]
@@ -235,11 +270,17 @@ impl Opener {
     pub(crate) fn new(tls: Arc<ClientConfig>) -> Self {
         Self {
             tls,
+            cloud: Cloud::Microsoft,
             #[cfg(feature = "test-support")]
             mock_origin: None,
             #[cfg(feature = "test-support")]
             opened: OpenedUrls::default(),
         }
+    }
+
+    pub(crate) fn for_cloud(mut self, cloud: Cloud) -> Self {
+        self.cloud = cloud;
+        self
     }
 
     #[cfg(feature = "test-support")]
@@ -257,7 +298,7 @@ impl Opener {
     /// Opens the socket at `url` (checked against the allowlist first) within `limit`: TCP, TLS, the WebSocket
     /// handshake with the web client's `Origin`.
     pub(crate) async fn open(&self, url: &Url, limit: Duration) -> Result<Stream, ConnectError> {
-        if !allowed(url) {
+        if !allowed_in(&self.cloud, url) {
             return Err(ConnectError::NotAllowed);
         }
         tokio::time::timeout(limit, self.open_checked(url))
@@ -274,10 +315,15 @@ impl Opener {
             mocked.set_query(url.query());
             let address = (origin.host_str().unwrap_or_default(), origin.port().unwrap_or_default());
             let tcp = TcpStream::connect(address).await.map_err(|error| network(&error))?;
-            return handshake(mocked, Box::new(tcp)).await;
+            return handshake(mocked, Box::new(tcp), &self.cloud).await;
         }
-        let host = url.host_str().ok_or(ConnectError::NotAllowed)?.to_owned();
-        let tcp = TcpStream::connect((host.as_str(), 443))
+        let host = url
+            .host_str()
+            .ok_or(ConnectError::NotAllowed)?
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_owned();
+        let tcp = TcpStream::connect((host.as_str(), url.port().unwrap_or(443)))
             .await
             .map_err(|error| network(&error))?;
         let name = ServerName::try_from(host).map_err(|_| ConnectError::NotAllowed)?;
@@ -285,7 +331,7 @@ impl Opener {
             .connect(name, tcp)
             .await
             .map_err(|_| ConnectError::Tls)?;
-        handshake(url.clone(), Box::new(tls)).await
+        handshake(url.clone(), Box::new(tls), &self.cloud).await
     }
 }
 
@@ -293,12 +339,18 @@ fn network(error: &io::Error) -> ConnectError {
     ConnectError::Network(error.kind())
 }
 
-async fn handshake(url: Url, stream: Box<dyn Io>) -> Result<Stream, ConnectError> {
+async fn handshake(url: Url, stream: Box<dyn Io>, cloud: &Cloud) -> Result<Stream, ConnectError> {
     let mut request = url
         .as_str()
         .into_client_request()
         .map_err(|_| ConnectError::NotAllowed)?;
-    request.headers_mut().insert("origin", HeaderValue::from_static(ORIGIN));
+    let origin = match cloud.origin() {
+        None => HeaderValue::from_static(ORIGIN),
+        Some(origin) => {
+            HeaderValue::from_str(origin.as_str().trim_end_matches('/')).map_err(|_| ConnectError::NotAllowed)?
+        }
+    };
+    request.headers_mut().insert("origin", origin);
     let config = WebSocketConfig::default()
         .max_message_size(Some(MAX_INCOMING))
         .max_frame_size(Some(MAX_INCOMING))
@@ -364,5 +416,79 @@ impl FrameWriter for SocketWriter {
         );
         let message = Message::text(text);
         async move { self.0.send(message).await.map_err(WriteFailed::from) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn own_connect_and_regional_urls_stay_on_origin() {
+        let cloud = Cloud::own("https://chat.example:8443").unwrap();
+        let global = ConnectBase::global_in(&cloud).unwrap();
+        assert_eq!(global.0.as_str(), "wss://chat.example:8443/trouter/v4/c");
+        let url = global.connect_url(Stack::Calling, "endpoint", "correlation", "connection");
+        assert!(
+            url.query_pairs()
+                .any(|(key, value)| key == "dom" && value == "chat.example")
+        );
+        assert!(allowed_in(&cloud, &url));
+        assert!(!allowed(&url));
+        assert!(ConnectBase::regional_in(&cloud, global.0.as_str()).is_some());
+        for link in [
+            "wss://go.trouter.teams.microsoft.com/v4/c",
+            "wss://name-t.trouter.teams.microsoft.com/v4/c",
+            "wss://chat.example/trouter/v4/c",
+            "ws://chat.example:8443/trouter/v4/c",
+            "wss://chat.example:8443/v4/c",
+            "wss://chat.example:8443/trouter/v4/c?token=x",
+            "wss://u@chat.example:8443/trouter/v4/c",
+            "wss://chat.example:8443/trouter/v4/c#x",
+        ] {
+            assert!(ConnectBase::regional_in(&cloud, link).is_none(), "{link}");
+        }
+        assert_eq!(
+            ConnectBase::global_in(&Cloud::Microsoft).unwrap().0.as_str(),
+            "wss://go.trouter.teams.microsoft.com/v4/c"
+        );
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    #[expect(
+        clippy::result_large_err,
+        reason = "tungstenite fixes the server handshake callback's error type"
+    )]
+    async fn own_handshake_uses_own_origin_and_refuses_off_origin_before_connecting() {
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mock = Url::parse(&format!("ws://{}/", listener.local_addr().unwrap())).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let socket = tokio_tungstenite::accept_hdr_async(stream, |request: &Request, response: Response| {
+                assert_eq!(request.uri().path(), "/trouter/v4/c");
+                assert_eq!(request.headers()["origin"], "https://chat.example:8443");
+                Ok(response)
+            })
+            .await
+            .unwrap();
+            drop(socket);
+        });
+        let cloud = Cloud::own("https://chat.example:8443").unwrap();
+        let opener = Opener::new(tls_config().unwrap())
+            .for_cloud(cloud.clone())
+            .with_mock_origin(mock);
+        let own = ConnectBase::global_in(&cloud).unwrap();
+        let socket = opener.open(&own.0, Duration::from_secs(5)).await.unwrap();
+        drop(socket);
+        server.await.unwrap();
+        let microsoft = ConnectBase::global_in(&Cloud::Microsoft).unwrap();
+        assert!(matches!(
+            opener.open(&microsoft.0, Duration::from_secs(5)).await,
+            Err(ConnectError::NotAllowed)
+        ));
+        assert_eq!(opener.opened().urls(), vec![own.0]);
     }
 }

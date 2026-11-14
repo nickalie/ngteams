@@ -22,6 +22,7 @@
 pub mod authz;
 pub mod broker;
 pub mod claims;
+pub mod cloud;
 pub mod id_token;
 pub mod pkce;
 pub mod redirect;

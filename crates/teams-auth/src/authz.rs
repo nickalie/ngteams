@@ -274,6 +274,17 @@ impl AuthzClient {
         Self::with_endpoint(AUTHZ_ENDPOINT)
     }
 
+    /// The authz endpoint belonging to this account's cloud.
+    ///
+    /// # Errors
+    /// When the HTTP client cannot be built.
+    pub fn for_cloud(cloud: &crate::cloud::Cloud) -> Result<Self, AuthzError> {
+        let endpoint = cloud
+            .service_url(AUTHZ_ENDPOINT, "/api/authsvc/v1.0/authz")
+            .map_err(|_| AuthzError::InvalidEndpoint)?;
+        Self::with_endpoint(endpoint.as_str())
+    }
+
     /// A client for another authz URL (another cloud, or a mock server). No proxy, no redirects, a 30 s timeout.
     ///
     /// # Errors

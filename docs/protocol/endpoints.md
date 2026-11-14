@@ -29,6 +29,42 @@ Info remains payload-free. The transport retains HTTPS-only, no proxy/redirect, 
 single-attempt typed writes; the outbox manages permitted retries and uncertain outcomes. There is no browser or
 native write fence.
 
+## Own-origin routing contract (inactive)
+
+`teams_proto::Cloud` selects Microsoft or one validated HTTPS origin, including its TLS port. Microsoft remains
+all existing constructors' default. No production account selects `Own` yet. The origin has no user info, path,
+query or fragment. Service bases and discovered links must stay on that account's origin; Microsoft tokens must
+never reach it. The transport's test-support loopback override runs only after the service URL has been validated.
+
+Own servers use the same endpoint paths, queries, bodies, token audiences and headers below these bases:
+
+| Service | Own-origin base or endpoint | Current entry |
+| --- | --- | --- |
+| Authorization | `/oauth2/v2.0/authorize` | `EntraConfig::for_cloud` |
+| Token grants | `/oauth2/v2.0/token` | `EntraConfig::for_cloud` |
+| Authz | `/api/authsvc/v1.0/authz` | `AuthzClient::for_cloud` |
+| Chat service | `/api/chatsvc/<region>/` | `HttpTransport::for_cloud`, authz `chatServiceAfd` |
+| Middle tier | `/api/mt/part/<partition>/` | `with_middle_tier`, authz `middleTier` |
+| CSA | `/api/csa/<region>/` | `with_csa`, authz `chatSvcAggAfd` |
+| Provisioning | `/fabric/<region>/templates/api/` | `with_provisioning`, authz `teamsAndChannelsProvisioningService` |
+| User profiles | `/api/userprofilesvc/<region>/` | `with_user_profile`, authz `userProfileService` |
+| Presence | `/ups/<geo>/` | `with_presence`, authz `presenceUPS` |
+| MCPS | `/api/mcps/<region>/` | `with_mcps`, authz `mcpService` |
+| Registrar | `/registrar/prod/V2/registrations` | `EndpointRegistration::messaging_in`, `CallingRegistration::new_in` |
+| Trouter | `wss://<origin>/trouter/v4/c`, push URLs `https://<origin>/trouter/v4/f/<endpoint>/` | `Trouter::for_cloud`, same-origin reconnect validation |
+| AMS and URL previews | `/ams/` | `with_ams`, authz `amsV2`; message-borne URL parsing pending |
+| Graph | `/graph/v1.0/` | transport fixed base |
+| Files and thumbnails | `/sp/` | reserved; own-origin link and drive parsing pending |
+| Loki | `/loki/` | `with_loki`, `set_loki_region` |
+| Search | `/search/` | transport fixed base |
+| Calling | `/flightproxy/api/v2/` | transport origin check; call link builders and tracker pending |
+| TURN credentials | `/trap/tokens` | `RelayTokens` |
+
+The public emoticon, Giphy and app-picture CDNs retain their current URLs with no account credentials. Optional
+Microsoft platform services have no own-server GTMs; the fixed Flow and Power Apps bases reserve `/workflows/` and
+`/workflow-connections/` on the own origin, with dynamic off-origin destinations refused. Core account wiring and
+message/calling parsers must be completed before an own-server account can run.
+
 ## Entra (`login.microsoftonline.com`)
 
 | Method | Path | What it does | Native | Notes · task | Evidence |

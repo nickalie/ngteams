@@ -21,8 +21,9 @@ These protect real people, the user's account and the user's data. They hold for
   marked ([development guide](docs/development.md#captures-and-fixtures)). Credentials never reach logs or stdout; print only aud, exp,
   scopes and tenant. At `debug`, every API request and response and every Trouter frame is logged in full, with
   credentials redacted by the logger; `info` stays payload-free.
-- **Tokens go only where Teams sends them**: for the same user action, to the service each was issued for, and never
-  to a non-Microsoft service (a third-party bot, an app's backend).
+- **Tokens go only to their account's cloud and service**: Microsoft-account tokens go only where Teams sends them
+  for the same user action, to the Microsoft service each was issued for, never to an own server, third-party bot or
+  app backend. An own-server account's tokens go only to that account's own server.
 - **Agents run the user's own account only read-only, and install it only when the user asks**
   ([details](docs/personal-build.md#what-agents-may-do-with-the-personal-build)):
   - start it only through `scripts/run-personal-read-only.sh` (Windows: `scripts/run-personal-read-only.ps1`);

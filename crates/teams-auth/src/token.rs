@@ -61,6 +61,12 @@ impl EntraConfig {
         }
     }
 
+    /// The token and authorization endpoints of the account's cloud.
+    #[must_use]
+    pub fn for_cloud(self, cloud: &crate::cloud::Cloud) -> Self {
+        self.with_authority(cloud.authority())
+    }
+
     /// Another authority (a tenant, or a mock server in tests): the base the `oauth2/v2.0/…` endpoints hang off.
     #[must_use]
     pub fn with_authority(mut self, authority: impl Into<String>) -> Self {

@@ -39,7 +39,7 @@ teams-ctl = { lines = 99, functions = 100, regions = 98 }
 # Individually inspected sources LLVM does not map. Any content change invalidates the review.
 # These entries never suppress coverage counts when LLVM supplies a mapping for the file.
 [unmapped_sources."crates/teams-auth/src/lib.rs"]
-sha256 = "3ddd9f60071e796622a5fc4d5faa6bc432c207a89e014eac21b5d8b4aaa4ea1a"
+sha256 = "2144e0b826f79b642f344fefb7881c65489ee1a7b9633fdfb4293d1bb7b35eae"
 reason = "module declarations and documentation only; no executable items"
 
 [unmapped_sources."crates/teams-ctl/src/lib.rs"]
@@ -128,7 +128,7 @@ context = { "crates/proto-lab/src/action_targets.rs" = "624e25a8a896080702107574
 [unmapped_sources."crates/teams-proto/src/http/attachment_tests.rs"]
 sha256 = "909df35e897a2669555420ad24f34094b1c62b2efe007ea18651d547be12b144"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
-context = { "crates/teams-proto/src/http.rs" = "7b7b0da2d01969ac8bd9474d04f6de685acdc64bda826cf1519399493f826be5" }
+context = { "crates/teams-proto/src/http.rs" = "fa348bd1426dbe8fe1fc1193b5f5737fb8ccd2e91372cac1fe9042942e3830f5" }
 
 [unmapped_sources."crates/teams-core/src/attachments_tests.rs"]
 sha256 = "9dd845ed73f53a7a32137d505c45018d56bf8529060c3cfdee1ebe7059968e96"
@@ -625,3 +625,8 @@ reason = "macOS-only menu bar, Dock reopen and AppKit terminate routing; no Linu
 sha256 = "63bb8f8ab6aaaec1cfac0b5eb49a7f3eb65a9795065e7742a356adf6bfd2fbab"
 reason = "unit-test module included only by meeting_alert.rs cfg(test); omitted by cargo-llvm-cov's test-file filter"
 context = { "crates/teams-ui/src/meeting_alert.rs" = "be5825947b396fe792bc9f0fe9d4f284a47a3156292b503e78dc6374372d41eb" }
+
+[unmapped_sources."crates/teams-proto/src/http/cloud_tests.rs"]
+sha256 = "13d7b021597c581c322da5d009092e6d682a8f48daae7d4ea74a77937fd305ee"
+reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
+context = { "crates/teams-proto/src/http.rs" = "fa348bd1426dbe8fe1fc1193b5f5737fb8ccd2e91372cac1fe9042942e3830f5" }

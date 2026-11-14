@@ -5,7 +5,7 @@ use std::future::Future;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use crate::{AFD_HOSTS, Mri, chat_service_path, path_shape};
+use crate::{AFD_HOSTS, Cloud, Mri, chat_service_path, path_shape};
 use percent_encoding::percent_decode_str;
 use reqwest::header::{
     ACCEPT, AUTHORIZATION, CONTENT_RANGE, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, LOCATION, RANGE,
@@ -288,6 +288,7 @@ pub enum BuildError {
 /// The native HTTP transport (see the module docs).
 pub struct HttpTransport<C> {
     client: reqwest::Client,
+    cloud: Cloud,
     credentials: Arc<C>,
     account: Option<Mri>,
     /// The chat base: an AFD base (`https://<AFD host>/api/chatsvc/<region>`) without a trailing slash, a regional
@@ -412,7 +413,7 @@ impl<C: Credentials> HttpTransport<C> {
             return Err(HttpError::Refused(Refusal::Loki));
         }
         let url = match request.call {
-            Some(url) if request.service == Service::Calling && on_calling_base(&url) => url,
+            Some(url) if request.service == Service::Calling && calling_base_in(&self.cloud, &url) => url,
             Some(_) => return Err(HttpError::Refused(Refusal::NotAllowed)),
             None => self.url_for(request.service, &request.endpoint)?,
         };
@@ -499,7 +500,20 @@ impl<C: Credentials> HttpTransport<C> {
     /// # Errors
     /// Returns `BuildError` for an invalid base or HTTP client setup failure.
     pub fn new(credentials: Arc<C>, chat_base: &str) -> Result<Self, BuildError> {
-        Self::build(credentials, chat_base, true)
+        Self::for_cloud(credentials, chat_base, Cloud::Microsoft)
+    }
+
+    /// Builds a transport whose authenticated services belong to `cloud`.
+    ///
+    /// # Errors
+    /// As [`Self::new`], refusing bases outside the account's cloud.
+    pub fn for_cloud(credentials: Arc<C>, chat_base: &str, cloud: Cloud) -> Result<Self, BuildError> {
+        Self::build(credentials, chat_base, cloud, true)
+    }
+
+    #[must_use]
+    pub const fn cloud(&self) -> &Cloud {
+        &self.cloud
     }
 
     /// A transport whose requests go to `origin` (`http://127.0.0.1:<port>`, a local mock) instead, each with the path
@@ -511,13 +525,31 @@ impl<C: Credentials> HttpTransport<C> {
     #[cfg(feature = "test-support")]
     pub fn with_mock_origin(credentials: Arc<C>, chat_base: &str, origin: &str) -> Result<Self, BuildError> {
         let origin = parse_mock_origin(origin).ok_or(BuildError::MockOrigin)?;
-        let mut transport = Self::build(credentials, chat_base, false)?;
+        let mut transport = Self::build(credentials, chat_base, Cloud::Microsoft, false)?;
         transport.mock_origin = Some(origin);
         Ok(transport)
     }
 
-    fn build(credentials: Arc<C>, chat_base: &str, https_only: bool) -> Result<Self, BuildError> {
-        let chat_base = parse_chat_base(chat_base).ok_or(BuildError::ChatBase)?;
+    /// The own-server transport through the same loopback-only test override as [`Self::with_mock_origin`].
+    ///
+    /// # Errors
+    /// As [`Self::with_mock_origin`] and [`Self::for_cloud`].
+    #[cfg(feature = "test-support")]
+    pub fn for_cloud_with_mock_origin(
+        credentials: Arc<C>,
+        chat_base: &str,
+        cloud: Cloud,
+        origin: &str,
+    ) -> Result<Self, BuildError> {
+        let origin = parse_mock_origin(origin).ok_or(BuildError::MockOrigin)?;
+        let mut transport = Self::build(credentials, chat_base, cloud, false)?;
+        transport.mock_origin = Some(origin);
+        Ok(transport)
+    }
+
+    fn build(credentials: Arc<C>, chat_base: &str, cloud: Cloud, https_only: bool) -> Result<Self, BuildError> {
+        let chat_base = cloud_base(&cloud, chat_base, parse_chat_base, "", "https://teams.microsoft.com")
+            .ok_or(BuildError::ChatBase)?;
         let registrar_host = chat_base
             .host_str()
             .and_then(|host| AFD_HOSTS.iter().find(|afd| **afd == host))
@@ -535,6 +567,7 @@ impl<C: Credentials> HttpTransport<C> {
             .map_err(BuildError::Client)?;
         Ok(Self {
             client,
+            cloud,
             credentials,
             account: None,
             chat_base,
@@ -608,7 +641,16 @@ impl<C: Credentials> HttpTransport<C> {
     /// # Errors
     /// [`BuildError::MiddleTierBase`] for any other base.
     pub fn with_middle_tier(mut self, base: &str) -> Result<Self, BuildError> {
-        self.middle_tier = Some(parse_middle_tier_base(base).ok_or(BuildError::MiddleTierBase)?);
+        self.middle_tier = Some(
+            cloud_base(
+                &self.cloud,
+                base,
+                parse_middle_tier_base,
+                "",
+                "https://teams.microsoft.com",
+            )
+            .ok_or(BuildError::MiddleTierBase)?,
+        );
         Ok(self)
     }
 
@@ -620,7 +662,10 @@ impl<C: Credentials> HttpTransport<C> {
     /// # Errors
     /// [`BuildError::CsaBase`] for any other base ([`Self::accepts_csa_base`]).
     pub fn with_csa(mut self, base: &str) -> Result<Self, BuildError> {
-        self.csa = Some(parse_csa_base(base).ok_or(BuildError::CsaBase)?);
+        self.csa = Some(
+            cloud_base(&self.cloud, base, parse_csa_base, "", "https://teams.microsoft.com")
+                .ok_or(BuildError::CsaBase)?,
+        );
         Ok(self)
     }
 
@@ -632,7 +677,16 @@ impl<C: Credentials> HttpTransport<C> {
     /// # Errors
     /// [`BuildError::McpsBase`] for any other base ([`Self::accepts_mcps_base`]).
     pub fn with_mcps(mut self, base: &str) -> Result<Self, BuildError> {
-        self.mcps = Some(parse_service_base(base, is_mcps_path).ok_or(BuildError::McpsBase)?);
+        self.mcps = Some(
+            cloud_base(
+                &self.cloud,
+                base,
+                |base| parse_service_base(base, is_mcps_path),
+                "",
+                "https://teams.microsoft.com",
+            )
+            .ok_or(BuildError::McpsBase)?,
+        );
         Ok(self)
     }
 
@@ -662,7 +716,14 @@ impl<C: Credentials> HttpTransport<C> {
     /// Loki.
     pub fn set_loki_region(&self, base: &str) -> Result<(), BuildError> {
         let slot = self.loki.as_ref().ok_or(BuildError::LokiBase)?;
-        let url = parse_regional_base(base).ok_or(BuildError::LokiBase)?;
+        let url = cloud_base(
+            &self.cloud,
+            base,
+            parse_regional_base,
+            "/loki",
+            "https://region.loki.delve.office.com",
+        )
+        .ok_or(BuildError::LokiBase)?;
         let set = slot.get_or_init(|| url.clone());
         if *set == url { Ok(()) } else { Err(BuildError::LokiBase) }
     }
@@ -701,7 +762,14 @@ impl<C: Credentials> HttpTransport<C> {
     /// [`BuildError::ProvisioningBase`] for any other base.
     pub fn with_provisioning(mut self, base: &str) -> Result<Self, BuildError> {
         self.provisioning = Some(
-            parse_service_base(base, crate::channel_read::is_provisioning_path).ok_or(BuildError::ProvisioningBase)?,
+            cloud_base(
+                &self.cloud,
+                base,
+                |base| parse_service_base(base, crate::channel_read::is_provisioning_path),
+                "",
+                "https://teams.microsoft.com",
+            )
+            .ok_or(BuildError::ProvisioningBase)?,
         );
         Ok(self)
     }
@@ -721,7 +789,14 @@ impl<C: Credentials> HttpTransport<C> {
     /// [`BuildError::UserProfileBase`] for any other base.
     pub fn with_user_profile(mut self, base: &str) -> Result<Self, BuildError> {
         self.user_profile = Some(
-            parse_service_base(base, crate::channel_read::is_user_profile_path).ok_or(BuildError::UserProfileBase)?,
+            cloud_base(
+                &self.cloud,
+                base,
+                |base| parse_service_base(base, crate::channel_read::is_user_profile_path),
+                "",
+                "https://teams.microsoft.com",
+            )
+            .ok_or(BuildError::UserProfileBase)?,
         );
         Ok(self)
     }
@@ -740,7 +815,16 @@ impl<C: Credentials> HttpTransport<C> {
     /// # Errors
     /// [`BuildError::PresenceBase`] for any other base ([`Self::accepts_presence_base`]).
     pub fn with_presence(mut self, base: &str) -> Result<Self, BuildError> {
-        self.presence = Some(parse_presence_base(base).ok_or(BuildError::PresenceBase)?);
+        self.presence = Some(
+            cloud_base(
+                &self.cloud,
+                base,
+                parse_presence_base,
+                "",
+                "https://teams.microsoft.com",
+            )
+            .ok_or(BuildError::PresenceBase)?,
+        );
         Ok(self)
     }
 
@@ -764,7 +848,16 @@ impl<C: Credentials> HttpTransport<C> {
     /// # Errors
     /// [`BuildError::AmsBase`] for any other base ([`Self::accepts_ams_base`]).
     pub fn with_ams(mut self, base: &str) -> Result<Self, BuildError> {
-        self.ams = Some(parse_ams_base(base).ok_or(BuildError::AmsBase)?);
+        self.ams = Some(
+            cloud_base(
+                &self.cloud,
+                base,
+                parse_ams_base,
+                "/ams",
+                "https://us-prod.asyncgw.teams.microsoft.com",
+            )
+            .ok_or(BuildError::AmsBase)?,
+        );
         Ok(self)
     }
 
@@ -824,27 +917,116 @@ impl<C: Credentials> HttpTransport<C> {
         if !endpoint.query().is_empty() {
             url.query_pairs_mut().extend_pairs(endpoint.query());
         }
-        if on_base(service, &base, &url, endpoint) {
+        if on_base_in(&self.cloud, service, &base, &url, endpoint) {
             Ok(url)
         } else {
             Err(refused(Refusal::NotAllowed))
         }
     }
 
+    /// Whether this account accepts the service base.
+    #[must_use]
+    pub fn accepts_middle_tier_base_in(&self, base: &str) -> bool {
+        cloud_base(
+            &self.cloud,
+            base,
+            parse_middle_tier_base,
+            "",
+            "https://teams.microsoft.com",
+        )
+        .is_some()
+    }
+
+    /// Whether this account accepts the service base.
+    #[must_use]
+    pub fn accepts_csa_base_in(&self, base: &str) -> bool {
+        cloud_base(&self.cloud, base, parse_csa_base, "", "https://teams.microsoft.com").is_some()
+    }
+
+    /// Whether this account accepts the service base.
+    #[must_use]
+    pub fn accepts_presence_base_in(&self, base: &str) -> bool {
+        cloud_base(
+            &self.cloud,
+            base,
+            parse_presence_base,
+            "",
+            "https://teams.microsoft.com",
+        )
+        .is_some()
+    }
+
+    /// Whether this account accepts the service base.
+    #[must_use]
+    pub fn accepts_ams_base_in(&self, base: &str) -> bool {
+        cloud_base(
+            &self.cloud,
+            base,
+            parse_ams_base,
+            "/ams",
+            "https://us-prod.asyncgw.teams.microsoft.com",
+        )
+        .is_some()
+    }
+
+    /// Whether this account accepts the service base.
+    #[must_use]
+    pub fn accepts_mcps_base_in(&self, base: &str) -> bool {
+        cloud_base(
+            &self.cloud,
+            base,
+            |base| parse_service_base(base, is_mcps_path),
+            "",
+            "https://teams.microsoft.com",
+        )
+        .is_some()
+    }
+
+    /// Whether this account accepts the service base.
+    #[must_use]
+    pub fn accepts_provisioning_base_in(&self, base: &str) -> bool {
+        cloud_base(
+            &self.cloud,
+            base,
+            |base| parse_service_base(base, crate::channel_read::is_provisioning_path),
+            "",
+            "https://teams.microsoft.com",
+        )
+        .is_some()
+    }
+
+    /// Whether this account accepts the service base.
+    #[must_use]
+    pub fn accepts_user_profile_base_in(&self, base: &str) -> bool {
+        cloud_base(
+            &self.cloud,
+            base,
+            |base| parse_service_base(base, crate::channel_read::is_user_profile_path),
+            "",
+            "https://teams.microsoft.com",
+        )
+        .is_some()
+    }
+
     /// `service`'s base, the one every URL of it is built on.
     fn base(&self, service: Service, endpoint: &Endpoint) -> Result<Url, HttpError> {
         let refused = |refusal| HttpError::Refused(refusal);
-        let fixed = |base: String| Url::parse(&base).map_err(|_| refused(Refusal::NotAllowed));
+        let fixed = |base: String, path: &str| {
+            self.cloud
+                .service_url(&base, path)
+                .map_err(|_| refused(Refusal::NotAllowed))
+        };
+        let public = |base: String| Url::parse(&base).map_err(|_| refused(Refusal::NotAllowed));
         match service {
             Service::ChatService if endpoint.segments().first().is_none_or(|first| first != "v1") => {
                 Err(refused(Refusal::ChatPath))
             }
             Service::ChatService => Ok(self.chat_base.clone()),
-            Service::Registrar => fixed(format!("https://{}/registrar", self.registrar_host)),
-            Service::Trouter => fixed(format!("https://{TROUTER_HOST}/")),
-            Service::Graph => fixed(format!("https://{GRAPH_HOST}/v1.0")),
-            Service::Workflows => fixed("https://api.flow.microsoft.com/".to_owned()),
-            Service::WorkflowConnections => fixed("https://api.powerapps.com/".to_owned()),
+            Service::Registrar => fixed(format!("https://{}/registrar", self.registrar_host), "/registrar"),
+            Service::Trouter => fixed(format!("https://{TROUTER_HOST}/"), "/trouter"),
+            Service::Graph => fixed(format!("https://{GRAPH_HOST}/v1.0"), "/graph/v1.0"),
+            Service::Workflows => fixed("https://api.flow.microsoft.com/".to_owned(), "/workflows"),
+            Service::WorkflowConnections => fixed("https://api.powerapps.com/".to_owned(), "/workflow-connections"),
             Service::WorkflowRuntime => Err(refused(Refusal::NotAllowed)),
             Service::MiddleTier => self.middle_tier.clone().ok_or(refused(Refusal::NoMiddleTier)),
             Service::Csa => self.csa.clone().ok_or(refused(Refusal::NoCsa)),
@@ -854,18 +1036,18 @@ impl<C: Credentials> HttpTransport<C> {
             Service::Calling => Err(refused(Refusal::Calling)),
             Service::FileThumbnail => Err(refused(Refusal::FileThumbnail)),
             Service::FileContent => Err(refused(Refusal::FileContent)),
-            Service::Relay => fixed(format!("https://{RELAY_HOST}/{RELAY_PATH}")),
-            Service::Emoticons => fixed(format!("https://{EMOTICONS_HOST}/{EMOTICONS_PATH}")),
-            Service::Giphy => fixed(format!("https://{GIPHY_HOST}/")),
-            Service::AppPictures => fixed(format!("https://{APP_PICTURES_HOST}/{APP_PICTURES_PATH}")),
-            Service::StaticAppPictures => fixed(format!("https://{STATIC_APP_PICTURES_HOST}/")),
-            Service::Substrate => fixed(format!("https://{SUBSTRATE_HOST}/")),
+            Service::Relay => fixed(format!("https://{RELAY_HOST}/{RELAY_PATH}"), "/trap"),
+            Service::Emoticons => public(format!("https://{EMOTICONS_HOST}/{EMOTICONS_PATH}")),
+            Service::Giphy => public(format!("https://{GIPHY_HOST}/")),
+            Service::AppPictures => public(format!("https://{APP_PICTURES_HOST}/{APP_PICTURES_PATH}")),
+            Service::StaticAppPictures => public(format!("https://{STATIC_APP_PICTURES_HOST}/")),
+            Service::Substrate => fixed(format!("https://{SUBSTRATE_HOST}/"), "/search"),
             Service::Ams => self.ams.clone().ok_or(refused(Refusal::NoAms)),
             Service::Mcps => self.mcps.clone().ok_or(refused(Refusal::NoMcps)),
             Service::LokiGlobal if self.loki.is_none() => Err(refused(Refusal::NoLoki)),
             // the global host answers its configuration only (any other path is refused there)
             Service::LokiGlobal if endpoint.segments() != CONFIGURATION_PATH => Err(refused(Refusal::Loki)),
-            Service::LokiGlobal => fixed(format!("https://{LOKI_GLOBAL_HOST}/")),
+            Service::LokiGlobal => fixed(format!("https://{LOKI_GLOBAL_HOST}/"), "/loki"),
             Service::Loki => self
                 .loki
                 .as_ref()
@@ -993,6 +1175,19 @@ impl<C: Credentials> HttpTransport<C> {
         .await
     }
 
+    fn destination_allowed(&self, url: &Url, auth: Auth<'_>) -> bool {
+        if self.cloud.is_microsoft() || self.cloud.contains(url) {
+            return true;
+        }
+        matches!(auth, Auth::None)
+            && url.scheme() == "https"
+            && url.port().is_none()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.fragment().is_none()
+            && matches!(url.host_str(), Some(EMOTICONS_HOST | GIPHY_HOST | APP_PICTURES_HOST))
+    }
+
     /// One request with exactly `headers` (lower-cased names, none of them a credential) and the credential `auth`
     /// (none, a bearer token, or the skypetoken), and its answer read.
     async fn send_as(
@@ -1003,6 +1198,9 @@ impl<C: Credentials> HttpTransport<C> {
         auth: Auth<'_>,
         body: Option<Vec<u8>>,
     ) -> Result<Response, HttpError> {
+        if !self.destination_allowed(url, auth) {
+            return Err(HttpError::Refused(Refusal::NotAllowed));
+        }
         let map = header_map(headers, auth)?;
         let full = log_request(&method, url, &map, body.as_deref());
         let shown = format!("{method} {}{}", url.host_str().unwrap_or_default(), request_path(url));
@@ -1012,7 +1210,14 @@ impl<C: Credentials> HttpTransport<C> {
             request = request.body(body);
         }
         let answered = match request.send().await {
-            Ok(answer) => read_answer(answer, full, max_body(url)).await,
+            Ok(answer) => {
+                let limit = if self.cloud.contains(url) && url.path().starts_with("/ams/") {
+                    MAX_PICTURE_BODY
+                } else {
+                    max_body(url)
+                };
+                read_answer(answer, full, limit).await
+            }
             Err(error) => Err(failure(&error)),
         };
         let elapsed = started.elapsed();
@@ -1142,7 +1347,7 @@ impl<C: Credentials> HttpTransport<C> {
     /// link's 401 or 403 among them: the caller asks Graph for a new one).
     pub async fn file_range(&self, link: &FileContentLink, offset: u64, len: u32) -> Result<Response, HttpError> {
         let url = link.url();
-        if !is_content_link(url) {
+        if !is_content_link(url) || !self.destination_allowed(url, Auth::None) {
             return Err(HttpError::Refused(Refusal::NotAllowed));
         }
         if len == 0 || len > MAX_RANGE {
@@ -1200,7 +1405,7 @@ impl<C: Credentials> HttpTransport<C> {
     /// among them: the caller asks Graph for a new one), [`HttpError::Failed`] when it failed on the way.
     pub async fn file_stream(&self, link: &FileContentLink, offset: u64, len: u64) -> Result<FileBody, HttpError> {
         let url = link.url();
-        if !is_content_link(url) {
+        if !is_content_link(url) || !self.destination_allowed(url, Auth::None) {
             return Err(HttpError::Refused(Refusal::NotAllowed));
         }
         if len == 0 || len > MAX_STREAM {
@@ -1633,6 +1838,37 @@ fn service_headers(service: Service) -> &'static [(&'static str, &'static str)] 
     }
 }
 
+fn on_base_in(cloud: &Cloud, service: Service, base: &Url, url: &Url, endpoint: &Endpoint) -> bool {
+    if cloud.is_microsoft()
+        || matches!(
+            service,
+            Service::Emoticons | Service::Giphy | Service::AppPictures | Service::StaticAppPictures
+        )
+    {
+        return on_base(service, base, url, endpoint);
+    }
+    if !cloud.contains(base) || !cloud.contains(url) || base.origin() != url.origin() {
+        return false;
+    }
+    let Some(projected_base) = cloud.project(base, "", "https://teams.microsoft.com") else {
+        return false;
+    };
+    let Some(projected_url) = cloud.project(url, "", "https://teams.microsoft.com") else {
+        return false;
+    };
+    on_base(service, &projected_base, &projected_url, endpoint)
+}
+
+pub(crate) fn calling_base_in(cloud: &Cloud, url: &Url) -> bool {
+    if cloud.is_microsoft() {
+        on_calling_base(url)
+    } else {
+        cloud
+            .project(url, "/flightproxy", "https://api.flightproxy.teams.microsoft.com")
+            .is_some_and(|url| on_calling_base(&url))
+    }
+}
+
 /// Whether `url`, built for `endpoint` on `service`, is on `base` and nothing else: `https`, no user info, port or
 /// fragment, the base's host, a decoded path that is exactly the base's and the endpoint's segments (UPS's with its
 /// trailing slash, but a subscription's), and the endpoint's query exactly. The chat service's also as
@@ -1708,6 +1944,26 @@ fn query_is(url: &Url, query: &[(String, String)]) -> bool {
     url.query_pairs()
         .map(|(name, value)| (name.into_owned(), value.into_owned()))
         .eq(query.iter().cloned())
+}
+
+fn cloud_base(
+    cloud: &Cloud,
+    base: &str,
+    parse: impl FnOnce(&str) -> Option<Url>,
+    prefix: &str,
+    microsoft: &str,
+) -> Option<Url> {
+    if cloud.is_microsoft() {
+        return parse(base);
+    }
+    let base = base.strip_suffix('/').unwrap_or(base);
+    let url = Url::parse(base).ok()?;
+    if base.contains(['?', '#']) || url.as_str().trim_end_matches('/') != base {
+        return None;
+    }
+    let projected = cloud.project(&url, prefix, microsoft)?;
+    parse(projected.as_str())?;
+    Some(url)
 }
 
 /// The AMS base, if `base` is one [`HttpTransport::with_ams`] accepts.
@@ -2039,3 +2295,6 @@ fn failure(error: &reqwest::Error) -> HttpError {
 #[cfg(test)]
 #[path = "http/attachment_tests.rs"]
 mod attachment_tests;
+
+#[cfg(test)]
+mod cloud_tests;

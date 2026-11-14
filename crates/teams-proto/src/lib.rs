@@ -180,3 +180,5 @@ pub use workflow::{MessageRun, MessageSender, Principal, WorkflowFailure, Workfl
 pub const fn test_support_enabled() -> bool {
     cfg!(feature = "test-support")
 }
+
+pub use teams_auth::cloud::{Cloud, InvalidOrigin, OwnOrigin};

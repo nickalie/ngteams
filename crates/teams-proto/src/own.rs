@@ -91,7 +91,13 @@ impl EndpointRegistration {
     /// digits, `-`, `_`), no query, fragment or user info.
     #[must_use]
     pub fn messaging(registration_id: &str, push_url: &str) -> Option<Self> {
-        (is_guid(registration_id) && is_push_url(push_url)).then(|| Self {
+        Self::messaging_in(&crate::Cloud::Microsoft, registration_id, push_url)
+    }
+
+    /// The registration on the account's cloud; refuses off-origin push URLs.
+    #[must_use]
+    pub fn messaging_in(cloud: &crate::Cloud, registration_id: &str, push_url: &str) -> Option<Self> {
+        (is_guid(registration_id) && is_push_url_in(cloud, push_url)).then(|| Self {
             registration_id: registration_id.to_owned(),
             push_url: push_url.to_owned(),
         })
@@ -166,7 +172,13 @@ impl CallingRegistration {
     /// [`EndpointRegistration::messaging`] takes them.
     #[must_use]
     pub fn new(registration_id: &str, push_url: &str) -> Option<Self> {
-        (is_guid(registration_id) && is_push_url(push_url)).then(|| Self {
+        Self::new_in(&crate::Cloud::Microsoft, registration_id, push_url)
+    }
+
+    /// The registration on the account's cloud; refuses off-origin push URLs.
+    #[must_use]
+    pub fn new_in(cloud: &crate::Cloud, registration_id: &str, push_url: &str) -> Option<Self> {
+        (is_guid(registration_id) && is_push_url_in(cloud, push_url)).then(|| Self {
             registration_id: registration_id.to_owned(),
             push_url: push_url.to_owned(),
         })
@@ -378,6 +390,17 @@ pub(crate) fn is_push_url(text: &str) -> bool {
         && url.password().is_none()
         // the URL as it was given, not one the parser normalized
         && url.as_str() == text
+}
+
+pub(crate) fn is_push_url_in(cloud: &crate::Cloud, text: &str) -> bool {
+    if cloud.is_microsoft() {
+        return is_push_url(text);
+    }
+    let Ok(url) = Url::parse(text) else { return false };
+    url.as_str() == text
+        && cloud
+            .project(&url, "/trouter", "https://go.trouter.teams.microsoft.com")
+            .is_some_and(|url| is_push_url(url.as_str()))
 }
 
 /// An own-state request of the test's choosing, `POST`ed: the transport's tests need one beyond the sealed list.

@@ -239,6 +239,7 @@ pub struct Trouter<T, K> {
     credentials: Arc<K>,
     clock: Arc<dyn Clock>,
     opener: Opener,
+    cloud: teams_proto::Cloud,
     /// The endpoint's id on every connect (`epid`) and its registration's `registrationId`.
     epid: String,
     options: Options,
@@ -279,6 +280,7 @@ where
     pub fn new(transport: Arc<T>, credentials: Arc<K>) -> Result<Self, BuildError> {
         Ok(Self {
             transport,
+            cloud: teams_proto::Cloud::Microsoft,
             credentials,
             clock: Arc::new(SystemClock),
             opener: Opener::new(socket::tls_config().map_err(BuildError::Tls)?),
@@ -286,6 +288,14 @@ where
             options: Options::default(),
             calls: None,
         })
+    }
+
+    /// Selects the account's service boundary before any socket is opened.
+    #[must_use]
+    pub fn for_cloud(mut self, cloud: teams_proto::Cloud) -> Self {
+        self.opener = self.opener.for_cloud(cloud.clone());
+        self.cloud = cloud;
+        self
     }
 
     /// Uses the calling stack's socket, registration and delivery tracking instead of the messaging stack.
@@ -536,7 +546,7 @@ where
             Err(end) => return end,
         };
         let params = self.drop_stale_cache();
-        let base = match (&self.cache, ConnectBase::global()) {
+        let base = match (&self.cache, ConnectBase::global_in(&self.trouter.cloud)) {
             (Some(cached), _) => cached.base.clone(),
             (None, Some(global)) => global,
             (None, None) => return End::Again(Down::ConnectFailed(ConnectError::NotAllowed), Wait::Backoff),
@@ -629,7 +639,10 @@ where
     /// A `trouter.connected`: the cache, the event, and whether its endpoint is another one.
     fn connected(&mut self, connected: &Connected) {
         self.failures = 0;
-        let base = connected.reconnect_url.as_deref().and_then(ConnectBase::regional);
+        let base = connected
+            .reconnect_url
+            .as_deref()
+            .and_then(|url| ConnectBase::regional_in(&self.trouter.cloud, url));
         self.cache = match (base, connected.params.clone()) {
             (Some(base), Some(params)) => Some(Cached { base, params }),
             _ => None,
@@ -988,8 +1001,12 @@ impl Link {
         self.registrar = None;
         let (epid, push_url) = (&run.trouter.epid, &connected.push_url);
         let registration = match run.trouter.stack() {
-            Stack::Messaging => EndpointRegistration::messaging(epid, push_url).map(Registration::Messaging),
-            Stack::Calling => CallingRegistration::new(epid, push_url).map(Registration::Calling),
+            Stack::Messaging => {
+                EndpointRegistration::messaging_in(&run.trouter.cloud, epid, push_url).map(Registration::Messaging)
+            }
+            Stack::Calling => {
+                CallingRegistration::new_in(&run.trouter.cloud, epid, push_url).map(Registration::Calling)
+            }
         };
         match registration {
             Some(registration) => {

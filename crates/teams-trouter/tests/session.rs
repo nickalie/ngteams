@@ -1342,3 +1342,43 @@ async fn no_log_record_carries_the_token_even_with_a_logger_at_trace() {
         assert!(!record.contains(&token), "a record of {target} carries the token");
     }
 }
+
+#[tokio::test]
+async fn own_cloud_authenticates_locally_but_refuses_microsoft_push_and_reconnect_urls() {
+    let lab = Lab::start().await;
+    let cloud = teams_proto::Cloud::own("https://chat.example:8443").unwrap();
+    let transport = HttpTransport::for_cloud_with_mock_origin(
+        Arc::clone(&lab.tokens),
+        "https://chat.example:8443/api/chatsvc/amer",
+        cloud.clone(),
+        &lab.mock.origin(),
+    )
+    .unwrap();
+    let client = Trouter::with_mock_origin(Arc::new(transport), Arc::clone(&lab.tokens), lab.trouter.origin())
+        .unwrap()
+        .for_cloud(cloud)
+        .with_options(options());
+    let opened = client.opened_urls();
+    let mut push = client.spawn();
+    for attempt in 0..2 {
+        if attempt != 0 {
+            lab.trouter.drop_sockets(LAB_B);
+        }
+        connected(&mut push).await;
+        next(&mut push, |event| match event {
+            PushEvent::Registration(RegistrationReport::Failed(_)) => Some(()),
+            _ => None,
+        })
+        .await;
+    }
+    push.stop().await;
+    assert!(lab.trouter.registrations().is_empty());
+    let urls = opened.urls();
+    assert_eq!(urls.len(), 2);
+    for url in urls {
+        assert_eq!(url.host_str(), Some("chat.example"));
+        assert_eq!(url.port(), Some(8443));
+        assert_eq!(url.path(), "/trouter/v4/c");
+    }
+    assert_eq!(lab.trouter.sockets().len(), 2);
+}
