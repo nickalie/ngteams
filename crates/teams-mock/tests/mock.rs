@@ -79,8 +79,12 @@ impl Answer {
 
 impl Lab {
     async fn start() -> TestResult<Self> {
+        Self::start_for_cloud(teams_proto::Cloud::Microsoft).await
+    }
+
+    async fn start_for_cloud(cloud: teams_proto::Cloud) -> TestResult<Self> {
         Ok(Self {
-            mock: ChatServiceMock::start().await?,
+            mock: ChatServiceMock::start_for_cloud(cloud).await?,
             http: reqwest::Client::builder().no_proxy().build()?,
         })
     }
@@ -228,6 +232,107 @@ fn text_message(content: &str, client_id: &str) -> Value {
         "amsreferences": [],
         "properties": {"mentions": "[]", "files": "[]", "formatVariant": "TEAMS"},
     })
+}
+
+#[tokio::test]
+async fn own_injected_messages_and_activity_use_own_links_and_allow_sender_changes() -> TestResult {
+    let lab = Lab::start_for_cloud(teams_proto::Cloud::own("https://chat.example:8443")?).await?;
+    let base = "https://chat.example:8443/api/chatsvc/amer/v1/users/ME";
+    let id = lab
+        .mock
+        .add_message(AB_CHAT, (LAB_A, "Lab A"), "RichText/Html", "<p>injected</p>")
+        .ok_or("no chat")?;
+    let message = lab.message(LAB_B, AB_CHAT, &id).await?;
+    assert_eq!(message["from"], format!("{base}/contacts/{LAB_A}"));
+    assert_eq!(message["conversationLink"], format!("{base}/conversations/{AB_CHAT}"));
+    assert_eq!(lab.mock.take_events(LAB_B)[0].resource, message);
+    let path = format!("users/ME/conversations/{}/messages/{id}", segment(AB_CHAT));
+    let edit = text_message("<p>edited</p>", "7777777777777777777");
+    assert_eq!(lab.send(LAB_B, Method::PUT, &path, Some(&edit)).await?.status, 403);
+    assert_eq!(lab.send(LAB_A, Method::PUT, &path, Some(&edit)).await?.status, 200);
+    assert_eq!(lab.message(LAB_B, AB_CHAT, &id).await?["content"], "<p>edited</p>");
+    assert_eq!(
+        lab.send(LAB_A, Method::DELETE, &format!("{path}?behavior=softDelete"), None)
+            .await?
+            .status,
+        200
+    );
+    let activity = lab
+        .mock
+        .add_activity(LAB_A, &json!({"activityType": "mention"}), false)
+        .ok_or("no feed")?;
+    let message = lab.message(LAB_A, NOTIFICATIONS, &activity).await?;
+    assert_eq!(message["from"], format!("{base}/contacts/{LAB_A}"));
+    assert_eq!(
+        message["conversationLink"],
+        format!("{base}/conversations/{NOTIFICATIONS}")
+    );
+    assert!(
+        lab.mock
+            .take_events(LAB_A)
+            .iter()
+            .any(|event| event.resource == message)
+    );
+    let path = format!(
+        "users/ME/conversations/{}/messages/{activity}?behavior=softDelete",
+        segment(NOTIFICATIONS)
+    );
+    assert_eq!(lab.send(LAB_A, Method::DELETE, &path, None).await?.status, 200);
+    Ok(())
+}
+
+#[tokio::test]
+async fn own_synthetic_chats_and_history_keep_own_links_across_pages_and_changes() -> TestResult {
+    let lab = Lab::start_for_cloud(teams_proto::Cloud::own("https://chat.example:8443")?).await?;
+    let base = "https://chat.example:8443/api/chatsvc/amer/v1/";
+    let chats = lab.mock.add_synthetic_chats(2);
+    lab.mock.page_conversation_list(1);
+    let first = lab.list(LAB_A).await?;
+    let forward = first["_metadata"]["forwardLink"].as_str().ok_or("no forward link")?;
+    let next = lab
+        .get(LAB_A, forward.strip_prefix(base).ok_or("off-origin forward link")?)
+        .await?;
+    assert_eq!(ids(&next), [chats[1].clone()]);
+    assert!(lab.mock.add_synthetic_history(0, 3));
+    assert!(lab.mock.add_synthetic_message(0, "new synthetic message"));
+    let mut page = lab
+        .get(
+            LAB_A,
+            &format!(
+                "users/ME/conversations/{}/messages?view=msnp24Equivalent&pageSize=2",
+                segment(&chats[0])
+            ),
+        )
+        .await?;
+    let mut messages = Vec::new();
+    loop {
+        messages.extend(page["messages"].as_array().ok_or("no messages")?.iter().cloned());
+        let Some(back) = page["_metadata"]["backwardLink"].as_str() else {
+            break;
+        };
+        page = lab
+            .get(LAB_A, back.strip_prefix(base).ok_or("off-origin backward link")?)
+            .await?;
+    }
+    assert_eq!(messages.len(), 5);
+    for message in &messages {
+        assert_eq!(message["from"], format!("{base}users/ME/contacts/{LAB_B}"));
+        assert_eq!(
+            message["conversationLink"],
+            format!("{base}users/ME/conversations/{}", chats[0])
+        );
+    }
+    let newest = messages[0]["id"].as_str().ok_or("no id")?;
+    let path = format!("users/ME/conversations/{}/messages/{newest}", segment(&chats[0]));
+    let edit = text_message("<p>edited synthetic</p>", "7777777777777777777");
+    assert_eq!(lab.send(LAB_B, Method::PUT, &path, Some(&edit)).await?.status, 200);
+    assert_eq!(
+        lab.send(LAB_B, Method::DELETE, &format!("{path}?behavior=softDelete"), None)
+            .await?
+            .status,
+        200
+    );
+    Ok(())
 }
 
 #[tokio::test]

@@ -9,7 +9,7 @@ use crate::chatsvc::{Call, json, status};
 use crate::fixtures::object;
 use crate::reads::{member_of, thread_body};
 use crate::world::{self, Kind, State, iso_time};
-use crate::{CHAT_BASE, EventKind, NOTIFICATIONS};
+use crate::{EventKind, NOTIFICATIONS};
 
 /// The string-valued message properties a post or an edit carries through as sent (JSON strings of lists).
 const LISTED_PROPERTIES: [&str; 4] = ["mentions", "cards", "links", "files"];
@@ -150,7 +150,7 @@ pub(crate) fn edit(state: &mut State, call: &Call<'_>, chat: &str, id: &str) -> 
         return status(400);
     };
     let caller = call.caller.as_str();
-    let contact = format!("{}/v1/users/ME/contacts/{caller}", state.chat_base());
+    let contact = state.contact(caller);
     let changed = change(state, chat, id, caller, EventKind::Edit, |message, time| {
         own_and_standing(message, &contact)?;
         let fields = object(message);
@@ -183,7 +183,7 @@ pub(crate) fn delete(state: &mut State, call: &Call<'_>, chat: &str, id: &str) -
         return status(404);
     }
     let caller = call.caller.as_str();
-    let contact = format!("{}/v1/users/ME/contacts/{caller}", state.chat_base());
+    let contact = state.contact(caller);
     let changed = change(state, chat, id, caller, EventKind::Delete, |message, time| {
         own_and_standing(message, &contact)?;
         let fields = object(message);
@@ -504,11 +504,6 @@ fn is_message(messagetype: &str) -> bool {
     messagetype == "Text" || messagetype == "RichText" || messagetype.starts_with("RichText/")
 }
 
-/// A user's contact URL, the `from` of their messages as read.
-pub(crate) fn contact(mri: &str) -> String {
-    format!("{CHAT_BASE}/v1/users/ME/contacts/{mri}")
-}
-
 fn text<'a>(body: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
     body.get(key).and_then(Value::as_str)
 }
@@ -541,7 +536,7 @@ fn new_message(state: &State, caller: &str, chat: &str, body: &Map<String, Value
         "version": arrival.to_string(),
         "messagetype": body.get("messagetype")?,
         "content": stored_content(body.get("content")?.as_str()?),
-        "from": format!("{}/v1/users/ME/contacts/{caller}", state.chat_base()),
+        "from": state.contact(caller),
         "composetime": iso_time(arrival, 7),
         "originalarrivaltime": iso_time(arrival, 7),
         "properties": properties,

@@ -127,6 +127,10 @@ impl State {
         )
     }
 
+    pub(crate) fn contact(&self, mri: &str) -> String {
+        format!("{}/v1/users/ME/contacts/{mri}", self.chat_base())
+    }
+
     pub(crate) fn location_base(&self) -> String {
         if self.cloud.is_microsoft() {
             crate::REGIONAL_HOST.to_owned()

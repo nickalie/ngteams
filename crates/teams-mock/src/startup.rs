@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use crate::world::{self, Kind, State};
-use crate::{CHAT_BASE, ChatServiceMock, LAB_A, LAB_B};
+use crate::{ChatServiceMock, LAB_A, LAB_B};
 
 /// The longest a request is held, released or not: less than a client's request timeout would let it wait.
 pub const MAX_HOLD: Duration = Duration::from_secs(25);
@@ -54,11 +54,18 @@ fn synthetic_sent(n: usize) -> u64 {
 }
 
 /// A message of b's in the synthetic chat `chat`, as a read gives it: `arrival` its id and version.
-fn synthetic_message(chat: &str, arrival: u64, sequence: u64, text: &str, sent: u64) -> serde_json::Value {
+fn synthetic_message(
+    state: &State,
+    chat: &str,
+    arrival: u64,
+    sequence: u64,
+    text: &str,
+    sent: u64,
+) -> serde_json::Value {
     json!({
         "sequenceId": sequence,
         "conversationid": chat,
-        "conversationLink": format!("{CHAT_BASE}/v1/users/ME/conversations/{chat}"),
+        "conversationLink": format!("{}/v1/users/ME/conversations/{chat}", state.chat_base()),
         "type": "Message",
         "id": arrival.to_string(),
         "version": arrival.to_string(),
@@ -66,7 +73,7 @@ fn synthetic_message(chat: &str, arrival: u64, sequence: u64, text: &str, sent: 
         "messagetype": "RichText/Html",
         "contenttype": "Text",
         "content": format!("<p>{text}</p>"),
-        "from": crate::writes::contact(LAB_B),
+        "from": state.contact(LAB_B),
         "imdisplayname": "Lab B",
         "composetime": world::iso_time(sent, 7),
         "originalarrivaltime": world::iso_time(sent, 7),
@@ -198,9 +205,11 @@ impl ChatServiceMock {
             let id = synthetic_chat(n);
             let created = state.tick();
             let mut conversation = world::created(&empty, &id, Kind::Group, &[LAB_B, LAB_A], created);
+            state.chat_value(&mut conversation.entry);
             conversation.entry["threadProperties"]["topic"] = json!(synthetic_topic(n));
             let arrival = state.tick();
             conversation.messages.push(synthetic_message(
+                &state,
                 &id,
                 arrival,
                 1,
@@ -249,6 +258,7 @@ impl ChatServiceMock {
                 let back = u64::try_from(count - i).unwrap_or(u64::MAX);
                 let sequence = u64::try_from(i + 1).unwrap_or(u64::MAX);
                 synthetic_message(
+                    &state,
                     &id,
                     arrival,
                     sequence,
@@ -284,13 +294,14 @@ impl ChatServiceMock {
         let id = synthetic_chat(n);
         let mut state = self.lock();
         let arrival = state.tick();
+        let Some(sequence) = state.conversation(&id).map(world::Conversation::next_sequence) else {
+            return false;
+        };
+        let message = synthetic_message(&state, &id, arrival, sequence, text, synthetic_sent(n) + 500);
         let Some(conversation) = state.conversation_mut(&id) else {
             return false;
         };
-        let sequence = conversation.next_sequence();
-        conversation
-            .messages
-            .push(synthetic_message(&id, arrival, sequence, text, synthetic_sent(n) + 500));
+        conversation.messages.push(message);
         true
     }
 

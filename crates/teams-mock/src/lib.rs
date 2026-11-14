@@ -390,11 +390,11 @@ impl ChatServiceMock {
         message_type: &str,
         content: &str,
     ) -> Option<String> {
-        let link = format!("{CHAT_BASE}/v1/users/ME/conversations/{conversation}");
+        let mut world = self.lock();
+        let link = format!("{}/v1/users/ME/conversations/{conversation}", world.chat_base());
         let conversation = conversation
             .split_once(";messageid=")
             .map_or(conversation, |(channel, _)| channel);
-        let mut world = self.lock();
         let arrival = world.tick();
         let sequence = world.conversation(conversation)?.next_sequence();
         let message = serde_json::json!({
@@ -408,7 +408,7 @@ impl ChatServiceMock {
             "messagetype": message_type,
             "contenttype": "Text",
             "content": content,
-            "from": writes::contact(from),
+            "from": world.contact(from),
             "imdisplayname": name,
             "composetime": world::iso_time(arrival, 7),
             "originalarrivaltime": world::iso_time(arrival, 7),
@@ -432,7 +432,7 @@ impl ChatServiceMock {
         let message = serde_json::json!({
             "sequenceId": sequence,
             "conversationid": NOTIFICATIONS,
-            "conversationLink": format!("{CHAT_BASE}/v1/users/ME/conversations/{NOTIFICATIONS}"),
+            "conversationLink": format!("{}/v1/users/ME/conversations/{NOTIFICATIONS}", world.chat_base()),
             "type": "Message",
             "id": arrival.to_string(),
             "version": arrival.to_string(),
@@ -440,7 +440,7 @@ impl ChatServiceMock {
             "messagetype": "Text",
             "contenttype": "text",
             "content": "",
-            "from": writes::contact(owner),
+            "from": world.contact(owner),
             "imdisplayname": "",
             "composetime": world::iso_time(arrival, 7),
             "originalarrivaltime": world::iso_time(arrival, 7),
