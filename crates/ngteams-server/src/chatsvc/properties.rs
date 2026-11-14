@@ -21,26 +21,55 @@ pub(super) async fn set_conversation(
 ) -> Result<StatusCode, Error> {
     let chat = reads::target(&path)?;
     let (_, members) = member_of(&app, &caller, chat).await?;
-    if query.len() != 1 || query.get("name").map(String::as_str) != Some("consumptionhorizon") {
+    let name = query.get("name").map(String::as_str).ok_or(Error::BadRequest)?;
+    if query
+        .keys()
+        .any(|key| key != "name" && key != "requirePermanentJoinedState")
+        || query
+            .get("requirePermanentJoinedState")
+            .is_some_and(|value| value != "true" && value != "false")
+        || !matches!(
+            name,
+            "consumptionhorizon"
+                | "favorite"
+                | "lastTimeFavorited"
+                | "alerts"
+                | "channelNotificationSettings"
+                | "followAllRc"
+                | "consumptionHorizonBookmark"
+        )
+    {
         return Err(Error::BadRequest);
     }
     let Json(body) = body.map_err(|_| Error::BadRequest)?;
-    let horizon = body["consumptionhorizon"].as_str().ok_or(Error::BadRequest)?;
-    let parts: Vec<_> = horizon.split(';').collect();
-    if parts.len() != 3 || parts.iter().any(|part| part.parse::<u64>().is_err()) {
+    if body.as_object().is_none_or(|body| body.len() != 1) {
         return Err(Error::BadRequest);
     }
-    if !property_repo::set_conversation(&app.db, chat, &caller.id, "consumptionhorizon", horizon).await? {
+    let value = body[name].as_str().ok_or(Error::BadRequest)?;
+    if matches!(name, "consumptionhorizon" | "consumptionHorizonBookmark") {
+        let parts: Vec<_> = value.split(';').collect();
+        if parts.len() != 3 || parts.iter().any(|part| part.parse::<u64>().is_err()) {
+            return Err(Error::BadRequest);
+        }
+    }
+    if !property_repo::set_conversation(&app.db, chat, &caller.id, name, value).await? {
         return Err(Error::Denied);
     }
-    let resource = json!({"id": chat, "mri": caller.mri(), "consumptionhorizon": horizon});
-    events::publish(&app, &caller, &members, "ReadReceipt", &resource).await;
+    if name == "consumptionhorizon" {
+        events::publish(
+            &app,
+            &caller,
+            &members,
+            "ReadReceipt",
+            &json!({"id": chat, "mri": caller.mri(), "consumptionhorizon": value}),
+        )
+        .await;
+    }
     events::own(
         &app,
         &caller,
         "ConversationUpdate",
-        &json!({"id": chat,
-        "propertiesUpdated": ["consumptionhorizon"], "properties": {"consumptionhorizon": horizon}}),
+        &json!({"id": chat, "propertiesUpdated": [name], "properties": body}),
     )
     .await;
     Ok(StatusCode::OK)
@@ -96,4 +125,17 @@ pub(super) async fn set_user(
     property_repo::set_user(&app.db, &caller.id, name, value).await?;
     events::own(&app, &caller, "CustomUserProperties", &body).await;
     Ok(StatusCode::OK)
+}
+
+pub(super) async fn conversation(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(path): Path<Params>,
+) -> Result<Json<Value>, Error> {
+    let (chat, _) = member_of(&app, &caller, reads::target(&path)?).await?;
+    let mut body = super::wire::conversation(&app, &caller, &chat);
+    if let Some(properties) = body["properties"].as_object_mut() {
+        properties.extend(property_repo::conversation(&app.db, &chat.id, &caller.id).await?);
+    }
+    Ok(Json(body))
 }

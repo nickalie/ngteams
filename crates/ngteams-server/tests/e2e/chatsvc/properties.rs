@@ -146,3 +146,49 @@ async fn an_account_wide_horizon_marks_all_read_and_can_be_taken_back_without_ch
         pair.stop().await;
     }
 }
+
+struct OwnConversation(String);
+impl teams_proto::Read for OwnConversation {
+    fn service(&self) -> teams_proto::Service {
+        teams_proto::Service::ChatService
+    }
+    fn endpoint(&self) -> teams_proto::Endpoint {
+        teams_proto::Endpoint::new(["v1", "users", "ME", "conversations", &self.0])
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn conversation_favorite_and_notification_settings_round_trip_without_being_shared() {
+    for backend in backends() {
+        let pair = Pair::start(backend).await;
+        let a_client = client(&pair.server, "a@own.test", &pair.a_id).await;
+        for (name, value) in [
+            ("favorite", "true"),
+            ("alerts", "false"),
+            ("channelNotificationSettings", "{\"followedPosts\":{\"banner\":false}}"),
+            ("followAllRc", "false"),
+        ] {
+            let write = PropertyWrite {
+                chat: Some(pair.chat.clone()),
+                name: name.into(),
+                value: value.into(),
+            };
+            assert_eq!(a_client.write(write).await.unwrap().status(), 200, "{name}");
+        }
+        let response = a_client.read(&OwnConversation(pair.chat.clone())).await.unwrap();
+        let own: serde_json::Value = serde_json::from_slice(response.body()).unwrap();
+        assert_eq!(own["properties"]["favorite"], "true");
+        assert_eq!(own["properties"]["alerts"], "false");
+        assert_eq!(own["properties"]["followAllRc"], "false");
+        assert_eq!(
+            own["properties"]["channelNotificationSettings"],
+            "{\"followedPosts\":{\"banner\":false}}"
+        );
+        let b_client = client(&pair.server, "b@own.test", &pair.b_id).await;
+        let response = b_client.read(&OwnConversation(pair.chat.clone())).await.unwrap();
+        let other: serde_json::Value = serde_json::from_slice(response.body()).unwrap();
+        assert!(other["properties"].get("favorite").is_none());
+        assert!(other["properties"].get("channelNotificationSettings").is_none());
+        pair.stop().await;
+    }
+}
