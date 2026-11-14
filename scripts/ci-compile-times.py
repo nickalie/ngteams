@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 import tomllib
 
@@ -51,7 +52,11 @@ def main():
     workspace = {tomllib.loads((ROOT / member / "Cargo.toml").read_text())["package"]["name"]
                  for member in members}
     data = collect(args.target, float(args.started.read_text()), workspace)
+    data["runner"] = {"logical_cpus": os.cpu_count(),
+                      "memory_bytes": os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")}
     args.output.write_text(json.dumps(data, indent=2) + "\n")
+    print(f"Runner: {data['runner']['logical_cpus']} logical CPUs, "
+          f"{data['runner']['memory_bytes'] / 2**30:.1f} GiB RAM")
     print("Compile unit durations overlap; their sum is not workflow wall time.")
     for category, counts in data["summary"].items():
         print(f"{category}: {counts['fresh_units']} fresh, {counts['cached_units']} cached, "
