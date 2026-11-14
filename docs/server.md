@@ -7,12 +7,13 @@ origin. The client sends a request to it only for an account signed in to that s
 What authz advertises today: sign-in (the token endpoint), authz and the chat service. Other services are added one
 at a time. Authz names only the services the server serves, so the client keeps every other service off.
 
-The chat service also serves chat creation, conversation lists and their sync/forward links, thread reads and
-member lists, message posting and newest/backward/incremental message pages under
-`/api/chatsvc/<region>/v1/`. These routes require an IC3 bearer token and current membership;
+The chat service serves chat creation, conversation sync, thread/member reads, message posting, edits, soft deletion,
+reactions, transient typing, account preferences and message pages (newest, backward, incremental and around a
+requested time) under `/api/chatsvc/<region>/v1/`. These routes require an IC3 bearer token and current membership;
 disabled users are refused even while their token is live. A repeated 1:1 roster returns the existing chat, and
-group rosters and names persist in SQLite or PostgreSQL. Authz advertises the chat service as `chatServiceAfd`;
-activity streams and membership changes are still being added.
+group rosters and names persist in SQLite or PostgreSQL. Requests are limited to 64 KiB. Authz advertises
+`chatServiceAfd`. Account streams (`48:notifications`, `48:mentions`, `48:notes`), rich quote normalization and
+membership changes are still being added.
 
 ## Stack
 
@@ -119,7 +120,7 @@ hands out its GTM.
 
 Chat creation publishes to every other member on `push:<mri>`. The internal JSON envelope is
 `{"resourceType":"ThreadUpdate","resource":<thread>}`; the resource has the thread-read shape. Trouter delivery
-wraps this internal event separately. A message post publishes `NewMessage` with the stored message as `resource`; an edit publishes `MessageUpdate`.
+wraps this internal event separately. A message post publishes `NewMessage` with the stored message as `resource`; an edit, soft deletion or reaction publishes `MessageUpdate`.
 Edits require message ownership and preserve its ID, client message ID, original arrival time and reactions. Publication happens after the transaction commits. The fan-out is at most
 once; clients catch up through conversation sync after a missed event.
 

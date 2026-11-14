@@ -80,7 +80,11 @@ async fn check_region(session: &Session<MemorySecretStore>, origin: &str) {
         session.service_base("authService"),
         Some(format!("{origin}/api/authsvc"))
     );
-    assert_eq!(session.region().endpoints.len(), 1);
+    assert_eq!(
+        session.service_base("chatServiceAfd"),
+        Some(format!("{origin}/api/chatsvc/own"))
+    );
+    assert_eq!(session.region().endpoints.len(), 2);
 }
 
 async fn rejects_an_untrusted_certificate(node: &Node) {

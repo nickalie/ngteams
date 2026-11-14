@@ -192,3 +192,46 @@ async fn conversation_favorite_and_notification_settings_round_trip_without_bein
         pair.stop().await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_nodes_updating_different_own_properties_keep_both_values() {
+    for backend in backends() {
+        let pair = Pair::start(backend).await;
+        let url = pair.server.app.config.database_url.clone();
+        let node = crate::support::TestServer::start_with(backend, |config| {
+            config.database_url = url;
+            config.public_origin = url::Url::parse("https://own.example.test").unwrap();
+        })
+        .await;
+        let first = client(&pair.server, "a@own.test", &pair.a_id).await;
+        let second = client(&node, "a@own.test", &pair.a_id).await;
+        let mut settings = teams_proto::UserGraphSettings::default();
+        settings.turn_off("synthetic-app", &["mention".into()]).unwrap();
+        let (graph, horizon) = tokio::join!(
+            first.write(teams_proto::SetUserGraphSettings(settings.clone())),
+            second.write(PropertyWrite {
+                chat: None,
+                name: "appConsumptionHorizon".into(),
+                value: serde_json::json!({"chat": 123, "channel": 0})
+            }),
+        );
+        assert_eq!(graph.unwrap().status(), 200);
+        assert_eq!(horizon.unwrap().status(), 200);
+        let response = first.read(&teams_proto::UserGraphSettingsRead).await.unwrap();
+        assert_eq!(
+            teams_proto::UserGraphSettingsRead::settings_of(response.status(), response.body()).unwrap(),
+            settings
+        );
+        assert_eq!(
+            ChatReads::new(&first)
+                .app_consumption_horizon()
+                .await
+                .unwrap()
+                .unwrap()
+                .chat,
+            123
+        );
+        node.stop().await;
+        pair.stop().await;
+    }
+}

@@ -1,6 +1,6 @@
 [package]
 name = "ngteams-server"
-description = "The own Teams-compatible server ngteams can sign in to instead of Microsoft's: its token and authz endpoints, database, fan-out and storage"
+description = "The own Teams-compatible server ngteams can sign in to instead of Microsoft's: its authentication and native chat endpoints, database, fan-out and storage"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
