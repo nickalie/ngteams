@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path, State, rejection::JsonRejection};
+use axum::extract::{Path, Query, State, rejection::JsonRejection};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
@@ -65,4 +65,34 @@ pub(super) fn updated(result: message_repo::Updated) -> Result<message_repo::Mes
         message_repo::Updated::Denied => Err(Error::Denied),
         message_repo::Updated::Message(row) => Ok(row),
     }
+}
+
+pub(super) async fn delete(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(path): Path<Params>,
+    Query(query): Query<Params>,
+) -> Result<Json<Value>, Error> {
+    if query.get("behavior").map(String::as_str) != Some("softDelete") {
+        return Err(Error::Missing);
+    }
+    let chat = reads::target(&path)?;
+    let (_, members) = member_of(&app, &caller, chat).await?;
+    let id = message_id(&path)?;
+    let result = message_repo::update(&app.db, chat, id, &caller.id, true, |body, at| {
+        body["content"] = "".into();
+        body["properties"] = json!({"deletetime": at});
+        if let Some(client) = body.get("clientmessageid").cloned() {
+            body["skypeeditedid"] = client;
+        }
+        if let Some(object) = body.as_object_mut() {
+            object.remove("amsreferences");
+            object.remove("annotationsSummary");
+        }
+        Ok(())
+    })
+    .await?;
+    let row = updated(result)?;
+    events::publish(&app, &caller, &members, "MessageUpdate", &row.value()?).await;
+    Ok(Json(Value::Null))
 }

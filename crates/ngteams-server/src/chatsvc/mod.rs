@@ -46,7 +46,7 @@ pub(super) fn router() -> Router<Arc<App>> {
         )
         .route(
             "/api/chatsvc/{region}/v1/users/ME/conversations/{chat}/messages/{message}",
-            put(mutations::edit),
+            put(mutations::edit).delete(mutations::delete),
         )
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
 }
