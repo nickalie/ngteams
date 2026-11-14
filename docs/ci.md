@@ -103,7 +103,8 @@ restores up to four independent archives in parallel. Every shard uses `/workspa
 and source maps stay valid.
 
 Docker Buildx uses a shared GHA image cache (`mode=min`); only the build job exports it. Cargo registry/Git sources
-and the pinned Linux x64 libwebrtc SDK have separate caches. Instrumented third-party dependencies are saved only
+and the pinned Linux x64 libwebrtc SDK have separate caches. A shard whose source cache is missing fetches the
+locked sources itself, because several tests run Cargo offline. Instrumented third-party dependencies are saved only
 when their compressed archive fits 1 GiB; larger archives are discarded without saving an empty cache entry.
 Their exact cache key includes Cargo.lock, rust-toolchain.toml, the actual Docker image ID, all CI image/scripts, Cargo configuration and vendored sources, with no fallback to incompatible
 keys. The vendor content hash permits stable checkout mtimes for vendored dependencies; the compiler cache preserves
@@ -338,6 +339,9 @@ manual dispatch. Its `tests` job waits for the newest standalone Coverage run wi
 accepting only push/manual runs and a completed success. A newer failed or cancelled run takes precedence over an
 older success. The publish job rechecks immediately before creating releases, so a newer failed rerun during
 packaging also blocks publication. API errors, absence of a run after the timeout, and every non-success conclusion block publishing.
+The wait lasts up to 330 minutes, which covers Coverage's runner queues as well as its slowest measured run.
+Coverage runs on `main` are keyed by commit, so a later push never cancels the run a release waits for; only a
+pull request's newer push replaces its older run.
 Release therefore reuses Coverage without a second full suite. A manual release of a documentation-only commit
 needs a manual Coverage dispatch first, since that commit otherwise has no matching run. Manual `coverage_only: true` dispatches run just this
 lookup, skipping all packaging and publishing, to prove the gate safely on a branch. Coverage also runs every `scripts/test_*.py`; release publishes only after that complete Coverage run passes. A new push cancels any release still building or waiting, so

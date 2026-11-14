@@ -207,7 +207,9 @@ jobs:
   tests:
     name: Coverage commit gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 155
+    # The wait starts with Coverage's own queue: script 330 min, far above its slowest measured run, inside GitHub's
+    # 360-minute job limit.
+    timeout-minutes: 340
     permissions:
       contents: read
       actions: read

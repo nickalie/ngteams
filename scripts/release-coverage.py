@@ -50,7 +50,7 @@ def main():
     parser.add_argument("--repository", default=os.environ.get("GITHUB_REPOSITORY"), required=False)
     parser.add_argument("--sha", default=os.environ.get("GITHUB_SHA"), required=False)
     parser.add_argument("--branch", default=os.environ.get("GITHUB_REF_NAME"), required=False)
-    parser.add_argument("--timeout", type=int, default=9000)
+    parser.add_argument("--timeout", type=int, default=19800)
     args = parser.parse_args()
     if not all((args.repository, args.sha, args.branch)) or args.timeout < 0:
         parser.error("repository, sha, branch and a nonnegative timeout are required")

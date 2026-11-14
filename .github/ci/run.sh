@@ -26,6 +26,9 @@ case "${1:-}" in
         export LD_LIBRARY_PATH="$CARGO_LLVM_COV_TARGET_DIR/debug/deps:$(rustc --print target-libdir)${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         exec python3 .github/ci/targets.py run target/test-shards.json "$2"
         ;;
+    fetch)
+        exec cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+        ;;
     report)
         mkdir -p target/coverage/continuous/all
         cargo llvm-cov report --locked --json --summary-only --output-path target/coverage/continuous/all/llvm.json
@@ -33,5 +36,5 @@ case "${1:-}" in
         exec python3 scripts/coverage-report.py report target/coverage/continuous/all/llvm.json \
             --output target/coverage/continuous/all/summary.json --require-target --packages "${packages[@]}"
         ;;
-    *) echo 'usage: coverage-ci build|test INDEX|report' >&2; exit 2 ;;
+    *) echo 'usage: coverage-ci build|test INDEX|fetch|report' >&2; exit 2 ;;
 esac

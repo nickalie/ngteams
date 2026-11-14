@@ -336,6 +336,24 @@ class ReleaseGateTests(unittest.TestCase):
             RELEASE.wait_for_coverage("owner/repo", "abc", "main", 30)
             sleep.assert_called_once()
 
+    def test_a_later_main_push_cannot_cancel_the_run_a_release_waits_for(self):
+        workflow = (ROOT / ".github/workflows/coverage.yml").read_text()
+        group = next(line for line in workflow.splitlines() if line.startswith("  group: "))
+        self.assertIn("github.event_name == 'pull_request' && github.ref || github.sha", group)
+
+    def test_default_wait_outlasts_coverage_and_fits_the_gate_job(self):
+        release = (ROOT / ".github/workflows/release.yml").read_text()
+        job = release.split("    name: Coverage commit gate\n", 1)[1].split("    steps:", 1)[0]
+        minutes = int(next(line for line in job.splitlines() if "timeout-minutes:" in line).split(":")[1])
+        with patch.object(RELEASE, "wait_for_coverage") as wait, \
+                patch.object(RELEASE.sys, "argv", ["release-coverage.py", "--repository", "owner/repo",
+                                                    "--sha", "abc", "--branch", "main"]):
+            RELEASE.main()
+        seconds = wait.call_args.args[3]
+        self.assertGreaterEqual(seconds, 4 * 3600)
+        self.assertLess(seconds, minutes * 60)
+        self.assertLessEqual(minutes, 360)
+
     def test_api_error_fails_closed(self):
         with patch.object(RELEASE.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "gh")), \
                 self.assertRaises(subprocess.CalledProcessError):

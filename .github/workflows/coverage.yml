@@ -23,8 +23,10 @@ on:
 permissions:
   contents: read
 
+# A pull request's newer push replaces its older run. Pushes to main, merge-queue entries and manual runs are keyed
+# by commit: the release waits for the Coverage run of its exact commit, so a later push must not cancel that run.
 concurrency:
-  group: coverage-${{ github.workflow }}-${{ github.ref }}
+  group: coverage-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -201,12 +203,17 @@ jobs:
           name: coverage-common
           path: target
       - name: Restore dependency sources for compile-contract tests
+        id: sources
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             .ci-cache/registry
             .ci-cache/git
           key: coverage-sources-v1-${{ hashFiles('Cargo.lock') }}
+      - name: Fetch the locked sources when the cache has none
+        # The cache is best effort: an unsaved or evicted entry must not fail the offline Cargo tests.
+        if: steps.sources.outputs.cache-hit != 'true'
+        run: .github/ci/docker.sh fetch
       - name: Unpack shared tests
         run: |
           .github/ci/unpack.sh target
