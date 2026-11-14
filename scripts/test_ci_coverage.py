@@ -1,0 +1,115 @@
+"""Protect the target inventory and exact-commit release gate."""
+
+import contextlib
+import importlib.util
+import io
+import json
+from pathlib import Path
+import subprocess
+import tempfile
+import types
+import unittest
+from unittest.mock import patch
+
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def load(name, relative):
+    spec = importlib.util.spec_from_file_location(name, ROOT / relative)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+TARGETS = load("ci_targets", ".github/ci/targets.py")
+RELEASE = load("release_coverage", "scripts/release-coverage.py")
+
+
+class TargetTests(unittest.TestCase):
+    @staticmethod
+    def artifact(name, package="example"):
+        return {"reason": "compiler-artifact", "executable": f"/workspace/target/{name}",
+                "manifest_path": f"/workspace/{package}/Cargo.toml", "profile": {"test": True},
+                "target": {"kind": ["test"], "name": name}}
+
+    def test_all_targets_once_and_long_target_alone(self):
+        messages = [self.artifact(f"test{i}") for i in range(20)]
+        shards = TARGETS.partition(messages, {"/workspace/example/Cargo.toml": "example"},
+                                   {"example/test0": 1000})
+        self.assertEqual(len(shards), 8)
+        self.assertEqual([test["target"] for test in shards[0]], ["test0"])
+        self.assertEqual(sorted(test["target"] for shard in shards for test in shard),
+                         sorted(f"test{i}" for i in range(20)))
+
+    def test_missing_package_or_duplicate_target_fails(self):
+        packages = {"/workspace/example/Cargo.toml": "example", "/workspace/other/Cargo.toml": "other"}
+        with self.assertRaisesRegex(ValueError, "every runtime package"):
+            TARGETS.partition([self.artifact("one")], packages, {})
+        with self.assertRaisesRegex(ValueError, "duplicate test target"):
+            TARGETS.partition([self.artifact("one")] * 2, packages, {})
+
+    def test_runner_preserves_failure_and_runs_remaining_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target").mkdir()
+            manifest = root / "shards.json"
+            tests = [{"id": name, "package": "example", "target": name, "executable": name,
+                      "directory": directory} for name in ["first", "second"]]
+            manifest.write_text(json.dumps([tests]))
+            with contextlib.chdir(root), patch.object(TARGETS.subprocess, "run") as run, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                run.side_effect = [types.SimpleNamespace(returncode=1), types.SimpleNamespace(returncode=0)]
+                self.assertEqual(TARGETS.run(manifest, 0), 1)
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(run.call_args.kwargs["env"]["CARGO_MANIFEST_DIR"], directory)
+                results = json.loads((root / "target/shard-0.json").read_text())
+                self.assertEqual([result["status"] for result in results], [1, 0])
+
+
+class ReleaseGateTests(unittest.TestCase):
+    @staticmethod
+    def workflow_run(number=1, conclusion="success", **fields):
+        return {"head_sha": "abc", "head_branch": "main", "head_repository": {"full_name": "owner/repo"},
+                "event": "push", "run_number": number, "run_attempt": 1, "status": "completed",
+                "conclusion": conclusion, "html_url": "https://github.com/owner/repo/actions/runs/1", **fields}
+
+    def check_runs(self, runs, timeout=0):
+        response = types.SimpleNamespace(stdout=json.dumps([{"workflow_runs": runs}]))
+        with patch.object(RELEASE.subprocess, "run", return_value=response), \
+                contextlib.redirect_stdout(io.StringIO()):
+            return RELEASE.wait_for_coverage("owner/repo", "abc", "main", timeout)
+
+    def test_exact_sha_branch_repository_and_standalone_event_required(self):
+        for fields in [{"head_sha": "wrong"}, {"head_branch": "other"}, {"event": "pull_request"},
+                       {"head_repository": {"full_name": "fork/repo"}}]:
+            with self.subTest(fields=fields), self.assertRaisesRegex(ValueError, "timeout"):
+                self.check_runs([self.workflow_run(**fields)])
+
+    def test_success_reused_but_newer_failure_or_cancellation_blocks(self):
+        self.check_runs([self.workflow_run()])
+        for conclusion in ["failure", "cancelled", "skipped", "timed_out", "action_required"]:
+            with self.subTest(conclusion=conclusion), self.assertRaisesRegex(ValueError, "did not pass"):
+                self.check_runs([self.workflow_run(), self.workflow_run(2, conclusion)])
+
+    def test_newest_rerun_attempt_is_authoritative(self):
+        with self.assertRaisesRegex(ValueError, "did not pass"):
+            self.check_runs([self.workflow_run(), self.workflow_run(conclusion="failure", run_attempt=2)])
+
+    def test_pending_run_is_polled_until_success(self):
+        pages = [[{"workflow_runs": [self.workflow_run(status="in_progress", conclusion=None)]}],
+                 [{"workflow_runs": [self.workflow_run()]}]]
+        with patch.object(RELEASE.subprocess, "run", side_effect=[
+                types.SimpleNamespace(stdout=json.dumps(page)) for page in pages]), \
+                patch.object(RELEASE.time, "sleep") as sleep, contextlib.redirect_stdout(io.StringIO()):
+            RELEASE.wait_for_coverage("owner/repo", "abc", "main", 30)
+            sleep.assert_called_once()
+
+    def test_api_error_fails_closed(self):
+        with patch.object(RELEASE.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "gh")), \
+                self.assertRaises(subprocess.CalledProcessError):
+            RELEASE.wait_for_coverage("owner/repo", "abc", "main", 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
