@@ -80,7 +80,9 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             let text = fs::read_to_string(dir.join("runner.log")).unwrap_or_default();
-            if text.lines().any(|line| line.starts_with("ready sandbox=")) {
+            if text.lines().any(|line| line.starts_with("ready sandbox="))
+                && fs::read_to_string(dir.join("trace.jsonl")).is_ok_and(|trace| trace == "synthetic runner trace\n")
+            {
                 break;
             }
             assert!(
