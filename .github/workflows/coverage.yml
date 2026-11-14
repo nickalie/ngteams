@@ -74,7 +74,7 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .ci-cache/build
-          key: coverage-build-v1-${{ steps.environment.outputs.image-id }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.github/ci/**', '.cargo/**', 'vendor/**') }}
+          key: coverage-build-v1-${{ steps.environment.outputs.image-id }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.github/ci/**', '!.github/ci/test-times.json', '.cargo/**', 'vendor/**') }}
       - name: Unpack compatible dependencies
         run: |
           if [[ -f .ci-cache/build/dependencies.tar.zst ]]; then
@@ -162,12 +162,16 @@ jobs:
           retention-days: 1
           if-no-files-found: error
       - name: Prepare bounded dependency cache
+        id: prepared-cache
         if: steps.dependencies.outputs.cache-hit != 'true'
         run: |
           docker run --rm --entrypoint /bin/bash --volume "$GITHUB_WORKSPACE:/workspace" \
             ngteams-coverage .github/ci/bundle.sh cache
+          if [[ -f .ci-cache/build/dependencies.tar.zst ]]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        if: steps.dependencies.outputs.cache-hit != 'true'
+        if: steps.dependencies.outputs.cache-hit != 'true' && steps.prepared-cache.outputs.ready == 'true'
         with:
           path: .ci-cache/build
           key: ${{ steps.dependencies.outputs.cache-primary-key }}
@@ -205,7 +209,7 @@ jobs:
           key: coverage-sources-v1-${{ hashFiles('Cargo.lock') }}
       - name: Unpack shared tests
         run: |
-          for archive in target/coverage-*.tar.zst; do tar -I 'zstd --long=30' -xf "$archive"; done
+          .github/ci/unpack.sh target
           rm target/coverage-*.tar.zst
       - name: Run every assigned target, retaining failures
         env:
@@ -240,20 +244,18 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/coverage-env
-        if: needs.build.result == 'success'
+        if: needs.build.result == 'success' && !cancelled()
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        if: needs.build.result == 'success'
+        if: needs.build.result == 'success' && !cancelled()
         with:
           pattern: coverage-*
           path: target/coverage-inputs
           merge-multiple: true
       - name: Merge profiles and require 90% in every runtime crate
         id: measurement
-        if: needs.build.result == 'success'
+        if: needs.build.result == 'success' && !cancelled()
         run: |
-          for archive in target/coverage-inputs/*.tar.zst; do
-            tar -I 'zstd --long=30' -xf "$archive"
-          done
+          .github/ci/unpack.sh target/coverage-inputs
           .github/ci/docker.sh report
       - name: Show measured coverage
         if: always()
