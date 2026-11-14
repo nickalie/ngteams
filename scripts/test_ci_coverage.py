@@ -29,6 +29,30 @@ RELEASE = load("release_coverage", "scripts/release-coverage.py")
 
 
 class EnvironmentTests(unittest.TestCase):
+    def test_vendor_checkout_times_are_stable_only_behind_a_content_key(self):
+        workflow = (ROOT / ".github/workflows/coverage.yml").read_text()
+        key = next(line for line in workflow.splitlines() if "key: coverage-build-v1-" in line)
+        self.assertIn("'vendor/**'", key)
+        restore = workflow.split("      - name: Restore instrumented dependencies", 1)[1].split("      - name:", 1)[0]
+        self.assertNotIn("restore-keys:", restore)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "vendor/example/src/lib.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text("synthetic vendored source\n")
+            workspace = root / "workspace.rs"
+            workspace.write_text("synthetic workspace source\n")
+            before = workspace.stat().st_mtime_ns
+            subprocess.run(["bash", str(ROOT / ".github/ci/vendor-times.sh")], cwd=root, check=True)
+            self.assertEqual(source.stat().st_mtime_ns, 0)
+            self.assertEqual(source.read_text(), "synthetic vendored source\n")
+            self.assertEqual(workspace.stat().st_mtime_ns, before)
+
+    def test_config_covers_every_large_call_scene_in_the_rust_source(self):
+        source = (ROOT / "crates/ngteams/tests/support/linux/large_call_window.rs").read_text()
+        weights = json.loads((ROOT / ".github/ci/test-times.json").read_text())["seconds"]
+        TARGETS.validate_large_steps(source, weights)
+
     def test_native_dependencies_are_required_and_live_settings_are_removed(self):
         keys = ["PROTO_LAB_REQUIRE_CHROME", "GPUI_SMOKE_REQUIRE", "WGPU_BACKEND", "PROTO_LAB_LIVE",
                 "TEAMS_MEDIA_TURN_SERVER", "TEAMS_MEDIA_TURN_USER", "TEAMS_MEDIA_TURN_PASSWORD"]
@@ -64,6 +88,31 @@ class TargetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate test target"):
             TARGETS.partition([self.artifact("one")] * 2, packages, {})
 
+    def test_each_declared_large_call_scene_runs_once_with_its_existing_filter(self):
+        source = ('fn scenarios() {\n let steps: [(&str, Step); 2] = '
+                  '[("one", first), ("two", second)];\n if wanted("meet-now") {}\n}\n')
+        weights = {f"{TARGETS.LARGE_TARGET}/{name}": seconds
+                   for name, seconds in [("one", 10), ("two", 20), ("meet-now", 5)]}
+        TARGETS.validate_large_steps(source, weights)
+        packages = {"/workspace/ngteams/Cargo.toml": "ngteams"}
+        messages = [self.artifact("large_call_window", "ngteams"), self.artifact("normal", "ngteams")]
+        shards = TARGETS.partition(messages, packages, weights)
+        scenes = [test for shard in shards for test in shard if "environment" in test]
+        self.assertEqual(len(scenes), 3)
+        self.assertEqual({test["environment"]["LARGE_CALL_STEPS"] for test in scenes}, {"one", "two", "meet-now"})
+        self.assertEqual(len({test["executable"] for test in scenes}), 1)
+        self.assertEqual(len({test["id"] for test in scenes}), 3)
+        self.assertEqual(sum(len(shard) for shard in shards), 4)
+        for changed in [dict(weights, unknown=1), {key: value for key, value in weights.items() if not key.endswith("one")}]:
+            if "unknown" in changed:
+                changed[f"{TARGETS.LARGE_TARGET}/unknown"] = changed.pop("unknown")
+            with self.assertRaisesRegex(ValueError, "large-call"):
+                TARGETS.validate_large_steps(source, changed)
+        with self.assertRaisesRegex(ValueError, "large-call"):
+            TARGETS.validate_large_steps(source.replace('("one", first)', '(DYNAMIC_NAME, first)'), weights)
+        with self.assertRaisesRegex(ValueError, "duplicate test target"):
+            TARGETS.partition([messages[0], messages[0]], packages, weights)
+
     def test_runner_preserves_failure_and_runs_remaining_targets(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -71,15 +120,51 @@ class TargetTests(unittest.TestCase):
             manifest = root / "shards.json"
             tests = [{"id": name, "package": "example", "target": name, "executable": name,
                       "directory": directory} for name in ["first", "second"]]
+            for test, scene in zip(tests, ["one", "two"]):
+                test.update(executable="same-binary", environment={"LARGE_CALL_STEPS": scene})
             manifest.write_text(json.dumps([tests]))
             with contextlib.chdir(root), patch.object(TARGETS.subprocess, "run") as run, \
+                    patch.dict(os.environ, {"LLVM_PROFILE_FILE": str(root / "%p-%m%c.profraw")}), \
                     contextlib.redirect_stdout(io.StringIO()):
                 run.side_effect = [types.SimpleNamespace(returncode=1), types.SimpleNamespace(returncode=0)]
                 self.assertEqual(TARGETS.run(manifest, 0), 1)
                 self.assertEqual(run.call_count, 2)
                 self.assertEqual(run.call_args.kwargs["env"]["CARGO_MANIFEST_DIR"], directory)
+                environments = [call.kwargs["env"] for call in run.call_args_list]
+                self.assertEqual([env["LARGE_CALL_STEPS"] for env in environments], ["one", "two"])
+                self.assertEqual(len({env["LLVM_PROFILE_FILE"] for env in environments}), 2)
                 results = json.loads((root / "target/shard-0.json").read_text())
                 self.assertEqual([result["status"] for result in results], [1, 0])
+
+    @unittest.skipUnless(shutil.which("zstd"), "zstd unavailable")
+    def test_dependency_cache_preserves_timestamp_precision_and_excludes_profiles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stamp = root / "target/coverage-continuous-build/debug/.fingerprint/example-123/invoked.timestamp"
+            stamp.parent.mkdir(parents=True)
+            stamp.write_text("synthetic compiler stamp\n")
+            instant = 1_700_000_000_123_456_789
+            os.utime(stamp, ns=(instant, instant))
+            instant = stamp.stat().st_mtime_ns
+            profile = root / "target/coverage-continuous-build/current.profraw"
+            profile.write_text("synthetic profile\n")
+            environment = root / ".github/ci/environment.sh"
+            environment.parent.mkdir(parents=True)
+            shutil.copyfile(ROOT / ".github/ci/environment.sh", environment)
+            tools = root / "tools"
+            tools.mkdir()
+            cargo = tools / "cargo"
+            cargo.write_text("#!/bin/sh\nexit 0\n")
+            cargo.chmod(0o755)
+            subprocess.run(["bash", str(ROOT / ".github/ci/bundle.sh"), "cache"], cwd=root,
+                           env=dict(os.environ, PATH=f"{tools}{os.pathsep}{os.environ['PATH']}"),
+                           capture_output=True, text=True, check=True)
+            self.assertFalse(profile.exists())
+            stamp.unlink()
+            subprocess.run(["bash", str(ROOT / ".github/ci/unpack.sh"), ".ci-cache/build"], cwd=root,
+                           capture_output=True, text=True, check=True)
+            self.assertEqual(stamp.stat().st_mtime_ns, instant)
+            self.assertFalse(profile.exists())
 
     @unittest.skipUnless(shutil.which("zstd"), "zstd unavailable")
     def test_bundles_contain_each_test_once_and_share_runtime_helpers(self):
@@ -102,6 +187,7 @@ class TargetTests(unittest.TestCase):
             metadata.parent.mkdir(parents=True)
             metadata.write_text(json.dumps({"features": json.dumps(["test-support"])}))
             manifest = [[{"executable": f"/workspace/{path}"}] for path in paths[:2]]
+            manifest[1].append(manifest[0][0])
             (root / "target/test-shards.json").write_text(json.dumps(manifest))
             subprocess.run(["bash", str(ROOT / ".github/ci/bundle.sh"), "pack"],
                            cwd=root, capture_output=True, text=True, check=True)
@@ -111,13 +197,26 @@ class TargetTests(unittest.TestCase):
                                         cwd=root, capture_output=True, text=True, check=True)
                 return set(result.stdout.splitlines())
 
-            self.assertEqual(files("shard-0"), {paths[0]})
+            self.assertEqual(files("shard-0"), set())
             self.assertEqual(files("shard-1"), {paths[1]})
-            self.assertEqual(files("common"), {*paths[2:], "target/test-shards.json", fingerprint})
+            self.assertEqual(files("common"), {paths[0], *paths[2:], "target/test-shards.json", fingerprint})
             metadata.unlink()
             subprocess.run(["tar", "-I", "zstd --long=30", "-xf", "target/coverage-common.tar.zst",
                             fingerprint], cwd=root, capture_output=True, text=True, check=True)
             self.assertEqual(json.loads(json.loads(metadata.read_text())["features"]), ["test-support"])
+
+            for name in [*paths, fingerprint, "target/test-shards.json"]:
+                (root / name).unlink()
+            unpack = ["bash", str(ROOT / ".github/ci/unpack.sh"), "target"]
+            subprocess.run(unpack, cwd=root, capture_output=True, text=True, check=True)
+            for name in paths:
+                self.assertEqual((root / name).read_text(), "synthetic executable\n")
+            self.assertEqual(json.loads(json.loads(metadata.read_text())["features"]), ["test-support"])
+            (root / "target/corrupt.tar.zst").write_text("synthetic corrupt archive\n")
+            self.assertNotEqual(subprocess.run(unpack, cwd=root, capture_output=True).returncode, 0)
+            for path in (root / "target").glob("*.tar.zst"):
+                path.unlink()
+            self.assertNotEqual(subprocess.run(unpack, cwd=root, capture_output=True).returncode, 0)
 
     @unittest.skipUnless(shutil.which("cargo"), "Cargo unavailable")
     def test_shared_executables_merge_to_the_same_coverage_as_cargo(self):

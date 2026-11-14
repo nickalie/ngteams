@@ -22,17 +22,18 @@ conditions: [skipped workflows leave required checks pending](https://docs.githu
 
 Coverage builds every runtime test target selected by `coverage-report.py list` once, with the same continuous
 instrumentation as `scripts/coverage.sh`. Eight parallel jobs run those shared executables. The inventory comes from
-Cargo's compiler-artifact messages, checks every runtime package is present, and assigns every test target exactly
-once. Longest-first balancing uses target timings from run 43552497622 in `.github/ci/test-times.json`; new targets
-receive a default weight. `large_call_window` runs alone, while the other `ngteams` and `teams-ui` targets spread over
-the remaining jobs. Each target retains serial harness execution. Refresh weights from the saved shard timing JSON
-when suites change.
+Cargo's compiler-artifact messages and checks every runtime package is present. Every ordinary target runs once;
+`large_call_window` runs once per named scene through its existing `LARGE_CALL_STEPS` filter. The inventory checks
+that its Rust declarations match the configured scenes, so a new scene cannot silently disappear. Longest-first
+balancing uses measured target and scene durations in `.github/ci/test-times.json`; new ordinary targets receive a
+default weight. Both `ngteams` and `teams-ui` spread across the eight jobs. Each invocation retains serial harness
+execution. Refresh weights from the saved shard timing JSON when suites change.
 
 The final `Coverage ≥90%` job merges the shards' LLVM profiles against that exact shared build, exports once, and
 runs the existing reporter with `--require-target` over all runtime crates. This preserves cross-crate test hits,
 which some crates need to reach 90%; independently gating smaller selections would change those measurements.
-Shard prefixes prevent profile filename collisions between containers. A crate
-below 90% in **any** of LLVM's lines, functions or regions fails the job, even if the workspace average or that
+Shard and invocation prefixes prevent profile filename collisions, including repeated executions of the same binary.
+A crate below 90% in **any** of LLVM's lines, functions or regions fails the job, even if the workspace average or that
 crate's saved standalone baseline is higher or lower. Exactly 90% passes. Failed tests, missing dependencies and
 missing source mappings also fail; the workflow does not skip packages or tolerate a failed coverage step.
 The hardware DMA subcase is excluded in GitHub Actions, as described below; its runtime source still counts.
@@ -52,6 +53,9 @@ between jobs and expire after one day. Screenshots, captures and runtime logs ar
 The job summary displays each crate's measured lines, functions and regions. If a shard fails, other shards continue and the aggregate attempts to report current partial profiles for diagnosis.
 A failed, cancelled or skipped shard, failed script tests, missing build, or failed measurement fails the aggregate,
 regardless of its partial percentages. Fresh jobs cannot reuse a previous measurement's summary.
+Expensive setup, downloads and export stop on workflow cancellation, while the final status check still fails on
+cancelled or incomplete work. GitHub [reevaluates step conditions during cancellation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-cancellation),
+so these steps use `!cancelled()` inside the always-running diagnostic aggregate.
 
 ## Hosted CPU runner
 
@@ -85,17 +89,21 @@ The image sets `TZ=Etc/UTC` so calendar fixtures do not depend on the host's `/e
 Tool installation uses the network; test traffic stays synthetic and offline from the tenant. No lab configuration
 or secret is required. The workflow frees unused hosted SDKs to make space for the instrumented native binaries.
 The shared build disables incremental compilation and DWARF debug information while retaining LLVM coverage maps and
-debug assertions. Each shard downloads only its assigned test executables and a common bundle of helper binaries, shared
-libraries and Cargo feature fingerprints, without dependency rlibs or object files. Compile-contract tests use the
-fingerprints to reproduce their parent executable’s enabled features. Shards need only a small disk cleanup; build and report jobs
+debug assertions, with four Cargo compilation jobs. Each shard downloads its assigned test executables and a common
+bundle of helper binaries, executables reused by several scenes, shared libraries and Cargo feature fingerprints,
+without dependency rlibs or object files. Compile-contract tests use the fingerprints to reproduce their parent executable’s enabled features. Shards need only a small disk cleanup; build and report jobs
 free more space. The report job collects every bundle before merging profiles. Zstandard uses a 1 GiB history window to compress
-repeated native code across executables; extraction permits that same window. Every shard uses `/workspace`, so compile-time fixture paths and source maps stay valid.
+repeated native code across executables, with four compression threads. Extraction permits that same window and
+restores up to four independent archives in parallel. Every shard uses `/workspace`, so compile-time fixture paths
+and source maps stay valid.
 
 Docker Buildx uses a shared GHA image cache (`mode=min`); only the build job exports it. Cargo registry/Git sources
 and the pinned Linux x64 libwebrtc SDK have separate caches. Instrumented third-party dependencies are saved only
-when their compressed archive fits 1 GiB; larger archives are discarded. Their exact cache key includes Cargo.lock,
-rust-toolchain.toml, the actual Docker image ID, all CI image/scripts, Cargo configuration and vendored sources, with no fallback to incompatible
-keys. Workspace artifacts are always cleaned before compilation, and profiles and reports are never cached. The SDK
+when their compressed archive fits 1 GiB; larger archives are discarded without saving an empty cache entry.
+Their exact cache key includes Cargo.lock, rust-toolchain.toml, the actual Docker image ID, all CI image/scripts, Cargo configuration and vendored sources, with no fallback to incompatible
+keys. The vendor content hash permits stable checkout mtimes for vendored dependencies; the compiler cache preserves
+nanosecond timestamp precision. Measured scheduling weights are excluded from the compiler key. Workspace artifacts
+are always cleaned before compilation, and profiles and reports are never cached. The SDK
 key also includes Cargo.lock, the toolchain and Dockerfile. This keeps the expensive large executable bundle out of
 the repository's shared 10 GB GHA cache budget, which is also used by release caches. Eviction is a performance miss;
 it never bypasses tests or the gate. The build also records fresh versus restored Rust compilation units using

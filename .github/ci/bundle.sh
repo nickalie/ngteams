@@ -16,14 +16,16 @@ assigned = [{Path(test['executable']).relative_to('/workspace') for test in shar
 all_tests = set().union(*assigned)
 if not all_tests <= paths:
     raise ValueError(f'missing test executables: {all_tests - paths}')
-lists = {'common': paths - all_tests, **{f'shard-{i}': tests for i, tests in enumerate(assigned)}}
+shared = {path for path in all_tests if sum(path in tests for tests in assigned) > 1}
+lists = {'common': (paths - all_tests) | shared,
+         **{f'shard-{i}': tests - shared for i, tests in enumerate(assigned)}}
 for name, files in lists.items():
     Path(f'target/bundle-{name}-files').write_text(''.join(f'{path}\n' for path in sorted(files)))
 PY
         for list in target/bundle-*-files; do
             name=${list#target/bundle-}
             name=${name%-files}
-            tar -I 'zstd --long=30 -T2 -3' -cf "target/coverage-$name.tar.zst" -T "$list"
+            tar -I 'zstd --long=30 -T4 -3' -cf "target/coverage-$name.tar.zst" -T "$list"
         done
         du -h target/coverage-*.tar.zst
         ;;
@@ -39,7 +41,7 @@ PY
         find target/coverage-continuous-build -name '*.profdata' -delete
         find target/coverage-continuous-build -type d -name livekit_webrtc -prune -exec rm -rf -- {} +
         mkdir -p .ci-cache/build
-        tar -I 'zstd --long=30 -T2 -3' -cf .ci-cache/build/dependencies.tar.zst target/coverage-continuous-build
+        tar --format=posix -I 'zstd --long=30 -T4 -3' -cf .ci-cache/build/dependencies.tar.zst target/coverage-continuous-build
         bytes=$(stat -c %s .ci-cache/build/dependencies.tar.zst)
         echo "Compressed dependency cache: $bytes bytes (limit 1 GiB)"
         if ((bytes > 1073741824)); then

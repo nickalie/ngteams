@@ -4,6 +4,7 @@ set -euo pipefail
 source .github/ci/environment.sh
 case "${1:-}" in
     build)
+        .github/ci/vendor-times.sh
         coverage-ci-smoke
         CARGO_TARGET_DIR=target/ci-bootstrap-build cargo run --locked -p proto-lab -- chrome install
         chrome_path=$(target/ci-bootstrap-build/debug/proto-lab chrome path)
