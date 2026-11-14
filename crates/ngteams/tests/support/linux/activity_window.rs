@@ -1653,6 +1653,7 @@ enum KeptDir {
 /// The mock with a's feed seeded, and a's engine on it.
 struct MockLab {
     runtime: tokio::runtime::Runtime,
+    _front: Option<teams_mock::Front>,
     mock: Arc<ChatServiceMock>,
     trouter: Arc<TrouterMock>,
     /// a's data: a dir of its own, or the one a tile run keeps across runs.
@@ -1678,6 +1679,9 @@ impl MockLab {
             .build()?;
         let mock = runtime.block_on(ChatServiceMock::start())?;
         let trouter = mock.start_trouter()?;
+        let front = matches!(&kept, Some(KeptDir::Pictures(_)))
+            .then(|| mock.start_front())
+            .transpose()?;
         let (dir, temp) = if let Some(run) = tiles {
             runtime.block_on(tile_runs::seed(&mock, run))?;
             (run.dir.clone(), None)
@@ -1698,7 +1702,9 @@ impl MockLab {
             token: mock.token(LAB_A).ok_or("the mock's token for a")?,
             renewals: broadcast::channel(4).0,
         });
-        let origin = mock.origin();
+        let origin = front
+            .as_ref()
+            .map_or_else(|| mock.origin(), |front| front.origin().to_owned());
         let http = || HttpTransport::with_mock_origin(Arc::clone(&tokens), CHAT_BASE, &origin);
         let probe = Arc::new(http()?);
         if !read_only {
@@ -1734,6 +1740,7 @@ impl MockLab {
         })?;
         let lab = Self {
             runtime,
+            _front: front,
             mock: Arc::new(mock),
             trouter: Arc::new(trouter),
             dir,
@@ -1931,6 +1938,7 @@ fn child_app(mode: &str) -> SandboxResult {
         trouter: Arc::clone(&lab.trouter),
         runtime: lab.runtime.handle().clone(),
         transport: Arc::clone(&lab.probe),
+        picture_tile_hold: Mutex::new(None),
     };
     let application = gpui_platform::linux(WindowingModes::WAYLAND).with_assets(teams_ui::AppAssets);
     application.run(move |cx: &mut App| {
@@ -1986,6 +1994,7 @@ struct Probe {
     trouter: Arc<TrouterMock>,
     runtime: tokio::runtime::Handle,
     transport: Arc<HttpTransport<Tokens>>,
+    picture_tile_hold: Mutex<Option<teams_mock::Hold>>,
 }
 
 impl Probe {

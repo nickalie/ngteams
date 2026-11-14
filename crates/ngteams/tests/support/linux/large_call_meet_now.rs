@@ -37,6 +37,11 @@ fn joined_from_the_banner(rig: &mut Rig<'_>) -> SandboxResult {
         return Err("no Meet now on the mock".into());
     }
     let conversation = conversation_of(rig, &call)?;
+    let joins_shown = buttons(rig.app.trace.catch_up(), "join");
+    // Opening the chat can consume this start as history before its push arrives.
+    post(rig, ABC_CHAT, &start(&conversation, &call, true))?;
+    let banner =
+        wait_until(WAIT, || meeting_banners(rig, seen).first().cloned()).ok_or("no banner for b's Meet now")?;
     rig.ctl.request(
         None,
         Request::Open {
@@ -45,10 +50,6 @@ fn joined_from_the_banner(rig: &mut Rig<'_>) -> SandboxResult {
             },
         },
     )?;
-    let joins_shown = buttons(rig.app.trace.catch_up(), "join");
-    post(rig, ABC_CHAT, &start(&conversation, &call, true))?;
-    let banner =
-        wait_until(WAIT, || meeting_banners(rig, seen).first().cloned()).ok_or("no banner for b's Meet now")?;
     rig.app.trace.wait_until("the chat's header offering Join", |seen| {
         buttons(seen, "join") > joins_shown
     })?;

@@ -9,8 +9,8 @@
 //! - four of b's messages in the 1:1 chat collapse into one banner with b's picture; four in the group, one without;
 //! - c's message (a picture that doesn't decode) and the outsider's (a picture read still running) come as promptly as
 //!   b's, with no picture;
-//! - Made-up Square's first item, its app never read this run, comes with no picture and has its tile read after; the
-//!   next one carries the tile, square to its corners; Made-up Slow's two items come promptly while its tile read
+//! - Made-up Square's first item comes promptly without its tile while its read is held; after it is released and
+//!   cached, the next banner carries the tile, square to its corners; Made-up Slow's two items come while its tile read
 //!   hangs, with no picture;
 //! - b's Meet now in the group chat: its banner ("Lab B started a meeting") carries b's picture, round (#125); the
 //!   meeting's end closes it;
@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 use std::{fs, io};
@@ -198,6 +198,24 @@ pub(super) fn reply(rest: &str, probe: &Probe) -> Value {
     let mock = &probe.mock;
     match what {
         "reads" => reads(probe),
+        "hold-square" => {
+            let path = tile_path("made-up-square");
+            *probe.picture_tile_hold.lock().unwrap_or_else(PoisonError::into_inner) =
+                Some(mock.hold(move |target| target.starts_with(&path)));
+            json!({"held": true})
+        }
+        "release-square" => {
+            let held = probe
+                .picture_tile_hold
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            json!({"released": held.is_some_and(teams_mock::Hold::release)})
+        }
+        "square-held" => {
+            let held = probe.picture_tile_hold.lock().unwrap_or_else(PoisonError::into_inner);
+            json!(held.as_ref().is_some_and(|held| held.wait_entered(Duration::ZERO)))
+        }
         "b-says" => posts(mock, LAB_B, AB_CHAT, count),
         "b-says-group" => posts(mock, LAB_B, ABC_CHAT, count),
         "c-says" => posts(mock, LAB_C, AC_CHAT, count),
@@ -645,8 +663,7 @@ fn hanging_person(qa: &mut Qa<'_>) -> SandboxResult {
     read_then_park(qa, AX_CHAT)
 }
 
-/// Made-up Square's first item, the app's tile never read this run: a banner without it, promptly, and the tile read
-/// after; its second item's banner carries the tile, square.
+/// Made-up Square's tile stays held until its first banner, then is cached before the second.
 fn app_first_then_tile(qa: &mut Qa<'_>) -> SandboxResult {
     park(qa)?;
     let path = tile_path("made-up-square");
@@ -654,14 +671,24 @@ fn app_first_then_tile(qa: &mut Qa<'_>) -> SandboxResult {
     ensure(!before.contains_key(&path), || {
         format!("Made-up Square's tile read before its first banner: {before:?}")
     })?;
-    let (first, took) = banner_for(qa, "pic square")?;
+    qa.ask("pic hold-square")?;
+    let first = banner_for(qa, "pic square").and_then(|first| {
+        wait_until(super::WAIT, || (qa.ask("pic square-held").ok()? == true).then_some(()))
+            .ok_or("Made-up Square's tile read never entered its hold")?;
+        Ok(first)
+    });
+    let released = qa.ask("pic release-square")?;
+    let (first, took) = first?;
+    ensure(released["released"] == true, || {
+        format!("the tile's hold expired: {released}")
+    })?;
     no_picture(&first)?;
     prompt(took, "the app's first banner")?;
-    wait_until(super::WAIT, || {
-        picture_reads(qa).ok()?.contains_key(&path).then_some(())
-    })
-    .ok_or("Made-up Square's tile never read after its first banner")?;
-    thread::sleep(Duration::from_secs(1));
+    qa.state_until("Made-up Square's tile cached by the pane", |state| {
+        super::items(state)
+            .iter()
+            .any(|item| item["app"] == SQUARE_APP && item["tile"] == true)
+    })?;
     let (next, took) = banner_for(qa, "pic square")?;
     keep(&next, "app-tile")?;
     square_of(&next, SQUARE_COLOUR)?;

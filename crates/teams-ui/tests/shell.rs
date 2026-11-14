@@ -1529,6 +1529,9 @@ fn the_own_file_in_the_sound_picker_can_be_chosen_with_the_keyboard() {
     cx.update(|_, cx| shell.update(cx, Shell::show_settings));
     click(cx, "settings-page-notifications");
     click(cx, "sound-message");
+    let first = bounds(cx, "sound-message-pack").expect("the first sound is drawn");
+    // A menu opened above its trigger can select a sound under the pointer.
+    cx.simulate_mouse_move(first.center(), None, Modifiers::none());
     cx.simulate_keystrokes("up enter");
     assert!(cx.did_prompt_for_paths());
     cx.simulate_path_prompt_response(|options| {
