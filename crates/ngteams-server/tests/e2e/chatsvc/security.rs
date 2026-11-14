@@ -138,3 +138,72 @@ fn malformed_rosters(a: &str, b: &str) -> Vec<serde_json::Value> {
     bodies.push(empty);
     bodies
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn message_ownership_and_membership_are_enforced_on_each_write_on_both_backends() {
+    for backend in crate::support::backends() {
+        let pair = super::messages::Pair::start(backend).await;
+        let id = pair.send("kept despite forbidden changes").await;
+        pair.a.sync().await.unwrap();
+        pair.b.sync().await.unwrap();
+        let old = pair.b.message(&pair.chat, &id).await.unwrap().unwrap();
+        let b_client = client(&pair.server, "b@own.test", &pair.b_id).await;
+        let author = teams_proto::Author::new(Mri::new(format!("8:orgid:{}", pair.b_id)), "Bert");
+        let original = teams_proto::Original {
+            client_message_id: old.client_message_id.clone().unwrap(),
+            compose_time_ms: old.compose_time.unwrap(),
+            arrival_time_ms: old.arrival_time,
+        };
+        let edit = teams_proto::EditMessage::new(
+            &pair.chat,
+            &id,
+            author,
+            teams_proto::chat::MessageText::plain("forbidden edit").unwrap(),
+            original,
+        );
+        assert_eq!(b_client.write(edit).await.unwrap().status(), 403);
+        assert_eq!(
+            b_client
+                .write(teams_proto::DeleteMessage::new(&pair.chat, &id))
+                .await
+                .unwrap()
+                .status(),
+            403
+        );
+        assert_eq!(
+            b_client
+                .write(teams_proto::DeleteMessage::new(&pair.chat, "1"))
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+        let c = pair.server.add_user("c@own.test", "Cora").await;
+        let c_client = client(&pair.server, "c@own.test", &c).await;
+        let reads = teams_proto::chat::ChatReads::new(&c_client);
+        assert_eq!(reads.messages(&pair.chat, 10).await.unwrap_err().status(), Some(403));
+        let send = teams_proto::SendMessage::new(
+            &pair.chat,
+            teams_proto::Author::new(Mri::new(format!("8:orgid:{c}")), "Cora"),
+            teams_proto::chat::MessageText::plain("forbidden post").unwrap(),
+        );
+        assert_eq!(c_client.write(send).await.unwrap().status(), 403);
+        assert_eq!(
+            c_client
+                .write(teams_proto::SetReaction::new(&pair.chat, &id, "like"))
+                .await
+                .unwrap()
+                .status(),
+            403
+        );
+        let read = teams_proto::ReadReceipt::new(&pair.chat, &id, old.client_message_id.unwrap());
+        assert_eq!(c_client.write(read).await.unwrap().status(), 403);
+        pair.a.sync().await.unwrap();
+        let kept = pair.a.message(&pair.chat, &id).await.unwrap().unwrap();
+        assert!(kept.content.contains("kept despite forbidden changes"));
+        assert!(kept.delete_time.is_none());
+        assert!(kept.edit_time.is_none());
+        assert!(pair.a.reactions(&pair.chat, &id).await.unwrap().is_empty());
+        pair.stop().await;
+    }
+}

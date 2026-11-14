@@ -72,6 +72,9 @@ pub(super) async fn conversations(
         let mut entry = wire::conversation(&app, &caller, chat);
         if let Some(message) = super::message_repo::latest(&app.db, &chat.id).await? {
             entry["lastMessage"] = message.value()?;
+            if let Some(preview) = entry["lastMessage"].as_object_mut() {
+                preview.remove("properties");
+            }
             entry["lastUpdatedMessageId"] = message.id.into();
             entry["lastUpdatedMessageVersion"] = message.version.into();
             entry["properties"]["isemptyconversation"] = "False".into();

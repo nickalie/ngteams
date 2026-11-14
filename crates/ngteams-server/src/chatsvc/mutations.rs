@@ -21,6 +21,9 @@ pub(super) async fn edit(
     let (_, members) = member_of(&app, &caller, chat).await?;
     let id = message_id(&path)?;
     let Json(mut sent) = body.map_err(|_| Error::BadRequest)?;
+    if !sent.is_object() {
+        return Err(Error::BadRequest);
+    }
     if sent["from"]
         .as_str()
         .is_some_and(|from| from != format!("worker/{}", caller.mri()))
