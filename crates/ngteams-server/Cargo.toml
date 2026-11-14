@@ -47,8 +47,9 @@ uuid.workspace = true
 rcgen = { workspace = true, features = ["pem"] }
 reqwest = { workspace = true, features = ["form", "json"] }
 teams-auth.workspace = true
-teams-core.workspace = true
-teams-proto.workspace = true
+teams-core = { workspace = true, features = ["test-support"] }
+teams-proto = { workspace = true, features = ["test-support"] }
+teams-store.workspace = true
 tempfile.workspace = true
 
 [lints]

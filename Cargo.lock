@@ -7773,6 +7773,7 @@ dependencies = [
  "teams-auth",
  "teams-core",
  "teams-proto",
+ "teams-store",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
