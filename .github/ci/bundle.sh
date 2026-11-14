@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 paths = {Path('target/test-shards.json'), Path('target/ci-bootstrap-build/debug/proto-lab')}
 root = Path('target/coverage-continuous-build')
+paths.update(root.glob('debug/.fingerprint/*/*.json'))
 for path in root.rglob('*'):
     if path.is_file() and (path.suffix == '.so' or (path.stat().st_mode & 0o111 and not path.suffix)):
         paths.add(path)

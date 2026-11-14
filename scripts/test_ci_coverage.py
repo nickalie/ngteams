@@ -97,6 +97,10 @@ class TargetTests(unittest.TestCase):
                 path.chmod(0o755)
             excluded = root / "target/coverage-continuous-build/debug/deps/library.rlib"
             excluded.write_text("synthetic dependency\n")
+            fingerprint = "target/coverage-continuous-build/debug/.fingerprint/example-123/test-first.json"
+            metadata = root / fingerprint
+            metadata.parent.mkdir(parents=True)
+            metadata.write_text(json.dumps({"features": json.dumps(["test-support"])}))
             manifest = [[{"executable": f"/workspace/{path}"}] for path in paths[:2]]
             (root / "target/test-shards.json").write_text(json.dumps(manifest))
             subprocess.run(["bash", str(ROOT / ".github/ci/bundle.sh"), "pack"],
@@ -109,7 +113,11 @@ class TargetTests(unittest.TestCase):
 
             self.assertEqual(files("shard-0"), {paths[0]})
             self.assertEqual(files("shard-1"), {paths[1]})
-            self.assertEqual(files("common"), {*paths[2:], "target/test-shards.json"})
+            self.assertEqual(files("common"), {*paths[2:], "target/test-shards.json", fingerprint})
+            metadata.unlink()
+            subprocess.run(["tar", "-I", "zstd --long=30", "-xf", "target/coverage-common.tar.zst",
+                            fingerprint], cwd=root, capture_output=True, text=True, check=True)
+            self.assertEqual(json.loads(json.loads(metadata.read_text())["features"]), ["test-support"])
 
     @unittest.skipUnless(shutil.which("cargo"), "Cargo unavailable")
     def test_shared_executables_merge_to_the_same_coverage_as_cargo(self):
