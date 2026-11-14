@@ -4,15 +4,15 @@
 wire the client already speaks to Microsoft (the shapes in `docs/protocol/`), with every service under one HTTPS
 origin. The client sends a request to it only for an account signed in to that server.
 
-What authz advertises today: sign-in (the token endpoint) and authz. Other services are added one at a time. Authz names
-only the services the server serves, so the client keeps every other service off.
+What authz advertises today: sign-in (the token endpoint), authz and the chat service. Other services are added one
+at a time. Authz names only the services the server serves, so the client keeps every other service off.
 
 The chat service also serves chat creation, conversation lists and their sync/forward links, thread reads and
 member lists, message posting and newest/backward/incremental message pages under
 `/api/chatsvc/<region>/v1/`. These routes require an IC3 bearer token and current membership;
 disabled users are refused even while their token is live. A repeated 1:1 roster returns the existing chat, and
-group rosters and names persist in SQLite or PostgreSQL. Chat discovery is not advertised by authz yet: the
-the remaining native chat surface is still being added.
+group rosters and names persist in SQLite or PostgreSQL. Authz advertises the chat service as `chatServiceAfd`;
+activity streams and membership changes are still being added.
 
 ## Stack
 
@@ -101,7 +101,7 @@ hands out its GTM.
 |---|---|---|---|
 | Token endpoint | (the authority) | `/oauth2/v2.0/token` | yes |
 | authz | `authService` (base `/api/authsvc`) | `/api/authsvc/v1.0/authz` | yes |
-| Chat service | `chatServiceAfd` | `/api/chatsvc/<region>/` | no |
+| Chat service | `chatServiceAfd` | `/api/chatsvc/<region>/` | yes |
 | Middle tier | `middleTier` | `/api/mt/part/<partition>/` | no |
 | Chat service aggregator | `chatSvcAggAfd` | `/api/csa/<region>/` | no |
 | Presence | `presenceUPS` | `/ups/<geo>/` | no |

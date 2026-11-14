@@ -13,5 +13,8 @@ pub const AUTH_SERVICE_GTM: &str = "authService";
 #[must_use]
 pub fn region_gtms(config: &Config) -> BTreeMap<&'static str, String> {
     let origin = config.origin();
-    BTreeMap::from([(AUTH_SERVICE_GTM, format!("{origin}/api/authsvc"))])
+    BTreeMap::from([
+        (AUTH_SERVICE_GTM, format!("{origin}/api/authsvc")),
+        ("chatServiceAfd", format!("{origin}/api/chatsvc/{}", config.region)),
+    ])
 }

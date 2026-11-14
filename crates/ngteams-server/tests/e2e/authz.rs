@@ -5,7 +5,7 @@ use std::time::SystemTime;
 use teams_auth::authz::{AuthzError, AuthzKind, CHAT_BASE_GTM};
 use teams_auth::secrets::MemorySecretStore;
 use teams_auth::token::{SPACES_RESOURCE, TokenError};
-use teams_core::account::{self, Account, AccountError};
+use teams_core::account::{self, Account};
 use teams_proto::IC3_AUDIENCE;
 
 use crate::support::{Backend, TestServer, backends};
@@ -41,13 +41,19 @@ async fn the_session_gets_a_skypetoken_with_the_region_and_the_servers_own_bases
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_account_bring_up_reads_its_bases_from_the_servers_authz_and_keeps_absent_services_off() {
-    let server = TestServer::start(Backend::Sqlite).await;
+    let server = TestServer::start_with(Backend::Sqlite, |config| {
+        config.public_origin = url::Url::parse("https://own.example.test").unwrap();
+    })
+    .await;
     server.add_user(UPN, "Ada").await;
     let session = server.session(UPN).await;
     session.skypetoken().await.unwrap();
     let region = session.region();
+    assert_eq!(
+        region.base(CHAT_BASE_GTM),
+        Some("https://own.example.test/api/chatsvc/own")
+    );
     for gtm in [
-        CHAT_BASE_GTM,
         account::MIDDLE_TIER_GTM,
         account::CSA_GTM,
         account::PRESENCE_GTM,
@@ -60,7 +66,7 @@ async fn the_account_bring_up_reads_its_bases_from_the_servers_authz_and_keeps_a
     }
     let dir = tempfile::tempdir().unwrap();
     let mri = format!("8:{}", session.skypetoken().await.unwrap().skype_id.unwrap());
-    let started = account::start(
+    let started = account::start_for_cloud(
         Account {
             upn: UPN.into(),
             mri: mri.clone(),
@@ -74,8 +80,9 @@ async fn the_account_bring_up_reads_its_bases_from_the_servers_authz_and_keeps_a
             read_only: false,
         },
         teams_core::CallFloor::new(),
+        &teams_proto::Cloud::own("https://own.example.test").unwrap(),
     );
-    assert!(matches!(started, Err(AccountError::NoChatBase)));
+    started.unwrap().handle.shutdown();
     server.stop().await;
 }
 
