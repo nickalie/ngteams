@@ -135,7 +135,7 @@ pub(super) async fn page(
     if more && let Some(last) = rows.last() {
         if incremental {
             metadata["forwardLink"] = json!(format!(
-                "{link}?syncState={since}&until={until}&after={}&pageSize={size}",
+                "{link}?syncState={since}&until={until}&before={}&pageSize={size}",
                 last.version
             ));
         } else {

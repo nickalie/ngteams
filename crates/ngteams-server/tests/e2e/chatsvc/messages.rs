@@ -140,3 +140,37 @@ async fn native_around_time_reads_choose_messages_on_both_sides_of_the_requested
         pair.stop().await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn incremental_message_pages_are_newest_first_and_keep_concurrent_posts_for_the_next_sync() {
+    for backend in backends() {
+        let pair = Pair::start(backend).await;
+        let reader = client(&pair.server, "b@own.test", &pair.b_id).await;
+        let reads = ChatReads::new(&reader);
+        let initial = reads.messages(&pair.chat, 200).await.unwrap();
+        let first = pair.send("one").await;
+        let second = pair.send("two").await;
+        let third = pair.send("three").await;
+        let mut page = reads
+            .messages_from(&pair.chat, &format!("{}&pageSize=1", initial.sync_state().unwrap()))
+            .await
+            .unwrap();
+        assert_eq!(page.messages[0].id, third);
+        let next_sync = page.sync_state().unwrap().to_owned();
+        let fourth = pair.send("four, between pages").await;
+        let mut seen = Vec::new();
+        loop {
+            assert_eq!(page.sync_state(), Some(next_sync.as_str()));
+            seen.extend(page.messages.iter().map(|message| message.id.clone()));
+            let Some(next) = page.forward_link() else {
+                break;
+            };
+            page = reads.messages_from(&pair.chat, next).await.unwrap();
+        }
+        assert_eq!(seen, vec![third, second, first]);
+        let following = reads.messages_from(&pair.chat, &next_sync).await.unwrap();
+        assert_eq!(following.messages.len(), 1);
+        assert_eq!(following.messages[0].id, fourth);
+        pair.stop().await;
+    }
+}

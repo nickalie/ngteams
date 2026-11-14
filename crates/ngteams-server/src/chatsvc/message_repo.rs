@@ -94,7 +94,8 @@ pub(super) async fn page(db: &Db, chat: &str, window: Window) -> Result<Vec<Mess
         if window.incremental {
             Ok(query
                 .filter(chat_messages::version.gt(window.since))
-                .order(chat_messages::version.asc())
+                .filter(chat_messages::version.lt(window.before))
+                .order(chat_messages::version.desc())
                 .limit(window.size)
                 .select(Message::as_select())
                 .load(conn)
