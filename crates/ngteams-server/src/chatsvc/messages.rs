@@ -9,8 +9,13 @@ use serde_json::{Map, Value, json};
 
 use super::{Caller, Error, events, member_of, message_repo, reads, repo, wire};
 use crate::app::App;
+use crate::db::DbError;
 
 type Params = HashMap<String, String>;
+
+const MAX_PAGE_BYTES: usize = 3 * 1024 * 1024;
+
+pub(super) const MESSAGE_PROPERTIES: [&str; 6] = ["mentions", "cards", "links", "files", "formatVariant", "qtdMsgs"];
 
 pub(super) async fn post(
     State(app): State<Arc<App>>,
@@ -59,7 +64,7 @@ pub(super) fn draft(app: &App, caller: &Caller, chat: &str, sent: &Value) -> Res
     let mut properties = Map::new();
     if let Some(sent) = sent.get("properties") {
         let sent = sent.as_object().ok_or(Error::BadRequest)?;
-        for key in ["mentions", "cards", "links", "files", "formatVariant", "qtdMsgs"] {
+        for key in MESSAGE_PROPERTIES {
             if let Some(value) = sent.get(key) {
                 properties.insert(key.into(), value.clone());
             }
@@ -111,18 +116,17 @@ pub(super) async fn page(
     let current = repo::watermark(&app.db).await?;
     let until = reads::number(&query, "until", current)?;
     let since = reads::number(&query, "syncState", 0)?;
-    let after = reads::number(&query, "after", since)?;
     let before = reads::number(&query, "before", i64::MAX)?;
-    if until > current || since > until || after < since || after > until {
+    if until > current || since > until {
         return Err(Error::BadRequest);
     }
     let size = reads::number(&query, "pageSize", 200)?.clamp(1, 200);
     let incremental = query.contains_key("syncState");
-    let mut rows = message_repo::page(
+    let rows = message_repo::page(
         &app.db,
         chat,
         message_repo::Window {
-            since: after,
+            since,
             until,
             before,
             size: size + 1,
@@ -130,25 +134,21 @@ pub(super) async fn page(
         },
     )
     .await?;
-    let more = i64::try_from(rows.len()).unwrap_or(i64::MAX) > size;
-    rows.truncate(usize::try_from(size).unwrap_or(200));
+    let (messages, more) = bounded_messages(&rows, size)?;
     let link = format!("{}/v1/users/ME/conversations/{chat}/messages", wire::base(&app));
     let mut metadata = json!({"syncState": format!("{link}?syncState={until}"),
-        "lastCompleteSegmentStartTime": 1, "lastCompleteSegmentEndTime": until});
-    if more && let Some(last) = rows.last() {
+        "lastCompleteSegmentStartTime": since, "lastCompleteSegmentEndTime": until});
+    if more && let Some(last) = rows.get(messages.len().saturating_sub(1)) {
+        metadata["lastCompleteSegmentStartTime"] = last.id.into();
         if incremental {
-            metadata["forwardLink"] = json!(format!(
+            metadata["backwardLink"] = json!(format!(
                 "{link}?syncState={since}&until={until}&before={}&pageSize={size}",
-                last.version
+                last.id
             ));
         } else {
             metadata["backwardLink"] = json!(format!("{link}?until={until}&before={}&pageSize={size}", last.id));
         }
     }
-    let messages: Vec<Value> = rows
-        .iter()
-        .map(message_repo::Message::value)
-        .collect::<Result<_, _>>()?;
     Ok(Json(
         json!({"messages": messages, "tenantId": caller.tenant, "_metadata": metadata}),
     ))
@@ -168,12 +168,34 @@ pub(super) async fn around(
         return Err(Error::BadRequest);
     }
     let rows = message_repo::around(&app.db, chat, at, size).await?;
-    let messages: Vec<_> = rows
-        .iter()
-        .map(message_repo::Message::value)
-        .collect::<Result<_, _>>()?;
-    Ok(Json(json!({"messages": messages, "tenantId": caller.tenant,
-        "_metadata": {"lastCompleteSegmentStartTime": 0, "lastCompleteSegmentEndTime": 0}})))
+    let (messages, more) = bounded_messages(&rows, size)?;
+    let mut metadata = json!({"lastCompleteSegmentStartTime": 0, "lastCompleteSegmentEndTime": 0});
+    if more && let Some(last) = rows.get(messages.len().saturating_sub(1)) {
+        metadata["backwardLink"] = json!(format!(
+            "{}/v1/users/ME/conversations/{chat}/messages?before={}&pageSize={size}",
+            wire::base(&app),
+            last.id
+        ));
+    }
+    Ok(Json(
+        json!({"messages": messages, "tenantId": caller.tenant, "_metadata": metadata}),
+    ))
+}
+
+fn bounded_messages(rows: &[message_repo::Message], size: i64) -> Result<(Vec<Value>, bool), DbError> {
+    let mut messages = Vec::new();
+    let mut bytes = 2;
+    for row in rows.iter().take(usize::try_from(size).unwrap_or(200)) {
+        let message = row.value()?;
+        let length = message.to_string().len() + 1;
+        if !messages.is_empty() && bytes + length > MAX_PAGE_BYTES {
+            break;
+        }
+        bytes += length;
+        messages.push(message);
+    }
+    let more = messages.len() < rows.len();
+    Ok((messages, more))
 }
 
 async fn typing(

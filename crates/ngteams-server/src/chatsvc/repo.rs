@@ -45,9 +45,10 @@ macro_rules! advance {
 pub(super) use advance;
 
 pub(super) async fn create(db: &Db, chat: &Chat, members: &[String]) -> Result<bool, DbError> {
+    let at = super::wire::now();
     with_conn!(db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
-            let version: i64 = advance!(conn, chat.created_at);
+            let version: i64 = advance!(conn, at);
             let active: i64 = users::table
                 .filter(users::id.eq_any(members))
                 .filter(users::disabled.eq(false))

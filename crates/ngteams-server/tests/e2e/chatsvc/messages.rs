@@ -151,6 +151,16 @@ async fn incremental_message_pages_are_newest_first_and_keep_concurrent_posts_fo
         let first = pair.send("one").await;
         let second = pair.send("two").await;
         let third = pair.send("three").await;
+        let edited = pair
+            .a
+            .write(Action::Edit {
+                conversation: pair.chat.clone(),
+                message_id: first.clone(),
+                text: MessageText::plain("one, edited last").unwrap(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(edited.state, OutboxState::Sent);
         let mut page = reads
             .messages_from(&pair.chat, &format!("{}&pageSize=1", initial.sync_state().unwrap()))
             .await
@@ -162,7 +172,7 @@ async fn incremental_message_pages_are_newest_first_and_keep_concurrent_posts_fo
         loop {
             assert_eq!(page.sync_state(), Some(next_sync.as_str()));
             seen.extend(page.messages.iter().map(|message| message.id.clone()));
-            let Some(next) = page.forward_link() else {
+            let Some(next) = page.backward_link() else {
                 break;
             };
             page = reads.messages_from(&pair.chat, next).await.unwrap();
@@ -171,6 +181,57 @@ async fn incremental_message_pages_are_newest_first_and_keep_concurrent_posts_fo
         let following = reads.messages_from(&pair.chat, &next_sync).await.unwrap();
         assert_eq!(following.messages.len(), 1);
         assert_eq!(following.messages[0].id, fourth);
+        pair.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_engine_catches_up_every_message_across_a_cut_incremental_answer() {
+    for backend in backends() {
+        let pair = Pair::start(backend).await;
+        let mut ids = Vec::new();
+        for index in 0..205 {
+            ids.push(pair.send(&format!("offline message {index}")).await);
+        }
+        assert!(pair.b.sync().await.unwrap().failed.is_empty());
+        for id in ids {
+            assert!(pair.b.message(&pair.chat, &id).await.unwrap().is_some(), "missing {id}");
+        }
+        pair.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn large_message_pages_stay_within_the_native_transport_budget_and_keep_all_rows() {
+    for backend in backends() {
+        let pair = Pair::start(backend).await;
+        let mut ids = Vec::new();
+        let text = "x".repeat(50 * 1024);
+        for _ in 0..90 {
+            ids.push(pair.send(&text).await);
+        }
+        let reader = client(&pair.server, "b@own.test", &pair.b_id).await;
+        let reads = ChatReads::new(&reader);
+        let around = reads
+            .messages_around(&pair.chat, ids.last().unwrap().parse().unwrap(), 200)
+            .await
+            .unwrap();
+        assert!(around.messages.len() < ids.len());
+        assert!(around.backward_link().is_some());
+        let mut page = reads.messages(&pair.chat, 200).await.unwrap();
+        assert!(page.messages.len() < ids.len());
+        let mut seen = Vec::new();
+        loop {
+            seen.extend(page.messages.iter().map(|message| message.id.clone()));
+            let Some(next) = page.backward_link() else { break };
+            page = reads.messages_from(&pair.chat, next).await.unwrap();
+        }
+        ids.reverse();
+        assert_eq!(seen, ids);
+        assert!(pair.b.sync().await.unwrap().failed.is_empty());
+        for id in &ids {
+            assert!(pair.b.message(&pair.chat, id).await.unwrap().is_some());
+        }
         pair.stop().await;
     }
 }

@@ -68,6 +68,7 @@ async fn add_two_reactions(pair: &Pair, a: &ChatClient, b: &ChatClient, id: &str
             .status(),
         200
     );
+    next(events).await;
 }
 
 async fn reaction_noops(pair: &Pair, a: &ChatClient, b: &ChatClient, id: &str, events: &mut Subscription) {

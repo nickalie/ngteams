@@ -118,9 +118,12 @@ hands out its GTM.
 
 ## Chat events
 
-Chat creation publishes to every other member on `push:<mri>`. The internal JSON envelope is
+Chat creation publishes to every member, including the acting account's other endpoints, on `push:<mri>`.
+The internal JSON envelope is
 `{"resourceType":"ThreadUpdate","resource":<thread>}`; the resource has the thread-read shape. Trouter delivery
-wraps this internal event separately. A message post publishes `NewMessage` with the stored message as `resource`; an edit, soft deletion or reaction publishes `MessageUpdate`.
+wraps this internal event separately. A message post publishes `NewMessage` with the stored message as `resource`;
+an edit, soft deletion or reaction publishes `MessageUpdate` to the same recipients. Typing and peer read receipts
+exclude the acting account.
 Edits require message ownership and preserve its ID, client message ID, original arrival time and reactions. Publication happens after the transaction commits. The fan-out is at most
 once; clients catch up through conversation sync after a missed event.
 
@@ -130,7 +133,9 @@ clocks on different HTTP nodes out of cursor ordering.
 
 Posts use the authenticated account as sender. A repeated `(chat, sender, clientmessageid)` returns the original
 message and emits no duplicate event. Message IDs and versions come from the shared version clock, and a
-message page keeps its watermark in backward and forward links.
+message page keeps its watermark in backward links. Incremental pages filter by changed version and order by
+arrival ID, with segment bounds that let the native engine follow a cut answer. Message arrays stay below a
+3 MiB serialized budget; remaining rows have a backward continuation.
 
 Read horizons are stored per `(chat, account)` and returned only in that account's conversation listing.
 Their own endpoints receive a `ConversationUpdate` with `propertiesUpdated` and the changed property. Other

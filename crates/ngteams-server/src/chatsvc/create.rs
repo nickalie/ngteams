@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Json;
 use axum::extract::{State, rejection::JsonRejection};
@@ -82,20 +81,13 @@ pub(super) async fn create(
     } else {
         format!("19:{}@thread.v2", uuid::Uuid::new_v4().simple())
     };
-    let at = i64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(),
-    )
-    .unwrap_or(i64::MAX);
     let chat = repo::Chat {
         id,
         creator: caller.id.clone(),
         topic: body.properties.topic,
         unique_roster: body.properties.unique,
-        created_at: at,
-        version: at,
+        created_at: 0,
+        version: 0,
     };
     let inserted = repo::create(&app.db, &chat, &members).await?;
     let (chat, members) = super::member_of(&app, &caller, &chat.id).await?;

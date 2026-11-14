@@ -79,9 +79,11 @@ pub(super) async fn conversations(
             if let Some(preview) = entry["lastMessage"].as_object_mut() {
                 preview.remove("properties");
             }
+            entry["properties"]["isemptyconversation"] = "False".into();
+        }
+        if let Some(message) = super::message_repo::last_updated(&app.db, &chat.id).await? {
             entry["lastUpdatedMessageId"] = message.id.into();
             entry["lastUpdatedMessageVersion"] = message.version.into();
-            entry["properties"]["isemptyconversation"] = "False".into();
         }
         if let Some(properties) = entry["properties"].as_object_mut() {
             properties.extend(super::property_repo::conversation(&app.db, &chat.id, &caller.id).await?);

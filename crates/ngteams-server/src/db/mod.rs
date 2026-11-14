@@ -1,9 +1,11 @@
 //! The database: Postgres (the source of truth several nodes share) or SQLite (one node), through Diesel.
 //!
-//! One schema ([`schema`]) and one set of queries serve both backends: each query is written once inside [`with_conn!`],
+//! The foundation schema ([`schema`]) and the chat service's own schema each serve both backends.
+//! Each query is written once inside [`with_conn!`],
 //! which runs it on whichever connection the pool holds. Postgres goes through diesel-async's tokio-postgres
 //! connection; SQLite through Diesel's own connection on the blocking pool, one connection per node (its writes
-//! serialize anyway, and a single writer never meets `SQLITE_BUSY`). Times are Unix seconds.
+//! serialize anyway, and a single writer never meets `SQLITE_BUSY`). Foundation times are Unix seconds; chat
+//! arrival times and versions are Unix milliseconds.
 
 pub mod keys;
 pub mod meta;

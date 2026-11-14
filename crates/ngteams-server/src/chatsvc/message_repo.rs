@@ -94,8 +94,8 @@ pub(super) async fn page(db: &Db, chat: &str, window: Window) -> Result<Vec<Mess
         if window.incremental {
             Ok(query
                 .filter(chat_messages::version.gt(window.since))
-                .filter(chat_messages::version.lt(window.before))
-                .order(chat_messages::version.desc())
+                .filter(chat_messages::id.lt(window.before))
+                .order(chat_messages::id.desc())
                 .limit(window.size)
                 .select(Message::as_select())
                 .load(conn)
@@ -115,6 +115,16 @@ pub(super) async fn page(db: &Db, chat: &str, window: Window) -> Result<Vec<Mess
 pub(super) async fn latest(db: &Db, chat: &str) -> Result<Option<Message>, DbError> {
     with_conn!(db, |conn| Ok(chat_messages::table
         .filter(chat_messages::chat_id.eq(chat))
+        .order(chat_messages::id.desc())
+        .select(Message::as_select())
+        .first(conn)
+        .await
+        .optional()?))
+}
+
+pub(super) async fn last_updated(db: &Db, chat: &str) -> Result<Option<Message>, DbError> {
+    with_conn!(db, |conn| Ok(chat_messages::table
+        .filter(chat_messages::chat_id.eq(chat))
         .order(chat_messages::version.desc())
         .select(Message::as_select())
         .first(conn)
@@ -129,12 +139,18 @@ pub(super) enum Updated {
     Unchanged(Message),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Who {
+    Owner,
+    AnyMember,
+}
+
 pub(super) async fn update<F>(
     db: &Db,
     chat: &str,
     id: i64,
     actor: &str,
-    owner_only: bool,
+    who: Who,
     transform: F,
 ) -> Result<Updated, DbError>
 where
@@ -163,7 +179,7 @@ where
             else {
                 return Ok(Updated::Missing);
             };
-            if owner_only && row.owner_id != actor {
+            if who == Who::Owner && row.owner_id != actor {
                 return Ok(Updated::Denied);
             }
             let mut body = row.value()?;

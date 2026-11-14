@@ -93,6 +93,7 @@ pub(super) async fn set_user(db: &Db, user: &str, name: &str, value: &Value) -> 
     let at = wire::now();
     with_conn!(db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
+            // The clock lock serializes property merges across Postgres nodes.
             let _version: i64 = advance!(conn, at);
             let body = user_chat_properties::table
                 .find(user)

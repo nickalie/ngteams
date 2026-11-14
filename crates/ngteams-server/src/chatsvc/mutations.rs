@@ -32,23 +32,30 @@ pub(super) async fn edit(
     }
     sent["from"] = caller.mri().into();
     let draft = messages::draft(&app, &caller, chat, &sent)?.value()?;
-    let changed = message_repo::update(&app.db, chat, id, &caller.id, true, |current, at| {
-        if current["properties"].get("deletetime").is_some() {
-            return Err(crate::db::DbError::Conflict);
-        }
-        current["content"] = draft["content"].clone();
-        current["messagetype"] = draft["messagetype"].clone();
-        for key in ["mentions", "cards", "links", "files", "formatVariant", "qtdMsgs"] {
-            if let Some(properties) = current["properties"].as_object_mut() {
-                properties.remove(key);
-                if let Some(value) = draft["properties"].get(key) {
-                    properties.insert(key.into(), value.clone());
+    let changed = message_repo::update(
+        &app.db,
+        chat,
+        id,
+        &caller.id,
+        message_repo::Who::Owner,
+        |current, at| {
+            if current["properties"].get("deletetime").is_some() {
+                return Err(crate::db::DbError::Conflict);
+            }
+            current["content"] = draft["content"].clone();
+            current["messagetype"] = draft["messagetype"].clone();
+            for key in messages::MESSAGE_PROPERTIES {
+                if let Some(properties) = current["properties"].as_object_mut() {
+                    properties.remove(key);
+                    if let Some(value) = draft["properties"].get(key) {
+                        properties.insert(key.into(), value.clone());
+                    }
                 }
             }
-        }
-        current["properties"]["edittime"] = json!(at);
-        Ok(true)
-    })
+            current["properties"]["edittime"] = json!(at);
+            Ok(true)
+        },
+    )
     .await?;
     let row = updated(changed)?;
     events::publish(&app, &caller, &members, "MessageUpdate", &row.value()?).await;
@@ -82,7 +89,7 @@ pub(super) async fn delete(
     let chat = reads::target(&path)?;
     let (_, members) = member_of(&app, &caller, chat).await?;
     let id = message_id(&path)?;
-    let result = message_repo::update(&app.db, chat, id, &caller.id, true, |body, at| {
+    let result = message_repo::update(&app.db, chat, id, &caller.id, message_repo::Who::Owner, |body, at| {
         body["content"] = "".into();
         body["properties"] = json!({"deletetime": at});
         if let Some(client) = body.get("clientmessageid").cloned() {

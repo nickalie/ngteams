@@ -41,9 +41,8 @@ async fn conversation_pages_keep_their_snapshot_and_survive_another_node_startin
             assert_eq!(page.sync_state(), Some(sync.as_str()));
             seen.extend(page.conversations.iter().map(|entry| entry.id.clone()));
         }
-        seen.sort();
-        seen.dedup();
         assert_eq!(seen.len(), 3);
+        assert_eq!(seen.iter().collect::<std::collections::HashSet<_>>().len(), 3);
         let changed = reads.conversations_from(&sync).await.unwrap();
         assert_eq!(changed.conversations.len(), 1);
         assert!(!seen.contains(&changed.conversations[0].id));

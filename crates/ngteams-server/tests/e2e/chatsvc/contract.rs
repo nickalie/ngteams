@@ -82,3 +82,105 @@ async fn malformed_edits_get_a_native_contract_bad_request_and_leave_the_message
     );
     pair.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn editing_and_reacting_to_older_messages_keeps_the_latest_arrival_preview() {
+    for backend in crate::support::backends() {
+        let pair = Pair::start(backend).await;
+        let first = pair.send("old arrival").await;
+        let last = pair.send("latest arrival").await;
+        let reader = client(&pair.server, "b@own.test", &pair.b_id).await;
+        for action in [
+            teams_core::engine::Action::Edit {
+                conversation: pair.chat.clone(),
+                message_id: first.clone(),
+                text: teams_proto::chat::MessageText::plain("old arrival edited").unwrap(),
+            },
+            teams_core::engine::Action::React {
+                conversation: pair.chat.clone(),
+                message_id: first.clone(),
+                key: "like".into(),
+            },
+        ] {
+            let row = pair.a.write(action).await.unwrap();
+            assert_eq!(row.state, teams_store::OutboxState::Sent);
+            let listed = ChatReads::new(&reader).conversations().await.unwrap();
+            let entry = listed.conversations.iter().find(|chat| chat.id == pair.chat).unwrap();
+            assert_eq!(entry.last_message_raw.as_ref().unwrap()["id"], last);
+            assert_eq!(
+                entry.last_updated_message_id,
+                teams_proto::chat::Field::Known(first.parse().unwrap())
+            );
+        }
+        pair.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn message_changes_reach_the_acting_accounts_other_endpoints() {
+    for backend in crate::support::backends() {
+        let pair = Pair::start(backend).await;
+        let mut events = pair
+            .server
+            .app
+            .fanout
+            .subscribe(&format!("push:8:orgid:{}", pair.a_id))
+            .await
+            .unwrap();
+        let id = pair.send("from another endpoint").await;
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let event: Value = serde_json::from_slice(&event).unwrap();
+        assert_eq!(event["resourceType"], "NewMessage");
+        assert_eq!(event["resource"]["id"], id);
+        for action in [
+            teams_core::engine::Action::Edit {
+                conversation: pair.chat.clone(),
+                message_id: id.clone(),
+                text: teams_proto::chat::MessageText::plain("updated on another endpoint").unwrap(),
+            },
+            teams_core::engine::Action::React {
+                conversation: pair.chat.clone(),
+                message_id: id.clone(),
+                key: "like".into(),
+            },
+            teams_core::engine::Action::Delete {
+                conversation: pair.chat.clone(),
+                message_id: id.clone(),
+            },
+        ] {
+            let row = pair.a.write(action).await.unwrap();
+            assert_eq!(row.state, teams_store::OutboxState::Sent);
+            let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let event: Value = serde_json::from_slice(&event).unwrap();
+            assert_eq!(event["resourceType"], "MessageUpdate");
+            assert_eq!(event["resource"]["id"], id);
+        }
+        let c_id = pair.server.add_user("c@own.test", "Cora").await;
+        let group = pair
+            .a
+            .write(teams_core::engine::Action::CreateChat {
+                others: vec![
+                    teams_proto::Mri::new(format!("8:orgid:{}", pair.b_id)),
+                    teams_proto::Mri::new(format!("8:orgid:{c_id}")),
+                ],
+                topic: Some("Another endpoint's room".into()),
+            })
+            .await
+            .unwrap();
+        assert_eq!(group.state, teams_store::OutboxState::Sent);
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let event: Value = serde_json::from_slice(&event).unwrap();
+        assert_eq!(event["resourceType"], "ThreadUpdate");
+        assert_eq!(event["resource"]["id"], group.message_id.unwrap());
+        pair.stop().await;
+    }
+}

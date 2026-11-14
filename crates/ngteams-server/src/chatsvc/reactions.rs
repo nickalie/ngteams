@@ -59,9 +59,14 @@ pub(super) async fn react(
         }
         Some(value)
     };
-    let result = message_repo::update(&app.db, chat, id, &caller.id, false, |current, at| {
-        apply(current, at, key, value.as_deref(), &caller.mri())
-    })
+    let result = message_repo::update(
+        &app.db,
+        chat,
+        id,
+        &caller.id,
+        message_repo::Who::AnyMember,
+        |current, at| apply(current, at, key, value.as_deref(), &caller.mri()),
+    )
     .await?;
     let changed = matches!(&result, message_repo::Updated::Message(_));
     let row = mutations::updated(result)?;
