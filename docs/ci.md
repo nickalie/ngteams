@@ -262,7 +262,8 @@ The [release workflow](../.github/workflows/release.yml) runs on a push to `main
 package (its `paths` list: code, dependencies, packaging and release scripts, not docs, skills or CI settings) and on
 manual dispatch. Its `tests` job waits for the newest standalone Coverage run with the exact repository, branch and commit SHA,
 accepting only push/manual runs and a completed success. A newer failed or cancelled run takes precedence over an
-older success. API errors, absence of a run after the timeout, and every non-success conclusion block publishing.
+older success. The publish job rechecks immediately before creating releases, so a newer failed rerun during
+packaging also blocks publication. API errors, absence of a run after the timeout, and every non-success conclusion block publishing.
 Release therefore reuses Coverage without a second full suite. Manual `coverage_only: true` dispatches run just this
 lookup, skipping all packaging and publishing, to prove the gate safely on a branch. Coverage also runs every `scripts/test_*.py`; release publishes only after that complete Coverage run passes. A new push cancels any release still building or waiting, so
 only the newest commit is published. A successful `main` run makes a GitHub release tagged
