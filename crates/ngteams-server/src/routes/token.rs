@@ -174,12 +174,11 @@ pub async fn token(
 /// The account `upn` names when `secret` is its password, counting failures toward the hold.
 async fn password_grant(app: &App, upn: &str, secret: &str) -> Result<User, Refusal> {
     let upn = normalize_upn(upn);
-    if let Some(wait) = app.throttle.hold(&upn).await {
+    if let Some(wait) = app.throttle.reserve(&upn).await {
         return Err(Refusal::held(wait));
     }
     let user = users::by_upn(&app.db, &upn).await?;
     if !password::verify(secret, user.as_ref().map(|user| user.password_hash.as_str())).await {
-        app.throttle.failed(&upn).await;
         return Err(Refusal::credentials());
     }
     app.throttle.succeeded(&upn).await;
@@ -241,7 +240,7 @@ async fn issue(
     let id_token = app.issuer.id_token(user, client_id)?;
     let next = new_refresh_token()?;
     let created_at = now();
-    refresh::insert(
+    let inserted = refresh::insert(
         &app.db,
         &RefreshToken {
             id: uuid::Uuid::new_v4().to_string(),
@@ -256,6 +255,9 @@ async fn issue(
         },
     )
     .await?;
+    if !inserted {
+        return Err(Refusal::refresh());
+    }
     let expires_in = seconds_until(access.expires_at);
     let scope = format!("{}/{} openid profile offline_access", resource.audience, resource.scope);
     let body = json!({

@@ -157,7 +157,11 @@ async fn housekeeping_rotates_a_due_key_and_the_earlier_tokens_still_verify() {
     let after = server.session("ada@own.test").await;
     let fresh = after.access_token(teams_auth::token::SPACES_RESOURCE).await.unwrap();
     assert_ne!(kid(&before.token), kid(&fresh.token));
-    session.skypetoken().await.unwrap();
+    server
+        .authz_client()
+        .exchange(&before.token, teams_auth::authz::AuthzKind::TokenRefresh)
+        .await
+        .unwrap();
     assert!(format!("{:?}", server.app.issuer.keys()).contains("KeyRing"));
     server.stop().await;
 }
@@ -219,7 +223,7 @@ fn the_binary_migrates_and_serves_until_terminated() {
     let live = format!("http://127.0.0.1:{port}/health/live");
     let up = (0..100).any(|_| {
         std::thread::sleep(std::time::Duration::from_millis(100));
-        std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+        binary_is_live(port)
     });
     assert!(up, "{live} never answered");
     let terminated = std::process::Command::new("kill")
@@ -228,6 +232,24 @@ fn the_binary_migrates_and_serves_until_terminated() {
         .unwrap();
     assert!(terminated.success());
     assert!(serving.wait().unwrap().success());
+}
+
+fn binary_is_live(port: u16) -> bool {
+    use std::io::{Read as _, Write as _};
+    let wait = std::time::Duration::from_millis(500);
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), wait) else {
+        return false;
+    };
+    stream.set_read_timeout(Some(wait)).unwrap();
+    stream.set_write_timeout(Some(wait)).unwrap();
+    if stream
+        .write_all(b"GET /health/live HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    let mut response = String::new();
+    stream.read_to_string(&mut response).is_ok() && response.starts_with("HTTP/1.1 204 ")
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -247,4 +269,126 @@ async fn serve_on_the_command_line_stops_when_told() {
     ngteams_server::cli::run(cli, &mut "".as_bytes(), &mut Vec::new(), async {})
         .await
         .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_rotations_leave_a_signer_on_every_node() {
+    for backend in backends() {
+        let server = TestServer::start(backend).await;
+        let second = TestServer::start_with(backend, |config| {
+            config.database_url.clone_from(&server.app.config.database_url);
+            config.public_origin.clone_from(&server.app.config.public_origin);
+        })
+        .await;
+        server.add_user("ada@own.test", "Ada").await;
+        for _ in 0..12 {
+            let (a, b) = tokio::join!(server.app.issuer.keys().rotate(), second.app.issuer.keys().rotate());
+            a.unwrap();
+            b.unwrap();
+            server.app.issuer.keys().reload().await.unwrap();
+            second.app.issuer.keys().reload().await.unwrap();
+            let rows = ngteams_server::db::keys::all(&server.app.db).await.unwrap();
+            assert_eq!(rows.iter().filter(|key| key.retired_at.is_none()).count(), 1);
+            for node in [&server, &second] {
+                node.session("ada@own.test").await.skypetoken().await.unwrap();
+            }
+        }
+        second.stop().await;
+        server.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn retired_keys_are_removed_after_access_lifetime_and_reload_slack() {
+    use diesel::{ExpressionMethods as _, QueryDsl as _};
+    use diesel_async::RunQueryDsl as _;
+    use ngteams_server::db::{keys, now, schema::signing_keys, with_conn};
+    for backend in backends() {
+        let server = TestServer::start(backend).await;
+        let previous = keys::all(&server.app.db).await.unwrap()[0].kid.clone();
+        server.app.issuer.keys().rotate().await.unwrap();
+        for (slack, kept) in [(3601, true), (3661, false)] {
+            let retired_at = now() - i64::try_from(server.app.config.tokens.access_lifetime).unwrap() - slack;
+            async {
+                with_conn!(&server.app.db, |conn| diesel::update(
+                    signing_keys::table.find(&previous)
+                )
+                .set(signing_keys::retired_at.eq(Some(retired_at)))
+                .execute(conn)
+                .await?);
+                Ok::<_, ngteams_server::db::DbError>(())
+            }
+            .await
+            .unwrap();
+            ngteams_server::app::tidy(&server.app).await;
+            let present = keys::all(&server.app.db)
+                .await
+                .unwrap()
+                .iter()
+                .any(|key| key.kid == previous);
+            assert_eq!(present, kept, "{backend:?}: reload slack {slack}");
+        }
+        server.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn debug_logging_never_formats_postgres_signing_keys() {
+    if !backends().contains(&crate::support::Backend::Postgres) {
+        return;
+    }
+    let server = TestServer::start(crate::support::Backend::Postgres).await;
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("server.toml");
+    std::fs::write(
+        &config,
+        format!("database_url = {:?}\n", server.app.config.database_url),
+    )
+    .unwrap();
+    for filter in ["debug", "trace,tokio_postgres=trace"] {
+        let answer = std::process::Command::new(env!("CARGO_BIN_EXE_ngteams-server"))
+            .args(["--config", config.to_str().unwrap(), "keys", "rotate"])
+            .env("NGTEAMS_SERVER_LOG", filter)
+            .output()
+            .unwrap();
+        assert!(answer.status.success());
+        let stderr = String::from_utf8(answer.stderr).unwrap();
+        for key in ngteams_server::db::keys::all(&server.app.db).await.unwrap() {
+            assert!(
+                !stderr.contains(&format!("{:?}", key.private_der)),
+                "private key reached stderr"
+            );
+        }
+        assert!(!stderr.contains("ToSqlHelper"), "SQL bind helper reached stderr");
+    }
+    server.stop().await;
+}
+
+#[test]
+fn debug_omits_config_credentials_and_minted_tokens() {
+    let mut config = Config {
+        database_url: "postgres://user:synthetic-database-secret@localhost/db".into(),
+        redis_url: Some("redis://:synthetic-redis-secret@localhost/".into()),
+        storage_url: "s3://synthetic-storage-url-secret".into(),
+        ..Config::default()
+    };
+    config
+        .storage_options
+        .insert("access_key_id".into(), "synthetic-storage-key-secret".into());
+    let debug = format!("{config:?}");
+    for secret in [
+        "synthetic-database-secret",
+        "synthetic-redis-secret",
+        "synthetic-storage-url-secret",
+        "synthetic-storage-key-secret",
+    ] {
+        assert!(!debug.contains(secret));
+    }
+    let minted = ngteams_server::auth::tokens::Minted {
+        token: "synthetic-minted-token-secret".into(),
+        expires_at: 42,
+    };
+    let debug = format!("{minted:?}");
+    assert!(!debug.contains("synthetic-minted-token-secret"));
+    assert!(debug.contains("42"));
 }

@@ -34,7 +34,7 @@ async fn a_password_sign_in_answers_as_entra_with_tokens_for_the_asked_audience(
         let access = claims(answer["access_token"].as_str().unwrap());
         assert_eq!(access["aud"], SPACES_RESOURCE);
         assert_eq!(access["oid"], oid.as_str());
-        assert_eq!(access["tid"], server.app.tenant.as_str());
+        assert_eq!(access["tid"], server.app.issuer.tenant());
         assert_eq!(access["upn"], UPN);
         assert_eq!(access["name"], "Ada Lovelace");
         let id = claims(answer["id_token"].as_str().unwrap());
@@ -56,7 +56,7 @@ async fn the_session_refreshes_a_token_per_audience_and_keeps_the_rotated_refres
             let token = session.access_token(audience).await.unwrap();
             let summary = TokenSummary::read(&token.token).unwrap();
             assert_eq!(summary.audience, [audience], "{backend:?}");
-            assert_eq!(summary.tenant.as_deref(), Some(server.app.tenant.as_str()));
+            assert_eq!(summary.tenant.as_deref(), Some(server.app.issuer.tenant()));
         }
         let rotated = session.store().get(&refresh_token_key(UPN)).await.unwrap().unwrap();
         assert_ne!(rotated.expose(), first.expose());
@@ -318,4 +318,150 @@ async fn a_refresh_token_is_bound_to_its_client_and_runs_out() {
     assert_eq!((status, answer["error_codes"][0].as_u64()), (400, Some(700_082)));
     ngteams_server::app::tidy(&server.app).await;
     server.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_password_guesses_reserve_the_login_limit() {
+    for redis in [None].into_iter().chain(crate::support::redis_url().map(Some)) {
+        let server = TestServer::start_with(Backend::Sqlite, |config| {
+            config.redis_url = redis;
+            config.login.max_failures = 2;
+        })
+        .await;
+        let upn = format!("{}@own.test", uuid::Uuid::new_v4().simple());
+        server.add_user(&upn, "Ada").await;
+        let scope = Scope::spaces();
+        let attempts = (0..12).map(|_| server.password_grant(&upn, "wrong password", &scope));
+        let answers = futures_util::future::join_all(attempts).await;
+        assert_eq!(answers.iter().filter(|(status, _)| *status == 400).count(), 2);
+        assert_eq!(answers.iter().filter(|(status, _)| *status == 429).count(), 10);
+        server.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_successor_inserted_after_revocation_cannot_refresh() {
+    use base64::Engine as _;
+    use ngteams_server::db::{refresh, users};
+    use sha2::{Digest as _, Sha256};
+    for backend in backends() {
+        for family_only in [true, false] {
+            let server = TestServer::start(backend).await;
+            let oid = server.add_user(UPN, "Ada").await;
+            let session = server.session(UPN).await;
+            let original = session.store().get(&refresh_token_key(UPN)).await.unwrap().unwrap();
+            let hash = |token: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(token));
+            let mut successor = refresh::by_hash(&server.app.db, &hash(original.expose()))
+                .await
+                .unwrap()
+                .unwrap();
+            refresh::mark_used(&server.app.db, &successor.id).await.unwrap();
+            if family_only {
+                refresh::revoke_family(&server.app.db, &successor.family_id)
+                    .await
+                    .unwrap();
+            } else {
+                users::set_password(&server.app.db, UPN, "replacement hash")
+                    .await
+                    .unwrap();
+            }
+            successor.id = uuid::Uuid::new_v4().to_string();
+            successor.token_hash = hash("delayed-successor");
+            successor.used_at = None;
+            let _ = refresh::insert(&server.app.db, &successor).await.unwrap();
+            session
+                .store()
+                .put(&refresh_token_key(UPN), &Secret::new("delayed-successor"))
+                .await
+                .unwrap();
+            let answer = session.access_token(IC3_AUDIENCE).await;
+            assert!(
+                matches!(answer, Err(TokenError::InvalidGrant(_))),
+                "{backend:?}, family={family_only}, user={oid}"
+            );
+            server.stop().await;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refresh_purge_removes_only_tokens_before_the_cutoff() {
+    use ngteams_server::db::{now, refresh};
+    for backend in backends() {
+        let server = TestServer::start(backend).await;
+        let oid = server.add_user(UPN, "Ada").await;
+        let cutoff = now();
+        for (id, expiry) in [("expired", cutoff - 1), ("boundary", cutoff), ("live", cutoff + 3600)] {
+            refresh::insert(
+                &server.app.db,
+                &refresh::RefreshToken {
+                    id: id.into(),
+                    family_id: id.into(),
+                    user_id: oid.clone(),
+                    token_hash: id.into(),
+                    client_id: CLIENT_ID.into(),
+                    created_at: cutoff - 100,
+                    expires_at: expiry,
+                    used_at: None,
+                    revoked_at: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(refresh::purge_expired(&server.app.db, cutoff).await.unwrap(), 1);
+        assert!(refresh::by_hash(&server.app.db, "expired").await.unwrap().is_none());
+        for hash in ["boundary", "live"] {
+            assert!(refresh::by_hash(&server.app.db, hash).await.unwrap().is_some());
+        }
+        server.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn revocation_and_successor_insertion_serialize_on_each_backend() {
+    use ngteams_server::db::{now, refresh};
+    for backend in backends() {
+        let server = TestServer::start(backend).await;
+        let oid = server.add_user(UPN, "Ada").await;
+        for family_only in [true, false] {
+            for _ in 0..6 {
+                let mut token = refresh::RefreshToken {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    family_id: uuid::Uuid::new_v4().to_string(),
+                    user_id: oid.clone(),
+                    token_hash: uuid::Uuid::new_v4().to_string(),
+                    client_id: CLIENT_ID.into(),
+                    created_at: now(),
+                    expires_at: now() + 3600,
+                    used_at: None,
+                    revoked_at: None,
+                };
+                assert!(refresh::insert(&server.app.db, &token).await.unwrap());
+                token.id = uuid::Uuid::new_v4().to_string();
+                token.token_hash = uuid::Uuid::new_v4().to_string();
+                let (inserted, revoked) = tokio::join!(
+                    refresh::insert(&server.app.db, &token),
+                    revoke_for_race(&server.app.db, &token, family_only)
+                );
+                inserted.unwrap();
+                revoked.unwrap();
+                let row = refresh::by_hash(&server.app.db, &token.token_hash).await.unwrap();
+                assert!(row.is_none_or(|row| row.revoked_at.is_some()));
+            }
+        }
+        server.stop().await;
+    }
+}
+
+async fn revoke_for_race(
+    db: &ngteams_server::db::Db,
+    token: &ngteams_server::db::refresh::RefreshToken,
+    family_only: bool,
+) -> Result<(), ngteams_server::db::DbError> {
+    if family_only {
+        ngteams_server::db::refresh::revoke_family(db, &token.family_id).await
+    } else {
+        ngteams_server::db::refresh::revoke_user(db, &token.user_id).await
+    }
 }

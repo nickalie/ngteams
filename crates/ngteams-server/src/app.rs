@@ -32,8 +32,6 @@ const EXPIRED_KEPT: Duration = Duration::from_hours(24);
 pub struct App {
     pub config: Config,
     pub db: Db,
-    /// The server's tenant id, every account's `tid`.
-    pub tenant: String,
     pub issuer: Issuer,
     pub throttle: Throttle,
     pub fanout: Arc<dyn Fanout>,
@@ -61,8 +59,8 @@ impl App {
     pub async fn start(config: Config) -> Result<Arc<Self>, StartError> {
         let db = Db::connect(&config.database_url, config.database_pool).await?;
         let tenant = crate::db::meta::tenant(&db).await?;
-        // a key verifies as long as an access token it signed may live after it stops signing
-        let keep = config.tokens.access() + config.tokens.rotation();
+        // Other nodes can sign with the retired key until their next maintenance tick.
+        let keep = config.tokens.access() + MAINTENANCE + Duration::from_secs(crate::auth::tokens::LEEWAY);
         let keys = KeyRing::load(db.clone(), config.tokens.rotation(), keep).await?;
         let issuer = Issuer::new(keys, &config.origin(), &tenant, &config.region, config.tokens.access());
         let (fanout, throttle): (Arc<dyn Fanout>, Throttle) = match &config.redis_url {
@@ -77,7 +75,6 @@ impl App {
         Ok(Arc::new(Self {
             config,
             db,
-            tenant,
             issuer,
             throttle,
             fanout,

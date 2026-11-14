@@ -30,7 +30,7 @@ pub const DEFAULT_AUDIENCES: [&str; 8] = [
     "https://outlook.office.com/search",
 ];
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Config {
     /// The address the server listens on.
@@ -59,6 +59,18 @@ pub struct Config {
     pub login: LoginConfig,
 }
 
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("listen", &self.listen)
+            .field("region", &self.region)
+            .field("partition", &self.partition)
+            .field("tokens", &self.tokens)
+            .field("login", &self.login)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TlsConfig {
@@ -85,7 +97,7 @@ pub struct TokenConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct LoginConfig {
-    /// Failed password sign-ins an account may have in `window` before it is held off.
+    /// Password attempts an account may have in `window` before it is held off; success clears the count.
     pub max_failures: u32,
     /// Seconds the failures are counted over, and the longest hold.
     pub window: u64,

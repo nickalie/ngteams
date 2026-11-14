@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use tracing_subscriber::prelude::*;
 
 use crate::app::{self, App};
 use crate::config::Config;
@@ -60,7 +61,7 @@ pub enum UserCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum KeysCommand {
-    /// Starts signing with a new key now; the others keep verifying until their tokens have run out.
+    /// Creates a new key; running nodes switch at their next hourly check (or unknown-key reload).
     Rotate,
 }
 
@@ -114,9 +115,16 @@ fn block_on(cli: Cli) -> Result<(), CliError> {
 fn init_logs() {
     let filter = tracing_subscriber::EnvFilter::try_from_env("NGTEAMS_SERVER_LOG")
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
+                    // Dependency debug events can contain raw SQL bind values, including private keys.
+                    *metadata.level() <= tracing::Level::INFO || metadata.target().starts_with("ngteams_server")
+                })),
+        )
         .init();
 }
 
@@ -141,7 +149,11 @@ pub async fn run(
         Command::Keys(KeysCommand::Rotate) => {
             let app = App::start(config).await?;
             let kid = app.issuer.keys().rotate().await?;
-            writeln!(output, "signing with key {kid}").map_err(CliError::Output)
+            writeln!(
+                output,
+                "created key {kid}; running nodes reload at their next hourly check"
+            )
+            .map_err(CliError::Output)
         }
     }
 }

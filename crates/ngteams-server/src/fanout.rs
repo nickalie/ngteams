@@ -107,7 +107,7 @@ impl Topics {
     /// Forgets `topic` when nobody listens to it any more; whether it did.
     fn release(&self, topic: &str) -> bool {
         let mut topics = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        let idle = topics.get(topic).is_some_and(|sender| sender.receiver_count() == 0);
+        let idle = topics.get(topic).is_none_or(|sender| sender.receiver_count() == 0);
         if idle {
             topics.remove(topic);
         }
@@ -283,4 +283,52 @@ fn message(push: PushInfo) -> Option<(String, Bytes)> {
         return None;
     };
     Some((String::from_utf8(channel).ok()?, Bytes::from(payload)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delivery_before_release_still_releases_an_idle_topic() {
+        let topics = Topics::default();
+        let (receiver, _) = topics.receiver("push:gone");
+        drop(receiver);
+        topics.deliver("push:gone", Bytes::from_static(b"late"));
+        assert!(topics.release("push:gone"));
+        let (_receiver, first) = topics.receiver("push:gone");
+        assert!(first);
+        assert!(!topics.release("push:gone"));
+    }
+
+    #[tokio::test]
+    async fn redis_unsubscribes_when_delivery_precedes_release() {
+        let Ok(url) = std::env::var("NGTEAMS_SERVER_REDIS_URL") else {
+            return;
+        };
+        let node = Redis::connect(&url).await.unwrap();
+        let topic = format!("push:{}", uuid::Uuid::new_v4());
+        let subscription = node.subscribe(&topic).await.unwrap();
+        let change = node.inner.changes.lock().await;
+        drop(subscription);
+        node.inner.topics.deliver(&topic, Bytes::from_static(b"late"));
+        drop(change);
+        let released = tokio::time::timeout(std::time::Duration::from_secs(5), wait_for_release(&node, &topic)).await;
+        assert!(released.is_ok());
+    }
+    async fn wait_for_release(node: &Redis, topic: &str) {
+        let mut commands = node.connection();
+        loop {
+            let counts: Vec<(String, u64)> = redis::cmd("PUBSUB")
+                .arg("NUMSUB")
+                .arg(topic)
+                .query_async(&mut commands)
+                .await
+                .unwrap();
+            if counts[0].1 == 0 {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    }
 }

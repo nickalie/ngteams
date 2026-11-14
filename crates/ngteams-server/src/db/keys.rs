@@ -2,9 +2,9 @@
 //! key verifies until it is deleted, which happens once nothing it signed can still be valid.
 
 use diesel::prelude::*;
-use diesel_async::RunQueryDsl;
+use diesel_async::{AsyncConnection as _, RunQueryDsl};
 
-use super::schema::signing_keys;
+use super::schema::{server_meta, signing_keys};
 use super::{Db, DbError, with_conn};
 
 #[derive(Clone, PartialEq, Eq, Queryable, Selectable, Insertable)]
@@ -39,30 +39,36 @@ pub async fn all(db: &Db) -> Result<Vec<SigningKey>, DbError> {
         .await?))
 }
 
-/// Stores a new key.
+/// Stores the new signer and retires the previous ones atomically across nodes.
 ///
 /// # Errors
 /// A database failure.
-pub async fn insert(db: &Db, key: &SigningKey) -> Result<(), DbError> {
-    with_conn!(db, |conn| diesel::insert_into(signing_keys::table)
-        .values(key)
-        .execute(conn)
-        .await?);
-    Ok(())
-}
-
-/// Stops every unretired key but `keep` from signing.
-///
-/// # Errors
-/// A database failure.
-pub async fn retire_others(db: &Db, keep: &str, at: i64) -> Result<(), DbError> {
-    with_conn!(db, |conn| diesel::update(
-        signing_keys::table.filter(signing_keys::kid.ne(keep).and(signing_keys::retired_at.is_null()))
-    )
-    .set(signing_keys::retired_at.eq(Some(at)))
-    .execute(conn)
-    .await?);
-    Ok(())
+pub async fn rotate(db: &Db, key: &SigningKey) -> Result<(), DbError> {
+    with_conn!(db, |conn| conn
+        .transaction::<_, DbError, _>(async |conn| {
+            diesel::insert_into(server_meta::table)
+                .values((server_meta::name.eq("signing_key_lock"), server_meta::value.eq("")))
+                .on_conflict_do_nothing()
+                .execute(conn)
+                .await?;
+            // Every node locks the same row before it replaces the signer.
+            diesel::update(server_meta::table.find("signing_key_lock"))
+                .set(server_meta::value.eq(server_meta::value))
+                .execute(conn)
+                .await?;
+            diesel::insert_into(signing_keys::table)
+                .values(key)
+                .execute(conn)
+                .await?;
+            diesel::update(
+                signing_keys::table.filter(signing_keys::kid.ne(&key.kid).and(signing_keys::retired_at.is_null())),
+            )
+            .set(signing_keys::retired_at.eq(Some(key.created_at)))
+            .execute(conn)
+            .await?;
+            Ok(())
+        })
+        .await)
 }
 
 /// Deletes the keys retired before `before`.

@@ -36,6 +36,8 @@ ngteams-server --config server.toml serve
 Commands: `serve`, `migrate`, `user add|list|disable|enable|reset-password`, `keys rotate`. A password is read from
 the first line of standard input, never from the command line. Disabling an account or resetting its password
 revokes its refresh tokens: its sessions end when their access tokens run out (one hour by default).
+`NGTEAMS_SERVER_LOG` controls logging (default `info`); dependency debug and trace events are always suppressed
+because database drivers can include secret bind values.
 
 `GET /health/live` answers 204 while the process runs. `GET /health/ready` answers 204 while the database and the
 fan-out answer, else 503.
@@ -61,7 +63,7 @@ takes a double underscore: `NGTEAMS_SERVER_TLS__CERT`, `NGTEAMS_SERVER_TOKENS__A
 | `tokens.refresh_lifetime` | `7776000` | seconds a refresh token lives (90 days) |
 | `tokens.key_rotation` | `2592000` | seconds a signing key signs before a new one replaces it (30 days) |
 | `tokens.reuse_grace` | `60` | seconds a spent refresh token may still be redeemed; after that it revokes its sign-in |
-| `login.max_failures`, `login.window` | `10`, `900` | failed password sign-ins an account may have in the window before it is held off |
+| `login.max_failures`, `login.window` | `10`, `900` | password attempts allowed in the window; success clears the count |
 
 ## Sign-in and tokens
 
@@ -73,7 +75,8 @@ takes a double underscore: `NGTEAMS_SERVER_TLS__CERT`, `NGTEAMS_SERVER_TOKENS__A
   unchanged with the server as authority.
 - Refresh tokens are single use. Each grant returns the next one of the same sign-in. One presented again after
   `tokens.reuse_grace` revokes that whole sign-in.
-- Failed password sign-ins are counted per account (in Redis when configured). After `login.max_failures` the
+- Password attempts are reserved per account before verification (in Redis when configured). Success clears the
+  count. After `login.max_failures` the
   account's password sign-ins get 429 with `Retry-After` until the window ends.
 - `POST /api/authsvc/v1.0/authz` takes an access token for `https://api.spaces.skype.com` and answers with a
   skypetoken, `region`, `partition` and `regionGtms`, as Teams' authz does. The skypetoken runs out when the
@@ -114,7 +117,10 @@ hands out its GTM.
   from it. Without Redis the same `Fanout` trait is one process's broadcast.
 - Delivery through the fan-out is at most once. A subscriber that falls behind learns how many payloads it missed.
 - Signing keys are rows in the database. A node rotates the key when it is due (checked hourly) and drops keys that
-  can no longer verify a live token. `ngteams-server keys rotate` rotates at once.
+  can no longer verify a live token. Retired keys are kept for the access lifetime plus one hourly reload interval
+  and the verifier's 60-second clock allowance.
+  `ngteams-server keys rotate` creates a key immediately; running nodes switch at their next hourly check, or
+  earlier if verifying an unknown key triggers a reload. Rotation is serialized in the database across nodes.
 - Migrations take a Postgres advisory lock, so nodes starting together take turns.
 
 ## Tests

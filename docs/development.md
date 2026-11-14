@@ -45,6 +45,7 @@ notification waits at most a few seconds for its translation); the language menu
 | path | contents |
 |---|---|
 | `crates/ngteams` | sole client, account files and startup, selected credential store, lab/read-only modes, build markers and sign-in integration |
+| `crates/ngteams-server` | own Teams-compatible server: token and authz endpoints, Postgres/SQLite, fan-out, storage and admin CLI ([server.md](server.md)) |
 | `crates/teams-auth` | PKCE, code exchange/refresh, identity checks, authz/skypetokens, sessions and scoped credential brokers |
 | `crates/teams-proto` | IDs and service constants, typed API requests and delivery responses, HTTP transport, chat/rich-text models and shared URL/path log shaping |
 | `crates/teams-store` | per-account SQLite/WAL stores, migrations, durable outbox and engine locks |

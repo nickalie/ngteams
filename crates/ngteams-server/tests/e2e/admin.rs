@@ -110,13 +110,13 @@ async fn the_command_line_refuses_bad_accounts_and_passwords() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_key_rotated_on_the_command_line_reaches_every_node_and_old_tokens_still_verify() {
+async fn a_rotated_key_loads_on_start_or_unknown_kid_and_old_tokens_still_verify() {
     let node_a = TestServer::start(Backend::Sqlite).await;
     node_a.add_user("ada@own.test", "Ada").await;
     let before = node_a.session("ada@own.test").await;
     let old = before.access_token(teams_auth::token::SPACES_RESOURCE).await.unwrap();
     let rotated = cli(&node_a, &["keys", "rotate"], "").await.unwrap();
-    assert!(rotated.starts_with("signing with key "), "{rotated}");
+    assert!(rotated.starts_with("created key "), "{rotated}");
     let shared = node_a.app.config.clone();
     // one deployment: the same database and the same public origin (the tokens' issuer)
     let node_b = TestServer::start_with(Backend::Sqlite, |config| {
@@ -128,7 +128,7 @@ async fn a_key_rotated_on_the_command_line_reaches_every_node_and_old_tokens_sti
     let new = on_b.access_token(teams_auth::token::SPACES_RESOURCE).await.unwrap();
     let kid = |token: &teams_auth::secrets::Secret| jsonwebtoken::decode_header(token.expose()).unwrap().kid.unwrap();
     assert!(
-        rotated.trim_end().ends_with(&kid(&new.token)),
+        rotated.starts_with(&format!("created key {};", kid(&new.token))),
         "node B signs with the rotated key"
     );
     assert_ne!(kid(&old.token), kid(&new.token));

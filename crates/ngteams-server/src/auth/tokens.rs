@@ -20,7 +20,7 @@ use crate::db::{now, seconds, unix};
 /// The audience of a skypetoken, which no resource may be named.
 pub const SKYPETOKEN_AUDIENCE: &str = "urn:ngteams-server:skypetoken";
 /// Clock skew allowed when checking a token's times.
-const LEEWAY: u64 = 60;
+pub(crate) const LEEWAY: u64 = 60;
 /// Scopes asked with every resource, which name no resource.
 const SIGN_IN_SCOPES: [&str; 4] = ["openid", "profile", "offline_access", "email"];
 
@@ -123,10 +123,18 @@ pub struct Issuer {
 }
 
 /// A minted token and when it runs out.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Minted {
     pub token: String,
     pub expires_at: i64,
+}
+
+impl std::fmt::Debug for Minted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Minted")
+            .field("expires_at", &self.expires_at)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Issuer {

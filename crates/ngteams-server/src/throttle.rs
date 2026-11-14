@@ -1,4 +1,4 @@
-//! Failed password sign-ins per account: after `max_failures` within the window, the account's password sign-ins are
+//! Password attempts per account: after `max_failures` within the window, the account's password sign-ins are
 //! held off until the window ends. Counted in Redis when the server has one (every node sees the same count), else in
 //! the node.
 
@@ -14,7 +14,7 @@ use sha2::{Digest as _, Sha256};
 
 use crate::config::LoginConfig;
 
-/// The failures counted: per account, the count and when its window started.
+/// The attempts counted: per account, the count and when its window started.
 type Windows = HashMap<String, (u32, Instant)>;
 
 /// Where the counts live.
@@ -52,45 +52,23 @@ impl Throttle {
         Self::Redis { limits, redis }
     }
 
-    /// How long `account`'s password sign-ins are still held off, if they are. A Redis failure holds nothing off (a
-    /// sign-in still needs the password).
-    pub async fn hold(&self, account: &str) -> Option<Duration> {
+    /// Reserves one password attempt before verification. Returns the remaining hold when the limit is exceeded.
+    /// A Redis failure holds nothing off (a sign-in still needs the password).
+    pub async fn reserve(&self, account: &str) -> Option<Duration> {
         match self {
             Self::Local { limits, windows } => {
                 let mut windows = windows.lock().unwrap_or_else(PoisonError::into_inner);
                 let window = Duration::from_secs(limits.window);
                 windows.retain(|_, (_, started)| started.elapsed() < window);
-                let (count, started) = windows.get(account)?;
-                (*count >= limits.max_failures).then(|| window.saturating_sub(started.elapsed()))
+                let (count, started) = windows.entry(account.to_owned()).or_insert((0, Instant::now()));
+                let held = *count >= limits.max_failures;
+                *count = count.saturating_add(1);
+                held.then(|| window.saturating_sub(started.elapsed()))
             }
             Self::Redis { limits, redis } => {
                 let mut redis = redis.clone();
                 let key = key(account);
-                let (count, ttl): (Option<u32>, i64) =
-                    redis::pipe().get(&key).ttl(&key).query_async(&mut redis).await.ok()?;
-                let held = count.is_some_and(|count| count >= limits.max_failures);
-                held.then(|| Duration::from_secs(u64::try_from(ttl).unwrap_or(limits.window).max(1)))
-            }
-        }
-    }
-
-    /// Counts a failed sign-in of `account`.
-    pub async fn failed(&self, account: &str) {
-        match self {
-            Self::Local { limits, windows } => {
-                let mut windows = windows.lock().unwrap_or_else(PoisonError::into_inner);
-                let window = Duration::from_secs(limits.window);
-                let entry = windows.entry(account.to_owned()).or_insert((0, Instant::now()));
-                if entry.1.elapsed() >= window {
-                    *entry = (0, Instant::now());
-                }
-                entry.0 = entry.0.saturating_add(1);
-            }
-            Self::Redis { limits, redis } => {
-                let mut redis = redis.clone();
-                let key = key(account);
-                // the window's key is made with its expiry, then counted, in one transaction
-                let counted: Result<(), _> = redis::pipe()
+                let result: redis::RedisResult<(u64, i64)> = redis::pipe()
                     .atomic()
                     .cmd("SET")
                     .arg(&key)
@@ -100,11 +78,16 @@ impl Throttle {
                     .arg(limits.window)
                     .ignore()
                     .incr(&key, 1)
-                    .ignore()
+                    .ttl(&key)
                     .query_async(&mut redis)
                     .await;
-                if let Err(error) = counted {
-                    tracing::warn!(%error, "can't count a failed sign-in");
+                match result {
+                    Ok((count, ttl)) => (count > u64::from(limits.max_failures))
+                        .then(|| Duration::from_secs(u64::try_from(ttl).unwrap_or(limits.window).max(1))),
+                    Err(error) => {
+                        tracing::warn!(%error, "can't reserve a password sign-in");
+                        None
+                    }
                 }
             }
         }

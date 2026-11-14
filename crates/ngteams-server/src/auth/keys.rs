@@ -1,6 +1,6 @@
 //! The signing keys every node shares through the database: Ed25519 (`EdDSA` JWTs), each named by a `kid`.
 //!
-//! The newest unretired key signs. A key is retired when a newer one has signed for a rotation period, and deleted
+//! The unretired key signs. A key is retired when its replacement is created, and deleted
 //! once nothing it signed can still be valid. A node that meets a `kid` it doesn't hold reloads the keys (another node
 //! rotated), at most once per [`RELOAD_PAUSE`]: tokens with made-up key ids cost the database little.
 
@@ -111,8 +111,7 @@ impl KeyRing {
     pub async fn rotate(&self) -> Result<String, KeyError> {
         let key = generate()?;
         let kid = key.kid.clone();
-        keys::insert(&self.db, &key).await?;
-        keys::retire_others(&self.db, &kid, key.created_at).await?;
+        keys::rotate(&self.db, &key).await?;
         self.reload().await?;
         Ok(kid)
     }

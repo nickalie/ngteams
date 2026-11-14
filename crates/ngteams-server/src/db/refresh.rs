@@ -2,9 +2,9 @@
 //! (one sign-in's chain), and a used one presented again after the grace period revokes the family.
 
 use diesel::prelude::*;
-use diesel_async::RunQueryDsl;
+use diesel_async::{AsyncConnection as _, RunQueryDsl};
 
-use super::schema::refresh_tokens;
+use super::schema::{refresh_tokens, users};
 use super::{Db, DbError, now, with_conn};
 
 /// A refresh token's row (never the token itself).
@@ -22,16 +22,45 @@ pub struct RefreshToken {
     pub revoked_at: Option<i64>,
 }
 
-/// Stores a new token's row.
+/// Stores a successor only while its family and account remain active. A new password sign-in has a new family.
+/// Returns `false` when the account or family was revoked before this insert.
 ///
 /// # Errors
 /// A database failure.
-pub async fn insert(db: &Db, row: &RefreshToken) -> Result<(), DbError> {
-    with_conn!(db, |conn| diesel::insert_into(refresh_tokens::table)
-        .values(row)
-        .execute(conn)
-        .await?);
-    Ok(())
+pub async fn insert(db: &Db, row: &RefreshToken) -> Result<bool, DbError> {
+    with_conn!(db, |conn| conn
+        .transaction::<_, DbError, _>(async |conn| {
+            // Inserts and both revocation paths lock the account before looking at its family.
+            diesel::update(users::table.find(&row.user_id))
+                .set(users::updated_at.eq(users::updated_at))
+                .execute(conn)
+                .await?;
+            let active = users::table
+                .find(&row.user_id)
+                .select(users::disabled)
+                .first::<bool>(conn)
+                .await
+                .optional()?
+                .is_some_and(|disabled| !disabled);
+            let revoked = diesel::select(diesel::dsl::exists(
+                refresh_tokens::table.filter(
+                    refresh_tokens::family_id
+                        .eq(&row.family_id)
+                        .and(refresh_tokens::revoked_at.is_not_null()),
+                ),
+            ))
+            .get_result::<bool>(conn)
+            .await?;
+            if !active || revoked {
+                return Ok(false);
+            }
+            diesel::insert_into(refresh_tokens::table)
+                .values(row)
+                .execute(conn)
+                .await?;
+            Ok(true)
+        })
+        .await)
 }
 
 /// The row of the token with this hash.
@@ -68,17 +97,15 @@ pub async fn mark_used(db: &Db, id: &str) -> Result<bool, DbError> {
 /// # Errors
 /// A database failure.
 pub async fn revoke_family(db: &Db, family_id: &str) -> Result<(), DbError> {
-    let at = now();
-    with_conn!(db, |conn| diesel::update(
-        refresh_tokens::table.filter(
-            refresh_tokens::family_id
-                .eq(family_id)
-                .and(refresh_tokens::revoked_at.is_null())
-        )
-    )
-    .set(refresh_tokens::revoked_at.eq(Some(at)))
-    .execute(conn)
-    .await?);
+    let user_id = with_conn!(db, |conn| refresh_tokens::table
+        .filter(refresh_tokens::family_id.eq(family_id))
+        .select(refresh_tokens::user_id)
+        .first::<String>(conn)
+        .await
+        .optional()?);
+    if let Some(user_id) = user_id {
+        revoke(db, &user_id, Some(family_id)).await?;
+    }
     Ok(())
 }
 
@@ -87,18 +114,31 @@ pub async fn revoke_family(db: &Db, family_id: &str) -> Result<(), DbError> {
 /// # Errors
 /// A database failure.
 pub async fn revoke_user(db: &Db, user_id: &str) -> Result<(), DbError> {
-    let at = now();
-    with_conn!(db, |conn| diesel::update(
-        refresh_tokens::table.filter(
-            refresh_tokens::user_id
-                .eq(user_id)
-                .and(refresh_tokens::revoked_at.is_null())
-        )
-    )
-    .set(refresh_tokens::revoked_at.eq(Some(at)))
-    .execute(conn)
-    .await?);
-    Ok(())
+    revoke(db, user_id, None).await
+}
+
+async fn revoke(db: &Db, user_id: &str, family_id: Option<&str>) -> Result<(), DbError> {
+    with_conn!(db, |conn| conn
+        .transaction::<_, DbError, _>(async |conn| {
+            diesel::update(users::table.find(user_id))
+                .set(users::updated_at.eq(users::updated_at))
+                .execute(conn)
+                .await?;
+            let tokens = refresh_tokens::table
+                .filter(refresh_tokens::user_id.eq(user_id))
+                .filter(refresh_tokens::revoked_at.is_null());
+            let revoked = refresh_tokens::revoked_at.eq(Some(now()));
+            if let Some(family_id) = family_id {
+                diesel::update(tokens.filter(refresh_tokens::family_id.eq(family_id)))
+                    .set(revoked)
+                    .execute(conn)
+                    .await?;
+            } else {
+                diesel::update(tokens).set(revoked).execute(conn).await?;
+            }
+            Ok(())
+        })
+        .await)
 }
 
 /// Deletes the rows of tokens that expired before `before`.
