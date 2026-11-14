@@ -79,7 +79,7 @@ fn apply(body: &mut Value, at: i64, key: &str, value: Option<&str>, actor: &str)
         .get("emotions")
         .map(|v| serde_json::from_value(v.clone()))
         .transpose()
-        .map_err(|error| DbError::Query(diesel::result::Error::DeserializationError(Box::new(error))))?
+        .map_err(|_| super::property_repo::corrupt())?
         .unwrap_or_default();
     let existing = emotions.iter().position(|emotion| emotion.key == key);
     if value.is_none() && existing.is_none_or(|index| !emotions[index].users.iter().any(|user| user.mri == actor)) {

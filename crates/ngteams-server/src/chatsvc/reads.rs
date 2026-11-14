@@ -76,6 +76,9 @@ pub(super) async fn conversations(
             entry["lastUpdatedMessageVersion"] = message.version.into();
             entry["properties"]["isemptyconversation"] = "False".into();
         }
+        if let Some(properties) = entry["properties"].as_object_mut() {
+            properties.extend(super::property_repo::conversation(&app.db, &chat.id, &caller.id).await?);
+        }
         conversations.push(entry);
     }
     Ok(Json(json!({"conversations": conversations, "_metadata": metadata})))

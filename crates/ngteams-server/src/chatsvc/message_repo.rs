@@ -20,8 +20,9 @@ pub(super) struct Message {
 
 impl Message {
     pub fn value(&self) -> Result<Value, DbError> {
-        serde_json::from_str(&self.body)
-            .map_err(|error| DbError::Query(diesel::result::Error::DeserializationError(Box::new(error))))
+        serde_json::from_str::<serde_json::Map<String, Value>>(&self.body)
+            .map(Value::Object)
+            .map_err(|_| super::property_repo::corrupt())
     }
 }
 

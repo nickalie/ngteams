@@ -38,3 +38,11 @@ diesel::table! {
         body -> Text,
     }
 }
+
+diesel::table! {
+    chat_properties (chat_id, user_id) {
+        chat_id -> Text,
+        user_id -> Text,
+        body -> Text,
+    }
+}

@@ -7,6 +7,8 @@ mod events;
 mod message_repo;
 mod messages;
 mod mutations;
+mod properties;
+mod property_repo;
 mod reactions;
 mod reads;
 mod repo;
@@ -52,6 +54,10 @@ pub(super) fn router() -> Router<Arc<App>> {
         .route(
             "/api/chatsvc/{region}/v1/users/ME/conversations/{chat}/messages/{message}/properties",
             put(reactions::react).delete(reactions::react),
+        )
+        .route(
+            "/api/chatsvc/{region}/v1/users/ME/conversations/{chat}/properties",
+            put(properties::set_conversation),
         )
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
 }

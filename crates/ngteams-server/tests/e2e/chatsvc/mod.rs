@@ -3,6 +3,7 @@
 mod messages;
 mod mutations;
 mod paging;
+mod properties;
 mod reactions;
 mod security;
 

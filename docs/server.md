@@ -131,6 +131,11 @@ Posts use the authenticated account as sender. A repeated `(chat, sender, client
 message and emits no duplicate event. Message IDs and versions come from the shared version clock, and a
 message page keeps its watermark in backward and forward links.
 
+Read horizons are stored per `(chat, account)` and returned only in that account's conversation listing.
+Their own endpoints receive a `ConversationUpdate` with `propertiesUpdated` and the changed property. Other
+members get an internal `ReadReceipt` resource (`id`, `mri`, `consumptionhorizon`); that is separate from the own
+horizon update, which must never mark another member's conversation read.
+
 ## Scaling
 
 - HTTP nodes keep no state of their own: Postgres is the source of truth, so any node answers any request. SQLite
