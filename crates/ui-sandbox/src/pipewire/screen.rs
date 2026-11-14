@@ -201,10 +201,20 @@ fn show_frame(stream: &pipewire::stream::Stream, showing: &mut Showing) {
 fn to_bgrx(i420: &[u8], pattern: TestPattern) -> Vec<u8> {
     let pixels = to_usize(pattern.width) * to_usize(pattern.height);
     let mut bgrx = Vec::with_capacity(pixels * 4);
-    for &luma in i420.iter().take(pixels) {
-        let grey = ((i32::from(luma) - BLACK) * 255 / (WHITE - BLACK)).clamp(0, 255);
-        let grey = u8::try_from(grey).unwrap_or(u8::MAX);
-        bgrx.extend_from_slice(&[grey, grey, grey, u8::MAX]);
+    // Per-pixel instrumentation otherwise makes the synthetic source miss its 15 Hz cadence.
+    let mut previous = None;
+    for row in i420[..i420.len().min(pixels)].chunks(to_usize(pattern.width)) {
+        if previous == Some(row) {
+            let start = bgrx.len() - row.len() * 4;
+            bgrx.extend_from_within(start..);
+        } else {
+            for &luma in row {
+                let grey = ((i32::from(luma) - BLACK) * 255 / (WHITE - BLACK)).clamp(0, 255);
+                let grey = u8::try_from(grey).unwrap_or(u8::MAX);
+                bgrx.extend_from_slice(&[grey, grey, grey, u8::MAX]);
+            }
+        }
+        previous = Some(row);
     }
     bgrx
 }
@@ -305,6 +315,24 @@ fn buffers(cast: ScreenCast, pattern: TestPattern) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_and_changing_rows_preserve_every_pixel_and_frame_index() {
+        for index in [0, 1, 7, 31, 160, u32::MAX] {
+            let pattern = TestPattern::new(1280, 720);
+            let frame = pattern.frame(index);
+            let actual = to_bgrx(&frame.data, pattern);
+            let expected: Vec<u8> = frame.data[..1280 * 720]
+                .iter()
+                .flat_map(|&luma| {
+                    let grey = ((i32::from(luma) - BLACK) * 255 / (WHITE - BLACK)).clamp(0, 255);
+                    let grey = u8::try_from(grey).unwrap_or(u8::MAX);
+                    [grey, grey, grey, u8::MAX]
+                })
+                .collect();
+            assert_eq!(actual, expected, "frame {index}");
+        }
+    }
 
     #[test]
     fn the_pattern_s_greys_span_a_screen_s_full_range() {
