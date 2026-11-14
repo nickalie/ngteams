@@ -28,6 +28,19 @@ TARGETS = load("ci_targets", ".github/ci/targets.py")
 RELEASE = load("release_coverage", "scripts/release-coverage.py")
 
 
+class EnvironmentTests(unittest.TestCase):
+    def test_native_dependencies_are_required_and_live_settings_are_removed(self):
+        keys = ["PROTO_LAB_REQUIRE_CHROME", "GPUI_SMOKE_REQUIRE", "WGPU_BACKEND", "PROTO_LAB_LIVE",
+                "TEAMS_MEDIA_TURN_SERVER", "TEAMS_MEDIA_TURN_USER", "TEAMS_MEDIA_TURN_PASSWORD"]
+        environment = dict(os.environ, **dict.fromkeys(keys[3:], "synthetic"))
+        result = subprocess.run([
+            "bash", "-c", 'source "$1"; exec python3 -c "$2"', "test",
+            str(ROOT / ".github/ci/environment.sh"),
+            f"import os,json; print(json.dumps([os.environ.get(key) for key in {keys!r}]))",
+        ], env=environment, capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout), ["1", "1", "vulkan", None, None, None, None])
+
+
 class TargetTests(unittest.TestCase):
     @staticmethod
     def artifact(name, package="example"):
