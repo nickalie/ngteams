@@ -1225,3 +1225,65 @@ fn a_valid_acceptance_reply_registers_new_callbacks_even_before_the_start_answer
         assert!(tracker.response_allowed(CONNECTION, media.id, &plain_receipt(&media)));
     }
 }
+
+#[test]
+fn own_tracker_binds_only_own_conversation_and_controller_links() {
+    use teams_proto::CallState as _;
+    let cloud = Cloud::own("https://calls.example:8443").unwrap();
+    let tracker = Tracker::for_cloud(Mri::new(LAB_A), cloud.clone());
+    let own = |text: &str| {
+        text.replace(
+            "https://api.flightproxy.teams.microsoft.com",
+            "https://calls.example:8443/flightproxy",
+        )
+        .replace(
+            "https://pub-ent-zz-01-f.trouter.teams.microsoft.com:3443/v4/f/",
+            "https://calls.example:8443/trouter/v4/f/",
+        )
+    };
+    let start: Value = serde_json::from_str(&own(&String::from_utf8(start_body()).unwrap())).unwrap();
+    assert!(tracker.connected(
+        CONNECTION,
+        "https://calls.example:8443/trouter/v4/f/SyntheticEndpoint00000/"
+    ));
+    let attempt = tracker.before(&write("https://calls.example:8443/flightproxy/api/v2/epconv", start));
+    let controller = own(&conversation("own"));
+    let body = json!({"conversationController": controller, "links": {"leave": format!("{controller}/leave")}});
+    tracker.answered(attempt, &Response::new(200, body.to_string().into_bytes()));
+    assert!(tracker.holds_floor());
+    assert!(tracker.call_allowed(&Url::parse(&format!("{controller}/leave")).unwrap(), None));
+    assert!(!tracker.call_allowed(
+        &Url::parse(CALL_START_URL).unwrap(),
+        Some(&json!({"conversationRequest": {}}))
+    ));
+    let acceptance =
+        json!({"callAcceptance": {"links": {"callLeg": format!("{PROXY}/{CC_HOST}/cc/v1/active/own/1/a/1")}}});
+    let callback = format!("/trouter{ACCEPTANCE_PATH}");
+    let mut delivery = delivery(900, &callback, acceptance.to_string().into_bytes());
+    assert_eq!(tracker.observe_delivery(&delivery), Observed::AcceptanceUnbound);
+    delivery.body = own(&acceptance.to_string()).into_bytes();
+    assert_eq!(tracker.observe_delivery(&delivery), Observed::Acceptance);
+}
+
+#[test]
+fn own_invitations_refuse_foreign_and_mixed_controller_origins() {
+    let cloud = Cloud::own("https://calls.example:8443").unwrap();
+    let (microsoft, gp) = invitation(0, 1).unwrap();
+    let tracker = || Tracker::for_cloud(Mri::new(LAB_B), cloud.clone());
+    assert_eq!(tracker().observe_delivery(&microsoft), Observed::Ignored);
+    let root = format!("/trouter{}", microsoft.path);
+    let mut own_gp: Value = serde_json::from_str(&gp.to_string().replace(
+        "https://api.flightproxy.teams.microsoft.com",
+        "https://calls.example:8443/flightproxy",
+    ))
+    .unwrap();
+    let own = invitation_delivery(&root, 2, &own_gp);
+    assert_eq!(tracker().observe_delivery(&own), Observed::Offered);
+    assert_eq!(Tracker::new(Mri::new(LAB_B)).observe_delivery(&own), Observed::Ignored);
+    own_gp["conversationInvitation"]["conversationController"] =
+        gp["conversationInvitation"]["conversationController"].clone();
+    assert_eq!(
+        tracker().observe_delivery(&invitation_delivery(&root, 3, &own_gp)),
+        Observed::Ignored
+    );
+}

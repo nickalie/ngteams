@@ -30,7 +30,12 @@ pub(crate) struct Invitation {
 }
 
 /// The invitation `body` is; `None` for any other body or one that doesn't read.
-pub(crate) fn invitation(body: &[u8]) -> Option<Invitation> {
+#[cfg(test)]
+fn invitation(body: &[u8]) -> Option<Invitation> {
+    invitation_in(&teams_proto::Cloud::Microsoft, body)
+}
+
+pub(crate) fn invitation_in(cloud: &teams_proto::Cloud, body: &[u8]) -> Option<Invitation> {
     let body: Value = serde_json::from_slice(body).ok()?;
     if !INVITATION_EVENTS.contains(&body.get("evt")?.as_u64()?) {
         return None;
@@ -46,16 +51,16 @@ pub(crate) fn invitation(body: &[u8]) -> Option<Invitation> {
         caller_name: text(notification, "/from/displayName"),
         callee: Mri::new(text(notification, "/to/id")?),
         group_chat: text(&gp, "/groupChat/threadId"),
-        conversation: link(&gp, "/conversationInvitation/conversationController")?,
-        attach: link(notification, "/links/attach")?,
+        conversation: link(cloud, &gp, "/conversationInvitation/conversationController")?,
+        attach: link(cloud, notification, "/links/attach")?,
         offer: notification.get("mediaContent").and_then(media),
         callee_participant: text(notification, "/to/participantId").filter(|id| !id.is_empty()),
     })
 }
 
 /// The link at `pointer`, if it reads as a [`CallLink`].
-fn link(at: &Value, pointer: &str) -> Option<CallLink> {
-    CallLink::parse(at.pointer(pointer)?.as_str()?)
+fn link(cloud: &teams_proto::Cloud, at: &Value, pointer: &str) -> Option<CallLink> {
+    CallLink::parse_in(cloud, at.pointer(pointer)?.as_str()?)
 }
 
 /// An offer or an answer: its blob and content type, its media leg when given.
@@ -98,8 +103,13 @@ pub(crate) struct Conversation {
 }
 
 impl Conversation {
-    fn of(links: &Value) -> Self {
-        let at = |name: &str| links.get(name).and_then(Value::as_str).and_then(CallLink::parse);
+    fn of(cloud: &teams_proto::Cloud, links: &Value) -> Self {
+        let at = |name: &str| {
+            links
+                .get(name)
+                .and_then(Value::as_str)
+                .and_then(|link| CallLink::parse_in(cloud, link))
+        };
         Self {
             leave: at("leave"),
             caption_add: at("addParticipant"),
@@ -121,17 +131,22 @@ impl Conversation {
 }
 
 /// The conversation a start's or a subscription's answer `body` opened: its `conversationController`.
-pub(crate) fn conversation_controller(body: &[u8]) -> Option<CallLink> {
+pub(crate) fn conversation_controller_in(cloud: &teams_proto::Cloud, body: &[u8]) -> Option<CallLink> {
     let body: Value = serde_json::from_slice(body).ok()?;
-    link(&body, "/conversationController")
+    link(cloud, &body, "/conversationController")
 }
 
 /// The conversation a start's or a join's answer is (`{"conversationController", "links": {…}}`); `None` unless it
 /// names a conversation controller.
-pub(crate) fn conversation(body: &[u8]) -> Option<Conversation> {
+#[cfg(test)]
+fn conversation(body: &[u8]) -> Option<Conversation> {
+    conversation_in(&teams_proto::Cloud::Microsoft, body)
+}
+
+pub(crate) fn conversation_in(cloud: &teams_proto::Cloud, body: &[u8]) -> Option<Conversation> {
     let body: Value = serde_json::from_slice(body).ok()?;
-    let controller = link(&body, "/conversationController")?;
-    let mut conversation = Conversation::of(body.get("links")?);
+    let controller = link(cloud, &body, "/conversationController")?;
+    let mut conversation = Conversation::of(cloud, body.get("links")?);
     conversation.controller = Some(controller);
     Some(conversation)
 }
@@ -147,7 +162,12 @@ pub(crate) struct Attached {
 }
 
 /// The `attach` answer `body`, its `join` the subscription to `conversation`; `None` unless the leg's three links read.
-pub(crate) fn attached(body: &[u8], conversation: &CallLink) -> Option<Attached> {
+#[cfg(test)]
+fn attached(body: &[u8], conversation: &CallLink) -> Option<Attached> {
+    attached_in(&teams_proto::Cloud::Microsoft, body, conversation)
+}
+
+pub(crate) fn attached_in(cloud: &teams_proto::Cloud, body: &[u8], conversation: &CallLink) -> Option<Attached> {
     let body: Value = serde_json::from_slice(body).ok()?;
     let links = body.pointer("/callInvitation/links")?;
     let subscription = body
@@ -158,13 +178,13 @@ pub(crate) fn attached(body: &[u8], conversation: &CallLink) -> Option<Attached>
         .and_then(|response| response.pointer("/output/links"))
         .map(|links| Conversation {
             controller: Some(conversation.clone()),
-            ..Conversation::of(links)
+            ..Conversation::of(cloud, links)
         })
         .unwrap_or_default();
     Some(Attached {
-        progress: link(links, "/progress")?,
-        acceptance: link(links, "/acceptance")?,
-        call_leg: link(links, "/callLeg")?,
+        progress: link(cloud, links, "/progress")?,
+        acceptance: link(cloud, links, "/acceptance")?,
+        call_leg: link(cloud, links, "/callLeg")?,
         conversation: subscription,
     })
 }
@@ -201,16 +221,21 @@ pub(crate) struct GroupMediaLinks {
 }
 
 impl GroupMediaLinks {
-    fn of(at: &Value) -> Self {
+    fn of(cloud: &teams_proto::Cloud, at: &Value) -> Self {
         Self {
-            descriptions: link(at, "/links/updateMediaDescriptions"),
-            channel_parameters: link(at, "/links/applyChannelParameters"),
+            descriptions: link(cloud, at, "/links/updateMediaDescriptions"),
+            channel_parameters: link(cloud, at, "/links/applyChannelParameters"),
         }
     }
 }
 
 /// An `accept`'s answer, as far as it reads.
-pub(crate) fn accept_answer(body: &[u8]) -> AcceptAnswer {
+#[cfg(test)]
+fn accept_answer(body: &[u8]) -> AcceptAnswer {
+    accept_answer_in(&teams_proto::Cloud::Microsoft, body)
+}
+
+pub(crate) fn accept_answer_in(cloud: &teams_proto::Cloud, body: &[u8]) -> AcceptAnswer {
     let Some(acknowledgement) = serde_json::from_slice::<Value>(body)
         .ok()
         .and_then(|body| body.get("callAcceptanceAcknowledgement").cloned())
@@ -219,11 +244,11 @@ pub(crate) fn accept_answer(body: &[u8]) -> AcceptAnswer {
     };
     AcceptAnswer {
         keep_alive: keep_alive(&acknowledgement),
-        renegotiation: link(&acknowledgement, "/links/mediaRenegotiation"),
-        call_leg: link(&acknowledgement, "/links/callLeg"),
-        group_media: GroupMediaLinks::of(&acknowledgement),
-        hold: link(&acknowledgement, "/links/hold"),
-        transfer: link(&acknowledgement, "/links/transfer"),
+        renegotiation: link(cloud, &acknowledgement, "/links/mediaRenegotiation"),
+        call_leg: link(cloud, &acknowledgement, "/links/callLeg"),
+        group_media: GroupMediaLinks::of(cloud, &acknowledgement),
+        hold: link(cloud, &acknowledgement, "/links/hold"),
+        transfer: link(cloud, &acknowledgement, "/links/transfer"),
     }
 }
 
@@ -244,7 +269,7 @@ pub(crate) struct Retarget {
 
 /// The retarget a media answer's acknowledgement `body` tells, if it is one ([`Retarget`]): a success naming the new
 /// call leg.
-pub(crate) fn retarget(body: &[u8]) -> Option<Retarget> {
+pub(crate) fn retarget_in(cloud: &teams_proto::Cloud, body: &[u8]) -> Option<Retarget> {
     let body: Value = serde_json::from_slice(body).ok()?;
     let succeeded = body
         .pointer("/mediaAcknowledgement/resultCategories")?
@@ -255,11 +280,11 @@ pub(crate) fn retarget(body: &[u8]) -> Option<Retarget> {
         return None;
     }
     Some(Retarget {
-        renegotiation: link(&body, "/links/mediaRenegotiation"),
-        call_leg: link(&body, "/links/callLeg")?,
-        group_media: GroupMediaLinks::of(&body),
-        hold: link(&body, "/links/hold"),
-        transfer: link(&body, "/links/transfer"),
+        renegotiation: link(cloud, &body, "/links/mediaRenegotiation"),
+        call_leg: link(cloud, &body, "/links/callLeg")?,
+        group_media: GroupMediaLinks::of(cloud, &body),
+        hold: link(cloud, &body, "/links/hold"),
+        transfer: link(cloud, &body, "/links/transfer"),
     })
 }
 
@@ -286,27 +311,32 @@ pub(crate) struct Acceptance {
 }
 
 /// The acceptance delivery `body`; `None` unless it is a `callAcceptance`.
-pub(crate) fn acceptance(body: &[u8]) -> Option<Acceptance> {
+#[cfg(test)]
+fn acceptance(body: &[u8]) -> Option<Acceptance> {
+    acceptance_in(&teams_proto::Cloud::Microsoft, body)
+}
+
+pub(crate) fn acceptance_in(cloud: &teams_proto::Cloud, body: &[u8]) -> Option<Acceptance> {
     let body: Value = serde_json::from_slice(body).ok()?;
     let acceptance = body.get("callAcceptance")?;
     Some(Acceptance {
-        acknowledgement: link(acceptance, "/links/acknowledgement"),
+        acknowledgement: link(cloud, acceptance, "/links/acknowledgement"),
         answer: acceptance.get("mediaContent").and_then(media),
         keep_alive: keep_alive(acceptance),
-        renegotiation: link(acceptance, "/links/mediaRenegotiation"),
-        call_leg: link(acceptance, "/links/callLeg"),
+        renegotiation: link(cloud, acceptance, "/links/mediaRenegotiation"),
+        call_leg: link(cloud, acceptance, "/links/callLeg"),
         voicemail: acceptance.pointer("/acceptedBy/endpointType").and_then(Value::as_str) == Some("voicemail"),
-        group_media: GroupMediaLinks::of(acceptance),
-        hold: link(acceptance, "/links/hold"),
-        transfer: link(acceptance, "/links/transfer"),
+        group_media: GroupMediaLinks::of(cloud, acceptance),
+        hold: link(cloud, acceptance, "/links/hold"),
+        transfer: link(cloud, acceptance, "/links/transfer"),
     })
 }
 
 /// Where a hold is taken back, as the hold's answer `body` hands it out: `{"holdResponse": {"links": {"resume"}}}`
 /// (seen 2026-11-06, `ab-call --call steps`).
-pub(crate) fn resume_link(body: &[u8]) -> Option<CallLink> {
+pub(crate) fn resume_link_in(cloud: &teams_proto::Cloud, body: &[u8]) -> Option<CallLink> {
     let body: Value = serde_json::from_slice(body).ok()?;
-    link(&body, "/holdResponse/links/resume")
+    link(cloud, &body, "/holdResponse/links/resume")
 }
 
 /// One participant of a call as its roster lists them (a `rosterUpdate` delivered at the conversation's callback:
@@ -535,24 +565,34 @@ pub(crate) fn reaction(body: &[u8]) -> Option<(Mri, Option<String>, String)> {
 
 /// A renegotiation delivered at the account's `mediaRenegotiation` callback (`{"mediaNegotiation": {"mediaContent",
 /// "links": {"mediaAnswer", …}}}`): its offer and the link the answer goes to; `None` unless both read.
-pub(crate) fn negotiation(body: &[u8]) -> Option<(MediaContent, CallLink)> {
+#[cfg(test)]
+fn negotiation(body: &[u8]) -> Option<(MediaContent, CallLink)> {
+    negotiation_in(&teams_proto::Cloud::Microsoft, body)
+}
+
+pub(crate) fn negotiation_in(cloud: &teams_proto::Cloud, body: &[u8]) -> Option<(MediaContent, CallLink)> {
     let body: Value = serde_json::from_slice(body).ok()?;
     let negotiation = body.get("mediaNegotiation")?;
     Some((
         media(negotiation.get("mediaContent")?)?,
-        link(negotiation, "/links/mediaAnswer")?,
+        link(cloud, negotiation, "/links/mediaAnswer")?,
     ))
 }
 
 /// The answer to the account's renegotiation, delivered at its `mediaAnswer` callback (`{"mediaAnswer":
 /// {"mediaContent", "links": {"mediaAcknowledgement"}}}`): the answer, and the link its acknowledgement goes to where
 /// it reads; `None` without a readable answer.
-pub(crate) fn media_answer(body: &[u8]) -> Option<(MediaContent, Option<CallLink>)> {
+#[cfg(test)]
+fn media_answer(body: &[u8]) -> Option<(MediaContent, Option<CallLink>)> {
+    media_answer_in(&teams_proto::Cloud::Microsoft, body)
+}
+
+pub(crate) fn media_answer_in(cloud: &teams_proto::Cloud, body: &[u8]) -> Option<(MediaContent, Option<CallLink>)> {
     let body: Value = serde_json::from_slice(body).ok()?;
     let answer = body.get("mediaAnswer")?;
     Some((
         media(answer.get("mediaContent")?)?,
-        link(answer, "/links/mediaAcknowledgement"),
+        link(cloud, answer, "/links/mediaAcknowledgement"),
     ))
 }
 
@@ -963,7 +1003,7 @@ pub(crate) struct TransferAsked {
 
 /// The transfer `body` asks for; `None` unless it is a blind transfer (a consultative one wasn't captured) whose
 /// target, transferor and acceptance link read.
-pub(crate) fn transfer_asked(body: &[u8]) -> Option<TransferAsked> {
+pub(crate) fn transfer_asked_in(cloud: &teams_proto::Cloud, body: &[u8]) -> Option<TransferAsked> {
     let body: Value = serde_json::from_slice(body).ok()?;
     let transfer = body.get("callTransfer")?;
     if transfer.get("isConsultative").and_then(Value::as_bool) == Some(true) {
@@ -979,6 +1019,6 @@ pub(crate) fn transfer_asked(body: &[u8]) -> Option<TransferAsked> {
     Some(TransferAsked {
         target,
         transferor: teams_proto::Transferor::new(details, authorization),
-        acceptance: link(transfer, "/links/transferAcceptance")?,
+        acceptance: link(cloud, transfer, "/links/transferAcceptance")?,
     })
 }

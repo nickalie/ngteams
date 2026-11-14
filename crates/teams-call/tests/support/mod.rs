@@ -159,14 +159,34 @@ fn options() -> Options {
 impl Client {
     /// `mri`'s client, its calling socket up and registered.
     pub async fn start(mock: &ChatServiceMock, trouter_origin: &str, mri: &'static str) -> Self {
-        let tracker = Arc::new(teams_call::Tracker::new(Mri::new(mri)));
+        Self::start_in(mock, trouter_origin, mri, teams_proto::Cloud::Microsoft).await
+    }
+
+    pub async fn start_in(
+        mock: &ChatServiceMock,
+        trouter_origin: &str,
+        mri: &'static str,
+        cloud: teams_proto::Cloud,
+    ) -> Self {
+        let tracker = Arc::new(teams_call::Tracker::for_cloud(Mri::new(mri), cloud.clone()));
         let tokens = Arc::new(Tokens {
             ic3: mock.token(mri).unwrap(),
             skypetoken: mock.skypetoken(mri).unwrap(),
             renewals: broadcast::channel(4).0,
         });
-        let transport =
-            Arc::new(HttpTransport::with_mock_origin(Arc::clone(&tokens), CHAT_BASE, &mock.origin()).unwrap());
+        let chat_base = cloud.service_url(CHAT_BASE, "/api/chatsvc/amer").unwrap();
+        let transport = HttpTransport::for_cloud_with_mock_origin(
+            Arc::clone(&tokens),
+            chat_base.as_str(),
+            cloud.clone(),
+            &mock.origin(),
+        )
+        .unwrap();
+        let transport = Arc::new(if cloud.is_microsoft() {
+            transport
+        } else {
+            transport.for_account(Mri::new(mri)).with_call_state(tracker.clone())
+        });
         let trouter = Trouter::with_mock_origin(Arc::clone(&transport), Arc::clone(&tokens), trouter_origin)
             .unwrap()
             .with_options(options())
@@ -193,7 +213,7 @@ impl Client {
         let (refused, refusals) = mpsc::unbounded_channel();
         let (ready, up) = tokio::sync::oneshot::channel();
         let driver = Driver {
-            calls: Calls::new(identity),
+            calls: Calls::for_cloud(identity, cloud),
             sink: Sink {
                 tracker,
                 transport,

@@ -7,8 +7,8 @@ use serde_json::Value;
 use url::Url;
 
 use super::json::strict_json;
-use super::{Callback, Controller, Delivery, Link, controller_path, parse_callback, proxy_link};
-use teams_proto::{CallOperation, INVITATION_EVENTS, Mri, is_group_chat_id};
+use super::{Callback, Controller, Delivery, Link, controller_path, parse_callback, proxy_link_in};
+use teams_proto::{CallOperation, Cloud, INVITATION_EVENTS, Mri, is_group_chat_id};
 
 /// What an invitation delivery says, read: who calls whom, in which group chat, and its links.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,13 +63,13 @@ pub(crate) struct Offer {
 pub(crate) const UNATTACHED_RING: Duration = Duration::from_secs(90);
 
 impl Offer {
-    pub(crate) fn new(invitation: Invitation) -> Self {
+    pub(crate) fn new_in(cloud: Cloud, invitation: Invitation) -> Self {
         let links = vec![(CallOperation::Attach, invitation.attach.clone())];
         let chat = invitation
             .group_chat
             .clone()
             .or_else(|| teams_proto::one_to_one_id(invitation.callee.as_str(), invitation.caller.as_str()));
-        let context = super::Context::incoming(chat, invitation.controller.clone());
+        let context = super::Context::incoming(cloud, chat, invitation.controller.clone());
         Self {
             context,
             state: OfferState::Ringing,
@@ -193,7 +193,10 @@ impl Offer {
         let mut found: Vec<Link> = leg
             .iter()
             .filter_map(|(operation, name)| {
-                let url = proxy_link(answer.pointer("/callInvitation/links")?.get(*name)?)?;
+                let url = proxy_link_in(
+                    &self.context.cloud,
+                    answer.pointer("/callInvitation/links")?.get(*name)?,
+                )?;
                 let fits = controller_path(&url).is_some_and(|(_, call, kind, last)| {
                     call == self.invitation.leg.1 && kind == "incoming" && last == operation.segment()
                 });
@@ -245,14 +248,18 @@ impl Offer {
                 ]
                 .into_iter()
                 .filter_map(|operation| {
-                    let url = proxy_link(response.pointer("/output/links")?.get(operation.segment())?)?;
+                    let url = proxy_link_in(
+                        &self.context.cloud,
+                        response.pointer("/output/links")?.get(operation.segment())?,
+                    )?;
                     let fits = url.path() == format!("{}/{}", controller.path(), operation.segment())
                         && url.query() == controller.query();
                     fits.then(|| (operation, url.as_str().to_owned()))
                 })
                 .chain(
                     // the add: its link is named `addParticipantAndModality`, its path ends in `add`
-                    proxy_link(
+                    proxy_link_in(
+                        &self.context.cloud,
                         response
                             .pointer("/output/links/addParticipantAndModality")
                             .unwrap_or(&Value::Null),
@@ -336,7 +343,7 @@ impl Offer {
             let Some(url) = answer
                 .pointer("/callAcceptanceAcknowledgement/links")
                 .and_then(|links| links.get(name))
-                .and_then(proxy_link)
+                .and_then(|value| proxy_link_in(&self.context.cloud, value))
             else {
                 continue;
             };
@@ -370,7 +377,7 @@ impl Offer {
     /// Binds the link [`super::media_link`] reads from a delivery at `path`, of the invitation's own call. Whether it
     /// bound.
     pub(crate) fn bind_media(&mut self, path: &str, body: &[u8]) -> bool {
-        let Some(link) = super::media_link(path, body, &self.invitation.leg.1) else {
+        let Some(link) = super::media_link_in(&self.context.cloud, path, body, &self.invitation.leg.1) else {
             return false;
         };
         if !self.links.contains(&link) {
@@ -386,7 +393,10 @@ impl Offer {
 /// replaces, no group context (a meeting), and the call's kind in a captured shape: a 1:1 call's (107) names no group
 /// chat and isn't multi-party (`conversationInvitation.isMultiParty` false); a group call's (109) is multi-party and
 /// names its group chat by a group chat's id, the only field naming its other participants.
-pub(crate) fn read_invitation(delivery: &Delivery) -> Option<Invitation> {
+pub(crate) fn read_invitation_in(cloud: &Cloud, delivery: &Delivery) -> Option<Invitation> {
+    if delivery.path.starts_with("/trouter/") == cloud.is_microsoft() {
+        return None;
+    }
     let endpoint = endpoint_root(&delivery.path)?;
     let body = strict_json(&delivery.body)?;
     let event = body.get("evt")?.as_u64()?;
@@ -403,12 +413,12 @@ pub(crate) fn read_invitation(delivery: &Delivery) -> Option<Invitation> {
     if !unset("/callNotification/replaces") || !unset("/groupContext") {
         return None;
     }
-    let attach_link = proxy_link(notification.pointer("/links/attach")?)?;
+    let attach_link = proxy_link_in(cloud, notification.pointer("/links/attach")?)?;
     let (host, call, kind, last) = controller_path(&attach_link)?;
     if kind != "forked" || last != "attach" {
         return None;
     }
-    let controller = conversation_of(&gp)?;
+    let controller = conversation_of(cloud, &gp)?;
     let group_chat = match gp.get("groupChat") {
         None | Some(Value::Null) => None,
         Some(chat) => Some(text(chat, "/threadId").filter(|id| is_group_chat_id(id))?),
@@ -427,7 +437,7 @@ pub(crate) fn read_invitation(delivery: &Delivery) -> Option<Invitation> {
     })
 }
 
-/// Why [`read_invitation`] doesn't read `delivery` as an invitation, in a few words naming the first part that doesn't
+/// Why [`read_invitation_in`] doesn't read `delivery` as an invitation, in a few words naming the first part that doesn't
 /// fit (never anything the delivery carries): what the log says of an incoming call it ignores.
 #[must_use]
 pub fn unread_invitation(delivery: &Delivery) -> String {
@@ -468,7 +478,7 @@ fn first_misfit(delivery: &Delivery) -> &'static str {
         "it names a group context"
     } else if gp.pointer("/callNotification/links/attach").is_none() {
         "it has no attach link"
-    } else if conversation_of(&gp).is_none() {
+    } else if conversation_of(&Cloud::Microsoft, &gp).is_none() {
         "it names no conversation"
     } else if !kind_fits(event, &gp, set("/groupChat")) {
         "its kind doesn't fit its chat (1:1 or group)"
@@ -479,7 +489,7 @@ fn first_misfit(delivery: &Delivery) -> &'static str {
     }
 }
 
-/// Whether a delivery that [`read_invitation`] doesn't read may still be an invitation, so that nothing of it is handed
+/// Whether a delivery that [`read_invitation_in`] doesn't read may still be an invitation, so that nothing of it is handed
 /// on or answered: a delivery at an endpoint's root whose body isn't a strictly read JSON object with a numeric `evt`
 /// other than an invitation's ([`INVITATION_EVENTS`]), or that carries a `callNotification` (at its top, or in a `gp`
 /// that decodes, one that doesn't counting as one). The root's other captured events (`evt` 115 and 116, a `cp` and no
@@ -505,17 +515,22 @@ pub(crate) fn may_be_invitation(delivery: &Delivery) -> bool {
 
 /// The conversation an invitation's decoded `gp` invites to (`conversationInvitation.conversationController`), when
 /// it is a conversation on the flight proxy (`/api/v2/ep/<host>/conv/<id>`).
-fn conversation_of(gp: &Value) -> Option<Url> {
-    let controller = proxy_link(gp.pointer("/conversationInvitation/conversationController")?)?;
+fn conversation_of(cloud: &Cloud, gp: &Value) -> Option<Url> {
+    let controller = proxy_link_in(cloud, gp.pointer("/conversationInvitation/conversationController")?)?;
     let fits = {
-        let segments: Vec<&str> = controller.path_segments()?.collect();
+        let segments: Vec<&str> = controller
+            .path()
+            .trim_start_matches("/flightproxy")
+            .trim_start_matches('/')
+            .split('/')
+            .collect();
         matches!(segments.as_slice(), ["api", "v2", "ep", host, "conv", id] if !host.is_empty() && !id.is_empty())
     };
     fits.then_some(controller)
 }
 
 /// Whether an invitation of `event` with this decoded `gp`, naming a group chat or not (`names_chat`), is of its call's
-/// kind in a captured shape (see [`read_invitation`]): a 1:1 call's names no group chat and isn't multi-party, a group
+/// kind in a captured shape (see [`read_invitation_in`]): a 1:1 call's names no group chat and isn't multi-party, a group
 /// call's names its group chat and is (its other participants are known only through its chat: one that names none
 /// doesn't read).
 fn kind_fits(event: u64, gp: &Value, names_chat: bool) -> bool {
@@ -531,7 +546,11 @@ fn kind_fits(event: u64, gp: &Value, names_chat: bool) -> bool {
 
 /// `path` when it is an endpoint's root, `/v4/f/<endpoint>/`.
 fn endpoint_root(path: &str) -> Option<String> {
-    let url = Url::parse(&format!("https://trouter.invalid{path}")).ok()?;
+    let url = Url::parse(&format!(
+        "https://trouter.invalid{}",
+        path.strip_prefix("/trouter").unwrap_or(path)
+    ))
+    .ok()?;
     let segments: Vec<&str> = url.path_segments()?.collect();
     match segments.as_slice() {
         ["v4", "f", endpoint, ""] if !endpoint.is_empty() && url.query().is_none() => Some(path.to_owned()),

@@ -58,7 +58,7 @@ except for the Trouter paths, handshake and calling domain described in its row:
 | Files and thumbnails | `/sp/` | reserved; own-origin link and drive parsing pending |
 | Loki | `/loki/` | `with_loki`, `set_loki_region` |
 | Search | `/search/` | transport fixed base |
-| Calling | `/flightproxy/api/v2/` | transport origin check; call link builders and tracker pending |
+| Calling | `/flightproxy/api/v2/` | `CallContext::for_cloud`, `CallLink::parse_in`; typed starts and operations, machine and tracker retain exact same-origin links; callbacks use `/trouter/v4/f/<endpoint>/callAgent/…` |
 | TURN credentials | `/trap/tokens` | `RelayTokens` |
 
 The public emoticon, Giphy and app-picture CDNs retain their current URLs with no account credentials. Optional
@@ -67,7 +67,7 @@ Microsoft platform services have no own-server GTMs; the fixed Flow and Power Ap
 `teams_core::account::start_for_cloud` wires the session authority/authz, both transports, optional GTMs and both
 Trouter stacks; `start` retains Microsoft defaults.
 The own-origin mock acceptance drives sync, send, edit, react, read and chat creation with two real core engines.
-Production sign-in selection and message/calling parsers remain separate work.
+Production sign-in selection remains separate work.
 
 ## Entra (`login.microsoftonline.com`)
 
@@ -355,6 +355,12 @@ The native transport reaches the async gateway as `Service::Ams`, using the acco
 | `POST` | `v1/pubsub/subscriptions/<epid>` (no trailing slash) | subscribes the account's Trouter endpoint to others' presence, with the presence read's headers plus `x-ms-correlation-id` (a fresh GUID), `x-ms-client-version` (the client build) and `x-ms-endpoint-id` (the `epid` again); without the first two UPS answers 400 "Missing mandatory header '<name>'": `{"trouterUri": "<the socket's push URL>unifiedPresenceService", "shouldPurgePreviousSubscriptions", "subscriptionsToAdd": [{"mri", "source": "ups"}], "subscriptionsToRemove": […]}`, answered `{"addStatuses": [{"mri", "source", "status": 20200}], "removeStatuses": […]}`; UPS then pushes each change (the `unifiedPresenceService` delivery below) | PostRead (`PresenceSubscription::new_in`, `trouterUri` checked against the account cloud at construction and send) | [trouter.md](trouter.md#others-presence) · M1 T14 | seen (755 in the captures of 2026-10-20 to 2026-10-26, allowed and answered `200` since 2026-10-23); native live (2026-11-04: lab a's subscription of a, b and the user's own account answered `200`, each `20200`; b's start then reached a as a `unifiedPresenceService` change) |
 
 ## Calling (`teams.microsoft.com/trap/`, `api.flightproxy.teams.microsoft.com/api/v2/`)
+
+An Own account uses `/flightproxy/api/v2/epconv` for starts and retains every controller link, including its routing
+query, under that origin's `/flightproxy/api/v2/ep/`. Both typed construction and transport refuse other origins
+(including another TLS port). Its Trouter callbacks include `/trouter/`. Meeting codes build `/meet/<id>?p=<passcode>`
+on that origin; cloud-aware calendar, thread, invitation and call-post readers reject foreign meeting/controller
+links. Microsoft constructors and readers retain their default URLs and wire shapes.
 
 Services behind the flight proxy are addressed as `ep/<service host>/…`, each URL handed out by the service. Typed call writes go through `Service::Calling` with the account's skypetoken; `teams-call` chooses actions and tracks invitations/callbacks, while `teams-core` shares the account call floor and sends through its outbox. Typed writes are single-attempt in the transport; the outbox manages explicit retry decisions and never blindly resends unknown outcomes. Calling delivery replies use the delivery's own connection.
 

@@ -70,7 +70,8 @@ pub use ams::{MessagePicture, PastedFormat, PastedPicture, sent_picture};
 pub use calendar::{
     Attendee, CALENDAR_VIEW_PATH, CalendarAnswer, CalendarAnswerError, CalendarEvent, CalendarView, ChannelEventRead,
     ChannelEventRef, EventKind, EventRead, EventTime, FloatingTime, FullEvent, MAX_CALENDAR_WINDOW_MS,
-    Response as EventResponse, ShowAs, TimeZoneSettings, join_url_chat, join_url_meeting,
+    Response as EventResponse, ShowAs, TimeZoneSettings, join_url_chat, join_url_chat_in, join_url_meeting,
+    join_url_meeting_in,
 };
 pub use channel_meeting::{CANCELLED_MEETING_TYPE, SCHEDULED_MEETING_TYPE, ScheduledMeeting};
 pub use channel_read::{ChannelCreationStatus, TeamPeopleSearch, TeamPerson};
@@ -114,7 +115,7 @@ pub use post_read::{
 pub use read::{
     CSA_TEAMS_PATH, CSA_TEAMS_QUERY, Channel, ChannelMeetup, ChannelType, CsaAnswerError, CsaTeams, GRAPH_PICTURE_SIZE,
     GRAPH_USER_SELECT, GraphAnswerError, GraphPicture, GraphUser, MAX_PICTURE, Picture, PictureFormat, Read, Team,
-    TeamAbout, TeamsAnswer, object_id, running_call, start_ended,
+    TeamAbout, TeamsAnswer, object_id, running_call, running_call_in, start_ended,
 };
 pub use recap::{MCPS_AUDIENCE, MeetingContent, MeetingContents, RecapPart, TranscriptLocation};
 pub use recording::{

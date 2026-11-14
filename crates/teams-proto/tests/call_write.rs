@@ -1808,3 +1808,108 @@ fn the_transferred_party_s_call_to_the_target_names_its_transferor_as_delivered(
     };
     assert!(StartCall::transferred(&context(), &start_parts(PUSH_B, LAB_B, None), &me, &transferor).is_err());
 }
+
+#[tokio::test]
+async fn own_typed_calling_rejects_cross_origin_links_callbacks_and_writes() {
+    let cloud = teams_proto::Cloud::own("https://calls.example:8443").unwrap();
+    let own = context().for_cloud(cloud.clone());
+    let own_push = "https://calls.example:8443/trouter/v4/f/SyntheticEndpoint00000/";
+    let own_link = conv("own", "leave").replace(
+        "https://api.flightproxy.teams.microsoft.com",
+        "https://calls.example:8443/flightproxy",
+    );
+    let parsed = CallLink::parse_in(&cloud, &own_link).unwrap();
+    assert_eq!(parsed.as_str(), own_link);
+    for other in [
+        conv("own", "leave"),
+        own_link.replace(":8443", ":9443"),
+        own_link.replace("https://", "http://"),
+        own_link.replace("calls.example", "elsewhere.example"),
+        own_link.replace("/flightproxy/", "/flightproxy-evil/"),
+        format!("{own_link}#fragment"),
+    ] {
+        assert!(CallLink::parse_in(&cloud, &other).is_none(), "{other}");
+    }
+    assert!(CallLink::parse(&own_link).is_none());
+    assert!(DeclineCall::new(&own, &link(&cc("incoming", "own", "reject"))).is_err());
+    assert!(
+        DeclineCall::new(
+            &context(),
+            &CallLink::parse_in(
+                &cloud,
+                &cc("incoming", "own", "reject").replace(
+                    "https://api.flightproxy.teams.microsoft.com",
+                    "https://calls.example:8443/flightproxy"
+                )
+            )
+            .unwrap()
+        )
+        .is_err()
+    );
+    assert!(StartCall::in_chat(&own, &start_parts(PUSH_A, LAB_A, None), &[invitee(LAB_B)], None).is_err());
+    let server = MockServer::start().await;
+    let tokens = Arc::new(Tokens {
+        skypetoken: true,
+        rejected: Mutex::default(),
+    });
+    let transport = HttpTransport::for_cloud_with_mock_origin(
+        tokens.clone(),
+        "https://calls.example:8443/api/chatsvc/amer",
+        cloud.clone(),
+        &server.uri(),
+    )
+    .unwrap();
+    let microsoft = StartCall::in_chat(&context(), &start_parts(PUSH_A, LAB_A, None), &[invitee(LAB_B)], None).unwrap();
+    assert!(matches!(transport.deliver(microsoft).await, Err(HttpError::Refused(_))));
+    let mut own_parts = start_parts(own_push, LAB_A, None);
+    own_parts.from.display_name = Some("Lab: A".into());
+    let own_start = StartCall::in_chat(&own, &own_parts, &[invitee(LAB_B)], None).unwrap();
+    let microsoft_transport = HttpTransport::with_mock_origin(tokens, CHAT_BASE, &server.uri()).unwrap();
+    assert!(matches!(
+        microsoft_transport.deliver(own_start).await,
+        Err(HttpError::Refused(_))
+    ));
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn own_meeting_code_start_retains_the_wire_shape_on_its_origin() {
+    let cloud = teams_proto::Cloud::own("https://calls.example:8443").unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/flightproxy/api/v2/epconv"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let tokens = Arc::new(Tokens {
+        skypetoken: true,
+        rejected: Mutex::default(),
+    });
+    let transport = HttpTransport::for_cloud_with_mock_origin(
+        tokens,
+        "https://calls.example:8443/api/chatsvc/amer",
+        cloud.clone(),
+        &server.uri(),
+    )
+    .unwrap();
+    let code = teams_proto::MeetingCode::typed("123456789012", "MadeUp").unwrap();
+    let start = StartCall::by_code(
+        &context().for_cloud(cloud),
+        &start_parts(
+            "https://calls.example:8443/trouter/v4/f/SyntheticEndpoint00000/",
+            LAB_A,
+            None,
+        ),
+        &code,
+    )
+    .unwrap();
+    transport.deliver(start).await.unwrap();
+    let sent = server.received_requests().await.unwrap();
+    let body = body_of(&sent[0]);
+    assert_eq!(
+        body["meetingData"]["meetingUrl"],
+        "https://calls.example:8443/meet/123456789012?p=MadeUp"
+    );
+    assert_eq!(header(&sent[0], "x-microsoft-skype-chain-id"), Some(CHAIN));
+    assert_eq!(header(&sent[0], "x-skypetoken"), Some(SKYPETOKEN));
+}

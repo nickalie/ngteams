@@ -42,7 +42,26 @@ pub(crate) struct CallAgent {
 impl CallAgent {
     /// The agent `agent_id` under `push_url` (the calling endpoint's `https://<host>/v4/f/<endpoint>/`); `None` for a
     /// push URL in another form.
+    #[cfg(test)]
     pub(crate) fn new(push_url: &str, agent_id: &str) -> Option<Self> {
+        Self::new_in(&teams_proto::Cloud::Microsoft, push_url, agent_id)
+    }
+
+    pub(crate) fn new_in(cloud: &teams_proto::Cloud, push_url: &str, agent_id: &str) -> Option<Self> {
+        if !cloud.is_microsoft() {
+            let url = url::Url::parse(push_url).ok()?;
+            let projected = cloud.project(&url, "/trouter", "https://callback.example")?;
+            let agent = Self::new_microsoft(projected.as_str(), agent_id)?;
+            let path = format!("/trouter{}", agent.path);
+            return Some(Self {
+                prefix: format!("{push_url}callAgent/{agent_id}/"),
+                path,
+            });
+        }
+        Self::new_microsoft(push_url, agent_id)
+    }
+
+    fn new_microsoft(push_url: &str, agent_id: &str) -> Option<Self> {
         let rest = push_url.strip_prefix("https://")?;
         let (authority, path) = rest.split_at(rest.find('/')?);
         let endpoint = path.strip_prefix("/v4/f/")?.strip_suffix('/')?;
@@ -156,5 +175,32 @@ mod tests {
         assert_eq!(id.len(), 36);
         assert_eq!(&id[14..15], "4");
         assert_ne!(id, guid().unwrap());
+    }
+}
+
+#[cfg(test)]
+mod own_tests {
+    use super::{CallAgent, Kind};
+
+    #[test]
+    fn own_callbacks_keep_the_origin_and_trouter_prefix() {
+        let cloud = teams_proto::Cloud::own("https://calls.example:8443").unwrap();
+        let push = "https://calls.example:8443/trouter/v4/f/Endpoint00001/";
+        let agent = CallAgent::new_in(&cloud, push, "agent").unwrap();
+        let callback = agent.callback_at(Kind::Call, "end", "segment");
+        assert_eq!(callback.url, format!("{push}callAgent/agent/segment/call/end/"));
+        assert_eq!(
+            callback.path,
+            "/trouter/v4/f/Endpoint00001/callAgent/agent/segment/call/end/"
+        );
+        for other in [
+            "https://calls.example:9443/trouter/v4/f/Endpoint00001/",
+            "https://elsewhere.example:8443/trouter/v4/f/Endpoint00001/",
+            "https://calls.example:8443/v4/f/Endpoint00001/",
+            "https://calls.example:8443/trouter/v4/f/Endpoint00001/?x=1",
+            "https://pub-ent-zz-01-f.trouter.teams.microsoft.com:3443/v4/f/Endpoint00001/",
+        ] {
+            assert!(CallAgent::new_in(&cloud, other, "agent").is_none(), "{other}");
+        }
     }
 }

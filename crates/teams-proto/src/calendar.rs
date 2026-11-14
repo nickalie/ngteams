@@ -55,6 +55,14 @@ impl CalendarView {
     /// # Errors
     /// [`CalendarAnswerError::Malformed`] unless the body is a JSON object with a `value` array.
     pub fn read_answer(body: &[u8]) -> Result<CalendarAnswer, CalendarAnswerError> {
+        Self::read_answer_in(&crate::Cloud::Microsoft, body)
+    }
+
+    /// Reads with the account's service origin.
+    ///
+    /// # Errors
+    /// Returns the same parse errors as the Microsoft reader.
+    pub fn read_answer_in(cloud: &crate::Cloud, body: &[u8]) -> Result<CalendarAnswer, CalendarAnswerError> {
         let answer: Value = serde_json::from_slice(body).map_err(|_| CalendarAnswerError::Malformed)?;
         let entries = answer
             .get("value")
@@ -62,7 +70,7 @@ impl CalendarView {
             .ok_or(CalendarAnswerError::Malformed)?;
         let mut read = CalendarAnswer::default();
         for entry in entries {
-            match CalendarEvent::of(entry) {
+            match CalendarEvent::of(cloud, entry) {
                 Some(event) if event.kind == EventKind::RecurringMaster => {}
                 Some(event) => {
                     read.events.push(event);
@@ -292,7 +300,13 @@ impl CalendarEvent {
     /// itself), a series' master too; `None` when it doesn't read.
     #[must_use]
     pub fn created(body: &[u8]) -> Option<Self> {
-        Self::of(&created_entry(body)?)
+        Self::created_in(&crate::Cloud::Microsoft, body)
+    }
+
+    /// Reads with the account's service origin.
+    #[must_use]
+    pub fn created_in(cloud: &crate::Cloud, body: &[u8]) -> Option<Self> {
+        Self::of(cloud, &created_entry(body)?)
     }
 
     /// The new event a creation's answer gives ([`Self::created`]) and its entry as text, as the calendar view's
@@ -300,8 +314,14 @@ impl CalendarEvent {
     /// or is a series' master (the calendar view gives a series as its occurrences).
     #[must_use]
     pub fn created_kept(body: &[u8]) -> Option<(Self, String)> {
+        Self::created_kept_in(&crate::Cloud::Microsoft, body)
+    }
+
+    /// Reads with the account's service origin.
+    #[must_use]
+    pub fn created_kept_in(cloud: &crate::Cloud, body: &[u8]) -> Option<(Self, String)> {
         let entry = created_entry(body)?;
-        let event = Self::of(&entry).filter(|event| event.kind != EventKind::RecurringMaster)?;
+        let event = Self::of(cloud, &entry).filter(|event| event.kind != EventKind::RecurringMaster)?;
         Some((event, entry.to_string()))
     }
 
@@ -309,12 +329,18 @@ impl CalendarEvent {
     /// doesn't read, or is a series' master.
     #[must_use]
     pub fn stored(entry: &str) -> Option<Self> {
+        Self::stored_in(&crate::Cloud::Microsoft, entry)
+    }
+
+    /// Reads with the account's service origin.
+    #[must_use]
+    pub fn stored_in(cloud: &crate::Cloud, entry: &str) -> Option<Self> {
         let entry: Value = serde_json::from_str(entry).ok()?;
-        Self::of(&entry).filter(|event| event.kind != EventKind::RecurringMaster)
+        Self::of(cloud, &entry).filter(|event| event.kind != EventKind::RecurringMaster)
     }
 
     /// The event `entry` describes; `None` without a string `objectId` or a readable `startTime` and `endTime`.
-    fn of(entry: &Value) -> Option<Self> {
+    fn of(cloud: &crate::Cloud, entry: &Value) -> Option<Self> {
         let text = |key: &str| {
             entry
                 .get(key)
@@ -329,10 +355,10 @@ impl CalendarEvent {
         let end = event_time(entry.get("endTime")?.as_str()?)?;
         let join_url = text("skypeTeamsMeetingUrl")
             .or_else(|| text("joinOnlineMeetingUrl"))
-            .filter(|url| url.starts_with("https://"));
+            .filter(|url| crate::meeting::meeting_link_in(cloud, url));
         let meeting_chat = text("skypeTeamsData")
             .and_then(|data| teams_data_chat(&data))
-            .or_else(|| join_url.as_deref().and_then(join_url_chat));
+            .or_else(|| join_url.as_deref().and_then(|url| join_url_chat_in(cloud, url)));
         Some(Self {
             id,
             subject: text("subject").unwrap_or_default(),
@@ -342,14 +368,14 @@ impl CalendarEvent {
             kind: event_kind(text("eventType").as_deref()),
             cancelled: flag("isCancelled"),
             online: flag("isOnlineMeeting") || join_url.is_some(),
-            meeting: join_url.as_deref().and_then(join_url_meeting),
+            meeting: join_url.as_deref().and_then(|url| join_url_meeting_in(cloud, url)),
             meeting_code: [
                 "shortOnlineMeetingJoinUrl",
                 "joinOnlineMeetingUrl",
                 "skypeTeamsMeetingUrl",
             ]
             .iter()
-            .find_map(|key| text(key).and_then(|url| MeetingCode::of_link(&url))),
+            .find_map(|key| text(key).and_then(|url| MeetingCode::of_link_in(cloud, &url))),
             join_url,
             meeting_chat,
             location: text("location").or_else(|| location_name(entry.get("location"))),
@@ -528,7 +554,22 @@ fn teams_data_chat(data: &str) -> Option<String> {
 /// The meeting chat a join link names: `https://teams.microsoft.com/l/meetup-join/<thread, percent-encoded>/…`.
 #[must_use]
 pub fn join_url_chat(url: &str) -> Option<String> {
-    let rest = url.split_once("/l/meetup-join/")?.1;
+    join_url_chat_in(&crate::Cloud::Microsoft, url)
+}
+
+/// Reads a join URL within this account's cloud.
+#[must_use]
+pub fn join_url_chat_in(cloud: &crate::Cloud, url: &str) -> Option<String> {
+    if !cloud.is_microsoft() && !crate::meeting::meeting_link_in(cloud, url) {
+        return None;
+    }
+    let parsed;
+    let rest = if cloud.is_microsoft() {
+        url.split_once("/l/meetup-join/")?.1
+    } else {
+        parsed = url::Url::parse(url).ok()?;
+        parsed.path().strip_prefix("/l/meetup-join/")?
+    };
     let segment = rest.split(['/', '?', '#']).next()?;
     let thread = percent_decode_str(segment).decode_utf8().ok()?;
     is_meeting_thread(&thread).then(|| thread.into_owned())
@@ -538,6 +579,15 @@ pub fn join_url_chat(url: &str) -> Option<String> {
 /// percent-encoded. `None` for a link without them (a short `/meet/<code>` one).
 #[must_use]
 pub fn join_url_meeting(url: &str) -> Option<MeetingInfo> {
+    join_url_meeting_in(&crate::Cloud::Microsoft, url)
+}
+
+/// Reads a join URL within this account's cloud.
+#[must_use]
+pub fn join_url_meeting_in(cloud: &crate::Cloud, url: &str) -> Option<MeetingInfo> {
+    if !cloud.is_microsoft() && !crate::meeting::meeting_link_in(cloud, url) {
+        return None;
+    }
     let parsed = url::Url::parse(url).ok()?;
     let (_, context) = parsed.query_pairs().find(|(key, _)| key == "context")?;
     let context: Value = serde_json::from_str(&context).ok()?;
@@ -585,12 +635,20 @@ impl EventRead {
     /// [`CalendarAnswerError::Malformed`] unless it is an event object whose id is the one read (the answer may also
     /// wrap it in `value`).
     pub fn read_answer(&self, body: &[u8]) -> Result<FullEvent, CalendarAnswerError> {
+        self.read_answer_in(&crate::Cloud::Microsoft, body)
+    }
+
+    /// Reads an event with meeting links restricted to the account's cloud.
+    ///
+    /// # Errors
+    /// Returns an error when the event is malformed or has the wrong id.
+    pub fn read_answer_in(&self, cloud: &crate::Cloud, body: &[u8]) -> Result<FullEvent, CalendarAnswerError> {
         let answer: Value = serde_json::from_slice(body).map_err(|_| CalendarAnswerError::Malformed)?;
         let raw = match answer.get("value") {
             Some(Value::Object(inner)) => inner.clone(),
             _ => answer.as_object().cloned().ok_or(CalendarAnswerError::Malformed)?,
         };
-        let full = full_event(raw)?;
+        let full = full_event(cloud, raw)?;
         if full.event.id != self.id {
             return Err(CalendarAnswerError::Malformed);
         }
@@ -599,8 +657,8 @@ impl EventRead {
 }
 
 /// An event's answer, read whole ([`FullEvent`]).
-fn full_event(raw: serde_json::Map<String, Value>) -> Result<FullEvent, CalendarAnswerError> {
-    let event = CalendarEvent::of(&Value::Object(raw.clone())).ok_or(CalendarAnswerError::Malformed)?;
+fn full_event(cloud: &crate::Cloud, raw: serde_json::Map<String, Value>) -> Result<FullEvent, CalendarAnswerError> {
+    let event = CalendarEvent::of(cloud, &Value::Object(raw.clone())).ok_or(CalendarAnswerError::Malformed)?;
     let body_html = raw
         .get("bodyContent")
         .or_else(|| raw.get("body").and_then(|body| body.get("content")))
@@ -686,6 +744,14 @@ impl ChannelEventRead {
     /// # Errors
     /// [`CalendarAnswerError::Malformed`] unless it is an event object whose `iCalUID` is the one read.
     pub fn read_answer(&self, body: &[u8]) -> Result<FullEvent, CalendarAnswerError> {
+        self.read_answer_in(&crate::Cloud::Microsoft, body)
+    }
+
+    /// Reads an event with meeting links restricted to the account's cloud.
+    ///
+    /// # Errors
+    /// Returns an error when the event is malformed or has the wrong id.
+    pub fn read_answer_in(&self, cloud: &crate::Cloud, body: &[u8]) -> Result<FullEvent, CalendarAnswerError> {
         let answer: Value = serde_json::from_slice(body).map_err(|_| CalendarAnswerError::Malformed)?;
         let raw = match answer.get("value") {
             Some(Value::Object(inner)) => inner.clone(),
@@ -695,7 +761,7 @@ impl ChannelEventRead {
         if !named.is_some_and(|named| named.eq_ignore_ascii_case(&self.ical_uid)) {
             return Err(CalendarAnswerError::Malformed);
         }
-        full_event(raw)
+        full_event(cloud, raw)
     }
 }
 

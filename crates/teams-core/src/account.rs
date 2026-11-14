@@ -189,7 +189,7 @@ pub fn start_for_cloud<S: SecretStore + 'static>(
         read_only,
     } = account;
     let (push, calls) = listening(read_only, push, calls);
-    let tracker = Arc::new(Tracker::new(Mri::new(&mri)));
+    let tracker = account_tracker(&mri, teams_proto::Cloud::Microsoft);
     let writable = |transport: HttpTransport<Session<S>>| {
         if read_only { transport.read_only() } else { transport }
     };
@@ -276,6 +276,10 @@ fn new_session<S: SecretStore>(
         AuthzClient::for_cloud(cloud)?,
         region,
     ))
+}
+
+fn account_tracker(mri: &str, cloud: teams_proto::Cloud) -> Arc<Tracker> {
+    Arc::new(Tracker::for_cloud(Mri::new(mri), cloud))
 }
 
 fn call_stack(tracker: &Arc<Tracker>, floor: &CallFloor) -> CallStack {
@@ -480,6 +484,19 @@ mod tests {
             || HttpTransport::new(Arc::clone(&tokens), "https://teams.microsoft.com/api/chatsvc/amer"),
             middle_tier,
         )
+    }
+
+    #[test]
+    fn the_account_tracker_uses_the_account_cloud() {
+        use teams_proto::CallState as _;
+        let cloud = teams_proto::Cloud::own("https://calls.example:8443").unwrap();
+        let tracker = account_tracker("8:orgid:00000000-0000-4000-8000-00000000000a", cloud);
+        assert!(tracker.connected("own", "https://calls.example:8443/trouter/v4/f/Endpoint00001/"));
+        assert!(!tracker.connected("other", "https://calls.example:9443/trouter/v4/f/Endpoint00001/"));
+        assert!(!tracker.connected(
+            "microsoft",
+            "https://pub-ent-zz-01-f.trouter.teams.microsoft.com:3443/v4/f/Endpoint00001/"
+        ));
     }
 
     #[test]

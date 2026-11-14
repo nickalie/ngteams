@@ -10,10 +10,9 @@ use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Mutex, MutexGuard, PoisonError};
-use teams_proto::Mri;
 use teams_proto::{CallOperation, Request, Response};
+use teams_proto::{Cloud, Mri};
 use url::Url;
-const PROXY_HOST: &str = teams_proto::CALLING_HOST;
 /// One Trouter delivery as the socket received it (a socket.io `3:::` request), its body decoded: the connection it
 /// came on (an opaque key of the caller's, the same for the responses sent on that connection), its signed id, the
 /// path it was delivered to, its `trouter-request`, `X-Microsoft-Skype-Chain-ID` and `X-Microsoft-Skype-Message-ID`
@@ -107,7 +106,10 @@ struct Call {
 impl Call {
     fn answered(&mut self, response: &Response) {
         self.context.answer(response.body());
-        let links = response.is_success().then(|| answer_links(response.body())).flatten();
+        let links = response
+            .is_success()
+            .then(|| answer_links_in(&self.context.cloud, response.body()))
+            .flatten();
         self.state = if links.is_some() { State::Live } else { State::Ended };
         self.links.extend(links.into_iter().flatten());
     }
@@ -123,7 +125,7 @@ impl Call {
         let Some(link) = self
             .controller
             .as_ref()
-            .and_then(|(_, call)| media_link(path, body, call))
+            .and_then(|(_, call)| media_link_in(&self.context.cloud, path, body, call))
         else {
             return false;
         };
@@ -155,7 +157,7 @@ impl Call {
             .get("links")
             .and_then(Value::as_object)
             .filter(|_| succeeded)
-            .and_then(controller_links)
+            .and_then(|value| controller_links_in(&self.context.cloud, value))
         else {
             log::debug!("call registry: a media acknowledgement names no one call (success: {succeeded})");
             return;
@@ -198,10 +200,10 @@ fn is_transfer_callback(path: &str) -> bool {
 /// Binds the `transferAcceptance` link a transfer delivered at a live call's or an answered invitation's `transfer`
 /// callback hands out (`callTransfer.links.transferAcceptance`, `…/cc/v1/transfer/<call>/…/acceptance` on the same call,
 /// seen 2026-11-06): where the transferred party takes it.
-fn bind_transfer(inner: &mut Inner, delivery: &Delivery) {
+fn bind_transfer(cloud: &Cloud, inner: &mut Inner, delivery: &Delivery) {
     if let Some(offer) = inner.offers.iter_mut().find(|offer| offer.transfers_at(&delivery.path)) {
         let call = offer.invitation.leg.1.clone();
-        if let Some(link) = transfer_link(&delivery.body, &call)
+        if let Some(link) = transfer_link_in(cloud, &delivery.body, &call)
             && !offer.links.contains(&link)
         {
             offer.links.push(link);
@@ -220,7 +222,7 @@ fn bind_transfer(inner: &mut Inner, delivery: &Delivery) {
     let Some(link) = call
         .controller
         .as_ref()
-        .and_then(|(_, id)| transfer_link(&delivery.body, id))
+        .and_then(|(_, id)| transfer_link_in(cloud, &delivery.body, id))
     else {
         return;
     };
@@ -230,8 +232,11 @@ fn bind_transfer(inner: &mut Inner, delivery: &Delivery) {
 }
 
 /// The `transferAcceptance` link a transfer's delivery `body` hands out for the call `call`, on the flight proxy.
-fn transfer_link(body: &[u8], call: &str) -> Option<Link> {
-    let url = proxy_link(strict_json(body)?.pointer("/callTransfer/links/transferAcceptance")?)?;
+fn transfer_link_in(cloud: &Cloud, body: &[u8], call: &str) -> Option<Link> {
+    let url = proxy_link_in(
+        cloud,
+        strict_json(body)?.pointer("/callTransfer/links/transferAcceptance")?,
+    )?;
     let (_, at, kind, last) = controller_path(&url)?;
     (at == call && kind == "transfer" && last == CallOperation::TransferAcceptance.segment())
         .then(|| (CallOperation::TransferAcceptance, url.as_str().to_owned()))
@@ -247,7 +252,7 @@ fn is_acknowledged_at(path: &str) -> bool {
 /// the flight proxy: a renegotiation's (at a `mediaRenegotiation` callback) `mediaNegotiation.links.mediaAnswer`,
 /// `…/cc/v1/negotiations/<call>/…/answer`; an answer's (at a `mediaAnswer` callback)
 /// `mediaAnswer.links.mediaAcknowledgement`, `…/cc/v1/mediaAnswers/<call>/…/acknowledge`. `None` for anything else.
-fn media_link(path: &str, body: &[u8], call: &str) -> Option<Link> {
+fn media_link_in(cloud: &Cloud, path: &str, body: &[u8], call: &str) -> Option<Link> {
     let (operation, pointer, kind) = if path.ends_with("/call/mediaRenegotiation/") {
         (
             CallOperation::MediaAnswer,
@@ -263,7 +268,7 @@ fn media_link(path: &str, body: &[u8], call: &str) -> Option<Link> {
     } else {
         return None;
     };
-    let url = proxy_link(strict_json(body)?.pointer(pointer)?)?;
+    let url = proxy_link_in(cloud, strict_json(body)?.pointer(pointer)?)?;
     let (_, at, of, last) = controller_path(&url)?;
     (at == call && of == kind && last == operation.segment()).then(|| (operation, url.as_str().to_owned()))
 }
@@ -272,6 +277,7 @@ fn media_link(path: &str, body: &[u8], call: &str) -> Option<Link> {
 #[derive(Debug)]
 pub struct Tracker {
     account: Mri,
+    cloud: Cloud,
     inner: Mutex<Inner>,
 }
 
@@ -306,7 +312,14 @@ pub enum Holder {
 impl Tracker {
     #[must_use]
     pub fn new(account: Mri) -> Self {
+        Self::for_cloud(account, Cloud::Microsoft)
+    }
+
+    /// Tracks links only within this account's calling service.
+    #[must_use]
+    pub fn for_cloud(account: Mri, cloud: Cloud) -> Self {
         Self {
+            cloud,
             account,
             inner: Mutex::new(Inner::default()),
         }
@@ -330,7 +343,7 @@ impl Tracker {
         observed
     }
     fn observe_filtered(&self, delivery: &Delivery, other_busy: bool) -> Observed {
-        let Some(invitation) = offer::read_invitation(delivery) else {
+        let Some(invitation) = offer::read_invitation_in(&self.cloud, delivery) else {
             return if offer::may_be_invitation(delivery) {
                 Observed::Ignored
             } else {
@@ -356,7 +369,7 @@ impl Tracker {
         if other_busy || busy {
             return Observed::Ignored;
         }
-        inner.offers.push(offer::Offer::new(invitation));
+        inner.offers.push(offer::Offer::new_in(self.cloud.clone(), invitation));
         Observed::Offered
     }
     pub fn observe_delivery(&self, delivery: &Delivery) -> Observed {
@@ -384,7 +397,7 @@ impl Tracker {
     }
     /// Notes one actual attempt before the socket may deliver its callbacks.
     pub fn before<R: Request>(&self, request: &R) -> Attempt {
-        let Some(url) = request.call_url() else {
+        let Some(url) = request.call_url().filter(|url| calling_url_fits(&self.cloud, url)) else {
             return Attempt::Nothing;
         };
         let body = request.body().unwrap_or(Value::Null);
@@ -407,7 +420,7 @@ impl Tracker {
             let agent = acceptance.as_ref().and_then(agent_of);
             inner.calls.push(Call {
                 state: State::Pending,
-                context: Context::from_request(&body, &self.account),
+                context: Context::from_request(self.cloud.clone(), &body, &self.account),
                 acceptance,
                 ends,
                 agent,
@@ -511,7 +524,7 @@ impl Tracker {
                         None => return,
                     },
                 };
-                if let Some(link) = call.and_then(|call| resume_link(response.body(), &call))
+                if let Some(link) = call.and_then(|call| resume_link_in(&self.cloud, response.body(), &call))
                     && !links.contains(&link)
                 {
                     links.push(link);
@@ -531,7 +544,7 @@ impl Tracker {
             return Observed::RingEnded;
         }
         if is_transfer_callback(&delivery.path) {
-            bind_transfer(&mut inner, delivery);
+            bind_transfer(&self.cloud, &mut inner, delivery);
             return Observed::Nothing;
         }
         let negotiated = if let Some(offer) = inner
@@ -579,7 +592,7 @@ impl Tracker {
                 call.state = State::Ended;
                 Observed::Ended
             }
-            Some((call, false)) => bind_acceptance(call, delivery),
+            Some((call, false)) => bind_acceptance_in(&self.cloud, call, delivery),
         }
     }
 }
@@ -646,26 +659,42 @@ fn authority(url: &Url) -> Option<String> {
 /// The `/v4/f/<endpoint>/callAgent/<agent>/` prefix of a callback (and its authority): every callback of one start
 /// shares it.
 fn agent_of(callback: &Callback) -> Option<Callback> {
-    let segments: Vec<&str> = callback.path.strip_prefix('/')?.split('/').collect();
+    let prefix = if callback.path.starts_with("/trouter/") {
+        "/trouter"
+    } else {
+        ""
+    };
+    let segments: Vec<&str> = callback
+        .path
+        .strip_prefix(prefix)?
+        .strip_prefix('/')?
+        .split('/')
+        .collect();
     match segments.as_slice() {
         ["v4", "f", endpoint, "callAgent", agent, ..] if !endpoint.is_empty() && !agent.is_empty() => Some(Callback {
             authority: callback.authority.clone(),
-            path: format!("/v4/f/{endpoint}/callAgent/{agent}/"),
+            path: format!("{prefix}/v4/f/{endpoint}/callAgent/{agent}/"),
         }),
         _ => None,
     }
 }
 
-/// A link on the flight proxy: `https`, [`PROXY_HOST`] with no port, no user info or fragment.
-fn proxy_link(link: &Value) -> Option<Url> {
-    let url = Url::parse(link.as_str()?).ok()?;
-    let plain = url.username().is_empty() && url.password().is_none() && url.fragment().is_none();
-    (url.scheme() == "https" && url.host_str() == Some(PROXY_HOST) && url.port().is_none() && plain).then_some(url)
+fn calling_url_fits(cloud: &Cloud, url: &Url) -> bool {
+    let start = cloud
+        .service_url(teams_proto::CALL_START_URL, "/flightproxy/api/v2/epconv")
+        .ok();
+    start.as_ref() == Some(url) || teams_proto::CallLink::parse_in(cloud, url.as_str()).is_some()
+}
+
+/// A link on the flight proxy: `https`, [`teams_proto::CALLING_HOST`] with no port, no user info or fragment.
+fn proxy_link_in(cloud: &Cloud, link: &Value) -> Option<Url> {
+    let link = teams_proto::CallLink::parse_in(cloud, link.as_str()?)?;
+    Url::parse(link.as_str()).ok()
 }
 
 /// The conversation links of a start's answer (see the module docs); `None` unless the answer is a JSON object with a
 /// `conversationController` on the flight proxy at `/api/v2/ep/<host>/conv/<id>`.
-fn answer_links(answer: &[u8]) -> Option<Vec<Link>> {
+fn answer_links_in(cloud: &Cloud, answer: &[u8]) -> Option<Vec<Link>> {
     const NAMES: [(CallOperation, &str); 13] = [
         (CallOperation::UpdateEndpointMetadata, "updateEndpointMetadata"),
         (
@@ -685,8 +714,13 @@ fn answer_links(answer: &[u8]) -> Option<Vec<Link>> {
         (CallOperation::Mute, "mute"),
     ];
     let answer = strict_json(answer)?;
-    let controller = proxy_link(answer.get("conversationController")?)?;
-    let segments: Vec<&str> = controller.path_segments()?.collect();
+    let controller = proxy_link_in(cloud, answer.get("conversationController")?)?;
+    let segments: Vec<&str> = controller
+        .path()
+        .trim_start_matches("/flightproxy")
+        .trim_start_matches('/')
+        .split('/')
+        .collect();
     if !matches!(segments.as_slice(), ["api", "v2", "ep", host, "conv", id] if !host.is_empty() && !id.is_empty()) {
         return None;
     }
@@ -697,7 +731,7 @@ fn answer_links(answer: &[u8]) -> Option<Vec<Link>> {
         NAMES
             .iter()
             .filter_map(|(operation, name)| {
-                let link = proxy_link(links?.get(*name)?)?;
+                let link = proxy_link_in(cloud, links?.get(*name)?)?;
                 let fits = link.path() == format!("{}/{}", controller.path(), operation.segment())
                     && link.query() == controller.query();
                 fits.then(|| (*operation, link.as_str().to_owned()))
@@ -708,8 +742,8 @@ fn answer_links(answer: &[u8]) -> Option<Vec<Link>> {
 }
 
 /// Binds an acceptance delivery's call controller links to `call` (see the module docs).
-fn bind_acceptance(call: &mut Call, delivery: &Delivery) -> Observed {
-    let Some((controller, links)) = acceptance_links(&delivery.body) else {
+fn bind_acceptance_in(cloud: &Cloud, call: &mut Call, delivery: &Delivery) -> Observed {
+    let Some((controller, links)) = acceptance_links_in(cloud, &delivery.body) else {
         return Observed::AcceptanceUnbound;
     };
     if call.controller.as_ref().is_some_and(|bound| *bound != controller) {
@@ -726,15 +760,15 @@ fn bind_acceptance(call: &mut Call, delivery: &Delivery) -> Observed {
 
 /// The call controller (host, call id) and the links of a mapped operation an acceptance's body names; `None` unless
 /// every link under `callAcceptance.links` that names a call names the same one, and at least one does.
-fn acceptance_links(body: &[u8]) -> Option<(Controller, Vec<Link>)> {
+fn acceptance_links_in(cloud: &Cloud, body: &[u8]) -> Option<(Controller, Vec<Link>)> {
     let body = strict_json(body)?;
-    controller_links(body.pointer("/callAcceptance/links")?.as_object()?)
+    controller_links_in(cloud, body.pointer("/callAcceptance/links")?.as_object()?)
 }
 
 /// The call controller (host, call id) and the links of a mapped operation `links` names (an acceptance's
 /// `callAcceptance.links`, a retarget's `links`); `None` unless every link that names a call names the same one, and at
 /// least one does.
-fn controller_links(links: &Map<String, Value>) -> Option<(Controller, Vec<Link>)> {
+fn controller_links_in(cloud: &Cloud, links: &Map<String, Value>) -> Option<(Controller, Vec<Link>)> {
     const NAMES: [(CallOperation, &str, &str); 7] = [
         (CallOperation::Acknowledge, "acknowledgement", "callAcceptance"),
         (CallOperation::KeepAlive, "callLeg", "active"),
@@ -754,7 +788,9 @@ fn controller_links(links: &Map<String, Value>) -> Option<(Controller, Vec<Link>
     ];
     let mut controller: Option<Controller> = None;
     for link in links.values() {
-        let Some(url) = proxy_link(link) else { continue };
+        let Some(url) = proxy_link_in(cloud, link) else {
+            continue;
+        };
         let Some((host, call, _, _)) = controller_path(&url) else {
             continue;
         };
@@ -767,7 +803,7 @@ fn controller_links(links: &Map<String, Value>) -> Option<(Controller, Vec<Link>
     let bound = NAMES
         .iter()
         .filter_map(|(operation, name, kind)| {
-            let url = proxy_link(links.get(*name)?)?;
+            let url = proxy_link_in(cloud, links.get(*name)?)?;
             let (host, call, at, last) = controller_path(&url)?;
             let fits = (host, call) == controller && at == *kind && link_is(*operation, &url, &last);
             fits.then(|| (*operation, url.as_str().to_owned()))
@@ -778,8 +814,8 @@ fn controller_links(links: &Map<String, Value>) -> Option<(Controller, Vec<Link>
 
 /// Where a hold's answer `body` says the hold of call `call` (the call controller's call id) is taken back, on the
 /// flight proxy: `holdResponse.links.resume`, `…/cc/v1/holdSession/<call>/…/resume` (seen 2026-11-06).
-fn resume_link(body: &[u8], call: &str) -> Option<Link> {
-    let url = proxy_link(strict_json(body)?.pointer("/holdResponse/links/resume")?)?;
+fn resume_link_in(cloud: &Cloud, body: &[u8], call: &str) -> Option<Link> {
+    let url = proxy_link_in(cloud, strict_json(body)?.pointer("/holdResponse/links/resume")?)?;
     let (_, at, kind, last) = controller_path(&url)?;
     (at == call && kind == "holdSession" && last == CallOperation::Resume.segment())
         .then(|| (CallOperation::Resume, url.as_str().to_owned()))
@@ -789,7 +825,14 @@ fn resume_link(body: &[u8], call: &str) -> Option<Link> {
 /// last, or for a keep-alive the call leg's own link (`…/cc/v1/active/<call>/<n>/<leg>/<n>`, nothing after it).
 pub(crate) fn link_is(operation: CallOperation, url: &Url, last: &str) -> bool {
     if operation == CallOperation::KeepAlive {
-        return url.path_segments().is_some_and(|segments| segments.count() == 11);
+        return url.path_segments().is_some_and(|segments| {
+            segments.count()
+                == if url.path().starts_with("/flightproxy/") {
+                    12
+                } else {
+                    11
+                }
+        });
     }
     last == operation.segment()
 }
@@ -797,7 +840,12 @@ pub(crate) fn link_is(operation: CallOperation, url: &Url, last: &str) -> bool {
 /// A call controller link's host, call id, kind (`callAcceptance`, `mcProxy`, `active`, …) and last segment:
 /// `/api/v2/ep/<host>/cc/v1/<kind>/<call>/…`.
 fn controller_path(url: &Url) -> Option<(String, String, String, String)> {
-    let segments: Vec<&str> = url.path_segments()?.collect();
+    let segments: Vec<&str> = url
+        .path()
+        .trim_start_matches("/flightproxy")
+        .trim_start_matches('/')
+        .split('/')
+        .collect();
     match segments.as_slice() {
         ["api", "v2", "ep", host, "cc", "v1", kind, call, .., last]
             if !host.is_empty() && !call.is_empty() && !kind.is_empty() =>

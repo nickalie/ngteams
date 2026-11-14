@@ -3052,7 +3052,14 @@ where
     /// reading the chat it names: no chat could be called, so the chat's own refusal would mislead.
     fn call(&mut self, action: CallAction, asked: std::time::Instant, reply: Responder<CallId>) {
         if let Some(calls) = self.calls.as_ref().map(CallingTask::actions) {
-            hand_call(&self.store, self.me(), &calls, action, asked, reply);
+            hand_call(
+                self.inbox.cloud(),
+                &self.store,
+                self.me(),
+                &calls,
+                (action, asked),
+                reply,
+            );
         } else {
             log::info!(
                 "action: {}: refused, this engine has no calling",
@@ -3441,11 +3448,11 @@ fn one_to_one_other(chat: &str, me: &str) -> Option<String> {
 /// calling `calls`; one that can't be resolved is answered here, logged with why. A start or a join that waited past
 /// [`START_WITHIN`](crate::calling::START_WITHIN) is refused: its view has given up on it, or is about to.
 fn hand_call(
+    cloud: &teams_proto::Cloud,
     store: &Store,
     me: &str,
     calls: &CallActions,
-    action: CallAction,
-    asked: std::time::Instant,
+    (action, asked): (CallAction, std::time::Instant),
     reply: Responder<CallId>,
 ) {
     let described = described::call(&action);
@@ -3455,7 +3462,7 @@ fn hand_call(
         log::warn!("action: {described}: waited {} ms to be taken", waited.as_millis());
         Err(CallActionError::Late)
     } else {
-        call_act(store, me, action)
+        call_act_in(cloud, store, me, action)
     };
     match act {
         Ok(act) => calls.act(act, reply),
@@ -3467,7 +3474,17 @@ fn hand_call(
 }
 
 /// What the calling does for `action`.
+#[cfg(test)]
 fn call_act(store: &Store, me: &str, action: CallAction) -> Result<Act, CallActionError> {
+    call_act_in(&teams_proto::Cloud::Microsoft, store, me, action)
+}
+
+fn call_act_in(
+    cloud: &teams_proto::Cloud,
+    store: &Store,
+    me: &str,
+    action: CallAction,
+) -> Result<Act, CallActionError> {
     Ok(match action {
         CallAction::Captions { call, enabled } => Act::Captions(call, enabled),
         CallAction::CaptionLanguage { call, language } => Act::CaptionLanguage(call, language),
@@ -3478,7 +3495,7 @@ fn call_act(store: &Store, me: &str, action: CallAction) -> Result<Act, CallActi
         CallAction::Call { chat } => Act::Place(placement(store, me, &chat)?),
         CallAction::TestCall { echo } => Act::Place(Placement::TestCall { echo }),
         CallAction::Join { chat } => {
-            let posted = posted_running_call(store, &chat).ok().flatten();
+            let posted = posted_running_call(cloud, store, &chat).ok().flatten();
             Act::Join(chat, posted)
         }
         // a channel's meeting is joined at the conversation its channel names it runs at, read as it goes
@@ -3512,19 +3529,26 @@ fn call_act(store: &Store, me: &str, action: CallAction) -> Result<Act, CallActi
 
 /// Where group chat `chat`'s call runs, as its newest stored call events say ([`teams_proto::running_call`]); `None`
 /// for any other chat.
-fn posted_running_call(store: &Store, chat: &str) -> Result<Option<teams_proto::CallLink>, StoreError> {
+fn posted_running_call(
+    cloud: &teams_proto::Cloud,
+    store: &Store,
+    chat: &str,
+) -> Result<Option<teams_proto::CallLink>, StoreError> {
     if !teams_proto::is_group_chat_id(chat) {
         return Ok(None);
     }
     let events = store.call_events(chat, POSTED_CALL_LOOKBACK)?;
-    Ok(teams_proto::running_call(events.iter().map(|message| {
-        (message.message_type.as_str(), message.content.as_str())
-    })))
+    Ok(teams_proto::running_call_in(
+        cloud,
+        events
+            .iter()
+            .map(|message| (message.message_type.as_str(), message.content.as_str())),
+    ))
 }
 
 /// Whether group chat `chat`'s call runs, as its newest stored call events say ([`posted_running_call`]).
-fn call_runs(store: &Store, chat: &str) -> Result<bool, StoreError> {
-    Ok(posted_running_call(store, chat)?.is_some())
+fn call_runs(cloud: &teams_proto::Cloud, store: &Store, chat: &str) -> Result<bool, StoreError> {
+    Ok(posted_running_call(cloud, store, chat)?.is_some())
 }
 
 /// Whether the call `conversation`'s stored call event `start` started has ended, as its newest stored call events
@@ -3625,7 +3649,14 @@ mod start_within {
         let calls = CallActions::of(&sender);
         let asked = std::time::Instant::now().checked_sub(waited).unwrap();
         let (reply, mut answer) = oneshot::channel();
-        hand_call(&store, ME, &calls, action, asked, reply);
+        hand_call(
+            &teams_proto::Cloud::Microsoft,
+            &store,
+            ME,
+            &calls,
+            (action, asked),
+            reply,
+        );
         (taken.try_recv().is_ok(), answer.try_recv().ok())
     }
 
@@ -3776,6 +3807,27 @@ mod start_within {
             chat: "19:meeting_MadeUpMeeting01@thread.v2".to_owned(),
         };
         assert!(matches!(call_act(&store, ME, meeting), Ok(Act::Join(_, None))));
+        let cloud = teams_proto::Cloud::own("https://calls.example:8443").unwrap();
+        let own_content = started.content.replace(
+            "https://api.flightproxy.teams.microsoft.com",
+            "https://calls.example:8443/flightproxy",
+        );
+        store
+            .upsert_message(
+                &teams_store::Message {
+                    version: 2,
+                    content: own_content,
+                    ..started
+                },
+                None,
+            )
+            .unwrap();
+        let Ok(Act::Join(_, Some(posted))) = call_act_in(&cloud, &store, ME, join()) else {
+            panic!("own stored call")
+        };
+        assert!(posted.as_str().starts_with("https://calls.example:8443/flightproxy/"));
+        assert!(call_runs(&cloud, &store, chat).unwrap());
+        assert!(!call_runs(&teams_proto::Cloud::Microsoft, &store, chat).unwrap());
     }
 
     #[test]

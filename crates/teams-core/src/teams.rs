@@ -99,6 +99,10 @@ pub(crate) struct Teams<C> {
 }
 
 impl<C: Credentials + 'static> Teams<C> {
+    pub(crate) fn cloud(&self) -> &teams_proto::Cloud {
+        self.client.transport().cloud()
+    }
+
     pub(crate) fn new(client: Arc<Client<HttpTransport<C>>>, retry: Duration) -> Self {
         Self {
             client,

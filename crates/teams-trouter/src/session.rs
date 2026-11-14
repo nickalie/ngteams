@@ -1055,7 +1055,11 @@ impl Link {
     }
 
     fn on_call_delivery(&self, raw: &RawDelivery, calls: &CallStack) -> PushEvent {
-        let root = self.endpoint.as_ref().map(|endpoint| format!("/v4/f/{endpoint}/"));
+        let prefix = if self.cloud.is_microsoft() { "" } else { "/trouter" };
+        let root = self
+            .endpoint
+            .as_ref()
+            .map(|endpoint| format!("{prefix}/v4/f/{endpoint}/"));
         let ours = root.as_deref().is_some_and(|root| {
             raw.url == root
                 || raw

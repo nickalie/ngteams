@@ -632,7 +632,7 @@ where
         events: mpsc::UnboundedSender<Event>,
     ) -> Self {
         Self {
-            calls: Calls::new(parts.identity),
+            calls: Calls::for_cloud(parts.identity, client.transport().cloud().clone()),
             captions: captions::Captions::default(),
             recording: recording::Recordings::default(),
             outbox,

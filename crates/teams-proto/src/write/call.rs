@@ -117,7 +117,12 @@ struct Plan<'a> {
 
 /// Builds `plan`'s request and classifies it (see the module docs).
 fn build(plan: Plan<'_>) -> Result<Built, CallWriteError> {
-    if !on_calling_base(plan.url) {
+    if !crate::http::calling_base_in(plan.context.cloud(), plan.url)
+        || plan
+            .body
+            .as_ref()
+            .is_some_and(|body| !own_links_fit(plan.context.cloud(), body))
+    {
         return Err(CallWriteError::Unmapped);
     }
     if let Expect::Operation(operation) = plan.expect {
@@ -139,6 +144,29 @@ fn build(plan: Plan<'_>) -> Result<Built, CallWriteError> {
             body: plan.body,
         },
     })
+}
+
+fn own_links_fit(cloud: &crate::Cloud, value: &Value) -> bool {
+    if cloud.is_microsoft() {
+        return true;
+    }
+    match value {
+        Value::Array(values) => values.iter().all(|value| own_links_fit(cloud, value)),
+        Value::Object(fields) => fields.iter().all(|(name, value)| match name.as_str() {
+            "links" | "clientContentForMediaController" => value
+                .as_object()
+                .is_some_and(|links| links.values().all(|value| own_url_fits(cloud, value))),
+            "rosterUpdate" | "url" | "meetingUrl" => own_url_fits(cloud, value),
+            _ => own_links_fit(cloud, value),
+        }),
+        _ => true,
+    }
+}
+
+fn own_url_fits(cloud: &crate::Cloud, value: &Value) -> bool {
+    value
+        .as_str()
+        .is_some_and(|text| Url::parse(text).is_ok_and(|url| cloud.contains(&url)))
 }
 
 /// [`build`] of an operation on a link, with no registry step.
@@ -444,10 +472,16 @@ impl StartCall {
         }
         let mut body = start_body(parts, None, &[], Value::Null);
         body["conversationRequest"]["suppressDialout"] = json!(true);
+        let meeting_path = format!("/meet/{}", code.id);
+        let mut meeting_url = context
+            .cloud()
+            .service_url(&format!("https://teams.microsoft.com{meeting_path}"), &meeting_path)
+            .map_err(|_| CallWriteError::Unmapped)?;
+        meeting_url.set_query(Some(&format!("p={}", code.passcode)));
         body["meetingData"] = json!({
             "meetingCode": code.id,
             "passcode": code.passcode,
-            "meetingUrl": format!("https://teams.microsoft.com/meet/{}?p={}", code.id, code.passcode),
+            "meetingUrl": meeting_url.as_str(),
         });
         body["meetingPreferences"] = json!({"shouldResurrect": "resurrect"});
         Self::start(context, parts, body, Expect::ChatStart, None)
@@ -485,7 +519,10 @@ impl StartCall {
         expect: Expect,
         echo: Option<&Mri>,
     ) -> Result<Self, CallWriteError> {
-        let url = Url::parse(CALL_START_URL).map_err(|_| CallWriteError::Unmapped)?;
+        let url = context
+            .cloud()
+            .service_url(CALL_START_URL, "/flightproxy/api/v2/epconv")
+            .map_err(|_| CallWriteError::Unmapped)?;
         let built = build(Plan {
             context,
             method: Method::Post,

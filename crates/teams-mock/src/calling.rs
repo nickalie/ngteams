@@ -34,7 +34,7 @@
 use serde_json::{Value, json};
 use wiremock::{Request, ResponseTemplate};
 
-use crate::chatsvc::{json as json_answer, status};
+use crate::chatsvc::status;
 use crate::roster::{self, Party};
 use crate::trouter::{CALLING_APP, fill_guids, invitation};
 use crate::world::State;
@@ -282,12 +282,17 @@ pub(crate) fn relay_tokens(state: &State, request: &Request) -> Option<ResponseT
         &answers["trap_tokens"].to_string(),
         &[("<token:1>", user), ("<token:2>", password)],
     );
-    Some(json_answer(200, &tokens))
+    Some(json_answer(state, 200, &tokens))
 }
 
 /// The calling service's answer to `request`, if its path is under `/api/v2/`.
 pub(crate) fn serve(state: &mut State, request: &Request) -> Option<ResponseTemplate> {
-    let path = request.url.path().strip_prefix("/api/v2/")?;
+    let prefix = if state.cloud.is_microsoft() {
+        "/api/v2/"
+    } else {
+        "/flightproxy/api/v2/"
+    };
+    let path = request.url.path().strip_prefix(prefix)?;
     let Some(account) = state.caller_of(request) else {
         return Some(status(401));
     };
@@ -359,7 +364,7 @@ fn start(state: &mut State, caller: &str, body: &Value) -> Option<ResponseTempla
         caller,
         roster::named(body, "conversationUpdate").as_deref(),
     );
-    Some(json_answer(200, &conversation_answer(&call.conversation)))
+    Some(json_answer(state, 200, &conversation_answer(&call.conversation)))
 }
 
 /// A new call of `caller` to `callees`; its index.
@@ -600,7 +605,7 @@ fn join(state: &mut State, account: &str, conversation: &str, body: &Value) -> O
             roster::named(body, "conversationUpdate").as_deref(),
         );
     }
-    Some(json_answer(200, &conversation_answer(conversation)))
+    Some(json_answer(state, 200, &conversation_answer(conversation)))
 }
 
 /// An operation on a conversation (`leave`, `add`, the endpoint's state and metadata, its participant properties).
@@ -673,6 +678,7 @@ fn conversation_op(
             let id = fill_guids("<guid:hand>");
             roster::hand(state, index, account, Some(&id));
             return Some(json_answer(
+                state,
                 200,
                 &json!({"publishStateResponse": {"typeRank": 1, "stateId": id}}),
             ));
@@ -696,7 +702,7 @@ fn conversation_op(
 fn meeting_op(state: &mut State, index: usize, account: &str, op: &str, body: &Value) -> ResponseTemplate {
     if op == "mute" {
         roster::mute_all(state, index, account, body);
-        return json_answer(202, &json!({"muteUnmuteResponse": {}}));
+        return json_answer(state, 202, &json!({"muteUnmuteResponse": {}}));
     }
     roster::meeting_changed(state, index, body);
     status(202)
@@ -857,6 +863,7 @@ fn controller_op(
             let resume = cc_url(&format!("holdSession/{id}/1/a6/1/resume"));
             roster::enter(state, index, MUSIC_ON_HOLD, None);
             Some(json_answer(
+                state,
                 202,
                 &json!({"holdResponse": {"links": {"resume": resume}}, "debugContent": null}),
             ))
@@ -1093,7 +1100,7 @@ fn attach(state: &mut State, index: usize, leg: usize, body: &Value) -> Option<R
             }
         }
     }
-    Some(json_answer(200, &answer))
+    Some(json_answer(state, 200, &answer))
 }
 
 /// A callee's endpoint answers its leg: the call is up; the caller's acceptance carries the callee's answer; the
@@ -1159,7 +1166,7 @@ fn accept(state: &mut State, index: usize, leg: usize, body: &Value) -> Option<R
         links.insert("hold".to_owned(), json!(hold_url(&call.id)));
         links.insert("transfer".to_owned(), json!(transfer_url(&call.id)));
     }
-    Some(json_answer(200, &answer))
+    Some(json_answer(state, 200, &answer))
 }
 
 /// The caller's acceptance of `call` by `callee` (`deliveries.json`'s acceptance), its media the callee's answer;
@@ -1331,4 +1338,40 @@ pub(crate) fn hang_up(state: &mut State, id: &str) -> bool {
     };
     end_call(state, index, 0, "CallEndReasonLocalUserInitiated");
     true
+}
+
+fn json_answer(state: &State, code: u16, body: &Value) -> ResponseTemplate {
+    crate::chatsvc::json(code, &in_cloud(&state.cloud, body.clone()))
+}
+
+pub(crate) fn in_cloud(cloud: &teams_auth::cloud::Cloud, value: Value) -> Value {
+    use base64::Engine as _;
+    let Some(origin) = cloud.origin() else { return value };
+    let base = format!("{}flightproxy", origin.as_str());
+    match value {
+        Value::String(text) => Value::String(text.replace("https://api.flightproxy.teams.microsoft.com", &base)),
+        Value::Array(values) => Value::Array(values.into_iter().map(|value| in_cloud(cloud, value)).collect()),
+        Value::Object(mut fields) => {
+            if let Some(Value::String(gp)) = fields.get("gp") {
+                let engine = base64::engine::general_purpose::STANDARD;
+                if let Some(decoded) = engine
+                    .decode(gp)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                {
+                    fields.insert(
+                        "gp".into(),
+                        Value::String(engine.encode(in_cloud(cloud, decoded).to_string())),
+                    );
+                }
+            }
+            Value::Object(
+                fields
+                    .into_iter()
+                    .map(|(key, value)| (key, in_cloud(cloud, value)))
+                    .collect(),
+            )
+        }
+        other => other,
+    }
 }

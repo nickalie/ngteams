@@ -416,6 +416,7 @@ impl Out {
 #[derive(Debug)]
 pub struct Calls {
     identity: Identity,
+    cloud: teams_proto::Cloud,
     agent: Option<CallAgent>,
     call: Option<Call>,
     /// The running calls invitations named, by their group chat: the conversation a join goes to (or the chat's own
@@ -446,7 +447,14 @@ struct Followed {
 impl Calls {
     #[must_use]
     pub fn new(identity: Identity) -> Self {
+        Self::for_cloud(identity, teams_proto::Cloud::Microsoft)
+    }
+
+    /// One account's call machine, bound to its service origin.
+    #[must_use]
+    pub fn for_cloud(identity: Identity, cloud: teams_proto::Cloud) -> Self {
         Self {
+            cloud,
             identity,
             agent: None,
             call: None,
@@ -478,7 +486,7 @@ impl Calls {
     /// # Errors
     /// [`CallError::NoEndpoint`] for a push URL that isn't `https://<host>/v4/f/<endpoint>/`.
     pub fn set_push_url(&mut self, push_url: &str) -> Result<(), CallError> {
-        let agent = CallAgent::new(push_url, &guid()?).ok_or(CallError::NoEndpoint)?;
+        let agent = CallAgent::new_in(&self.cloud, push_url, &guid()?).ok_or(CallError::NoEndpoint)?;
         self.agent = Some(agent);
         Ok(())
     }
@@ -592,7 +600,7 @@ impl Calls {
     /// meeting, which rings nobody: `teams_proto::running_call`): [`Self::join`] goes there. The chat's newest start
     /// is newer than what an earlier invitation named.
     pub fn posted_running(&mut self, chat: &str, conversation: CallLink) {
-        if teams_proto::is_group_chat_id(chat) {
+        if teams_proto::is_group_chat_id(chat) && CallLink::parse_in(&self.cloud, conversation.as_str()).is_some() {
             self.running.insert(chat.to_owned(), conversation);
         }
     }
@@ -647,7 +655,8 @@ impl Calls {
             self.finish(end.end());
             return;
         }
-        let entry = read::conversation_controller(body).zip(self.call.as_mut().and_then(|call| call.meet_now.take()));
+        let entry = read::conversation_controller_in(&self.cloud, body)
+            .zip(self.call.as_mut().and_then(|call| call.meet_now.take()));
         let Some((conversation, (channel, offer))) = entry else {
             self.fail(Step::Subscribe, now);
             return;
@@ -741,7 +750,9 @@ impl Calls {
             return Err(CallError::Busy);
         }
         let agent = self.agent.clone().ok_or(CallError::NoEndpoint)?;
-        let context = CallContext::fresh()?.with_region(self.identity.region.clone(), self.identity.partition.clone());
+        let context = CallContext::fresh()?
+            .for_cloud(self.cloud.clone())
+            .with_region(self.identity.region.clone(), self.identity.partition.clone());
         let me = self.participant()?;
         let number = self.reserved.take().unwrap_or_else(|| {
             self.next_call += 1;
@@ -1512,7 +1523,7 @@ impl Calls {
     fn held(&mut self, step: Step, body: Option<&[u8]>) {
         let Some(call) = self.call.as_mut() else { return };
         match (step, body) {
-            (Step::Hold, Some(body)) => call.resume = read::resume_link(body),
+            (Step::Hold, Some(body)) => call.resume = read::resume_link_in(&self.cloud, body),
             (Step::Resume, Some(_)) => call.resume = None,
             _ => {}
         }
@@ -1563,7 +1574,7 @@ impl Calls {
         let Some(call) = self.call.as_mut().filter(|call| call.phase == Phase::Connected) else {
             return;
         };
-        let Some(asked) = read::transfer_asked(&delivery.body) else {
+        let Some(asked) = read::transfer_asked_in(&self.cloud, &delivery.body) else {
             log::info!("call {}: a transfer it doesn't read", call.id.get());
             return;
         };
@@ -1590,7 +1601,7 @@ impl Calls {
 
     /// A start's or a join's answer: the conversation it opened.
     fn started(&mut self, step: Step, body: &[u8], now: Instant) {
-        let Some(conversation) = read::conversation(body) else {
+        let Some(conversation) = read::conversation_in(&self.cloud, body) else {
             self.fail(step, now);
             return;
         };
@@ -1701,7 +1712,7 @@ impl Calls {
     /// told from such a replay and is taken as one; a different offer on a link seen before is a new renegotiation.
     fn renegotiated(&mut self, delivery: &Delivery, observed: Observed, now: Instant) {
         let Some(call) = self.call.as_mut() else { return };
-        let read = read::negotiation(&delivery.body)
+        let read = read::negotiation_in(&self.cloud, &delivery.body)
             .filter(|_| observed == Observed::Renegotiation)
             .map(|(offer, link)| Negotiation { offer, link });
         if let Some(negotiation) = &read {
@@ -1741,7 +1752,7 @@ impl Calls {
             return;
         }
         let Some(call) = self.call.as_mut() else { return };
-        let Some(retarget) = read::retarget(&delivery.body) else {
+        let Some(retarget) = read::retarget_in(&self.cloud, &delivery.body) else {
             return;
         };
         if retarget.renegotiation.is_some() {
@@ -1777,7 +1788,7 @@ impl Calls {
             return;
         }
         call.reoffer = None;
-        let Some((media, acknowledgement)) = read::media_answer(&delivery.body) else {
+        let Some((media, acknowledgement)) = read::media_answer_in(&self.cloud, &delivery.body) else {
             self.fail(Step::Renegotiate, now);
             return;
         };
@@ -1860,7 +1871,7 @@ impl Calls {
 
     /// An invitation the tracker offered (see the crate docs).
     fn invited(&mut self, delivery: &Delivery, now: Instant) {
-        let Some(invitation) = read::invitation(&delivery.body) else {
+        let Some(invitation) = read::invitation_in(&self.cloud, &delivery.body) else {
             return;
         };
         if invitation.callee != self.identity.mri {
@@ -1885,7 +1896,9 @@ impl Calls {
     /// A new invitation rings: its receipt, then the `attach` (it is shown once the `attach` is answered).
     fn ring(&mut self, delivery: &Delivery, invitation: Invitation, now: Instant) -> Result<(), CallError> {
         let agent = self.agent.clone().ok_or(CallError::NoEndpoint)?;
-        let context = CallContext::fresh()?.with_region(self.identity.region.clone(), self.identity.partition.clone());
+        let context = CallContext::fresh()?
+            .for_cloud(self.cloud.clone())
+            .with_region(self.identity.region.clone(), self.identity.partition.clone());
         let mut me = self.participant()?;
         if let Some(id) = invitation.callee_participant.clone() {
             me.participant_id = Some(id);
@@ -1924,7 +1937,7 @@ impl Calls {
         let Some(invitation) = self.call.as_ref().and_then(|call| call.invitation().cloned()) else {
             return;
         };
-        let Some(leg) = read::attached(body, &invitation.conversation) else {
+        let Some(leg) = read::attached_in(&self.cloud, body, &invitation.conversation) else {
             self.let_go();
             return;
         };
@@ -2014,7 +2027,7 @@ impl Calls {
 
     /// The `accept`'s answer: the call is up.
     fn connected_by_accept(&mut self, body: &[u8], now: Instant) {
-        let answer = read::accept_answer(body);
+        let answer = read::accept_answer_in(&self.cloud, body);
         let Some(call) = self.call.as_mut() else { return };
         if call.phase != Phase::Answering {
             return;
@@ -2082,7 +2095,7 @@ impl Calls {
         if !matches!(phase, Phase::Ringing | Phase::Joining) {
             return;
         }
-        let acceptance = read::acceptance(&delivery.body);
+        let acceptance = read::acceptance_in(&self.cloud, &delivery.body);
         let Some(acceptance) = acceptance.filter(|_| observed == Observed::Acceptance) else {
             self.fail(Step::Acknowledge, now);
             return;

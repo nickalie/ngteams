@@ -302,6 +302,12 @@ impl CsaTeams {
     /// calling service, its meeting's post and its organizer and tenant named.
     #[must_use]
     pub fn meetup_in(body: &[u8], channel: &str) -> Option<ChannelMeetup> {
+        Self::meetup_for_cloud(&crate::Cloud::Microsoft, body, channel)
+    }
+
+    /// Reads with the account's service origin.
+    #[must_use]
+    pub fn meetup_for_cloud(cloud: &crate::Cloud, body: &[u8], channel: &str) -> Option<ChannelMeetup> {
         let answer: Value = serde_json::from_slice(body).ok()?;
         let channels = answer
             .get("teams")?
@@ -317,7 +323,7 @@ impl CsaTeams {
             .as_array()?
             .iter()
             .filter(|meetup| meetup.get("status").and_then(Value::as_str) == Some("Active"))
-            .find_map(ChannelMeetup::of)
+            .find_map(|meetup| ChannelMeetup::of(cloud, meetup))
     }
 }
 
@@ -333,7 +339,7 @@ pub struct ChannelMeetup {
 }
 
 impl ChannelMeetup {
-    fn of(meetup: &Value) -> Option<Self> {
+    fn of(cloud: &crate::Cloud, meetup: &Value) -> Option<Self> {
         let text = |key: &str| {
             meetup
                 .get(key)
@@ -342,7 +348,7 @@ impl ChannelMeetup {
         };
         Some(Self {
             message_id: text("messageId")?.to_owned(),
-            conversation: crate::CallLink::parse(text("conversationUrl")?)?,
+            conversation: crate::CallLink::parse_in(cloud, text("conversationUrl")?)?,
             meeting: crate::MeetingInfo {
                 organizer_id: text("organizerId")?.to_owned(),
                 tenant_id: text("tenantId")?.to_owned(),
@@ -358,6 +364,12 @@ impl ChannelMeetup {
     /// joins by the post's card). `None` when no such post reads.
     #[must_use]
     pub fn of_posts(messages: &[crate::chat::Message]) -> Option<Self> {
+        Self::of_posts_in(&crate::Cloud::Microsoft, messages)
+    }
+
+    /// Reads with the account's service origin.
+    #[must_use]
+    pub fn of_posts_in(cloud: &crate::Cloud, messages: &[crate::chat::Message]) -> Option<Self> {
         let mut ended: Vec<&str> = Vec::new();
         for message in messages {
             if message.message_type.as_str() != "Event/Call" {
@@ -368,7 +380,7 @@ impl ChannelMeetup {
             match xml_text(content, "callEventType") {
                 Some("callEnded") => ended.extend(call),
                 Some("callStarted") if call.is_none_or(|call| !ended.contains(&call)) => {
-                    return Self::of_post(message);
+                    return Self::of_post(cloud, message);
                 }
                 _ => {}
             }
@@ -376,7 +388,7 @@ impl ChannelMeetup {
         None
     }
 
-    fn of_post(message: &crate::chat::Message) -> Option<Self> {
+    fn of_post(cloud: &crate::Cloud, message: &crate::chat::Message) -> Option<Self> {
         let link = xml_text(&message.content, "conversationUrl")?.replace("&amp;", "&");
         let meeting = match message.properties.get("meeting")? {
             Value::String(text) => serde_json::from_str::<Value>(text).ok()?,
@@ -393,7 +405,7 @@ impl ChannelMeetup {
         (!message.id.is_empty()).then_some(())?;
         Some(Self {
             message_id: message.id.clone(),
-            conversation: crate::CallLink::parse(&link)?,
+            conversation: crate::CallLink::parse_in(cloud, &link)?,
             meeting: crate::MeetingInfo {
                 organizer_id: text("organizerId")?,
                 tenant_id: text("tenantId")?,
@@ -409,6 +421,15 @@ impl ChannelMeetup {
 /// `None` when no start reads so, or an end naming no call comes before any unended start.
 #[must_use]
 pub fn running_call<'m>(events: impl IntoIterator<Item = (&'m str, &'m str)>) -> Option<crate::CallLink> {
+    running_call_in(&crate::Cloud::Microsoft, events)
+}
+
+/// The newest running call whose conversation is on this account's calling service.
+#[must_use]
+pub fn running_call_in<'m>(
+    cloud: &crate::Cloud,
+    events: impl IntoIterator<Item = (&'m str, &'m str)>,
+) -> Option<crate::CallLink> {
     let mut ended: Vec<&str> = Vec::new();
     for (message_type, content) in events {
         if message_type != "Event/Call" {
@@ -419,7 +440,7 @@ pub fn running_call<'m>(events: impl IntoIterator<Item = (&'m str, &'m str)>) ->
             Some("callEnded") => ended.push(call?),
             Some("callStarted") if call.is_none_or(|call| !ended.contains(&call)) => {
                 let link = xml_text(content, "conversationUrl")?.replace("&amp;", "&");
-                return crate::CallLink::parse(&link);
+                return crate::CallLink::parse_in(cloud, &link);
             }
             _ => {}
         }

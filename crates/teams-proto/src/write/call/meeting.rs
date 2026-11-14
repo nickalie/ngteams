@@ -293,6 +293,12 @@ impl MeetingJoinInfo {
     /// link.
     #[must_use]
     pub fn read(body: &Value) -> Option<Self> {
+        Self::read_in(&crate::Cloud::Microsoft, body)
+    }
+
+    /// Reads with the account's service origin.
+    #[must_use]
+    pub fn read_in(cloud: &crate::Cloud, body: &Value) -> Option<Self> {
         let encoded = body.pointer("/meetingDetails/invitation")?.as_str()?;
         let plus = encoded.replace('+', " ");
         let html = percent_encoding::percent_decode_str(&plus).decode_utf8().ok()?;
@@ -300,7 +306,12 @@ impl MeetingJoinInfo {
         let anchor = |id: &str| {
             let selector = scraper::Selector::parse(&format!("a[id=\"{id}\"]")).ok()?;
             let href = fragment.select(&selector).next()?.value().attr("href")?.trim();
-            href.starts_with("https://").then(|| href.to_owned())
+            (if cloud.is_microsoft() {
+                href.starts_with("https://")
+            } else {
+                url::Url::parse(href).is_ok_and(|url| cloud.contains(&url))
+            })
+            .then(|| href.to_owned())
         };
         let text = fragment
             .root_element()

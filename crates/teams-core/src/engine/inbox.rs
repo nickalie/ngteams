@@ -46,6 +46,7 @@ use crate::{profiles, teams};
 pub(super) struct Inbox<C> {
     /// The account's MRI, whose read horizon and unread counts the queries answer with.
     me: String,
+    cloud: teams_proto::Cloud,
     /// The names the binary knows ([`Parts::known_names`](super::Parts::known_names)), for a person answered meanwhile.
     known: HashMap<String, String>,
     requests: Mutex<Requests>,
@@ -69,6 +70,10 @@ struct Requests {
 }
 
 impl<C: Credentials + 'static> Inbox<C> {
+    pub(super) fn cloud(&self) -> &teams_proto::Cloud {
+        &self.cloud
+    }
+
     pub(super) fn new(
         me: String,
         known: HashMap<String, String>,
@@ -78,6 +83,7 @@ impl<C: Credentials + 'static> Inbox<C> {
         teams: Teams<C>,
     ) -> Self {
         Self {
+            cloud: teams.cloud().clone(),
             me,
             known,
             events,
@@ -289,7 +295,7 @@ impl<C: Credentials + 'static> Inbox<C> {
             }
             Request::Call(action, asked, reply) => match self.calls.get() {
                 Some(calls) => {
-                    super::hand_call(store, &self.me, calls, action, asked, reply);
+                    super::hand_call(&self.cloud, store, &self.me, calls, (action, asked), reply);
                     None
                 }
                 None => Some(Request::Call(action, asked, reply)),
@@ -402,7 +408,7 @@ impl<C: Credentials + 'static> Inbox<C> {
             } => give(reply, store.reactions(&conversation, &id)),
             Query::Members(conversation, reply) => give(reply, store.members(&conversation)),
             Query::GroupChatWith(members, reply) => give(reply, store.group_chat_with(&members)),
-            Query::CallRuns(chat, reply) => give(reply, super::call_runs(store, &chat)),
+            Query::CallRuns(chat, reply) => give(reply, super::call_runs(&self.cloud, store, &chat)),
             Query::CallEnded(chat, start, reply) => give(reply, super::call_ended(store, &chat, &start)),
             Query::RecentReactions(limit, reply) => give(reply, store.recent_reactions(me, limit)),
             Query::FrequentReactions(limit, reply) => give(reply, store.frequent_reactions(me, limit)),
@@ -442,7 +448,7 @@ impl<C: Credentials + 'static> Inbox<C> {
                 start_ms,
                 end_ms,
                 reply,
-            } => give(reply, crate::calendar::stored(store, start_ms, end_ms)),
+            } => give(reply, crate::calendar::stored_in(&self.cloud, store, start_ms, end_ms)),
             Query::Search {
                 query,
                 within,

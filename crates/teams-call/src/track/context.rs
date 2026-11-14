@@ -7,6 +7,7 @@ use teams_proto::{CallState, Mri};
 
 #[derive(Debug, Default)]
 pub(super) struct Context {
+    pub(super) cloud: teams_proto::Cloud,
     chat: Option<String>,
     actor: Option<(String, String)>,
     conversation: Option<String>,
@@ -15,14 +16,15 @@ pub(super) struct Context {
     callbacks: BTreeSet<String>,
 }
 impl Context {
-    pub(super) fn incoming(chat: Option<String>, conversation: String) -> Self {
+    pub(super) fn incoming(cloud: teams_proto::Cloud, chat: Option<String>, conversation: String) -> Self {
         Self {
+            cloud,
             chat,
             conversation: Some(conversation),
             ..Self::default()
         }
     }
-    pub(super) fn from_request(body: &Value, own: &Mri) -> Self {
+    pub(super) fn from_request(cloud: teams_proto::Cloud, body: &Value, own: &Mri) -> Self {
         let chat = body
             .pointer("/groupChat/threadId")
             .and_then(Value::as_str)
@@ -33,6 +35,7 @@ impl Context {
                 teams_proto::one_to_one_id(own.as_str(), peer.get("id")?.as_str()?)
             });
         let mut context = Self {
+            cloud,
             chat,
             ..Self::default()
         };
@@ -79,7 +82,7 @@ impl Context {
             self.conversation = body
                 .get("conversationController")
                 .and_then(Value::as_str)
-                .and_then(teams_proto::CallLink::parse)
+                .and_then(|link| teams_proto::CallLink::parse_in(&self.cloud, link))
                 .map(|link| link.as_str().to_owned());
         }
         if let Some(link) = body.pointer("/links/addParticipant").and_then(Value::as_str)
@@ -212,7 +215,7 @@ impl Tracker {
             return;
         }
         let entry = if observed == Observed::Offered {
-            super::offer::read_invitation(delivery)
+            super::offer::read_invitation_in(&self.cloud, delivery)
                 .and_then(|invitation| inner.offers.iter().rposition(|offer| offer.is_redelivery(&invitation)))
                 .map(Entry::Offer)
         } else {
@@ -259,6 +262,9 @@ impl Tracker {
 }
 impl CallState for Tracker {
     fn call_allowed(&self, url: &url::Url, body: Option<&Value>) -> bool {
+        if !super::calling_url_fits(&self.cloud, url) {
+            return false;
+        }
         let empty = Value::Null;
         let body = body.unwrap_or(&empty);
         let inner = self.lock();
@@ -288,13 +294,20 @@ impl CallState for Tracker {
             || url.password().is_some()
             || url.query().is_some()
             || url.fragment().is_some()
-            || !url
-                .host_str()
-                .is_some_and(|host| host.ends_with(".trouter.teams.microsoft.com"))
-            || !url.port().is_none_or(|port| matches!(port, 443 | 3443))
+            || if self.cloud.is_microsoft() {
+                !url.host_str()
+                    .is_some_and(|host| host.ends_with(".trouter.teams.microsoft.com"))
+                    || !url.port().is_none_or(|port| matches!(port, 443 | 3443))
+            } else {
+                !self.cloud.contains(&url)
+            }
             || !url
                 .path()
-                .strip_prefix("/v4/f/")
+                .strip_prefix(if self.cloud.is_microsoft() {
+                    "/v4/f/"
+                } else {
+                    "/trouter/v4/f/"
+                })
                 .and_then(|tail| tail.strip_suffix('/'))
                 .is_some_and(|endpoint| {
                     !endpoint.is_empty()

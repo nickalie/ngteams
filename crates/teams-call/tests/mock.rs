@@ -438,3 +438,71 @@ fn keep_alives(lab: &Lab, mri: &str) -> usize {
         .filter(|(op, by)| op == "keepAlive" && by == mri)
         .count()
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_own_origin_call_rings_accepts_and_hangs_up_through_native_signaling() {
+    let cloud = teams_proto::Cloud::own("https://calls.example:8443").unwrap();
+    let mock = ChatServiceMock::start_for_cloud(cloud.clone()).await.unwrap();
+    let trouter = mock.start_trouter().unwrap();
+    let mut a = Client::start_in(&mock, trouter.origin(), LAB_A, cloud.clone()).await;
+    let mut b = Client::start_in(&mock, trouter.origin(), LAB_B, cloud.clone()).await;
+    a.place(Placement::Chat {
+        callees: vec![Mri::new(LAB_B)],
+        group_chat: None,
+    });
+    state(&mut a, CallState::Ringing).await;
+    let ring = incoming(&mut b).await;
+    assert_eq!(ring.caller.as_str(), LAB_A);
+    assert_eq!(ring.offer.unwrap().blob, support::offer().blob);
+    assert_eq!(mock.calls()[0].legs[0].accepted_by, None);
+    b.answer(ring.call);
+    state(&mut b, CallState::Connected).await;
+    let media = a
+        .next(|event| match event {
+            CallEvent::RemoteMedia { media, .. } => Some(media),
+            _ => None,
+        })
+        .await;
+    assert_eq!(media.blob, answer().blob);
+    state(&mut a, CallState::Connected).await;
+    b.hang_up(ring.call);
+    assert_eq!(ended(&mut b).await, End::HungUp);
+    assert!(matches!(ended(&mut a).await, End::Remote(_)));
+    assert_eq!(mock.calls()[0].phase, CallPhase::Ended);
+    let sent = mock.received_requests().await;
+    assert!(
+        sent.iter()
+            .any(|request| request.url.path() == "/flightproxy/api/v2/epconv")
+    );
+    assert!(sent.iter().any(|request| request.url.path().ends_with("/accept")));
+    assert!(sent.iter().any(|request| request.url.path().ends_with("/leave")));
+    for request in &sent {
+        assert!(
+            request.url.path().starts_with("/flightproxy/api/v2/")
+                || request.url.path() == "/registrar/prod/V2/registrations"
+        );
+        let body = String::from_utf8_lossy(&request.body);
+        assert!(
+            !body.contains("teams.microsoft.com"),
+            "no Microsoft service URL in an Own request"
+        );
+        if let Ok(body) = serde_json::from_slice::<Value>(&request.body) {
+            assert_own_callbacks(&cloud, &body);
+        }
+    }
+}
+
+fn assert_own_callbacks(cloud: &teams_proto::Cloud, value: &Value) {
+    match value {
+        Value::String(text) if text.starts_with("https://") => {
+            let url = url::Url::parse(text).unwrap();
+            assert!(cloud.contains(&url));
+            if text.contains("/callAgent/") {
+                assert!(url.path().starts_with("/trouter/v4/f/"));
+            }
+        }
+        Value::Array(values) => values.iter().for_each(|value| assert_own_callbacks(cloud, value)),
+        Value::Object(fields) => fields.values().for_each(|value| assert_own_callbacks(cloud, value)),
+        _ => {}
+    }
+}

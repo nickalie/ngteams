@@ -37,6 +37,12 @@ impl MeetingThread {
     /// without a work account's organizer or a tenant (both GUIDs).
     #[must_use]
     pub fn read_answer(body: &[u8]) -> Option<MeetingDetails> {
+        Self::read_answer_in(&crate::Cloud::Microsoft, body)
+    }
+
+    /// Reads with the account's service origin.
+    #[must_use]
+    pub fn read_answer_in(cloud: &crate::Cloud, body: &[u8]) -> Option<MeetingDetails> {
         let answer: Value = serde_json::from_slice(body).ok()?;
         // the batch read (`v1/threads?threadIds=`) answers a list of threads; the single one, the thread itself
         let thread = answer.as_array().and_then(|threads| threads.first()).unwrap_or(&answer);
@@ -61,7 +67,7 @@ impl MeetingThread {
                 tenant_id: guid("tenantId")?,
             },
             title: text("subject"),
-            join_url: text("meetingJoinUrl").filter(|url| url.starts_with("https://")),
+            join_url: text("meetingJoinUrl").filter(|url| meeting_link_in(cloud, url)),
         })
     }
 }
@@ -105,6 +111,15 @@ impl MeetingCode {
     /// The id and passcode a short join link carries: `https://teams.microsoft.com/meet/<id>?p=<passcode>`.
     #[must_use]
     pub fn of_link(url: &str) -> Option<Self> {
+        Self::of_link_in(&crate::Cloud::Microsoft, url)
+    }
+
+    /// Reads with the account's service origin.
+    #[must_use]
+    pub fn of_link_in(cloud: &crate::Cloud, url: &str) -> Option<Self> {
+        if !cloud.is_microsoft() && !meeting_link_in(cloud, url) {
+            return None;
+        }
         let parsed = url::Url::parse(url).ok()?;
         let mut segments = parsed.path_segments()?;
         if segments.next()? != "meet" {
@@ -114,6 +129,15 @@ impl MeetingCode {
         let (_, passcode) = parsed.query_pairs().find(|(key, _)| key == "p")?;
         Self::typed(id, &passcode)
     }
+}
+
+pub(crate) fn meeting_link_in(cloud: &crate::Cloud, value: &str) -> bool {
+    if cloud.is_microsoft() {
+        return value.starts_with("https://");
+    }
+    url::Url::parse(value).is_ok_and(|url| {
+        cloud.contains(&url) && (url.path().starts_with("/meet/") || url.path().starts_with("/l/meetup-join/"))
+    })
 }
 
 /// The shortest meeting id Teams takes.

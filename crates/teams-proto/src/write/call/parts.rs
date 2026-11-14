@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use crate::Mri;
+use crate::{Cloud, Mri};
 use percent_encoding::percent_decode_str;
 use serde_json::{Map, Value, json};
 use url::Url;
@@ -34,8 +34,21 @@ impl CallLink {
     /// `None` for anything but a link in the form above.
     #[must_use]
     pub fn parse(link: &str) -> Option<Self> {
+        Self::parse_in(&Cloud::Microsoft, link)
+    }
+
+    /// Reads an exact operation link within the account's calling service.
+    #[must_use]
+    pub fn parse_in(cloud: &Cloud, link: &str) -> Option<Self> {
         let url = Url::parse(link).ok()?;
-        (url.as_str() == link && is_ep_link(&url)).then_some(Self(url))
+        let valid = if cloud.is_microsoft() {
+            is_ep_link(&url)
+        } else {
+            cloud
+                .project(&url, "/flightproxy", "https://api.flightproxy.teams.microsoft.com")
+                .is_some_and(|url| is_ep_link(&url))
+        };
+        (url.as_str() == link && valid).then_some(Self(url))
     }
 
     /// The link as it was given.
@@ -106,6 +119,7 @@ fn is_ep_link(url: &Url) -> bool {
 /// named them) when known. Each request adds its own message id (`X-Microsoft-Skype-Message-ID`, a fresh GUID).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallContext {
+    cloud: Cloud,
     chain_id: String,
     region: Option<String>,
     partition: Option<String>,
@@ -116,6 +130,7 @@ impl CallContext {
     #[must_use]
     pub fn new(chain_id: impl Into<String>) -> Self {
         Self {
+            cloud: Cloud::Microsoft,
             chain_id: chain_id.into(),
             region: None,
             partition: None,
@@ -128,6 +143,18 @@ impl CallContext {
     /// When the system's random source fails.
     pub fn fresh() -> Result<Self, getrandom::Error> {
         Ok(Self::new(guid()?))
+    }
+
+    /// Binds every request and service link of this call to the account's cloud.
+    #[must_use]
+    pub fn for_cloud(mut self, cloud: Cloud) -> Self {
+        self.cloud = cloud;
+        self
+    }
+
+    #[must_use]
+    pub const fn cloud(&self) -> &Cloud {
+        &self.cloud
     }
 
     /// The same context naming the account's region and partition.

@@ -262,13 +262,19 @@ impl CreateOnlineMeeting {
     /// object with a join link.
     #[must_use]
     pub fn read_answer(body: &[u8]) -> Option<Value> {
+        Self::read_answer_in(&crate::Cloud::Microsoft, body)
+    }
+
+    /// Reads meeting links within the account's cloud.
+    #[must_use]
+    pub fn read_answer_in(cloud: &crate::Cloud, body: &[u8]) -> Option<Value> {
         let answer: Value = serde_json::from_slice(body).ok()?;
         let meeting = answer.get("value")?;
         meeting
             .get("links")
             .and_then(|links| links.get("join"))
             .and_then(Value::as_str)
-            .is_some()
+            .is_some_and(|url| cloud.is_microsoft() || crate::meeting::meeting_link_in(cloud, url))
             .then(|| meeting.clone())
     }
 }
@@ -324,6 +330,12 @@ impl MeetNow {
     /// The meeting the answer `body` gives: `None` without a chat or a join link.
     #[must_use]
     pub fn read_answer(body: &[u8]) -> Option<MeetNowMeeting> {
+        Self::read_answer_in(&crate::Cloud::Microsoft, body)
+    }
+
+    /// Reads meeting links within the account's cloud.
+    #[must_use]
+    pub fn read_answer_in(cloud: &crate::Cloud, body: &[u8]) -> Option<MeetNowMeeting> {
         let answer: Value = serde_json::from_slice(body).ok()?;
         let meeting = answer.get("value")?;
         let text = |value: Option<&Value>| {
@@ -337,6 +349,11 @@ impl MeetNow {
         let links = meeting.get("links");
         let join = text(links.and_then(|links| links.get("join")))?;
         let share = text(links.and_then(|links| links.get("shortJoinUrl"))).unwrap_or_else(|| join.clone());
+        if !cloud.is_microsoft()
+            && (!crate::meeting::meeting_link_in(cloud, &join) || !crate::meeting::meeting_link_in(cloud, &share))
+        {
+            return None;
+        }
         Some(MeetNowMeeting { thread, join, share })
     }
 }

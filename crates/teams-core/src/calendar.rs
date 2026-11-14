@@ -329,10 +329,12 @@ where
         let client = Arc::clone(&self.client);
         tokio::task::spawn_local(async move {
             let answer = match client.read(&read).await {
-                Ok(answer) => read.read_answer(answer.body()).map_err(|error| {
-                    log::info!("the event's answer wasn't taken: {error}");
-                    EngineError::CalendarUnread
-                }),
+                Ok(answer) => read
+                    .read_answer_in(client.transport().cloud(), answer.body())
+                    .map_err(|error| {
+                        log::info!("the event's answer wasn't taken: {error}");
+                        EngineError::CalendarUnread
+                    }),
                 Err(error) => {
                     log::info!("the event couldn't be read: {error}");
                     Err(EngineError::CalendarUnread)
@@ -354,10 +356,12 @@ where
         let me = self.outbox.me().clone();
         tokio::task::spawn_local(async move {
             let answer = match client.read(&read).await {
-                Ok(answer) => read.read_answer(answer.body()).map_err(|error| {
-                    log::info!("the channel meeting's answer wasn't taken: {error}");
-                    EngineError::CalendarUnread
-                }),
+                Ok(answer) => read
+                    .read_answer_in(client.transport().cloud(), answer.body())
+                    .map_err(|error| {
+                        log::info!("the channel meeting's answer wasn't taken: {error}");
+                        EngineError::CalendarUnread
+                    }),
                 Err(error) => {
                     log::info!("the channel's meeting couldn't be read: {error}");
                     Err(EngineError::CalendarUnread)
@@ -392,7 +396,7 @@ where
                     .messages(&channel, POSTS_LOOKED_AT)
                     .await
                     .ok()
-                    .and_then(|page| ChannelMeetup::of_posts(&page.messages))
+                    .and_then(|page| ChannelMeetup::of_posts_in(client.transport().cloud(), &page.messages))
                     .filter(|meetup| meetup.meeting.organizer_id.eq_ignore_ascii_case(&me))
                     .filter(|meetup| meetup.message_id.parse::<i64>().is_ok_and(|id| id >= since));
                 if let Some(meetup) = posted {
@@ -418,7 +422,7 @@ where
         tokio::task::spawn_local(async move {
             let read = MeetingThread { chat };
             let answer = match client.read(&read).await {
-                Ok(answer) => Ok(MeetingThread::read_answer(answer.body())),
+                Ok(answer) => Ok(MeetingThread::read_answer_in(client.transport().cloud(), answer.body())),
                 Err(error) => {
                     log::info!("the meeting's chat couldn't be read: {error}");
                     Err(EngineError::MeetingUnread)
@@ -581,13 +585,13 @@ where
     /// answers `reply` with its chat and links: one attempt through the outbox (refused in the read-only mode), its
     /// failure [`EngineError::EventNotSaved`].
     pub(crate) fn meet_now(&self, subject: String, reply: Responder<MeetNowMeeting>) {
+        let cloud = self.client.transport().cloud().clone();
         let outbox = Arc::clone(&self.outbox);
         tokio::task::spawn_local(async move {
             let request = MeetNow { subject };
             let answer = match send(&outbox, &request, "meet now").await {
-                Ok(body) => {
-                    MeetNow::read_answer(&body).ok_or_else(|| not_saved("meet now", "the meeting doesn't read"))
-                }
+                Ok(body) => MeetNow::read_answer_in(&cloud, &body)
+                    .ok_or_else(|| not_saved("meet now", "the meeting doesn't read")),
                 Err(error) => Err(error),
             };
             let _ = reply.send(answer);
@@ -666,7 +670,14 @@ where
                     None => Err(not_saved(kind, "no event")),
                 },
             };
-            Box::new(WriteOver::of(answer, creates, keeps, touched, reply))
+            Box::new(WriteOver::of(
+                client.transport().cloud(),
+                answer,
+                creates,
+                keeps,
+                touched,
+                reply,
+            ))
         });
     }
 }
@@ -675,6 +686,7 @@ impl WriteOver {
     /// What a write answered with `answer` (its answer's body) gives: the event it `creates`, and the one it `keeps`
     /// in the store (a creation's on the account's own calendar), for the engine to settle and answer `reply` with.
     fn of(
+        cloud: &teams_proto::Cloud,
         answer: Result<Vec<u8>, EngineError>,
         creates: bool,
         keeps: bool,
@@ -685,11 +697,11 @@ impl WriteOver {
             .as_ref()
             .ok()
             .filter(|_| keeps)
-            .and_then(|body| CalendarEvent::created_kept(body))
+            .and_then(|body| CalendarEvent::created_kept_in(cloud, body))
             .and_then(|(event, entry)| kept(&[event], vec![entry]).pop());
         Self {
             answer: answer.map(|body| EventWritten {
-                created: creates.then(|| CalendarEvent::created(&body)).flatten(),
+                created: creates.then(|| CalendarEvent::created_in(cloud, &body)).flatten(),
             }),
             touched,
             kept: new_event,
@@ -736,14 +748,14 @@ pub(crate) async fn find_channel_meetup<C: Credentials + 'static>(
     channel: &str,
 ) -> Result<Option<ChannelMeetup>, String> {
     let csa = match client.read(&CsaTeams).await {
-        Ok(answer) => match CsaTeams::meetup_in(answer.body(), channel) {
+        Ok(answer) => match CsaTeams::meetup_for_cloud(client.transport().cloud(), answer.body(), channel) {
             Some(meetup) => return Ok(Some(meetup)),
             None => Ok(()),
         },
         Err(error) => Err(format!("the channel's meeting couldn't be read: {error}")),
     };
     match ChatReads::new(client).messages(channel, POSTS_LOOKED_AT).await {
-        Ok(page) => Ok(ChannelMeetup::of_posts(&page.messages)),
+        Ok(page) => Ok(ChannelMeetup::of_posts_in(client.transport().cloud(), &page.messages)),
         Err(error) => {
             log::info!("the channel's posts couldn't be read for its meeting: {error}");
             csa.map(|()| None)
@@ -960,7 +972,7 @@ async fn online_meeting<C: Credentials + 'static>(client: &Client<HttpTransport<
             return None;
         }
     };
-    CreateOnlineMeeting::read_answer(answer.body())
+    CreateOnlineMeeting::read_answer_in(client.transport().cloud(), answer.body())
 }
 
 /// Sends `write` until it is answered or no further attempt may follow ([`CallRetries`]); the answer's body on a 2xx.
@@ -1002,7 +1014,7 @@ async fn read<C: Credentials + 'static>(
         log::info!("the calendar couldn't be read: {error}");
         EngineError::CalendarUnread
     })?;
-    let read = CalendarView::read_answer(answer.body()).map_err(|error| {
+    let read = CalendarView::read_answer_in(client.transport().cloud(), answer.body()).map_err(|error| {
         log::info!("the calendar's answer wasn't taken: {error}");
         EngineError::CalendarUnread
     })?;
@@ -1019,14 +1031,24 @@ async fn read<C: Credentials + 'static>(
 /// # Errors
 ///
 /// [`StoreError`] when the store can't be read.
+#[cfg(test)]
 pub(crate) fn stored(store: &Store, start_ms: i64, end_ms: i64) -> Result<Vec<CalendarEvent>, StoreError> {
+    stored_in(&teams_proto::Cloud::Microsoft, store, start_ms, end_ms)
+}
+
+pub(crate) fn stored_in(
+    cloud: &teams_proto::Cloud,
+    store: &Store,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<Vec<CalendarEvent>, StoreError> {
     if end_ms <= start_ms {
         return Ok(Vec::new());
     }
     Ok(store
         .calendar_events(start_ms, end_ms)?
         .iter()
-        .filter_map(|stored| CalendarEvent::stored(&stored.entry))
+        .filter_map(|stored| CalendarEvent::stored_in(cloud, &stored.entry))
         .collect())
 }
 

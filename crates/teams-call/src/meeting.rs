@@ -101,13 +101,13 @@ pub(crate) struct Meeting {
 }
 
 /// What a `conversationUpdate` (or a start's answer) tells of the meeting, each part only where it says it.
-fn conversation_update(body: &[u8]) -> Option<ConversationUpdate> {
+fn conversation_update(cloud: &teams_proto::Cloud, body: &[u8]) -> Option<ConversationUpdate> {
     let body: Value = serde_json::from_slice(body).ok()?;
     let timer = body.pointer("/meetingStates/timer").and_then(MeetingTimer::read);
     Some(ConversationUpdate {
         timer,
         locked: teams_proto::meeting_locked(&body),
-        join: MeetingJoinInfo::read(&body),
+        join: MeetingJoinInfo::read_in(cloud, &body),
         options: teams_proto::MeetingOptions::of_capability(&body),
     })
 }
@@ -145,13 +145,13 @@ fn recorder(metadata: Option<&Value>) -> (Option<Recording>, Option<Transcriptio
 
 impl Meeting {
     /// Takes what a `conversationUpdate` (or a start's answer) `body` tells; whether the state changed.
-    pub(crate) fn conversation(&mut self, body: &[u8]) -> bool {
+    pub(crate) fn conversation(&mut self, cloud: &teams_proto::Cloud, body: &[u8]) -> bool {
         let Some(ConversationUpdate {
             timer,
             locked,
             join,
             options,
-        }) = conversation_update(body)
+        }) = conversation_update(cloud, body)
         else {
             return false;
         };
@@ -258,7 +258,8 @@ impl Calls {
 
     /// A `conversationUpdate` at the call's own callback: the meeting's state told when it changed.
     pub(crate) fn conversation_updated(&mut self, delivery: &Delivery) {
-        self.meeting_told(|meeting| meeting.conversation(&delivery.body));
+        let cloud = self.cloud.clone();
+        self.meeting_told(|meeting| meeting.conversation(&cloud, &delivery.body));
     }
 
     /// A roster update's word on the account itself: the meeting's state told when it changed.
@@ -329,7 +330,8 @@ impl Calls {
 
     /// A start's or a join's answer, as the conversation it is: what it tells of the meeting.
     pub(crate) fn meeting_answered(&mut self, body: &[u8]) {
-        self.meeting_told(|meeting| meeting.conversation(body));
+        let cloud = self.cloud.clone();
+        self.meeting_told(|meeting| meeting.conversation(&cloud, body));
         if let Ok(answer) = serde_json::from_slice::<Value>(body)
             && let Some(roster) = answer.get("roster")
         {
@@ -353,8 +355,10 @@ impl Calls {
                 .join
                 .as_ref()
                 .and_then(|join| join.reference_link.as_deref())
-                .filter(|link| link.starts_with("https://teams.microsoft.com/l/meetup-join/"))
-                .and_then(teams_proto::join_url_chat)
+                .filter(|link| {
+                    !self.cloud.is_microsoft() || link.starts_with("https://teams.microsoft.com/l/meetup-join/")
+                })
+                .and_then(|link| teams_proto::join_url_chat_in(&self.cloud, link))
                 .filter(|chat| teams_proto::is_meeting_chat_id(chat))
         {
             call.caption_thread = Some(chat.clone());
