@@ -147,3 +147,25 @@ pub(super) async fn page(
         json!({"messages": messages, "tenantId": caller.tenant, "_metadata": metadata}),
     ))
 }
+
+pub(super) async fn around(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(path): Path<Params>,
+    Query(query): Query<Params>,
+) -> Result<Json<Value>, Error> {
+    let chat = reads::target(&path)?;
+    member_of(&app, &caller, chat).await?;
+    let at = reads::number(&path, "time", 0)?;
+    let size = reads::number(&query, "pageSize", 200)?.clamp(1, 200);
+    if query.get("direction").map(String::as_str) != Some("BIDIRECTIONAL") {
+        return Err(Error::BadRequest);
+    }
+    let rows = message_repo::around(&app.db, chat, at, size).await?;
+    let messages: Vec<_> = rows
+        .iter()
+        .map(message_repo::Message::value)
+        .collect::<Result<_, _>>()?;
+    Ok(Json(json!({"messages": messages, "tenantId": caller.tenant,
+        "_metadata": {"lastCompleteSegmentStartTime": 0, "lastCompleteSegmentEndTime": 0}})))
+}

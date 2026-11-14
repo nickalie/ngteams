@@ -67,6 +67,10 @@ pub(super) fn router() -> Router<Arc<App>> {
             "/api/chatsvc/{region}/v1/users/ME/conversations/{chat}",
             get(properties::conversation),
         )
+        .route(
+            "/api/chatsvc/{region}/v1/users/ME/conversations/{chat}/messages/epochTimeStamp/{time}",
+            get(messages::around),
+        )
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
 }
 

@@ -184,3 +184,33 @@ where
         })
         .await)
 }
+
+pub(super) async fn around(db: &Db, chat: &str, at: i64, size: i64) -> Result<Vec<Message>, DbError> {
+    with_conn!(db, |conn| {
+        let mut past = chat_messages::table
+            .filter(chat_messages::chat_id.eq(chat))
+            .filter(chat_messages::id.le(at))
+            .order(chat_messages::id.desc())
+            .limit(size)
+            .select(Message::as_select())
+            .load::<Message>(conn)
+            .await?;
+        let mut future = chat_messages::table
+            .filter(chat_messages::chat_id.eq(chat))
+            .filter(chat_messages::id.gt(at))
+            .order(chat_messages::id.asc())
+            .limit(size)
+            .select(Message::as_select())
+            .load::<Message>(conn)
+            .await?;
+        let size = usize::try_from(size).unwrap_or(200);
+        let initial_past = size.div_ceil(2).min(past.len());
+        let future_count = (size - initial_past).min(future.len());
+        let past_count = (size - future_count).min(past.len());
+        past.truncate(past_count);
+        future.truncate(future_count);
+        past.extend(future);
+        past.sort_unstable_by_key(|row| std::cmp::Reverse(row.id));
+        Ok(past)
+    })
+}

@@ -106,3 +106,37 @@ async fn an_engine_posts_messages_and_another_engine_syncs_them_with_backward_an
         pair.stop().await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn native_around_time_reads_choose_messages_on_both_sides_of_the_requested_time() {
+    for backend in backends() {
+        let pair = Pair::start(backend).await;
+        let first = pair.send("earliest").await;
+        let middle = pair.send("middle").await;
+        let last = pair.send("latest").await;
+        let reader = client(&pair.server, "b@own.test", &pair.b_id).await;
+        let reads = ChatReads::new(&reader);
+        let page = reads
+            .messages_around(&pair.chat, middle.parse().unwrap(), 3)
+            .await
+            .unwrap();
+        assert_eq!(
+            page.messages.iter().map(|message| &message.id).collect::<Vec<_>>(),
+            vec![&last, &middle, &first]
+        );
+        let early = reads.messages_around(&pair.chat, 0, 2).await.unwrap();
+        assert_eq!(
+            early.messages.iter().map(|message| &message.id).collect::<Vec<_>>(),
+            vec![&middle, &first]
+        );
+        let late = reads
+            .messages_around(&pair.chat, last.parse::<u64>().unwrap() + 1000, 2)
+            .await
+            .unwrap();
+        assert_eq!(
+            late.messages.iter().map(|message| &message.id).collect::<Vec<_>>(),
+            vec![&last, &middle]
+        );
+        pair.stop().await;
+    }
+}
