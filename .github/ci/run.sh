@@ -12,7 +12,9 @@ case "${1:-}" in
         CARGO_TARGET_DIR=target/ci-bootstrap-build cargo test --locked -p gpui-pre-linux --lib local_selection_tests
         package_args=()
         while read -r package; do package_args+=(-p "$package"); done < <(python3 scripts/coverage-report.py list)
-        cargo llvm-cov clean --workspace
+        if [[ "${COVERAGE_WORKSPACE_RESTORED:-0}" != 1 ]]; then
+            cargo llvm-cov clean --workspace
+        fi
         eval "$(cargo llvm-cov show-env --sh)"
         cargo test --locked --tests --no-run "${package_args[@]}" --message-format=json > target/test-artifacts.json
         python3 .github/ci/targets.py inventory target/test-artifacts.json target/test-shards.json

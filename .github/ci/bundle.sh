@@ -9,8 +9,12 @@ paths = {Path('target/test-shards.json'), Path('target/ci-bootstrap-build/debug/
 root = Path('target/coverage-continuous-build')
 paths.update(root.glob('debug/.fingerprint/*/*.json'))
 for path in root.rglob('*'):
-    if path.is_file() and (path.suffix == '.so' or (path.stat().st_mode & 0o111 and not path.suffix)):
+    if path.is_file() and path.suffix == '.so':
         paths.add(path)
+for line in Path('target/test-artifacts.json').read_text().splitlines():
+    message = json.loads(line)
+    if message.get('reason') == 'compiler-artifact' and message.get('executable'):
+        paths.add(Path(message['executable']).relative_to('/workspace'))
 shards = json.loads(Path('target/test-shards.json').read_text())
 assigned = [{Path(test['executable']).relative_to('/workspace') for test in shard} for shard in shards]
 all_tests = set().union(*assigned)
@@ -25,7 +29,7 @@ PY
         for list in target/bundle-*-files; do
             name=${list#target/bundle-}
             name=${name%-files}
-            tar -I 'zstd --long=30 -T4 -3' -cf "target/coverage-$name.tar.zst" -T "$list"
+            tar --format=posix -I 'zstd --long=30 -T4 -3' -cf "target/coverage-$name.tar.zst" -T "$list"
         done
         du -h target/coverage-*.tar.zst
         ;;

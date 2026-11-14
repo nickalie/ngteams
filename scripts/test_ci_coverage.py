@@ -256,6 +256,14 @@ class TargetTests(unittest.TestCase):
             manifest = [[{"executable": f"/workspace/{path}"}] for path in paths[:2]]
             manifest[1].append(manifest[0][0])
             (root / "target/test-shards.json").write_text(json.dumps(manifest))
+            (root / "target/test-artifacts.json").write_text("".join(
+                json.dumps({"reason": "compiler-artifact", "executable": f"/workspace/{path}"}) + "\n"
+                for path in paths[:3]))
+            stale = root / "target/coverage-continuous-build/debug/deps/deleted-test-789"
+            stale.write_text("synthetic obsolete executable\n")
+            stale.chmod(0o755)
+            precision = 1_700_000_000_123_456_789
+            os.utime(root / paths[0], ns=(precision, precision))
             subprocess.run(["bash", str(ROOT / ".github/ci/bundle.sh"), "pack"],
                            cwd=root, capture_output=True, text=True, check=True)
 
@@ -278,6 +286,7 @@ class TargetTests(unittest.TestCase):
             subprocess.run(unpack, cwd=root, capture_output=True, text=True, check=True)
             for name in paths:
                 self.assertEqual((root / name).read_text(), "synthetic executable\n")
+            self.assertEqual((root / paths[0]).stat().st_mtime_ns, precision)
             self.assertEqual(json.loads(json.loads(metadata.read_text())["features"]), ["test-support"])
             (root / "target/corrupt.tar.zst").write_text("synthetic corrupt archive\n")
             self.assertNotEqual(subprocess.run(unpack, cwd=root, capture_output=True).returncode, 0)

@@ -22,6 +22,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 # A pull request's newer push replaces its older run. Pushes to main, merge-queue entries and manual runs are keyed
 # by ref and commit: the release waits for the Coverage run of its exact commit, so neither a later push nor a run
@@ -72,8 +73,15 @@ jobs:
         with:
           path: .ci-cache/webrtc
           key: coverage-webrtc-linux-x64-v1-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.github/ci/Dockerfile') }}
+      - name: Restore a compatible successful workspace build
+        id: workspace
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COVERAGE_COMPILER_KEY: coverage-build-v1-${{ steps.environment.outputs.image-id }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.github/ci/**', '!.github/ci/test-times.json', '.cargo/**', 'vendor/**') }}
+        run: python3 -B .github/ci/workspace-cache.py restore
       - name: Restore instrumented dependencies
         id: dependencies
+        if: steps.workspace.outputs.hit != 'true'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .ci-cache/build
@@ -85,6 +93,8 @@ jobs:
             rm .ci-cache/build/dependencies.tar.zst
           fi
       - name: Compile all runtime test targets and inventory the shards
+        env:
+          COVERAGE_WORKSPACE_RESTORED: ${{ steps.workspace.outputs.hit == 'true' && '1' || '0' }}
         run: |
           mkdir -p target
           python3 -c 'import time; print(time.time())' > target/compile-start
@@ -101,6 +111,17 @@ jobs:
           if-no-files-found: error
       - name: Bundle the shared executables and coverage maps
         run: .github/ci/bundle.sh pack
+      - name: Cache compiler metadata without profiles or duplicate executables
+        env:
+          COVERAGE_COMPILER_KEY: coverage-build-v1-${{ steps.environment.outputs.image-id }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.github/ci/**', '!.github/ci/test-times.json', '.cargo/**', 'vendor/**') }}
+        run: python3 -B .github/ci/workspace-cache.py pack
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.workspace.outputs.name }}
+          path: target/compiler-workspace.tar.zst
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage-common
@@ -166,7 +187,7 @@ jobs:
           if-no-files-found: error
       - name: Prepare bounded dependency cache
         id: prepared-cache
-        if: steps.dependencies.outputs.cache-hit != 'true'
+        if: steps.workspace.outputs.hit != 'true' && steps.dependencies.outputs.cache-hit != 'true'
         run: |
           docker run --rm --entrypoint /bin/bash --volume "$GITHUB_WORKSPACE:/workspace" \
             ngteams-coverage .github/ci/bundle.sh cache
@@ -174,7 +195,7 @@ jobs:
             echo 'ready=true' >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        if: steps.dependencies.outputs.cache-hit != 'true' && steps.prepared-cache.outputs.ready == 'true'
+        if: steps.workspace.outputs.hit != 'true' && steps.dependencies.outputs.cache-hit != 'true' && steps.prepared-cache.outputs.ready == 'true'
         with:
           path: .ci-cache/build
           key: ${{ steps.dependencies.outputs.cache-primary-key }}
