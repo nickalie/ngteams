@@ -24,7 +24,6 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::Value;
 use url::Url;
 
-use crate::chat::is_file_link;
 use crate::client::Response;
 use crate::endpoint::{Endpoint, Service};
 use crate::read::Read;
@@ -45,14 +44,22 @@ pub const THUMBNAIL_HOST_SUFFIX: &str = ".svc.ms";
 pub struct FileThumbnails {
     /// `u!` and the sharing link, base64url without padding (Graph's sharing token).
     share: String,
+    cloud: crate::Cloud,
 }
 
 impl FileThumbnails {
     /// The read for the file `share_url` is the sharing link of; `None` unless it is an `https` link on a SharePoint
-    /// host ([`is_file_link`]).
+    /// host ([`crate::chat::is_file_link`]).
     #[must_use]
     pub fn of(share_url: &str) -> Option<Self> {
-        is_file_link(share_url).then(|| Self {
+        Self::of_in(&crate::Cloud::Microsoft, share_url)
+    }
+
+    /// Resolves a sharing link only within this account's file service.
+    #[must_use]
+    pub fn of_in(cloud: &crate::Cloud, share_url: &str) -> Option<Self> {
+        crate::chat::is_file_link_in(cloud, share_url).then(|| Self {
+            cloud: cloud.clone(),
             share: format!("u!{}", URL_SAFE_NO_PAD.encode(share_url.as_bytes())),
         })
     }
@@ -72,7 +79,7 @@ impl FileThumbnails {
         SIZES
             .iter()
             .filter_map(|size| set.get(size)?.get("url")?.as_str())
-            .find_map(ThumbnailLink::parse)
+            .find_map(|link| ThumbnailLink::parse_in(&self.cloud, link))
     }
 }
 
@@ -105,6 +112,14 @@ impl ThumbnailLink {
         is_thumbnail_link(&url).then_some(Self(url))
     }
 
+    pub(crate) fn parse_in(cloud: &crate::Cloud, link: &str) -> Option<Self> {
+        if cloud.is_microsoft() {
+            return Self::parse(link);
+        }
+        let url = Url::parse(link).ok()?;
+        is_thumbnail_link_in(cloud, &url).then_some(Self(url))
+    }
+
     /// The link (`pub(crate)`: nothing outside this crate sees its credential).
     pub(crate) const fn url(&self) -> &Url {
         &self.0
@@ -123,6 +138,13 @@ impl fmt::Debug for ThumbnailLink {
 /// and `-`) or a SharePoint host ([`crate::chat::is_sharepoint_host`]).
 #[must_use]
 pub fn is_thumbnail_link(url: &Url) -> bool {
+    is_thumbnail_link_in(&crate::Cloud::Microsoft, url)
+}
+
+pub(crate) fn is_thumbnail_link_in(cloud: &crate::Cloud, url: &Url) -> bool {
+    if !cloud.is_microsoft() {
+        return url.as_str().len() <= MAX_THUMBNAIL_LINK && cloud.contains(url) && url.path().starts_with("/sp/");
+    }
     let media_host = |host: &str| {
         host.strip_suffix(THUMBNAIL_HOST_SUFFIX).is_some_and(|name| {
             !name.is_empty()

@@ -40,6 +40,8 @@ use crate::chat::html::{
 /// Why a [`MessageText`] can't be built.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ComposeError {
+    #[error("a file is stored outside this account's cloud")]
+    FileCloud,
     /// A mention in the text whose `item_id` names no mentioned MRI.
     #[error("the mention {0:?} names nobody")]
     UnknownMention(String),
@@ -82,6 +84,7 @@ pub enum ComposeError {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "Stored", into = "Stored")]
 pub struct MessageText {
+    origin: Option<String>,
     files: Vec<crate::UploadedFile>,
     text: RichText,
     mentioned: BTreeMap<String, Mri>,
@@ -101,6 +104,18 @@ impl MessageText {
     /// once; only work accounts and everyone in a group chat (by the chat's id) are mentioned; no image, no link but `http`, `https` and `mailto`, a reply's quote
     /// complete; the text read in full, at most [`MAX_DEPTH`] deep and its HTML at most [`MAX_CONTENT`] bytes.
     pub fn new(text: RichText, mentioned: impl IntoIterator<Item = (String, Mri)>) -> Result<Self, ComposeError> {
+        Self::new_in(&crate::Cloud::Microsoft, text, mentioned)
+    }
+
+    /// Composes a message whose pictures belong to the account's media service.
+    ///
+    /// # Errors
+    /// Returns the same validation errors as [`Self::new`], including off-cloud pictures.
+    pub fn new_in(
+        cloud: &crate::Cloud,
+        text: RichText,
+        mentioned: impl IntoIterator<Item = (String, Mri)>,
+    ) -> Result<Self, ComposeError> {
         let mut table = BTreeMap::new();
         for (item_id, mri) in mentioned {
             if !is_work_account(&mri) && !is_group_chat_id(mri.as_str()) {
@@ -113,7 +128,7 @@ impl MessageText {
         if text.truncated {
             return Err(ComposeError::Truncated);
         }
-        let mut render = Render::new(&table);
+        let mut render = Render::new(cloud, &table);
         render.nodes(&text.nodes, 0)?;
         if let Some(unused) = table.keys().find(|item_id| !render.used.contains(item_id.as_str())) {
             return Err(ComposeError::UnusedMention(unused.clone()));
@@ -131,6 +146,7 @@ impl MessageText {
             ..
         } = render;
         Ok(Self {
+            origin: cloud.origin().map(ToString::to_string),
             files: Vec::new(),
             text,
             mentioned: table,
@@ -141,6 +157,17 @@ impl MessageText {
             participants,
             everyone,
         })
+    }
+
+    /// Checks the composed text and staged files against the sending account's cloud.
+    ///
+    /// # Errors
+    /// Returns [`ComposeError::FileCloud`] for an off-cloud file, or a text validation error.
+    pub fn for_cloud(self, cloud: &crate::Cloud) -> Result<Self, ComposeError> {
+        if self.files.iter().any(|file| file.site_in(cloud).is_none()) {
+            return Err(ComposeError::FileCloud);
+        }
+        Self::new_in(cloud, self.text, self.mentioned).map(|text| text.with_files(self.files))
     }
 
     /// Plain text as one paragraph, no mention.
@@ -231,6 +258,8 @@ impl MessageText {
 /// How a [`MessageText`] is stored (the outbox's payload): the text and its mention table, checked again when read.
 #[derive(Serialize, Deserialize)]
 struct Stored {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     files: Vec<crate::UploadedFile>,
     text: RichText,
@@ -241,7 +270,16 @@ impl TryFrom<Stored> for MessageText {
     type Error = ComposeError;
 
     fn try_from(stored: Stored) -> Result<Self, ComposeError> {
-        Self::new(
+        let cloud = stored
+            .origin
+            .as_deref()
+            .map_or(Ok(crate::Cloud::Microsoft), crate::Cloud::own)
+            .map_err(|_| ComposeError::Image)?;
+        if stored.files.iter().any(|file| file.site_in(&cloud).is_none()) {
+            return Err(ComposeError::FileCloud);
+        }
+        Self::new_in(
+            &cloud,
             stored.text,
             stored
                 .mentioned
@@ -255,6 +293,7 @@ impl TryFrom<Stored> for MessageText {
 impl From<MessageText> for Stored {
     fn from(text: MessageText) -> Self {
         Self {
+            origin: text.origin,
             files: text.files,
             text: text.text,
             mentioned: text
@@ -297,6 +336,7 @@ fn is_work_account(mri: &Mri) -> bool {
 
 /// Renders the model into HTML and collects what the properties and the target need.
 struct Render<'a> {
+    cloud: &'a crate::Cloud,
     table: &'a BTreeMap<String, Mri>,
     html: String,
     mentions: Vec<Value>,
@@ -318,8 +358,9 @@ const MARK_TAGS: [(Marks, &str); 5] = [
 ];
 
 impl<'a> Render<'a> {
-    fn new(table: &'a BTreeMap<String, Mri>) -> Self {
+    fn new(cloud: &'a crate::Cloud, table: &'a BTreeMap<String, Mri>) -> Self {
         Self {
+            cloud,
             table,
             html: String::new(),
             mentions: Vec::new(),
@@ -400,7 +441,7 @@ impl<'a> Render<'a> {
     /// in messages", its attributes in that order); its object goes in `amsreferences`. The received ones' `itemscope`
     /// (`png`) is left out: its value for another format was never seen.
     fn picture(&mut self, image: &crate::chat::Image) -> Result<(), ComposeError> {
-        let view = crate::MessagePicture::of(&image.src).ok_or(ComposeError::Image)?;
+        let view = crate::MessagePicture::of_in(self.cloud, &image.src).ok_or(ComposeError::Image)?;
         let object = view.object().to_owned();
         if image.item_type.as_deref() != Some(crate::chat::html::AMS_IMAGE_ITEMTYPE)
             || image.item_id.as_deref() != Some(object.as_str())

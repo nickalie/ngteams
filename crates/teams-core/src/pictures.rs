@@ -243,7 +243,7 @@ impl<C: Credentials + 'static> Pictures<C> {
     /// Answers `reply` with the picture `src` names: at once when it is known, else once its read is over (the read
     /// started now unless one runs). A `src` no read can name is answered `None`.
     pub(crate) fn picture(&self, src: &str, reply: Responder<Option<PictureBytes>>) {
-        match InlinePicture::of(src) {
+        match InlinePicture::of_in(self.client.transport().cloud(), src) {
             Some(picture) => self.ask(&self.kept, picture, reply),
             None => {
                 let _ = reply.send(Ok(None));

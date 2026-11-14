@@ -29,7 +29,19 @@ pub struct DriveSite(String);
 impl DriveSite {
     #[must_use]
     pub fn from_web_url(web_url: &str) -> Option<Self> {
+        Self::from_web_url_in(&crate::Cloud::Microsoft, web_url)
+    }
+
+    /// Validates a personal drive site within the account's file service.
+    #[must_use]
+    pub fn from_web_url_in(cloud: &crate::Cloud, web_url: &str) -> Option<Self> {
         let url = Url::parse(web_url).ok()?;
+        if !cloud.is_microsoft() {
+            let projected = cloud.project(&url, "/sp", "https://own-my.sharepoint.com")?;
+            let site = Self::from_web_url(projected.as_str())?;
+            let path = Url::parse(site.base()).ok()?.path().to_owned();
+            return Some(Self(cloud.service_url(site.base(), &format!("/sp{path}")).ok()?.into()));
+        }
         let host = url.host_str()?;
         let tenant = host.strip_suffix("-my.sharepoint.com")?;
         let parts: Vec<_> = url.path_segments()?.collect();
@@ -81,10 +93,16 @@ impl UploadedFile {
     /// Reads the immutable metadata the native outbox stores in a file entry, rejecting unrecognized routes.
     #[must_use]
     pub fn from_entry(entry: &Value) -> Option<Self> {
+        Self::from_entry_in(&crate::Cloud::Microsoft, entry)
+    }
+
+    /// Restores an outbox file only when its site belongs to the account's cloud.
+    #[must_use]
+    pub fn from_entry_in(cloud: &crate::Cloud, entry: &Value) -> Option<Self> {
         if entry.get("@type")?.as_str()? != "http://schema.skype.com/File" {
             return None;
         }
-        let site = DriveSite::from_web_url(entry.get("baseUrl")?.as_str()?)?;
+        let site = DriveSite::from_web_url_in(cloud, entry.get("baseUrl")?.as_str()?)?;
         let object_url = entry.get("objectUrl")?.as_str()?;
         let guid = entry.get("itemid")?.as_str()?;
         let name = entry.get("fileName")?.as_str()?;
@@ -146,7 +164,13 @@ impl UploadedFile {
     }
     #[must_use]
     pub fn site(&self) -> Option<DriveSite> {
-        DriveSite::from_web_url(&self.site)
+        self.site_in(&crate::Cloud::Microsoft)
+    }
+
+    /// This upload's site, checked against the selected account.
+    #[must_use]
+    pub fn site_in(&self, cloud: &crate::Cloud) -> Option<DriveSite> {
+        DriveSite::from_web_url_in(cloud, &self.site)
     }
     #[must_use]
     pub fn item_url(&self) -> String {
@@ -287,10 +311,22 @@ impl DriveWrite {
         recipients: &[(String, String)],
         owner: &str,
     ) -> Option<Self> {
+        Self::share_in(&crate::Cloud::Microsoft, file, conversation, recipients, owner)
+    }
+
+    /// Grants named readers access only to an upload on this account's file service.
+    #[must_use]
+    pub fn share_in(
+        cloud: &crate::Cloud,
+        file: &UploadedFile,
+        conversation: &str,
+        recipients: &[(String, String)],
+        owner: &str,
+    ) -> Option<Self> {
         crate::object_id(owner)?;
         let addresses: Vec<String> = recipients.iter().map(|(_, address)| address.clone()).collect();
         if !crate::read::is_guid(&file.guid)
-            || file.site().as_ref().map(DriveSite::base) != Some(file.site.as_str())
+            || file.site_in(cloud).as_ref().map(DriveSite::base) != Some(file.site.as_str())
             || recipients.is_empty()
             || addresses.iter().any(|email| {
                 email.trim() != email

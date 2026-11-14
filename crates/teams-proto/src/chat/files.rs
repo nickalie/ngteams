@@ -134,6 +134,12 @@ pub struct SharedFiles {
 /// Reads `properties.files` (`None`: there is none) as [`SharedFiles`].
 #[must_use]
 pub fn shared_files(value: Option<&Value>) -> SharedFiles {
+    shared_files_in(&crate::Cloud::Microsoft, value)
+}
+
+/// Reads files using only links on the account's file and media services.
+#[must_use]
+pub fn shared_files_in(cloud: &crate::Cloud, value: Option<&Value>) -> SharedFiles {
     let Some(value) = value else {
         return SharedFiles::default();
     };
@@ -158,7 +164,7 @@ pub fn shared_files(value: Option<&Value>) -> SharedFiles {
     let mut files = Vec::new();
     let mut unread = Vec::new();
     for entry in list {
-        match entry.as_object().and_then(read_entry) {
+        match entry.as_object().and_then(|entry| read_entry(cloud, entry)) {
             Some(file) => files.push(file),
             None => unread.push(entry),
         }
@@ -170,7 +176,7 @@ pub fn shared_files(value: Option<&Value>) -> SharedFiles {
 }
 
 /// One entry, when it is a file's in the shape the module docs give.
-fn read_entry(entry: &Map<String, Value>) -> Option<SharedFile> {
+fn read_entry(cloud: &crate::Cloud, entry: &Map<String, Value>) -> Option<SharedFile> {
     fn text(value: Option<&Value>) -> Option<&str> {
         value
             .and_then(Value::as_str)
@@ -189,7 +195,11 @@ fn read_entry(entry: &Map<String, Value>) -> Option<SharedFile> {
         .chars()
         .take(MAX_NAME)
         .collect();
-    let link = |value: Option<&Value>| text(value).filter(|link| is_file_link(link)).map(str::to_owned);
+    let link = |value: Option<&Value>| {
+        text(value)
+            .filter(|link| is_file_link_in(cloud, link))
+            .map(str::to_owned)
+    };
     let share_url = link(info.and_then(|info| info.get("shareUrl")));
     let object_url = link(entry.get("objectUrl")).or_else(|| link(info.and_then(|info| info.get("fileUrl"))));
     if share_url.is_none() && object_url.is_none() {
@@ -215,14 +225,14 @@ fn read_entry(entry: &Map<String, Value>) -> Option<SharedFile> {
         preview: entry
             .get("filePreview")
             .and_then(Value::as_object)
-            .and_then(read_preview),
+            .and_then(|preview| read_preview(cloud, preview)),
     })
 }
 
 /// An entry's `filePreview`, when its `previewUrl` is a view of an AMS object.
-fn read_preview(preview: &Map<String, Value>) -> Option<FilePreview> {
+fn read_preview(cloud: &crate::Cloud, preview: &Map<String, Value>) -> Option<FilePreview> {
     let src = preview.get("previewUrl")?.as_str()?.trim();
-    crate::MessagePicture::of(src)?;
+    crate::MessagePicture::of_in(cloud, src)?;
     let side = |key: &str| {
         preview
             .get(key)
@@ -240,6 +250,16 @@ fn read_preview(preview: &Map<String, Value>) -> Option<FilePreview> {
 /// (`<tenant>.sharepoint.com`, `<tenant>-my.sharepoint.com`), at most [`MAX_LINK`] bytes.
 #[must_use]
 pub fn is_file_link(link: &str) -> bool {
+    is_file_link_in(&crate::Cloud::Microsoft, link)
+}
+
+/// Whether a file link belongs to this account's file service.
+#[must_use]
+pub fn is_file_link_in(cloud: &crate::Cloud, link: &str) -> bool {
+    if !cloud.is_microsoft() {
+        return link.len() <= MAX_LINK
+            && Url::parse(link).is_ok_and(|url| cloud.contains(&url) && url.path().starts_with("/sp/"));
+    }
     if link.len() > MAX_LINK {
         return false;
     }

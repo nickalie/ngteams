@@ -541,20 +541,24 @@ impl ChatServiceMock {
     /// Answers a pasted picture's send as the async gateway did (`docs/protocol/chat.md`, "Pictures sent"): every
     /// object's creation (`POST /v1/objects/`) `201` with `{"id": object}`, and its bytes put into it
     /// (`PUT /v1/objects/<object>/content/imgpsh`) `201`; then a `GET` of its `imgo` view answers `png`.
+    /// Own accounts use the same paths under `/ams`.
     pub async fn serve_picture_sends(&self, object: &str, png: Vec<u8>) {
+        let prefix = if self.lock().cloud.is_microsoft() { "" } else { "/ams" };
         Mock::given(method("POST"))
-            .and(wiremock::matchers::path("/v1/objects/"))
+            .and(wiremock::matchers::path(format!("{prefix}/v1/objects/")))
             .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({ "id": object })))
             .with_priority(1)
             .mount(&self.server)
             .await;
         Mock::given(method("PUT"))
-            .and(wiremock::matchers::path(format!("/v1/objects/{object}/content/imgpsh")))
+            .and(wiremock::matchers::path(format!(
+                "{prefix}/v1/objects/{object}/content/imgpsh"
+            )))
             .respond_with(ResponseTemplate::new(201))
             .with_priority(1)
             .mount(&self.server)
             .await;
-        self.serve_bytes(&format!("/v1/objects/{object}/views/imgo"), "image/png", png)
+        self.serve_bytes(&format!("{prefix}/v1/objects/{object}/views/imgo"), "image/png", png)
             .await;
     }
 

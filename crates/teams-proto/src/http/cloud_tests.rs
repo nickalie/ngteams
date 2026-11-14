@@ -333,3 +333,213 @@ fn refuse_push_origins(endpoint: &crate::RegisteredEndpoint, push: &str) {
         );
     }
 }
+
+#[test]
+fn message_media_links_are_scoped_to_the_cloud_and_keep_microsoft_defaults() {
+    use crate::{LinkPreviewPicture, MessagePicture, sent_picture, sent_picture_in};
+
+    let cloud = cloud();
+    let image = sent_picture_in(&cloud, "synthetic-object", (32, 24)).unwrap();
+    assert_eq!(
+        image.src,
+        "https://chat.example:8443/ams/v1/objects/synthetic-object/views/imgo"
+    );
+    assert_eq!(
+        MessagePicture::of_in(&cloud, &image.src).unwrap().object(),
+        "synthetic-object"
+    );
+    assert!(MessagePicture::of(&image.src).is_none());
+    assert_eq!(
+        sent_picture("x", (1, 1)),
+        sent_picture_in(&Cloud::Microsoft, "x", (1, 1))
+    );
+    let preview = LinkPreviewPicture::card_picture_src_in(&cloud, "https://page.example/picture.png").unwrap();
+    assert!(preview.starts_with("https://chat.example:8443/ams/urlp/"));
+    assert_eq!(
+        LinkPreviewPicture::of_in(&cloud, &preview).unwrap().picture(),
+        "https://page.example/picture.png"
+    );
+    for src in [
+        image.src.replace(":8443", ""),
+        image.src.replace("https:", "http:"),
+        image.src.replace("chat.example", "outside.example"),
+        image.src.replace("/ams/", "/amsx/"),
+        format!("{}?extra=1", image.src),
+        format!("{}#fragment", image.src),
+        "https://us-api.asm.skype.com/v1/objects/x/views/imgo".into(),
+    ] {
+        assert!(MessagePicture::of_in(&cloud, &src).is_none(), "{src}");
+    }
+    for src in [
+        preview.replace(":8443", ""),
+        preview.replace("/ams/", "/sp/"),
+        preview.replace("chat.example", "outside.example"),
+        preview.replace("chat.example:8443/ams", "urlp.asyncgw.teams.microsoft.com"),
+        format!("{preview}&url=https://second.example"),
+    ] {
+        assert!(LinkPreviewPicture::of_in(&cloud, &src).is_none(), "{src}");
+    }
+}
+
+#[test]
+fn own_picture_compose_round_trips_and_refuses_a_different_account_origin() {
+    use crate::chat::{MessageText, Node, RichText};
+
+    let cloud = cloud();
+    let image = crate::sent_picture_in(&cloud, "synthetic-object", (32, 24)).unwrap();
+    let rich = RichText {
+        nodes: vec![Node::Image(image)],
+        truncated: false,
+    };
+    assert!(MessageText::new(rich.clone(), []).is_err());
+    let text = MessageText::new_in(&cloud, rich, []).unwrap();
+    let stored = serde_json::to_vec(&text).unwrap();
+    let restored: MessageText = serde_json::from_slice(&stored).unwrap();
+    assert_eq!(restored, text);
+    assert!(
+        restored
+            .for_cloud(&Cloud::own("https://other.example").unwrap())
+            .is_err()
+    );
+    assert!(
+        !serde_json::to_string(&MessageText::plain("unchanged").unwrap())
+            .unwrap()
+            .contains("origin")
+    );
+}
+
+#[test]
+fn own_files_accept_only_the_selected_origin_and_file_prefix() {
+    use crate::chat::{is_file_link_in, shared_files_in};
+    use crate::{DriveSite, DriveWrite, FileDownload, FileThumbnails, UploadedFile};
+
+    let cloud = cloud();
+    let base = "https://chat.example:8443/sp/personal/lab_a/";
+    let site = DriveSite::from_web_url_in(&cloud, base).unwrap();
+    let upload = serde_json::json!({"id":"ABC1","name":"demo.txt","size":3,
+        "webUrl":format!("{base}Documents/demo.txt"),"parentReference":{"driveId":"drive1"},
+        "sharepointIds":{"listItemUniqueId":"00000000-0000-4000-8000-000000000001"}});
+    let file = UploadedFile::from_upload(&site, &serde_json::to_vec(&upload).unwrap()).unwrap();
+    assert_eq!(
+        UploadedFile::from_entry_in(&cloud, &file.entry()).unwrap().entry(),
+        file.entry()
+    );
+    assert!(UploadedFile::from_entry(&file.entry()).is_none());
+    assert_eq!(file.site_in(&cloud).unwrap(), site);
+    assert!(
+        DriveWrite::upload(
+            &site,
+            "demo.txt",
+            b"abc".to_vec(),
+            "8:orgid:00000000-0000-4000-8000-00000000000a"
+        )
+        .is_some()
+    );
+    assert!(
+        DriveWrite::share_in(
+            &cloud,
+            &file,
+            "chat",
+            &[("peer".into(), "peer@example.test".into())],
+            "8:orgid:00000000-0000-4000-8000-00000000000a"
+        )
+        .is_some()
+    );
+    let files = shared_files_in(&cloud, Some(&serde_json::json!([file.entry()])));
+    assert_eq!(
+        files.files[0].open_link(),
+        Some("https://chat.example:8443/sp/personal/lab_a/Documents/demo.txt")
+    );
+    for link in [
+        "https://chat.example/sp/personal/lab_a/demo.txt",
+        "https://outside.example:8443/sp/personal/lab_a/demo.txt",
+        "https://chat.example:8443/spx/personal/lab_a/demo.txt",
+        "https://u@chat.example:8443/sp/personal/lab_a/demo.txt",
+        "https://chat.example:8443/sp/personal/lab_a/demo.txt#fragment",
+        "https://madeup-my.sharepoint.com/personal/lab_a/demo.txt",
+    ] {
+        assert!(!is_file_link_in(&cloud, link), "{link}");
+        assert!(FileDownload::of_in(&cloud, link).is_none(), "{link}");
+        assert!(FileThumbnails::of_in(&cloud, link).is_none(), "{link}");
+        assert!(DriveSite::from_web_url_in(&cloud, link).is_none(), "{link}");
+    }
+    let entry = file.entry();
+    let text = crate::chat::MessageText::plain("file")
+        .unwrap()
+        .with_files(vec![file])
+        .for_cloud(&cloud)
+        .unwrap();
+    let restored: crate::chat::MessageText = serde_json::from_slice(&serde_json::to_vec(&text).unwrap()).unwrap();
+    assert_eq!(restored.files()[0].entry(), entry);
+}
+
+#[tokio::test]
+async fn own_graph_answers_and_transport_refuse_foreign_file_credentials() {
+    use crate::{FileDownload, FileThumbnails};
+
+    let transport = transport();
+    let cloud = cloud();
+    let share = "https://chat.example:8443/sp/personal/lab_a/demo.mp4";
+    let download = FileDownload::of_in(&cloud, share).unwrap();
+    let thumbnails = FileThumbnails::of_in(&cloud, share).unwrap();
+    for url in [
+        "https://outside.example/sp/file?tempauth=synthetic",
+        "https://chat.example/sp/file?tempauth=synthetic",
+        "https://chat.example:8443/graph/file?tempauth=synthetic",
+        "https://madeup-my.sharepoint.com/file?tempauth=synthetic",
+        "https://media.svc.ms/file?tempauth=synthetic",
+    ] {
+        let answer = Response::new(
+            200,
+            serde_json::to_vec(&serde_json::json!({"size":3,"@microsoft.graph.downloadUrl":url})).unwrap(),
+        );
+        assert!(download.read_answer(&answer).is_none());
+        let answer = Response::new(
+            200,
+            serde_json::to_vec(&serde_json::json!({"value":[{"large":{"url":url}}]})).unwrap(),
+        );
+        assert!(thumbnails.read_answer(&answer).is_none());
+    }
+    let foreign = crate::FileContentLink::parse("https://madeup-my.sharepoint.com/file?tempauth=synthetic").unwrap();
+    assert!(matches!(
+        transport.file_range(&foreign, 0, 1).await,
+        Err(HttpError::Refused(Refusal::NotAllowed))
+    ));
+    assert!(matches!(
+        transport.file_stream(&foreign, 0, 1).await,
+        Err(HttpError::Refused(Refusal::NotAllowed))
+    ));
+    let foreign = crate::ThumbnailLink::parse("https://media.svc.ms/picture?tempauth=synthetic").unwrap();
+    assert!(matches!(
+        transport.file_thumbnail(&foreign).await,
+        Err(HttpError::Refused(Refusal::NotAllowed))
+    ));
+}
+
+#[test]
+fn own_uploaded_file_answers_and_shared_previews_cannot_escape_the_account() {
+    let cloud = cloud();
+    let base = "https://chat.example:8443/sp/personal/lab_a/";
+    let site = crate::DriveSite::from_web_url_in(&cloud, base).unwrap();
+    let mut upload = serde_json::json!({"id":"ABC1","name":"demo.png","size":3,
+        "webUrl":format!("{base}Documents/demo.png"),"parentReference":{"driveId":"drive1"},
+        "sharepointIds":{"listItemUniqueId":"00000000-0000-4000-8000-000000000001"}});
+    let file = crate::UploadedFile::from_upload(&site, &serde_json::to_vec(&upload).unwrap()).unwrap();
+    let mut entry = file.entry();
+    let image = crate::sent_picture_in(&cloud, "object", (32, 24)).unwrap();
+    entry["filePreview"] = serde_json::json!({"previewUrl":image.src,"previewWidth":32,"previewHeight":24});
+    let files = crate::chat::shared_files_in(&cloud, Some(&serde_json::json!([entry.clone()])));
+    assert_eq!(files.files[0].preview.as_ref().unwrap().size, Some((32, 24)));
+    for url in [
+        "https://outside.example/sp/personal/lab_a/Documents/demo.png",
+        "https://chat.example/sp/personal/lab_a/Documents/demo.png",
+        "https://chat.example:8443/sp/personal/lab_b/Documents/demo.png",
+        "https://chat.example:8443/sp/personal/lab_a/Documents/demo.png?share=anyone",
+    ] {
+        upload["webUrl"] = url.into();
+        assert!(crate::UploadedFile::from_upload(&site, &serde_json::to_vec(&upload).unwrap()).is_none());
+    }
+    entry["filePreview"]["previewUrl"] = "https://us-api.asm.skype.com/v1/objects/object/views/imgo".into();
+    let files = crate::chat::shared_files_in(&cloud, Some(&serde_json::json!([entry])));
+    assert!(files.files[0].preview.is_none());
+}

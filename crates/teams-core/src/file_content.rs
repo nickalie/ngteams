@@ -122,7 +122,7 @@ impl<C: Credentials + 'static> FileContents<C> {
 
     /// Answers `reply` with `len` bytes of the file `share_url` is the sharing link of, from `offset`, once read.
     pub(crate) fn range(&self, share_url: &str, offset: u64, len: u32, reply: Responder<FileRange>) {
-        let Some(file) = FileDownload::of(share_url) else {
+        let Some(file) = FileDownload::of_in(self.client.transport().cloud(), share_url) else {
             let _ = reply.send(Err(EngineError::FileUnavailable));
             return;
         };
@@ -138,7 +138,7 @@ impl<C: Credentials + 'static> FileContents<C> {
     /// Answers `reply` with a stream of `len` bytes of the file `share_url` is the sharing link of, from `offset`, once
     /// its answer's headers came; its pieces follow as they arrive, until its reader drops it.
     pub(crate) fn stream(&self, share_url: &str, offset: u64, len: u64, mut reply: Responder<FileStream>) {
-        let Some(file) = FileDownload::of(share_url) else {
+        let Some(file) = FileDownload::of_in(self.client.transport().cloud(), share_url) else {
             let _ = reply.send(Err(EngineError::FileUnavailable));
             return;
         };
@@ -172,7 +172,7 @@ impl<C: Credentials + 'static> FileContents<C> {
     /// Answers `reply` with the size of the file `share_url` is the sharing link of, as its item gives it; its link is
     /// kept for the reads that follow.
     pub(crate) fn size(&self, share_url: &str, reply: Responder<u64>) {
-        let Some(file) = FileDownload::of(share_url) else {
+        let Some(file) = FileDownload::of_in(self.client.transport().cloud(), share_url) else {
             let _ = reply.send(Err(EngineError::FileUnavailable));
             return;
         };

@@ -1826,3 +1826,30 @@ async fn activity_turn_off_app_does_not_overwrite_unreadable_preferences() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_stored_picture_for_another_cloud_is_refused_before_delivery() {
+    use teams_proto::chat::{Node, RichText};
+
+    let setup = setup().await;
+    let mut store = setup.open_store();
+    let cloud = teams_proto::Cloud::own("https://chat.example:8443").unwrap();
+    let image = teams_proto::sent_picture_in(&cloud, "synthetic-picture", (32, 24)).unwrap();
+    let text = MessageText::new_in(
+        &cloud,
+        RichText {
+            nodes: vec![Node::Image(image)],
+            truncated: false,
+        },
+        [],
+    )
+    .unwrap();
+    let command = Command::Send {
+        conversation: CHAT.to_owned(),
+        text,
+    };
+    let row = enqueue(&mut store, &command).unwrap();
+    let row = send(&setup, &mut store, &row).await;
+    assert_eq!(row.state, OutboxState::Failed);
+    assert!(setup.server.received_requests().await.unwrap().is_empty());
+}

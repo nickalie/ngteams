@@ -94,6 +94,8 @@ pub fn native_for_cloud(
             transport
         } else {
             transport
+                .with_ams(cloud.service_url(teams_mock::AMS_BASE, "/ams").unwrap().as_str())
+                .unwrap()
                 .with_presence(
                     cloud
                         .service_url(teams_mock::PRESENCE_BASE, "/ups/noam")

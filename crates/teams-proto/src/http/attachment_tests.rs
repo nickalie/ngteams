@@ -456,3 +456,107 @@ async fn own_drive_connection_failure_propagates_without_credential_refresh() {
     assert_eq!(tokens.bearers.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert_eq!(tokens.renewals.load(std::sync::atomic::Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn own_drive_upload_and_share_keep_every_preflight_and_write_on_own_services() {
+    let cloud = crate::Cloud::own("https://chat.example:8443").unwrap();
+    let server = MockServer::start().await;
+    let transport = HttpTransport::for_cloud_with_mock_origin(
+        Arc::new(Tokens),
+        "https://chat.example:8443/api/chatsvc/amer",
+        cloud.clone(),
+        &server.uri(),
+    )
+    .unwrap()
+    .for_account(Mri::new(A));
+    let base = "https://chat.example:8443/sp/personal/lab_a/";
+    let site = DriveSite::from_web_url_in(&cloud, base).unwrap();
+    own_drive_preflight(&server).await;
+    Mock::given(method("PUT"))
+        .respond_with(ResponseTemplate::new(201))
+        .mount(&server)
+        .await;
+    let upload = DriveWrite::upload(&site, "own.txt", b"abc".to_vec(), A).unwrap();
+    assert_eq!(
+        transport.deliver_attachment(upload).await.unwrap().unwrap().status(),
+        201
+    );
+    let file = UploadedFile::from_upload(
+        &site,
+        &serde_json::to_vec(&json!({
+            "id":"ABC123","name":"own.txt","size":3,"webUrl":format!("{base}Documents/own.txt"),
+            "parentReference":{"driveId":"drive1"},"sharepointIds":{"listItemUniqueId":GUID}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let id = chat(&server, &[A, B]).await;
+    get(
+        &server,
+        &format!("/sp/personal/lab_a/_api/v2.0/sites/root/items/{GUID}/driveItem/permissions"),
+        grants(&[A]),
+    )
+    .await;
+    get(
+        &server,
+        &format!("/graph/v1.0/users/{}", B.strip_prefix("8:orgid:").unwrap()),
+        json!({"id":B.strip_prefix("8:orgid:").unwrap(),"userPrincipalName":"b@lab.example.test"}),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let share = DriveWrite::share_in(&cloud, &file, &id, &[(B.into(), "b@lab.example.test".into())], A).unwrap();
+    assert_eq!(
+        transport.deliver_attachment(share).await.unwrap().unwrap().status(),
+        200
+    );
+    let writes = writes(&server).await;
+    assert_eq!(writes.len(), 2);
+    assert!(
+        writes
+            .iter()
+            .all(|request| request.url.path().starts_with("/sp/personal/lab_a/"))
+    );
+    assert!(server.received_requests().await.unwrap().iter().all(|request| {
+        ["/sp/", "/graph/", "/api/chatsvc/"]
+            .iter()
+            .any(|prefix| request.url.path().starts_with(prefix))
+    }));
+    assert!(transport.drive_details(&self::site()).await.is_err());
+    assert!(
+        transport
+            .deliver_attachment(DriveWrite::upload(&self::site(), "foreign.txt", b"abc".to_vec(), A).unwrap())
+            .await
+            .unwrap()
+            .is_err()
+    );
+}
+
+async fn own_drive_preflight(server: &MockServer) {
+    get(
+        server,
+        "/graph/v1.0/me",
+        json!({"id":A.strip_prefix("8:orgid:").unwrap(),"userPrincipalName":"a@lab.example.test"}),
+    )
+    .await;
+    get(
+        server,
+        "/sp/personal/lab_a/_api/v2.0/drive",
+        json!({"owner":{"user":{"id":A.strip_prefix("8:orgid:").unwrap()}}}),
+    )
+    .await;
+    get(
+        server,
+        "/sp/personal/lab_a/_api/v2.0/drive/root:/Microsoft Teams Chat Files",
+        json!({"id":"folder"}),
+    )
+    .await;
+    get(
+        server,
+        "/sp/personal/lab_a/_api/v2.0/drive/root:/Microsoft Teams Chat Files:/permissions",
+        grants(&[A]),
+    )
+    .await;
+}

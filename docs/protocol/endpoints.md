@@ -37,7 +37,8 @@ query or fragment. Service bases and discovered links must stay on that account'
 never reach it. The transport's test-support loopback override runs only after the service URL has been validated.
 
 Own servers use the same endpoint paths, queries, bodies, token audiences and headers below these bases,
-except for the Trouter paths, handshake and calling domain described in its row:
+except for the Trouter paths, handshake and calling domain described in its row, and the drive audience, which is
+the own origin rather than a Microsoft SharePoint origin:
 
 | Service | Own-origin base or endpoint | Current entry |
 | --- | --- | --- |
@@ -53,9 +54,9 @@ except for the Trouter paths, handshake and calling domain described in its row:
 | MCPS | `/api/mcps/<region>/` | `with_mcps`, authz `mcpService` |
 | Registrar | `/registrar/prod/V2/registrations` | `EndpointRegistration::messaging_in`, `CallingRegistration::new_in` |
 | Trouter | `wss://<origin>/trouter/v4/c`, push URLs `https://<origin>/trouter/v4/f/<endpoint>/` | `Trouter::new` derives the cloud from its transport; same-origin reconnect validation; handshake `Origin` is the own origin and the calling stack's `dom` is the own host; messaging/presence delivery paths retain `/trouter/v4/f/<endpoint>/` |
-| AMS and URL previews | `/ams/` | `with_ams`, authz `amsV2`; message-borne URL parsing pending |
-| Graph | `/graph/v1.0/` | transport fixed base |
-| Files and thumbnails | `/sp/` | reserved; own-origin link and drive parsing pending |
+| AMS and URL previews | `/ams/` | `with_ams`, authz `amsV2`; `MessagePicture::of_in`, `sent_picture_in`, `MessageText::new_in` and `LinkPreviewPicture` cloud variants validate and construct `/ams/` message URLs |
+| Graph | `/graph/v1.0/` | transport fixed base; `FileThumbnails::of_in` and `FileDownload::of_in` retain the cloud when validating response links |
+| Files and thumbnails | `/sp/` | `shared_files_in`, `DriveSite::from_web_url_in`, `UploadedFile::from_entry_in`, `DriveWrite::share_in`; personal sites at `/sp/personal/<account>/`, unchanged `_api/v2.0/` drive paths; thumbnail/download links stay under `/sp/` and are fetched without account credentials |
 | Loki | `/loki/` | `with_loki`, `set_loki_region` |
 | Search | `/search/` | transport fixed base |
 | Calling | `/flightproxy/api/v2/` | `CallContext::for_cloud`, `CallLink::parse_in`; typed starts and operations, machine and tracker retain exact same-origin links; callbacks use `/trouter/v4/f/<endpoint>/callAgent/…` |

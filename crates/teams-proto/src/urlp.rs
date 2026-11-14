@@ -33,6 +33,17 @@ impl LinkPreviewPicture {
     /// for anything else.
     #[must_use]
     pub fn of(src: &str) -> Option<Self> {
+        Self::of_in(&crate::Cloud::Microsoft, src)
+    }
+
+    /// Reads a message URL within the account's media service boundary.
+    #[must_use]
+    pub fn of_in(cloud: &crate::Cloud, src: &str) -> Option<Self> {
+        if !cloud.is_microsoft() {
+            let url = Url::parse(src.trim()).ok()?;
+            let projected = cloud.project(&url, "/ams", "https://urlp.asyncgw.teams.microsoft.com")?;
+            return Self::of(projected.as_str());
+        }
         let url = Url::parse(src.trim()).ok()?;
         let host = url.host_str()?;
         let on_gateway = host
@@ -65,14 +76,25 @@ impl LinkPreviewPicture {
     /// gateway ([`Service::Ams`]), as every thumbnail read does. `None` for any other link.
     #[must_use]
     pub fn card_picture_src(picture: &str) -> Option<String> {
+        Self::card_picture_src_in(&crate::Cloud::Microsoft, picture)
+    }
+
+    /// Constructs a card thumbnail URL on the account's media service.
+    #[must_use]
+    pub fn card_picture_src_in(cloud: &crate::Cloud, picture: &str) -> Option<String> {
         let picture = picture.trim();
         let parsed = Url::parse(picture).ok()?;
         if !matches!(parsed.scheme(), "http" | "https") || picture.len() > MAX_LINK {
             return None;
         }
-        let mut src = Url::parse("https://urlp.asyncgw.teams.microsoft.com/urlp/v1/url/image/Thumbnail").ok()?;
+        let mut src = cloud
+            .service_url(
+                "https://urlp.asyncgw.teams.microsoft.com/urlp/v1/url/image/Thumbnail",
+                "/ams/urlp/v1/url/image/Thumbnail",
+            )
+            .ok()?;
         src.query_pairs_mut().append_pair("url", picture);
-        Self::of(src.as_str()).map(|_| src.into())
+        Self::of_in(cloud, src.as_str()).map(|_| src.into())
     }
 
     /// The page's picture the thumbnail is of.

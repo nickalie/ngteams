@@ -44,7 +44,7 @@ impl<C: Credentials + 'static> Thumbnails<C> {
     /// Answers `reply` with the thumbnail of the file `share_url` is the sharing link of: at once when it is known,
     /// else once its reads are over (started now unless they run). A link no read can name is answered `None`.
     pub(crate) fn thumbnail(&self, share_url: &str, reply: Responder<Option<PictureBytes>>) {
-        let Some(file) = FileThumbnails::of(share_url) else {
+        let Some(file) = FileThumbnails::of_in(self.client.transport().cloud(), share_url) else {
             let _ = reply.send(Ok(None));
             return;
         };

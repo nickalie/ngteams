@@ -217,6 +217,27 @@ pub(crate) fn attachment_properties(message: &Message) -> Result<Map<String, Val
 }
 
 impl Command {
+    pub(crate) fn for_cloud(self, cloud: &teams_proto::Cloud) -> Result<Self, teams_proto::chat::ComposeError> {
+        Ok(match self {
+            Self::Send { conversation, text } => Self::Send {
+                conversation,
+                text: text.for_cloud(cloud)?,
+            },
+            Self::Edit {
+                conversation,
+                message_id,
+                text,
+                original,
+            } => Self::Edit {
+                conversation,
+                message_id,
+                text: text.for_cloud(cloud)?,
+                original,
+            },
+            other => other,
+        })
+    }
+
     /// The row's kind.
     #[must_use]
     pub fn kind(&self) -> OutboxKind {
@@ -557,6 +578,10 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
     /// Returns the transport's authentication, service, schema or read-only refusal.
     pub async fn try_workflow(&self, request: &teams_proto::WorkflowRequest) -> teams_proto::WorkflowResponse {
         self.transport.workflow(request).await
+    }
+
+    pub(crate) fn cloud(&self) -> &teams_proto::Cloud {
+        self.transport.cloud()
     }
 
     /// Whether the outbox sends nothing (its transport is read-only: the personal build's `ngteams --read-only`): every
@@ -961,6 +986,10 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
         let command = match serde_json::from_str::<Command>(&row.payload) {
             Ok(command) => command,
             Err(error) => return Tried::NotSent(format!("the stored command can't be read: {error}")),
+        };
+        let command = match command.for_cloud(self.transport.cloud()) {
+            Ok(command) => command,
+            Err(error) => return Tried::NotSent(error.to_string()),
         };
         let at = row.created_at;
         let me = self.me.clone();

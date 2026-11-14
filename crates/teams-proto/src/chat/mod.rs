@@ -35,7 +35,8 @@ pub use event::{
     meeting_times,
 };
 pub use files::{
-    FILE_TYPE, FileKind, FilePreview, SharedFile, SharedFiles, is_file_link, is_sharepoint_host, shared_files,
+    FILE_TYPE, FileKind, FilePreview, SharedFile, SharedFiles, is_file_link, is_file_link_in, is_sharepoint_host,
+    shared_files, shared_files_in,
 };
 pub use html::{
     AMS_IMAGE_ITEMTYPE, EMOJI_ITEMTYPE, FORWARD_ITEMTYPE, FontSize, INDENT_STEP, Image, List, MAX_CONTENT, MAX_DEPTH,

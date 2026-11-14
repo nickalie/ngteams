@@ -92,6 +92,17 @@ impl MessagePicture {
     /// `imgpsh_fullsize_anim`). `None` for anything else.
     #[must_use]
     pub fn of(src: &str) -> Option<Self> {
+        Self::of_in(&crate::Cloud::Microsoft, src)
+    }
+
+    /// Reads a message URL within the account's media service boundary.
+    #[must_use]
+    pub fn of_in(cloud: &crate::Cloud, src: &str) -> Option<Self> {
+        if !cloud.is_microsoft() {
+            let url = Url::parse(src.trim()).ok()?;
+            let projected = cloud.project(&url, "/ams", "https://us-api.asm.skype.com")?;
+            return Self::of(projected.as_str());
+        }
         let url = Url::parse(src.trim()).ok()?;
         let host = url.host_str()?;
         let on_ams = PICTURE_HOSTS
@@ -180,8 +191,15 @@ const SENT_PICTURE_BASE: &str = "https://us-api.asm.skype.com/v1/objects";
 /// view. `None` for an id that isn't an object's.
 #[must_use]
 pub fn sent_picture(object: &str, given: (u32, u32)) -> Option<crate::chat::Image> {
+    sent_picture_in(&crate::Cloud::Microsoft, object, given)
+}
+
+/// Constructs a sent picture's image on the account's media origin.
+#[must_use]
+pub fn sent_picture_in(cloud: &crate::Cloud, object: &str, given: (u32, u32)) -> Option<crate::chat::Image> {
+    let base = cloud.service_url(SENT_PICTURE_BASE, "/ams/v1/objects").ok()?;
     is_object_id(object).then(|| crate::chat::Image {
-        src: format!("{SENT_PICTURE_BASE}/{object}/views/imgo"),
+        src: format!("{base}/{object}/views/imgo"),
         alt: Some("image".to_owned()),
         item_type: Some(crate::chat::AMS_IMAGE_ITEMTYPE.to_owned()),
         item_id: Some(object.to_owned()),

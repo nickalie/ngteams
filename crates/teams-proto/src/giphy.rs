@@ -110,10 +110,16 @@ impl InlinePicture {
     /// for anything else.
     #[must_use]
     pub fn of(src: &str) -> Option<Self> {
-        MessagePicture::of(src)
+        Self::of_in(&crate::Cloud::Microsoft, src)
+    }
+
+    /// Reads account media URLs within their cloud; public GIF URLs keep their credential-free route.
+    #[must_use]
+    pub fn of_in(cloud: &crate::Cloud, src: &str) -> Option<Self> {
+        MessagePicture::of_in(cloud, src)
             .map(Self::Ams)
             .or_else(|| GiphyPicture::of(src).map(Self::Giphy))
-            .or_else(|| LinkPreviewPicture::of(src).map(Self::LinkPreview))
+            .or_else(|| LinkPreviewPicture::of_in(cloud, src).map(Self::LinkPreview))
     }
 
     /// The picture the answer gives, as its read takes it ([`MessagePicture::read_answer`],

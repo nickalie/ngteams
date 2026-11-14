@@ -66,7 +66,7 @@ pub use ids::{
 };
 pub use log_shape::{log_url, path_shape};
 
-pub use ams::{MessagePicture, PastedFormat, PastedPicture, sent_picture};
+pub use ams::{MessagePicture, PastedFormat, PastedPicture, sent_picture, sent_picture_in};
 pub use calendar::{
     Attendee, CALENDAR_VIEW_PATH, CalendarAnswer, CalendarAnswerError, CalendarEvent, CalendarView, ChannelEventRead,
     ChannelEventRef, EventKind, EventRead, EventTime, FloatingTime, FullEvent, MAX_CALENDAR_WINDOW_MS,

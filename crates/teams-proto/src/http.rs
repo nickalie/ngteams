@@ -20,14 +20,14 @@ use url::Url;
 use crate::app_picture::{APP_PICTURES_HOST, APP_PICTURES_PATH, STATIC_APP_PICTURES_HOST};
 use crate::client::{Response, Transport};
 use crate::endpoint::{Endpoint, Service};
-use crate::file_content::{FileContentLink, MAX_RANGE, MAX_STREAM, StreamStart, is_content_link};
+use crate::file_content::{FileContentLink, MAX_RANGE, MAX_STREAM, StreamStart, is_content_link_in};
 use crate::loki::{CONFIGURATION_PATH, LOKI_AUDIENCE, LOKI_GLOBAL_HOST, parse_regional_base};
 use crate::own::OwnState;
 use crate::post_read::PostRead;
 use crate::read::Read;
 use crate::request::Request;
 use crate::search::{SUBSTRATE_AUDIENCE, SUBSTRATE_HOST, SubstrateSearch};
-use crate::thumbnail::{ThumbnailLink, is_thumbnail_link};
+use crate::thumbnail::{ThumbnailLink, is_thumbnail_link_in};
 use crate::write::on_calling_base;
 
 mod captions;
@@ -1296,7 +1296,7 @@ impl<C: Credentials> HttpTransport<C> {
 
     /// Reads the picture of a file's thumbnail at `link`, the link Graph handed out for it
     /// ([`crate::FileThumbnails::read_answer`]): a `GET` on [`Service::FileThumbnail`] with no token of the account's
-    /// (the link carries its own credential), the link checked again before it goes ([`is_thumbnail_link`]), with the
+    /// (the link carries its own credential), the link checked again before it goes ([`crate::thumbnail::is_thumbnail_link`]), with the
     /// one retry a 429 or 503 allows, as any read.
     ///
     /// # Errors
@@ -1304,7 +1304,7 @@ impl<C: Credentials> HttpTransport<C> {
     /// isn't a success.
     pub async fn file_thumbnail(&self, link: &ThumbnailLink) -> Result<Response, HttpError> {
         let url = link.url();
-        if !is_thumbnail_link(url) {
+        if !is_thumbnail_link_in(&self.cloud, url) {
             return Err(HttpError::Refused(Refusal::NotAllowed));
         }
         let outgoing = Outgoing {
@@ -1321,7 +1321,7 @@ impl<C: Credentials> HttpTransport<C> {
     /// Reads `len` bytes of a shared file from `offset`, at the download link Graph handed out for it
     /// ([`crate::FileDownload::read_answer`]): a `GET` on [`Service::FileContent`] with `Range: bytes=<first>-<last>`
     /// and no token of the account's (the link carries its own credential), the link checked again before it goes
-    /// ([`is_content_link`]), with the one retry a 429 or 503 allows, as any read. The answer is read as a part of the
+    /// ([`crate::file_content::is_content_link`]), with the one retry a 429 or 503 allows, as any read. The answer is read as a part of the
     /// file by [`crate::FileRange::read`].
     ///
     /// # Errors
@@ -1330,7 +1330,7 @@ impl<C: Credentials> HttpTransport<C> {
     /// link's 401 or 403 among them: the caller asks Graph for a new one).
     pub async fn file_range(&self, link: &FileContentLink, offset: u64, len: u32) -> Result<Response, HttpError> {
         let url = link.url();
-        if !is_content_link(url) || !self.destination_allowed(url, Auth::None) {
+        if !is_content_link_in(&self.cloud, url) || !self.destination_allowed(url, Auth::None) {
             return Err(HttpError::Refused(Refusal::NotAllowed));
         }
         if len == 0 || len > MAX_RANGE {
@@ -1388,7 +1388,7 @@ impl<C: Credentials> HttpTransport<C> {
     /// among them: the caller asks Graph for a new one), [`HttpError::Failed`] when it failed on the way.
     pub async fn file_stream(&self, link: &FileContentLink, offset: u64, len: u64) -> Result<FileBody, HttpError> {
         let url = link.url();
-        if !is_content_link(url) || !self.destination_allowed(url, Auth::None) {
+        if !is_content_link_in(&self.cloud, url) || !self.destination_allowed(url, Auth::None) {
             return Err(HttpError::Refused(Refusal::NotAllowed));
         }
         if len == 0 || len > MAX_STREAM {

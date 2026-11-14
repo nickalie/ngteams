@@ -2674,7 +2674,9 @@ where
             self.activity_app_command(&item).await?
         } else {
             self.command(action)?
-        };
+        }
+        .for_cloud(self.outbox.cloud())
+        .map_err(|error| EngineError::Attachment { why: error.to_string() })?;
         if let Command::Send { conversation, text } = &command {
             let mut sharing = std::pin::pin!(self.uploads.share(conversation, text.files()));
             tokio::select! {

@@ -10,8 +10,8 @@ impl<C: Credentials> HttpTransport<C> {
         if self.account.as_ref().is_none_or(|own| own.as_str() != write.owner) {
             return Err(refused());
         }
+        let site = DriveSite::from_web_url_in(&self.cloud, write.url().as_str()).ok_or_else(refused)?;
         self.verify_account_actor().await?;
-        let site = DriveSite::from_web_url(write.url().as_str()).ok_or_else(refused)?;
         let details = self.drive_details(&site).await?;
         let details: serde_json::Value = serde_json::from_slice(details.body()).map_err(|_| refused())?;
         if details.pointer("/owner/user/id").and_then(serde_json::Value::as_str) != Some(owner) {
@@ -195,7 +195,7 @@ impl<C: Credentials> HttpTransport<C> {
         headers: &[(String, String)],
     ) -> Result<Response, HttpError> {
         let url = url::Url::parse(url).map_err(|_| HttpError::Refused(Refusal::NotAllowed))?;
-        if DriveSite::from_web_url(url.as_str()).as_ref() != Some(site) {
+        if DriveSite::from_web_url_in(&self.cloud, url.as_str()).as_ref() != Some(site) {
             return Err(HttpError::Refused(Refusal::NotAllowed));
         }
         let audience = site.audience();
@@ -248,7 +248,8 @@ impl<C: Credentials> HttpTransport<C> {
         }
     }
     pub(super) async fn deliver_drive(&self, write: &DriveWrite) -> Result<Response, HttpError> {
-        let site = DriveSite::from_web_url(write.url().as_str()).ok_or(HttpError::Refused(Refusal::NotAllowed))?;
+        let site = DriveSite::from_web_url_in(&self.cloud, write.url().as_str())
+            .ok_or(HttpError::Refused(Refusal::NotAllowed))?;
         let audience = site.audience();
         let token = self
             .credentials
@@ -279,7 +280,9 @@ impl<C: Credentials> HttpTransport<C> {
     /// # Errors
     /// Returns an invalid site, transport error, or unsuccessful service response.
     pub async fn file_permissions(&self, file: &UploadedFile) -> Result<Response, HttpError> {
-        let site = file.site().ok_or(HttpError::Refused(Refusal::NotAllowed))?;
+        let site = file
+            .site_in(&self.cloud)
+            .ok_or(HttpError::Refused(Refusal::NotAllowed))?;
         self.drive_read(&site, &format!("{}/permissions", file.item_url()))
             .await
     }

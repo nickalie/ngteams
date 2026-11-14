@@ -560,7 +560,13 @@ impl Message {
     /// nothing is fetched here).
     #[must_use]
     pub fn files(&self) -> SharedFiles {
-        shared_files(self.properties.get("files"))
+        self.files_in(&crate::Cloud::Microsoft)
+    }
+
+    /// The message's files within the account's service boundary.
+    #[must_use]
+    pub fn files_in(&self, cloud: &crate::Cloud) -> SharedFiles {
+        crate::chat::shared_files_in(cloud, self.properties.get("files"))
     }
 
     /// `properties.policyViolation`: what a tenant's policy did to the message ([`PolicyViolation::of`]).

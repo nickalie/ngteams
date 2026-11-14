@@ -80,7 +80,7 @@ where
         }
         for file in files {
             let site = file
-                .site()
+                .site_in(self.client.transport().cloud())
                 .ok_or_else(|| failed("The file's storage details can't be read."))?;
             verify_owner(&self.client, &site, self.outbox.me().mri()).await?;
             let before = self
@@ -100,8 +100,14 @@ where
                 .zip(&recipients)
                 .map(|(person, address)| (person.as_str().to_owned(), address.clone()))
                 .collect();
-            let write = DriveWrite::share(file, chat, &addressed, self.outbox.me().mri().as_str())
-                .ok_or_else(|| failed("The file's sharing details can't be read."))?;
+            let write = DriveWrite::share_in(
+                self.client.transport().cloud(),
+                file,
+                chat,
+                &addressed,
+                self.outbox.me().mri().as_str(),
+            )
+            .ok_or_else(|| failed("The file's sharing details can't be read."))?;
             send(&self.outbox, write).await?;
             let answer = self
                 .client
@@ -155,7 +161,7 @@ where
     let site = drive
         .get("webUrl")
         .and_then(Value::as_str)
-        .and_then(DriveSite::from_web_url)
+        .and_then(|url| DriveSite::from_web_url_in(client.transport().cloud(), url))
         .ok_or_else(|| failed("Your OneDrive isn't available. Check your storage with your administrator."))?;
     verify_owner(client, &site, outbox.me().mri()).await?;
     let permissions = client
