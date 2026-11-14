@@ -1,0 +1,55 @@
+[package]
+name = "ngteams-server"
+description = "The own Teams-compatible server ngteams can sign in to instead of Microsoft's: its token and authz endpoints, database, fan-out and storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "ngteams-server"
+path = "src/main.rs"
+
+[dependencies]
+argon2.workspace = true
+async-trait.workspace = true
+aws-lc-rs.workspace = true
+axum.workspace = true
+axum-server.workspace = true
+base64.workspace = true
+bytes.workspace = true
+clap.workspace = true
+diesel.workspace = true
+diesel-async.workspace = true
+diesel_migrations.workspace = true
+figment.workspace = true
+futures-util.workspace = true
+jsonwebtoken.workspace = true
+libsqlite3-sys.workspace = true
+object_store.workspace = true
+redis.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tower.workspace = true
+tower-http.workspace = true
+tracing = { workspace = true, features = ["std", "attributes"] }
+tracing-subscriber.workspace = true
+url = { workspace = true, features = ["serde"] }
+uuid.workspace = true
+
+[dev-dependencies]
+# the e2e tests: the real client crates against the in-process server
+rcgen.workspace = true
+reqwest = { workspace = true, features = ["form", "json"] }
+teams-auth.workspace = true
+teams-core.workspace = true
+teams-proto.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,78 @@
+//! Token signing keys (Ed25519): the private key as PKCS#8, the public key raw. The newest unretired key signs; every
+//! key verifies until it is deleted, which happens once nothing it signed can still be valid.
+
+use diesel::prelude::*;
+use diesel_async::RunQueryDsl;
+
+use super::schema::signing_keys;
+use super::{Db, DbError, with_conn};
+
+#[derive(Clone, PartialEq, Eq, Queryable, Selectable, Insertable)]
+#[diesel(table_name = signing_keys)]
+pub struct SigningKey {
+    pub kid: String,
+    pub private_der: Vec<u8>,
+    pub public_der: Vec<u8>,
+    pub created_at: i64,
+    pub retired_at: Option<i64>,
+}
+
+impl std::fmt::Debug for SigningKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SigningKey")
+            .field("kid", &self.kid)
+            .field("created_at", &self.created_at)
+            .field("retired_at", &self.retired_at)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Every key, newest first.
+///
+/// # Errors
+/// A database failure.
+pub async fn all(db: &Db) -> Result<Vec<SigningKey>, DbError> {
+    with_conn!(db, |conn| Ok(signing_keys::table
+        .order((signing_keys::created_at.desc(), signing_keys::kid.desc()))
+        .select(SigningKey::as_select())
+        .load(conn)
+        .await?))
+}
+
+/// Stores a new key.
+///
+/// # Errors
+/// A database failure.
+pub async fn insert(db: &Db, key: &SigningKey) -> Result<(), DbError> {
+    with_conn!(db, |conn| diesel::insert_into(signing_keys::table)
+        .values(key)
+        .execute(conn)
+        .await?);
+    Ok(())
+}
+
+/// Stops every unretired key but `keep` from signing.
+///
+/// # Errors
+/// A database failure.
+pub async fn retire_others(db: &Db, keep: &str, at: i64) -> Result<(), DbError> {
+    with_conn!(db, |conn| diesel::update(
+        signing_keys::table.filter(signing_keys::kid.ne(keep).and(signing_keys::retired_at.is_null()))
+    )
+    .set(signing_keys::retired_at.eq(Some(at)))
+    .execute(conn)
+    .await?);
+    Ok(())
+}
+
+/// Deletes the keys retired before `before`.
+///
+/// # Errors
+/// A database failure.
+pub async fn delete_retired(db: &Db, before: i64) -> Result<usize, DbError> {
+    with_conn!(db, |conn| Ok(diesel::delete(
+        signing_keys::table.filter(signing_keys::retired_at.lt(before))
+    )
+    .execute(conn)
+    .await?))
+}
