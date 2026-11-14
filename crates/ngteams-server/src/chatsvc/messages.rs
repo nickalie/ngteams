@@ -104,6 +104,9 @@ pub(super) async fn page(
     Query(query): Query<Params>,
 ) -> Result<Json<Value>, Error> {
     let chat = reads::target(&path)?;
+    if chat == "48:generic" {
+        return Err(Error::InvalidThread);
+    }
     member_of(&app, &caller, chat).await?;
     let current = repo::watermark(&app.db).await?;
     let until = reads::number(&query, "until", current)?;

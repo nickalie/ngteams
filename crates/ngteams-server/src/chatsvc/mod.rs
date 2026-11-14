@@ -49,7 +49,7 @@ pub(super) fn router() -> Router<Arc<App>> {
         )
         .route(
             "/api/chatsvc/{region}/v1/users/ME/conversations/{chat}/messages/{message}",
-            put(mutations::edit).delete(mutations::delete),
+            put(mutations::edit).delete(mutations::delete).get(reads::missing_copy),
         )
         .route(
             "/api/chatsvc/{region}/v1/users/ME/conversations/{chat}/messages/{message}/properties",
@@ -116,6 +116,7 @@ impl FromRequestParts<Arc<App>> for Caller {
 #[derive(Debug)]
 enum Error {
     BadRequest,
+    InvalidThread,
     Denied,
     Missing,
     Database(DbError),
@@ -133,6 +134,7 @@ impl From<DbError> for Error {
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let (status, code, message) = match self {
+            Self::InvalidThread => (StatusCode::BAD_REQUEST, 201, "The Thread Id is invalid"),
             Self::BadRequest => (StatusCode::BAD_REQUEST, 201, "Invalid threadId or request"),
             Self::Denied => (StatusCode::FORBIDDEN, 209, "AclCheckFailed"),
             Self::Missing => (StatusCode::NOT_FOUND, 201, "ThreadNotFound"),

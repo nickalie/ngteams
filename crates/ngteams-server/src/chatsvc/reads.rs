@@ -19,7 +19,11 @@ pub(super) async fn thread(
     caller: Caller,
     Path(path): Path<Params>,
 ) -> Result<Json<Value>, Error> {
-    let (chat, members) = member_of(&app, &caller, target(&path)?).await?;
+    let id = target(&path)?;
+    if id == "48:generic" {
+        return Err(Error::InvalidThread);
+    }
+    let (chat, members) = member_of(&app, &caller, id).await?;
     Ok(Json(wire::thread(&app, &caller, &chat, &members)))
 }
 
@@ -92,4 +96,8 @@ pub(super) fn number(query: &Params, name: &str, default: i64) -> Result<i64, Er
         None => Ok(default),
         Some(value) => value.parse().ok().filter(|value| *value >= 0).ok_or(Error::BadRequest),
     }
+}
+
+pub(super) fn missing_copy(_caller: Caller) -> std::future::Ready<Error> {
+    std::future::ready(Error::Missing)
 }
