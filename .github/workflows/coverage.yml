@@ -82,7 +82,20 @@ jobs:
             rm .ci-cache/build/dependencies.tar.zst
           fi
       - name: Compile all runtime test targets and inventory the shards
-        run: .github/ci/docker.sh build
+        run: |
+          mkdir -p target
+          python3 -c 'import time; print(time.time())' > target/compile-start
+          .github/ci/docker.sh build
+      - name: Record dependency and workspace compiler durations
+        run: |
+          python3 scripts/ci-compile-times.py --target target/coverage-continuous-build \
+            --started target/compile-start --output target/compile-times.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-compile-times
+          path: target/compile-times.json
+          retention-days: 14
+          if-no-files-found: error
       - name: Bundle the shared executables and coverage maps
         run: .github/ci/bundle.sh pack
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -255,6 +268,7 @@ jobs:
           path: |
             target/coverage/continuous/all/summary.json
             target/coverage-inputs/shard-*.json
+            target/coverage-inputs/compile-times.json
             target/test-shards.json
           if-no-files-found: warn
           retention-days: 14

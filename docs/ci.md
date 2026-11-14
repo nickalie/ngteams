@@ -97,7 +97,10 @@ rust-toolchain.toml, the actual Docker image ID, all CI image/scripts, Cargo con
 keys. Workspace artifacts are always cleaned before compilation, and profiles and reports are never cached. The SDK
 key also includes Cargo.lock, the toolchain and Dockerfile. This keeps the expensive large executable bundle out of
 the repository's shared 10 GB GHA cache budget, which is also used by release caches. Eviction is a performance miss;
-it never bypasses tests or the gate. See [Docker's GHA cache backend](https://docs.docker.com/build/cache/backends/gha/)
+it never bypasses tests or the gate. The build also records fresh versus restored Rust compilation units using
+Cargo's invocation/completion stamps. Their durations overlap, so the dependency/workspace unit totals in
+`compile-times.json` are reported separately from the compiler span and workflow wall time. This diagnostic does
+not change compiler flags or invalidate compatible dependency caches. See [Docker's GHA cache backend](https://docs.docker.com/build/cache/backends/gha/)
 and [GitHub's cache limits](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching).
 
 A historical instrumented build with these settings measured about 23 GiB locally, before temporary test outputs;
