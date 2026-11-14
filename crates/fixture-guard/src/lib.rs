@@ -4,7 +4,7 @@
 //! meetings' join credentials (a join link's code or `p` passcode, a meeting id or a passcode under its key or label,
 //! in any language Teams writes an invitation in: [`labels`]), and a call's network data (a public IP address, an ICE
 //! username fragment or password, a DTLS fingerprint, a TURN credential: [`network`]). It is the backstop behind the
-//! sanitizer and behind hand-written fixtures: what either lets through fails instead of being committed. Every
+//! sanitizer and behind handwritten fixtures: what either lets through fails instead of being committed. Every
 //! committed fixture also has to declare itself synthetic ([`synthetic`]).
 //!
 //! Each line is scanned twice: as written, and decoded the way captures hide text, layer after layer: `%XX` percent
