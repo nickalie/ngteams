@@ -23,20 +23,31 @@ pub(super) struct Member {
     pub joined_at: i64,
 }
 
+macro_rules! advance {
+    ($conn:expr, $at:expr) => {
+        diesel::update($crate::chatsvc::schema::chat_clock::table)
+            .set(
+                $crate::chatsvc::schema::chat_clock::version.eq(diesel::dsl::case_when::<
+                    _,
+                    _,
+                    diesel::sql_types::BigInt,
+                >(
+                    $crate::chatsvc::schema::chat_clock::version.lt($at),
+                    $at,
+                )
+                .otherwise($crate::chatsvc::schema::chat_clock::version + 1)),
+            )
+            .returning($crate::chatsvc::schema::chat_clock::version)
+            .get_result($conn)
+            .await?
+    };
+}
+pub(super) use advance;
+
 pub(super) async fn create(db: &Db, chat: &Chat, members: &[String]) -> Result<bool, DbError> {
     with_conn!(db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
-            let version: i64 = diesel::update(chat_clock::table)
-                .set(
-                    chat_clock::version.eq(diesel::dsl::case_when::<_, _, diesel::sql_types::BigInt>(
-                        chat_clock::version.lt(chat.created_at),
-                        chat.created_at,
-                    )
-                    .otherwise(chat_clock::version + 1)),
-                )
-                .returning(chat_clock::version)
-                .get_result(conn)
-                .await?;
+            let version: i64 = advance!(conn, chat.created_at);
             let active: i64 = users::table
                 .filter(users::id.eq_any(members))
                 .filter(users::disabled.eq(false))

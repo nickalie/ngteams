@@ -76,3 +76,18 @@ pub(super) fn conversation(app: &App, caller: &Caller, chat: &Chat) -> Value {
         "threadProperties": properties,
     })
 }
+
+pub(super) fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
+}
+
+pub(super) fn iso(at: i64) -> String {
+    let time = chrono::DateTime::from_timestamp_millis(at).unwrap_or(chrono::DateTime::UNIX_EPOCH);
+    format!(
+        "{}.{:03}0000Z",
+        time.format("%Y-%m-%dT%H:%M:%S"),
+        time.timestamp_subsec_millis()
+    )
+}

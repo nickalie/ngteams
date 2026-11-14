@@ -27,3 +27,14 @@ diesel::table! {
 
 diesel::joinable!(chat_members -> chats (chat_id));
 diesel::allow_tables_to_appear_in_same_query!(chats, chat_members);
+
+diesel::table! {
+    chat_messages (chat_id, id) {
+        chat_id -> Text,
+        id -> BigInt,
+        owner_id -> Text,
+        client_id -> Nullable<Text>,
+        version -> BigInt,
+        body -> Text,
+    }
+}

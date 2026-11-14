@@ -19,6 +19,7 @@ axum.workspace = true
 axum-server.workspace = true
 base64.workspace = true
 bytes.workspace = true
+chrono.workspace = true
 clap = { workspace = true, features = ["env"] }
 diesel.workspace = true
 diesel-async.workspace = true

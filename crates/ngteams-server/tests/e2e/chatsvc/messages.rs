@@ -99,7 +99,10 @@ async fn an_engine_posts_messages_and_another_engine_syncs_them_with_backward_an
         assert!(pair.b.sync().await.unwrap().failed.is_empty());
         let message = pair.b.message(&pair.chat, &third).await.unwrap().unwrap();
         assert!(message.content.contains("third persistent message"));
-        assert_eq!(message.sender.as_deref(), Some(format!("8:orgid:{}", pair.a_id).as_str()));
+        assert_eq!(
+            message.sender.as_deref(),
+            Some(format!("8:orgid:{}", pair.a_id).as_str())
+        );
         pair.stop().await;
     }
 }

@@ -3,6 +3,9 @@
 //! appear in the next sync. No client-supplied author or roster can grant access to another account.
 
 mod create;
+mod events;
+mod message_repo;
+mod messages;
 mod reads;
 mod repo;
 mod schema;
@@ -38,7 +41,7 @@ pub(super) fn router() -> Router<Arc<App>> {
         )
         .route(
             "/api/chatsvc/{region}/v1/users/ME/conversations/{chat}/messages",
-            get(reads::empty_messages),
+            get(messages::page).post(messages::post),
         )
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
 }
@@ -46,6 +49,7 @@ pub(super) fn router() -> Router<Arc<App>> {
 struct Caller {
     id: String,
     tenant: String,
+    name: String,
 }
 
 impl Caller {
@@ -70,12 +74,13 @@ impl FromRequestParts<Arc<App>> for Caller {
         let user = users::by_id(&app.db, &bearer.claims.oid)
             .await
             .map_err(|error| Error::from(error).into_response())?;
-        if user.is_none_or(|user| user.disabled) {
-            return Err(Error::Denied.into_response());
-        }
+        let user = user
+            .filter(|user| !user.disabled)
+            .ok_or_else(|| Error::Denied.into_response())?;
         Ok(Self {
             id: bearer.claims.oid,
             tenant: bearer.claims.tid,
+            name: user.display_name,
         })
     }
 }

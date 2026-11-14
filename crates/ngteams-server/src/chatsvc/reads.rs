@@ -10,7 +10,7 @@ use crate::app::App;
 
 type Params = HashMap<String, String>;
 
-fn target(path: &Params) -> Result<&str, Error> {
+pub(super) fn target(path: &Params) -> Result<&str, Error> {
     path.get("chat").map(String::as_str).ok_or(Error::BadRequest)
 }
 
@@ -34,18 +34,6 @@ pub(super) async fn members(
         "members": members.iter().map(|member| wire::member(&app, member, false)).collect::<Vec<_>>(),
         "rosterVersion": 0, "totalMemberCount": members.len(),
     })))
-}
-
-pub(super) async fn empty_messages(
-    State(app): State<Arc<App>>,
-    caller: Caller,
-    Path(path): Path<Params>,
-) -> Result<Json<Value>, Error> {
-    let (chat, _) = member_of(&app, &caller, target(&path)?).await?;
-    Ok(Json(json!({"messages": [], "tenantId": caller.tenant, "_metadata": {
-        "lastCompleteSegmentStartTime": 0, "lastCompleteSegmentEndTime": 0,
-        "syncState": format!("{}/v1/users/ME/conversations/{}/messages?syncState={}", wire::base(&app), chat.id, chat.version),
-    }})))
 }
 
 pub(super) async fn conversations(
@@ -79,12 +67,21 @@ pub(super) async fn conversations(
             last.version
         ));
     }
-    Ok(Json(
-        json!({"conversations": chats.iter().map(|chat| wire::conversation(&app, &caller, chat)).collect::<Vec<_>>(), "_metadata": metadata}),
-    ))
+    let mut conversations = Vec::new();
+    for chat in &chats {
+        let mut entry = wire::conversation(&app, &caller, chat);
+        if let Some(message) = super::message_repo::latest(&app.db, &chat.id).await? {
+            entry["lastMessage"] = message.value()?;
+            entry["lastUpdatedMessageId"] = message.id.into();
+            entry["lastUpdatedMessageVersion"] = message.version.into();
+            entry["properties"]["isemptyconversation"] = "False".into();
+        }
+        conversations.push(entry);
+    }
+    Ok(Json(json!({"conversations": conversations, "_metadata": metadata})))
 }
 
-fn number(query: &Params, name: &str, default: i64) -> Result<i64, Error> {
+pub(super) fn number(query: &Params, name: &str, default: i64) -> Result<i64, Error> {
     match query.get(name) {
         None => Ok(default),
         Some(value) => value.parse().ok().filter(|value| *value >= 0).ok_or(Error::BadRequest),

@@ -8,10 +8,11 @@ What authz advertises today: sign-in (the token endpoint) and authz. Other servi
 only the services the server serves, so the client keeps every other service off.
 
 The chat service also serves chat creation, conversation lists and their sync/forward links, thread reads and
-member lists under `/api/chatsvc/<region>/v1/`, with empty message pages for these newly created chats. These routes require an IC3 bearer token and current membership;
+member lists, message posting and newest/backward/incremental message pages under
+`/api/chatsvc/<region>/v1/`. These routes require an IC3 bearer token and current membership;
 disabled users are refused even while their token is live. A repeated 1:1 roster returns the existing chat, and
 group rosters and names persist in SQLite or PostgreSQL. Chat discovery is not advertised by authz yet: the
-message write surface is still being added.
+remaining message mutations and account properties are still being added.
 
 ## Stack
 
@@ -118,12 +119,16 @@ hands out its GTM.
 
 Chat creation publishes to every other member on `push:<mri>`. The internal JSON envelope is
 `{"resourceType":"ThreadUpdate","resource":<thread>}`; the resource has the thread-read shape. Trouter delivery
-wraps this internal event separately. Publication happens after the transaction commits. The fan-out is at most
+wraps this internal event separately. A message post publishes `NewMessage` with the stored message as `resource`. Publication happens after the transaction commits. The fan-out is at most
 once; clients catch up through conversation sync after a missed event.
 
 Database versions advance a shared row inside the write transaction. A conversation page keeps its upper bound
 and follows versions as a keyset; a chat changed during paging appears on the next incremental scan. This keeps
 clocks on different HTTP nodes out of cursor ordering.
+
+Posts use the authenticated account as sender. A repeated `(chat, sender, clientmessageid)` returns the original
+message and emits no duplicate event. Message IDs and versions come from the shared version clock, and a
+message page keeps its watermark in backward and forward links.
 
 ## Scaling
 

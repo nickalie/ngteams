@@ -101,18 +101,7 @@ pub(super) async fn create(
     let (chat, members) = super::member_of(&app, &caller, &chat.id).await?;
     let thread = wire::thread(&app, &caller, &chat, &members);
     if inserted {
-        let event = json!({"resourceType": "ThreadUpdate", "resource": thread});
-        for member in &members {
-            if member.user_id != caller.id
-                && app
-                    .fanout
-                    .publish(&format!("push:8:orgid:{}", member.user_id), event.to_string().into())
-                    .await
-                    .is_err()
-            {
-                tracing::warn!("chat event fan-out unavailable; conversation sync will catch up");
-            }
-        }
+        super::events::publish(&app, &caller, &members, "ThreadUpdate", &thread).await;
     }
     Ok((
         StatusCode::CREATED,
