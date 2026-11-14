@@ -1,6 +1,7 @@
 //! The real own-cloud engine and typed reads against persisted local chat service accounts.
 
 mod messages;
+mod mutations;
 mod paging;
 mod security;
 
@@ -20,9 +21,17 @@ use crate::support::{TestServer, backends};
 type ChatClient = Client<HttpTransport<Session<MemorySecretStore>>>;
 
 async fn transport(server: &TestServer, upn: &str, id: &str) -> HttpTransport<Session<MemorySecretStore>> {
+    transport_with(Arc::new(server.session(upn).await), server, id)
+}
+
+fn transport_with(
+    session: Arc<Session<MemorySecretStore>>,
+    server: &TestServer,
+    id: &str,
+) -> HttpTransport<Session<MemorySecretStore>> {
     let cloud = Cloud::own("https://own.example.test").unwrap();
     HttpTransport::for_cloud_with_mock_origin(
-        Arc::new(server.session(upn).await),
+        session,
         "https://own.example.test/api/chatsvc/own",
         cloud,
         &server.origin,
@@ -36,8 +45,9 @@ async fn client(server: &TestServer, upn: &str, id: &str) -> ChatClient {
 }
 
 async fn engine(server: &TestServer, upn: &str, id: &str, dir: &std::path::Path) -> EngineHandle {
-    let client = Arc::new(client(server, upn, id).await);
-    let transport = Arc::new(transport(server, upn, id).await);
+    let session = Arc::new(server.session(upn).await);
+    let client = Arc::new(Client::new(transport_with(Arc::clone(&session), server, id)));
+    let transport = Arc::new(transport_with(session, server, id));
     engine::start(Parts {
         store: Store::open(&dir.join("account.sqlite")).unwrap(),
         client,
