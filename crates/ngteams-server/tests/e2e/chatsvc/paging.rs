@@ -7,6 +7,79 @@ use super::client;
 use crate::support::{TestServer, backends};
 
 #[tokio::test(flavor = "multi_thread")]
+async fn large_conversation_previews_page_within_the_native_budget_and_sync_every_chat() {
+    for backend in backends() {
+        let pair = super::messages::Pair::start(backend).await;
+        let c = pair.server.add_user("c@own.test", "Cora").await;
+        let text = "x".repeat(50 * 1024);
+        let mut chats = Vec::new();
+        for index in 0..90 {
+            chats.push(group_with_preview(&pair, &c, &format!("Room {index}"), &text).await);
+        }
+        let reader = client(&pair.server, "b@own.test", &pair.b_id).await;
+        let reads = ChatReads::new(&reader);
+        let mut page = reads.conversations().await.unwrap();
+        assert!(page.conversations.len() < chats.len());
+        let sync = page.sync_state().unwrap().to_owned();
+        let later = group_with_preview(&pair, &c, "During paging", &text).await;
+        let mut seen = Vec::new();
+        loop {
+            assert_eq!(page.sync_state(), Some(sync.as_str()));
+            seen.extend(page.conversations.iter().map(|entry| entry.id.clone()));
+            let Some(next) = page.forward_link() else { break };
+            page = reads.conversations_from(next).await.unwrap();
+        }
+        assert_eq!(seen.len(), chats.len() + 1);
+        assert_eq!(seen.iter().collect::<std::collections::HashSet<_>>().len(), seen.len());
+        assert!(seen.contains(&pair.chat));
+        for (chat, _) in &chats {
+            assert!(seen.contains(chat), "missing {chat}");
+        }
+        assert!(!seen.contains(&later.0));
+        let next = reads.conversations_from(&sync).await.unwrap();
+        assert_eq!(next.conversations.len(), 1);
+        assert_eq!(next.conversations[0].id, later.0);
+        assert!(pair.b.sync().await.unwrap().failed.is_empty());
+        assert_eq!(pair.b.conversations(200).await.unwrap().len(), chats.len() + 2);
+        chats.push(later);
+        for (chat, message) in chats {
+            let stored = pair.b.message(&chat, &message).await.unwrap().unwrap();
+            assert!(stored.content.contains(&text));
+        }
+        pair.stop().await;
+    }
+}
+
+async fn group_with_preview(pair: &super::messages::Pair, other: &str, topic: &str, text: &str) -> (String, String) {
+    use teams_core::engine::Action;
+    use teams_store::OutboxState;
+
+    let row = pair
+        .a
+        .write(Action::CreateChat {
+            others: vec![
+                Mri::new(format!("8:orgid:{}", pair.b_id)),
+                Mri::new(format!("8:orgid:{other}")),
+            ],
+            topic: Some(topic.into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(row.state, OutboxState::Sent, "{row:?}");
+    let chat = row.message_id.unwrap();
+    let row = pair
+        .a
+        .write(Action::Send {
+            conversation: chat.clone(),
+            text: teams_proto::chat::MessageText::plain(text).unwrap(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(row.state, OutboxState::Sent, "{row:?}");
+    (chat, row.message_id.unwrap())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn conversation_pages_keep_their_snapshot_and_survive_another_node_starting() {
     for backend in backends() {
         let server = TestServer::start_with(backend, |config| {

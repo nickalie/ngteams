@@ -122,11 +122,11 @@ pub(super) async fn latest(db: &Db, chat: &str) -> Result<Option<Message>, DbErr
         .optional()?))
 }
 
-pub(super) async fn last_updated(db: &Db, chat: &str) -> Result<Option<Message>, DbError> {
+pub(super) async fn last_updated(db: &Db, chat: &str) -> Result<Option<(i64, i64)>, DbError> {
     with_conn!(db, |conn| Ok(chat_messages::table
         .filter(chat_messages::chat_id.eq(chat))
         .order(chat_messages::version.desc())
-        .select(Message::as_select())
+        .select((chat_messages::id, chat_messages::version))
         .first(conn)
         .await
         .optional()?))

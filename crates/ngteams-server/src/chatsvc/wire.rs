@@ -6,6 +6,8 @@ use super::{
 };
 use crate::app::App;
 
+pub(super) const MAX_PAGE_BYTES: usize = 3 * 1024 * 1024;
+
 pub(super) fn base(app: &App) -> String {
     format!("{}/api/chatsvc/{}", app.config.origin(), app.config.region)
 }

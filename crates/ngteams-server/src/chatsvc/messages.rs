@@ -13,8 +13,6 @@ use crate::db::DbError;
 
 type Params = HashMap<String, String>;
 
-const MAX_PAGE_BYTES: usize = 3 * 1024 * 1024;
-
 pub(super) const MESSAGE_PROPERTIES: [&str; 6] = ["mentions", "cards", "links", "files", "formatVariant", "qtdMsgs"];
 
 pub(super) async fn post(
@@ -139,7 +137,12 @@ pub(super) async fn page(
     let mut metadata = json!({"syncState": format!("{link}?syncState={until}"),
         "lastCompleteSegmentStartTime": since, "lastCompleteSegmentEndTime": until});
     if more && let Some(last) = rows.get(messages.len().saturating_sub(1)) {
-        metadata["lastCompleteSegmentStartTime"] = last.id.into();
+        metadata["lastCompleteSegmentStartTime"] = if incremental {
+            last.id.max(since.saturating_add(1))
+        } else {
+            last.id
+        }
+        .into();
         if incremental {
             metadata["backwardLink"] = json!(format!(
                 "{link}?syncState={since}&until={until}&before={}&pageSize={size}",
@@ -186,13 +189,12 @@ fn bounded_messages(rows: &[message_repo::Message], size: i64) -> Result<(Vec<Va
     let mut messages = Vec::new();
     let mut bytes = 2;
     for row in rows.iter().take(usize::try_from(size).unwrap_or(200)) {
-        let message = row.value()?;
-        let length = message.to_string().len() + 1;
-        if !messages.is_empty() && bytes + length > MAX_PAGE_BYTES {
+        let length = row.body.len() + 1;
+        if !messages.is_empty() && bytes + length > wire::MAX_PAGE_BYTES {
             break;
         }
         bytes += length;
-        messages.push(message);
+        messages.push(row.value()?);
     }
     let more = messages.len() < rows.len();
     Ok((messages, more))

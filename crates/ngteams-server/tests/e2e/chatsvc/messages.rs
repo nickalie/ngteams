@@ -202,6 +202,66 @@ async fn an_engine_catches_up_every_message_across_a_cut_incremental_answer() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_engine_catches_up_older_mutations_across_count_and_byte_cuts() {
+    for backend in backends() {
+        for (count, text) in [(198, "new message".to_owned()), (59, "x".repeat(50 * 1024))] {
+            let pair = Pair::start(backend).await;
+            let deleted = pair.send("delete later").await;
+            let reacted = pair.send(&text).await;
+            let edited = pair.send(&text).await;
+            assert!(pair.b.sync().await.unwrap().failed.is_empty());
+            let reader = client(&pair.server, "b@own.test", &pair.b_id).await;
+            let reads = ChatReads::new(&reader);
+            let initial = reads.messages(&pair.chat, 200).await.unwrap();
+            let mut ids = Vec::new();
+            for _ in 0..count {
+                ids.push(pair.send(&text).await);
+            }
+            for action in [
+                Action::Delete {
+                    conversation: pair.chat.clone(),
+                    message_id: deleted.clone(),
+                },
+                Action::React {
+                    conversation: pair.chat.clone(),
+                    message_id: reacted.clone(),
+                    key: "like".into(),
+                },
+                Action::Edit {
+                    conversation: pair.chat.clone(),
+                    message_id: edited.clone(),
+                    text: MessageText::plain(&format!("edited while offline {text}")).unwrap(),
+                },
+            ] {
+                assert_eq!(pair.a.write(action).await.unwrap().state, OutboxState::Sent);
+            }
+            let page = reads
+                .messages_from(&pair.chat, initial.sync_state().unwrap())
+                .await
+                .unwrap();
+            assert!(page.backward_link().is_some());
+            let last = &page.messages.last().unwrap().id;
+            assert!(last == &edited || last == &reacted, "cut must end on an older mutation");
+            assert!(pair.b.sync().await.unwrap().failed.is_empty());
+            let tombstone = pair.b.message(&pair.chat, &deleted).await.unwrap().unwrap();
+            assert!(tombstone.delete_time.is_some());
+            let reactions = pair.b.reactions(&pair.chat, &reacted).await.unwrap();
+            assert_eq!(reactions.len(), 1);
+            assert_eq!(reactions[0].key, "like");
+            let updated = pair.b.message(&pair.chat, &edited).await.unwrap().unwrap();
+            assert!(updated.content.contains("edited while offline"));
+            for id in ids {
+                assert!(pair.b.message(&pair.chat, &id).await.unwrap().is_some(), "missing {id}");
+            }
+            assert!(pair.b.sync().await.unwrap().failed.is_empty());
+            let tombstone = pair.b.message(&pair.chat, &deleted).await.unwrap().unwrap();
+            assert!(tombstone.delete_time.is_some());
+            pair.stop().await;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn large_message_pages_stay_within_the_native_transport_budget_and_keep_all_rows() {
     for backend in backends() {
         let pair = Pair::start(backend).await;

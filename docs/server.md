@@ -129,13 +129,15 @@ once; clients catch up through conversation sync after a missed event.
 
 Database versions advance a shared row inside the write transaction. A conversation page keeps its upper bound
 and follows versions as a keyset; a chat changed during paging appears on the next incremental scan. This keeps
-clocks on different HTTP nodes out of cursor ordering.
+clocks on different HTTP nodes out of cursor ordering. Conversation arrays, including their full last-message
+previews, stay below a 3 MiB serialized budget; a cut page's forward link starts after the last included chat.
 
 Posts use the authenticated account as sender. A repeated `(chat, sender, clientmessageid)` returns the original
 message and emits no duplicate event. Message IDs and versions come from the shared version clock, and a
 message page keeps its watermark in backward links. Incremental pages filter by changed version and order by
-arrival ID, with segment bounds that let the native engine follow a cut answer. Message arrays stay below a
-3 MiB serialized budget; remaining rows have a backward continuation.
+arrival ID. While an incremental answer is cut, its segment start stays above the prior watermark even when
+the last row is a changed older message; only the final page reports that prior watermark. This keeps the
+native engine following every backward continuation. Message arrays stay below a 3 MiB serialized budget.
 
 Read horizons are stored per `(chat, account)` and returned only in that account's conversation listing.
 Their own endpoints receive a `ConversationUpdate` with `propertiesUpdated` and the changed property. Other
