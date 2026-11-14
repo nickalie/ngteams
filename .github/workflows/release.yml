@@ -33,13 +33,18 @@ on:
       - scripts/lib/windows-runner.ps1
       - scripts/macos-gstreamer.sh
   workflow_dispatch:
+    inputs:
+      coverage_only:
+        description: Verify same-commit Coverage reuse without building or publishing
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 # A new push cancels whatever release is building or waiting: only the newest commit is worth publishing.
 concurrency:
-  group: release
+  group: ${{ inputs.coverage_only && format('release-coverage-{0}', github.ref) || 'release' }}
   cancel-in-progress: true
 
 defaults:
@@ -51,6 +56,7 @@ env:
 
 jobs:
   build:
+    if: ${{ !inputs.coverage_only }}
     runs-on: ubuntu-24.04
     # A cold Rust release build, plus the runtime's archive when its key is new.
     timeout-minutes: 240
@@ -198,13 +204,24 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  # The full suite, the same one that gates pull requests: a release is published only if it passes.
   tests:
-    uses: ./.github/workflows/coverage.yml
+    name: Coverage commit gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 155
     permissions:
       contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require standalone Coverage success for this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release-coverage.py
 
   windows:
+    if: ${{ !inputs.coverage_only }}
     runs-on: windows-2025
     timeout-minutes: 240
     permissions:
@@ -302,6 +319,7 @@ jobs:
   # ngteams.app for Apple silicon, its GStreamer runtime inside. Signed with a Developer ID and notarized when the
   # repository has the signing secrets (docs/ci.md, "macOS signing"); ad hoc without them.
   macos:
+    if: ${{ !inputs.coverage_only }}
     runs-on: macos-latest
     timeout-minutes: 180
     permissions:
@@ -415,7 +433,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && !inputs.coverage_only
     needs: [build, windows, macos, tests]
     runs-on: ubuntu-24.04
     timeout-minutes: 30

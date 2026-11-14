@@ -7,7 +7,7 @@ changes are entirely Markdown (`**/*.md`) or under `docs/`. This includes `READM
 Files under any `tests/fixtures/` directory and `vendor/gpui-pre/README.md` remain included: tests consume fixtures
 and GPUI compiles its README with `include_str!`. Licenses remain included because packaging reads them. A mixed
 documentation/code change runs them all. Merge queues and manual dispatch remain unfiltered, as does
-Coverage's reusable `workflow_call` entry point used by releases.
+the release's exact-commit Coverage lookup.
 
 The small [Fixture and documentation guard workflow](../.github/workflows/fixtures.yml) still runs
 `cargo test --locked -p fixture-guard` when `docs/`, any `tests/fixtures/`, the guard crate, the root manifest/lockfile,
@@ -20,8 +20,18 @@ Main currently has no branch protection or applicable rulesets requiring these c
 path-filtered check, replace workflow filtering with an always-triggered workflow and job-level changed-file
 conditions: [skipped workflows leave required checks pending](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#using-filters-to-target-specific-paths-for-pull-request-or-push-events).
 
-Coverage's `Coverage ≥90%` job runs `scripts/coverage.sh --require-target` over all runtime crates
-selected by `coverage-report.py list`. A crate
+Coverage builds every runtime test target selected by `coverage-report.py list` once, with the same continuous
+instrumentation as `scripts/coverage.sh`. Eight parallel jobs run those shared executables. The inventory comes from
+Cargo's compiler-artifact messages, checks every runtime package is present, and assigns every test target exactly
+once. Longest-first balancing uses target timings from run 43552497622 in `.github/ci/test-times.json`; new targets
+receive a default weight. `large_call_window` runs alone, while the other `ngteams` and `teams-ui` targets spread over
+the remaining jobs. Each target retains serial harness execution. Refresh weights from the saved shard timing JSON
+when suites change.
+
+The final `Coverage ≥90%` job merges the shards' LLVM profiles against that exact shared build, exports once, and
+runs the existing reporter with `--require-target` over all runtime crates. This preserves cross-crate test hits,
+which some crates need to reach 90%; independently gating smaller selections would change those measurements.
+Shard prefixes prevent profile filename collisions between containers. A crate
 below 90% in **any** of LLVM's lines, functions or regions fails the job, even if the workspace average or that
 crate's saved standalone baseline is higher or lower. Exactly 90% passes. Failed tests, missing dependencies and
 missing source mappings also fail; the workflow does not skip packages or tolerate a failed coverage step.
@@ -36,15 +46,16 @@ commands, locks and holders.
 
 The hosted `Coverage gate tests` job checks the reporter and the wrapper's failure propagation, including 89.99%
 in each metric and a second crate whose coverage is lower than the first one's. This fast job does not replace the
-full measurement. The coverage artifact contains only `summary.json`, including per-crate counts and gaps. Raw
-profiles, screenshots, captures and runtime logs are not uploaded.
-The job summary displays each crate's measured lines, functions and regions. If tests fail, the wrapper attempts
-to export the current profiles for diagnosis and labels those results as partial; it still exits with the original
-test failure. A failed build or export cannot reuse a previous measurement's summary.
+full measurement. The final `coverage-summary` artifact contains `summary.json` with per-crate counts and gaps, the target assignment,
+and target timings. Intermediate shared executables and raw LLVM counters are uploaded only to move measurements
+between jobs and expire after one day. Screenshots, captures and runtime logs are never uploaded.
+The job summary displays each crate's measured lines, functions and regions. If a shard fails, other shards continue and the aggregate attempts to report current partial profiles for diagnosis.
+A failed, cancelled or skipped shard, failed script tests, missing build, or failed measurement fails the aggregate,
+regardless of its partial percentages. Fresh jobs cannot reuse a previous measurement's summary.
 
 ## Hosted CPU runner
 
-Both jobs use GitHub-hosted Ubuntu runners. The full measurement runs in the
+All Coverage jobs use GitHub-hosted Ubuntu runners. The full measurement runs in the
 [Arch test image](../.github/ci/Dockerfile), which supplies WPE WebKit ≥2.54, Weston ≥15, niri, PipeWire, the private
 keyring tools and Mesa's software OpenGL/Vulkan drivers. Tests run as a non-root user. The container is privileged
 so WebKit can create its own sandbox namespaces, and `/dev/dri` is hidden explicitly. It runs on a disposable
@@ -67,14 +78,26 @@ CI selects `WGPU_BACKEND=vulkan` so GPUI uses Mesa's Lavapipe software adapter w
 devices. The sandbox forwards this graphics setting alongside its existing small environment allowlist.
 
 The image installs the repository's pinned Rust toolchain and LLVM tools plus `cargo-llvm-cov` 0.9.1. The entry
-script downloads checksum-verified Chrome using the normal lab CLI, then executes the full strict coverage gate.
+script downloads checksum-verified Chrome using the normal lab CLI and checks it before executing tests.
 Before measurement it also runs the patched Wayland clipboard's ownership regressions; these vendor-library tests
 are separate from the runtime-crate selection. The native UI test still exercises copy, cut and paste end to end.
 The image sets `TZ=Etc/UTC` so calendar fixtures do not depend on the host's `/etc/localtime` configuration.
 Tool installation uses the network; test traffic stays synthetic and offline from the tenant. No lab configuration
 or secret is required. The workflow frees unused hosted SDKs to make space for the instrumented native binaries.
-The one-shot build disables incremental caches and DWARF debug information while retaining LLVM coverage maps and
-debug assertions. It also removes the temporary Chrome-installer build before compiling instrumented tests.
+The shared build disables incremental compilation and DWARF debug information while retaining LLVM coverage maps and
+debug assertions. Its bundle carries test executables, helper binaries and shared libraries, without dependency
+rlibs or object files. Every shard uses `/workspace`, so compile-time fixture paths and source maps stay valid.
+
+Docker Buildx uses a shared GHA image cache (`mode=min`); only the build job exports it. Cargo registry/Git sources
+and the pinned Linux x64 libwebrtc SDK have separate caches. Instrumented third-party dependencies are saved only
+when their compressed archive fits 1 GiB; larger archives are discarded. Their exact cache key includes Cargo.lock,
+rust-toolchain.toml, all CI image/scripts, Cargo configuration and vendored sources, with no fallback to incompatible
+keys. Workspace artifacts are always cleaned before compilation, and profiles and reports are never cached. The SDK
+key also includes Cargo.lock, the toolchain and Dockerfile. This keeps the expensive large executable bundle out of
+the repository's shared 10 GiB GHA cache budget, which is also used by release caches. Eviction is a performance miss;
+it never bypasses tests or the gate. See [Docker's GHA cache backend](https://docs.docker.com/build/cache/backends/gha/)
+and [GitHub's cache limits](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching).
+
 A historical instrumented build with these settings measured about 23 GiB locally, before temporary test outputs;
 actual size depends on the selected sources and dependencies.
 
@@ -237,8 +260,11 @@ window itself and the app's windows run on the Mac console through `scripts/run-
 
 The [release workflow](../.github/workflows/release.yml) runs on a push to `main` that changes what ends up in a
 package (its `paths` list: code, dependencies, packaging and release scripts, not docs, skills or CI settings) and on
-manual dispatch. It runs the full suite (the Coverage workflow above, called as its `tests` job, plus every
-`scripts/test_*.py`) and publishes only if that passes. A new push cancels any release still building or waiting, so
+manual dispatch. Its `tests` job waits for the newest standalone Coverage run with the exact repository, branch and commit SHA,
+accepting only push/manual runs and a completed success. A newer failed or cancelled run takes precedence over an
+older success. API errors, absence of a run after the timeout, and every non-success conclusion block publishing.
+Release therefore reuses Coverage without a second full suite. Manual `coverage_only: true` dispatches run just this
+lookup, skipping all packaging and publishing, to prove the gate safely on a branch. Coverage also runs every `scripts/test_*.py`; release publishes only after that complete Coverage run passes. A new push cancels any release still building or waiting, so
 only the newest commit is published. A successful `main` run makes a GitHub release tagged
 `v<workspace version>.<run number>` (`Cargo.toml`'s `[workspace.package] version` and `github.run_number`, monotonic
 for package upgrades), marked latest, targeting the pushed commit. Linux x86_64 builds on `ubuntu-24.04` produce

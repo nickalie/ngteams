@@ -623,13 +623,14 @@ starts. Serial execution avoids that overlap in coverage runs; ordinary `cargo t
 concurrency. `--test-threads N` accepts a positive integer to change the harness concurrency; concurrency exercised
 inside a test stays part of that test.
 
-`coverage.toml` holds the 90% target and measured standalone baseline floors for all 17 runtime crates. Raise floors
+`coverage.toml` holds the 90% target and measured standalone baseline floors for all runtime crates. Raise floors
 as tests improve; never lower them or exclude runnable code to pass. Baselines are measured with each crate
 selected alone. Some standalone floors remain below 90%; the full workspace also exercises libraries through their consumers' integration suites and can cover more code.
 `--require-target` always enforces 90% for every selected crate, independently of those baseline floors.
 The [Coverage CI workflow](ci.md) requires the 90% target on pull requests and `main`, using hosted CPU runners
-and software graphics; only the hardware DMA test is excluded there. Running the script without
-`-p` selects all 17 crates with runtime code, including the lab and test-support tooling. Generated WPE bindings and
+and software graphics. CI builds once, distributes test targets across eight jobs, then merges LLVM profiles before
+applying the unchanged per-crate gates; only the hardware DMA test is excluded there. Running the script without
+`-p` selects all crates with runtime code, including the lab and test-support tooling. Generated WPE bindings and
 the standalone video spike are excluded. Retained typed-construction compile checks run in `teams-proto` and
 production-only mock-origin/registrar checks run in `teams-trouter` as part of the normal test gate.
 Third-party code and tests outside `src/` do not enter the totals.
