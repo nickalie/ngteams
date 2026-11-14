@@ -92,7 +92,9 @@ Before measurement it also runs the patched Wayland clipboard's ownership regres
 are separate from the runtime-crate selection. The native UI test still exercises copy, cut and paste end to end.
 The image sets `TZ=Etc/UTC` so calendar fixtures do not depend on the host's `/etc/localtime` configuration.
 Tool installation uses the network; test traffic stays synthetic and offline from the tenant. No lab configuration
-or secret is required. The workflow frees unused hosted SDKs to make space for the instrumented native binaries.
+or secret is required. Every shard job starts Postgres and Redis service containers for the own server's cases
+(`crates/ngteams-server`, [server.md](server.md)); the test container reaches them through the host gateway, and a
+shard started without their URLs fails instead of letting those cases skip themselves. The workflow frees unused hosted SDKs to make space for the instrumented native binaries.
 The shared build disables incremental compilation and DWARF debug information while retaining LLVM coverage maps and
 debug assertions, with four Cargo compilation jobs. Each shard downloads its assigned test executables and a common
 bundle of helper binaries, executables reused by several scenes, shared libraries and Cargo feature fingerprints,

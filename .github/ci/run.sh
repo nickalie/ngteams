@@ -18,6 +18,9 @@ case "${1:-}" in
         python3 .github/ci/targets.py inventory target/test-artifacts.json target/test-shards.json
         ;;
     test)
+        # Without these the server's Postgres and Redis cases skip themselves and still pass.
+        : "${NGTEAMS_SERVER_PG_URL:?the shard needs its Postgres service}"
+        : "${NGTEAMS_SERVER_REDIS_URL:?the shard needs its Redis service}"
         coverage-ci-smoke
         target/ci-bootstrap-build/debug/proto-lab chrome install
         coverage-ci-smoke "$(target/ci-bootstrap-build/debug/proto-lab chrome path)"

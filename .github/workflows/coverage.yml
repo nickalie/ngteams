@@ -188,6 +188,23 @@ jobs:
       fail-fast: false
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    # the own server's Postgres and Redis cases (crates/ngteams-server, docs/server.md); reached from the measuring
+    # container through the host gateway. Every shard has them: the balancer may assign the server's targets to any.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: ngts
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -222,6 +239,8 @@ jobs:
       - name: Run every assigned target, retaining failures
         env:
           SHARD: ${{ matrix.shard }}
+          NGTEAMS_SERVER_PG_URL: postgres://postgres:ngts@host.docker.internal:5432/postgres
+          NGTEAMS_SERVER_REDIS_URL: redis://host.docker.internal:6379
         run: .github/ci/docker.sh test "$SHARD"
       - name: Bundle current LLVM profiles
         if: always()

@@ -64,6 +64,39 @@ class EnvironmentTests(unittest.TestCase):
         ], env=environment, capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(result.stdout), ["1", "1", "vulkan", None, None, None, None])
 
+    def test_every_shard_runs_beside_the_server_services_and_cannot_skip_them(self):
+        workflow = (ROOT / ".github/workflows/coverage.yml").read_text()
+        shards = workflow.split("\n  shards:\n", 1)[1].split("\n  coverage:\n", 1)[0]
+        services = shards.split("    services:\n", 1)[1].split("    steps:\n", 1)[0]
+        self.assertIn("image: postgres:17", services)
+        self.assertIn("image: redis:7", services)
+        step = shards.split("      - name: Run every assigned target, retaining failures", 1)[1].split("      - ", 1)[0]
+        self.assertIn("NGTEAMS_SERVER_PG_URL: postgres://postgres:ngts@host.docker.internal:5432/postgres", step)
+        self.assertIn("NGTEAMS_SERVER_REDIS_URL: redis://host.docker.internal:6379", step)
+        self.assertIn(".github/ci/docker.sh test", step)
+        urls = {"NGTEAMS_SERVER_PG_URL": "synthetic-postgres", "NGTEAMS_SERVER_REDIS_URL": "synthetic-redis"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            docker = root / "bin/docker"
+            docker.parent.mkdir()
+            docker.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@" > arguments\n')
+            docker.chmod(0o755)
+            base = {key: value for key, value in os.environ.items() if key not in urls}
+            base["PATH"] = f"{docker.parent}:{base['PATH']}"
+            for environment, forwarded in ((base, []), (dict(base, **urls), [*urls])):
+                subprocess.run(["bash", str(ROOT / ".github/ci/docker.sh"), "test", "0"], cwd=root, env=environment,
+                               check=True)
+                arguments = (root / "arguments").read_text().splitlines()
+                self.assertIn("--add-host=host.docker.internal:host-gateway", arguments)
+                self.assertEqual([name for name in urls if name in arguments], forwarded)
+            for missing in urls:
+                environment = dict(base, **urls)
+                del environment[missing]
+                result = subprocess.run(["bash", str(ROOT / ".github/ci/run.sh"), "test", "0"], cwd=ROOT,
+                                        env=environment, capture_output=True, text=True, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(missing, result.stderr)
+
 
 class TargetTests(unittest.TestCase):
     @staticmethod
