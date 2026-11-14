@@ -4,8 +4,10 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import types
 import unittest
@@ -65,6 +67,60 @@ class TargetTests(unittest.TestCase):
                 self.assertEqual(run.call_args.kwargs["env"]["CARGO_MANIFEST_DIR"], directory)
                 results = json.loads((root / "target/shard-0.json").read_text())
                 self.assertEqual([result["status"] for result in results], [1, 0])
+
+    @unittest.skipUnless(shutil.which("cargo"), "Cargo unavailable")
+    def test_shared_executables_merge_to_the_same_coverage_as_cargo(self):
+        available = subprocess.run(["cargo", "llvm-cov", "--version"], capture_output=True, check=False)
+        if available.returncode:
+            self.skipTest("cargo-llvm-cov unavailable")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src").mkdir()
+            (root / "tests").mkdir()
+            (root / "Cargo.toml").write_text(
+                '[package]\nname="example"\nversion="0.1.0"\nedition="2021"\n')
+            (root / "src/lib.rs").write_text(
+                'pub fn value(flag: bool) -> u32 {\n if flag { 1 } else { 2 }\n}\n')
+            for name, flag, expected in [("first", "true", 1), ("second", "false", 2)]:
+                (root / f"tests/{name}.rs").write_text(
+                    f'#[test] fn {name}() {{ assert_eq!(example::value({flag}), {expected}); }}\n')
+            environment = dict(os.environ)
+            for key in ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_TARGET_DIR"]:
+                environment.pop(key, None)
+            environment.update(CARGO_LLVM_COV_TARGET_DIR=str(root / "target/build"),
+                               CARGO_TARGET_DIR=str(root / "target/build"),
+                               RUSTFLAGS="-C llvm-args=-runtime-counter-relocation",
+                               LLVM_PROFILE_FILE_NAME="%p-%m%c.profraw")
+
+            def command(*arguments, env=environment):
+                result = subprocess.run(arguments, cwd=root, env=env, capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return result.stdout
+
+            command("cargo", "generate-lockfile", "--offline")
+            messages = command("bash", "-c", 'eval "$(cargo llvm-cov show-env --sh)"; '
+                               'cargo test --locked --tests --no-run --message-format=json')
+            shards = TARGETS.partition([json.loads(line) for line in messages.splitlines()],
+                                       {str(root / "Cargo.toml"): "example"}, {}, count=2)
+            manifest = root / "shards.json"
+            manifest.write_text(json.dumps(shards))
+            for index in range(2):
+                child = dict(environment, LLVM_PROFILE_FILE_NAME=f"shard-{index}-%p-%m%c.profraw")
+                command("bash", "-c", 'eval "$(cargo llvm-cov show-env --sh)"; '
+                        'exec python3 "$1" run "$2" "$3"', "test", str(Path(TARGETS.__file__)),
+                        str(manifest), str(index), env=child)
+
+            def counts(output):
+                data = json.loads(output)
+                return next(entry["summary"] for unit in data["data"] for entry in unit["files"]
+                            if entry["filename"] == str(root / "src/lib.rs"))
+
+            merged = counts(command("cargo", "llvm-cov", "report", "--json"))
+            for path in (root / "target/build").rglob("*.profraw"):
+                path.unlink()
+            serial = counts(command("cargo", "llvm-cov", "--no-clean", "--json"))
+            self.assertEqual(merged, serial)
+            self.assertEqual(merged["regions"]["percent"], 100)
 
 
 class ReleaseGateTests(unittest.TestCase):
