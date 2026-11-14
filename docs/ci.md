@@ -123,6 +123,61 @@ actual size depends on the selected sources and dependencies.
 To block merges on coverage failures, first apply the required-check pattern above, then make `Coverage ≥90%`
 a required status check in branch rules; the hosted reporter tests alone are not a coverage measurement.
 
+## Measured Coverage runs
+
+The November 14, 2026 (UTC) cold and warm runs used four-vCPU GitHub-hosted Ubuntu runners. Workflow wall time runs
+from workflow creation to the last completed job. Execution time is the longest dependency path with runner
+queues removed: `max(script gate, build + slowest shard) + aggregate`. Job execution includes setup, artifact
+transfer, tests and cleanup; queues overlap and must not be added across parallel jobs. Account-wide runner
+contention affected these runs.
+
+| Measurement | Commit | Workflow wall | Execution path |
+| --- | --- | ---: | ---: |
+| [Before](https://github.com/nickalie/ngteams/actions/runs/43552497622) | `68ff71dc` | 2:23:43 | 2:17:34 |
+| [Empty-cache cold](https://github.com/nickalie/ngteams/actions/runs/43621864665) | `54768816` | 1:59:30 | 1:05:59 |
+| [Changed-workspace warm](https://github.com/nickalie/ngteams/actions/runs/43632853097) | `c7673cd1` | 1:46:59 | 1:02:36 |
+
+The cold run missed the image, Cargo source, SDK and instrumented-dependency caches. Its compressed native
+dependency archive was 943,559,703 bytes against a 1 GiB limit. Those caches remained populated for the warm
+run. The warm revision changes a Rust module doc in `crates/fixture-guard/src/lib.rs`; the pipeline still
+cleans and rebuilds workspace artifacts. Both runs execute all 362 invocations from 351 compiled test targets,
+including all 13 large-call scenes, and pass the same 90% gate for all 25 runtime crates.
+
+The warm execution path of **1:02:36 misses the 45-minute goal**. Workspace target reuse is a
+separate follow-up on `team/ci-speed-reuse`; it is not part of this checkpoint.
+
+| Job | Cold queue | Cold execution | Cold tests | Warm queue | Warm execution | Warm tests |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Coverage gate tests | 0:09:53 | 0:01:14 | — | 0:05:22 | 0:01:06 | — |
+| Build instrumented tests | 0:19:28 | 0:33:04 | — | 0:04:35 | 0:29:23 | — |
+| Coverage shard 0 | 0:16:07 | 0:18:33 | 0:12:52 | 0:42:27 | 0:18:20 | 0:13:38 |
+| Coverage shard 1 | 0:34:40 | 0:18:53 | 0:14:18 | 0:41:10 | 0:19:18 | 0:15:03 |
+| Coverage shard 2 | 0:37:13 | 0:15:21 | 0:10:52 | 0:14:55 | 0:23:59 | 0:17:10 |
+| Coverage shard 3 | 0:27:20 | 0:19:23 | 0:13:17 | 0:40:44 | 0:21:00 | 0:16:38 |
+| Coverage shard 4 | 0:10:24 | 0:21:53 | 0:17:04 | 0:27:05 | 0:15:09 | 0:11:06 |
+| Coverage shard 5 | 0:37:51 | 0:17:31 | 0:11:39 | 0:43:30 | 0:16:34 | 0:11:14 |
+| Coverage shard 6 | 0:13:04 | 0:17:47 | 0:11:58 | 0:43:14 | 0:19:13 | 0:14:35 |
+| Coverage shard 7 | 0:30:31 | 0:19:56 | 0:16:07 | 0:38:56 | 0:16:50 | 0:12:02 |
+| Coverage ≥90% | 0:00:32 | 0:11:02 | — | 0:01:19 | 0:09:14 | — |
+
+The baseline Coverage job queued for 0:06:09 and executed for 2:17:34; its script gate queued for 0:07:24 and
+executed for 0:01:26. Compiler units below are fresh or restored units, with summed unit durations in seconds;
+they run concurrently, so their duration sums do not equal elapsed compiler time.
+
+| Compiler measurement | Cold | Warm |
+| --- | ---: | ---: |
+| Compiler span | 0:15:34 | 0:14:21 |
+| Dependency units | 1130 fresh / 0 restored; 1,226.2 s | 33 fresh / 1097 restored; 143.1 s |
+| Workspace units | 393 fresh / 0 restored; 2,288.9 s | 393 fresh / 0 restored; 3,015.0 s |
+
+Per-target durations also varied: shard 2 ran the same 45 targets in 625.84 seconds cold and 1007.55 seconds warm.
+
+The [gate-only release](https://github.com/nickalie/ngteams/actions/runs/43642472379) reused the successful warm
+Coverage for the exact commit `c7673cd1a06841c7d34280388b0efe1e729ccc7a`. Packaging and publishing jobs were
+skipped; no release or tag was created. The gate executed for 0:00:08 after a 0:08:06 queue (0:08:17 total workflow time).
+The earlier [negative gate proof](https://github.com/nickalie/ngteams/actions/runs/43574788930)
+rejected a cancelled same-commit Coverage run.
+
 ## Windows portability
 
 The [Windows portability workflow](../.github/workflows/windows.yml) checks, lints and runs the offline tests of
