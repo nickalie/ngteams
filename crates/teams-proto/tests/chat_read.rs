@@ -1850,3 +1850,97 @@ async fn a_blocked_copy_is_read_by_id_with_properties_and_missing_or_invalid_ans
     assert_eq!(reads.blocked_copy(id).await.unwrap_err().status(), Some(403));
     Ok(())
 }
+
+#[tokio::test]
+async fn own_chat_pages_sync_and_backward_links_stay_on_the_account_base() -> TestResult {
+    let cloud = teams_proto::Cloud::own("https://chat.example:8443")?;
+    let base = "https://chat.example:8443/api/chatsvc/amer";
+    let mock = ChatServiceMock::start_for_cloud(cloud.clone()).await?;
+    mock.page_conversation_list(1);
+    let transport = HttpTransport::for_cloud_with_mock_origin(
+        Arc::new(MockToken(mock.token(LAB_A).ok_or("no account")?)),
+        base,
+        cloud,
+        &mock.origin(),
+    )?;
+    let client = Client::new(transport);
+    let reads = ChatReads::new(&client);
+    let list = reads.conversations().await?;
+    let sync = list.sync_state().ok_or("no sync")?;
+    assert!(sync.starts_with(base));
+    assert!(reads.conversations_from(sync).await?.conversations.is_empty());
+    let forward = list.forward_link().ok_or("no forward link")?;
+    assert!(forward.starts_with(base));
+    assert_eq!(reads.conversations_from(forward).await?.conversations.len(), 1);
+    let first = reads.messages(AB_CHAT, 2).await?;
+    let mut ids: Vec<String> = first.messages.iter().map(|message| message.id.clone()).collect();
+    let mut backward = first.backward_link().map(str::to_owned);
+    while let Some(link) = backward {
+        assert!(link.starts_with(base));
+        let page = reads.messages_from(AB_CHAT, &link).await?;
+        ids.extend(page.messages.iter().map(|message| message.id.clone()));
+        backward = page.backward_link().map(str::to_owned);
+    }
+    assert_eq!(ids.len(), 5);
+    assert_eq!(ids.iter().collect::<std::collections::BTreeSet<_>>().len(), 5);
+    assert!(
+        reads
+            .messages_from(AB_CHAT, first.sync_state().ok_or("no message sync")?)
+            .await?
+            .messages
+            .is_empty()
+    );
+    let before = mock.received_requests().await.len();
+    refuse_own_chat_links(&reads, sync, first.sync_state().unwrap(), base).await;
+    assert_eq!(mock.received_requests().await.len(), before);
+    Ok(())
+}
+
+async fn refuse_own_chat_links(reads: &ChatReads<'_, MockToken>, sync: &str, message_sync: &str, base: &str) {
+    for bad_base in [
+        CHAT_BASE,
+        "https://other.example:8443/api/chatsvc/amer",
+        "https://chat.example/api/chatsvc/amer",
+        "http://chat.example:8443/api/chatsvc/amer",
+        "https://user@chat.example:8443/api/chatsvc/amer",
+        "https://chat.example:8443/api/chatsvc/emea",
+        "https://chat.example:8443/api/mt/part/amer-03",
+    ] {
+        refuse_own_chat_base(reads, sync, message_sync, base, bad_base).await;
+    }
+    assert!(matches!(
+        reads.messages_from(ABC_CHAT, message_sync).await,
+        Err(ChatReadError::Link { .. })
+    ));
+    assert!(matches!(
+        reads.conversations_from(message_sync).await,
+        Err(ChatReadError::Link { .. })
+    ));
+    let link = format!("{message_sync}#fragment");
+    assert!(matches!(
+        reads.messages_from(AB_CHAT, &link).await,
+        Err(ChatReadError::Link { .. })
+    ));
+}
+
+async fn refuse_own_chat_base(
+    reads: &ChatReads<'_, MockToken>,
+    sync: &str,
+    message_sync: &str,
+    base: &str,
+    bad_base: &str,
+) {
+    let link = sync.replacen(base, bad_base, 1);
+    assert!(
+        matches!(reads.conversations_from(&link).await, Err(ChatReadError::Link { .. })),
+        "{link}"
+    );
+    let link = message_sync.replacen(base, bad_base, 1);
+    assert!(
+        matches!(
+            reads.messages_from(AB_CHAT, &link).await,
+            Err(ChatReadError::Link { .. })
+        ),
+        "{link}"
+    );
+}

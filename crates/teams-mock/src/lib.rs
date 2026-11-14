@@ -256,7 +256,16 @@ impl ChatServiceMock {
     /// # Errors
     /// When an embedded fixture doesn't have the shape the mock reads from it.
     pub async fn start() -> Result<Self, FixtureError> {
-        let state = Arc::new(Mutex::new(world::State::lab()?));
+        Self::start_for_cloud(teams_auth::cloud::Cloud::Microsoft).await
+    }
+
+    /// Starts the synthetic services with links and push URLs belonging to `cloud`.
+    /// The loopback override is still required to reach this server.
+    ///
+    /// # Errors
+    /// When an embedded fixture cannot be read.
+    pub async fn start_for_cloud(cloud: teams_auth::cloud::Cloud) -> Result<Self, FixtureError> {
+        let state = Arc::new(Mutex::new(world::State::lab()?.for_cloud(cloud)));
         let server = MockServer::start().await;
         Mock::given(any())
             .respond_with(chatsvc::ChatService::new(Arc::clone(&state)))

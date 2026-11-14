@@ -68,15 +68,40 @@ impl TrouterCredentials for Tokens {
 
 /// `me`'s engine against the mocks, knowing a and b by `names` (writing as its own), its store in `dir`.
 pub fn native(mock: &ChatServiceMock, trouter: &TrouterMock, me: &str, names: [&str; 2], dir: &Path) -> EngineHandle {
+    native_for_cloud(mock, trouter, me, names, dir, &teams_proto::Cloud::Microsoft)
+}
+
+pub fn native_for_cloud(
+    mock: &ChatServiceMock,
+    trouter: &TrouterMock,
+    me: &str,
+    names: [&str; 2],
+    dir: &Path,
+    cloud: &teams_proto::Cloud,
+) -> EngineHandle {
     let tokens = Arc::new(Tokens {
         token: mock.token(me).unwrap(),
         renewals: broadcast::channel(4).0,
     });
     let origin = mock.origin();
+    let base = cloud.service_url(CHAT_BASE, "/api/chatsvc/amer").unwrap();
     let http = || {
-        HttpTransport::with_mock_origin(Arc::clone(&tokens), CHAT_BASE, &origin)
-            .unwrap()
-            .for_account(Mri::new(me))
+        let transport =
+            HttpTransport::for_cloud_with_mock_origin(Arc::clone(&tokens), base.as_str(), cloud.clone(), &origin)
+                .unwrap()
+                .for_account(Mri::new(me));
+        if cloud.is_microsoft() {
+            transport
+        } else {
+            transport
+                .with_presence(
+                    cloud
+                        .service_url(teams_mock::PRESENCE_BASE, "/ups/noam")
+                        .unwrap()
+                        .as_str(),
+                )
+                .unwrap()
+        }
     };
     let transport = Arc::new(http());
     let push = Trouter::with_mock_origin(Arc::clone(&transport), Arc::clone(&tokens), trouter.origin())

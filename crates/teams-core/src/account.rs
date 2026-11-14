@@ -14,7 +14,7 @@ use teams_call::Tracker;
 use teams_media::video::codec::EncoderSettings;
 use teams_media::video::convert::MaxSize;
 use teams_proto::Mri;
-use teams_proto::{Author, BuildError, Client, ClientInfo, Credentials, HttpTransport};
+use teams_proto::{Author, BuildError, Client, ClientInfo, Cloud, Credentials, HttpTransport};
 use teams_store::{Store, StoreError};
 use teams_trouter::{CallStack, Trouter};
 
@@ -163,6 +163,19 @@ pub fn start<S: SecretStore + 'static>(
     account: Account<S>,
     floor: CallFloor,
 ) -> Result<AccountEngine<S>, AccountError> {
+    start_for_cloud(account, floor, &Cloud::Microsoft)
+}
+
+/// Builds an account engine whose authentication, transports and push stacks belong to `cloud`.
+/// Credentials and region must belong to that cloud. Existing callers use [`start`]'s Microsoft default.
+///
+/// # Errors
+/// See [`start`].
+pub fn start_for_cloud<S: SecretStore + 'static>(
+    account: Account<S>,
+    floor: CallFloor,
+    cloud: &Cloud,
+) -> Result<AccountEngine<S>, AccountError> {
     let Account {
         upn,
         mri,
@@ -181,7 +194,7 @@ pub fn start<S: SecretStore + 'static>(
         if read_only { transport.read_only() } else { transport }
     };
     let store = Store::open(&store_file)?;
-    let session = Arc::new(new_session(upn, secrets, region)?);
+    let session = Arc::new(new_session(upn, secrets, region, cloud)?);
     let base = session.service_base(CHAT_BASE_GTM).ok_or(AccountError::NoChatBase)?;
     let presence = session.service_base(PRESENCE_GTM);
     // the writes' transport (the outbox's, the push channel's registration): UPS's base too, for the account's own
@@ -189,7 +202,7 @@ pub fn start<S: SecretStore + 'static>(
     // its event reads).
     let writes = with_middle_tier(
         || {
-            HttpTransport::new(Arc::clone(&session), &base)
+            HttpTransport::for_cloud(Arc::clone(&session), &base, cloud.clone())
                 .map(|transport| writable(transport.for_account(Mri::new(&mri)).with_call_state(tracker.clone())))
         },
         session.service_base(MIDDLE_TIER_GTM).as_deref(),
@@ -198,7 +211,7 @@ pub fn start<S: SecretStore + 'static>(
     let transport = Arc::new(with_presence(writes, presence.as_deref())?);
     let reads = with_middle_tier(
         || {
-            HttpTransport::new(Arc::clone(&session), &base)
+            HttpTransport::for_cloud(Arc::clone(&session), &base, cloud.clone())
                 .map(|transport| writable(transport.for_account(Mri::new(&mri)).with_call_state(tracker.clone())))
         },
         session.service_base(MIDDLE_TIER_GTM).as_deref(),
@@ -250,12 +263,17 @@ pub fn start<S: SecretStore + 'static>(
     Ok(AccountEngine { handle, session })
 }
 
-fn new_session<S: SecretStore>(upn: String, secrets: S, region: Region) -> Result<Session<S>, AccountError> {
+fn new_session<S: SecretStore>(
+    upn: String,
+    secrets: S,
+    region: Region,
+    cloud: &Cloud,
+) -> Result<Session<S>, AccountError> {
     Ok(Session::new(
         upn,
         secrets,
-        TokenClient::new(EntraConfig::teams_native())?,
-        AuthzClient::new()?,
+        TokenClient::new(EntraConfig::teams_native().for_cloud(cloud))?,
+        AuthzClient::for_cloud(cloud)?,
         region,
     ))
 }
@@ -297,7 +315,7 @@ pub const CSA_GTM: &str = "chatSvcAggAfd";
 /// of the teams, and the Teams list says the teams can't be read): an optional read never stops the engine.
 fn with_csa<C: Credentials>(reads: HttpTransport<C>, csa: Option<&str>) -> Result<HttpTransport<C>, BuildError> {
     match csa {
-        Some(base) if HttpTransport::<C>::accepts_csa_base(base) => reads.with_csa(base),
+        Some(base) if reads.accepts_csa_base_in(base) => reads.with_csa(base),
         Some(_) => {
             log::warn!("the region's chatSvcAggAfd base isn't of the form the transport accepts: no teams read");
             Ok(reads)
@@ -316,7 +334,7 @@ fn with_provisioning<C: Credentials>(
     base: Option<&str>,
 ) -> Result<HttpTransport<C>, BuildError> {
     match base {
-        Some(base) if HttpTransport::<C>::accepts_provisioning_base(base) => transport.with_provisioning(base),
+        Some(base) if transport.accepts_provisioning_base_in(base) => transport.with_provisioning(base),
         Some(_) => {
             log::warn!("the region's provisioning base isn't of the form the transport accepts: no private channels");
             Ok(transport)
@@ -347,7 +365,7 @@ fn with_user_profile<C: Credentials>(
     base: Option<&str>,
 ) -> Result<HttpTransport<C>, BuildError> {
     match base {
-        Some(base) if HttpTransport::<C>::accepts_user_profile_base(base) => reads.with_user_profile(base),
+        Some(base) if reads.accepts_user_profile_base_in(base) => reads.with_user_profile(base),
         Some(_) => {
             log::warn!("the region's user profile base isn't of the form the transport accepts: no team people search");
             Ok(reads)
@@ -383,7 +401,7 @@ pub const MCPS_GTM: &str = "mcpService";
 /// the recap can't be read: an optional read never stops the engine.
 fn with_mcps<C: Credentials>(reads: HttpTransport<C>, mcps: Option<&str>) -> Result<HttpTransport<C>, BuildError> {
     match mcps {
-        Some(base) if HttpTransport::<C>::accepts_mcps_base(base) => reads.with_mcps(base),
+        Some(base) if reads.accepts_mcps_base_in(base) => reads.with_mcps(base),
         Some(_) => {
             log::warn!("the region's mcpService base isn't of the form the transport accepts: no meeting recaps");
             Ok(reads)
@@ -400,7 +418,7 @@ pub const AMS_GTM: &str = "amsV2";
 /// shows its pictures as placeholders: an optional read never stops the engine.
 fn with_ams<C: Credentials>(reads: HttpTransport<C>, ams: Option<&str>) -> Result<HttpTransport<C>, BuildError> {
     match ams {
-        Some(base) if HttpTransport::<C>::accepts_ams_base(base) => reads.with_ams(base),
+        Some(base) if reads.accepts_ams_base_in(base) => reads.with_ams(base),
         Some(_) => {
             log::warn!("the region's amsV2 base isn't of the form the transport accepts: no message pictures");
             Ok(reads)
@@ -421,7 +439,7 @@ fn with_presence<C: Credentials>(
     presence: Option<&str>,
 ) -> Result<HttpTransport<C>, BuildError> {
     match presence {
-        Some(base) if HttpTransport::<C>::accepts_presence_base(base) => reads.with_presence(base),
+        Some(base) if reads.accepts_presence_base_in(base) => reads.with_presence(base),
         Some(_) => {
             log::warn!("the region's presenceUPS base isn't of the form the transport accepts: no presence read");
             Ok(reads)
@@ -440,7 +458,7 @@ mod tests {
     use super::*;
 
     /// Placeholder tokens; nothing is sent.
-    struct NoTokens;
+    pub(super) struct NoTokens;
 
     impl Credentials for NoTokens {
         fn bearer(&self, audience: &str) -> impl Future<Output = Result<Secret, TokenError>> + Send {
@@ -519,6 +537,37 @@ mod tests {
         ] {
             let kept = with_csa(reads(middle_tier).unwrap(), Some(other)).unwrap();
             assert!(!kept.has_csa() && kept.has_middle_tier(), "{other}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod cloud_tests {
+    use super::tests::NoTokens;
+    use super::*;
+
+    #[test]
+    fn optional_services_accept_only_the_accounts_cloud() {
+        let cloud = Cloud::own("https://chat.example:8443").unwrap();
+        let tokens = Arc::new(NoTokens);
+        let build = || {
+            HttpTransport::for_cloud(
+                Arc::clone(&tokens),
+                "https://chat.example:8443/api/chatsvc/amer",
+                cloud.clone(),
+            )
+        };
+        for origin in [
+            "https://chat.example:8443",
+            "https://other.example:8443",
+            "https://teams.microsoft.com",
+        ] {
+            let presence = with_presence(build().unwrap(), Some(&format!("{origin}/ups/noam"))).unwrap();
+            assert_eq!(presence.has_presence(), origin == "https://chat.example:8443");
+            let csa = with_csa(build().unwrap(), Some(&format!("{origin}/api/csa/amer"))).unwrap();
+            assert_eq!(csa.has_csa(), origin == "https://chat.example:8443");
+            let mt = with_middle_tier(build, Some(&format!("{origin}/api/mt/part/amer-03"))).unwrap();
+            assert_eq!(mt.has_middle_tier(), origin == "https://chat.example:8443");
         }
     }
 }

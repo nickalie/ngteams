@@ -187,3 +187,38 @@ async fn read_only_suppresses_requested_sockets_and_calling_and_invalid_optional
         engine.handle.shutdown();
     }
 }
+
+#[tokio::test]
+async fn own_account_assembly_accepts_its_bases_and_refuses_a_microsoft_chat_base() {
+    let cloud = teams_proto::Cloud::own("https://chat.example:8443").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mut configured = account(&dir.path().join("own.sqlite"));
+    assert!(matches!(
+        account::start_for_cloud(configured, teams_core::CallFloor::new(), &cloud),
+        Err(AccountError::Transport(BuildError::ChatBase))
+    ));
+    configured = account(&dir.path().join("own.sqlite"));
+    for (gtm, path) in [
+        (CHAT_BASE_GTM, "/api/chatsvc/amer"),
+        (account::MIDDLE_TIER_GTM, "/api/mt/part/amer-03"),
+        (account::CSA_GTM, "/api/csa/amer"),
+        (account::PRESENCE_GTM, "/ups/noam"),
+        (account::AMS_GTM, "/ams"),
+        (account::PROVISIONING_GTM, "/fabric/amer/templates/api"),
+        (account::USER_PROFILE_GTM, "/api/userprofilesvc/amer"),
+        (account::MCPS_GTM, "/api/mcps/amer"),
+    ] {
+        configured
+            .region
+            .endpoints
+            .insert(gtm.into(), format!("https://chat.example:8443{path}"));
+    }
+    configured.push = true;
+    configured.calls = Some(calls());
+    let engine = account::start_for_cloud(configured, teams_core::CallFloor::new(), &cloud).unwrap();
+    assert!(matches!(
+        engine.session.access_token(IC3_AUDIENCE).await,
+        Err(TokenError::NotSignedIn { .. })
+    ));
+    engine.handle.shutdown();
+}

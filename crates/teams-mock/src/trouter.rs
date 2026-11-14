@@ -152,6 +152,14 @@ struct Shared {
 }
 
 impl Shared {
+    fn push_prefix(&self) -> &'static str {
+        if self.world().cloud.is_microsoft() {
+            ""
+        } else {
+            "/trouter"
+        }
+    }
+
     fn sockets(&self) -> MutexGuard<'_, Sockets> {
         self.sockets.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -597,6 +605,15 @@ async fn send_connected(socket: &mut Socket, shared: &Shared, account: &str, end
     info["healthUrl"] = json!(format!("https://{}:443/v4/h", host("t")));
     info["reconnectUrl"] = json!(format!("wss://{}:443/v4/c", host("t")));
     info["socketio"] = json!(format!("https://{}:443/", host("t")));
+    if let Some(origin) = shared.world().cloud.origin() {
+        let base = origin.as_str().trim_end_matches('/');
+        info["url"] = json!(format!("{base}/trouter/v4/f/{endpoint}/"));
+        info["surl"] = info["url"].clone();
+        info["curlb"] = json!(base);
+        info["healthUrl"] = json!(format!("{base}/trouter/v4/h"));
+        info["reconnectUrl"] = json!(format!("wss://{}/trouter/v4/c", &base[8..]));
+        info["socketio"] = json!(format!("{base}/trouter/"));
+    }
     info["connectparams"]["sr"] = json!(endpoint);
     info["connectparams"]["sp"] = json!(REGIONAL_NAME);
     info["connectparams"]["st"] = json!((now * 1000).to_string());
@@ -647,7 +664,7 @@ async fn connected(mut socket: Socket, shared: &Shared, index: usize, account: &
             command = commanded.recv() => {
                 let Some(command) = command else { return };
                 let to_calls = calling && registered(shared, account, &endpoint, CALLING_APP);
-                if carry_out(&mut socket, &endpoint, to_calls, command).await.is_none() {
+                if carry_out(&mut socket, &endpoint, to_calls, command, shared.push_prefix()).await.is_none() {
                     return;
                 }
             }
@@ -683,7 +700,7 @@ async fn answer(socket: &mut Socket, shared: &Shared, text: &str) -> Option<()> 
 
 /// Carries out `command` on a socket of `endpoint`; a call delivery only when the socket takes calls (`to_calls`: a
 /// calling stack's socket whose endpoint the calling stack registered).
-async fn carry_out(socket: &mut Socket, endpoint: &str, to_calls: bool, command: Command) -> Option<()> {
+async fn carry_out(socket: &mut Socket, endpoint: &str, to_calls: bool, command: Command, prefix: &str) -> Option<()> {
     match command {
         Command::Drop => None,
         Command::Disconnect(reason) => {
@@ -696,7 +713,7 @@ async fn carry_out(socket: &mut Socket, endpoint: &str, to_calls: bool, command:
             let delivery = json!({
                 "id": 9_000_001,
                 "method": "POST",
-                "url": format!("/v4/f/{endpoint}/{path}"),
+                "url": format!("{prefix}/v4/f/{endpoint}/{path}"),
                 "headers": {"Content-Type": "application/json"},
                 "body": body,
             });
@@ -711,7 +728,7 @@ async fn carry_out(socket: &mut Socket, endpoint: &str, to_calls: bool, command:
             let delivery = json!({
                 "id": id,
                 "method": "POST",
-                "url": format!("/v4/f/{endpoint}/unifiedPresenceService"),
+                "url": format!("{prefix}/v4/f/{endpoint}/unifiedPresenceService"),
                 "headers": {
                     "Host": format!("{REGIONAL_NAME}-t.trouter.teams.microsoft.com"),
                     "User-Agent": "Microsoft.Skype.Presence.App/1.0",
@@ -748,7 +765,7 @@ async fn carry_out(socket: &mut Socket, endpoint: &str, to_calls: bool, command:
             let delivery = json!({
                 "id": id,
                 "method": "POST",
-                "url": format!("/v4/f/{endpoint}/{path}"),
+                "url": format!("{prefix}/v4/f/{endpoint}/{path}"),
                 "headers": headers,
                 "body": body,
             });
@@ -778,7 +795,7 @@ async fn deliver_calls(socket: &mut Socket, shared: &Shared, endpoint: &str) -> 
             path: delivery.path,
             body: delivery.body.to_string(),
         };
-        carry_out(socket, endpoint, true, command).await?;
+        carry_out(socket, endpoint, true, command, shared.push_prefix()).await?;
     }
     Some(())
 }
@@ -856,7 +873,15 @@ async fn replay(socket: &mut Socket, shared: &Shared, account: &str, endpoint: &
         headers.insert("trouter-request".to_owned(), json!(request.to_string()));
         headers.insert("Trouter-Timeout".to_owned(), json!("7500"));
         headers.insert("Connection".to_owned(), json!("keep-alive"));
-        send_delivery(socket, endpoint, delivery.id, headers, &delivery.frame_body).await?;
+        send_delivery(
+            socket,
+            endpoint,
+            delivery.id,
+            headers,
+            &delivery.frame_body,
+            shared.push_prefix(),
+        )
+        .await?;
     }
     Some(())
 }
@@ -876,6 +901,10 @@ async fn deliver_queued(socket: &mut Socket, shared: &Shared, account: &str, end
     };
     // every event is numbered and stored before the first send, so a socket that fails halfway loses none: the
     // unsent ones come with the next connect's replay
+    let own_base = {
+        let world = shared.world();
+        (!world.cloud.is_microsoft()).then(|| format!("{}/v1/users/ME", world.chat_base()))
+    };
     let numbered: Vec<(u64, Value, bool)> = {
         let mut sockets = shared.sockets();
         events
@@ -884,7 +913,7 @@ async fn deliver_queued(socket: &mut Socket, shared: &Shared, account: &str, end
                 let typing = event.kind == EventKind::Typing;
                 sockets.next_delivery += 1;
                 let id = 1_000_000 + sockets.next_delivery;
-                let body = event_message(event, id);
+                let body = event_message(event, id, own_base.as_deref());
                 if !typing {
                     sockets.stored.entry(account.to_owned()).or_default().push(Stored {
                         id,
@@ -897,7 +926,15 @@ async fn deliver_queued(socket: &mut Socket, shared: &Shared, account: &str, end
             .collect()
     };
     for (id, body, typing) in numbered {
-        send_delivery(socket, endpoint, id, live_headers(shared, id, typing), &body).await?;
+        send_delivery(
+            socket,
+            endpoint,
+            id,
+            live_headers(shared, id, typing),
+            &body,
+            shared.push_prefix(),
+        )
+        .await?;
     }
     Some(())
 }
@@ -925,13 +962,14 @@ async fn send_delivery(
     id: u64,
     mut headers: Map<String, Value>,
     body: &Value,
+    prefix: &str,
 ) -> Option<()> {
     let body = body.to_string();
     headers.insert("Content-Length".to_owned(), json!(body.len().to_string()));
     let delivery = json!({
         "id": id,
         "method": "POST",
-        "url": format!("/v4/f/{endpoint}/messaging"),
+        "url": format!("{prefix}/v4/f/{endpoint}/messaging"),
         "headers": headers,
         "body": body,
     });
@@ -949,10 +987,11 @@ fn resource_type(kind: EventKind) -> Option<&'static str> {
 }
 
 /// The delivery's body (an `EventMessage`), `deliveries.json`'s shape around the event's message.
-fn event_message(event: &ChatEvent, id: u64) -> Value {
+fn event_message(event: &ChatEvent, id: u64, own_base: Option<&str>) -> Value {
     const NOTIFICATIONS: &str = "https://notifications.skype.net/v1/users/ME";
+    let base = own_base.unwrap_or(NOTIFICATIONS);
     let chat = &event.conversation;
-    let conversation_link = format!("{NOTIFICATIONS}/conversations/{chat}");
+    let conversation_link = format!("{base}/conversations/{chat}");
     if event.kind == EventKind::ConversationUpdate {
         return json!({
             "time": iso_time(now_ms(), 7),
@@ -972,7 +1011,7 @@ fn event_message(event: &ChatEvent, id: u64) -> Value {
         json!({
             "clientmessageid": id.to_string(), "content": "", "id": id.to_string(), "version": id.to_string(),
             "messagetype": event.resource["messagetype"], "contenttype": "Application/Message",
-            "from": format!("{NOTIFICATIONS}/contacts/{}", event.from), "imdisplayname": "",
+            "from": format!("{base}/contacts/{}", event.from), "imdisplayname": "",
             "properties": {"importance": "", "subject": ""}, "type": "Message",
         })
     } else {

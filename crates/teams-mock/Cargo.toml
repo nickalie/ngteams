@@ -24,6 +24,7 @@ image = { workspace = true, features = ["png"] }
 # decodes the conversation and message ids the clients percent-encode as one path segment
 percent-encoding.workspace = true
 serde_json.workspace = true
+teams-auth.workspace = true
 # the loopback media peer (`media`): a session on the file backend through the loopback TURN server
 teams-media = { workspace = true, features = ["test-support"], optional = true }
 thiserror = { workspace = true, optional = true }
@@ -42,7 +43,6 @@ teams-mock = { path = ".", features = ["media"] }
 tempfile.workspace = true
 # the mock's own tests send raw requests too: a missing header, a malformed body
 reqwest.workspace = true
-teams-auth.workspace = true
 # and the native transport reaching the mock through its mock origin
 teams-proto = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["macros", "rt"] }

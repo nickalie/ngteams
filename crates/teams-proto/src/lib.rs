@@ -59,7 +59,7 @@ mod urlp;
 pub mod workflow;
 mod write;
 
-pub use chat_service::chat_service_path;
+pub use chat_service::{chat_service_path, chat_service_path_in};
 pub use ids::{
     AFD_HOSTS, CALL_PROXY_HOST, INVITATION_EVENTS, Mri, is_chat_id, is_group_chat_id, is_meeting_chat_id,
     is_team_thread_id, one_to_one_id, one_to_one_pair, reply_chain, reply_chain_id, stored_conversation,

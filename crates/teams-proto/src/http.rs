@@ -1227,7 +1227,7 @@ impl<C: Credentials> HttpTransport<C> {
             .map(|(key, value)| (key.into_owned(), value.into_owned()))
             .collect();
         if shape
-            .read_back(wire.endpoint().segments(), &query, &headers, &body)
+            .read_back(&self.cloud, wire.endpoint().segments(), &query, &headers, &body)
             .as_deref()
             != Some(read.names())
         {

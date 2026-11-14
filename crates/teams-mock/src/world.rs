@@ -86,6 +86,7 @@ impl Conversation {
 }
 
 pub(crate) struct State {
+    pub(crate) cloud: teams_auth::cloud::Cloud,
     pub(crate) fixtures: Fixtures,
     pub(crate) accounts: Vec<Account>,
     pub(crate) conversations: Vec<Conversation>,
@@ -119,6 +120,58 @@ pub(crate) struct State {
 }
 
 impl State {
+    pub(crate) fn chat_base(&self) -> String {
+        self.cloud.origin().map_or_else(
+            || CHAT_BASE.to_owned(),
+            |origin| format!("{}api/chatsvc/amer", origin.as_str()),
+        )
+    }
+
+    pub(crate) fn location_base(&self) -> String {
+        if self.cloud.is_microsoft() {
+            crate::REGIONAL_HOST.to_owned()
+        } else {
+            self.chat_base()
+        }
+    }
+
+    pub(crate) fn chat_value(&self, value: &mut Value) {
+        if self.cloud.is_microsoft() {
+            return;
+        }
+        match value {
+            Value::String(text) => {
+                for base in [
+                    CHAT_BASE,
+                    crate::REGIONAL_HOST,
+                    "https://amer.example.test",
+                    "https://notifications.skype.net",
+                ] {
+                    if let Some(path) = text.strip_prefix(base) {
+                        *text = format!("{}{path}", self.chat_base());
+                        break;
+                    }
+                }
+            }
+            Value::Array(values) => values.iter_mut().for_each(|value| self.chat_value(value)),
+            Value::Object(fields) => fields.values_mut().for_each(|value| self.chat_value(value)),
+            _ => {}
+        }
+    }
+
+    pub(crate) fn for_cloud(mut self, cloud: teams_auth::cloud::Cloud) -> Self {
+        self.cloud = cloud;
+        let mut conversations = std::mem::take(&mut self.conversations);
+        for conversation in &mut conversations {
+            self.chat_value(&mut conversation.entry);
+            for message in &mut conversation.messages {
+                self.chat_value(message);
+            }
+        }
+        self.conversations = conversations;
+        self
+    }
+
     /// The world of the crate docs, from the fixtures.
     pub(crate) fn lab() -> Result<Self, FixtureError> {
         let fixtures = Fixtures::load()?;
@@ -138,6 +191,7 @@ impl State {
         .collect();
         let conversations = seed(&fixtures)?;
         Ok(Self {
+            cloud: teams_auth::cloud::Cloud::Microsoft,
             fixtures,
             accounts,
             conversations,

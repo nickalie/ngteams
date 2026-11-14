@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::endpoint::{Endpoint, Method, Service};
-use crate::own::{CLIENT_BUILD, RegisteredEndpoint, is_guid, is_push_url};
+use crate::own::{CLIENT_BUILD, RegisteredEndpoint, is_guid, is_push_url_in};
 use crate::request::Request;
 
 /// A reviewed read by `POST` (see the module docs). Sealed: no other crate can implement it.
@@ -142,7 +142,7 @@ impl Body {
 
     /// The MRIs `body` names when it is of this schema and nothing else (one JSON value, nothing after it); `None`
     /// otherwise, or when it names nobody.
-    fn read(self, body: &[u8]) -> Option<Vec<Mri>> {
+    fn read(self, cloud: &crate::Cloud, body: &[u8]) -> Option<Vec<Mri>> {
         let names: Vec<String> = match self {
             Self::Mris => serde_json::from_slice(body).ok()?,
             Self::MriObjects => serde_json::from_slice::<Vec<MriObject>>(body)
@@ -150,7 +150,7 @@ impl Body {
                 .into_iter()
                 .map(|object| object.mri)
                 .collect(),
-            Self::Subscription => serde_json::from_slice::<SubscriptionBody>(body).ok()?.names()?,
+            Self::Subscription => serde_json::from_slice::<SubscriptionBody>(body).ok()?.names(cloud)?,
         };
         (!names.is_empty()).then(|| names.into_iter().map(Mri::new).collect())
     }
@@ -171,7 +171,7 @@ struct SubscriptionBody {
 impl SubscriptionBody {
     /// The MRIs it names, the additions first, when its URI is the account's Trouter endpoint's presence path and
     /// every item's `source` UPS's.
-    fn names(self) -> Option<Vec<String>> {
+    fn names(self, cloud: &crate::Cloud) -> Option<Vec<String>> {
         let push_url = self.trouter_uri.strip_suffix(PRESENCE_PUSH_PATH)?;
         let items = self
             .subscriptions_to_add
@@ -180,7 +180,7 @@ impl SubscriptionBody {
         let names: Option<Vec<String>> = items
             .map(|item| (item.source == UPS_SOURCE).then_some(item.mri))
             .collect();
-        is_push_url(push_url).then_some(names).flatten()
+        is_push_url_in(cloud, push_url).then_some(names).flatten()
     }
 }
 
@@ -249,6 +249,7 @@ impl Shape {
     /// unknown.
     pub(crate) fn read_back(
         &self,
+        cloud: &crate::Cloud,
         path: &[String],
         query: &[(String, String)],
         headers: &[(String, String)],
@@ -266,7 +267,7 @@ impl Shape {
         let fixed = self.without_ids(headers, endpoint)?;
         let same_path = path.iter().map(String::as_str).eq(self.path.iter().copied());
         (same_path && same_pairs(query, self.query) && same_pairs(&fixed, self.headers))
-            .then(|| self.body.read(body))
+            .then(|| self.body.read(cloud, body))
             .flatten()
     }
 
@@ -757,6 +758,19 @@ impl PresenceSubscription {
         add: impl IntoIterator<Item = Mri>,
         remove: impl IntoIterator<Item = Mri>,
     ) -> Option<Self> {
+        Self::new_in(&crate::Cloud::Microsoft, endpoint, push_url, purge, add, remove)
+    }
+
+    /// A subscription to this account's cloud; off-origin push URLs are refused.
+    #[must_use]
+    pub fn new_in(
+        cloud: &crate::Cloud,
+        endpoint: &RegisteredEndpoint,
+        push_url: &str,
+        purge: bool,
+        add: impl IntoIterator<Item = Mri>,
+        remove: impl IntoIterator<Item = Mri>,
+    ) -> Option<Self> {
         let mut names: Vec<Mri> = add.into_iter().collect();
         let added = names.len();
         names.extend(remove);
@@ -764,7 +778,7 @@ impl PresenceSubscription {
         let has_presence = names
             .iter()
             .all(|mri| !mri.as_str().starts_with("28:") && !mri.as_str().starts_with("48:"));
-        let shaped = is_guid(endpoint.id()) && is_push_url(push_url);
+        let shaped = is_guid(endpoint.id()) && is_push_url_in(cloud, push_url);
         (!names.is_empty() && unique && has_presence && shaped).then(|| Self {
             endpoint: endpoint.id().to_owned(),
             push_url: push_url.to_owned(),
@@ -1004,7 +1018,13 @@ mod tests {
             "subscriptionsToAdd": [{"mri": "8:orgid:lab-b", "source": "ups"}],
             "subscriptionsToRemove": [],
         });
-        PRESENCE_SUBSCRIPTION.read_back(&path, &[], &headers, body.to_string().as_bytes())
+        PRESENCE_SUBSCRIPTION.read_back(
+            &crate::Cloud::Microsoft,
+            &path,
+            &[],
+            &headers,
+            body.to_string().as_bytes(),
+        )
     }
 
     #[test]

@@ -49,3 +49,33 @@ fn urls_outside_the_service_routes_or_with_invalid_decoding_are_not_chat_paths()
         assert_eq!(chat_service_path(&Url::parse(url).unwrap()), None, "{url}");
     }
 }
+
+#[test]
+fn own_chat_paths_require_the_exact_origin_and_chat_service_prefix() {
+    let cloud = teams_proto::Cloud::own("https://chat.example:8443").unwrap();
+    let valid = Url::parse(
+        "https://chat.example:8443/api/chatsvc/amer/v1/users/ME/conversations/19%3Achat%40thread.v2/messages",
+    )
+    .unwrap();
+    assert_eq!(
+        teams_proto::chat_service_path_in(&cloud, &valid).unwrap(),
+        ["users", "ME", "conversations", "19:chat@thread.v2", "messages"]
+    );
+    assert_eq!(chat_service_path(&valid), None);
+    for link in [
+        "https://chat.example/api/chatsvc/amer/v1/users/ME/conversations",
+        "https://other.example:8443/api/chatsvc/amer/v1/users/ME/conversations",
+        "https://teams.microsoft.com/api/chatsvc/amer/v1/users/ME/conversations",
+        "http://chat.example:8443/api/chatsvc/amer/v1/users/ME/conversations",
+        "https://chat.example:8443/api/chatsvc/AMER/v1/users/ME/conversations",
+        "https://chat.example:8443/v1/users/ME/conversations",
+        "https://chat.example:8443/api/mt/part/amer-03/v1/users/ME/conversations",
+        "https://chat.example:8443/api/chatsvc/amer/v1/users/ME/conversations#fragment",
+    ] {
+        assert_eq!(
+            teams_proto::chat_service_path_in(&cloud, &Url::parse(link).unwrap()),
+            None,
+            "{link}"
+        );
+    }
+}

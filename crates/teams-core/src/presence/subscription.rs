@@ -248,7 +248,8 @@ async fn subscribe_one<C: Credentials>(
     names: &[String],
 ) -> Outcome {
     let added = names.iter().map(|mri| Mri::new(mri.as_str()));
-    let Some(request) = PresenceSubscription::new(endpoint, push_url, purge, added, []) else {
+    let Some(request) = PresenceSubscription::new_in(client.transport().cloud(), endpoint, push_url, purge, added, [])
+    else {
         return Outcome::Failed(None);
     };
     let answer = match client.lookup(request.clone()).await {

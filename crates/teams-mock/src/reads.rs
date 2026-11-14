@@ -8,7 +8,7 @@ use wiremock::ResponseTemplate;
 use crate::chatsvc::{Call, json, status};
 use crate::fixtures::object;
 use crate::world::{Conversation, Kind, State};
-use crate::{CHAT_BASE, REGION, TENANT};
+use crate::{REGION, TENANT};
 
 /// The mock's sync token: what changed after a time.
 const SINCE: &str = "mock-since-";
@@ -23,6 +23,7 @@ const MAX_PAGE: usize = 200;
 /// changed since it was handed out; one page (no `forwardLink` was ever seen), unless a test asked for pages
 /// (`startup.rs`): then newest first, each page but the last with a `forwardLink` to the next.
 pub(crate) fn conversations(state: &State, call: &Call<'_>, owner: &str) -> ResponseTemplate {
+    let chat_base = state.chat_base();
     if owner != "ME" && owner != call.caller {
         return status(403);
     }
@@ -54,13 +55,13 @@ pub(crate) fn conversations(state: &State, call: &Call<'_>, owner: &str) -> Resp
         .map(|conversation| list_entry(state, conversation, &call.caller))
         .collect();
     let sync = format!(
-        "{CHAT_BASE}/v1/users/{}/conversations?view=msnp24Equivalent&syncState={SINCE}{}&pageSize=200",
+        "{chat_base}/v1/users/{}/conversations?view=msnp24Equivalent&syncState={SINCE}{}&pageSize=200",
         call.caller,
         state.now()
     );
     let forward = match state.list_page {
         Some(size) if end < listed.len() => format!(
-            "{CHAT_BASE}/v1/users/{}/conversations?view=msnp24Equivalent&syncState={LIST_PAGE}{since}-{end}&pageSize={size}",
+            "{chat_base}/v1/users/{}/conversations?view=msnp24Equivalent&syncState={LIST_PAGE}{since}-{end}&pageSize={size}",
             call.caller
         ),
         _ => String::new(),
@@ -86,6 +87,7 @@ fn list_page_token(token: &str) -> Option<(u64, usize)> {
 /// page handed out (the backward token carries its time), so a client keeping the latest sync link it got while paging
 /// back still gets what changed after the first page.
 pub(crate) fn messages(state: &State, call: &Call<'_>, chat: &str) -> ResponseTemplate {
+    let chat_base = state.chat_base();
     let conversation = match member_of(state, chat, &call.caller) {
         Ok(conversation) => conversation,
         Err(code) => return status(code),
@@ -108,14 +110,14 @@ pub(crate) fn messages(state: &State, call: &Call<'_>, chat: &str) -> ResponseTe
         "lastCompleteSegmentStartTime": 1,
         "lastCompleteSegmentEndTime": last_version,
         "syncState": format!(
-            "{CHAT_BASE}/v1/users/ME/conversations/{chat}/messages?startTime={first}&syncState={SINCE}{watermark}&pageSize=200&view=msnp24Equivalent"
+            "{chat_base}/v1/users/ME/conversations/{chat}/messages?startTime={first}&syncState={SINCE}{watermark}&pageSize=200&view=msnp24Equivalent"
         ),
     });
     if let (true, Some(oldest)) = (older, page.last().and_then(|message| message["sequenceId"].as_u64())) {
         object(&mut metadata).insert(
             "backwardLink".to_owned(),
             json!(format!(
-                "{CHAT_BASE}/v1/users/ME/conversations/{chat}/messages?syncState={BEFORE}{oldest}-{watermark}&pageSize={size}&view=msnp24Equivalent"
+                "{chat_base}/v1/users/ME/conversations/{chat}/messages?syncState={BEFORE}{oldest}-{watermark}&pageSize={size}&view=msnp24Equivalent"
             )),
         );
     }
@@ -278,6 +280,7 @@ pub(crate) fn thread_body(state: &State, conversation: &Conversation) -> Value {
         // what Manage team's settings read of a team's thread
         properties.insert("spaceAdminSettings".to_owned(), crate::team_pages::settings());
     }
+    state.chat_value(&mut thread);
     thread
 }
 
@@ -298,16 +301,17 @@ fn member_entry(template: &Value, mri: &str, range_start: Option<u64>) -> Value 
 
 /// `conversation`'s entry in `caller`'s conversation list: its fixture entry with what changes filled in.
 fn list_entry(state: &State, conversation: &Conversation, caller: &str) -> Value {
+    let chat_base = state.chat_base();
     let mut entry = conversation.entry.clone();
     let last = conversation.messages.last();
     let id = &conversation.id;
     let fields = object(&mut entry);
     fields.insert("id".to_owned(), json!(id));
     fields.insert("version".to_owned(), json!(conversation.version));
-    fields.insert("targetLink".to_owned(), json!(format!("{CHAT_BASE}/v1/threads/{id}")));
+    fields.insert("targetLink".to_owned(), json!(format!("{chat_base}/v1/threads/{id}")));
     fields.insert(
         "messages".to_owned(),
-        json!(format!("{CHAT_BASE}/v1/users/ME/conversations/{id}/messages")),
+        json!(format!("{chat_base}/v1/users/ME/conversations/{id}/messages")),
     );
     fields.insert(
         "lastUpdatedMessageId".to_owned(),

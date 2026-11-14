@@ -239,3 +239,97 @@ fn push_registration_refuses_off_origin_in_both_clouds() {
         );
     }
 }
+
+#[tokio::test]
+async fn presence_subscriptions_validate_the_push_origin_at_construction_and_send() {
+    use crate::{Client, EndpointRegistration, Mri, PresenceSubscription, register};
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({})))
+        .mount(&server)
+        .await;
+    let transport = HttpTransport::for_cloud_with_mock_origin(
+        Arc::new(Tokens),
+        "https://chat.example:8443/api/chatsvc/amer",
+        cloud(),
+        &server.uri(),
+    )
+    .unwrap()
+    .with_presence("https://chat.example:8443/ups/noam")
+    .unwrap();
+    let push = "https://chat.example:8443/trouter/v4/f/SyntheticEndpoint/";
+    let id = "00000000-0000-4000-8000-000000000001";
+    let registration = EndpointRegistration::messaging_in(&cloud(), id, push).unwrap();
+    let (_, endpoint) = register(&transport, &registration).await.unwrap();
+    let endpoint = endpoint.unwrap();
+    let named = || [Mri::new("8:orgid:synthetic-b")];
+    refuse_push_origins(&endpoint, push);
+    Mock::given(method("POST"))
+        .and(path(format!("/ups/noam/v1/pubsub/subscriptions/{id}")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"addStatuses": [], "removeStatuses": []})),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let client = Client::new(transport);
+    let own = PresenceSubscription::new_in(&cloud(), &endpoint, push, true, named(), []).unwrap();
+    assert_eq!(client.lookup(own.clone()).await.unwrap().status(), 200);
+    let foreign = PresenceSubscription::new(
+        &endpoint,
+        "https://go.trouter.teams.microsoft.com/v4/f/SyntheticEndpoint/",
+        true,
+        named(),
+        [],
+    )
+    .unwrap();
+    assert!(matches!(client.lookup(foreign).await, Err(HttpError::Unknown)));
+    let wrong_cloud = Cloud::own("https://other.example:8443").unwrap();
+    let foreign = PresenceSubscription::new_in(
+        &wrong_cloud,
+        &endpoint,
+        "https://other.example:8443/trouter/v4/f/SyntheticEndpoint/",
+        true,
+        named(),
+        [],
+    )
+    .unwrap();
+    assert!(matches!(client.lookup(foreign).await, Err(HttpError::Unknown)));
+    let microsoft = Client::new(
+        HttpTransport::with_mock_origin(
+            Arc::new(Tokens),
+            "https://teams.microsoft.com/api/chatsvc/amer",
+            &server.uri(),
+        )
+        .unwrap()
+        .with_presence("https://teams.microsoft.com/ups/noam")
+        .unwrap(),
+    );
+    assert!(matches!(microsoft.lookup(own).await, Err(HttpError::Unknown)));
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+}
+
+fn refuse_push_origins(endpoint: &crate::RegisteredEndpoint, push: &str) {
+    use crate::{Mri, PresenceSubscription};
+    let named = || [Mri::new("8:orgid:synthetic-b")];
+    assert!(PresenceSubscription::new(endpoint, push, true, named(), []).is_none());
+    for bad in [
+        "https://go.trouter.teams.microsoft.com/v4/f/SyntheticEndpoint/",
+        "https://other.example:8443/trouter/v4/f/SyntheticEndpoint/",
+        "https://chat.example/trouter/v4/f/SyntheticEndpoint/",
+        "https://chat.example:8443/v4/f/SyntheticEndpoint/",
+        "https://user@chat.example:8443/trouter/v4/f/SyntheticEndpoint/",
+        "https://chat.example:8443/trouter/v4/f/SyntheticEndpoint/?q=x",
+        "https://chat.example:8443/trouter/v4/f/SyntheticEndpoint/#fragment",
+        "http://chat.example:8443/trouter/v4/f/SyntheticEndpoint/",
+    ] {
+        assert!(
+            PresenceSubscription::new_in(&cloud(), endpoint, bad, true, named(), []).is_none(),
+            "{bad}"
+        );
+    }
+}

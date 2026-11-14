@@ -47,3 +47,13 @@ fn is_region(region: &str) -> bool {
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
+
+/// The decoded chat-service path within the account's cloud.
+#[must_use]
+pub fn chat_service_path_in(cloud: &crate::Cloud, url: &Url) -> Option<Vec<String>> {
+    if cloud.is_microsoft() {
+        return chat_service_path(url);
+    }
+    let projected = cloud.project(url, "", "https://teams.microsoft.com")?;
+    chat_service_path(&projected)
+}

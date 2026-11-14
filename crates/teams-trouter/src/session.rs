@@ -53,7 +53,7 @@ use teams_auth::session::{AccessToken, Clock, REFRESH_MARGIN, Renewal, SystemClo
 use teams_auth::token::TokenError;
 use teams_call::Observed;
 use teams_proto::{
-    Authenticate, CallingRegistration, ConnectParams, Disconnect, DroppedIndicator, EndpointRegistrar,
+    Authenticate, CallingRegistration, Cloud, ConnectParams, Disconnect, DroppedIndicator, EndpointRegistrar,
     EndpointRegistration, FrameError, FrameSink, IC3_AUDIENCE, MessageLossAck, OwnFrame, PRESENCE_PUSH_PATH, Ping,
     RegisteredEndpoint, RespondError, Sent,
 };
@@ -573,6 +573,7 @@ where
         let sink = self.sink(writer, &connection);
         let mut link = Link::new(sink, read, token, params, &options, self.trouter.clock.now());
         link.connection = connection;
+        link.cloud = self.trouter.cloud.clone();
         let end = link.serve(self).await;
         self.served(&link, &end);
         end
@@ -685,6 +686,7 @@ type LossAck = Pin<Box<dyn Future<Output = Option<Vec<DroppedIndicator>>> + Send
 
 /// One open socket: its sink (the only way it sends), its read half, and what it waits for.
 struct Link {
+    cloud: Cloud,
     sink: FrameSink<SocketWriter>,
     read: SplitStream<Stream>,
     token: AccessToken,
@@ -729,6 +731,7 @@ impl Link {
         let renew = renewable(&token, options.renew_lead, now);
         let (responder, responses) = CallResponder::channel();
         Self {
+            cloud: Cloud::Microsoft,
             connection: String::new(),
             responder,
             responses,
@@ -1025,10 +1028,11 @@ impl Link {
         if incoming_call {
             return PushEvent::Ignored(Ignored::IncomingCall);
         }
+        let prefix = if self.cloud.is_microsoft() { "" } else { "/trouter" };
         let at = |path: &str| {
             self.endpoint
                 .as_ref()
-                .is_some_and(|endpoint| raw.url == format!("/v4/f/{endpoint}/{path}"))
+                .is_some_and(|endpoint| raw.url == format!("{prefix}/v4/f/{endpoint}/{path}"))
         };
         let ours = at("messaging");
         // the delivery's number and kind of path only, never its body or headers

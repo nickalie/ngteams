@@ -11,7 +11,7 @@
 
 use std::iter;
 
-use crate::chat_service_path;
+use crate::{Cloud, chat_service_path_in};
 use url::Url;
 
 use crate::chat::model::{self, AppConsumptionHorizon, ConversationList, Malformed, MemberList, MessagePage, Thread};
@@ -275,7 +275,12 @@ impl<'c, C: Credentials> ChatReads<'c, C> {
 
     /// `link` as an endpoint, if it is on the transport's chat base and its path after `v1` is one `expected` takes.
     fn link(&self, link: &str, expected: impl Fn(&[String]) -> bool) -> Option<Endpoint> {
-        link_endpoint(self.client.transport().chat_base(), link).filter(|endpoint| {
+        link_endpoint_in(
+            self.client.transport().cloud(),
+            self.client.transport().chat_base(),
+            link,
+        )
+        .filter(|endpoint| {
             endpoint
                 .segments()
                 .split_first()
@@ -312,10 +317,16 @@ fn page(page_size: u32) -> String {
 }
 
 /// A link the service handed out, as an endpoint on `chat_base` (`HttpTransport::chat_base`): `None` unless it is a
-/// chat service URL ([`chat_service_path`]) with no fragment whose scheme, host, port and base path are exactly the
-/// base's. Its query comes along, pair by pair.
+/// chat service URL ([`crate::chat_service_path`]) with no fragment whose scheme, host, port and base path are
+/// exactly the base's. Its query comes along, pair by pair.
 #[must_use]
 pub fn link_endpoint(chat_base: &str, link: &str) -> Option<Endpoint> {
+    link_endpoint_in(&Cloud::Microsoft, chat_base, link)
+}
+
+/// A service-issued link on this account's exact chat base and cloud, including its TLS port.
+#[must_use]
+pub fn link_endpoint_in(cloud: &Cloud, chat_base: &str, link: &str) -> Option<Endpoint> {
     let url = Url::parse(link).ok()?;
     let base = Url::parse(&format!("{}/v1", chat_base.trim_end_matches('/'))).ok()?;
     let on_base = url.scheme() == base.scheme()
@@ -329,7 +340,7 @@ pub fn link_endpoint(chat_base: &str, link: &str) -> Option<Endpoint> {
     if !on_base {
         return None;
     }
-    let rest = chat_service_path(&url)?;
+    let rest = chat_service_path_in(cloud, &url)?;
     let endpoint = Endpoint::new(iter::once("v1".to_owned()).chain(rest));
     Some(
         url.query_pairs()

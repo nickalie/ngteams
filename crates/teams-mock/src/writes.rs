@@ -9,7 +9,7 @@ use crate::chatsvc::{Call, json, status};
 use crate::fixtures::object;
 use crate::reads::{member_of, thread_body};
 use crate::world::{self, Kind, State, iso_time};
-use crate::{CHAT_BASE, EventKind, NOTIFICATIONS, REGIONAL_HOST};
+use crate::{CHAT_BASE, EventKind, NOTIFICATIONS};
 
 /// The string-valued message properties a post or an edit carries through as sent (JSON strings of lists).
 const LISTED_PROPERTIES: [&str; 4] = ["mentions", "cards", "links", "files"];
@@ -51,7 +51,10 @@ pub(crate) fn post(state: &mut State, call: &Call<'_>, chat: &str) -> ResponseTe
         return status(400);
     };
     store(state, &call.caller, chat, None, message, arrival);
-    let location = format!("{REGIONAL_HOST}/v1/users/ME/conversations/{chat}/messages/{arrival}");
+    let location = format!(
+        "{}/v1/users/ME/conversations/{chat}/messages/{arrival}",
+        state.location_base()
+    );
     posted(state, arrival, Some(location))
 }
 
@@ -63,7 +66,10 @@ fn store(state: &mut State, from: &str, chat: &str, post: Option<&str>, mut mess
         let post = post.map_or_else(|| arrival.to_string(), str::to_owned);
         object(&mut message).insert(
             "conversationLink".to_owned(),
-            json!(format!("{CHAT_BASE}/v1/users/ME/conversations/{chat};messageid={post}")),
+            json!(format!(
+                "{}/v1/users/ME/conversations/{chat};messageid={post}",
+                state.chat_base()
+            )),
         );
     }
     if let Some(conversation) = state.conversation_mut(chat) {
@@ -98,7 +104,10 @@ fn reply(state: &mut State, call: &Call<'_>, channel: &str, post: &str) -> Respo
         return status(400);
     };
     store(state, &call.caller, channel, Some(post), message, arrival);
-    let location = format!("{REGIONAL_HOST}/v1/users/ME/conversations/{channel};messageid={post}/messages/{arrival}");
+    let location = format!(
+        "{}/v1/users/ME/conversations/{channel};messageid={post}/messages/{arrival}",
+        state.location_base()
+    );
     posted(state, arrival, Some(location))
 }
 
@@ -141,8 +150,9 @@ pub(crate) fn edit(state: &mut State, call: &Call<'_>, chat: &str, id: &str) -> 
         return status(400);
     };
     let caller = call.caller.as_str();
+    let contact = format!("{}/v1/users/ME/contacts/{caller}", state.chat_base());
     let changed = change(state, chat, id, caller, EventKind::Edit, |message, time| {
-        own_and_standing(message, caller)?;
+        own_and_standing(message, &contact)?;
         let fields = object(message);
         fields.insert("content".to_owned(), json!(stored_content(content)));
         fields.insert("version".to_owned(), json!(time.to_string()));
@@ -173,8 +183,9 @@ pub(crate) fn delete(state: &mut State, call: &Call<'_>, chat: &str, id: &str) -
         return status(404);
     }
     let caller = call.caller.as_str();
+    let contact = format!("{}/v1/users/ME/contacts/{caller}", state.chat_base());
     let changed = change(state, chat, id, caller, EventKind::Delete, |message, time| {
-        own_and_standing(message, caller)?;
+        own_and_standing(message, &contact)?;
         let fields = object(message);
         fields.insert("content".to_owned(), json!(""));
         fields.insert("version".to_owned(), json!(time.to_string()));
@@ -364,8 +375,10 @@ pub(crate) fn create_chat(state: &mut State, call: &Call<'_>) -> ResponseTemplat
     let Some(conversation) = state.conversation(&id) else {
         return status(500);
     };
-    json(201, &json!({"threadResource": thread_body(state, conversation)}))
-        .insert_header("Location", format!("{REGIONAL_HOST}/v1/threads/{id}").as_str())
+    json(201, &json!({"threadResource": thread_body(state, conversation)})).insert_header(
+        "Location",
+        format!("{}/v1/threads/{id}", state.location_base()).as_str(),
+    )
 }
 
 /// `PUT v1/threads/<id>/members` (`docs/protocol/chat-service.md`, "Adding people to a chat"): `{members: [{id,
@@ -446,12 +459,12 @@ fn change(
 }
 
 /// Whether `caller` sent the message and nobody deleted it: 403 for someone else's, 404 for a deleted one.
-fn own_and_standing(message: &Value, caller: &str) -> Result<(), u16> {
+fn own_and_standing(message: &Value, contact: &str) -> Result<(), u16> {
     if is_deleted(message) {
         return Err(404);
     }
     let from = message["from"].as_str().unwrap_or_default();
-    if from == contact(caller) { Ok(()) } else { Err(403) }
+    if from == contact { Ok(()) } else { Err(403) }
 }
 
 /// Whether `caller` has a standing reaction under `key` on message `id` of `chat`: 404 for no such message, or a
@@ -521,14 +534,14 @@ fn new_message(state: &State, caller: &str, chat: &str, body: &Map<String, Value
     let mut message = json!({
         "sequenceId": conversation.next_sequence(),
         "conversationid": chat,
-        "conversationLink": format!("{CHAT_BASE}/v1/users/ME/conversations/{chat}"),
+        "conversationLink": format!("{}/v1/users/ME/conversations/{chat}", state.chat_base()),
         "type": "Message",
         "fromDisplayNameInToken": display,
         "id": arrival.to_string(),
         "version": arrival.to_string(),
         "messagetype": body.get("messagetype")?,
         "content": stored_content(body.get("content")?.as_str()?),
-        "from": contact(caller),
+        "from": format!("{}/v1/users/ME/contacts/{caller}", state.chat_base()),
         "composetime": iso_time(arrival, 7),
         "originalarrivaltime": iso_time(arrival, 7),
         "properties": properties,
