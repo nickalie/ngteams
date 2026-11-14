@@ -108,7 +108,8 @@ when their compressed archive fits 1 GiB; larger archives are discarded without 
 Their exact cache key includes Cargo.lock, rust-toolchain.toml, the actual Docker image ID, all CI image/scripts, Cargo configuration and vendored sources, with no fallback to incompatible
 keys. The vendor content hash permits stable checkout mtimes for vendored dependencies; the compiler cache preserves
 nanosecond timestamp precision. Measured scheduling weights are excluded from the compiler key. Workspace artifacts
-are always cleaned before compilation, and profiles and reports are never cached. The SDK
+are cleaned before compilation unless the following content-checked workspace restore succeeds. Profiles and reports
+are never cached. The SDK
 key also includes Cargo.lock, the toolchain and Dockerfile. This keeps the expensive large executable bundle out of
 the repository's shared 10 GB GHA cache budget, which is also used by release caches. Eviction is a performance miss;
 it never bypasses tests or the gate. The build also records fresh versus restored Rust compilation units using
@@ -116,6 +117,17 @@ Cargo's invocation/completion stamps. Their durations overlap, so the dependency
 `compile-times.json` are reported separately from the compiler span and workflow wall time. This diagnostic does
 not change compiler flags or invalidate compatible dependency caches. See [Docker's GHA cache backend](https://docs.docker.com/build/cache/backends/gha/)
 and [GitHub's cache limits](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching).
+
+A subsequent run can reuse the shared executable bundles and a separate compiler-metadata artifact from a completed,
+successful Coverage run on the same repository and branch. The key also includes all workspace Cargo manifests and
+the workflow, so changes to features, flags or target declarations cannot select an incompatible compiler state.
+Restoration checks every tracked file's content hash before restoring its exact previous timestamp; changed or new
+files keep fresh timestamps so Cargo rebuilds their dependents. Both compiler metadata and executable archives retain
+nanosecond timestamps. This includes the normal Chrome bootstrap's dependencies as well as the instrumented targets.
+All tests and vendor regressions still execute, and the report receives only the current Cargo inventory's executables,
+even when a test target was removed since the cached run. A partial restore, old profile, wrong key, expired artifact or
+missing input falls back to normal compilation. Every run starts with fresh profiles. These artifacts expire after one
+day and use artifact storage rather than the repository's shared dependency-cache budget.
 
 A historical instrumented build with these settings measured about 23 GiB locally, before temporary test outputs;
 actual size depends on the selected sources and dependencies.

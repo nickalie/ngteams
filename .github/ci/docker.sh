@@ -2,6 +2,7 @@
 set -euo pipefail
 mkdir -p .ci-cache/registry .ci-cache/git
 arguments=()
+arguments+=(--env "COVERAGE_WORKSPACE_RESTORED=${COVERAGE_WORKSPACE_RESTORED:-0}")
 if [[ -d .ci-cache/webrtc/include ]]; then
     arguments+=(--env LK_CUSTOM_WEBRTC=/workspace/.ci-cache/webrtc)
 fi
