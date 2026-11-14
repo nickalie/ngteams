@@ -44,7 +44,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 # the e2e tests: the real client crates against the in-process server
-rcgen.workspace = true
+rcgen = { workspace = true, features = ["pem"] }
 reqwest = { workspace = true, features = ["form", "json"] }
 teams-auth.workspace = true
 teams-core.workspace = true

@@ -13,6 +13,9 @@ use url::Url;
 
 /// The environment variables' prefix.
 pub const ENV_PREFIX: &str = "NGTEAMS_SERVER_";
+/// Variables under the prefix that aren't configuration keys: the command line's file and log filter, and the tests'
+/// Postgres.
+const NOT_KEYS: [&str; 3] = ["config", "log", "pg_url"];
 
 /// Audiences the client asks tokens for (`teams-proto`'s and `teams-auth`'s resources): a token request for any other
 /// resource is refused.
@@ -154,7 +157,7 @@ impl Config {
             figment = figment.merge(Toml::file_exact(file));
         }
         let config: Self = figment
-            .merge(Env::prefixed(ENV_PREFIX).split("__"))
+            .merge(Env::prefixed(ENV_PREFIX).ignore(&NOT_KEYS).split("__"))
             .extract()
             .map_err(Box::new)?;
         config.check()?;

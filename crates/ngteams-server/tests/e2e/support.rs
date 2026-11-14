@@ -63,7 +63,6 @@ async fn fresh_postgres() -> String {
 pub struct TestServer {
     pub origin: String,
     pub app: Arc<App>,
-    pub backend: Backend,
     shutdown: Option<oneshot::Sender<()>>,
     task: Option<tokio::task::JoinHandle<()>>,
     _dir: TempDir,
@@ -100,7 +99,6 @@ impl TestServer {
         Self {
             origin,
             app,
-            backend,
             shutdown: Some(shutdown),
             task: Some(task),
             _dir: dir,
