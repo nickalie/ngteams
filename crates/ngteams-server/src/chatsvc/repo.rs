@@ -121,3 +121,11 @@ pub(super) async fn list(db: &Db, user: &str, after: i64, until: i64, limit: i64
         .load(conn)
         .await?))
 }
+
+pub(super) async fn tick(db: &Db) -> Result<i64, DbError> {
+    let at = super::wire::now();
+    with_conn!(db, |conn| {
+        let version: i64 = advance!(conn, at);
+        Ok(version)
+    })
+}

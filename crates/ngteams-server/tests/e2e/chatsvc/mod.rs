@@ -7,6 +7,7 @@ mod paging;
 mod properties;
 mod reactions;
 mod security;
+mod typing;
 
 use std::sync::Arc;
 use std::time::Duration;

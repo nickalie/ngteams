@@ -21,6 +21,9 @@ pub(super) async fn post(
     let chat = reads::target(&path)?;
     let (_, members) = member_of(&app, &caller, chat).await?;
     let Json(body) = body.map_err(|_| Error::BadRequest)?;
+    if body["messagetype"].as_str() == Some("Control/Typing") {
+        return typing(&app, &caller, chat, &members, &body).await;
+    }
     let draft = draft(&app, &caller, chat, &body)?;
     let (row, inserted) = message_repo::insert(&app.db, &draft).await?.ok_or(Error::Denied)?;
     if inserted {
@@ -168,4 +171,26 @@ pub(super) async fn around(
         .collect::<Result<_, _>>()?;
     Ok(Json(json!({"messages": messages, "tenantId": caller.tenant,
         "_metadata": {"lastCompleteSegmentStartTime": 0, "lastCompleteSegmentEndTime": 0}})))
+}
+
+async fn typing(
+    app: &App,
+    caller: &Caller,
+    chat: &str,
+    members: &[super::repo::Member],
+    body: &Value,
+) -> Result<Response, Error> {
+    if body["content"].as_str() != Some("") {
+        return Err(Error::BadRequest);
+    }
+    let at = repo::tick(&app.db).await?;
+    let resource = json!({
+        "type": "Message", "id": at.to_string(), "version": at.to_string(), "clientmessageid": at.to_string(),
+        "conversationid": chat, "conversationLink": format!("{}/v1/users/ME/conversations/{chat}", wire::base(app)),
+        "from": format!("{}/v1/users/ME/contacts/{}", wire::base(app), caller.mri()), "imdisplayname": "",
+        "messagetype": "Control/Typing", "contenttype": "Application/Message", "content": "",
+        "properties": {"importance": "", "subject": ""},
+    });
+    events::publish(app, caller, members, "NewMessage", &resource).await;
+    Ok((StatusCode::CREATED, Json(json!({"OriginalArrivalTime": at}))).into_response())
 }
