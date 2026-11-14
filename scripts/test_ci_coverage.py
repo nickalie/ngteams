@@ -339,7 +339,13 @@ class ReleaseGateTests(unittest.TestCase):
     def test_a_later_main_push_cannot_cancel_the_run_a_release_waits_for(self):
         workflow = (ROOT / ".github/workflows/coverage.yml").read_text()
         group = next(line for line in workflow.splitlines() if line.startswith("  group: "))
-        self.assertIn("github.event_name == 'pull_request' && github.ref || github.sha", group)
+        self.assertIn("${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}", group)
+
+    def test_a_run_of_the_same_commit_on_another_branch_cannot_cancel_the_run_a_release_waits_for(self):
+        workflow = (ROOT / ".github/workflows/coverage.yml").read_text()
+        group = next(line for line in workflow.splitlines() if line.startswith("  group: "))
+        key = group.split("${{ github.workflow }}-", 1)[1]
+        self.assertTrue(key.startswith("${{ github.ref }}-"), key)
 
     def test_default_wait_outlasts_coverage_and_fits_the_gate_job(self):
         release = (ROOT / ".github/workflows/release.yml").read_text()

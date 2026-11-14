@@ -340,8 +340,9 @@ accepting only push/manual runs and a completed success. A newer failed or cance
 older success. The publish job rechecks immediately before creating releases, so a newer failed rerun during
 packaging also blocks publication. API errors, absence of a run after the timeout, and every non-success conclusion block publishing.
 The wait lasts up to 330 minutes, which covers Coverage's runner queues as well as its slowest measured run.
-Coverage runs on `main` are keyed by commit, so a later push never cancels the run a release waits for; only a
-pull request's newer push replaces its older run.
+Coverage runs outside pull requests are keyed by branch and commit, so neither a later push nor a manual run of the
+same commit on another branch cancels the run a release waits for; only a pull request's newer push replaces its
+older run.
 Release therefore reuses Coverage without a second full suite. A manual release of a documentation-only commit
 needs a manual Coverage dispatch first, since that commit otherwise has no matching run. Manual `coverage_only: true` dispatches run just this
 lookup, skipping all packaging and publishing, to prove the gate safely on a branch. Coverage also runs every `scripts/test_*.py`; release publishes only after that complete Coverage run passes. A new push cancels any release still building or waiting, so

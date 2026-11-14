@@ -24,9 +24,10 @@ permissions:
   contents: read
 
 # A pull request's newer push replaces its older run. Pushes to main, merge-queue entries and manual runs are keyed
-# by commit: the release waits for the Coverage run of its exact commit, so a later push must not cancel that run.
+# by ref and commit: the release waits for the Coverage run of its exact commit, so neither a later push nor a run
+# of the same commit on another branch may cancel that run.
 concurrency:
-  group: coverage-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: coverage-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
   cancel-in-progress: true
 
 jobs:
