@@ -15,6 +15,7 @@ use tempfile::TempDir;
 use crate::support::{Backend, CLIENT_ID, database_url};
 
 pub const TLS_DIR: &str = "NGTS_QA_TLS_DIR";
+pub const LOGIN_WINDOW_SECONDS: u64 = 30;
 
 pub struct Deployment {
     pub dir: TempDir,
@@ -53,7 +54,7 @@ impl Deployment {
         if let Some(redis) = &self.redis {
             writeln!(text, "redis_url = {redis:?}").unwrap();
         }
-        text.push_str("[login]\nmax_failures = 3\nwindow = 10\n");
+        writeln!(text, "[login]\nmax_failures = 3\nwindow = {LOGIN_WINDOW_SECONDS}").unwrap();
         if self.tls {
             let certs = PathBuf::from(std::env::var_os(TLS_DIR).unwrap());
             writeln!(

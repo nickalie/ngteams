@@ -12,7 +12,7 @@ use teams_auth::session::{AccessToken, Session};
 use teams_auth::token::{SPACES_RESOURCE, TokenError};
 use teams_proto::IC3_AUDIENCE;
 
-use self::support::{Deployment, Node, tls_parent};
+use self::support::{Deployment, LOGIN_WINDOW_SECONDS, Node, tls_parent};
 use crate::support::{Backend, PASSWORD, PG_ENV, backends, redis_url};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -192,7 +192,7 @@ async fn lockout_flow(node: &Node) {
         .unwrap()
         .parse::<u64>()
         .unwrap();
-    assert!((1..=10).contains(&retry));
+    assert!((1..=LOGIN_WINDOW_SECONDS).contains(&retry));
     let answer: Value = response.json().await.unwrap();
     assert_eq!(answer["error"], "temporarily_unavailable");
     tokio::time::sleep(Duration::from_secs(retry + 1)).await;
