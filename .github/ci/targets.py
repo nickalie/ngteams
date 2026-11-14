@@ -19,6 +19,17 @@ def large_weights(weights):
     return {name.removeprefix(prefix): seconds for name, seconds in weights.items() if name.startswith(prefix)}
 
 
+def large_cases(weights):
+    scenes = large_weights(weights)
+    # The 1:1 scene rings only after Leave ends the existing group call.
+    sequence = ("leave", "one-to-one")
+    if not set(sequence).isdisjoint(scenes):
+        if not set(sequence).issubset(scenes):
+            raise ValueError("large-call Leave and 1:1 scenes must stay together")
+        scenes[",".join(sequence)] = sum(scenes.pop(name) for name in sequence)
+    return scenes
+
+
 def validate_large_steps(source, weights):
     body = source.partition("fn scenarios(")[2].partition("\n}\n")[0]
     table = re.search(r"let steps:\s*\[[^\]]+;\s*(\d+)\]\s*=\s*\[(.*?)\];", body, re.S)
@@ -52,7 +63,7 @@ def partition(messages, packages, weights, count=8):
             "seconds": weights.get(identity, weights.get(f"{package}/{target['name']}", 10)),
         }
         if identity == LARGE_TARGET:
-            scenes = large_weights(weights)
+            scenes = large_cases(weights)
             if not scenes:
                 raise ValueError("large-call scene timings are missing")
             for name, seconds in scenes.items():
