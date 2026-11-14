@@ -203,7 +203,6 @@ async fn peer_sync_and_node_restart_preserve_chat_history() {
             .unwrap();
         assert!(persisted.messages.iter().any(|message| message.id == first));
         rig.actors[1].restart();
-        rig.actors[1].sync().await;
         rig.actors[1]
             .assert_message(&rig.chat, &first, "before node restart")
             .await;

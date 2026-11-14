@@ -206,6 +206,17 @@ impl Rig {
         }
     }
 
+    pub async fn restart_nodes(&mut self) {
+        self.first.stop().await;
+        if let Some(node) = &mut self.second {
+            node.stop().await;
+        }
+        self.first.start().await;
+        if let Some(node) = &mut self.second {
+            node.start().await;
+        }
+    }
+
     pub async fn stop(mut self) {
         for actor in &mut self.actors {
             actor.engine.take().unwrap().shutdown();

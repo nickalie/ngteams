@@ -79,7 +79,7 @@ async fn reading_clears_only_own_unread_and_mark_all_read_can_be_undone() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn favorite_and_mute_stay_private_after_restarting_the_engine_on_its_store() {
+async fn favorite_and_mute_stay_private_after_restarting_the_server_nodes() {
     for backend in backends() {
         let mut rig = Rig::start(backend).await;
         rig.actors[0].send(&rig.chat, "preference persistence").await;
@@ -100,7 +100,7 @@ async fn favorite_and_mute_stay_private_after_restarting_the_engine_on_its_store
         }
         for restarted in [false, true] {
             if restarted {
-                rig.actors[0].restart();
+                rig.restart_nodes().await;
             }
             rig.actors[0].sync().await;
             rig.actors[1].sync().await;
