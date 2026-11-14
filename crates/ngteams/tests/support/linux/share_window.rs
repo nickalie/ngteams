@@ -246,10 +246,14 @@ fn one_to_one(user: &mut User<'_>, a: &mut AppUnderTest, b: &mut AppUnderTest) -
         user.shot_a(&format!("share-1to1-{round}-sharing.png"))?;
         user.shot_b(&format!("share-1to1-{round}-far-end.png"))?;
         user.holds(&format!("1:1 share {round}"), round)?;
-        b.trace
-            .next_where(&format!("1:1 share {round}: b keeps presenting a's screen"), |line| {
-                is_share_presented(line) && frames_of(line) >= frames_of(&first) + PRESENTED
-            })?;
+        let presented = b.trace.presented_share();
+        if presented < frames_of(&first) + PRESENTED {
+            return Err(format!(
+                "1:1 share {round}: b presented only {presented} of a's frames by the hold's end (from {})",
+                first["frames"]
+            )
+            .into());
+        }
         if !user.b_shows_a_screen()? {
             return Err(format!("1:1 share {round}: b's window shows no shared screen").into());
         }
