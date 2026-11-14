@@ -91,7 +91,7 @@ rlibs or object files. Every shard uses `/workspace`, so compile-time fixture pa
 Docker Buildx uses a shared GHA image cache (`mode=min`); only the build job exports it. Cargo registry/Git sources
 and the pinned Linux x64 libwebrtc SDK have separate caches. Instrumented third-party dependencies are saved only
 when their compressed archive fits 1 GiB; larger archives are discarded. Their exact cache key includes Cargo.lock,
-rust-toolchain.toml, all CI image/scripts, Cargo configuration and vendored sources, with no fallback to incompatible
+rust-toolchain.toml, the actual Docker image ID, all CI image/scripts, Cargo configuration and vendored sources, with no fallback to incompatible
 keys. Workspace artifacts are always cleaned before compilation, and profiles and reports are never cached. The SDK
 key also includes Cargo.lock, the toolchain and Dockerfile. This keeps the expensive large executable bundle out of
 the repository's shared 10 GiB GHA cache budget, which is also used by release caches. Eviction is a performance miss;

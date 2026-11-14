@@ -4,6 +4,10 @@ inputs:
   save-cache:
     description: Export the shared image cache from the build job only
     default: 'false'
+outputs:
+  image-id:
+    description: Actual image identity, including the native system libraries
+    value: ${{ steps.build.outputs.imageid }}
 runs:
   using: composite
   steps:
@@ -26,6 +30,7 @@ runs:
         echo "rust=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')" >> "$GITHUB_OUTPUT"
         echo "uid=$(id -u)" >> "$GITHUB_OUTPUT"
     - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+      id: build
       with:
         context: .github/ci
         load: true
