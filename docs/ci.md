@@ -264,7 +264,8 @@ manual dispatch. Its `tests` job waits for the newest standalone Coverage run wi
 accepting only push/manual runs and a completed success. A newer failed or cancelled run takes precedence over an
 older success. The publish job rechecks immediately before creating releases, so a newer failed rerun during
 packaging also blocks publication. API errors, absence of a run after the timeout, and every non-success conclusion block publishing.
-Release therefore reuses Coverage without a second full suite. Manual `coverage_only: true` dispatches run just this
+Release therefore reuses Coverage without a second full suite. A manual release of a documentation-only commit
+needs a manual Coverage dispatch first, since that commit otherwise has no matching run. Manual `coverage_only: true` dispatches run just this
 lookup, skipping all packaging and publishing, to prove the gate safely on a branch. Coverage also runs every `scripts/test_*.py`; release publishes only after that complete Coverage run passes. A new push cancels any release still building or waiting, so
 only the newest commit is published. A successful `main` run makes a GitHub release tagged
 `v<workspace version>.<run number>` (`Cargo.toml`'s `[workspace.package] version` and `github.run_number`, monotonic
