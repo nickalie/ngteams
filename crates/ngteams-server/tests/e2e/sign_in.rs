@@ -13,7 +13,12 @@ const UPN: &str = "ada@own.test";
 fn claims(token: &str) -> serde_json::Value {
     use base64::Engine as _;
     let payload = token.split('.').nth(1).unwrap();
-    serde_json::from_slice(&base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap()
+    serde_json::from_slice(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload)
+            .unwrap(),
+    )
+    .unwrap()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -77,7 +82,10 @@ async fn repeated_failures_hold_the_account_off_with_retry_after() {
     let server = TestServer::start_with(Backend::Sqlite, |config| config.login.max_failures = 2).await;
     server.add_user(UPN, "Ada").await;
     for _ in 0..2 {
-        assert_eq!(server.password_grant(UPN, "not the password", &Scope::spaces()).await.0, 400);
+        assert_eq!(
+            server.password_grant(UPN, "not the password", &Scope::spaces()).await.0,
+            400
+        );
     }
     let response = reqwest::Client::new()
         .post(server.token_endpoint())
@@ -151,17 +159,35 @@ async fn a_disabled_account_or_a_reset_password_signs_the_session_out() {
         server.add_user("bob@own.test", "Bob").await;
         let ada = server.session(UPN).await;
         let bob = server.session("bob@own.test").await;
-        ngteams_server::admin::set_disabled(&server.app.db, UPN, true).await.unwrap();
-        ngteams_server::admin::reset_password(&server.app.db, "bob@own.test", "a new password").await.unwrap();
+        ngteams_server::admin::set_disabled(&server.app.db, UPN, true)
+            .await
+            .unwrap();
+        ngteams_server::admin::reset_password(&server.app.db, "bob@own.test", "a new password")
+            .await
+            .unwrap();
         for session in [&ada, &bob] {
             let error = session.access_token(IC3_AUDIENCE).await.unwrap_err();
             assert!(matches!(error, TokenError::InvalidGrant(_)), "{backend:?}: {error:?}");
         }
         let (status, answer) = server.password_grant(UPN, PASSWORD, &Scope::spaces()).await;
         assert_eq!((status, answer["error_codes"][0].as_u64()), (400, Some(50057)));
-        assert_eq!(server.password_grant("bob@own.test", PASSWORD, &Scope::spaces()).await.0, 400);
-        assert_eq!(server.password_grant("bob@own.test", "a new password", &Scope::spaces()).await.0, 200);
-        ngteams_server::admin::set_disabled(&server.app.db, UPN, false).await.unwrap();
+        assert_eq!(
+            server
+                .password_grant("bob@own.test", PASSWORD, &Scope::spaces())
+                .await
+                .0,
+            400
+        );
+        assert_eq!(
+            server
+                .password_grant("bob@own.test", "a new password", &Scope::spaces())
+                .await
+                .0,
+            200
+        );
+        ngteams_server::admin::set_disabled(&server.app.db, UPN, false)
+            .await
+            .unwrap();
         assert_eq!(server.password_grant(UPN, PASSWORD, &Scope::spaces()).await.0, 200);
         server.stop().await;
     }
@@ -179,5 +205,117 @@ async fn a_garbage_refresh_token_is_an_invalid_grant() {
         .unwrap();
     let error = session.access_token(IC3_AUDIENCE).await.unwrap_err();
     assert!(matches!(error, TokenError::InvalidGrant(_)), "{error:?}");
+    server.stop().await;
+}
+
+async fn form(server: &TestServer, fields: &[(&str, &str)]) -> (u16, serde_json::Value) {
+    let answer = reqwest::Client::new()
+        .post(server.token_endpoint())
+        .form(fields)
+        .send()
+        .await
+        .unwrap();
+    (answer.status().as_u16(), answer.json().await.unwrap_or_default())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn malformed_token_requests_get_entras_errors() {
+    let server = TestServer::start(Backend::Sqlite).await;
+    server.add_user(UPN, "Ada").await;
+    let spaces = Scope::spaces();
+    let two = format!("{IC3_AUDIENCE}/.default {CSA_AUDIENCE}/.default");
+    for (fields, error, code) in [
+        (vec![("scope", spaces.as_str())], "invalid_request", 900_144),
+        (vec![("client_id", CLIENT_ID)], "invalid_request", 900_144),
+        (
+            vec![("client_id", CLIENT_ID), ("scope", spaces.as_str())],
+            "invalid_request",
+            900_144,
+        ),
+        (
+            vec![("client_id", CLIENT_ID), ("scope", "openid profile")],
+            "invalid_scope",
+            70_011,
+        ),
+        (
+            vec![("client_id", CLIENT_ID), ("scope", two.as_str())],
+            "invalid_scope",
+            70_011,
+        ),
+        (
+            vec![("client_id", CLIENT_ID), ("scope", "https://ic3.teams.office.com")],
+            "invalid_scope",
+            70_011,
+        ),
+        (
+            vec![
+                ("client_id", CLIENT_ID),
+                ("scope", spaces.as_str()),
+                ("grant_type", "client_credentials"),
+            ],
+            "unsupported_grant_type",
+            70_003,
+        ),
+        (
+            vec![
+                ("client_id", CLIENT_ID),
+                ("scope", spaces.as_str()),
+                ("grant_type", "password"),
+                ("username", UPN),
+            ],
+            "invalid_request",
+            900_144,
+        ),
+        (
+            vec![
+                ("client_id", CLIENT_ID),
+                ("scope", spaces.as_str()),
+                ("grant_type", "refresh_token"),
+            ],
+            "invalid_request",
+            900_144,
+        ),
+    ] {
+        let (status, answer) = form(&server, &fields).await;
+        assert_eq!((status, answer["error"].as_str()), (400, Some(error)), "{fields:?}");
+        assert_eq!(answer["error_codes"][0], code);
+        assert!(
+            answer["error_description"]
+                .as_str()
+                .unwrap()
+                .starts_with(&format!("AADSTS{code}: "))
+        );
+    }
+    server.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refresh_token_is_bound_to_its_client_and_runs_out() {
+    let server = TestServer::start_with(Backend::Sqlite, |config| config.tokens.refresh_lifetime = 1).await;
+    server.add_user(UPN, "Ada").await;
+    let (_, answer) = server.password_grant(UPN, PASSWORD, &Scope::spaces()).await;
+    let refresh = answer["refresh_token"].as_str().unwrap().to_owned();
+    let grant = |client: &'static str, token: String| {
+        let scope = Scope::spaces();
+        let server = &server;
+        async move {
+            form(
+                server,
+                &[
+                    ("client_id", client),
+                    ("grant_type", "refresh_token"),
+                    ("refresh_token", token.as_str()),
+                    ("scope", scope.as_str()),
+                ],
+            )
+            .await
+        }
+    };
+    let (status, answer) = grant("another-client", refresh.clone()).await;
+    assert_eq!((status, answer["error_codes"][0].as_u64()), (400, Some(70_000)));
+    tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+    let (status, answer) = grant(CLIENT_ID, refresh).await;
+    assert_eq!((status, answer["error_codes"][0].as_u64()), (400, Some(700_082)));
+    ngteams_server::app::tidy(&server.app).await;
     server.stop().await;
 }

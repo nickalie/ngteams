@@ -7,7 +7,7 @@ use ngteams_server::app::{self, App};
 use ngteams_server::config::Config;
 use ngteams_server::serve::Listener;
 use serde_json::Value;
-use teams_auth::authz::AuthzClient;
+use teams_auth::authz::{AuthzClient, Region};
 use teams_auth::refresh::refresh_token_key;
 use teams_auth::secrets::{MemorySecretStore, Secret, SecretStore as _};
 use teams_auth::session::Session;
@@ -177,7 +177,7 @@ impl TestServer {
     /// The client's session for a signed-in `upn` against this server.
     pub async fn session(&self, upn: &str) -> Session<MemorySecretStore> {
         let store = self.signed_in_store(upn).await;
-        Session::new(upn, store, self.token_client(), self.authz_client(), Default::default())
+        Session::new(upn, store, self.token_client(), self.authz_client(), Region::default())
     }
 }
 

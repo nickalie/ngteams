@@ -25,7 +25,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// How often a node rotates keys when due and drops expired refresh tokens.
 const MAINTENANCE: Duration = Duration::from_secs(3600);
 /// Expired refresh tokens are kept this much longer (a late reuse still finds its family).
-const EXPIRED_KEPT: Duration = Duration::from_secs(86_400);
+const EXPIRED_KEPT: Duration = Duration::from_hours(24);
 
 /// What a node holds while it runs. Shared behind an `Arc`.
 #[derive(Debug)]
@@ -96,7 +96,10 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
         .route("/health/ready", get(ready))
         .merge(auth)
-        .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, REQUEST_TIMEOUT))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(app)
 }
@@ -125,9 +128,17 @@ pub async fn maintain(app: Arc<App>) {
 
 /// One round of [`maintain`].
 pub async fn tidy(app: &App) {
+    rotate(app).await;
+    purge(app).await;
+}
+
+async fn rotate(app: &App) {
     if let Err(error) = app.issuer.keys().rotate_if_due().await {
         tracing::warn!(%error, "key rotation failed");
     }
+}
+
+async fn purge(app: &App) {
     let before = crate::db::now() - crate::db::seconds(EXPIRED_KEPT);
     if let Err(error) = crate::db::refresh::purge_expired(&app.db, before).await {
         tracing::warn!(%error, "expired refresh tokens weren't dropped");

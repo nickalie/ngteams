@@ -36,11 +36,24 @@ teams-ui = { lines = 92, functions = 90, regions = 91 }
 ui-sandbox = { lines = 94, functions = 91, regions = 90 }
 proto-lab = { lines = 94, functions = 93, regions = 90 }
 teams-ctl = { lines = 99, functions = 100, regions = 98 }
+ngteams-server = { lines = 93, functions = 92, regions = 90 }
 
 # Individually inspected sources LLVM does not map. Any content change invalidates the review.
 # These entries never suppress coverage counts when LLVM supplies a mapping for the file.
 [unmapped_sources."crates/teams-auth/src/lib.rs"]
 sha256 = "2144e0b826f79b642f344fefb7881c65489ee1a7b9633fdfb4293d1bb7b35eae"
+reason = "module declarations and documentation only; no executable items"
+
+[unmapped_sources."crates/ngteams-server/src/lib.rs"]
+sha256 = "389b0ffd6e242aa756cc78ec3766f3af24c063e5c0427b3b280c80a213fe2c82"
+reason = "module declarations and documentation only; no executable items"
+
+[unmapped_sources."crates/ngteams-server/src/auth/mod.rs"]
+sha256 = "3efc7c0084c5c264096f60581209719b5733112bc2b7f23e69fd6ce9999cd784"
+reason = "module declarations and documentation only; no executable items"
+
+[unmapped_sources."crates/ngteams-server/src/routes/mod.rs"]
+sha256 = "15d2b5bc975221fbb0e297ffb18edb0e51c25cd40ff3b87f4cbeacf2fa2f7b5d"
 reason = "module declarations and documentation only; no executable items"
 
 [unmapped_sources."crates/teams-ctl/src/lib.rs"]

@@ -19,7 +19,11 @@ async fn the_session_gets_a_skypetoken_with_the_region_and_the_servers_own_bases
         let oid = server.add_user(UPN, "Ada").await;
         let session = server.session(UPN).await;
         let skypetoken = session.skypetoken().await.unwrap();
-        assert_eq!(skypetoken.skype_id.as_deref(), Some(format!("orgid:{oid}").as_str()), "{backend:?}");
+        assert_eq!(
+            skypetoken.skype_id.as_deref(),
+            Some(format!("orgid:{oid}").as_str()),
+            "{backend:?}"
+        );
         assert!(skypetoken.expires_at > SystemTime::now());
         let spaces = session.access_token(SPACES_RESOURCE).await.unwrap();
         assert!(skypetoken.expires_at <= spaces.expires_at);
@@ -93,7 +97,11 @@ async fn authz_refuses_a_token_for_another_audience_or_none() {
         .await
         .unwrap_err();
     assert!(matches!(error, AuthzError::Unauthorized { .. }), "{error:?}");
-    let answer = reqwest::Client::new().post(server.authz_endpoint()).send().await.unwrap();
+    let answer = reqwest::Client::new()
+        .post(server.authz_endpoint())
+        .send()
+        .await
+        .unwrap();
     assert_eq!(answer.status(), 401);
     server.stop().await;
 }
@@ -104,7 +112,9 @@ async fn authz_refuses_a_disabled_account_as_teams_refuses_an_unlicensed_one() {
     server.add_user(UPN, "Ada").await;
     let session = server.session(UPN).await;
     let spaces = session.access_token(SPACES_RESOURCE).await.unwrap();
-    ngteams_server::admin::set_disabled(&server.app.db, UPN, true).await.unwrap();
+    ngteams_server::admin::set_disabled(&server.app.db, UPN, true)
+        .await
+        .unwrap();
     let error = server
         .authz_client()
         .exchange(&spaces.token, AuthzKind::ExplicitLogin)
@@ -115,6 +125,9 @@ async fn authz_refuses_a_disabled_account_as_teams_refuses_an_unlicensed_one() {
         "{error:?}"
     );
     let error = session.skypetoken().await.unwrap_err();
-    assert!(matches!(error, TokenError::InvalidGrant(_) | TokenError::Authz(_)), "{error:?}");
+    assert!(
+        matches!(error, TokenError::InvalidGrant(_) | TokenError::Authz(_)),
+        "{error:?}"
+    );
     server.stop().await;
 }

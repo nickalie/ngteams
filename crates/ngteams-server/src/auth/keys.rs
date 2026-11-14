@@ -1,4 +1,4 @@
-//! The signing keys every node shares through the database: Ed25519 (EdDSA JWTs), each named by a `kid`.
+//! The signing keys every node shares through the database: Ed25519 (`EdDSA` JWTs), each named by a `kid`.
 //!
 //! The newest unretired key signs. A key is retired when a newer one has signed for a rotation period, and deleted
 //! once nothing it signed can still be valid. A node that meets a `kid` it doesn't hold reloads the keys (another node
@@ -159,7 +159,10 @@ impl KeyRing {
     /// # Errors
     /// [`Invalid`] for any token that isn't one of ours, valid now.
     pub async fn verify<T: DeserializeOwned>(&self, token: &str, validation: &Validation) -> Result<T, Invalid> {
-        let kid = jsonwebtoken::decode_header(token).map_err(|_| Invalid)?.kid.ok_or(Invalid)?;
+        let kid = jsonwebtoken::decode_header(token)
+            .map_err(|_| Invalid)?
+            .kid
+            .ok_or(Invalid)?;
         if !self.knows(&kid) && self.may_reload() {
             self.reload().await.map_err(|_| Invalid)?;
         }

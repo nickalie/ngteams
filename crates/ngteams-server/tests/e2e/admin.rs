@@ -17,37 +17,74 @@ async fn cli(server: &TestServer, args: &[&str], input: &str) -> Result<String, 
         ),
     )
     .unwrap();
-    let mut argv = vec!["ngteams-server", "--config", config.to_str().unwrap()];
-    argv.extend_from_slice(args);
+    let mut command = vec!["ngteams-server", "--config", config.to_str().unwrap()];
+    command.extend_from_slice(args);
     let mut output = Vec::new();
-    run(Cli::parse_from(argv), &mut input.as_bytes(), &mut output, std::future::pending()).await?;
+    run(
+        Cli::parse_from(command),
+        &mut input.as_bytes(),
+        &mut output,
+        std::future::pending(),
+    )
+    .await?;
     Ok(String::from_utf8(output).unwrap())
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn accounts_added_and_changed_on_the_command_line_sign_in_as_set() {
     let server = TestServer::start(Backend::Sqlite).await;
-    let added = cli(&server, &["user", "add", "Grace@Own.Test", "--name", "Grace Hopper"], &format!("{PASSWORD}\n"))
-        .await
-        .unwrap();
+    let added = cli(
+        &server,
+        &["user", "add", "Grace@Own.Test", "--name", "Grace Hopper"],
+        &format!("{PASSWORD}\n"),
+    )
+    .await
+    .unwrap();
     assert!(added.starts_with("added grace@own.test ("), "{added}");
     let session = server.session("grace@own.test").await;
     session.skypetoken().await.unwrap();
 
     let listed = cli(&server, &["user", "list"], "").await.unwrap();
-    assert!(listed.starts_with("grace@own.test\t") && listed.contains("\tenabled\tGrace Hopper"), "{listed}");
+    assert!(
+        listed.starts_with("grace@own.test\t") && listed.contains("\tenabled\tGrace Hopper"),
+        "{listed}"
+    );
 
     cli(&server, &["user", "disable", "grace@own.test"], "").await.unwrap();
-    assert!(cli(&server, &["user", "list"], "").await.unwrap().contains("\tdisabled\t"));
-    assert_eq!(server.password_grant("grace@own.test", PASSWORD, &Scope::spaces()).await.0, 400);
+    assert!(
+        cli(&server, &["user", "list"], "")
+            .await
+            .unwrap()
+            .contains("\tdisabled\t")
+    );
+    assert_eq!(
+        server
+            .password_grant("grace@own.test", PASSWORD, &Scope::spaces())
+            .await
+            .0,
+        400
+    );
     cli(&server, &["user", "enable", "grace@own.test"], "").await.unwrap();
 
-    cli(&server, &["user", "reset-password", "grace@own.test"], "another password\r\n")
-        .await
-        .unwrap();
-    assert_eq!(server.password_grant("grace@own.test", PASSWORD, &Scope::spaces()).await.0, 400);
+    cli(
+        &server,
+        &["user", "reset-password", "grace@own.test"],
+        "another password\r\n",
+    )
+    .await
+    .unwrap();
     assert_eq!(
-        server.password_grant("grace@own.test", "another password", &Scope::spaces()).await.0,
+        server
+            .password_grant("grace@own.test", PASSWORD, &Scope::spaces())
+            .await
+            .0,
+        400
+    );
+    assert_eq!(
+        server
+            .password_grant("grace@own.test", "another password", &Scope::spaces())
+            .await
+            .0,
         200
     );
     server.stop().await;
@@ -58,7 +95,10 @@ async fn the_command_line_refuses_bad_accounts_and_passwords() {
     let server = TestServer::start(Backend::Sqlite).await;
     server.add_user("ada@own.test", "Ada").await;
     for (args, input) in [
-        (&["user", "add", "ada@own.test", "--name", "Ada"][..], "a long password\n"),
+        (
+            &["user", "add", "ada@own.test", "--name", "Ada"][..],
+            "a long password\n",
+        ),
         (&["user", "add", "not-an-upn", "--name", "X"][..], "a long password\n"),
         (&["user", "add", "eve@own.test", "--name", "Eve"][..], "short\n"),
         (&["user", "disable", "nobody@own.test"][..], ""),
@@ -86,6 +126,12 @@ async fn a_key_rotated_on_the_command_line_reaches_every_node_and_old_tokens_sti
     .await;
     let on_b = node_b.session("ada@own.test").await;
     let new = on_b.access_token(teams_auth::token::SPACES_RESOURCE).await.unwrap();
+    let kid = |token: &teams_auth::secrets::Secret| jsonwebtoken::decode_header(token.expose()).unwrap().kid.unwrap();
+    assert!(
+        rotated.trim_end().ends_with(&kid(&new.token)),
+        "node B signs with the rotated key"
+    );
+    assert_ne!(kid(&old.token), kid(&new.token));
     for token in [&old.token, &new.token] {
         node_a
             .authz_client()

@@ -6,7 +6,7 @@
 //! Refresh tokens are single use: each grant issues the next one of the sign-in's family. One presented again within
 //! the grace period (a client retrying after a lost answer) still works; later, it revokes the family.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,11 +21,11 @@ use serde_json::json;
 use sha2::{Digest as _, Sha256};
 
 use crate::app::App;
+use crate::auth::keys::KeyError;
 use crate::auth::password;
 use crate::auth::tokens::{Requested, requested, seconds_until};
 use crate::db::refresh::{self, RefreshToken};
 use crate::db::users::{self, User, normalize_upn};
-use crate::auth::keys::KeyError;
 use crate::db::{DbError, now, seconds};
 
 /// An Entra-shaped refusal.
@@ -50,11 +50,19 @@ impl Refusal {
     }
 
     const fn missing() -> Self {
-        Self::new("invalid_request", 900_144, "The request body must contain the parameters of its grant.")
+        Self::new(
+            "invalid_request",
+            900_144,
+            "The request body must contain the parameters of its grant.",
+        )
     }
 
     const fn credentials() -> Self {
-        Self::new("invalid_grant", 50_126, "Error validating credentials due to invalid username or password.")
+        Self::new(
+            "invalid_grant",
+            50_126,
+            "Error validating credentials due to invalid username or password.",
+        )
     }
 
     const fn disabled() -> Self {
@@ -70,7 +78,11 @@ impl Refusal {
     }
 
     const fn scope() -> Self {
-        Self::new("invalid_scope", 70_011, "The scope names no resource this server issues tokens for.")
+        Self::new(
+            "invalid_scope",
+            70_011,
+            "The scope names no resource this server issues tokens for.",
+        )
     }
 
     const fn grant_type() -> Self {
@@ -81,7 +93,11 @@ impl Refusal {
         Self {
             status: StatusCode::TOO_MANY_REQUESTS,
             retry_after: Some(wait),
-            ..Self::new("temporarily_unavailable", 50_053, "The account is locked after failed sign-ins.")
+            ..Self::new(
+                "temporarily_unavailable",
+                50_053,
+                "The account is locked after failed sign-ins.",
+            )
         }
     }
 
@@ -126,7 +142,13 @@ impl From<KeyError> for Refusal {
 }
 
 /// The token endpoint.
-pub async fn token(State(app): State<Arc<App>>, Form(form): Form<HashMap<String, String>>) -> Result<Response, Refusal> {
+///
+/// # Errors
+/// A [`Refusal`] in Entra's shape for a grant it won't give.
+pub async fn token(
+    State(app): State<Arc<App>>,
+    Form(form): Form<BTreeMap<String, String>>,
+) -> Result<Response, Refusal> {
     let field = |name: &str| form.get(name).map(String::as_str).filter(|value| !value.is_empty());
     let client_id = field("client_id").ok_or_else(Refusal::missing)?;
     let scope = field("scope").ok_or_else(Refusal::missing)?;

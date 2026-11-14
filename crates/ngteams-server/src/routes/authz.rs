@@ -10,11 +10,12 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse, Response};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::app::App;
 use crate::auth::extract::{Bearer, Spaces};
-use crate::auth::tokens::seconds_until;
+use crate::auth::tokens::{Minted, seconds_until};
+use crate::config::Config;
 use crate::db::users;
 
 /// The authz endpoint.
@@ -22,27 +23,25 @@ pub async fn authz(State(app): State<Arc<App>>, bearer: Bearer<Spaces>) -> Respo
     match users::by_id(&app.db, &bearer.claims.oid).await {
         Ok(Some(user)) if !user.disabled => {}
         Ok(_) => return refused(),
-        Err(error) => {
-            tracing::error!(%error, "authz failed");
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
+        Err(error) => return unavailable(&error),
     }
-    let skypetoken = match app.issuer.skypetoken(&bearer.claims) {
-        Ok(skypetoken) => skypetoken,
-        Err(error) => {
-            tracing::error!(%error, "authz failed");
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
-    };
-    let body = json!({
+    match app.issuer.skypetoken(&bearer.claims) {
+        Ok(skypetoken) => ([(CACHE_CONTROL, "no-store")], Json(answer(&app.config, &skypetoken))).into_response(),
+        Err(error) => unavailable(&error),
+    }
+}
+
+/// The answer's body, in the shape Teams' authz gives.
+fn answer(config: &Config, skypetoken: &Minted) -> Value {
+    json!({
         "tokens": {
             "skypeToken": skypetoken.token,
             "expiresIn": seconds_until(skypetoken.expires_at),
             "tokenType": "SkypeToken",
         },
-        "region": app.config.region,
-        "partition": app.config.partition,
-        "regionGtms": crate::services::region_gtms(&app.config),
+        "region": config.region,
+        "partition": config.partition,
+        "regionGtms": crate::services::region_gtms(config),
         "regionSettings": {
             "isAppsDiscoveryEnabled": false,
             "isContactMigrationEnabled": false,
@@ -57,8 +56,12 @@ pub async fn authz(State(app): State<Arc<App>>, bearer: Bearer<Spaces>) -> Respo
             "isCopilot": false,
         },
         "isMultiGeo": false,
-    });
-    ([(CACHE_CONTROL, "no-store")], Json(body)).into_response()
+    })
+}
+
+fn unavailable(error: &dyn std::fmt::Display) -> Response {
+    tracing::error!(%error, "authz failed");
+    StatusCode::SERVICE_UNAVAILABLE.into_response()
 }
 
 /// The 403 Teams gives an account it won't serve.

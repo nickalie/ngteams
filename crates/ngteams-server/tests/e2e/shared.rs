@@ -23,16 +23,26 @@ async fn next(subscription: &mut ngteams_server::fanout::Subscription) -> Bytes 
 async fn the_local_fanout_delivers_to_each_subscriber_of_a_topic_only() {
     let fanout = Local::new();
     fanout.ready().await.unwrap();
-    fanout.publish("push:nobody", Bytes::from_static(b"lost")).await.unwrap();
+    fanout
+        .publish("push:nobody", Bytes::from_static(b"lost"))
+        .await
+        .unwrap();
     let mut first = fanout.subscribe("push:a").await.unwrap();
     let mut second = fanout.subscribe("push:a").await.unwrap();
     let mut other = fanout.subscribe("push:b").await.unwrap();
     fanout.publish("push:a", Bytes::from_static(b"hello")).await.unwrap();
     assert_eq!(next(&mut first).await, "hello");
     assert_eq!(next(&mut second).await, "hello");
-    assert!(tokio::time::timeout(Duration::from_millis(50), other.recv()).await.is_err());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), other.recv())
+            .await
+            .is_err()
+    );
     drop((first, second));
-    fanout.publish("push:a", Bytes::from_static(b"to nobody")).await.unwrap();
+    fanout
+        .publish("push:a", Bytes::from_static(b"to nobody"))
+        .await
+        .unwrap();
     let mut again = fanout.subscribe("push:a").await.unwrap();
     fanout.publish("push:a", Bytes::from_static(b"back")).await.unwrap();
     assert_eq!(next(&mut again).await, "back");
@@ -95,9 +105,17 @@ async fn two_nodes_on_one_database_and_redis_share_sign_ins_and_login_holds() {
         for _ in 0..2 {
             assert_eq!(node_a.password_grant(&upn, "wrong password", &scope).await.0, 400);
         }
-        assert_eq!(node_b.password_grant(&upn, crate::support::PASSWORD, &scope).await.0, 429);
+        assert_eq!(
+            node_b.password_grant(&upn, crate::support::PASSWORD, &scope).await.0,
+            429
+        );
         let mut subscription = node_b.app.fanout.subscribe("push:test").await.unwrap();
-        node_a.app.fanout.publish("push:test", Bytes::from_static(b"x")).await.unwrap();
+        node_a
+            .app
+            .fanout
+            .publish("push:test", Bytes::from_static(b"x"))
+            .await
+            .unwrap();
         assert_eq!(next(&mut subscription).await, "x");
         let ready = reqwest::get(node_b.url("/health/ready")).await.unwrap();
         assert_eq!(ready.status(), 204, "{backend:?}");
@@ -118,9 +136,15 @@ async fn a_success_clears_the_failures_counted_in_redis() {
     server.add_user(&upn, "Ada").await;
     let scope = teams_auth::token::Scope::spaces();
     assert_eq!(server.password_grant(&upn, "wrong password", &scope).await.0, 400);
-    assert_eq!(server.password_grant(&upn, crate::support::PASSWORD, &scope).await.0, 200);
+    assert_eq!(
+        server.password_grant(&upn, crate::support::PASSWORD, &scope).await.0,
+        200
+    );
     assert_eq!(server.password_grant(&upn, "wrong password", &scope).await.0, 400);
-    assert_eq!(server.password_grant(&upn, crate::support::PASSWORD, &scope).await.0, 200);
+    assert_eq!(
+        server.password_grant(&upn, crate::support::PASSWORD, &scope).await.0,
+        200
+    );
     server.stop().await;
 }
 
@@ -144,7 +168,10 @@ async fn the_file_store_keeps_replaces_and_removes_by_key() {
         storage.delete("pictures/a.png").await.unwrap();
         assert_eq!(storage.get("pictures/a.png").await.unwrap(), None);
         for key in ["", "../escape", "a/../b"] {
-            assert!(matches!(storage.put(key, Bytes::new()).await, Err(StorageError::Key)), "{key}");
+            assert!(
+                matches!(storage.put(key, Bytes::new()).await, Err(StorageError::Key)),
+                "{key}"
+            );
         }
     }
     assert!(matches!(

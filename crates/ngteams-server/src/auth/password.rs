@@ -1,4 +1,4 @@
-//! Passwords: Argon2id (RustCrypto's defaults) in PHC strings, hashed and checked on the blocking pool.
+//! Passwords: Argon2id (the `argon2` crate's defaults) in PHC strings, hashed and checked on the blocking pool.
 
 use std::sync::LazyLock;
 
@@ -48,7 +48,8 @@ pub async fn verify(password: &str, hash: Option<&str>) -> bool {
     };
     let password = password.to_owned();
     let matched = tokio::task::spawn_blocking(move || {
-        PasswordHash::new(&hash).is_ok_and(|parsed| Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
+        PasswordHash::new(&hash)
+            .is_ok_and(|parsed| Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
     })
     .await
     .unwrap_or(false);

@@ -23,7 +23,9 @@ async fn each_backends_migrations_go_up_down_and_up_again() {
         tokio::task::spawn_blocking(move || match backend {
             Backend::Sqlite => {
                 let path = url.strip_prefix("sqlite://").unwrap().to_owned();
-                let connection = tokio::runtime::Handle::current().block_on(Sqlite::establish(&path)).unwrap();
+                let connection = tokio::runtime::Handle::current()
+                    .block_on(Sqlite::establish(&path))
+                    .unwrap();
                 cycle(AsyncMigrationHarness::new(connection), &migrations);
             }
             Backend::Postgres => {
@@ -57,7 +59,11 @@ async fn a_second_start_on_a_migrated_database_finds_nothing_to_do() {
         let tenant = ngteams_server::db::meta::tenant(&first).await.unwrap();
         let second = Db::connect(&url, 2).await.unwrap();
         second.ping().await.unwrap();
-        assert_eq!(ngteams_server::db::meta::tenant(&second).await.unwrap(), tenant, "{backend:?}");
+        assert_eq!(
+            ngteams_server::db::meta::tenant(&second).await.unwrap(),
+            tenant,
+            "{backend:?}"
+        );
         assert!(format!("{second:?}").contains(match backend {
             Backend::Sqlite => "sqlite",
             Backend::Postgres => "postgres",

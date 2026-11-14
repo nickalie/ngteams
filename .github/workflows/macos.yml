@@ -55,10 +55,11 @@ jobs:
           echo "DYLD_FALLBACK_LIBRARY_PATH=$RUNNER_TEMP/gstreamer/lib" >> "$GITHUB_ENV"
       - name: Format
         run: cargo fmt --all -- --check
+      # the own server is a Linux service (docs/server.md): built and tested by the Linux jobs only
       - name: Check every target
-        run: cargo check --locked --workspace --all-targets
+        run: cargo check --locked --workspace --all-targets --exclude ngteams-server
       - name: Lints
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --exclude ngteams-server -- -D warnings
       - name: Offline files, Keychain, control socket, runner, update and sign-in guard tests
         run: >-
           cargo test --locked -p teams-platform -p teams-log -p teams-store -p teams-auth -p teams-ctl -p teams-runner

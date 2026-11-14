@@ -31,7 +31,11 @@ pub async fn add_user(db: &Db, upn: &str, display_name: &str, password: &str) ->
         return Err(AdminError::Upn);
     }
     let hash = password::hash(password).await?;
-    let name = if display_name.trim().is_empty() { upn.as_str() } else { display_name.trim() };
+    let name = if display_name.trim().is_empty() {
+        upn.as_str()
+    } else {
+        display_name.trim()
+    };
     users::add(db, &upn, name, &hash).await.map_err(|error| match error {
         DbError::Conflict => AdminError::Exists,
         error => AdminError::Db(error),

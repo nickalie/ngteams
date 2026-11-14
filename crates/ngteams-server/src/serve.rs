@@ -95,12 +95,13 @@ async fn tls_config(tls: &TlsConfig) -> Result<rustls::ServerConfig, ServeError>
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| invalid("unreadable certificate"))?;
     let key = rustls::pki_types::PrivateKeyDer::from_pem_slice(&key).map_err(|_| invalid("unreadable key"))?;
-    let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
-        .with_safe_default_protocol_versions()
-        .map_err(|_| invalid("no TLS versions"))?
-        .with_no_client_auth()
-        .with_single_cert(chain, key)
-        .map_err(|_| invalid("the key doesn't match the certificate"))?;
+    let mut config =
+        rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+            .with_safe_default_protocol_versions()
+            .map_err(|_| invalid("no TLS versions"))?
+            .with_no_client_auth()
+            .with_single_cert(chain, key)
+            .map_err(|_| invalid("the key doesn't match the certificate"))?;
     config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     Ok(config)
 }

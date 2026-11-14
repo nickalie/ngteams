@@ -91,7 +91,8 @@ Live runs reach the real tenant, so these stay firm. Commands are in the develop
 - **Never edit a released store migration**: users' stores already ran it. Add a new one (`crates/teams-store`).
 - Keep a value in a form no capture showed as unknown rather than guessing it (`teams_proto::chat::Field::Unknown`);
   a fixture covers a field's whole captured range.
-- A new or changed endpoint updates its row in `docs/protocol/endpoints.md`.
+- A new or changed endpoint updates its row in `docs/protocol/endpoints.md`, and the own server
+  (`crates/ngteams-server`, [docs/server.md](docs/server.md)) where it serves that service.
 - Check a new dependency that logs at `debug` or below against the compile-time log cap (`crates/teams-log`).
 
 ## Code comments
@@ -130,6 +131,7 @@ Undoing one needs a new reason, not a cleanup; the why is in each path's module 
 
 - [README.md](README.md): what the app is and how to install it, for end users.
 - [docs/development.md](docs/development.md): layout, building, each tool's commands, the lab's files, captures, fixtures and tests.
+- [docs/server.md](docs/server.md): the own Teams-compatible server (`crates/ngteams-server`).
 - `docs/protocol/`: how each Teams service works, `endpoints.md`, `chat-service.md`. `docs/lab-rules.md`: the lab rule
   and per-run check. `docs/personal-build.md`: the installed client. `docs/backlog/`: deferred work. `docs/plans/`:
   plans as decided then, not the current design.

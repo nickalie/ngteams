@@ -45,7 +45,10 @@ impl ObjectStorage {
     ///
     /// # Errors
     /// [`StorageError::Url`] for a URL `object_store` doesn't take.
-    pub fn open<'a>(url: &str, options: impl IntoIterator<Item = (&'a String, &'a String)>) -> Result<Self, StorageError> {
+    pub fn open<'a>(
+        url: &str,
+        options: impl IntoIterator<Item = (&'a String, &'a String)>,
+    ) -> Result<Self, StorageError> {
         let parsed = Url::parse(url).map_err(|_| StorageError::Url(url.to_owned()))?;
         if parsed.scheme() == "file" {
             let dir = parsed.to_file_path().map_err(|()| StorageError::Url(url.to_owned()))?;

@@ -2,6 +2,8 @@
 //! against the in-process server on loopback, on SQLite and, when `NGTEAMS_SERVER_PG_URL` is set, on Postgres
 //! (Redis cases when `NGTEAMS_SERVER_REDIS_URL` is set).
 
+#![cfg(test)]
+
 mod admin;
 mod authz;
 mod migrations;

@@ -12,7 +12,11 @@ use crate::config::Config;
 use crate::serve::Listener;
 
 #[derive(Debug, Parser)]
-#[command(name = "ngteams-server", version, about = "The own Teams-compatible server for ngteams")]
+#[command(
+    name = "ngteams-server",
+    version,
+    about = "The own Teams-compatible server for ngteams"
+)]
 pub struct Cli {
     /// The configuration file (TOML); `NGTEAMS_SERVER_*` variables override it.
     #[arg(long, short, global = true, env = "NGTEAMS_SERVER_CONFIG")]
@@ -74,6 +78,8 @@ pub enum CliError {
     Db(#[from] crate::db::DbError),
     #[error(transparent)]
     Serve(#[from] crate::serve::ServeError),
+    #[error("can't start the runtime: {0}")]
+    Runtime(#[source] std::io::Error),
     #[error("can't read the password from standard input: {0}")]
     Input(#[source] std::io::Error),
     #[error("can't write the output: {0}")]
@@ -84,29 +90,34 @@ pub enum CliError {
 #[must_use]
 pub fn main() -> ExitCode {
     let cli = Cli::parse();
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("NGTEAMS_SERVER_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
-    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            tracing::error!(%error, "can't start the runtime");
-            return ExitCode::FAILURE;
-        }
-    };
-    let stdin = std::io::stdin();
-    let result = runtime.block_on(run(cli, &mut stdin.lock(), &mut std::io::stdout(), shutdown_signal()));
-    match result {
+    init_logs();
+    match block_on(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             tracing::error!(%error, "ngteams-server failed");
             ExitCode::FAILURE
         }
     }
+}
+
+/// [`run`] on a new runtime, with the process's standard input and output, until SIGINT or SIGTERM.
+fn block_on(cli: Cli) -> Result<(), CliError> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(CliError::Runtime)?;
+    let stdin = std::io::stdin();
+    runtime.block_on(run(cli, &mut stdin.lock(), &mut std::io::stdout(), shutdown_signal()))
+}
+
+/// Logs to standard error, filtered by `NGTEAMS_SERVER_LOG` (default `info`).
+fn init_logs() {
+    let filter = tracing_subscriber::EnvFilter::try_from_env("NGTEAMS_SERVER_LOG")
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .init();
 }
 
 /// Runs one command; `serve` runs until `shutdown` resolves.
@@ -184,12 +195,9 @@ async fn shutdown_signal() {
     let interrupt = tokio::signal::ctrl_c();
     #[cfg(unix)]
     {
-        let mut terminate = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(terminate) => terminate,
-            Err(_) => {
-                let _ = interrupt.await;
-                return;
-            }
+        let Ok(mut terminate) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) else {
+            let _ = interrupt.await;
+            return;
         };
         tokio::select! {
             _ = interrupt => {}

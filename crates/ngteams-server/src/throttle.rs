@@ -128,5 +128,8 @@ impl Throttle {
 
 /// The Redis key of an account's count: its UPN hashed, so Redis holds no account names.
 fn key(account: &str) -> String {
-    format!("ngts:login:{}", URL_SAFE_NO_PAD.encode(Sha256::digest(account.as_bytes())))
+    format!(
+        "ngts:login:{}",
+        URL_SAFE_NO_PAD.encode(Sha256::digest(account.as_bytes()))
+    )
 }

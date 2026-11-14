@@ -5,7 +5,7 @@
 //! - an ID token for the client (`aud` its client id) naming the account;
 //! - the skypetoken: `skypeid` (`orgid:<oid>`), `rgn` and the `exp` of the access token it was exchanged for.
 //!
-//! All three are EdDSA JWTs from the [`KeyRing`], with this server's issuer; the skypetoken's audience is its own, so
+//! All three are `EdDSA` JWTs from the [`KeyRing`], with this server's issuer; the skypetoken's audience is its own, so
 //! no access token passes for a skypetoken, nor the other way round. Refresh tokens are opaque (`crate::db::refresh`).
 
 use std::time::{Duration, SystemTime};
@@ -116,7 +116,7 @@ pub fn requested(scope: &str, allowed: &[String]) -> Option<Requested> {
 #[derive(Debug)]
 pub struct Issuer {
     keys: KeyRing,
-    issuer: String,
+    iss: String,
     tenant: String,
     region: String,
     access_lifetime: Duration,
@@ -135,7 +135,7 @@ impl Issuer {
     pub fn new(keys: KeyRing, origin: &str, tenant: &str, region: &str, access_lifetime: Duration) -> Self {
         Self {
             keys,
-            issuer: format!("{origin}/{tenant}/v2.0"),
+            iss: format!("{origin}/{tenant}/v2.0"),
             tenant: tenant.to_owned(),
             region: region.to_owned(),
             access_lifetime,
@@ -161,7 +161,7 @@ impl Issuer {
         let exp = iat + seconds(self.access_lifetime);
         let claims = AccessClaims {
             aud: requested.audience.clone(),
-            iss: self.issuer.clone(),
+            iss: self.iss.clone(),
             iat,
             nbf: iat,
             exp,
@@ -190,7 +190,7 @@ impl Issuer {
         let iat = now();
         self.keys.sign(&IdClaims {
             aud: client_id.to_owned(),
-            iss: self.issuer.clone(),
+            iss: self.iss.clone(),
             iat,
             nbf: iat,
             exp: iat + seconds(self.access_lifetime),
@@ -210,7 +210,7 @@ impl Issuer {
     pub fn skypetoken(&self, access: &AccessClaims) -> Result<Minted, KeyError> {
         let claims = SkypeClaims {
             aud: SKYPETOKEN_AUDIENCE.to_owned(),
-            iss: self.issuer.clone(),
+            iss: self.iss.clone(),
             iat: now(),
             exp: access.exp,
             skypeid: format!("orgid:{}", access.oid),
@@ -245,7 +245,7 @@ impl Issuer {
         let mut validation = Validation::new(Algorithm::EdDSA);
         validation.leeway = LEEWAY;
         validation.set_audience(&[audience]);
-        validation.set_issuer(&[&self.issuer]);
+        validation.set_issuer(&[&self.iss]);
         validation.set_required_spec_claims(&["exp", "aud", "iss"]);
         validation
     }
