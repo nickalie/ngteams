@@ -11,7 +11,7 @@
 //! escapes (`8%3Aorgid%3A…`, `someone%40contoso.com`), backslash escapes of a JSON or JavaScript string (`\"`,
 //! `\u0026`, `\x26`) and HTML character references (`&amp;`, `&#38;`, `&#x26;`, `&nbsp;`).
 //!
-//! Sanitized placeholders (`<user:a>`,`<mri:b>`, `<guid:1>`, `<token:1>`) and prose that only names these things pass.
+//! Sanitized placeholders (`<user:a>`, `<mri:b>`, `<guid:1>`, `<token:1>`) and prose that only names these things pass.
 //! A finding reports where and what, never the matched value, so the report itself cannot leak it.
 //!
 //! The repo-wide checks are in `tests/fixture_guard.rs` (the scan on every `tests/fixtures/` of the workspace and on
