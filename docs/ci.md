@@ -87,7 +87,8 @@ or secret is required. The workflow frees unused hosted SDKs to make space for t
 The shared build disables incremental compilation and DWARF debug information while retaining LLVM coverage maps and
 debug assertions. Each shard downloads only its assigned test executables and a common bundle of helper binaries and shared
 libraries, without dependency rlibs or object files. Shards need only a small disk cleanup; build and report jobs
-free more space. The report job collects every bundle before merging profiles. Every shard uses `/workspace`, so compile-time fixture paths and source maps stay valid.
+free more space. The report job collects every bundle before merging profiles. Zstandard uses a 1 GiB history window to compress
+repeated native code across executables; extraction permits that same window. Every shard uses `/workspace`, so compile-time fixture paths and source maps stay valid.
 
 Docker Buildx uses a shared GHA image cache (`mode=min`); only the build job exports it. Cargo registry/Git sources
 and the pinned Linux x64 libwebrtc SDK have separate caches. Instrumented third-party dependencies are saved only

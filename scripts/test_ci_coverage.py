@@ -103,7 +103,7 @@ class TargetTests(unittest.TestCase):
                            cwd=root, capture_output=True, text=True, check=True)
 
             def files(name):
-                result = subprocess.run(["tar", "-I", "zstd", "-tf", f"target/coverage-{name}.tar.zst"],
+                result = subprocess.run(["tar", "-I", "zstd --long=30", "-tf", f"target/coverage-{name}.tar.zst"],
                                         cwd=root, capture_output=True, text=True, check=True)
                 return set(result.stdout.splitlines())
 
