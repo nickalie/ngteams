@@ -12,7 +12,7 @@ member lists, message posting and newest/backward/incremental message pages unde
 `/api/chatsvc/<region>/v1/`. These routes require an IC3 bearer token and current membership;
 disabled users are refused even while their token is live. A repeated 1:1 roster returns the existing chat, and
 group rosters and names persist in SQLite or PostgreSQL. Chat discovery is not advertised by authz yet: the
-remaining message mutations and account properties are still being added.
+the remaining native chat surface is still being added.
 
 ## Stack
 
@@ -135,6 +135,11 @@ Read horizons are stored per `(chat, account)` and returned only in that account
 Their own endpoints receive a `ConversationUpdate` with `propertiesUpdated` and the changed property. Other
 members get an internal `ReadReceipt` resource (`id`, `mri`, `consumptionhorizon`); that is separate from the own
 horizon update, which must never mark another member's conversation read.
+
+Own user properties persist `userGraphSettings` as its native JSON text and `appConsumptionHorizon` as JSON text
+or an object. Mark-all-read may be reset, as in Teams. Writes retain the account's other properties and publish
+`CustomUserProperties` only to that account. An account with no own properties receives the native 404/subcode-1
+shape that the client treats as empty preferences.
 
 ## Scaling
 

@@ -85,3 +85,64 @@ async fn native_app_preferences_persist_and_are_visible_only_to_their_own_accoun
         pair.stop().await;
     }
 }
+
+struct PropertyWrite {
+    chat: Option<String>,
+    name: String,
+    value: serde_json::Value,
+}
+
+impl teams_proto::Request for PropertyWrite {
+    fn service(&self) -> teams_proto::Service {
+        teams_proto::Service::ChatService
+    }
+    fn method(&self) -> teams_proto::Method {
+        teams_proto::Method::Put
+    }
+    fn endpoint(&self) -> teams_proto::Endpoint {
+        let mut segments = vec!["v1", "users", "ME"];
+        if let Some(chat) = &self.chat {
+            segments.extend(["conversations", chat]);
+        }
+        segments.push("properties");
+        teams_proto::Endpoint::new(segments).with_query("name", &self.name)
+    }
+    fn body(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({self.name.clone(): self.value}))
+    }
+    fn is_write(&self) -> bool {
+        true
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_account_wide_horizon_marks_all_read_and_can_be_taken_back_without_changing_another_account() {
+    for backend in backends() {
+        let pair = Pair::start(backend).await;
+        let id = pair.send("unread until the account horizon").await;
+        pair.b.sync().await.unwrap();
+        assert!(pair.b.unread_count(&pair.chat).await.unwrap() > 0);
+        let b_client = client(&pair.server, "b@own.test", &pair.b_id).await;
+        let set = |chat| PropertyWrite {
+            chat: None,
+            name: "appConsumptionHorizon".into(),
+            value: serde_json::json!({"chat": chat, "channel": 0}).to_string().into(),
+        };
+        let row = b_client.write(set(id.parse::<u64>().unwrap())).await.unwrap();
+        assert_eq!(row.status(), 200);
+        pair.b.sync().await.unwrap();
+        assert_eq!(pair.b.unread_count(&pair.chat).await.unwrap(), 0);
+        let a_client = client(&pair.server, "a@own.test", &pair.a_id).await;
+        assert!(
+            ChatReads::new(&a_client)
+                .app_consumption_horizon()
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(b_client.write(set(0)).await.unwrap().status(), 200);
+        pair.b.sync().await.unwrap();
+        assert!(pair.b.unread_count(&pair.chat).await.unwrap() > 0);
+        pair.stop().await;
+    }
+}

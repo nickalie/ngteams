@@ -64,20 +64,36 @@ pub(super) async fn set_user(
     Query(query): Query<Params>,
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<StatusCode, Error> {
-    if query.len() != 1 || query.get("name").map(String::as_str) != Some("userGraphSettings") {
+    if query.len() != 1 {
         return Err(Error::BadRequest);
     }
+    let name = query.get("name").ok_or(Error::BadRequest)?;
     let Json(body) = body.map_err(|_| Error::BadRequest)?;
     let object = body
         .as_object()
         .filter(|body| body.len() == 1)
         .ok_or(Error::BadRequest)?;
-    let settings = object
-        .get("userGraphSettings")
-        .and_then(Value::as_str)
-        .ok_or(Error::BadRequest)?;
-    let _: serde_json::Map<String, Value> = serde_json::from_str(settings).map_err(|_| Error::BadRequest)?;
-    property_repo::set_user(&app.db, &caller.id, "userGraphSettings", &body["userGraphSettings"]).await?;
+    let value = object.get(name).ok_or(Error::BadRequest)?;
+    match name.as_str() {
+        "userGraphSettings" => {
+            let settings = value.as_str().ok_or(Error::BadRequest)?;
+            let _: serde_json::Map<String, Value> = serde_json::from_str(settings).map_err(|_| Error::BadRequest)?;
+        }
+        "appConsumptionHorizon" => {
+            let horizon = match value.as_str() {
+                Some(text) => serde_json::from_str(text).map_err(|_| Error::BadRequest)?,
+                None => value.clone(),
+            };
+            let times = horizon.as_object().ok_or(Error::BadRequest)?;
+            if !(times.contains_key("chat") || times.contains_key("channel"))
+                || times.values().any(|time| time.as_i64().is_none_or(|time| time < 0))
+            {
+                return Err(Error::BadRequest);
+            }
+        }
+        _ => return Err(Error::BadRequest),
+    }
+    property_repo::set_user(&app.db, &caller.id, name, value).await?;
     events::own(&app, &caller, "CustomUserProperties", &body).await;
     Ok(StatusCode::OK)
 }
