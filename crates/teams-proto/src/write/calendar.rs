@@ -265,17 +265,24 @@ impl CreateOnlineMeeting {
         Self::read_answer_in(&crate::Cloud::Microsoft, body)
     }
 
-    /// Reads meeting links within the account's cloud.
+    /// Reads the join link and optional `shortJoinUrl` within the account's cloud.
     #[must_use]
     pub fn read_answer_in(cloud: &crate::Cloud, body: &[u8]) -> Option<Value> {
         let answer: Value = serde_json::from_slice(body).ok()?;
         let meeting = answer.get("value")?;
-        meeting
-            .get("links")
-            .and_then(|links| links.get("join"))
-            .and_then(Value::as_str)
-            .is_some_and(|url| cloud.is_microsoft() || crate::meeting::meeting_link_in(cloud, url))
-            .then(|| meeting.clone())
+        let links = meeting.get("links")?;
+        let join = links.get("join")?.as_str()?;
+        if !cloud.is_microsoft()
+            && (!crate::meeting::meeting_link_in(cloud, join)
+                || links.get("shortJoinUrl").is_some_and(|short| {
+                    !short
+                        .as_str()
+                        .is_some_and(|url| crate::meeting::meeting_link_in(cloud, url))
+                }))
+        {
+            return None;
+        }
+        Some(meeting.clone())
     }
 }
 

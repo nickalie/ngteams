@@ -484,7 +484,8 @@ impl Calls {
     /// a call agent of their own there. A call that is up keeps its own.
     ///
     /// # Errors
-    /// [`CallError::NoEndpoint`] for a push URL that isn't `https://<host>/v4/f/<endpoint>/`.
+    /// [`CallError::NoEndpoint`] unless the push URL is `https://<host>/v4/f/<endpoint>/` for Microsoft, or
+    /// `/trouter/v4/f/<endpoint>/` on Own's exact origin (including its port).
     pub fn set_push_url(&mut self, push_url: &str) -> Result<(), CallError> {
         let agent = CallAgent::new_in(&self.cloud, push_url, &guid()?).ok_or(CallError::NoEndpoint)?;
         self.agent = Some(agent);

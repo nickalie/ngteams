@@ -1084,7 +1084,7 @@ impl Link {
             Observed::Ignored => {
                 log::info!(
                     "trouter: an incoming call not offered by the call tracker, ignored: {}",
-                    teams_call::track::unread_invitation(&delivery)
+                    teams_call::track::unread_invitation(&self.cloud, &delivery)
                 );
                 PushEvent::Ignored(Ignored::IncomingCall)
             }

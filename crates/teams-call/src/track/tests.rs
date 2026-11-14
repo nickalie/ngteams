@@ -261,13 +261,19 @@ fn a_transferred_call_s_invitation_naming_its_context_twice_is_offered_and_any_o
     // any other key twice stays ambiguous, and the log says which
     let from = invitation_with_twice(&invited.path, &gp, &format!(r#""from":{{"id":"{LAB_A}"}}"#));
     assert_eq!(Tracker::new(Mri::new(LAB_B)).observe_delivery(&from), Observed::Ignored);
-    assert_eq!(unread_invitation(&from), "its notification names `from` twice");
+    assert_eq!(
+        unread_invitation(&Cloud::Microsoft, &from),
+        "its notification names `from` twice"
+    );
     // and a delivery that isn't an invitation at all says why too
     let mut odd = invited.clone();
     odd.body = br#"{"evt":107,"gp":"not base64"}"#.to_vec();
-    assert_eq!(unread_invitation(&odd), "its notification doesn't decode");
+    assert_eq!(
+        unread_invitation(&Cloud::Microsoft, &odd),
+        "its notification doesn't decode"
+    );
     odd.body = b"not JSON".to_vec();
-    assert_eq!(unread_invitation(&odd), "its body isn't JSON");
+    assert_eq!(unread_invitation(&Cloud::Microsoft, &odd), "its body isn't JSON");
 }
 #[test]
 fn redelivery_is_kept_but_an_ended_ring_never_rings_again() {
@@ -1279,11 +1285,19 @@ fn own_invitations_refuse_foreign_and_mixed_controller_origins() {
     .unwrap();
     let own = invitation_delivery(&root, 2, &own_gp);
     assert_eq!(tracker().observe_delivery(&own), Observed::Offered);
-    assert_eq!(Tracker::new(Mri::new(LAB_B)).observe_delivery(&own), Observed::Ignored);
-    own_gp["conversationInvitation"]["conversationController"] =
-        gp["conversationInvitation"]["conversationController"].clone();
     assert_eq!(
-        tracker().observe_delivery(&invitation_delivery(&root, 3, &own_gp)),
+        Tracker::for_cloud(Mri::new(LAB_A), cloud.clone()).observe_delivery(&own),
         Observed::Ignored
     );
+    assert_eq!(
+        unread_invitation(&cloud, &own),
+        "it isn't addressed to the account, or the account is busy"
+    );
+    assert_eq!(Tracker::new(Mri::new(LAB_B)).observe_delivery(&own), Observed::Ignored);
+    assert_eq!(unread_invitation(&Cloud::Microsoft, &own), "it names no conversation");
+    own_gp["conversationInvitation"]["conversationController"] =
+        gp["conversationInvitation"]["conversationController"].clone();
+    let mixed = invitation_delivery(&root, 3, &own_gp);
+    assert_eq!(tracker().observe_delivery(&mixed), Observed::Ignored);
+    assert_eq!(unread_invitation(&cloud, &mixed), "it names no conversation");
 }

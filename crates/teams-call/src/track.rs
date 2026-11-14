@@ -656,8 +656,8 @@ fn authority(url: &Url) -> Option<String> {
     })
 }
 
-/// The `/v4/f/<endpoint>/callAgent/<agent>/` prefix of a callback (and its authority): every callback of one start
-/// shares it.
+/// A callback's authority and `/v4/f/<endpoint>/callAgent/<agent>/` prefix, with `/trouter` prepended for Own:
+/// every callback of one start shares it.
 fn agent_of(callback: &Callback) -> Option<Callback> {
     let prefix = if callback.path.starts_with("/trouter/") {
         "/trouter"
@@ -686,14 +686,16 @@ fn calling_url_fits(cloud: &Cloud, url: &Url) -> bool {
     start.as_ref() == Some(url) || teams_proto::CallLink::parse_in(cloud, url.as_str()).is_some()
 }
 
-/// A link on the flight proxy: `https`, [`teams_proto::CALLING_HOST`] with no port, no user info or fragment.
+/// A flight proxy operation link at `/api/v2/ep/<host>/…`: `https` on [`teams_proto::CALLING_HOST`] without a port
+/// for Microsoft, or the exact Own origin (including its port) under `/flightproxy`; no user info or fragment.
 fn proxy_link_in(cloud: &Cloud, link: &Value) -> Option<Url> {
     let link = teams_proto::CallLink::parse_in(cloud, link.as_str()?)?;
     Url::parse(link.as_str()).ok()
 }
 
 /// The conversation links of a start's answer (see the module docs); `None` unless the answer is a JSON object with a
-/// `conversationController` on the flight proxy at `/api/v2/ep/<host>/conv/<id>`.
+/// `conversationController` on the account's flight proxy at `/api/v2/ep/<host>/conv/<id>`, after stripping Own's
+/// leading `/flightproxy`.
 fn answer_links_in(cloud: &Cloud, answer: &[u8]) -> Option<Vec<Link>> {
     const NAMES: [(CallOperation, &str); 13] = [
         (CallOperation::UpdateEndpointMetadata, "updateEndpointMetadata"),
@@ -838,7 +840,7 @@ pub(crate) fn link_is(operation: CallOperation, url: &Url, last: &str) -> bool {
 }
 
 /// A call controller link's host, call id, kind (`callAcceptance`, `mcProxy`, `active`, …) and last segment:
-/// `/api/v2/ep/<host>/cc/v1/<kind>/<call>/…`.
+/// `/api/v2/ep/<host>/cc/v1/<kind>/<call>/…`, after stripping Own's leading `/flightproxy`.
 fn controller_path(url: &Url) -> Option<(String, String, String, String)> {
     let segments: Vec<&str> = url
         .path()

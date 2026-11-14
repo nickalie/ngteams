@@ -437,21 +437,21 @@ pub(crate) fn read_invitation_in(cloud: &Cloud, delivery: &Delivery) -> Option<I
     })
 }
 
-/// Why [`read_invitation_in`] doesn't read `delivery` as an invitation, in a few words naming the first part that doesn't
-/// fit (never anything the delivery carries): what the log says of an incoming call it ignores.
+/// Why [`read_invitation_in`] doesn't read `delivery` as an invitation in the account's `cloud`, in a few words naming
+/// the first part that doesn't fit (never anything the delivery carries): what the log says of a call it ignores.
 #[must_use]
-pub fn unread_invitation(delivery: &Delivery) -> String {
+pub fn unread_invitation(cloud: &Cloud, delivery: &Delivery) -> String {
     let gp = strict_json(&delivery.body)
         .and_then(|body| body.get("gp").and_then(Value::as_str).map(str::to_owned))
         .and_then(|gp| base64::engine::general_purpose::STANDARD.decode(gp).ok());
     if let Some(key) = gp.as_deref().and_then(super::json::twice_named) {
         return format!("its notification names `{key}` twice");
     }
-    first_misfit(delivery).to_owned()
+    first_misfit(cloud, delivery).to_owned()
 }
 
 /// The first part of `delivery` that keeps it from being read as an invitation ([`unread_invitation`]).
-fn first_misfit(delivery: &Delivery) -> &'static str {
+fn first_misfit(cloud: &Cloud, delivery: &Delivery) -> &'static str {
     let Some(body) = strict_json(&delivery.body) else {
         return "its body isn't JSON";
     };
@@ -478,7 +478,7 @@ fn first_misfit(delivery: &Delivery) -> &'static str {
         "it names a group context"
     } else if gp.pointer("/callNotification/links/attach").is_none() {
         "it has no attach link"
-    } else if conversation_of(&Cloud::Microsoft, &gp).is_none() {
+    } else if conversation_of(cloud, &gp).is_none() {
         "it names no conversation"
     } else if !kind_fits(event, &gp, set("/groupChat")) {
         "its kind doesn't fit its chat (1:1 or group)"
@@ -514,7 +514,8 @@ pub(crate) fn may_be_invitation(delivery: &Delivery) -> bool {
 }
 
 /// The conversation an invitation's decoded `gp` invites to (`conversationInvitation.conversationController`), when
-/// it is a conversation on the flight proxy (`/api/v2/ep/<host>/conv/<id>`).
+/// it is on the account's flight proxy at `/api/v2/ep/<host>/conv/<id>` (under `/flightproxy` on Own's exact origin,
+/// including its port).
 fn conversation_of(cloud: &Cloud, gp: &Value) -> Option<Url> {
     let controller = proxy_link_in(cloud, gp.pointer("/conversationInvitation/conversationController")?)?;
     let fits = {
@@ -544,7 +545,7 @@ fn kind_fits(event: u64, gp: &Value, names_chat: bool) -> bool {
     }
 }
 
-/// `path` when it is an endpoint's root, `/v4/f/<endpoint>/`.
+/// `path` when it is an endpoint's root: `/v4/f/<endpoint>/`, or `/trouter/v4/f/<endpoint>/` for Own.
 fn endpoint_root(path: &str) -> Option<String> {
     let url = Url::parse(&format!(
         "https://trouter.invalid{}",

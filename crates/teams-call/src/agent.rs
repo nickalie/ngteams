@@ -35,18 +35,18 @@ pub(crate) struct Callback {
 pub(crate) struct CallAgent {
     /// `<push url>callAgent/<agent id>/`.
     prefix: String,
-    /// Its path: `/v4/f/<endpoint>/callAgent/<agent id>/`.
+    /// Its path: `/v4/f/<endpoint>/callAgent/<agent id>/`, with `/trouter` prepended for Own.
     path: String,
 }
 
 impl CallAgent {
-    /// The agent `agent_id` under `push_url` (the calling endpoint's `https://<host>/v4/f/<endpoint>/`); `None` for a
-    /// push URL in another form.
     #[cfg(test)]
     pub(crate) fn new(push_url: &str, agent_id: &str) -> Option<Self> {
         Self::new_in(&teams_proto::Cloud::Microsoft, push_url, agent_id)
     }
 
+    /// The agent `agent_id` under the calling endpoint's `push_url`: `https://<host>/v4/f/<endpoint>/` for Microsoft,
+    /// or `/trouter/v4/f/<endpoint>/` on Own's exact origin (including its port); `None` for another form.
     pub(crate) fn new_in(cloud: &teams_proto::Cloud, push_url: &str, agent_id: &str) -> Option<Self> {
         if !cloud.is_microsoft() {
             let url = url::Url::parse(push_url).ok()?;

@@ -104,6 +104,40 @@ fn own_join_links_and_meeting_creation_answers_refuse_other_origins() {
 }
 
 #[test]
+fn scheduled_own_meetings_validate_optional_short_links_without_changing_microsoft_answers() {
+    let cloud = Cloud::own(ORIGIN).unwrap();
+    let mut answer = json!({"value": {"links": {"join": join_url(ORIGIN)}}});
+    assert_eq!(
+        CreateOnlineMeeting::read_answer_in(&cloud, answer.to_string().as_bytes()),
+        Some(answer["value"].clone())
+    );
+    for (short, accepted) in [
+        (json!(format!("{ORIGIN}/meet/123456789012?p=MadeUp")), true),
+        (json!(join_url(ORIGIN)), true),
+        (json!("https://teams.microsoft.com/meet/123456789012?p=MadeUp"), false),
+        (json!("https://other.example/meet/123456789012?p=MadeUp"), false),
+        (json!("https://calls.example:9443/meet/123456789012?p=MadeUp"), false),
+        (json!("http://calls.example:8443/meet/123456789012?p=MadeUp"), false),
+        (json!(""), false),
+        (Value::Null, false),
+        (json!(42), false),
+    ] {
+        answer["value"]["links"]["shortJoinUrl"] = short;
+        let body = answer.to_string();
+        assert_eq!(
+            CreateOnlineMeeting::read_answer_in(&cloud, body.as_bytes()),
+            accepted.then(|| answer["value"].clone()),
+            "shortJoinUrl={}",
+            answer["value"]["links"]["shortJoinUrl"]
+        );
+        assert_eq!(
+            CreateOnlineMeeting::read_answer(body.as_bytes()),
+            Some(answer["value"].clone())
+        );
+    }
+}
+
+#[test]
 fn own_channel_and_group_call_posts_keep_exact_conversation_links() {
     let cloud = Cloud::own(ORIGIN).unwrap();
     let controller = format!("{ORIGIN}/flightproxy/api/v2/ep/conversation.example/conv/SyntheticOwn?i=1&e=2");
