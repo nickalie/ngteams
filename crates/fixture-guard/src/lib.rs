@@ -1,5 +1,5 @@
 //! The fixture guard: scans files meant for the repository (synthetic fixtures, docs) and `proto-lab export`'s local
-//! reference copies for what must never be committed, such as JWTs, `Bearer` and skypetoken values, OAuth tokens,
+//! reference copies for what must never be committed, including JWTs, `Bearer` and skypetoken values, OAuth tokens,
 //! email addresses, real MRIs, GUIDs (other than Microsoft's public app ids), signed URLs' signatures, and Teams
 //! meetings' join credentials (a join link's code or `p` passcode, a meeting id or a passcode under its key or label,
 //! in any language Teams writes an invitation in: [`labels`]), and a call's network data (a public IP address, an ICE
