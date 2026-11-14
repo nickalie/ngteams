@@ -305,9 +305,15 @@ async fn retired_keys_are_removed_after_access_lifetime_and_reload_slack() {
     use ngteams_server::db::{keys, now, schema::signing_keys, with_conn};
     for backend in backends() {
         let server = TestServer::start(backend).await;
+        server.add_user("ada@own.test", "Ada").await;
+        let stale = TestServer::start_with(backend, |config| {
+            config.database_url.clone_from(&server.app.config.database_url);
+            config.public_origin.clone_from(&server.app.config.public_origin);
+        })
+        .await;
         let previous = keys::all(&server.app.db).await.unwrap()[0].kid.clone();
         server.app.issuer.keys().rotate().await.unwrap();
-        for (slack, kept) in [(3601, true), (3661, false)] {
+        for (slack, kept) in [(3601, true), (7261, true), (10801, true), (10861, false)] {
             let retired_at = now() - i64::try_from(server.app.config.tokens.access_lifetime).unwrap() - slack;
             async {
                 with_conn!(&server.app.db, |conn| diesel::update(
@@ -320,6 +326,15 @@ async fn retired_keys_are_removed_after_access_lifetime_and_reload_slack() {
             }
             .await
             .unwrap();
+            let session = stale.session("ada@own.test").await;
+            let token = session.access_token(teams_auth::token::SPACES_RESOURCE).await.unwrap();
+            assert_eq!(
+                jsonwebtoken::decode_header(token.token.expose())
+                    .unwrap()
+                    .kid
+                    .as_deref(),
+                Some(previous.as_str())
+            );
             ngteams_server::app::tidy(&server.app).await;
             let present = keys::all(&server.app.db)
                 .await
@@ -327,7 +342,13 @@ async fn retired_keys_are_removed_after_access_lifetime_and_reload_slack() {
                 .iter()
                 .any(|key| key.kid == previous);
             assert_eq!(present, kept, "{backend:?}: reload slack {slack}");
+            let exchange = server
+                .authz_client()
+                .exchange(&token.token, teams_auth::authz::AuthzKind::TokenRefresh)
+                .await;
+            assert_eq!(exchange.is_ok(), kept, "{backend:?}: token at reload slack {slack}");
         }
+        stale.stop().await;
         server.stop().await;
     }
 }

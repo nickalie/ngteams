@@ -117,8 +117,9 @@ hands out its GTM.
   from it. Without Redis the same `Fanout` trait is one process's broadcast.
 - Delivery through the fan-out is at most once. A subscriber that falls behind learns how many payloads it missed.
 - Signing keys are rows in the database. A node rotates the key when it is due (checked hourly) and drops keys that
-  can no longer verify a live token. Retired keys are kept for the access lifetime plus one hourly reload interval
-  and the verifier's 60-second clock allowance.
+  can no longer verify a live token. Retired keys are kept for the access lifetime plus three hourly reload intervals
+  and the verifier's 60-second clock allowance, covering two missed maintenance checks. Nodes that cannot reload
+  for longer than three hours should be taken out of service until their database connection recovers.
   `ngteams-server keys rotate` creates a key immediately; running nodes switch at their next hourly check, or
   earlier if verifying an unknown key triggers a reload. Rotation is serialized in the database across nodes.
 - Migrations take a Postgres advisory lock, so nodes starting together take turns.

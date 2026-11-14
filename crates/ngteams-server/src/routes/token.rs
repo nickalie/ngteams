@@ -24,7 +24,7 @@ use crate::app::App;
 use crate::auth::keys::KeyError;
 use crate::auth::password;
 use crate::auth::tokens::{Requested, requested, seconds_until};
-use crate::db::refresh::{self, RefreshToken};
+use crate::db::refresh::{self, InsertOutcome, RefreshToken};
 use crate::db::users::{self, User, normalize_upn};
 use crate::db::{DbError, now, seconds};
 
@@ -253,10 +253,14 @@ async fn issue(
             used_at: None,
             revoked_at: None,
         },
+        family.is_none().then_some(user.password_hash.as_str()),
     )
     .await?;
-    if !inserted {
-        return Err(Refusal::refresh());
+    match inserted {
+        InsertOutcome::Stored => {}
+        InsertOutcome::AccountDisabled => return Err(Refusal::disabled()),
+        InsertOutcome::PasswordChanged => return Err(Refusal::credentials()),
+        InsertOutcome::FamilyRevoked => return Err(Refusal::refresh()),
     }
     let expires_in = seconds_until(access.expires_at);
     let scope = format!("{}/{} openid profile offline_access", resource.audience, resource.scope);

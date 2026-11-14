@@ -22,12 +22,20 @@ pub struct RefreshToken {
     pub revoked_at: Option<i64>,
 }
 
-/// Stores a successor only while its family and account remain active. A new password sign-in has a new family.
-/// Returns `false` when the account or family was revoked before this insert.
+/// Whether a refresh token was stored, or why the sign-in became invalid before insertion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InsertOutcome {
+    Stored,
+    AccountDisabled,
+    PasswordChanged,
+    FamilyRevoked,
+}
+
+/// Stores a token only while its account and family remain active. Password grants also recheck the verified hash.
 ///
 /// # Errors
 /// A database failure.
-pub async fn insert(db: &Db, row: &RefreshToken) -> Result<bool, DbError> {
+pub async fn insert(db: &Db, row: &RefreshToken, verified_hash: Option<&str>) -> Result<InsertOutcome, DbError> {
     with_conn!(db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
             // Inserts and both revocation paths lock the account before looking at its family.
@@ -35,13 +43,18 @@ pub async fn insert(db: &Db, row: &RefreshToken) -> Result<bool, DbError> {
                 .set(users::updated_at.eq(users::updated_at))
                 .execute(conn)
                 .await?;
-            let active = users::table
+            let account = users::table
                 .find(&row.user_id)
-                .select(users::disabled)
-                .first::<bool>(conn)
+                .select((users::disabled, users::password_hash))
+                .first::<(bool, String)>(conn)
                 .await
-                .optional()?
-                .is_some_and(|disabled| !disabled);
+                .optional()?;
+            let Some((false, password_hash)) = account else {
+                return Ok(InsertOutcome::AccountDisabled);
+            };
+            if verified_hash.is_some_and(|verified| verified != password_hash) {
+                return Ok(InsertOutcome::PasswordChanged);
+            }
             let revoked = diesel::select(diesel::dsl::exists(
                 refresh_tokens::table.filter(
                     refresh_tokens::family_id
@@ -51,14 +64,14 @@ pub async fn insert(db: &Db, row: &RefreshToken) -> Result<bool, DbError> {
             ))
             .get_result::<bool>(conn)
             .await?;
-            if !active || revoked {
-                return Ok(false);
+            if revoked {
+                return Ok(InsertOutcome::FamilyRevoked);
             }
             diesel::insert_into(refresh_tokens::table)
                 .values(row)
                 .execute(conn)
                 .await?;
-            Ok(true)
+            Ok(InsertOutcome::Stored)
         })
         .await)
 }

@@ -59,8 +59,8 @@ impl App {
     pub async fn start(config: Config) -> Result<Arc<Self>, StartError> {
         let db = Db::connect(&config.database_url, config.database_pool).await?;
         let tenant = crate::db::meta::tenant(&db).await?;
-        // Other nodes can sign with the retired key until their next maintenance tick.
-        let keep = config.tokens.access() + MAINTENANCE + Duration::from_secs(crate::auth::tokens::LEEWAY);
+        // Allow two missed maintenance ticks before other nodes reload their signer.
+        let keep = config.tokens.access() + 3 * MAINTENANCE + Duration::from_secs(crate::auth::tokens::LEEWAY);
         let keys = KeyRing::load(db.clone(), config.tokens.rotation(), keep).await?;
         let issuer = Issuer::new(keys, &config.origin(), &tenant, &config.region, config.tokens.access());
         let (fanout, throttle): (Arc<dyn Fanout>, Throttle) = match &config.redis_url {

@@ -368,7 +368,7 @@ async fn a_successor_inserted_after_revocation_cannot_refresh() {
             successor.id = uuid::Uuid::new_v4().to_string();
             successor.token_hash = hash("delayed-successor");
             successor.used_at = None;
-            let _ = refresh::insert(&server.app.db, &successor).await.unwrap();
+            let _ = refresh::insert(&server.app.db, &successor, None).await.unwrap();
             session
                 .store()
                 .put(&refresh_token_key(UPN), &Secret::new("delayed-successor"))
@@ -405,6 +405,7 @@ async fn refresh_purge_removes_only_tokens_before_the_cutoff() {
                     used_at: None,
                     revoked_at: None,
                 },
+                None,
             )
             .await
             .unwrap();
@@ -437,11 +438,14 @@ async fn revocation_and_successor_insertion_serialize_on_each_backend() {
                     used_at: None,
                     revoked_at: None,
                 };
-                assert!(refresh::insert(&server.app.db, &token).await.unwrap());
+                assert_eq!(
+                    refresh::insert(&server.app.db, &token, None).await.unwrap(),
+                    refresh::InsertOutcome::Stored
+                );
                 token.id = uuid::Uuid::new_v4().to_string();
                 token.token_hash = uuid::Uuid::new_v4().to_string();
                 let (inserted, revoked) = tokio::join!(
-                    refresh::insert(&server.app.db, &token),
+                    refresh::insert(&server.app.db, &token, None),
                     revoke_for_race(&server.app.db, &token, family_only)
                 );
                 inserted.unwrap();
@@ -464,4 +468,132 @@ async fn revoke_for_race(
     } else {
         ngteams_server::db::refresh::revoke_user(db, &token.user_id).await
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_password_grant_verified_before_reset_cannot_create_a_session() {
+    for backend in backends() {
+        password_grant_during_account_change(backend, false, 50126).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_password_grant_disabled_before_insert_reports_the_account_error() {
+    for backend in backends() {
+        password_grant_during_account_change(backend, true, 50057).await;
+    }
+}
+
+async fn password_grant_during_account_change(backend: Backend, disable: bool, code: u32) {
+    let server = TestServer::start(backend).await;
+    let (release, change) = lock_account_change(&server, disable).await;
+    server.app.throttle.reserve(UPN).await;
+    let scope = Scope::spaces();
+    let grant = server.password_grant(UPN, PASSWORD, &scope);
+    let update = async {
+        wait_for_password_verification(&server.app.throttle).await;
+        release.send(()).unwrap();
+        change.await.unwrap();
+    };
+    let ((status, answer), ()) = futures_util::future::join(grant, update).await;
+    assert_eq!(status, 400, "{backend:?}: disabled={disable}");
+    assert_eq!(answer["error_codes"][0], code, "{backend:?}: disabled={disable}");
+    assert!(answer.get("access_token").is_none());
+    assert!(answer.get("refresh_token").is_none());
+    if !disable {
+        sign_in_with_replacement_password(&server).await;
+    }
+    server.stop().await;
+}
+
+async fn lock_account_change(
+    server: &TestServer,
+    disable: bool,
+) -> (tokio::sync::oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
+    use ngteams_server::db::{Db, users};
+    let oid = server.add_user(UPN, "Ada").await;
+    let user = users::by_id(&server.app.db, &oid).await.unwrap().unwrap();
+    let replacement = if disable {
+        user.password_hash
+    } else {
+        ngteams_server::auth::password::hash("replacement password")
+            .await
+            .unwrap()
+    };
+    let admin = Db::connect(&server.app.config.database_url, 1).await.unwrap();
+    let (locked, ready) = tokio::sync::oneshot::channel();
+    let (release, proceed) = tokio::sync::oneshot::channel();
+    let change = tokio::spawn(change_locked_account(admin, oid, replacement, disable, locked, proceed));
+    ready.await.unwrap();
+    (release, change)
+}
+
+async fn sign_in_with_replacement_password(server: &TestServer) {
+    let scope = Scope::spaces();
+    let (status, answer) = server.password_grant(UPN, "replacement password", &scope).await;
+    assert_eq!(status, 200);
+    let store = teams_auth::secrets::MemorySecretStore::new();
+    store
+        .put(
+            &refresh_token_key(UPN),
+            &Secret::new(answer["refresh_token"].as_str().unwrap()),
+        )
+        .await
+        .unwrap();
+    let session = teams_auth::session::Session::new(
+        UPN,
+        store,
+        server.token_client(),
+        server.authz_client(),
+        teams_auth::authz::Region::default(),
+    );
+    session.skypetoken().await.unwrap();
+}
+
+async fn wait_for_password_verification(throttle: &ngteams_server::throttle::Throttle) {
+    use ngteams_server::throttle::Throttle;
+    use std::time::Duration;
+    let Throttle::Local { windows, .. } = throttle else {
+        unreachable!();
+    };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while windows.lock().unwrap().contains_key(UPN) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+async fn change_locked_account(
+    db: ngteams_server::db::Db,
+    oid: String,
+    replacement: String,
+    disable: bool,
+    locked: tokio::sync::oneshot::Sender<()>,
+    proceed: tokio::sync::oneshot::Receiver<()>,
+) {
+    use diesel::{ExpressionMethods as _, QueryDsl as _};
+    use diesel_async::{AsyncConnection as _, RunQueryDsl as _};
+    use ngteams_server::db::{DbError, schema::users, with_conn};
+    let result: Result<(), DbError> = async {
+        with_conn!(&db, |conn| conn
+            .transaction::<_, DbError, _>(async |conn| {
+                diesel::update(users::table.find(&oid))
+                    .set(users::updated_at.eq(users::updated_at))
+                    .execute(conn)
+                    .await?;
+                locked.send(()).unwrap();
+                proceed.await.unwrap();
+                diesel::update(users::table.find(&oid))
+                    .set((users::password_hash.eq(replacement), users::disabled.eq(disable)))
+                    .execute(conn)
+                    .await?;
+                Ok(())
+            })
+            .await)
+    }
+    .await;
+    result.unwrap();
+    ngteams_server::db::refresh::revoke_user(&db, &oid).await.unwrap();
 }
