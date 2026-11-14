@@ -1,4 +1,4 @@
-//! `sdp-ngc-1.0` both ways, on the shapes the M3 calling runs captured (`tests/fixtures/sdp/captured.json`, synthetic):
+//! `sdp-ngc-1.0` both ways, on the shapes the M3 calling runs captured (`crates/teams-sdp/tests/fixtures/sdp/captured.json`, synthetic):
 //! libwebrtc's offer written as the web client writes its call start's and read back from the media controller's and a
 //! callee's answers; an invitation's offer (the caller's, and the mixer's in `sdp-ngc-0.5`) read into libwebrtc and our
 //! answer written; renegotiations offered by either side; a browser's SDP refused where the dialect is required.
@@ -28,7 +28,7 @@ use teams_media::test_turn::TurnServer;
 use teams_media::video::codec::EncoderSettings;
 use teams_media::video::convert::MaxSize;
 
-const FIXTURE: &str = include_str!("fixtures/sdp/captured.json");
+const FIXTURE: &str = include_str!("../../teams-sdp/tests/fixtures/sdp/captured.json");
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -774,33 +774,6 @@ fn our_offer_names_no_line_naming_header_extension_and_our_answer_keeps_the_offe
 }
 
 #[test]
-fn a_rejected_line_may_name_any_profile_and_a_line_in_use_only_teams_own() -> TestResult {
-    // seen live (M3 Task 16): the mixer's renegotiation of a call whose video lines we rejected names a profile on
-    // them that isn't RTP/SAVP; a rejected line carries nothing, so whatever it names is read as rejected
-    let mut parts = sections(captured_text("mixer_renegotiation_offer")?);
-    let video = parts
-        .iter()
-        .position(|part| part[0].starts_with("m=video "))
-        .ok_or("a video line")?;
-    parts[video][0] = "m=video 0 RTP/AVP 34";
-    let text = joined(&parts);
-    let read = NgcSdp::new(SDP_NGC, &text)?;
-    assert!(read.as_str().contains("m=video 0 RTP/AVP 34"));
-    // a line in use on another profile is refused, the error naming its kind, port and profile only
-    parts[video][0] = "m=video 50000 RTP/AVPF 34";
-    let refused = NgcSdp::new(SDP_NGC, &joined(&parts)).unwrap_err();
-    assert_eq!(
-        refused,
-        SdpError::Profile {
-            media: "video".to_owned(),
-            port: "50000".to_owned(),
-            proto: "RTP/AVPF".to_owned(),
-        }
-    );
-    Ok(())
-}
-
-#[test]
 fn an_audio_only_answer_to_the_mixer_names_a_format_on_each_rejected_video_line() -> TestResult {
     // an audio-only call: every video line read rejected, and libwebrtc answers each one rejected; the dialect writes
     // the web client's static `34` on each, never an m-line without a format (the mixer refuses that:
@@ -923,21 +896,6 @@ fn an_offer_without_a_relayed_candidate_is_unwritable() -> TestResult {
 }
 
 #[test]
-fn an_answer_to_an_offer_we_never_made_is_refused() -> TestResult {
-    let mut session = NgcSession::new();
-    let error = session.read_answer(&captured("controller_answer")?).unwrap_err();
-    assert!(matches!(error, SdpError::Mismatch(_)), "{error}");
-    Ok(())
-}
-
-#[test]
-fn the_sdp_never_shows_in_debug() -> TestResult {
-    let debug = format!("{:?}", captured("start_offer")?);
-    assert!(!debug.contains("ice-pwd") && !debug.contains("192.0.2"), "{debug}");
-    Ok(())
-}
-
-#[test]
 fn every_captured_answer_reads_as_an_answer() -> TestResult {
     // `SdpAnswer` and `SdpOffer` are libwebrtc's parse: the conversion of each captured form must be one it takes
     let peer = Peer::new()?;
@@ -948,5 +906,35 @@ fn every_captured_answer_reads_as_an_answer() -> TestResult {
         let answer: SdpAnswer = session.read_answer(&captured(name)?).unwrap();
         assert!(answer.to_sdp_string().starts_with("v=0"), "{name}");
     }
+    Ok(())
+}
+
+#[test]
+fn converted_offers_and_answers_still_require_libwebrtc_validation() -> TestResult {
+    let original = captured("invitation_offer")?;
+    let malformed = original
+        .as_str()
+        .lines()
+        .map(|line| {
+            if line.starts_with("o=") {
+                "o=- a=ice-pwd:SyntheticPrivateValue"
+            } else {
+                line.trim_end()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\r\n")
+        + "\r\n";
+    let malformed = NgcSdp::new(SDP_NGC, &malformed)?;
+    let mut session = NgcSession::new();
+    assert_eq!(
+        session.read_offer(&malformed).unwrap_err(),
+        SdpError::Refused("invalid SDP origin line".to_owned())
+    );
+    session.read_offer(&original)?;
+    assert_eq!(
+        session.read_answer(&malformed).unwrap_err(),
+        SdpError::Refused("invalid SDP origin line".to_owned())
+    );
     Ok(())
 }

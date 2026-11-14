@@ -11289,6 +11289,7 @@ dependencies = [
  "sha1",
  "teams-media",
  "teams-platform",
+ "teams-sdp",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -11367,6 +11368,15 @@ dependencies = [
  "teams-platform",
  "tempfile",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "teams-sdp"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

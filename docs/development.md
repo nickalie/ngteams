@@ -51,7 +51,8 @@ notification waits at most a few seconds for its translation); the language menu
 | `crates/teams-trouter` | messaging and calling push sockets, registration, reconnect and typed connection-bound call replies |
 | `crates/teams-call` | call state machine and tracking: offers, redelivery/ended rings, acceptance and media links, one call per account |
 | `crates/teams-core` | account engines, sync, outbox and retries, calendar/team operations and the cross-account call floor |
-| `crates/teams-media` | libwebrtc, Teams' SDP dialect, relay-only ICE, audio processing, video effects, file/PipeWire devices and GStreamer playback |
+| `crates/teams-media` | libwebrtc, relay-only ICE, audio processing, video effects, file/PipeWire devices, GStreamer playback and validated SDP adapters |
+| `crates/teams-sdp` | Teams' SDP dialect and group media control plane, without a media engine |
 | `crates/teams-ui` | GPUI views/models over `Core`, rich-text editor/rendering, accounts, calendar, notifications and call windows |
 | `crates/teams-ctl` | `ngteamsctl` and the control socket's protocol, socket paths, line codec and client (no GPUI); the app's server is `crates/ngteams/src/ctl/` |
 | `crates/teams-log` | private rotated diagnostic files, full debug HTTP/frame records and logger-owned credential redaction |

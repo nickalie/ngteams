@@ -1200,8 +1200,8 @@ Every offer and answer in the signaling is a `mediaContent` object: the SDP as `
 whoever wrote it. The one exception is a group call's invitation: the mixer's offer there is
 `application/sdp-ngc-0.5` (below). The web client turns each into standard SDP before its `RTCPeerConnection` takes it,
 and its own standard SDP into the dialect before it sends it; both forms were captured side by side (the WebRTC hooks
-record what the page hands its peer connection). `teams-media`'s `sdp` module does the same conversion for libwebrtc
-(fixture `crates/teams-media/tests/fixtures/sdp/captured.json`, synthetic).
+record what the page hands its peer connection). `teams-sdp` does the same conversion, exposed with libwebrtc validation by `teams-media`'s `sdp` module
+(fixture `crates/teams-sdp/tests/fixtures/sdp/captured.json`, synthetic).
 
 **From standard SDP to the dialect** (what the web client sends):
 

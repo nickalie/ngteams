@@ -1,10 +1,10 @@
-//! A group call's media control plane (`teams_media::mcp`): the data channel's packets and the control plane's
+//! A group call's media control plane (`teams_sdp::mcp`): the data channel's packets and the control plane's
 //! messages, as the web client's code makes and reads them and the group video run captured them.
 
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use teams_media::mcp::{
+use teams_sdp::mcp::{
     ControlPlane, Depacketizer, FrameError, HANDSHAKE_TIMEOUT, MCP_DATA_ID, MIXER_RECIPIENT, McpError, McpEvent,
     McpState, Message, Packetizer, ReceiveLimits, UNKNOWN_SOURCE,
 };

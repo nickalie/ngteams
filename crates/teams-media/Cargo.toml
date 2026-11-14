@@ -22,7 +22,7 @@ sha1 = { workspace = true, optional = true }
 # libwebrtc's answers (SDP, a description applied) are futures: run on the asking thread
 futures-executor.workspace = true
 futures-util.workspace = true
-# STUN transaction ids (the test TURN server) and the data line's SSRC
+# STUN transaction ids (the test TURN server) and private background-picture file names
 getrandom.workspace = true
 # the camera's background effects: a picture (the app's own JPEGs, or the user's JPEG or PNG) decoded and scaled, and
 # a user's picture written as a JPEG: the version and decoders GPUI already links
@@ -35,7 +35,7 @@ gstreamer-app.workspace = true
 # bandwidth estimation, A/V sync), the audio processing module, the data channel
 libwebrtc.workspace = true
 log.workspace = true
-# a group call's control plane: its messages are JSON (`mcp`)
+# call captions and device metadata arrive as JSON
 serde_json.workspace = true
 thiserror.workspace = true
 # the camera's background effects: the person segmentation model (ONNX), run on the CPU
@@ -49,6 +49,7 @@ cubecl.workspace = true
 # threads wait for libwebrtc's streams with a timeout: the media's own runtime runs both
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync"] }
 teams-platform.workspace = true
+teams-sdp.workspace = true
 
 # The model's GPU API: Vulkan where the drivers have it, Metal on macOS
 [target.'cfg(not(target_os = "macos"))'.dependencies]

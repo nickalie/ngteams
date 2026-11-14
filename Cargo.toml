@@ -11,6 +11,7 @@ members = [
     "crates/teams-ctl",
     "crates/teams-log",
     "crates/teams-media",
+    "crates/teams-sdp",
     "crates/teams-mock",
     "crates/teams-platform",
     "crates/teams-runner",
@@ -42,6 +43,7 @@ default-members = [
     "crates/teams-ctl",
     "crates/teams-log",
     "crates/teams-media",
+    "crates/teams-sdp",
     "crates/teams-mock",
     "crates/teams-platform",
     "crates/teams-runner",
@@ -87,6 +89,7 @@ teams-log = { path = "crates/teams-log" }
 # a call's media: Teams' SDP dialect (sdp-ngc-1.0), the relayed libwebrtc peer and its session, the mixer's control
 # plane and the device seam
 teams-media = { path = "crates/teams-media" }
+teams-sdp = { path = "crates/teams-sdp" }
 # tests only: a crate takes it under [dev-dependencies], never [dependencies] (crates/teams-mock/tests/mock.rs checks)
 teams-mock = { path = "crates/teams-mock" }
 teams-platform = { path = "crates/teams-platform" }

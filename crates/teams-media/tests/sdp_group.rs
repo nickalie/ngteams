@@ -35,7 +35,7 @@ use teams_media::test_turn::TurnServer;
 use teams_media::video::codec::EncoderSettings;
 use teams_media::video::convert::MaxSize;
 
-const FIXTURE: &str = include_str!("fixtures/sdp/captured.json");
+const FIXTURE: &str = include_str!("../../teams-sdp/tests/fixtures/sdp/captured.json");
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 

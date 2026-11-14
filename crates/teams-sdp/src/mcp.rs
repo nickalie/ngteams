@@ -16,7 +16,7 @@
 //!   with the largest picture the client takes there (`fmtParams`); the mixer answers each (`sr_res`) when it said it
 //!   would, and tells who spoke last (`dsh`, the dominant speakers' audio source ids).
 //!
-//! Nothing here sends or reads a socket: the session's network thread carries the packets ([`crate::session`]).
+//! Nothing here sends or reads a socket: the session's network thread carries the packets (in `teams-media`).
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};

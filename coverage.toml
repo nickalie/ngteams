@@ -29,6 +29,7 @@ teams-signin-protocol = { lines = 100, functions = 100, regions = 98 }
 ngteams = { lines = 92, functions = 91, regions = 90 }
 teams-core = { lines = 92, functions = 93, regions = 90 }
 teams-media = { lines = 81, functions = 81, regions = 81 }
+teams-sdp = { lines = 94, functions = 93, regions = 93 }
 teams-mock = { lines = 54, functions = 52, regions = 55 }
 teams-signin = { lines = 92, functions = 93, regions = 91 }
 teams-ui = { lines = 92, functions = 90, regions = 91 }
@@ -92,7 +93,7 @@ sha256 = "bdf5733cf64171e3a666b8d3ccea3ad644d979fec6ff22687b1e2fc60bf5d574"
 reason = "module declarations, re-exports and documentation only; no executable bodies"
 
 [unmapped_sources."crates/teams-media/src/lib.rs"]
-sha256 = "9c9c6cf673eaa941f3c88cd7f4b48eac44b827eedbdc7ebe58e09f06cc86dc86"
+sha256 = "a9d93c055e4f635ece1feeb7889ccc62460c515cd07a58029447314391a59ee2"
 reason = "module declarations and derived error type only; no authored executable bodies"
 
 [unmapped_sources."crates/teams-media/src/video.rs"]
@@ -630,3 +631,7 @@ context = { "crates/teams-ui/src/meeting_alert.rs" = "be5825947b396fe792bc9f0fe9
 sha256 = "13d7b021597c581c322da5d009092e6d682a8f48daae7d4ea74a77937fd305ee"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
 context = { "crates/teams-proto/src/http.rs" = "4f321bf7a181af900d065902aa053fbd083e2d0cc2bc17b22813b3d778074c1d" }
+
+[unmapped_sources."crates/teams-sdp/src/lib.rs"]
+sha256 = "2dfe9b286b9ebca1a0c6c3ee22c751f4886f6f8bd7d397bc684c79a5eba33862"
+reason = "module declarations, documentation and re-exports only; no executable bodies"
