@@ -64,8 +64,14 @@ pub(super) async fn conversations(
     let mut conversations = Vec::new();
     let mut bytes = 2;
     for chat in chats.iter().take(usize::try_from(size).unwrap_or(200)) {
-        let entry = conversation(&app, &caller, chat).await?;
-        let length = entry.to_string().len() + 1;
+        let mut entry = conversation(&app, &caller, chat).await?;
+        let mut length = entry.to_string().len() + 1;
+        if length + 2 > wire::MAX_PAGE_BYTES
+            && let Some(preview) = entry["lastMessage"].as_object_mut()
+        {
+            preview.remove("annotationsSummary");
+            length = entry.to_string().len() + 1;
+        }
         if !conversations.is_empty() && bytes + length > wire::MAX_PAGE_BYTES {
             break;
         }

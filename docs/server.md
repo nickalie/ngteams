@@ -129,8 +129,10 @@ once; clients catch up through conversation sync after a missed event.
 
 Database versions advance a shared row inside the write transaction. A conversation page keeps its upper bound
 and follows versions as a keyset; a chat changed during paging appears on the next incremental scan. This keeps
-clocks on different HTTP nodes out of cursor ordering. Conversation arrays, including their full last-message
-previews, stay below a 3 MiB serialized budget; a cut page's forward link starts after the last included chat.
+clocks on different HTTP nodes out of cursor ordering. Conversation arrays, including their last-message
+previews, stay below a 3 MiB serialized budget; a cut page's forward link starts after the last included chat,
+and every page's sync link keeps the snapshot's upper bound. If a single preview exceeds the array budget,
+its reaction summary is omitted from the listing; its text, identity and stored message remain unchanged.
 
 Posts use the authenticated account as sender. A repeated `(chat, sender, clientmessageid)` returns the original
 message and emits no duplicate event. Message IDs and versions come from the shared version clock, and a

@@ -7,6 +7,69 @@ use super::client;
 use crate::support::{TestServer, backends};
 
 #[tokio::test(flavor = "multi_thread")]
+async fn oversized_reaction_summaries_do_not_block_conversation_paging() {
+    for backend in backends() {
+        let pair = super::messages::Pair::start(backend).await;
+        let message = pair.send("the preview text survives").await;
+        let writer = client(&pair.server, "a@own.test", &pair.a_id).await;
+        let reader = client(&pair.server, "b@own.test", &pair.b_id).await;
+        let reads = ChatReads::new(&reader);
+        assert_eq!(
+            writer
+                .write(teams_proto::SetReaction::new(&pair.chat, &message, "like"))
+                .await
+                .unwrap()
+                .status(),
+            200
+        );
+        let normal = reads.conversations().await.unwrap();
+        assert_eq!(
+            normal.conversations[0].last_message_raw.as_ref().unwrap()["annotationsSummary"]["emotions"]["like"],
+            1
+        );
+        for index in 0..72 {
+            let key = format!("{index}-{}", "x".repeat(60 * 1024));
+            let response = writer
+                .write(teams_proto::SetReaction::new(&pair.chat, &message, key))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200);
+        }
+        let c = pair.server.add_user("c@own.test", "Cora").await;
+        let later = group_with_preview(&pair, &c, "After the oversized preview", "still reachable").await;
+        let first = reads
+            .conversations_from("https://own.example.test/api/chatsvc/own/v1/users/ME/conversations?pageSize=1")
+            .await
+            .unwrap();
+        assert_eq!(first.conversations.len(), 1);
+        assert_eq!(first.conversations[0].id, pair.chat);
+        let preview = first.conversations[0].last_message_raw.as_ref().unwrap();
+        assert_eq!(preview["id"], message);
+        assert!(
+            preview["content"]
+                .as_str()
+                .unwrap()
+                .contains("the preview text survives")
+        );
+        assert!(preview.get("annotationsSummary").is_none());
+        let next = reads.conversations_from(first.forward_link().unwrap()).await.unwrap();
+        assert_eq!(next.conversations.len(), 1);
+        assert_eq!(next.conversations[0].id, later.0);
+        assert_eq!(next.sync_state(), first.sync_state());
+        assert!(next.forward_link().is_none());
+        assert!(
+            reads
+                .conversations_from(next.sync_state().unwrap())
+                .await
+                .unwrap()
+                .conversations
+                .is_empty()
+        );
+        pair.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn large_conversation_previews_page_within_the_native_budget_and_sync_every_chat() {
     for backend in backends() {
         let pair = super::messages::Pair::start(backend).await;
