@@ -87,8 +87,64 @@ jobs:
         run: .github/ci/bundle.sh pack
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: coverage-build
-          path: target/test-build.tar.zst
+          name: coverage-common
+          path: target/coverage-common.tar.zst
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-shard-0
+          path: target/coverage-shard-0.tar.zst
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-shard-1
+          path: target/coverage-shard-1.tar.zst
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-shard-2
+          path: target/coverage-shard-2.tar.zst
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-shard-3
+          path: target/coverage-shard-3.tar.zst
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-shard-4
+          path: target/coverage-shard-4.tar.zst
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-shard-5
+          path: target/coverage-shard-5.tar.zst
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-shard-6
+          path: target/coverage-shard-6.tar.zst
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-shard-7
+          path: target/coverage-shard-7.tar.zst
           compression-level: 0
           retention-days: 1
           if-no-files-found: error
@@ -117,9 +173,15 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/coverage-env
+        with:
+          disk: tests
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: coverage-build
+          name: coverage-shard-${{ matrix.shard }}
+          path: target
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: coverage-common
           path: target
       - name: Restore dependency sources for compile-contract tests
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -130,8 +192,8 @@ jobs:
           key: coverage-sources-v1-${{ hashFiles('Cargo.lock') }}
       - name: Unpack shared tests
         run: |
-          tar -I zstd -xf target/test-build.tar.zst
-          rm target/test-build.tar.zst
+          for archive in target/coverage-*.tar.zst; do tar -I zstd -xf "$archive"; done
+          rm target/coverage-*.tar.zst
       - name: Run every assigned target, retaining failures
         env:
           SHARD: ${{ matrix.shard }}
@@ -176,8 +238,7 @@ jobs:
         id: measurement
         if: needs.build.result == 'success'
         run: |
-          tar -I zstd -xf target/coverage-inputs/test-build.tar.zst
-          for archive in target/coverage-inputs/profiles-*.tar.zst; do
+          for archive in target/coverage-inputs/*.tar.zst; do
             tar -I zstd -xf "$archive"
           done
           .github/ci/docker.sh report

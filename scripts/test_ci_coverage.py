@@ -81,6 +81,36 @@ class TargetTests(unittest.TestCase):
                 results = json.loads((root / "target/shard-0.json").read_text())
                 self.assertEqual([result["status"] for result in results], [1, 0])
 
+    @unittest.skipUnless(shutil.which("zstd"), "zstd unavailable")
+    def test_bundles_contain_each_test_once_and_share_runtime_helpers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = ["target/coverage-continuous-build/debug/deps/first-123",
+                     "target/coverage-continuous-build/debug/deps/second-456",
+                     "target/coverage-continuous-build/debug/helper",
+                     "target/coverage-continuous-build/debug/deps/library.so",
+                     "target/ci-bootstrap-build/debug/proto-lab"]
+            for name in paths:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("synthetic executable\n")
+                path.chmod(0o755)
+            excluded = root / "target/coverage-continuous-build/debug/deps/library.rlib"
+            excluded.write_text("synthetic dependency\n")
+            manifest = [[{"executable": f"/workspace/{path}"}] for path in paths[:2]]
+            (root / "target/test-shards.json").write_text(json.dumps(manifest))
+            subprocess.run(["bash", str(ROOT / ".github/ci/bundle.sh"), "pack"],
+                           cwd=root, capture_output=True, text=True, check=True)
+
+            def files(name):
+                result = subprocess.run(["tar", "-I", "zstd", "-tf", f"target/coverage-{name}.tar.zst"],
+                                        cwd=root, capture_output=True, text=True, check=True)
+                return set(result.stdout.splitlines())
+
+            self.assertEqual(files("shard-0"), {paths[0]})
+            self.assertEqual(files("shard-1"), {paths[1]})
+            self.assertEqual(files("common"), {*paths[2:], "target/test-shards.json"})
+
     @unittest.skipUnless(shutil.which("cargo"), "Cargo unavailable")
     def test_shared_executables_merge_to_the_same_coverage_as_cargo(self):
         available = subprocess.run(["cargo", "llvm-cov", "--version"], capture_output=True, check=False)
