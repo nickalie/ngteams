@@ -4,6 +4,9 @@ inputs:
   save-cache:
     description: Export the shared image cache from the build job only
     default: 'false'
+  disk:
+    description: Test shards extract only their targets; build and report jobs need more disk
+    default: full
 outputs:
   image-id:
     description: Actual image identity, including the native system libraries
@@ -13,10 +16,15 @@ runs:
   steps:
     - name: Free space for instrumented native test binaries
       shell: bash
+      env:
+        DISK_MODE: ${{ inputs.disk }}
       run: |
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
-          /usr/local/share/boost /usr/local/share/powershell /usr/local/share/chromium /usr/share/swift \
-          /usr/lib/jvm /usr/local/julia* /opt/az /opt/microsoft /opt/google
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android
+        if [[ "$DISK_MODE" == full ]]; then
+          sudo rm -rf /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache \
+            /usr/local/share/boost /usr/local/share/powershell /usr/local/share/chromium /usr/share/swift \
+            /usr/lib/jvm /usr/local/julia* /opt/az /opt/microsoft /opt/google
+        fi
         docker system prune --all --force
         df -h /
     - name: Allow browser sandbox namespaces on this disposable VM
