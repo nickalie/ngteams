@@ -93,6 +93,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/health/live", get(|| async { StatusCode::NO_CONTENT }))
         .route("/health/ready", get(ready))
         .merge(auth)
+        .merge(crate::chatsvc::router())
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             REQUEST_TIMEOUT,

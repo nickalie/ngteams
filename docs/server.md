@@ -4,8 +4,14 @@
 wire the client already speaks to Microsoft (the shapes in `docs/protocol/`), with every service under one HTTPS
 origin. The client sends a request to it only for an account signed in to that server.
 
-What it serves today: sign-in (the token endpoint) and authz. Other services are added one at a time. Authz names
+What authz advertises today: sign-in (the token endpoint) and authz. Other services are added one at a time. Authz names
 only the services the server serves, so the client keeps every other service off.
+
+The chat service also serves chat creation, conversation lists and their sync/forward links, thread reads and
+member lists under `/api/chatsvc/<region>/v1/`, with empty message pages for these newly created chats. These routes require an IC3 bearer token and current membership;
+disabled users are refused even while their token is live. A repeated 1:1 roster returns the existing chat, and
+group rosters and names persist in SQLite or PostgreSQL. Chat discovery is not advertised by authz yet: the
+message write surface is still being added.
 
 ## Stack
 
@@ -107,6 +113,17 @@ hands out its GTM.
 | Search | (the origin) | `/search/` | no |
 | Flight proxy | (the origin) | `/flightproxy/api/v2/` | no |
 | TURN credentials | (the origin) | `/trap/tokens` | no |
+
+## Chat events
+
+Chat creation publishes to every other member on `push:<mri>`. The internal JSON envelope is
+`{"resourceType":"ThreadUpdate","resource":<thread>}`; the resource has the thread-read shape. Trouter delivery
+wraps this internal event separately. Publication happens after the transaction commits. The fan-out is at most
+once; clients catch up through conversation sync after a missed event.
+
+Database versions advance a shared row inside the write transaction. A conversation page keeps its upper bound
+and follows versions as a keyset; a chat changed during paging appears on the next incremental scan. This keeps
+clocks on different HTTP nodes out of cursor ordering.
 
 ## Scaling
 

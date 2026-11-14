@@ -44,9 +44,16 @@ fn cycle<B: diesel::backend::Backend>(
     mut harness: impl diesel_migrations::MigrationHarness<B>,
     migrations: &FileBasedMigrations,
 ) {
-    assert_eq!(harness.run_pending_migrations(migrations.clone()).unwrap().len(), 1);
-    assert_eq!(harness.revert_all_migrations(migrations.clone()).unwrap().len(), 1);
-    assert_eq!(harness.run_pending_migrations(migrations.clone()).unwrap().len(), 1);
+    let applied = harness.run_pending_migrations(migrations.clone()).unwrap().len();
+    assert!(applied > 0);
+    assert_eq!(
+        harness.revert_all_migrations(migrations.clone()).unwrap().len(),
+        applied
+    );
+    assert_eq!(
+        harness.run_pending_migrations(migrations.clone()).unwrap().len(),
+        applied
+    );
     assert!(!harness.has_pending_migration(migrations.clone()).unwrap());
 }
 

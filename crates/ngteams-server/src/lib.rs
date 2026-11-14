@@ -13,6 +13,7 @@
 pub mod admin;
 pub mod app;
 pub mod auth;
+mod chatsvc;
 pub mod cli;
 pub mod config;
 pub mod db;

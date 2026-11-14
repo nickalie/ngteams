@@ -1,5 +1,6 @@
 //! The real own-cloud engine and typed reads against persisted local chat service accounts.
 
+mod paging;
 mod security;
 
 use std::sync::Arc;
