@@ -23,8 +23,10 @@ conditions: [skipped workflows leave required checks pending](https://docs.githu
 Coverage builds every runtime test target selected by `coverage-report.py list` once, with the same continuous
 instrumentation as `scripts/coverage.sh`. Eight parallel jobs run those shared executables. The inventory comes from
 Cargo's compiler-artifact messages and checks every runtime package is present. Every ordinary target runs once;
-`large_call_window` runs once per named scene through its existing `LARGE_CALL_STEPS` filter. The inventory checks
-that its Rust declarations match the configured scenes, so a new scene cannot silently disappear. Longest-first
+`large_call_window` runs its named scenes through its existing `LARGE_CALL_STEPS` filter. Leave and the following
+1:1 call share an invocation because the new ring needs the group call to end first; every scene still runs once.
+The inventory checks that its Rust declarations match the configured scenes, so a new scene cannot silently disappear.
+Longest-first
 balancing uses measured target and scene durations in `.github/ci/test-times.json`; new ordinary targets receive a
 default weight. Both `ngteams` and `teams-ui` spread across the eight jobs. Each invocation retains serial harness
 execution. Refresh weights from the saved shard timing JSON when suites change.
@@ -32,6 +34,9 @@ execution. Refresh weights from the saved shard timing JSON when suites change.
 The final `Coverage ≥90%` job merges the shards' LLVM profiles against that exact shared build, exports once, and
 runs the existing reporter with `--require-target` over all runtime crates. This preserves cross-crate test hits,
 which some crates need to reach 90%; independently gating smaller selections would change those measurements.
+The JSON export uses LLVM's [per-file summary mode](https://llvm.org/docs/CommandGuide/llvm-cov.html#llvm-cov-export),
+which preserves every file's metric counts used by the reporter and gap ranking without serializing individual
+function bodies or region lists. The shared-profile contract compares all file summaries and totals with a full export.
 Shard and invocation prefixes prevent profile filename collisions, including repeated executions of the same binary.
 A crate below 90% in **any** of LLVM's lines, functions or regions fails the job, even if the workspace average or that
 crate's saved standalone baseline is higher or lower. Exactly 90% passes. Failed tests, missing dependencies and

@@ -113,6 +113,22 @@ class TargetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate test target"):
             TARGETS.partition([messages[0], messages[0]], packages, weights)
 
+    def test_leave_and_one_to_one_keep_their_existing_sequence_without_repeating_a_scene(self):
+        weights = {f"{TARGETS.LARGE_TARGET}/{name}": seconds
+                   for name, seconds in [("leave", 35), ("one-to-one", 19), ("toolbar", 359)]}
+        messages = [self.artifact("large_call_window", "ngteams")]
+        shards = TARGETS.partition(messages, {"/workspace/ngteams/Cargo.toml": "ngteams"}, weights)
+        cases = [test for shard in shards for test in shard]
+        self.assertEqual(len(cases), 2)
+        combined = next(test for test in cases if test["environment"]["LARGE_CALL_STEPS"] == "leave,one-to-one")
+        self.assertEqual(combined["seconds"], 54)
+        steps = [step for test in cases for step in test["environment"]["LARGE_CALL_STEPS"].split(",")]
+        self.assertCountEqual(steps, ["leave", "one-to-one", "toolbar"])
+        for missing in ["leave", "one-to-one"]:
+            with self.assertRaisesRegex(ValueError, "must stay together"):
+                TARGETS.partition(messages, {"/workspace/ngteams/Cargo.toml": "ngteams"},
+                                  {key: value for key, value in weights.items() if not key.endswith("/" + missing)})
+
     def test_runner_preserves_failure_and_runs_remaining_targets(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -265,7 +281,16 @@ class TargetTests(unittest.TestCase):
                 return next(entry["summary"] for unit in data["data"] for entry in unit["files"]
                             if entry["filename"] == str(root / "src/lib.rs"))
 
-            merged = counts(command("cargo", "llvm-cov", "report", "--json"))
+            full = json.loads(command("cargo", "llvm-cov", "report", "--json"))
+            compact = json.loads(command("cargo", "llvm-cov", "report", "--json", "--summary-only"))
+            def summaries(data):
+                return {entry["filename"]: entry["summary"]
+                        for unit in data["data"] for entry in unit["files"]}
+
+            self.assertEqual(summaries(full), summaries(compact))
+            self.assertEqual([unit["totals"] for unit in full["data"]],
+                             [unit["totals"] for unit in compact["data"]])
+            merged = counts(json.dumps(compact))
             for path in (root / "target/build").rglob("*.profraw"):
                 path.unlink()
             serial = counts(command("cargo", "llvm-cov", "--no-clean", "--json"))

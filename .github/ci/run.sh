@@ -28,7 +28,7 @@ case "${1:-}" in
         ;;
     report)
         mkdir -p target/coverage/continuous/all
-        cargo llvm-cov report --locked --json --output-path target/coverage/continuous/all/llvm.json
+        cargo llvm-cov report --locked --json --summary-only --output-path target/coverage/continuous/all/llvm.json
         mapfile -t packages < <(python3 scripts/coverage-report.py list)
         exec python3 scripts/coverage-report.py report target/coverage/continuous/all/llvm.json \
             --output target/coverage/continuous/all/summary.json --require-target --packages "${packages[@]}"
