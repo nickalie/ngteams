@@ -28,8 +28,9 @@ Cargo's compiler-artifact messages and checks every runtime package is present. 
 The inventory checks that its Rust declarations match the configured scenes, so a new scene cannot silently disappear.
 Longest-first
 balancing uses measured target and scene durations in `.github/ci/test-times.json`; new ordinary targets receive a
-default weight. Both `ngteams` and `teams-ui` spread across the eight jobs. Each invocation retains serial harness
-execution. Refresh weights from the saved shard timing JSON when suites change.
+default weight. Both `ngteams` and `teams-ui` spread across the eight jobs. Each invocation runs its tests on one
+thread, except the targets in `THREADS` in `targets.py`: the server's `e2e` target runs on four, since its tests keep
+their deployments apart on the shard's one Postgres and Redis. Refresh weights from the saved shard timing JSON when suites change.
 
 The final `Coverage ≥90%` job merges the shards' LLVM profiles against that exact shared build, exports once, and
 runs the existing reporter with `--require-target` over all runtime crates. This preserves cross-crate test hits,

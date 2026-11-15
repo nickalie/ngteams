@@ -404,6 +404,13 @@ opt-level = 3
 [profile.dev.package.tract-core]
 opt-level = 3
 
+# The own server hashes every password with Argon2id: unoptimized, one hash takes over a second, which made the
+# server's e2e tests (accounts made and signed in by the hundred) slow and near their request timeouts under load.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+
 # GPUI with agterm-rs's external-surfaces patches (M0 Task 16, approach (b) of the video spike):
 # `Window::paint_external_surface` draws CPU pixels uploaded into a texture kept per surface, or a dmabuf imported on
 # the GPU, instead of a new sprite atlas texture per video frame. vendor/gpui-pre and vendor/gpui-pre-wgpu are the verified crates.io sources of the

@@ -12,6 +12,8 @@ import time
 
 
 LARGE_TARGET = "ngteams/test/large_call_window"
+# Their tests keep each deployment apart (own database, Redis namespace, locked ports), so they run in parallel.
+THREADS = {"ngteams-server/test/e2e": 4}
 
 
 def large_weights(weights):
@@ -109,7 +111,7 @@ def run(manifest, index):
         if profile := environment.get("LLVM_PROFILE_FILE"):
             environment["LLVM_PROFILE_FILE"] = str(
                 Path(profile).with_name(f"shard-{index}-case-{position}-%p-%m%c.profraw"))
-        result = subprocess.run([test["executable"], "--test-threads", "1"],
+        result = subprocess.run([test["executable"], "--test-threads", str(THREADS.get(test["id"], 1))],
                                 cwd=test["directory"], env=environment, check=False)
         seconds = round(time.monotonic() - start, 2)
         results.append({"id": test["id"], "seconds": seconds, "status": result.returncode})

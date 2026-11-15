@@ -188,6 +188,21 @@ class TargetTests(unittest.TestCase):
                 results = json.loads((root / "target/shard-0.json").read_text())
                 self.assertEqual([result["status"] for result in results], [1, 0])
 
+    def test_runner_runs_only_the_parallel_safe_targets_on_several_threads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target").mkdir()
+            manifest = root / "shards.json"
+            ids = ["ngteams-server/test/e2e", "ngteams-server/lib/ngteams_server", "ngteams/test/ui_tour"]
+            manifest.write_text(json.dumps([[{"id": name, "package": name.partition("/")[0], "target": name,
+                                              "executable": name, "directory": directory} for name in ids]]))
+            with contextlib.chdir(root), patch.object(TARGETS.subprocess, "run") as run, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                run.return_value = types.SimpleNamespace(returncode=0)
+                self.assertEqual(TARGETS.run(manifest, 0), 0)
+            self.assertEqual([call.args[0][1:] for call in run.call_args_list],
+                             [["--test-threads", "4"], ["--test-threads", "1"], ["--test-threads", "1"]])
+
     @unittest.skipUnless(shutil.which("zstd"), "zstd unavailable")
     def test_dependency_cache_preserves_timestamp_precision_and_excludes_profiles(self):
         with tempfile.TemporaryDirectory() as directory:
