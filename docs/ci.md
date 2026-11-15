@@ -139,12 +139,19 @@ contention affected these runs.
 | [Before](https://github.com/nickalie/ngteams/actions/runs/43552497622) | `68ff71dc` | 2:23:43 | 2:17:34 |
 | [Empty-cache cold](https://github.com/nickalie/ngteams/actions/runs/43621864665) | `54768816` | 1:59:30 | 1:05:59 |
 | [Changed-workspace warm](https://github.com/nickalie/ngteams/actions/runs/43632853097) | `c7673cd1` | 1:46:59 | 1:02:36 |
+| [Cold, with the own server's tests](https://github.com/nickalie/ngteams/actions/runs/43651636933) | `0a0c555e` | 3:01:31 | 1:20:23 |
 
 The cold run missed the image, Cargo source, SDK and instrumented-dependency caches. Its compressed native
 dependency archive was 943,559,703 bytes against a 1 GiB limit. Those caches remained populated for the warm
 run. The warm revision changes a Rust module doc in `crates/fixture-guard/src/lib.rs`; the pipeline still
 cleans and rebuilds workspace artifacts. Both runs execute all 362 invocations from 351 compiled test targets,
 including all 13 large-call scenes, and pass the same 90% gate for all 25 runtime crates.
+
+The last row is the November 15 run after `ngteams-server` joined the workspace: 368 invocations from 357 targets
+and 26 runtime crates, with Postgres and Redis beside every shard. Its execution path is the 0:32:13 build, the
+slowest shard's 0:30:08 and the 0:18:02 aggregate; the server's `e2e` target alone runs for 0:14:41. Its wall time
+includes a first attempt that ended red after 2:09:53, when `share_window`'s far end presented no new frame during
+one 10-second hold, and the rerun of that shard and the aggregate, which passed.
 
 The warm execution path of **1:02:36 misses the 45-minute goal**. Workspace target reuse is a
 separate follow-up on `team/ci-speed-reuse`; it is not part of this checkpoint.
