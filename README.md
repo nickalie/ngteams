@@ -105,10 +105,12 @@ Every release is on the [releases page](https://github.com/nickalie/ngteams/rele
 | Fedora, RHEL-likes | `ngteams-*.x86_64.rpm` | `sudo dnf install ./ngteams-*.x86_64.rpm` |
 | openSUSE | `ngteams-*.x86_64.rpm` | `sudo zypper install --allow-unsigned-rpm ./ngteams-*.x86_64.rpm` |
 | Arch Linux | `ngteams-*-x86_64.pkg.tar.zst` | `sudo pacman -U ./ngteams-*-x86_64.pkg.tar.zst` |
-| Anything with glibc 2.39 or newer | `ngteams-*-linux-x86_64.AppImage` | `chmod +x` it and run it |
-| | `ngteams-*-linux-x86_64.tar.gz` | unpack it and run `ngteams/AppRun` |
+| Anything with glibc 2.39 or newer | `ngteams-*-linux-x86_64.tar.gz` | unpack it and run `ngteams/install.sh` (no root, see below) |
+| | `ngteams-*-linux-x86_64.AppImage` | `chmod +x` it and run it |
 
-**Updates**: ngteams checks for a newer release once an hour. When there is one, **Install update** appears in its title bar: select it and ngteams downloads the release, checks it against the release's `SHA256SUMS`, installs it and restarts. A `.deb`, `.rpm` or Arch package asks for your password first; on Windows, ngteams closes and the new installer upgrades it and opens it again. If a call is going on or you have a message you haven't sent, the restart waits until you select **Restart to update**. To update by hand, install the newer package the same way. The unpacked `.tar.gz` (or an extracted AppImage) updates itself only while it stays in its own folder named `ngteams`; the Windows zip doesn't update itself.
+**Updates**: ngteams checks for a newer release once an hour. When there is one, it downloads it in the background and checks it against the release's `SHA256SUMS`. Then **Restart to update** appears in its title bar: select it, and ngteams installs the update and restarts. If a call is going on or you have a message you haven't sent, the button says so and waits: end the call or send the message, then select it again. A download that fails is tried again at the next check. On Windows, ngteams closes and the new installer upgrades it and opens it again.
+
+**Updates with no password on Linux**: a `.deb`, `.rpm` or Arch package belongs to the system, so its update asks for your password. To update with no password, install ngteams for yourself alone: unpack the `.tar.gz` and run `ngteams/install.sh` as your own user (not with `sudo`). It puts ngteams in `~/.local/opt/ngteams`, adds it to your app menu (which also opens `msteams:` links), and links `ngteams` and `ngteamsctl` in `~/.local/bin`. That copy updates itself with no password. Your accounts and settings stay where they are. To move from a system package, run the script, then remove the package (`sudo pacman -R ngteams`, `sudo apt remove ngteams` or `sudo dnf remove ngteams`). `~/.local/opt/ngteams/install.sh --uninstall` removes the per-user copy. An AppImage also updates itself with no password; an unpacked `.tar.gz` updates itself only while it stays in its own folder named `ngteams`. The Windows zip doesn't update itself.
 
 **On Windows**, run `ngteams-*-windows-x86_64-setup.exe` as your ordinary user: it needs no administrator rights.
 It installs ngteams for you alone under `%LOCALAPPDATA%\Programs\ngteams`, adds it to Start and to Settings → Apps →
@@ -128,18 +130,16 @@ Without the installer, extract the zip, open PowerShell in its `ngteams` folder 
 
 **On Linux, the sign-in window** runs on WPE WebKit 2.54 or newer. If your system has it (the Arch package installs it, Debian testing and openSUSE Tumbleweed have it), ngteams uses it. Otherwise it downloads a verified copy of about 120 MB once, the first time you sign in.
 
-**On Ubuntu 24.04 and later, prefer the `.deb`.** Those systems restrict the sandbox the sign-in window needs, and the `.deb` installs the AppArmor profile that allows it. To run an AppImage there, extract it to a permanent place and install the profile it carries:
+**On Ubuntu 24.04 and later, prefer the `.deb`.** Those systems restrict the sandbox the sign-in window needs, and the `.deb` installs the AppArmor profile that allows it. To run an AppImage there, install it for yourself and add the profile it carries:
 
 ```sh
-mkdir -p ~/.local/opt
-./ngteams-*-linux-x86_64.AppImage --appimage-extract && mv squashfs-root ~/.local/opt/ngteams
+./ngteams-*-linux-x86_64.AppImage --appimage-extract && squashfs-root/install.sh && rm -rf squashfs-root
 sed "s|@NGTEAMS_BIN@|$HOME/.local/opt/ngteams/usr/bin/ngteams|" ~/.local/opt/ngteams/usr/share/doc/ngteams/apparmor.profile.in \
     | sudo tee /etc/apparmor.d/ngteams > /dev/null
 sudo apparmor_parser -r /etc/apparmor.d/ngteams
-~/.local/opt/ngteams/AppRun
 ```
 
-For the tarball, do the same with its `ngteams` folder.
+For the tarball, run its `ngteams/install.sh` instead of the first line.
 
 **From source** on Arch, the system it's developed on:
 

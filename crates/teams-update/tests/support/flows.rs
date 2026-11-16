@@ -585,3 +585,30 @@ fn a_package_changed_before_the_prompt_is_refused_against_the_verified_digest() 
     );
 }
 
+#[test]
+fn a_per_user_copy_updates_its_own_files_with_no_password_prompt() {
+    // the per-user layout of `packaging/linux/install.sh`: the archive's folder in ~/.local/opt
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().join(".local/opt/ngteams");
+    tree(&root, "0.1.0.5", Format::Archive).unwrap();
+    let asked = home.path().join("asked");
+    let prompter = home.path().join("pkexec");
+    program(&prompter, &format!("#!/bin/sh\ntouch '{}'\n", asked.display())).unwrap();
+    let installation = Installation::detect(&places(root.join("usr/bin/ngteams"), home.path()))
+        .unwrap()
+        .with_prompter(prompter);
+    assert_eq!(installation.format(), Format::Archive);
+    let feed = Feed::start().unwrap();
+    let asset = Format::Archive.asset(version("0.1.0.7"));
+    publish(&feed, "v0.1.0.7", &asset, &archive_bytes("0.1.0.7", |_| {}).unwrap());
+    let source = Source::local(&feed.base);
+    let release = source.check(&installation, version("0.1.0.5")).unwrap().unwrap();
+    let mut prepared = source.prepare(&installation, &release, |_, _| {}).unwrap();
+    // the download waits beside the installation, in the user's own folder
+    assert!(prepared.candidate.starts_with(home.path().join(".local/opt")));
+    let restart = prepared.install().unwrap();
+    assert_eq!(restart.program, root.join("usr/bin/ngteams"));
+    assert_eq!(restart.directory, None, "the app starts again where it was started");
+    assert_eq!(fs::read_to_string(root.join(IDENTITY)).unwrap(), "0.1.0.7\n");
+    assert!(!asked.exists(), "a per-user copy never asks for a password");
+}

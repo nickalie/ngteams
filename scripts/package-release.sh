@@ -44,6 +44,8 @@ install -m 0644 "$repo/packaging/$app_id.desktop" "$root/usr/share/applications/
 install -m 0755 "$repo/packaging/linux/AppRun" "$root/AppRun"
 install -m 0644 "$repo/packaging/$app_id.desktop" "$root/$app_id.desktop"
 install -m 0644 "$repo/packaging/icons/hicolor/256x256/apps/$app_id.png" "$root/$app_id.png"
+# The per-user install, with no root, that updates itself with no password: ~/.local/opt/ngteams.
+install -m 0755 "$repo/packaging/linux/install.sh" "$root/install.sh"
 # Writing a script runs only `ngteamsctl completions`, which asks no app.
 for completion in "bash bash-completion/completions/ngteamsctl" "fish fish/vendor_completions.d/ngteamsctl.fish" \
   "zsh zsh/site-functions/_ngteamsctl"; do
