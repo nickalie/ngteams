@@ -189,7 +189,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 308 + 8 + 5 + 15] = [
+const STEPS: [Step; 5 + 311 + 8 + 5 + 15] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -299,6 +299,25 @@ const STEPS: [Step; 5 + 308 + 8 + 5 + 15] = [
         update_shown(UpdateStatus::Ready(TOUR_RELEASE.into()), cx);
     }),
     ("update-failed", |_, _, cx| update_shown(update_failed(), cx)),
+    // a draft not sent yet holds the restart, as the app's desktop tells it: the press says so and changes nothing
+    ("update-held-draft", |shell, window, cx| {
+        type_in_compose(shell, "A made-up draft, not sent yet", window, cx);
+        let held = shell.downgrade();
+        teams_ui::update::holds_with(
+            std::rc::Rc::new(move |cx| {
+                held.upgrade()
+                    .is_some_and(|shell| shell.read(cx).has_unsent(cx))
+                    .then_some(teams_ui::update::Waiting::Unsent)
+            }),
+            cx,
+        );
+        update_shown(UpdateStatus::Ready(TOUR_RELEASE.into()), cx);
+    }),
+    ("update-held-pressed", |_, window, cx| click_update(window, cx)),
+    ("update-held-cleared", |shell, window, cx| {
+        type_in_compose(shell, "", window, cx);
+        teams_ui::update::holds_with(std::rc::Rc::new(|_| None), cx);
+    }),
     ("chat-hover-theirs", |shell, _, cx| {
         update_shown(UpdateStatus::None, cx);
         hover_last(shell, false, cx);
@@ -4217,6 +4236,41 @@ fn show_page(shell: &Entity<Shell>, page: Page, cx: &mut App) {
 
 /// The made-up release the update steps show.
 const TOUR_RELEASE: &str = "0.1.0.13";
+
+/// A left click on the title bar's update button, as a person makes it, once the step's update is over. The button
+/// sits left of the title bar's menu at the tour's window width (the update shots show it there).
+fn click_update(window: &mut Window, cx: &mut App) {
+    window.defer(cx, |window, cx| {
+        let position = gpui::point(px(1100.0), px(23.0));
+        window.dispatch_event(
+            gpui::PlatformInput::MouseMove(gpui::MouseMoveEvent {
+                position,
+                pressed_button: None,
+                modifiers: gpui::Modifiers::default(),
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                button: gpui::MouseButton::Left,
+                position,
+                modifiers: gpui::Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                button: gpui::MouseButton::Left,
+                position,
+                modifiers: gpui::Modifiers::default(),
+                click_count: 1,
+            }),
+            cx,
+        );
+    });
+}
 
 fn update_shown(status: UpdateStatus, cx: &mut App) {
     teams_ui::update::set_status(status, cx);
