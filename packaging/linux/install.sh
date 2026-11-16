@@ -45,17 +45,29 @@ uninstall() {
   for completion in "${completions[@]}"; do
     unlink_ours "$share/$completion"
   done
-  rm -f "$share/applications/$app_id.desktop"
-  if [[ -d "$target/usr/share/icons/hicolor" ]]; then
-    (cd "$target/usr/share/icons/hicolor" && find . -type f -name "$app_id.*") | while read -r icon; do
-      rm -f "$share/icons/hicolor/$icon"
-    done
+  # the menu entry and the icons only when the entry is this copy's: another build (scripts/install.sh) writes the same
+  # names, and its entry starts that build
+  local entry="$share/applications/$app_id.desktop"
+  if [[ -e "$entry" ]] && ! grep -qF "Exec=\"$target/AppRun\" " "$entry"; then
+    echo "The menu entry $entry starts another ngteams build, so it and the icons stay."
+  else
+    rm -f "$entry"
+    remove_icons
   fi
   if [[ -d "$target" ]]; then
     release_folder "$target" || die "$target is not an ngteams release, so it was left alone"
     rm -rf "${target:?}"
   fi
   echo "ngteams is removed. Your accounts and data in $share/ngteams and your keyring stay."
+}
+
+# Removes the icons that this copy installed (the names its hicolor folder holds).
+remove_icons() {
+  if [[ -d "$target/usr/share/icons/hicolor" ]]; then
+    (cd "$target/usr/share/icons/hicolor" && find . -type f -name "$app_id.*") | while read -r icon; do
+      rm -f "$share/icons/hicolor/$icon"
+    done
+  fi
 }
 
 # Copies this release to the per-user folder. The copy is made beside it and put in place by renames, so a failure

@@ -151,9 +151,17 @@ class InstallLinux(unittest.TestCase):
         self.assertEqual(os.readlink(link), str(self.target / "usr/bin/ngteams"))
         link.unlink()
         link.symlink_to(source_build)
+        # the source build's menu entry and icon, written over this copy's as scripts/install.sh does
+        entry = self.data / f"applications/{APP_ID}.desktop"
+        entry.write_text(f"[Desktop Entry]\nExec={source_build} %u\nMimeType=x-scheme-handler/msteams;\n")
+        icon = self.data / f"icons/hicolor/256x256/apps/{APP_ID}.png"
+        icon.write_bytes(b"source build icon")
         result = self.run_script(self.target / "install.sh", "--uninstall")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(os.readlink(link), str(source_build))
+        self.assertIn(f"Exec={source_build} %u", entry.read_text())
+        self.assertEqual(icon.read_bytes(), b"source build icon")
+        self.assertFalse(self.target.exists())
 
 
 if __name__ == "__main__":

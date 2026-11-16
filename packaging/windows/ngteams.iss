@@ -16,7 +16,9 @@
 ; - The app's own updater (crates/teams-update) runs this installer with /VERYSILENT /UPDATEPID=<pid> /DIR=<folder>:
 ;   it waits for that process to exit, upgrades the folder and starts ngteams again, the previous version when the
 ;   upgrade fails. An app older than `teams_update::Restart::directory` starts it in bin, where the Start menu starts
-;   the app: a folder a process works in can't be moved, so what bin holds is moved aside instead (MoveItemAside).
+;   the app: a folder a process works in can't be moved, so when bin can't be moved (a process works in it, or a file
+;   in it is open), what bin holds is moved aside instead (MoveItemAside). Only bin: share holds the marker that
+;   RecoverInterruptedUpgrade reads, so share moves by one rename or not at all.
 
 #ifndef AppVersion
   #error Pass /DAppVersion=MAJOR.MINOR.PATCH.RUN
@@ -528,14 +530,17 @@ begin
     Result := 'An interrupted upgrade left ' + Folder + ', and it could not be put back or removed. Quit ngteams (including from the notification area) and close any of its files that are open, then run setup again.';
 end;
 
-{ Moves the previous version's Item into {#PreviousFolder}: by one rename, or when Item is a folder a process works in,
-  which stays, by moving what it holds. That is marked first, so that a put back merges it back. }
+{ Moves the previous version's Item into {#PreviousFolder}: by one rename, or when Item is bin and the rename fails (a
+  process works in bin, or a file in it is open), by moving what it holds, which stops at a file that is open. That is
+  marked first, so that a put back merges it back. Only bin: share, which holds the marker, moves by one rename or
+  not at all, so a share kept in {#PreviousFolder} always says that DiscardPrevious was cut short
+  (RecoverInterruptedUpgrade). }
 function MoveItemAside(const Item: String): Boolean;
 begin
   Result := RenameFile(InstalledItem(Item), PreviousItem(Item));
-  if Result or not DirExists(InstalledItem(Item)) or not SaveStringToFile(ContentsMark(Item), '', False) then
+  if Result or (Item <> 'bin') or not DirExists(InstalledItem(Item)) or not SaveStringToFile(ContentsMark(Item), '', False) then
     Exit;
-  Log(InstalledItem(Item) + ' could not be moved (a process works in it): moving what it holds instead.');
+  Log(InstalledItem(Item) + ' could not be moved (a process works in it, or a file in it is open): moving what it holds instead.');
   Result := MoveContents(InstalledItem(Item), PreviousItem(Item));
 end;
 
