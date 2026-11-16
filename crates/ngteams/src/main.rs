@@ -228,8 +228,8 @@ fn restarted(exec: &mut dyn FnMut(&mut Command) -> std::io::Error) -> ExitCode {
 
 /// What `restart` names run by `exec` once an update is in: the new version with this run's arguments (the link it
 /// `opened` left out, a link macOS handed it and it didn't open, `given`, added), without the AppImage runtime's
-/// variables (the new AppImage's runtime sets them again), or the Windows installer with its own; `exec` returns only
-/// when it couldn't.
+/// variables (the new AppImage's runtime sets them again), or the Windows installer with its own, in the folder the
+/// update names; `exec` returns only when it couldn't.
 fn updated(
     restart: Restart,
     opened: Option<&str>,
@@ -241,6 +241,9 @@ fn updated(
         Some(arguments) => command.args(arguments),
         None => command.args(restart_args(std::env::args_os().skip(1), opened, given)),
     };
+    if let Some(directory) = &restart.directory {
+        command.current_dir(directory);
+    }
     #[cfg(unix)]
     for variable in ngteams::update::APPIMAGE_ENV {
         command.env_remove(variable);

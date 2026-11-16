@@ -99,7 +99,8 @@ impl Drop for Inherited<'_> {
 mod windows;
 
 /// Replace this process after its UI and engines have stopped. Windows starts the successor in the same runner
-/// job before exiting; Unix exec replaces the image. No lab handles are transferred by this personal restart.
+/// job before exiting; Unix exec replaces the image. No lab handles are transferred by this personal restart. The
+/// successor starts in `command`'s folder when it names one (an update's installer, `teams_update::Restart`).
 /// Returns only a launch error.
 pub fn exec(command: &mut Command) -> io::Error {
     #[cfg(unix)]
@@ -108,7 +109,7 @@ pub fn exec(command: &mut Command) -> io::Error {
     }
     #[cfg(windows)]
     {
-        if let Err(error) = windows::validate(command) {
+        if let Err(error) = windows::validate_environment(command) {
             return error;
         }
         match teams_platform::windows_process::Transfer::new(&[]) {

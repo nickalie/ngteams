@@ -15,7 +15,8 @@
 ;   now open another copy (a zip's), and keeps the accounts and data in %LOCALAPPDATA%\ngteams and Credential Manager.
 ; - The app's own updater (crates/teams-update) runs this installer with /VERYSILENT /UPDATEPID=<pid> /DIR=<folder>:
 ;   it waits for that process to exit, upgrades the folder and starts ngteams again, the previous version when the
-;   upgrade fails.
+;   upgrade fails. An app older than `teams_update::Restart::directory` starts it in bin, where the Start menu starts
+;   the app: a folder a process works in can't be moved, so what bin holds is moved aside instead (MoveItemAside).
 
 #ifndef AppVersion
   #error Pass /DAppVersion=MAJOR.MINOR.PATCH.RUN
@@ -349,6 +350,80 @@ begin
   Result := FileExists(Path) or DirExists(Path);
 end;
 
+{ Says that the previous version's Item went aside by its contents (MoveContents): its own folder stayed in place. }
+function ContentsMark(const Item: String): String;
+begin
+  Result := PreviousItem(Item) + '.contents';
+end;
+
+{ The names of the items in the folder Folder. }
+function FolderItems(const Folder: String): TArrayOfString;
+var
+  Found: TFindRec;
+  Count: Integer;
+begin
+  Count := 0;
+  SetArrayLength(Result, 0);
+  if FindFirst(AddBackslash(Folder) + '*', Found) then
+  try
+    repeat
+      if (Found.Name <> '.') and (Found.Name <> '..') then
+      begin
+        SetArrayLength(Result, Count + 1);
+        Result[Count] := Found.Name;
+        Count := Count + 1;
+      end;
+    until not FindNext(Found);
+  finally
+    FindClose(Found);
+  end;
+end;
+
+{ Moves each item the folder From holds into the folder Into, by renames on one disk; False at the first that can't
+  go. A folder a process works in can't be moved, but what it holds can: an app started from the Start menu works in
+  bin, and an older app starts this installer in the same folder. }
+function MoveContents(const From, Into: String): Boolean;
+var
+  Names: TArrayOfString;
+  I: Integer;
+begin
+  Result := ForceDirectories(Into);
+  if not Result then
+    Exit;
+  Names := FolderItems(From);
+  for I := 0 to GetArrayLength(Names) - 1 do
+    if not RenameFile(AddBackslash(From) + Names[I], AddBackslash(Into) + Names[I]) then
+    begin
+      Log('Could not move ' + AddBackslash(From) + Names[I] + '.');
+      Result := False;
+      Exit;
+    end;
+end;
+
+{ Puts back the previous version's Item that went aside by its contents: each of its items replaces the one of the
+  same name in place, and nothing else there is deleted (a move aside cut short left the rest of it there). }
+function MergeBack(const Item: String): Boolean;
+var
+  Names: TArrayOfString;
+  I: Integer;
+  Installed: String;
+begin
+  Result := True;
+  Names := FolderItems(PreviousItem(Item));
+  for I := 0 to GetArrayLength(Names) - 1 do
+  begin
+    Installed := AddBackslash(InstalledItem(Item)) + Names[I];
+    if DirExists(Installed) then
+      DelTree(Installed, True, True, True)
+    else if FileExists(Installed) then
+      DeleteFile(Installed);
+    if not RenameFile(AddBackslash(PreviousItem(Item)) + Names[I], Installed) then
+      Result := False;
+  end;
+  if Result and RemoveDir(PreviousItem(Item)) then
+    DeleteFile(ContentsMark(Item));
+end;
+
 { Puts the previous version's items kept in {#PreviousFolder} back in place, over whatever a failed upgrade left
   there, and removes that folder once it is empty. }
 procedure PutPreviousBack;
@@ -358,7 +433,17 @@ var
 begin
   Items := ProgramItems;
   for I := GetArrayLength(Items) - 1 downto 0 do
-    if ItemExists(PreviousItem(Items[I])) then
+    if FileExists(ContentsMark(Items[I])) then
+    begin
+      if not DirExists(PreviousItem(Items[I])) or MergeBack(Items[I]) then
+      begin
+        DeleteFile(ContentsMark(Items[I]));
+        Log('Put the previous version''s ' + Items[I] + ' back.');
+      end
+      else
+        Log('The previous version''s ' + Items[I] + ' could not be put back; it is in ' + PreviousItem(Items[I]) + '.');
+    end
+    else if ItemExists(PreviousItem(Items[I])) then
     begin
       if DirExists(InstalledItem(Items[I])) then
         DelTree(InstalledItem(Items[I]), True, True, True)
@@ -379,6 +464,8 @@ begin
     DelTree(PreviousItem(Item), True, True, True)
   else if FileExists(PreviousItem(Item)) then
     DeleteFile(PreviousItem(Item));
+  if not ItemExists(PreviousItem(Item)) then
+    DeleteFile(ContentsMark(Item));
 end;
 
 { Deletes the previous version kept in {#PreviousFolder} once the new one is in. share, which holds its marker, goes
@@ -441,6 +528,17 @@ begin
     Result := 'An interrupted upgrade left ' + Folder + ', and it could not be put back or removed. Quit ngteams (including from the notification area) and close any of its files that are open, then run setup again.';
 end;
 
+{ Moves the previous version's Item into {#PreviousFolder}: by one rename, or when Item is a folder a process works in,
+  which stays, by moving what it holds. That is marked first, so that a put back merges it back. }
+function MoveItemAside(const Item: String): Boolean;
+begin
+  Result := RenameFile(InstalledItem(Item), PreviousItem(Item));
+  if Result or not DirExists(InstalledItem(Item)) or not SaveStringToFile(ContentsMark(Item), '', False) then
+    Exit;
+  Log(InstalledItem(Item) + ' could not be moved (a process works in it): moving what it holds instead.');
+  Result := MoveContents(InstalledItem(Item), PreviousItem(Item));
+end;
+
 { Moves the previous version's program items into {#PreviousFolder}, by renames on one disk, where they stay until the
   upgrade has succeeded (DeinitializeSetup); nothing is deleted. The reason they couldn't be, with everything put
   back, or ''. }
@@ -464,14 +562,13 @@ begin
   MovedAside := True;
   Items := ProgramItems;
   for I := 0 to GetArrayLength(Items) - 1 do
-    if ItemExists(InstalledItem(Items[I])) then
-      if not RenameFile(InstalledItem(Items[I]), PreviousItem(Items[I])) then
-      begin
-        Result := 'A file in ' + InstalledItem(Items[I]) + ' is in use.';
-        PutPreviousBack;
-        MovedAside := False;
-        Exit;
-      end;
+    if ItemExists(InstalledItem(Items[I])) and not MoveItemAside(Items[I]) then
+    begin
+      Result := 'A file in ' + InstalledItem(Items[I]) + ' is in use.';
+      PutPreviousBack;
+      MovedAside := False;
+      Exit;
+    end;
   Log('Moved the previous version aside into ' + ExpandConstant('{app}\{#PreviousFolder}') + '.');
 end;
 

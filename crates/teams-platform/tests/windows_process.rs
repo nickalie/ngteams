@@ -103,6 +103,40 @@ fn waits_are_bounded_and_job_termination_stops_the_owned_process() {
     assert_eq!(child.wait(Duration::from_secs(10)).unwrap(), Some(1));
 }
 
+/// An update's installer starts in its own folder (`spawn_in`), not in the app's: Windows refuses to move a folder that
+/// a process works in, and the upgrade moves the app's `bin`, where its Start menu shortcut starts it.
+#[test]
+fn a_child_started_in_a_folder_works_there_and_that_folder_cannot_be_moved_meanwhile() {
+    let dir = tempfile::tempdir().unwrap();
+    let (stage, bin) = (dir.path().join("stage"), dir.path().join("bin"));
+    std::fs::create_dir_all(&stage).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    let report = dir.path().join("directory");
+    let transfer = Transfer::new(&[]).unwrap();
+    let mut args = arguments("directory");
+    args.push(report.clone().into_os_string());
+    let held = stage.join("held");
+    std::fs::create_dir_all(&held).unwrap();
+    let child = transfer
+        .spawn_in(&std::env::current_exe().unwrap(), &args, Some(&held))
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !report.exists() {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        std::fs::canonicalize(std::fs::read_to_string(&report).unwrap()).unwrap(),
+        std::fs::canonicalize(&held).unwrap()
+    );
+    // the folder the child works in can't be moved while it runs; any other folder can
+    assert!(std::fs::rename(&held, dir.path().join("moved")).is_err());
+    std::fs::rename(&bin, dir.path().join("bin-moved")).unwrap();
+    assert_eq!(child.wait(Duration::from_secs(20)).unwrap(), Some(0));
+    std::fs::rename(&held, dir.path().join("moved")).unwrap();
+}
+
 #[test]
 fn invalid_launches_fail_before_creating_a_child() {
     let transfer = Transfer::new(&[]).unwrap();
@@ -197,6 +231,14 @@ fn transfer_child() {
             .spawn(&std::env::current_exe().unwrap(), &arguments("sleep"))
             .unwrap();
         std::fs::write(&args[start + 2], child.id().to_string()).unwrap();
+        return;
+    }
+    if args[start + 1] == "directory" {
+        let directory = std::env::current_dir().unwrap();
+        let written = args[start + 2].to_str().unwrap().to_owned() + ".tmp";
+        std::fs::write(&written, directory.to_str().unwrap()).unwrap();
+        std::fs::rename(&written, &args[start + 2]).unwrap();
+        std::thread::sleep(Duration::from_secs(2));
         return;
     }
     if args[start + 1] == "sleep" {

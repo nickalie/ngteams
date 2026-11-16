@@ -1,7 +1,8 @@
 //! The actual startup controllers on a mock GPUI platform and empty in-memory credentials.
 //! Each case owns HOME/XDG in a subprocess; no user's files, keyring, display or service is reached.
 
-use std::process::Command;
+use std::path::PathBuf;
+use std::process::{Command, ExitCode};
 use std::sync::{Mutex, OnceLock};
 
 use clap::Parser as _;
@@ -679,6 +680,46 @@ fn a_restart_carries_a_given_link_it_did_not_open() {
         ),
         ["--ctl-socket", "/run/synthetic.sock", first].map(std::ffi::OsString::from)
     );
+}
+
+/// An update's program starts in the folder the update names (Windows' installer, in its own folder), and with its own
+/// arguments; the new version of an archive starts where this run did, with this run's arguments.
+#[test]
+fn an_update_starts_its_program_in_the_folder_it_names() {
+    let mut seen = Vec::new();
+    let mut exec = |command: &mut std::process::Command| {
+        seen.push((
+            command.get_program().to_owned(),
+            command
+                .get_args()
+                .map(std::ffi::OsStr::to_os_string)
+                .collect::<Vec<_>>(),
+            command.get_current_dir().map(std::path::Path::to_path_buf),
+        ));
+        std::io::Error::other("synthetic: not started")
+    };
+    let installer = teams_update::Restart {
+        program: PathBuf::from("/synthetic/updates/stage/ngteams-setup.exe"),
+        arguments: Some(vec!["/VERYSILENT".into()]),
+        directory: Some(PathBuf::from("/synthetic/updates/stage")),
+    };
+    assert_eq!(super::updated(installer, None, None, &mut exec), ExitCode::FAILURE);
+    let archive = teams_update::Restart {
+        program: PathBuf::from("/synthetic/opt/ngteams/usr/bin/ngteams"),
+        arguments: None,
+        directory: None,
+    };
+    assert_eq!(super::updated(archive, None, None, &mut exec), ExitCode::FAILURE);
+    assert_eq!(
+        seen[0],
+        (
+            "/synthetic/updates/stage/ngteams-setup.exe".into(),
+            vec!["/VERYSILENT".into()],
+            Some(PathBuf::from("/synthetic/updates/stage"))
+        )
+    );
+    assert_eq!(seen[1].0, "/synthetic/opt/ngteams/usr/bin/ngteams");
+    assert_eq!(seen[1].2, None);
 }
 
 /// How a case's run must have ended.

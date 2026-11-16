@@ -16,8 +16,9 @@ param(
     # The unzipped release's ngteams folder: every installed program file must match its PACKAGE-MANIFEST.json hash.
     [string]$Package,
     # Upgrade the way the app's updater does (/UPDATEPID): waits for a stand-in process, then starts the installed
-    # ngteams.exe. Before it, three updater runs that fail (a program still running from bin; a file held open in bin;
-    # a late failure, the uninstaller held open) must leave the previous version whole and start it again. Only for lab-built installers (a lab build
+    # ngteams.exe, with Setup working in bin as an older app starts it. Before it, four updater runs that fail (a
+    # program still running from bin; a file held open in bin, also with Setup working in bin; a late failure, the
+    # uninstaller held open) must leave the previous version whole and start it again. Only for lab-built installers (a lab build
     # refuses to start without --lab); never in CI.
     [switch]$UpdateRelaunch,
     # After the uninstall checks: install again, install -Package's zip copy over it with its Install.ps1, and check
@@ -56,10 +57,13 @@ function Get-RegistryValue([string]$Key, [string]$Name) {
     return $item.$Name
 }
 
-function Invoke-Setup([string]$Path, [string]$Name, [string[]]$Extra = @()) {
+# Runs Setup at $Path, in the folder $WorkIn when one is given (an older app starts its updater's run in bin).
+function Invoke-Setup([string]$Path, [string]$Name, [string[]]$Extra = @(), [string]$WorkIn = '') {
     $log = Join-Path $Logs "$Name.log"
     $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$log`"") + $Extra
-    $process = Start-Process -FilePath $Path -ArgumentList $arguments -PassThru -Wait
+    $where = @{}
+    if ($WorkIn) { $where.WorkingDirectory = $WorkIn }
+    $process = Start-Process -FilePath $Path -ArgumentList $arguments -PassThru -Wait @where
     Write-Output "$Name exited $($process.ExitCode) (log $log)"
     return $process.ExitCode
 }
@@ -102,10 +106,10 @@ function Test-Restarted([string]$Log) {
     return ($text -match $run) -or ($text -match "Starting ngteams again: $([regex]::Escape($exe))")
 }
 
-# An updater run of -Installer over $Older that fails while $Hold is held open (read sharing only, as a program
-# using it), or with no $Hold while a program runs from bin: it must exit non-zero, leave $Older whole with nothing set
-# aside, and start it again.
-function Assert-FailedUpdate([string]$Name, [string]$Hold, [string]$Older, [string]$Expected) {
+# An updater run of -Installer over $Older, in the folder $WorkIn when given, that fails while $Hold is held open (read
+# sharing only, as a program using it), or with no $Hold while a program runs from bin: it must exit non-zero, leave
+# $Older whole with nothing set aside, and start it again.
+function Assert-FailedUpdate([string]$Name, [string]$Hold, [string]$Older, [string]$Expected, [string]$WorkIn = '') {
     $standIn = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'exit' -PassThru -Wait -WindowStyle Hidden
     if ($Hold) {
         $held = [IO.File]::Open($Hold, 'Open', 'Read', 'Read')
@@ -115,7 +119,7 @@ function Assert-FailedUpdate([string]$Name, [string]$Hold, [string]$Older, [stri
         $held = Start-Process $runner -ArgumentList '/t', '300', '/nobreak' -PassThru -WindowStyle Hidden
     }
     try {
-        $code = (Invoke-Setup $Installer $Name @("/UPDATEPID=$($standIn.Id)", '/SP-', "/DIR=`"$app`""))[-1]
+        $code = (Invoke-Setup $Installer $Name @("/UPDATEPID=$($standIn.Id)", '/SP-', "/DIR=`"$app`"") $WorkIn)[-1]
     } finally {
         if ($Hold) {
             $held.Close()
@@ -193,14 +197,18 @@ if ($Previous) {
         # Stopped before anything moved: a program still runs from bin, or a file in it is in use.
         Assert-FailedUpdate "update-running-$version" '' $older 'ngteams is still running'
         Assert-FailedUpdate "update-held-$version" (Join-Path $app 'bin\previous-only.dll') $older 'is in use'
+        # The same with Setup working in bin, as an older app starts it: what bin holds went aside and comes back.
+        Assert-FailedUpdate "update-held-in-bin-$version" (Join-Path $app 'bin\previous-only.dll') $older 'is in use' (Join-Path $app 'bin')
         # Failed after the previous version was moved aside and the new one copied: Setup can't replace the
         # uninstaller, rolls back, and the previous version goes back.
         Assert-FailedUpdate "update-late-$version" (Join-Path $app 'unins000.exe') $older 'Put the previous version''s bin back'
         # The updater's run: the installer waits for the app (a stand-in here) to exit, then starts the installed app.
+        # It works in bin, as an older app (before teams_update::Restart::directory) starts it: bin itself cannot move.
         $standIn = Start-Process pwsh -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 8' -PassThru -WindowStyle Hidden
-        $code = (Invoke-Setup $Installer "update-$version" @("/UPDATEPID=$($standIn.Id)", '/SP-', "/DIR=`"$app`""))[-1]
+        $code = (Invoke-Setup $Installer "update-$version" @("/UPDATEPID=$($standIn.Id)", '/SP-', "/DIR=`"$app`"") (Join-Path $app 'bin'))[-1]
         $log = Join-Path $Logs "update-$version.log"
         Assert-That ($code -eq 0) "the updater's run of $version succeeds"
+        Assert-That ((Get-Content -Raw -LiteralPath $log) -match 'moving what it holds instead') 'it moved what bin holds, as Setup works in bin'
         Assert-That ($standIn.HasExited -and (Get-LogTime $log 'Starting the installation process') -ge $standIn.ExitTime) 'it waited for the app to exit before installing'
         Assert-That (Test-Restarted $log) 'it started the installed ngteams.exe again'
     } else {
@@ -232,6 +240,13 @@ Assert-RecoveredThenHeld "recover-put-back-$version" {
     Move-Item -LiteralPath (Join-Path $app 'bin') -Destination $Kept
     New-Item -ItemType Directory (Join-Path $app 'bin') | Out-Null
     Set-Content (Join-Path $app 'bin\partial.txt') 'a failed upgrade'
+}
+# A move aside of what bin holds (Setup working in bin), cut short: what went comes back, and what stayed is kept.
+Assert-RecoveredThenHeld "recover-contents-$version" {
+    param($Kept)
+    New-Item -ItemType Directory (Join-Path $Kept 'bin') | Out-Null
+    Set-Content (Join-Path $Kept 'bin.contents') ''
+    foreach ($file in 'ngteams.exe', 'recovered.txt') { Move-Item -LiteralPath (Join-Path $app "bin\$file") -Destination (Join-Path $Kept 'bin') }
 }
 # The deletion of the previous version once the new one was in, cut short in share: the rest of it goes.
 New-Item -ItemType Directory -Force (Join-Path $app 'previous-version\share\licenses') | Out-Null

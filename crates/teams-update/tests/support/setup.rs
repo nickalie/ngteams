@@ -59,6 +59,11 @@ fn the_installer_is_handed_back_to_run_once_the_app_has_quit() {
     let installer = prepared.candidate.clone();
     let restart = prepared.install().unwrap();
     assert_eq!(restart.program, installer);
+    // The installer starts in its own folder: Windows can't move a folder that a process works in, so an installer
+    // that inherits the app's folder (`bin`, where the Start menu starts it) can't move it aside to upgrade it.
+    let directory = restart.directory.clone().unwrap();
+    assert_eq!(directory, installer.parent().unwrap());
+    assert!(!directory.starts_with(installation.root()), "{}", directory.display());
     let arguments = restart.arguments.unwrap();
     let mut directory = OsString::from("/DIR=");
     directory.push(installation.root());

@@ -81,7 +81,15 @@ impl Transfer {
     /// # Errors
     /// Invalid executable/arguments, attribute-list allocation, or process creation failure.
     pub fn spawn(&self, program: &Path, args: &[OsString]) -> io::Result<Child> {
-        self.spawn_with_job(program, args, None)
+        self.spawn_with_job(program, args, None, None)
+    }
+
+    /// As [`Self::spawn`], in `directory` when one is given (an update's installer starts in its own folder).
+    ///
+    /// # Errors
+    /// Invalid executable/arguments/directory, attribute-list allocation, or process creation failure.
+    pub fn spawn_in(&self, program: &Path, args: &[OsString], directory: Option<&Path>) -> io::Result<Child> {
+        self.spawn_with_job(program, args, None, directory)
     }
 
     /// Launch with atomic job assignment, before the child's first instruction. The job handle is never inherited.
@@ -89,10 +97,16 @@ impl Transfer {
     /// # Errors
     /// Invalid executable/arguments, attribute-list allocation, job assignment or process creation failure.
     pub fn spawn_in_job(&self, program: &Path, args: &[OsString], job: &super::windows_job::Job) -> io::Result<Child> {
-        self.spawn_with_job(program, args, Some(job.handle()))
+        self.spawn_with_job(program, args, Some(job.handle()), None)
     }
 
-    fn spawn_with_job(&self, program: &Path, args: &[OsString], job: Option<BorrowedHandle<'_>>) -> io::Result<Child> {
+    fn spawn_with_job(
+        &self,
+        program: &Path,
+        args: &[OsString],
+        job: Option<BorrowedHandle<'_>>,
+        directory: Option<&Path>,
+    ) -> io::Result<Child> {
         if !program.is_absolute()
             || !program
                 .extension()
@@ -104,6 +118,7 @@ impl Transfer {
             ));
         }
         let application = wide(program.as_os_str())?;
+        let directory = directory.map(|directory| wide(directory.as_os_str())).transpose()?;
         let mut command_line = command_line(program, args)?;
         let handles: Vec<HANDLE> = self
             .passed
@@ -123,7 +138,7 @@ impl Transfer {
         let mut information = PROCESS_INFORMATION::default();
         // SAFETY: all strings are NUL-terminated, command_line is writable, and the attribute list, its handle
         // array and the owning transfer set outlive this call. Only those handles are inherited. A null environment
-        // and directory inherit this process's values. The child process and primary thread outputs are fresh.
+        // or directory inherits this process's value. The child process and primary thread outputs are fresh.
         let ok = unsafe {
             CreateProcessW(
                 application.as_ptr(),
@@ -133,7 +148,7 @@ impl Transfer {
                 1,
                 EXTENDED_STARTUPINFO_PRESENT,
                 null(),
-                null(),
+                directory.as_ref().map_or(null(), Vec::as_ptr),
                 &raw const startup.StartupInfo,
                 &raw mut information,
             )

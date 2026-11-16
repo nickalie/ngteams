@@ -182,7 +182,7 @@ sha256 = "e2d8868d9c820bb4f17e6786d91f3b251df014786b1bc3a436a0d1c1b1d589bc"
 reason = "Windows-only app listener binding and cleanup; compiled and exercised by teams-ctl app_listener tests on Windows without the remaining GUI/media dependencies"
 
 [unmapped_sources."crates/teams-platform/src/windows_process.rs"]
-sha256 = "0b84326451184dcaf00369ec66504d88bc3db9729394cab56353e90cb489ed79"
+sha256 = "0ba662f82c7b576529d2fbb11c0fd086e101c15878e146db80b5ac8f2dd2f64a"
 reason = "Windows-only selective native process/handle transfer; exercised with real synthetic subprocesses and measured by the Windows portability gate."
 
 [unmapped_sources."crates/teams-platform/src/windows_sandbox.rs"]
@@ -202,7 +202,7 @@ sha256 = "b6827bc649d8189fb77ae73c441b51258158ac1ba34a21dda63ccb843e06954c"
 reason = "Windows-only app handle adoption, peer verification and writable-trace validation; the actual module is compiled and exercised by native app_descriptors tests, pending whole-app Windows integration."
 
 [unmapped_sources."crates/ngteams/src/restart/windows.rs"]
-sha256 = "4d17bf1f5ab7f35841e4471512b8d3316ab6f420547aa67f55450bd65f0f4230"
+sha256 = "94a7d873ea44696e94a01687b1cdc7d6777a90debf73b79a3743a00282a7f2d6"
 reason = "Windows-only app restart with explicit handle transfer and rewritten descriptor arguments; actual app_descriptors subprocess tests exercise success and failure on Windows, pending whole-app integration."
 
 [unmapped_sources."crates/teams-platform/src/windows_job.rs"]

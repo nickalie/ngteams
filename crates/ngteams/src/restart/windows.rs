@@ -37,10 +37,22 @@ impl super::RestartDescriptors {
 }
 
 pub(super) fn validate(command: &Command) -> io::Result<()> {
-    if command.get_envs().next().is_some() || command.get_current_dir().is_some() {
+    validate_environment(command)?;
+    if command.get_current_dir().is_some() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "a restart inherits its environment and directory",
+            "a restart inherits its directory",
+        ));
+    }
+    Ok(())
+}
+
+/// An update's restart may name its folder (the installer's own), never its environment.
+pub(super) fn validate_environment(command: &Command) -> io::Result<()> {
+    if command.get_envs().next().is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a restart inherits its environment",
         ));
     }
     Ok(())
@@ -48,7 +60,7 @@ pub(super) fn validate(command: &Command) -> io::Result<()> {
 
 pub(super) fn exec(command: &Command, transfer: &Transfer) -> io::Error {
     let args: Vec<OsString> = command.get_args().map(OsStr::to_os_string).collect();
-    match transfer.spawn(Path::new(command.get_program()), &args) {
+    match transfer.spawn_in(Path::new(command.get_program()), &args, command.get_current_dir()) {
         Ok(_) => std::process::exit(0),
         Err(error) => error,
     }

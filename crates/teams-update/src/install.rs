@@ -19,6 +19,9 @@ pub struct Restart {
     pub program: PathBuf,
     /// The installer's own arguments; `None` runs `program` with this run's arguments.
     pub arguments: Option<Vec<OsString>>,
+    /// The folder `program` starts in; `None` keeps this run's. The Windows installer starts in its own folder:
+    /// Windows can't move a folder a process works in, and the app often works in the `bin` folder the upgrade moves.
+    pub directory: Option<PathBuf>,
 }
 
 /// A downloaded and verified update, waiting in its stage; the installation is untouched until [`Prepared::install`].
@@ -82,6 +85,7 @@ impl Prepared {
         let mut restart = Restart {
             program: installation.executable.clone(),
             arguments: None,
+            directory: None,
         };
         match installation.format {
             Format::Archive | Format::MacApp => {
@@ -104,6 +108,7 @@ impl Prepared {
                 restart = Restart {
                     program: self.candidate.clone(),
                     arguments: Some(self.setup_arguments(&stage)?),
+                    directory: self.candidate.parent().map(Path::to_path_buf),
                 };
             }
         }
