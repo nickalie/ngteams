@@ -201,6 +201,25 @@ fn a_fake_archive_is_the_same_bytes_each_time() {
     assert_eq!(first, archive_bytes("0.1.0.6", |_| {}).unwrap());
 }
 
+/// The connection lost part way through the asset or its checksums is offline, as a request that can't connect: the
+/// app shows nothing and its next check tries again.
+#[test]
+fn a_download_cut_by_the_network_is_offline_and_changes_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let installation = archive_installation(home.path(), "0.1.0.5");
+    let asset_cut = refused(&installation, |feed, asset| {
+        let bytes = archive_bytes("0.1.0.6", |_| {}).unwrap();
+        feed.serve(&format!("/download/v0.1.0.6/{asset}"), Reply::cut(bytes));
+    });
+    assert!(matches!(asset_cut, Error::Offline), "{asset_cut:?}");
+    let sums_cut = refused(&installation, |feed, asset| {
+        let bytes = archive_bytes("0.1.0.6", |_| {}).unwrap();
+        let sums = format!("{}  {asset}\n", sha256(&bytes));
+        feed.serve("/download/v0.1.0.6/SHA256SUMS", Reply::cut(sums));
+    });
+    assert!(matches!(sums_cut, Error::Offline), "{sums_cut:?}");
+}
+
 #[test]
 fn a_download_that_doesnt_match_its_checksum_changes_nothing() {
     let home = tempfile::tempdir().unwrap();

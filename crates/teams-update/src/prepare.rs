@@ -90,7 +90,7 @@ impl Source {
         let mut received = 0;
         let mut buffer = vec![0; 64 * 1024];
         loop {
-            let read = reader.read(&mut buffer)?;
+            let read = reader.read(&mut buffer).map_err(crate::received)?;
             if read == 0 {
                 break;
             }

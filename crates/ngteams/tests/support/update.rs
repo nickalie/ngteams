@@ -147,6 +147,15 @@ fn a_call_or_an_unsent_message_holds_the_restart_until_the_press(cx: &mut TestAp
     assert!(app.restart.take().is_some());
 }
 
+/// The button says Update failed for 0.1.0.7's download, which didn't match its checksum.
+fn failed_at_its_checksum(cx: &mut TestAppContext) {
+    let UpdateStatus::Failed { version, reason } = status(cx) else {
+        panic!("{:?}", status(cx));
+    };
+    assert_eq!(version, "0.1.0.7");
+    assert!(reason.contains("SHA256SUMS"), "{reason}");
+}
+
 #[gpui::test]
 fn a_bad_download_says_update_failed_and_the_next_check_or_a_press_tries_again(cx: &mut TestAppContext) {
     let home = tempfile::tempdir().unwrap();
@@ -156,21 +165,22 @@ fn a_bad_download_says_update_failed_and_the_next_check_or_a_press_tries_again(c
     let path = format!("/download/v0.1.0.7/{asset}");
     feed.serve(&path, Reply::ok(vec![0; 10]));
     let app = started(cx, installation, &feed);
+    let downloads = || feed.requests().iter().filter(|asked| asked.contains(&path)).count();
     checked(cx);
-    let UpdateStatus::Failed { version, reason } = status(cx) else {
-        panic!("{:?}", status(cx));
-    };
-    assert_eq!(version, "0.1.0.7");
-    assert!(reason.contains("SHA256SUMS"), "{reason}");
+    failed_at_its_checksum(cx);
+    assert_eq!(downloads(), 1);
+    // the next check downloads again by itself: still bad, still said
+    checked(cx);
+    failed_at_its_checksum(cx);
+    assert_eq!(downloads(), 2, "the next check downloads again");
     assert_eq!(fs::read_to_string(root.join(IDENTITY)).unwrap(), "0.1.0.5\n");
     assert_eq!(app.quits.get(), 0);
-    // the press tries again at once: still bad, still said
-    assert_eq!(pressed(cx), None);
-    assert!(matches!(status(cx), UpdateStatus::Failed { .. }));
-    // the release's file mended: the next check downloads it again by itself
+    // the release's file mended: the press downloads it again at once, and offers the restart
     feed.serve(&path, Reply::ok(bytes));
-    checked(cx);
+    assert_eq!(pressed(cx), None);
+    assert_eq!(downloads(), 3, "the press downloads again");
     assert_eq!(status(cx), UpdateStatus::Ready("0.1.0.7".into()));
+    assert_eq!(fs::read_to_string(root.join(IDENTITY)).unwrap(), "0.1.0.5\n");
     assert_eq!(app.quits.get(), 0);
     assert_eq!(pressed(cx), None);
     assert_eq!(fs::read_to_string(root.join(IDENTITY)).unwrap(), "0.1.0.7\n");
@@ -189,6 +199,10 @@ fn a_download_cut_by_the_network_or_a_rate_limit_shows_nothing_and_the_next_chec
         checked(cx);
         assert_eq!(status(cx), UpdateStatus::None, "{answer}");
     }
+    // the connection lost part way through the download
+    feed.serve(&path, Reply::cut(bytes.clone()));
+    checked(cx);
+    assert_eq!(status(cx), UpdateStatus::None, "a download cut short");
     feed.serve(&path, Reply::ok(bytes));
     checked(cx);
     assert_eq!(status(cx), UpdateStatus::Ready("0.1.0.7".into()));

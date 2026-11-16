@@ -196,7 +196,10 @@ pub(crate) fn select(
 /// At most `limit` bytes of `reader`; more is an error naming `what`.
 pub(crate) fn bounded(reader: impl std::io::Read, limit: u64, what: &str) -> Result<Vec<u8>, Error> {
     let mut bytes = Vec::new();
-    reader.take(limit + 1).read_to_end(&mut bytes)?;
+    reader
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(crate::received)?;
     if bytes.len() as u64 > limit {
         return Err(error(format!("{what} is larger than any release's.")));
     }

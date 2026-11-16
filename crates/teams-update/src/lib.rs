@@ -157,6 +157,7 @@ impl From<ureq::Error> for Error {
                         | std::io::ErrorKind::HostUnreachable
                         | std::io::ErrorKind::NetworkUnreachable
                         | std::io::ErrorKind::NetworkDown
+                        | std::io::ErrorKind::UnexpectedEof
                 ) =>
             {
                 Self::Offline
@@ -164,6 +165,12 @@ impl From<ureq::Error> for Error {
             error => Self::Message(format!("GitHub's answer couldn't be read ({error}). Try again later.")),
         }
     }
+}
+
+/// A failed read of GitHub's answer: the connection lost or timed out (also part way through a download) is
+/// [`Error::Offline`], as for the request itself. ureq gives these as `io::Error`s, its own errors wrapped inside.
+pub(crate) fn received(error: std::io::Error) -> Error {
+    Error::from(ureq::Error::from(error))
 }
 
 /// How this copy was installed, which picks the release asset that updates it and how it is installed.

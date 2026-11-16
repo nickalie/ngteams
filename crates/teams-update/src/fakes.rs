@@ -13,12 +13,14 @@ use std::time::Duration;
 
 use crate::{Format, IDENTITY, MARKER};
 
-/// A reply: its status line, extra headers and body.
+/// A reply: its status line, extra headers and body; `cut`, only the first half of the body is sent before the
+/// connection closes, as when the network goes during a download.
 #[derive(Clone)]
 pub struct Reply {
     pub status: &'static str,
     pub headers: String,
     pub body: Vec<u8>,
+    pub cut: bool,
 }
 
 impl Reply {
@@ -28,6 +30,16 @@ impl Reply {
             status: "200 OK",
             headers: String::new(),
             body: body.into(),
+            cut: false,
+        }
+    }
+
+    /// `body`'s length announced, but only its first half sent before the connection closes.
+    #[must_use]
+    pub fn cut(body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            cut: true,
+            ..Self::ok(body)
         }
     }
 
@@ -37,6 +49,7 @@ impl Reply {
             status,
             headers: String::new(),
             body: Vec::new(),
+            cut: false,
         }
     }
 }
@@ -127,7 +140,12 @@ fn answer(mut socket: TcpStream, routes: &Mutex<HashMap<String, Reply>>, asked: 
         reply.headers
     );
     let _ = socket.write_all(head.as_bytes());
-    let _ = socket.write_all(&reply.body);
+    let sent = if reply.cut {
+        reply.body.len() / 2
+    } else {
+        reply.body.len()
+    };
+    let _ = socket.write_all(&reply.body[..sent]);
 }
 
 /// A release's description as GitHub's API gives it, its assets served under `base`'s downloads.
