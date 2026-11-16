@@ -202,6 +202,9 @@ pub fn archive_bytes(version: &str, edit: impl FnOnce(&Path)) -> std::io::Result
     {
         let encoder = flate2::write::GzEncoder::new(&mut packed, flate2::Compression::fast());
         let mut builder = tar::Builder::new(encoder);
+        // no modification times or owners: the same release gives the same bytes, so its published size and
+        // checksum hold for a copy made again
+        builder.mode(tar::HeaderMode::Deterministic);
         builder.append_dir_all(crate::FOLDER, &root)?;
         builder.into_inner()?.finish()?;
     }

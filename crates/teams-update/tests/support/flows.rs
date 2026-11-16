@@ -191,6 +191,16 @@ fn refused(installation: &Installation, serve: impl FnOnce(&Feed, &str)) -> Erro
     error
 }
 
+/// A fake release's archive is the same bytes each time it is made: a test that serves a changed copy of the published
+/// one compares against the size and checksum published. Files written in another second gave other modification
+/// times, and a compressed archive one byte longer read as "larger than the release says".
+#[test]
+fn a_fake_archive_is_the_same_bytes_each_time() {
+    let first = archive_bytes("0.1.0.6", |_| {}).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    assert_eq!(first, archive_bytes("0.1.0.6", |_| {}).unwrap());
+}
+
 #[test]
 fn a_download_that_doesnt_match_its_checksum_changes_nothing() {
     let home = tempfile::tempdir().unwrap();
@@ -574,3 +584,4 @@ fn a_package_changed_before_the_prompt_is_refused_against_the_verified_digest() 
         "0.1.0.5\n"
     );
 }
+
