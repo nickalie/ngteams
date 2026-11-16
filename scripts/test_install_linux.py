@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "packaging/linux/install.sh"
@@ -162,6 +163,37 @@ class InstallLinux(unittest.TestCase):
         self.assertIn(f"Exec={source_build} %u", entry.read_text())
         self.assertEqual(icon.read_bytes(), b"source build icon")
         self.assertFalse(self.target.exists())
+
+    def test_no_step_asks_for_a_password(self) -> None:
+        tools = self.temp / "tools"
+        tools.mkdir()
+        asked = self.temp / "asked"
+        for tool in ("pkexec", "sudo", "su", "doas", "run0"):
+            fake = tools / tool
+            fake.write_text(f"#!/bin/sh\necho {tool} >> '{asked}'\nexit 1\n")
+            fake.chmod(0o755)
+        path = f"{tools}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+        with unittest.mock.patch.dict(os.environ, {"PATH": path}):
+            self.installed(tree(self.temp / "pkg/ngteams", "0.1.0.5", "linux-pacman") / "install.sh")
+            self.installed(tree(self.temp / "new/ngteams", "0.1.0.7", "linux-archive") / "install.sh")
+            self.installed(self.target / "install.sh")
+            result = self.run_script(self.target / "install.sh", "--uninstall")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.target.exists())
+        self.assertFalse(asked.exists(), asked.read_text() if asked.exists() else "")
+
+    def test_root_is_refused_before_anything_changes(self) -> None:
+        tools = self.temp / "tools"
+        tools.mkdir()
+        fake_id = tools / "id"
+        fake_id.write_text("#!/bin/sh\necho 0\n")
+        fake_id.chmod(0o755)
+        path = f"{tools}:{os.environ.get('PATH', '/usr/bin:/bin')}"
+        with unittest.mock.patch.dict(os.environ, {"PATH": path}):
+            result = self.run_script(tree(self.temp / "ngteams", "0.1.0.7", "linux-archive") / "install.sh")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not as root", result.stderr)
+        self.assertFalse((self.home / ".local").exists())
 
 
 if __name__ == "__main__":

@@ -631,3 +631,108 @@ fn a_per_user_copy_updates_its_own_files_with_no_password_prompt() {
     assert_eq!(fs::read_to_string(root.join(IDENTITY)).unwrap(), "0.1.0.7\n");
     assert!(!asked.exists(), "a per-user copy never asks for a password");
 }
+
+const APP_ID: &str = "com.nickalie.ngteams";
+
+/// A system package's tree of `version` at `root` (`/opt/ngteams`, marked for pacman), with the files
+/// `packaging/linux/install.sh` copies and the script itself.
+fn package_tree(root: &std::path::Path, version: &str) {
+    tree(root, version, Format::Pacman).unwrap();
+    // a package's programs are executable; the fake tree's are plain files
+    for program in ["AppRun", "usr/bin/ngteams", "usr/bin/ngteamsctl"] {
+        fs::set_permissions(root.join(program), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packaging/linux/install.sh");
+    fs::copy(&script, root.join("install.sh")).unwrap();
+    fs::create_dir_all(root.join("usr/share/applications")).unwrap();
+    fs::write(
+        root.join(format!("usr/share/applications/{APP_ID}.desktop")),
+        "[Desktop Entry]\nExec=ngteams %u\nMimeType=x-scheme-handler/msteams;\n",
+    )
+    .unwrap();
+    let icon = root.join(format!("usr/share/icons/hicolor/256x256/apps/{APP_ID}.png"));
+    fs::create_dir_all(icon.parent().unwrap()).unwrap();
+    fs::write(&icon, "synthetic icon").unwrap();
+}
+
+/// Every way to ask for a password, in `tools`, as programs that only write their name to `asked`.
+fn password_tools(tools: &std::path::Path, asked: &std::path::Path) {
+    fs::create_dir_all(tools).unwrap();
+    for tool in ["pkexec", "sudo", "su", "doas", "run0"] {
+        program(
+            &tools.join(tool),
+            &format!("#!/bin/sh\necho {tool} >> '{}'\nexit 1\n", asked.display()),
+        )
+        .unwrap();
+    }
+}
+
+/// What `packaging/linux/install.sh` leaves for the user: a system package's tree copied by the user's own run of the
+/// script into `~/.local/opt/ngteams`, with the menu entry and the links. Then the app's own update of that copy: no
+/// password tool runs at any step, and the entry and links still start it.
+#[test]
+fn a_copy_made_by_install_sh_updates_itself_with_no_password_tool() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let package = temp.path().join("opt/ngteams");
+    package_tree(&package, "0.1.0.5");
+    let (tools, asked) = (temp.path().join("tools"), temp.path().join("asked"));
+    password_tools(&tools, &asked);
+    let installed = std::process::Command::new("bash")
+        .arg(package.join("install.sh"))
+        .env_clear()
+        .env("HOME", &home)
+        .env("PATH", format!("{}:/usr/bin:/bin", tools.display()))
+        .output()
+        .unwrap();
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    let root = home.join(".local/opt/ngteams");
+    // the app as the menu entry or ~/.local/bin starts it: its real path is in the user's copy
+    let link = home.join(".local/bin/ngteams");
+    let installation = Installation::detect(&places(link.clone(), &home))
+        .unwrap()
+        .with_prompter(tools.join("pkexec"));
+    assert_eq!(
+        installation.format(),
+        Format::Archive,
+        "the copy is the user's own archive"
+    );
+    assert_eq!(installation.root(), root);
+    let feed = Feed::start().unwrap();
+    let asset = Format::Archive.asset(version("0.1.0.7"));
+    publish(&feed, "v0.1.0.7", &asset, &archive_bytes("0.1.0.7", |_| {}).unwrap());
+    let source = Source::local(&feed.base);
+    let release = source.check(&installation, version("0.1.0.5")).unwrap().unwrap();
+    let restart = source
+        .prepare(&installation, &release, |_, _| {})
+        .unwrap()
+        .install()
+        .unwrap();
+    assert_eq!(restart.program, root.join("usr/bin/ngteams"));
+    assert_eq!(fs::read_to_string(root.join(IDENTITY)).unwrap(), "0.1.0.7\n");
+    assert_eq!(
+        fs::read_to_string(fs::canonicalize(&link).unwrap()).unwrap(),
+        "usr/bin/ngteams 0.1.0.7",
+        "~/.local/bin/ngteams starts the new version"
+    );
+    let entry = fs::read_to_string(home.join(format!(".local/share/applications/{APP_ID}.desktop"))).unwrap();
+    assert!(
+        entry.contains(&format!("Exec=\"{}\" %u", root.join("AppRun").display())),
+        "{entry}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("AppRun")).unwrap(),
+        "AppRun 0.1.0.7",
+        "the menu entry starts the new version"
+    );
+    assert_eq!(
+        fs::read_to_string(package.join(IDENTITY)).unwrap(),
+        "0.1.0.5\n",
+        "the package stays"
+    );
+    assert!(!asked.exists(), "{}", fs::read_to_string(&asked).unwrap_or_default());
+}
