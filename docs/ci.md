@@ -122,8 +122,10 @@ Cargo's invocation/completion stamps. Their durations overlap, so the dependency
 not change compiler flags or invalidate compatible dependency caches. See [Docker's GHA cache backend](https://docs.docker.com/build/cache/backends/gha/)
 and [GitHub's cache limits](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching).
 
-A subsequent run can reuse the shared executable bundles and a separate compiler-metadata artifact from a completed,
-successful Coverage run on the same repository and branch. The key also includes all workspace Cargo manifests and
+A subsequent run can reuse the shared executable bundles and a separate compiler-metadata artifact from an earlier
+Coverage run on the same repository and branch whose build job succeeded. The build output does not depend on the
+test results, so a run whose shards failed, a run that a later push cancelled and a run that still tests are all
+sources. The key also includes all workspace Cargo manifests and
 the workflow, so changes to features, flags or target declarations cannot select an incompatible compiler state.
 Restoration checks every tracked file's content hash before restoring its exact previous timestamp; changed or new
 files keep fresh timestamps so Cargo rebuilds their dependents. Both compiler metadata and executable archives retain

@@ -63,14 +63,29 @@ def api(path, *arguments):
     return json.loads(subprocess.check_output(["gh", "api", "--method", "GET", path, *arguments]))
 
 
-def find_run(repository, branch, name):
+BUILD_JOB = "Build instrumented tests"
+
+
+def build_succeeded(repository, run):
+    jobs = api(f"repos/{repository}/actions/runs/{run['id']}/jobs", "-f", "filter=latest", "-f", "per_page=100")["jobs"]
+    return any(job["name"] == BUILD_JOB and job["conclusion"] == "success" for job in jobs)
+
+
+def find_run(repository, branch, name, current=None):
+    """The newest run on this branch whose build job succeeded and whose build artifacts are all still available.
+
+    The build output does not depend on the test results, so a run whose shards failed or that a later push cancelled
+    is a valid source too, and so is a run that still tests.
+    """
     runs = api(f"repos/{repository}/actions/workflows/coverage.yml/runs", "-f", f"branch={branch}",
-               "-f", "status=success", "-f", "per_page=20")["workflow_runs"]
+               "-f", "per_page=20")["workflow_runs"]
     wanted = {name, "coverage-common", *(f"coverage-shard-{i}" for i in range(8))}
     for run in sorted(runs, key=lambda run: (run["run_number"], run["run_attempt"]), reverse=True):
-        if (run["status"] != "completed" or run["conclusion"] != "success" or
+        if (str(run["id"]) == str(current) or
                 run["head_branch"] != branch or run["event"] not in ("push", "workflow_dispatch") or
                 run["head_repository"]["full_name"].lower() != repository.lower()):
+            continue
+        if not build_succeeded(repository, run):
             continue
         artifacts = api(f"repos/{repository}/actions/runs/{run['id']}/artifacts", "-f", "per_page=100")["artifacts"]
         available = {artifact["name"] for artifact in artifacts if not artifact["expired"]}
@@ -81,7 +96,8 @@ def find_run(repository, branch, name):
 
 def restore(key, name):
     try:
-        found = find_run(os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_REF_NAME"], name)
+        found = find_run(os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_REF_NAME"], name,
+                         os.environ.get("GITHUB_RUN_ID"))
         if not found:
             print("No compatible successful workspace build", flush=True)
             return False

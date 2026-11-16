@@ -26,24 +26,40 @@ class ProvenanceTests(unittest.TestCase):
                 "conclusion": "success", "head_branch": "main", "event": "push",
                 "head_repository": {"full_name": "owner/repo"}, **changes}
 
-    def test_only_a_complete_successful_same_branch_build_is_reused(self):
+    def test_only_a_complete_same_branch_build_of_another_run_is_reused(self):
         names = {"compiler-key", "coverage-common", *(f"coverage-shard-{i}" for i in range(8))}
         artifacts = [{"name": name, "expired": False} for name in sorted(names)]
-        incompatible = [self.run_record(20, head_branch="other"), self.run_record(19, conclusion="failure"),
-                        self.run_record(18, status="in_progress"), self.run_record(17, event="pull_request"),
+        incompatible = [self.run_record(30), self.run_record(20, head_branch="other"),
+                        self.run_record(19, conclusion="failure"), self.run_record(17, event="pull_request"),
                         self.run_record(16, head_repository={"full_name": "other/repo"})]
+        build_failed = {19}
 
         def api(path, *arguments):
-            if path.endswith("/runs"):
+            if path.endswith("/coverage.yml/runs"):
                 return {"workflow_runs": [*incompatible, self.run_record(2), self.run_record()]}
+            if path.endswith("/jobs"):
+                number = int(path.split("/")[-2])
+                self.assertNotIn(number, {30, 20, 17, 16})
+                return {"jobs": [{"name": "Coverage gate tests", "conclusion": "success"},
+                                 {"name": CACHE.BUILD_JOB,
+                                  "conclusion": "failure" if number in build_failed else "success"}]}
             self.assertIn("/runs/2/", path)
             return {"artifacts": artifacts}
 
         with patch.object(CACHE, "api", side_effect=api):
-            self.assertEqual(CACHE.find_run("owner/repo", "main", "compiler-key"), (2, names))
+            self.assertEqual(CACHE.find_run("owner/repo", "main", "compiler-key", current=30), (2, names))
+        # The build output does not depend on the tests: a run whose shards failed, or that still tests, is a source.
+        for changes in [{"conclusion": "failure"}, {"conclusion": "cancelled"},
+                        {"status": "in_progress", "conclusion": None}]:
+            build_failed.clear()
+            incompatible[2] = self.run_record(19, **changes)
+            with self.subTest(**changes), patch.object(CACHE, "api", side_effect=lambda path, *arguments: (
+                    {"artifacts": artifacts} if path.endswith("/artifacts") else api(path))):
+                self.assertEqual(CACHE.find_run("owner/repo", "main", "compiler-key", current=30), (19, names))
         for broken in [[artifact for artifact in artifacts if artifact["name"] != "coverage-shard-7"],
                        [dict(artifact, expired=artifact["name"] == "compiler-key") for artifact in artifacts]]:
             with patch.object(CACHE, "api", side_effect=[{"workflow_runs": [self.run_record()]},
+                                                        {"jobs": [{"name": CACHE.BUILD_JOB, "conclusion": "success"}]},
                                                         {"artifacts": broken}]):
                 self.assertIsNone(CACHE.find_run("owner/repo", "main", "compiler-key"))
 
