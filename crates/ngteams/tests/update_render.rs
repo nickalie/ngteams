@@ -86,7 +86,10 @@ fn a_release_updater_renders_without_reading_the_shell_it_is_rendering() {
     let mut visual = VisualTestContext::from_window(window.into(), &rig.cx);
     for status in [
         UpdateStatus::None,
-        UpdateStatus::Available("0.1.0.7".into()),
+        UpdateStatus::Downloading {
+            version: "0.1.0.7".into(),
+            percent: 40,
+        },
         UpdateStatus::Ready("0.1.0.7".into()),
     ] {
         let visible = status != UpdateStatus::None;

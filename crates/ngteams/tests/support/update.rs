@@ -91,17 +91,22 @@ fn archive_case(home: &Path, asset_version: &str) -> (Installation, Feed, Vec<u8
 }
 
 #[gpui::test]
-fn a_newer_release_shows_the_button_whose_press_installs_it_and_restarts(cx: &mut TestAppContext) {
+fn a_newer_release_downloads_by_itself_and_the_press_restarts_into_it(cx: &mut TestAppContext) {
     let home = tempfile::tempdir().unwrap();
     let (installation, feed, _) = archive_case(home.path(), "0.1.0.7");
     let root = installation.root().to_path_buf();
     let app = started(cx, installation, &feed);
     assert_eq!(status(cx), UpdateStatus::None, "nothing before a check");
     checked(cx);
-    assert_eq!(status(cx), UpdateStatus::Available("0.1.0.7".into()));
-    // the same release found again changes nothing
-    checked(cx);
-    assert_eq!(status(cx), UpdateStatus::Available("0.1.0.7".into()));
+    // downloaded and verified after the check, with no press: only the restart is offered
+    assert_eq!(status(cx), UpdateStatus::Ready("0.1.0.7".into()));
+    assert_eq!(
+        fs::read_to_string(root.join(IDENTITY)).unwrap(),
+        "0.1.0.5\n",
+        "nothing installed before the press"
+    );
+    assert_eq!(app.quits.get(), 0);
+    assert!(cx.update(check).is_none(), "no check while a download waits");
     assert_eq!(pressed(cx), None);
     assert_eq!(fs::read_to_string(root.join(IDENTITY)).unwrap(), "0.1.0.7\n");
     assert_eq!(
@@ -120,9 +125,9 @@ fn a_call_or_an_unsent_message_holds_the_restart_until_the_press(cx: &mut TestAp
     let (installation, feed, _) = archive_case(home.path(), "0.1.0.7");
     let root = installation.root().to_path_buf();
     let app = started(cx, installation, &feed);
-    checked(cx);
     app.holds.set(Some(Waiting::Call));
-    assert_eq!(pressed(cx), None, "the download goes on meanwhile");
+    checked(cx);
+    // the download goes on during a call
     assert_eq!(status(cx), UpdateStatus::Ready("0.1.0.7".into()));
     assert_eq!(
         fs::read_to_string(root.join(IDENTITY)).unwrap(),
@@ -143,7 +148,7 @@ fn a_call_or_an_unsent_message_holds_the_restart_until_the_press(cx: &mut TestAp
 }
 
 #[gpui::test]
-fn a_bad_download_says_update_failed_and_the_press_tries_again(cx: &mut TestAppContext) {
+fn a_bad_download_says_update_failed_and_the_next_check_or_a_press_tries_again(cx: &mut TestAppContext) {
     let home = tempfile::tempdir().unwrap();
     let (installation, feed, bytes) = archive_case(home.path(), "0.1.0.7");
     let root = installation.root().to_path_buf();
@@ -152,7 +157,6 @@ fn a_bad_download_says_update_failed_and_the_press_tries_again(cx: &mut TestAppC
     feed.serve(&path, Reply::ok(vec![0; 10]));
     let app = started(cx, installation, &feed);
     checked(cx);
-    assert_eq!(pressed(cx), None);
     let UpdateStatus::Failed { version, reason } = status(cx) else {
         panic!("{:?}", status(cx));
     };
@@ -160,14 +164,35 @@ fn a_bad_download_says_update_failed_and_the_press_tries_again(cx: &mut TestAppC
     assert!(reason.contains("SHA256SUMS"), "{reason}");
     assert_eq!(fs::read_to_string(root.join(IDENTITY)).unwrap(), "0.1.0.5\n");
     assert_eq!(app.quits.get(), 0);
-    // a check meanwhile leaves the failure shown
-    checked(cx);
+    // the press tries again at once: still bad, still said
+    assert_eq!(pressed(cx), None);
     assert!(matches!(status(cx), UpdateStatus::Failed { .. }));
-    // the release's file mended: the press tries again and goes through
+    // the release's file mended: the next check downloads it again by itself
     feed.serve(&path, Reply::ok(bytes));
+    checked(cx);
+    assert_eq!(status(cx), UpdateStatus::Ready("0.1.0.7".into()));
+    assert_eq!(app.quits.get(), 0);
     assert_eq!(pressed(cx), None);
     assert_eq!(fs::read_to_string(root.join(IDENTITY)).unwrap(), "0.1.0.7\n");
     assert_eq!(app.quits.get(), 1);
+}
+
+#[gpui::test]
+fn a_download_cut_by_the_network_or_a_rate_limit_shows_nothing_and_the_next_check_tries_again(cx: &mut TestAppContext) {
+    let home = tempfile::tempdir().unwrap();
+    let (installation, feed, bytes) = archive_case(home.path(), "0.1.0.7");
+    let asset = Format::Archive.asset(version("0.1.0.7"));
+    let path = format!("/download/v0.1.0.7/{asset}");
+    let app = started(cx, installation, &feed);
+    for answer in ["429 Too Many Requests", "403 Forbidden"] {
+        feed.serve(&path, Reply::status(answer));
+        checked(cx);
+        assert_eq!(status(cx), UpdateStatus::None, "{answer}");
+    }
+    feed.serve(&path, Reply::ok(bytes));
+    checked(cx);
+    assert_eq!(status(cx), UpdateStatus::Ready("0.1.0.7".into()));
+    assert_eq!(app.quits.get(), 0);
 }
 
 #[gpui::test]
@@ -204,6 +229,8 @@ fn a_closed_password_prompt_keeps_the_download_for_the_next_press(cx: &mut TestA
     publish(&feed, "v0.1.0.6", &Format::Deb.asset(version("0.1.0.6")), b"package");
     let app = started(cx, installation, &feed);
     checked(cx);
+    assert_eq!(status(cx), UpdateStatus::Ready("0.1.0.6".into()));
+    // the password prompt comes only with the press
     assert_eq!(pressed(cx), None);
     assert_eq!(status(cx), UpdateStatus::Ready("0.1.0.6".into()));
     assert_eq!(app.quits.get(), 0);
@@ -235,6 +262,7 @@ fn a_closed_password_prompt_keeps_the_download_for_the_next_press(cx: &mut TestA
     publish(&feed, "v0.1.0.6", &Format::Pacman.asset(version("0.1.0.6")), b"package");
     let failing = started(cx, installation, &feed);
     checked(cx);
+    assert_eq!(status(cx), UpdateStatus::Ready("0.1.0.6".into()));
     assert_eq!(pressed(cx), None);
     let UpdateStatus::Failed { reason, .. } = status(cx) else {
         panic!("{:?}", status(cx));
@@ -272,52 +300,58 @@ fn progress_is_whole_percent() {
 #[gpui::test]
 fn a_hold_arriving_during_the_package_prompt_waits_for_a_restart_without_reinstalling(cx: &mut TestAppContext) {
     for hold in [Waiting::Call, Waiting::Unsent] {
-        let home = tempfile::tempdir().unwrap();
-        let root = home.path().join("opt/ngteams");
-        tree(&root, "0.1.0.5", Format::Deb).unwrap();
-        let prompter = home.path().join("pkexec");
-        let installed = home.path().join("installed");
-        program(&prompter, &format!("#!/bin/sh\ntouch '{}'\n", installed.display())).unwrap();
-        let installation = Installation::detect(&places(root.join("usr/bin/ngteams"), home.path()))
-            .unwrap()
-            .with_prompter(prompter.clone());
-        let feed = Feed::start().unwrap();
-        let asset = Format::Deb.asset(version("0.1.0.6"));
-        publish(&feed, "v0.1.0.6", &asset, b"package");
-        let app = started(cx, installation, &feed);
-        let completed = installed.clone();
-        let released = Rc::new(Cell::new(false));
-        let resumed = Rc::clone(&released);
-        // No hold before installation; one exists by the time the prompt returns.
-        cx.update(|cx| {
-            button::holds_with(
-                Rc::new(move |_| (completed.exists() && !resumed.get()).then_some(hold)),
-                cx,
-            );
-        });
-        checked(cx);
-        assert_eq!(pressed(cx), None);
-        assert!(installed.exists());
-        assert_eq!(app.quits.get(), 0);
-        assert!(app.restart.take().is_none(), "no restart armed while held");
-        assert_eq!(status(cx), UpdateStatus::Ready("0.1.0.6".into()));
-        assert_eq!(pressed(cx), Some(hold));
-        assert!(cx.update(check).is_none());
-        // Neither download nor installation may run again on the later press.
-        feed.serve(&format!("/download/v0.1.0.6/{asset}"), Reply::status("404 Not Found"));
-        fs::remove_file(prompter).unwrap();
-        released.set(true);
-        cx.run_until_parked();
-        assert_eq!(app.quits.get(), 0, "clearing the hold never restarts automatically");
-        assert_eq!(pressed(cx), None);
-        assert_eq!(app.quits.get(), 1);
-        assert_eq!(pressed(cx), None);
-        assert_eq!(app.quits.get(), 1, "a second press while quitting does nothing");
-        assert_eq!(
-            app.restart.take().map(|restart| restart.program),
-            Some(fs::canonicalize(root.join("usr/bin/ngteams")).unwrap())
-        );
+        hold_arriving_during_the_package_prompt(hold, cx);
     }
+}
+
+/// One hold (`hold`) that arrives while the package prompt is open, as the test above runs it.
+fn hold_arriving_during_the_package_prompt(hold: Waiting, cx: &mut TestAppContext) {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path().join("opt/ngteams");
+    tree(&root, "0.1.0.5", Format::Deb).unwrap();
+    let prompter = home.path().join("pkexec");
+    let installed = home.path().join("installed");
+    program(&prompter, &format!("#!/bin/sh\ntouch '{}'\n", installed.display())).unwrap();
+    let installation = Installation::detect(&places(root.join("usr/bin/ngteams"), home.path()))
+        .unwrap()
+        .with_prompter(prompter.clone());
+    let feed = Feed::start().unwrap();
+    let asset = Format::Deb.asset(version("0.1.0.6"));
+    publish(&feed, "v0.1.0.6", &asset, b"package");
+    let app = started(cx, installation, &feed);
+    let completed = installed.clone();
+    let released = Rc::new(Cell::new(false));
+    let resumed = Rc::clone(&released);
+    // No hold before installation; one exists by the time the prompt returns.
+    cx.update(|cx| {
+        button::holds_with(
+            Rc::new(move |_| (completed.exists() && !resumed.get()).then_some(hold)),
+            cx,
+        );
+    });
+    checked(cx);
+    assert!(!installed.exists(), "the download alone asks for no password");
+    assert_eq!(pressed(cx), None);
+    assert!(installed.exists());
+    assert_eq!(app.quits.get(), 0);
+    assert!(app.restart.take().is_none(), "no restart armed while held");
+    assert_eq!(status(cx), UpdateStatus::Ready("0.1.0.6".into()));
+    assert_eq!(pressed(cx), Some(hold));
+    assert!(cx.update(check).is_none());
+    // Neither download nor installation may run again on the later press.
+    feed.serve(&format!("/download/v0.1.0.6/{asset}"), Reply::status("404 Not Found"));
+    fs::remove_file(prompter).unwrap();
+    released.set(true);
+    cx.run_until_parked();
+    assert_eq!(app.quits.get(), 0, "clearing the hold never restarts automatically");
+    assert_eq!(pressed(cx), None);
+    assert_eq!(app.quits.get(), 1);
+    assert_eq!(pressed(cx), None);
+    assert_eq!(app.quits.get(), 1, "a second press while quitting does nothing");
+    assert_eq!(
+        app.restart.take().map(|restart| restart.program),
+        Some(fs::canonicalize(root.join("usr/bin/ngteams")).unwrap())
+    );
 }
 
 #[test]

@@ -10,7 +10,7 @@
 //! - **The launcher** lists the app's own places (Chat, Calendar, Settings), as Teams' lists its apps.
 //! - **Settings and more**: the settings, the zoom (the base font size: Ctrl+=, Ctrl+-, Ctrl+0) and "Copy
 //!   diagnostics".
-//! - **The app's update** ([`crate::update`]), right of the search while there is one: Install update, its progress,
+//! - **The app's update** ([`crate::update`]), right of the search while there is one: its download's progress,
 //!   Restart to update, or Update failed.
 //!
 //! Traced: `title-bar back` and `forward` (the place gone to, by kind), `list-pane hidden`/`shown`.

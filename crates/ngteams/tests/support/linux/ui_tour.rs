@@ -189,7 +189,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 309 + 8 + 5 + 15] = [
+const STEPS: [Step; 5 + 308 + 8 + 5 + 15] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -294,9 +294,6 @@ const STEPS: [Step; 5 + 309 + 8 + 5 + 15] = [
         });
     }),
     // the title bar's update button (`teams_ui::update`), its states as the app's updater sets them
-    ("update-available", |_, _, cx| {
-        update_shown(available(), cx);
-    }),
     ("update-downloading", |_, _, cx| update_shown(downloading(), cx)),
     ("update-ready", |_, _, cx| {
         update_shown(UpdateStatus::Ready(TOUR_RELEASE.into()), cx);
@@ -1096,10 +1093,10 @@ const STEPS: [Step; 5 + 309 + 8 + 5 + 15] = [
         shell.update(cx, |shell, cx| shell.show_chats(window, cx));
         select_last_message(shell, window, cx);
     }),
-    ("update-available-dark", |_, _, cx| {
-        update_shown(available(), cx);
-    }),
     ("update-downloading-dark", |_, _, cx| update_shown(downloading(), cx)),
+    ("update-ready-dark", |_, _, cx| {
+        update_shown(UpdateStatus::Ready(TOUR_RELEASE.into()), cx);
+    }),
     ("update-failed-dark", |_, _, cx| update_shown(update_failed(), cx)),
     ("chat-dark-compose", |shell, window, cx| {
         update_shown(UpdateStatus::None, cx);
@@ -4223,10 +4220,6 @@ const TOUR_RELEASE: &str = "0.1.0.13";
 
 fn update_shown(status: UpdateStatus, cx: &mut App) {
     teams_ui::update::set_status(status, cx);
-}
-
-fn available() -> UpdateStatus {
-    UpdateStatus::Available(TOUR_RELEASE.into())
 }
 
 fn downloading() -> UpdateStatus {

@@ -1,14 +1,14 @@
-//! The title bar's update button: shown once a newer release is there, and for as long as installing it goes on.
+//! The title bar's update button: shown while a newer release downloads, once it is ready, and for as long as
+//! installing it goes on.
 //!
-//! The app's updater (`ngteams::update`) checks for releases and installs them; this is only what the window shows of
-//! it ([`set_status`]) and the press it hands back ([`on_press`]). One status is shared by every account's title bar.
+//! The app's updater (`ngteams::update`) checks for releases, downloads a newer one by itself and installs it at the
+//! press; this is only what the window shows of it ([`set_status`]) and the press it hands back ([`on_press`]). One
+//! status is shared by every account's title bar.
 //!
-//! - **Install update** (a newer release is out): the press downloads it, verifies it and, when nothing holds the
-//!   restart up, installs it and restarts the app into it.
 //! - **Downloading update… n%**, **Installing update…**: a spinner, no press.
-//! - **Restart to update** (downloaded, the restart held up: a call, or a message not sent yet, [`Waiting`]): the press
-//!   installs and restarts once nothing holds it up any more, else says what does.
-//! - **Update failed**: why in its tooltip; the press tries again.
+//! - **Restart to update** (downloaded and verified): the press installs and restarts, unless something holds the
+//!   restart up (a call, or a message not sent yet, [`Waiting`]): then it says what does.
+//! - **Update failed**: why in its tooltip; the press tries again, as the next check does.
 //!
 //! Nothing is shown otherwise: no update, or a build that doesn't update itself.
 
@@ -31,9 +31,7 @@ pub enum UpdateStatus {
     /// Nothing to show.
     #[default]
     None,
-    /// A newer release, by its version, waits for the press.
-    Available(SharedString),
-    /// Downloading and verifying it: how far, in percent.
+    /// Downloading and verifying a newer release: how far, in percent.
     Downloading { version: SharedString, percent: u8 },
     /// Downloaded and verified; its install and restart wait for the press.
     Ready(SharedString),
@@ -123,7 +121,7 @@ pub fn press(cx: &mut App) -> Option<Waiting> {
     let status = status(cx);
     match status {
         UpdateStatus::Ready(_) if let Some(waiting) = waiting(cx) => return Some(waiting),
-        UpdateStatus::Available(_) | UpdateStatus::Ready(_) | UpdateStatus::Failed { .. } => {}
+        UpdateStatus::Ready(_) | UpdateStatus::Failed { .. } => {}
         UpdateStatus::None | UpdateStatus::Downloading { .. } | UpdateStatus::Installing(_) => return None,
     }
     if let Some(press) = cx.try_global::<Updates>().and_then(|updates| updates.press.clone()) {
@@ -136,11 +134,6 @@ pub fn press(cx: &mut App) -> Option<Waiting> {
 fn face(status: &UpdateStatus, waiting: Option<Waiting>) -> Option<(Option<Glyph>, SharedString, SharedString)> {
     Some(match status {
         UpdateStatus::None => return None,
-        UpdateStatus::Available(version) => (
-            Some(Glyph::DOWNLOAD),
-            "Install update".into(),
-            format!("Install ngteams {version} and restart").into(),
-        ),
         UpdateStatus::Downloading { version, percent } => (
             None,
             format!("Downloading update… {percent}%").into(),
@@ -150,7 +143,7 @@ fn face(status: &UpdateStatus, waiting: Option<Waiting>) -> Option<(Option<Glyph
             Some(Glyph::REFRESH),
             "Restart to update".into(),
             waiting.map_or_else(
-                || format!("ngteams {version} is ready: restart to install it").into(),
+                || format!("ngteams {version} is downloaded: restart to install it").into(),
                 |waiting| waiting.says().into(),
             ),
         ),
@@ -248,9 +241,9 @@ mod tests {
             let counted = Rc::clone(&pressed);
             on_press(Rc::new(move |_| counted.set(counted.get() + 1)), cx);
             let version = SharedString::from("0.1.0.7");
+            // only the restart and a retry of a failure take a press: the download starts by itself
             let takes = [
                 (UpdateStatus::None, false),
-                (UpdateStatus::Available(version.clone()), true),
                 (
                     UpdateStatus::Downloading {
                         version: version.clone(),
@@ -281,8 +274,14 @@ mod tests {
             let before = pressed.get();
             assert_eq!(press(cx), Some(Waiting::Call));
             assert_eq!(pressed.get(), before);
-            // ... but not the download, which may go on meanwhile
-            set_status(UpdateStatus::Available(version), cx);
+            // ... but not a new try of a failed download, which may go on meanwhile
+            set_status(
+                UpdateStatus::Failed {
+                    version,
+                    reason: "Offline.".into(),
+                },
+                cx,
+            );
             assert_eq!(press(cx), None);
             assert_eq!(pressed.get(), before + 1);
         });
@@ -296,14 +295,6 @@ mod tests {
             let (glyph, words, tip) = face(&status, waiting).unwrap();
             (glyph.is_some(), words.to_string(), tip.to_string())
         };
-        assert_eq!(
-            words(UpdateStatus::Available(version.clone()), None),
-            (
-                true,
-                "Install update".into(),
-                "Install ngteams 0.1.0.7 and restart".into()
-            )
-        );
         assert_eq!(
             words(
                 UpdateStatus::Downloading {
@@ -319,8 +310,12 @@ mod tests {
             )
         );
         assert_eq!(
-            words(UpdateStatus::Ready(version.clone()), None).2,
-            "ngteams 0.1.0.7 is ready: restart to install it"
+            words(UpdateStatus::Ready(version.clone()), None),
+            (
+                true,
+                "Restart to update".into(),
+                "ngteams 0.1.0.7 is downloaded: restart to install it".into()
+            )
         );
         assert_eq!(
             words(UpdateStatus::Ready(version.clone()), Some(Waiting::Unsent)).2,

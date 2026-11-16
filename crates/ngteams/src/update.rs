@@ -8,16 +8,20 @@
 //! - **When** ([`FIRST_CHECK`], then every [`EVERY`]): offline or rate-limited, nothing is shown and the next check
 //!   tries again. One anonymous request an hour is far under GitHub's limit of 60 per address. GitHub is no Teams
 //!   service: it gets no token and no account data, only the app's name and version as its `User-Agent`.
-//! - **The press** (Install update): the release's asset for this installation is downloaded and verified, the button
-//!   showing how far. Then, unless a call is up or ringing or a box holds a message not sent yet
-//!   ([`teams_ui::update::Waiting`]), it is installed at once; else the button waits as Restart to update, and its
-//!   press says what holds it up. A failure (a bad checksum, no permission, a full disk)
-//!   shows Update failed, whose press tries again. A closed password prompt keeps the download and returns to
-//!   Restart to update. A failed rollback keeps the previous installation in the stage named by the error.
+//! - **The download**, as ngterm's: a check that finds a newer release downloads and verifies the release's asset for
+//!   this installation at once, in the background, the button showing how far. Offline or rate-limited, nothing is
+//!   shown and the next check tries again; another failure (a bad checksum, no permission, a full disk) shows Update
+//!   failed, and the next check or a press tries again.
+//! - **The press** (Restart to update, once the download is verified): unless a call is up or ringing or a box holds a
+//!   message not sent yet ([`teams_ui::update::Waiting`]), the update is installed and the app restarts; else the
+//!   press says what holds it up. Only a system package asks for a password, at the press: a per-user copy replaces
+//!   its own files. A closed password prompt keeps the download and returns to Restart to update. A failed rollback
+//!   keeps the previous installation in the stage named by the error.
 //! - **The restart**: once the update is in, the app quits as it always does, every engine shut down first (the
 //!   outbox's rows and the store stay), and `main` runs the new version in this process, with this run's arguments.
 //!   On Windows, where a running program's files can't be replaced, "in" means the new installer is downloaded and
-//!   checked: `main` starts it as the app exits, and it waits for the exit, upgrades the folder and starts the app.
+//!   checked: `main` starts it in its own folder as the app exits, and it waits for the exit, upgrades the folder and
+//!   starts the app.
 //!   The keyring's credentials are untouched.
 
 use std::cell::Cell;
@@ -159,7 +163,7 @@ fn version(version: Version) -> SharedString {
     version.to_string().into()
 }
 
-/// Asks GitHub for a newer release, unless a download or install is under way or waits; one found is offered.
+/// Asks GitHub for a newer release, unless a download or install is under way or waits; one found is downloaded.
 pub fn check(cx: &mut App) -> Option<Task<()>> {
     let flow = cx.try_global::<Flow>()?;
     if flow.busy || flow.prepared.is_some() || flow.installed.is_some() {
@@ -191,16 +195,17 @@ fn found_release(found: Result<Option<Release>, Error>, cx: &mut App) {
         }
     };
     let flow = cx.global_mut::<Flow>();
-    if flow.busy || flow.prepared.is_some() || flow.installed.is_some() || flow.release.as_ref() == Some(&release) {
+    if flow.busy || flow.prepared.is_some() || flow.installed.is_some() {
         return;
     }
-    log::info!("updates: release {} is out", release.version);
-    let shown = version(release.version);
-    flow.release = Some(release);
-    button::set_status(UpdateStatus::Available(shown), cx);
+    if flow.release.as_ref() != Some(&release) {
+        log::info!("updates: release {} is out", release.version);
+    }
+    flow.release = Some(release.clone());
+    download(release, cx);
 }
 
-/// The button's press: the download when there is none yet, else the install.
+/// The button's press: the install of the download, or a new try of a download that failed.
 fn press(cx: &mut App) {
     let Some(flow) = cx.try_global::<Flow>() else {
         return;
@@ -223,7 +228,7 @@ fn percent(received: u64, total: u64) -> u8 {
     u8::try_from(percent).unwrap_or(100)
 }
 
-/// Downloads and verifies `release`, showing how far; then installs it ([`install`]).
+/// Downloads and verifies `release`, showing how far; then offers its restart.
 fn download(release: Release, cx: &mut App) {
     let shown = version(release.version);
     log::info!("updates: downloading {}", release.asset());
@@ -258,8 +263,13 @@ fn download(release: Release, cx: &mut App) {
             cx.global_mut::<Flow>().busy = false;
             match prepared {
                 Ok(prepared) => {
+                    log::info!("updates: {shown} is downloaded and verified");
                     cx.global_mut::<Flow>().prepared = Some(prepared);
-                    install(cx);
+                    button::set_status(UpdateStatus::Ready(shown), cx);
+                }
+                Err(error @ (Error::Offline | Error::RateLimited)) => {
+                    log::info!("updates: the download of {shown} stopped, the next check tries again: {error}");
+                    button::set_status(UpdateStatus::None, cx);
                 }
                 Err(error) => failed(&shown, &error, cx),
             }
@@ -334,7 +344,7 @@ fn restart_when_ready(cx: &mut App) {
     quit(cx);
 }
 
-/// The update didn't go through: said on the button, whose press starts over from the download.
+/// The update didn't go through: said on the button. The next check, or the press, starts over from the download.
 fn failed(shown: &SharedString, error: &Error, cx: &mut App) {
     log::warn!("updates: {shown} wasn't installed: {error}");
     button::set_status(
