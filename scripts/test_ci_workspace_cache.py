@@ -135,6 +135,11 @@ class CompilerStateTests(unittest.TestCase):
                 workflow.write_text("synthetic workflow\n")
                 (root / "Cargo.toml").write_text("synthetic different features\n")
                 self.assertNotEqual(CACHE.compiler_key("native-image-and-flags"), original)
+                (root / "Cargo.toml").write_text("synthetic manifest\n")
+                self.assertEqual(CACHE.compiler_key("native-image-and-flags"), original)
+                # A build without the cached SDK compiled webrtc-sys without LK_CUSTOM_WEBRTC.
+                CACHE.SDK.mkdir(parents=True)
+                self.assertNotEqual(CACHE.compiler_key("native-image-and-flags"), original)
 
     @unittest.skipUnless(shutil.which("cargo"), "Cargo unavailable")
     def test_restored_unchanged_crate_stays_fresh_and_changed_crate_rebuilds_with_new_behavior(self):

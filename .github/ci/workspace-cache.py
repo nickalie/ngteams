@@ -9,11 +9,15 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 
 
 DIRECTORIES = (Path("target/coverage-continuous-build"), Path("target/ci-bootstrap-build"))
 SOURCES = Path("target/compiler-workspace-sources.json")
 INPUTS = Path(".ci-cache/workspace-inputs")
+# webrtc-sys rebuilds, and every crate above it, when LK_CUSTOM_WEBRTC appears or goes: docker.sh sets it when the
+# cached SDK is present.
+SDK = Path(".ci-cache/webrtc/include")
 
 
 def tracked():
@@ -103,19 +107,25 @@ def restore(key, name):
             return False
         run_id, names = found
         INPUTS.mkdir(parents=True, exist_ok=True)
+        start = time.monotonic()
 
         def download(artifact):
             subprocess.run(["gh", "run", "download", str(run_id), "--repo", os.environ["GITHUB_REPOSITORY"],
                             "--name", artifact, "--dir", str(INPUTS)],
                            check=True, capture_output=True)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(names)) as pool:
             list(pool.map(download, sorted(names)))
+        print(f"Downloaded {len(names)} artifacts of run {run_id} in {time.monotonic() - start:.0f}s", flush=True)
+        start = time.monotonic()
         subprocess.run(["bash", ".github/ci/unpack.sh", str(INPUTS)], check=True)
+        print(f"Unpacked them in {time.monotonic() - start:.0f}s", flush=True)
+        start = time.monotonic()
         for root in DIRECTORIES:
             if any(root.rglob("*.profraw")) or any(root.rglob("*.profdata")):
                 raise ValueError("cached compiler artifacts contain profiles")
         restore_stamps(key)
+        print(f"Checked the sources in {time.monotonic() - start:.0f}s", flush=True)
         print(f"Reused compiler artifacts from successful Coverage {run_id}", flush=True)
         return True
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
@@ -130,15 +140,18 @@ def restore(key, name):
 def compiler_key(native_key):
     manifests = "".join(f"{path}:{digest(path)}\n" for path in sorted(tracked())
                         if path.name == "Cargo.toml" or path == Path(".github/workflows/coverage.yml"))
-    return hashlib.sha256((native_key + manifests).encode()).hexdigest()
+    sdk = f"webrtc-sdk:{SDK.is_dir()}\n"
+    return hashlib.sha256((native_key + manifests + sdk).encode()).hexdigest()
 
 
 def main():
+    if sys.argv[1] == "pack":
+        # The key of the restore step: the SDK cache can appear after the build.
+        pack(os.environ["COVERAGE_WORKSPACE_NAME"].removeprefix("compiler-workspace-"))
+        return
     key = compiler_key(os.environ["COVERAGE_COMPILER_KEY"])
     name = f"compiler-workspace-{key}"
-    if sys.argv[1] == "pack":
-        pack(key)
-    elif sys.argv[1] == "restore":
+    if sys.argv[1] == "restore":
         hit = restore(key, name)
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             output.write(f"name={name}\nhit={str(hit).lower()}\n")

@@ -113,7 +113,7 @@ jobs:
         run: .github/ci/bundle.sh pack
       - name: Cache compiler metadata without profiles or duplicate executables
         env:
-          COVERAGE_COMPILER_KEY: coverage-build-v1-${{ steps.environment.outputs.image-id }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.github/ci/**', '!.github/ci/test-times.json', '.cargo/**', 'vendor/**') }}
+          COVERAGE_WORKSPACE_NAME: ${{ steps.workspace.outputs.name }}
         run: python3 -B .github/ci/workspace-cache.py pack
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

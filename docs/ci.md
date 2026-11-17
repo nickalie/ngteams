@@ -95,7 +95,7 @@ The image sets `TZ=Etc/UTC` so calendar fixtures do not depend on the host's `/e
 Tool installation uses the network; test traffic stays synthetic and offline from the tenant. No lab configuration
 or secret is required. Every shard job starts Postgres and Redis service containers for the own server's cases
 (`crates/ngteams-server`, [server.md](server.md)); the test container reaches them through the host gateway, and a
-shard started without their URLs fails instead of letting those cases skip themselves. The workflow frees unused hosted SDKs to make space for the instrumented native binaries.
+shard started without their URLs fails instead of letting those cases skip themselves. The workflow frees unused hosted SDKs to make space for the instrumented native binaries, but only on a runner with less free space than the job needs (80 GiB for the build and report jobs, 30 GiB for a shard): the removal takes about three minutes.
 The shared build disables incremental compilation and DWARF debug information while retaining LLVM coverage maps and
 debug assertions, with four Cargo compilation jobs. Each shard downloads its assigned test executables and a common
 bundle of helper binaries, executables reused by several scenes, shared libraries and Cargo feature fingerprints,
@@ -127,6 +127,8 @@ Coverage run on the same repository and branch whose build job succeeded. The bu
 test results, so a run whose shards failed, a run that a later push cancelled and a run that still tests are all
 sources. The key also includes all workspace Cargo manifests and
 the workflow, so changes to features, flags or target declarations cannot select an incompatible compiler state.
+It also records whether the cached libwebrtc SDK was present: `docker.sh` then sets `LK_CUSTOM_WEBRTC`, and a
+change of that variable rebuilds `webrtc-sys` and every workspace crate above it.
 Restoration checks every tracked file's content hash before restoring its exact previous timestamp; changed or new
 files keep fresh timestamps so Cargo rebuilds their dependents. Both compiler metadata and executable archives retain
 nanosecond timestamps. This includes the normal Chrome bootstrap's dependencies as well as the instrumented targets.
