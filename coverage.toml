@@ -232,7 +232,7 @@ reason = "unit-test module (the device formats of the native speaker and microph
 context = { "crates/teams-media/src/devices/native/tests.rs" = "d947175e219563780fb6512f1cee34411c81326643aa09b137b5ae1288da0adf" }
 
 [unmapped_sources."crates/teams-media/src/devices/native/tests/jitter.rs"]
-sha256 = "53733664f1bfa18c6e58c7707ebfbb387c5e17a6861697267405149eed3625ce"
+sha256 = "3cd5c6041072a8f4eb72b8b66b440a48dcb1c0f8c0ead8e6283c7cfeef7ea6d8"
 reason = "unit-test module (the native speaker under a call's delivery jitter, on a paced test device) included only by native/tests.rs; omitted by cargo-llvm-cov's test-file filter"
 context = { "crates/teams-media/src/devices/native/tests.rs" = "d947175e219563780fb6512f1cee34411c81326643aa09b137b5ae1288da0adf" }
 

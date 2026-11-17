@@ -28,6 +28,8 @@ const AHEAD: Duration = Duration::from_millis(20);
 const UNDERRUN: Duration = Duration::from_millis(5);
 /// A silent run this long (in windows) is a device stall's: a hold in delivery gives less.
 const STALL_RUN: usize = 12;
+/// How much longer than its stall a stall's silence may be: the windows around it fall where they fall.
+const PAST_STALL: Duration = Duration::from_millis(50);
 /// Sound after a stall's silence for less than this (in windows) and then silence again is a second gap from the stall.
 const AFTER_STALL: usize = 6;
 /// How late a frame plays at most once the device runs again: the speaker's 50 ms playout margin, the device's 40 ms
@@ -52,6 +54,9 @@ struct Line {
     next_stall: Option<Instant>,
     /// Each write: where it plays on the device's own line, in samples from the start, and its samples.
     played: Vec<(usize, Vec<f32>)>,
+    /// Each stall as it really was: where the device's line goes on after it, and how long the thread stopped. A
+    /// loaded runner's timers make a stop of 300 ms last up to 430 ms.
+    stalls: Vec<(usize, Duration)>,
 }
 
 impl Line {
@@ -140,11 +145,13 @@ mod imp {
             let mut line = lock(&line);
             let now = Instant::now();
             let start = *line.start.get_or_insert(now);
+            let mut stalled = None;
             if let Some(every) = model.every {
                 let next = line.next_stall.get_or_insert(start + every);
                 if now >= *next {
                     *next += every;
                     wait_until(now + model.stall);
+                    stalled = Some(now.elapsed());
                 }
             }
             let now = Instant::now();
@@ -152,6 +159,7 @@ mod imp {
                 line.taken = (now - start).as_secs_f64() * model.speed;
             }
             let at = to_samples(line.taken);
+            line.stalls.extend(stalled.map(|stall| (at, stall)));
             #[expect(clippy::cast_precision_loss, reason = "a write is a few hundred samples")]
             let taken = samples.len() as f64 / f64::from(SAMPLE_RATE);
             line.played.push((at, samples));
@@ -219,16 +227,19 @@ fn schedule(frames: u32, seed: u32) -> Vec<Duration> {
 }
 
 /// What a user hears: the windows of the tone after its first second, how many are disturbed (under 30 dB), the
-/// longest silent run, the stalls with a second gap soon after their silence, and how late the last frame played.
+/// longest silent run, how much longer a stall's silence was than the stall, the stalls with a second gap soon after
+/// their silence, and how late the last frame played.
 struct Heard {
     windows: usize,
     disturbed: usize,
     silent: Duration,
+    past_stall: Duration,
     second_gaps: usize,
     late: Duration,
 }
 
-fn judge(heard: &[f32], from: usize, to: usize) -> Heard {
+/// The line's windows from sample `from` to `to`, against the stalls the device had and the stall its model gives.
+fn judge(heard: &[f32], (from, to): (usize, usize), stalls: &[(usize, Duration)], modelled: Duration) -> Heard {
     let fits: Vec<(f32, f32)> = heard
         .get(from..to.min(heard.len()))
         .unwrap_or_default()
@@ -243,6 +254,21 @@ fn judge(heard: &[f32], from: usize, to: usize) -> Heard {
         .collect();
     let runs = silent_runs(&silent);
     let longest = runs.iter().map(|(_, length)| *length).max().unwrap_or(0);
+    let past_stall = runs
+        .iter()
+        .map(|&(start, length)| {
+            // a stall's silence ends where the line goes on after it
+            let (first, after) = (from + start * WINDOW, from + (start + length + 1) * WINDOW);
+            let stall = stalls
+                .iter()
+                .filter(|(at, _)| (first..=after).contains(at))
+                .map(|(_, stall)| *stall)
+                .max()
+                .unwrap_or(modelled);
+            window_time(length).saturating_sub(stall)
+        })
+        .max()
+        .unwrap_or_default();
     let second_gaps = runs
         .windows(2)
         .filter(|pair| pair[0].1 >= STALL_RUN && pair[1].0 - (pair[0].0 + pair[0].1) < AFTER_STALL)
@@ -250,10 +276,15 @@ fn judge(heard: &[f32], from: usize, to: usize) -> Heard {
     Heard {
         windows: fits.len(),
         disturbed: fits.iter().filter(|(_, db)| *db < 30.0).count(),
-        silent: Duration::from_millis(20) * u32::try_from(longest).unwrap(),
+        silent: window_time(longest),
+        past_stall,
         second_gaps,
         late: Duration::ZERO,
     }
+}
+
+fn window_time(windows: usize) -> Duration {
+    Duration::from_millis(20) * u32::try_from(windows).unwrap()
 }
 
 /// Each run of silent windows: where it starts and how many windows it holds.
@@ -317,11 +348,15 @@ fn play(model: &str, seconds: u32, seed: u32) -> Heard {
     let line = lock(&line);
     let heard = line.heard();
     // the device's line starts when it opens, about when the first frame came
-    let mut judged = judge(&heard, to_samples(1.0), to_samples(f64::from(seconds)));
+    let modelled = Duration::from_millis(model.split(' ').nth(1).unwrap().parse().unwrap());
+    let span = (to_samples(1.0), to_samples(f64::from(seconds)));
+    let mut judged = judge(&heard, span, &line.stalls, modelled);
     judged.late = lateness(&line, &heard, heard_at);
+    let stalls: Vec<u128> = line.stalls.iter().map(|(_, stall)| stall.as_millis()).collect();
     eprintln!(
-        "{model}: {} of {} windows disturbed, longest silence {:?}, {} second gaps, last frame {:?} late",
-        judged.disturbed, judged.windows, judged.silent, judged.second_gaps, judged.late
+        "{model}: {} of {} windows disturbed, longest silence {:?} ({:?} past its stall), stalls {stalls:?} ms, {} \
+         second gaps, last frame {:?} late",
+        judged.disturbed, judged.windows, judged.silent, judged.past_stall, judged.second_gaps, judged.late
     );
     judged
 }
@@ -345,14 +380,16 @@ fn a_call_s_jitter_gives_only_short_gaps() {
 
 /// A device whose thread stops for 300 ms every 2 s, as WASAPI's does in a loaded VM: each stop loses that much sound,
 /// no more, and the frames after it play in time again. A speaker slaved to the system clock went silent for seconds
-/// here. The run ends 1 s after a stop, so its last frame shows the latency after a stall.
+/// here. The run ends 1 s after a stop, so its last frame shows the latency after a stall. Each silence is held against
+/// the stop the device really had: a loaded runner's timers make it longer than 300 ms.
 #[test]
 fn a_device_that_stalls_loses_only_the_stall() {
     let heard = play("1.0 300 2000", 19, 11);
     assert!(
-        heard.silent <= Duration::from_millis(350),
-        "silent for {:?}",
-        heard.silent
+        heard.past_stall <= PAST_STALL,
+        "silent for {:?}, {:?} longer than its stall",
+        heard.silent,
+        heard.past_stall
     );
     assert!(
         heard.disturbed * 10 <= heard.windows * 3,
