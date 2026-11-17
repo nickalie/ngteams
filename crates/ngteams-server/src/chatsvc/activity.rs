@@ -228,7 +228,7 @@ impl Scene {
         match effect {
             Effect::None => Plan::default(),
             Effect::Reacted(key) => self.of_reaction(row, actor, key),
-            Effect::Unreacted => self.of_unreaction(row, body, actor),
+            Effect::Unreacted(_) => self.of_unreaction(row, body, actor),
             Effect::Edited => self.of_edit(row, body),
             Effect::Deleted => Plan {
                 gone: self.items_of(row, before),

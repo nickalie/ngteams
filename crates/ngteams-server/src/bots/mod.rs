@@ -16,7 +16,9 @@
 pub(crate) mod activity;
 mod connector;
 mod delivery;
+mod invoke;
 pub(crate) mod outbox;
+mod pictures;
 
 pub use outbox::{Delivery, FAILED, PENDING, SENT, deliveries};
 pub(crate) mod schema;
@@ -125,6 +127,13 @@ fn unsigned_credential(bot: &Bot) -> String {
     crate::apps::digest(&format!("unsigned:{}", bot.secret_hash))
 }
 
+/// The 1:1 chat of `person` and `bot`, as Teams names it: `19:<a>_<b>@unq.gbl.spaces`, the ids in order.
+pub(crate) fn personal_chat(person: &str, bot: &str) -> String {
+    let mut ids = [person, bot];
+    ids.sort_unstable();
+    format!("19:{}_{}@unq.gbl.spaces", ids[0], ids[1])
+}
+
 /// Before a person's message to `chat`: when it names their 1:1 chat with a bot whose app they may use
 /// (`19:<a>_<b>@unq.gbl.spaces`, the ids in order) and the chat isn't there yet, it is made, as Teams makes a bot
 /// chat with its first message.
@@ -160,7 +169,7 @@ pub(crate) fn router(config: &crate::config::Config) -> Router<Arc<App>> {
     if !config.apps.enabled {
         return Router::new();
     }
-    connector::router()
+    connector::router().merge(invoke::router())
 }
 
 /// Typing by `user` in `chat` at the chat service's moment `at`, for the bots in it.

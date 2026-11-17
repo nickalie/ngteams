@@ -8,6 +8,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -38,10 +39,47 @@ impl Received {
     }
 }
 
+/// How the bot answers one activity: its status, its body (JSON when given) and how long it takes first.
+#[derive(Clone, Debug)]
+pub struct Scripted {
+    pub status: u16,
+    pub body: Option<Value>,
+    pub delay: Duration,
+}
+
+impl Scripted {
+    /// 200 with `body`.
+    pub fn json(body: Value) -> Self {
+        Self {
+            status: 200,
+            body: Some(body),
+            delay: Duration::ZERO,
+        }
+    }
+
+    /// `status` with an empty body.
+    pub const fn empty(status: u16) -> Self {
+        Self {
+            status,
+            body: None,
+            delay: Duration::ZERO,
+        }
+    }
+
+    #[must_use]
+    pub const fn after(mut self, delay: Duration) -> Self {
+        self.delay = delay;
+        self
+    }
+}
+
+type Script = Arc<dyn Fn(&Value) -> Scripted + Send + Sync>;
+
 struct Shared {
     sender: mpsc::UnboundedSender<Received>,
     status: AtomicU16,
     hits: AtomicUsize,
+    script: std::sync::Mutex<Option<Script>>,
 }
 
 /// A bot endpoint on loopback.
@@ -65,6 +103,7 @@ impl TestBot {
             sender,
             status: AtomicU16::new(status),
             hits: AtomicUsize::new(0),
+            script: std::sync::Mutex::new(None),
         });
         let router = Router::new()
             .route("/api/messages", post(receive))
@@ -89,6 +128,11 @@ impl TestBot {
 
     pub fn answer(&self, status: u16) {
         self.shared.status.store(status, Ordering::SeqCst);
+    }
+
+    /// From now on each activity is answered as `script` says, by the activity.
+    pub fn script(&self, script: impl Fn(&Value) -> Scripted + Send + Sync + 'static) {
+        *self.shared.script.lock().unwrap() = Some(Arc::new(script));
     }
 
     /// The next activity of type `kind`, skipping others; panics after `wait`.
@@ -129,9 +173,11 @@ impl Drop for TestBot {
     }
 }
 
-async fn receive(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: String) -> StatusCode {
+async fn receive(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: String) -> Response {
     shared.hits.fetch_add(1, Ordering::SeqCst);
-    let activity = serde_json::from_str(&body).unwrap_or(Value::Null);
+    let activity: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+    let script = shared.script.lock().unwrap().clone();
+    let scripted = script.map(|script| script(&activity));
     let authorization = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
@@ -140,7 +186,17 @@ async fn receive(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: St
         activity,
         authorization,
     });
-    StatusCode::from_u16(shared.status.load(Ordering::SeqCst)).unwrap_or(StatusCode::OK)
+    let Some(scripted) = scripted else {
+        return StatusCode::from_u16(shared.status.load(Ordering::SeqCst))
+            .unwrap_or(StatusCode::OK)
+            .into_response();
+    };
+    tokio::time::sleep(scripted.delay).await;
+    let status = StatusCode::from_u16(scripted.status).unwrap_or(StatusCode::OK);
+    match scripted.body {
+        Some(body) => (status, axum::Json(body)).into_response(),
+        None => status.into_response(),
+    }
 }
 
 /// The bot's side of the Bot Connector API: the `serviceUrl` it was given (reached at the server's loopback origin)

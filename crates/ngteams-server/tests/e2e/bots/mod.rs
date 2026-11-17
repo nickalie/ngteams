@@ -2,10 +2,12 @@
 //! with in MSAL's exact form, and the keys the server signs activities to a bot with. Apps, bots and their names here
 //! are synthetic.
 
+mod attachments;
 mod connector;
 mod credentials;
 mod delivery;
 pub mod endpoint;
+mod invoke;
 mod keys;
 mod people;
 mod registry;

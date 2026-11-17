@@ -15,7 +15,6 @@ use serde_json::{Value, json};
 
 use super::{Error, IC3, account, quota, repo};
 use crate::app::App;
-use crate::db::users::User;
 use crate::db::{Db, DbError};
 use crate::storage::Storage;
 use crate::teams::repo::joined;
@@ -194,14 +193,14 @@ pub(super) fn picture_type(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// The object when `caller` made it or is now in a chat it was made for.
-async fn readable(db: &Db, caller: &User, id: &str) -> Result<repo::Object, Error> {
+/// The object when `reader` made it or is now in a chat it was made for.
+async fn readable(db: &Db, reader: &str, id: &str) -> Result<repo::Object, Error> {
     let object = repo::object(db, id).await?.ok_or(Error::Missing)?;
-    if object.owner_id == caller.id {
+    if object.owner_id == reader {
         return Ok(object);
     }
     let chats = repo::object_chats(db, id).await?;
-    if joined(db, &caller.id, &chats).await?.is_empty() {
+    if joined(db, reader, &chats).await?.is_empty() {
         return Err(Error::Forbidden);
     }
     Ok(object)
@@ -209,7 +208,7 @@ async fn readable(db: &Db, caller: &User, id: &str) -> Result<repo::Object, Erro
 
 async fn read(State(app): State<Arc<App>>, headers: HeaderMap, Path(id): Path<String>) -> Result<Json<Value>, Error> {
     let caller = account(&app, &headers, IC3).await?;
-    let object = readable(&app.db, &caller, &id).await?;
+    let object = readable(&app.db, &caller.id, &id).await?;
     let contents = match &object.content_type {
         Some(_) => json!({"imgpsh": {"length": object.size}}),
         None => json!({}),
@@ -237,7 +236,7 @@ async fn view(
     if !VIEWS.contains(&view.as_str()) {
         return Err(Error::Missing);
     }
-    let (content_type, bytes) = served(&app.db, app.storage.as_ref(), &caller, &id).await?;
+    let (content_type, bytes) = served(&app.db, app.storage.as_ref(), &caller.id, &id).await?;
     let headers = [
         (CONTENT_TYPE, content_type.as_str()),
         (CACHE_CONTROL, "private, max-age=86400"),
@@ -245,12 +244,12 @@ async fn view(
     Ok((headers, bytes).into_response())
 }
 
-/// The type and the bytes of the picture `caller` may read.
-async fn served(db: &Db, storage: &dyn Storage, caller: &User, id: &str) -> Result<(String, Bytes), Error> {
+/// The type and the bytes of the picture `reader` may read.
+async fn served(db: &Db, storage: &dyn Storage, reader: &str, id: &str) -> Result<(String, Bytes), Error> {
     let mut gone = None;
     // a fill may replace the bytes between the row's read and theirs: the row is read again until it names them
     loop {
-        let object = readable(db, caller, id).await?;
+        let object = readable(db, reader, id).await?;
         let (Some(content_type), Some(blob)) = (object.content_type, object.blob) else {
             return Err(Error::Missing);
         };
@@ -262,6 +261,69 @@ async fn served(db: &Db, storage: &dyn Storage, caller: &User, id: &str) -> Resu
         }
         gone = Some(blob);
     }
+}
+
+/// What became of a bot's picture ([`keep_bot_picture`]).
+pub(crate) enum BotPicture {
+    /// Kept: the object's id.
+    Made(String),
+    /// Not a picture the client shows, or larger than a picture may be.
+    NotAPicture,
+    Quota,
+    Failed,
+}
+
+/// A picture's name, type and bytes, for a bot that may read it.
+pub(crate) struct Kept {
+    pub filename: String,
+    pub content_type: String,
+    pub bytes: Bytes,
+}
+
+/// A bot's picture for `chat` (`crate::bots`): an object of the bot's own, made for that chat alone and filled at
+/// once, as a person's pasted picture is.
+pub(crate) async fn keep_bot_picture(app: &App, bot: &str, chat: &str, filename: &str, bytes: Bytes) -> BotPicture {
+    let Some(content_type) = picture_type(&bytes) else {
+        return BotPicture::NotAPicture;
+    };
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > app.config.media.max_picture_bytes {
+        return BotPicture::NotAPicture;
+    }
+    let object = repo::Object {
+        id: format!("0-{}-d1-{}", app.config.region, uuid::Uuid::new_v4().simple()),
+        owner_id: bot.to_owned(),
+        kind: PICTURE.to_owned(),
+        filename: filename.to_owned(),
+        content_type: None,
+        blob: None,
+        size: 0,
+        created_at: crate::db::now(),
+    };
+    if let Err(error) = repo::create_object(&app.db, &object, &[chat.to_owned()]).await {
+        tracing::warn!(%error, "a bot's picture wasn't made");
+        return BotPicture::Failed;
+    }
+    match store(&app.db, app.storage.as_ref(), &object, content_type, bytes, quota(app)).await {
+        Ok(()) => BotPicture::Made(object.id),
+        Err(Error::Quota) => BotPicture::Quota,
+        Err(_) => BotPicture::Failed,
+    }
+}
+
+/// The picture `id` when `bot` made it or is now in a chat it was made for.
+pub(crate) async fn bot_picture(app: &App, bot: &str, id: &str) -> Option<Kept> {
+    let object = readable(&app.db, bot, id).await.ok()?;
+    let (content_type, bytes) = served(&app.db, app.storage.as_ref(), bot, id).await.ok()?;
+    Some(Kept {
+        filename: object.filename,
+        content_type,
+        bytes,
+    })
+}
+
+/// Whether `bot` made the picture `id`.
+pub(crate) async fn bot_owns_picture(app: &App, bot: &str, id: &str) -> bool {
+    matches!(repo::object(&app.db, id).await, Ok(Some(object)) if object.owner_id == bot)
 }
 
 #[cfg(test)]
@@ -511,7 +573,7 @@ mod tests {
         store(&db, &storage, &object, "image/png", Bytes::from(vec![1; 10]), 0)
             .await
             .unwrap();
-        let served = served(&db, &storage, &owner(), &object.id).await.unwrap();
+        let served = served(&db, &storage, &owner().id, &object.id).await.unwrap();
         assert_eq!(served, ("image/gif".to_owned(), Bytes::from(vec![2; 1])));
     }
 
@@ -523,7 +585,7 @@ mod tests {
         repo::fill_object(&db, &object, "gone", "image/png", 5, 0)
             .await
             .unwrap();
-        let served = served(&db, &storage, &owner(), &object.id).await;
+        let served = served(&db, &storage, &owner().id, &object.id).await;
         assert!(matches!(served, Err(Error::Missing)));
     }
 }

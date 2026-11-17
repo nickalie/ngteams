@@ -8,6 +8,7 @@
 //! account ever reaches the store.
 
 mod ams;
+pub(crate) use ams::{BotPicture, bot_owns_picture, bot_picture, keep_bot_picture};
 mod drive;
 mod fetch;
 mod graph;

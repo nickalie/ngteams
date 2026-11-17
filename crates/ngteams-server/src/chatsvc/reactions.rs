@@ -72,7 +72,7 @@ pub(super) async fn react(
         actor: &caller.id,
         who: message_repo::Who::AnyMember,
         effect: if remove {
-            message_repo::Effect::Unreacted
+            message_repo::Effect::Unreacted(key)
         } else {
             message_repo::Effect::Reacted(key)
         },

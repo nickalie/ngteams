@@ -337,7 +337,8 @@ pub(super) enum Effect<'a> {
     None,
     /// The actor's reaction, by its key.
     Reacted(&'a str),
-    Unreacted,
+    /// The actor's reaction taken back, by its key.
+    Unreacted(&'a str),
     Edited,
     Deleted,
 }
@@ -419,7 +420,13 @@ where
             let event = match change.effect {
                 Effect::Edited => Some(crate::bots::activity::Event::Edited { id, body: &body }),
                 Effect::Deleted => Some(crate::bots::activity::Event::Deleted { id }),
-                _ => None,
+                Effect::Reacted(key) | Effect::Unreacted(key) => Some(crate::bots::activity::Event::Reaction {
+                    id,
+                    owner: &row.owner_id,
+                    key,
+                    added: matches!(change.effect, Effect::Reacted(_)),
+                }),
+                Effect::None => None,
             };
             let queued = match event {
                 Some(event) => crate::bots::outbox::enqueue!(conn, chat, actor, event, version),

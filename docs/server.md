@@ -657,8 +657,8 @@ paging of the lists (a list is whole, without `nextLink`).
 
 The server becomes a Bot Connector for bots built with the Bot Framework, Teams or Microsoft 365 Agents SDKs. It
 registers apps and bots, gives each bot its credentials and the keys to check the server with, delivers chat events
-to bots as activities and serves the connector routes a bot answers on (1:1 bot chats). Invokes, installs, group
-chats and channels are not served yet.
+to bots as activities, serves the connector routes a bot answers on (1:1 bot chats) and passes a person's invokes to
+the bot ([below](#invokes)). Installs, group chats and channels are not served yet.
 
 **A bot is a principal in chats**: a `users` row of kind `app` with the bot's id, MRI `28:<id>`, no password and no
 sign-in. No people read finds it: not the admin's account list or account changes, not a sign-in, not a profile
@@ -729,7 +729,8 @@ so a person's read receipt can name it.
 
 **To a bot.** In a 1:1 chat the bot gets each message (`message`), edit (`messageUpdate`, `channelData.eventType`
 `editMessage`), delete (`messageDelete`, `softDeleteMessage`) and typing (`typing`) of the person; in a group chat only
-a message that mentions it. An activity is the `msteams` channel's: `channelId: "msteams"`, `serviceUrl`, `from`
+a message that mentions it. In any chat it gets a reaction put on or taken off one of its own messages
+(`messageReaction`, `replyToId` the message, `reactionsAdded` or `reactionsRemoved` `[{"type": <key>}]`). An activity is the `msteams` channel's: `channelId: "msteams"`, `serviceUrl`, `from`
 `{"id": "29:<account id>", "name", "aadObjectId"}`, `recipient` `{"id": "28:<bot id>", "name"}`, `conversation`
 `{"id", "conversationType": "personal", "isGroup": false, "tenantId"}`, `channelData.tenant.id`, `timestamp`,
 `localTimestamp`, `locale`. A message's `id` is the chat service's message id; its `text` is the message's plain text,
@@ -776,12 +777,44 @@ is 403.
 | `GET v3/conversations/{id}/members`, `…/activities/{activityId}/members` | the chat's people as `TeamsChannelAccount` (`id` `29:<id>`, `name`, `aadObjectId`, `objectId`, `givenName`, `surname`, `email`, `userPrincipalName`, `tenantId`, `userRole`) | 200 list |
 | `GET v3/conversations/{id}/pagedmembers` | the same | 200 `{"members"}` |
 | `GET v3/conversations/{id}/members/{member}` | one, by `29:<id>`, `8:orgid:<id>`, id or address | 200 account |
+| `POST v3/conversations/{id}/attachments` | keeps a picture for the chat (`AttachmentData`: `type`, `name`, `originalBase64`; PNG, JPEG, GIF or WebP up to `media.max_picture_bytes`) as a media object of the bot's own, made for that chat | 200 `{"id"}` |
+| `GET v3/attachments/{id}`, `…/views/original` | a picture the bot made or one of a chat it is in: its `AttachmentInfo` (`name`, `type`, `views` `[{"viewId": "original", "size"}]`), or its bytes | 200 |
 | `POST v3/conversations` | the bot's 1:1 chat with one person (`members[0].id` `29:<id>` or `8:orgid:<id>`, or `aadObjectId`) who may use its app, with `activity` posted in it when given | 201 `{"id", "activityId", "serviceUrl"}` |
 | `v3/batch/…`, `v3/teams/…`, `v1/meetings/…`, `…/history` | not served | 501 |
 
+A message's picture attachment (`contentType` `image/…`) names a picture the bot kept (its `contentUrl` the
+`…/v3/attachments/{id}/views/original` above) or carries one as a `data:` URL (kept then, as an upload is). The
+message shows it as a pasted picture does ([Pictures in messages](#pictures-in-messages-ams-ams)): an `<img>` of
+the object's `imgo` view after the text, read by the chat's people alone. A request may be up to 4 MiB.
+
 A bot acts only in a chat it is in (403) and changes only its own messages (403). Refusals take the Bot Framework's
 `{"error": {"code", "message"}}`: 400 `BadArgument` (not an activity, no text or card, an attachment that isn't a card
-the client draws, a group conversation), 401 `Unauthorized`, 403 `Forbidden`, 404 `NotFound`.
+the client draws or a picture the server keeps, a group conversation), 401 `Unauthorized`, 403 `Forbidden`, 404
+`NotFound`, 507 `InsufficientStorage` (the bot's pictures fill its `media.user_quota_bytes`).
+
+### Invokes
+
+`POST /api/chatsvc/<region>/v1/agents/28:<bot>/invoke` with a person's `ic3` bearer token: a card's button, a
+message extension's command, search or dialog ([bots.md](protocol/bots.md)). The server checks that the person may
+use the bot's app (`appId` the app's or the bot's id; else 404), and that both are in `conversation.id` now (a chat,
+or a channel post's `<channel>;messageid=<post>`; else 403) and the person may read `messageId` there (else 404).
+Without a conversation (an app's commands asked with none open) the invoke names their 1:1 chat. Then it posts one
+activity to the bot, signed as a delivery is and through the same address guard, and waits at most
+`bots.send_timeout` seconds; nothing is kept and nothing is sent again, so any node serves it.
+
+The activity is an `invoke` with the request's `name` and `value` (`replyToId` the `messageId`), addressed as a
+delivery is; a card's plain submit (`name` `message`) is a `message` activity with the `value` and a `messageBack`'s
+`text`. Nothing else of the request goes to the bot: a `userAadToken` a client sends is never read.
+
+| The bot's answer | The person gets |
+|---|---|
+| 2xx, empty | the same status, empty |
+| 2xx, `{"composeExtension": …}` or `{"task": …}` | 200 with `responseType` added, as Teams' chat service answers |
+| 2xx, other JSON (an `Action.Execute`'s `{"statusCode", "type", "value"}`) | that JSON as it is |
+| 400–599 but 401, 403, 407 | the bot's status and JSON body |
+| 401, 403, 407, a redirect, a body that isn't JSON, no endpoint, a refused address | 502 |
+| none within `bots.send_timeout` | 504 |
+
 
 ### The keys a bot checks activities with
 

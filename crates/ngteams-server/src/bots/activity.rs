@@ -15,7 +15,7 @@ pub(crate) const HTML: &str = "RichText/Html";
 pub(crate) const CARD: &str = "RichText/Media_Card";
 
 /// The locale activities name: the server has no account locale yet.
-const LOCALE: &str = "en-US";
+pub(crate) const LOCALE: &str = "en-US";
 
 /// The bot an activity goes to.
 pub(crate) struct Recipient<'a> {
@@ -38,10 +38,27 @@ pub(crate) struct Place<'a> {
 
 /// What happened, with the message's body as the chat service keeps it.
 pub(crate) enum Event<'a> {
-    Message { id: i64, body: &'a Value },
-    Edited { id: i64, body: &'a Value },
-    Deleted { id: i64 },
-    Typing { at: i64 },
+    Message {
+        id: i64,
+        body: &'a Value,
+    },
+    Edited {
+        id: i64,
+        body: &'a Value,
+    },
+    Deleted {
+        id: i64,
+    },
+    Typing {
+        at: i64,
+    },
+    /// A reaction `key` put on (`added`) or taken off the message `id` of `owner`.
+    Reaction {
+        id: i64,
+        owner: &'a str,
+        key: &'a str,
+        added: bool,
+    },
 }
 
 impl Event<'_> {
@@ -51,6 +68,7 @@ impl Event<'_> {
             Self::Edited { .. } => "messageUpdate",
             Self::Deleted { .. } => "messageDelete",
             Self::Typing { .. } => "typing",
+            Self::Reaction { .. } => "messageReaction",
         }
     }
 }
@@ -86,6 +104,12 @@ pub(crate) fn pending(event: &Event<'_>, place: &Place<'_>, from: &Sender<'_>, t
         Event::Typing { at } => {
             activity["id"] = format!("typing-{at}").into();
         }
+        Event::Reaction { id, key, added, .. } => {
+            activity["id"] = format!("reaction-{id}-{at}").into();
+            activity["replyToId"] = id.to_string().into();
+            let listed = if *added { "reactionsAdded" } else { "reactionsRemoved" };
+            activity[listed] = json!([{ "type": key }]);
+        }
     }
     activity
 }
@@ -120,15 +144,16 @@ pub(crate) struct Made {
     pub content: String,
 }
 
-/// The messages `activity` makes, in order: its text, then one card message carrying its cards.
-pub(crate) fn messages(activity: &Value, origin: &str) -> Result<Vec<Made>, Refused> {
+/// The messages `activity` makes, in order: its text with `pictures` (each one's HTML) after it, then one card
+/// message carrying its cards.
+pub(crate) fn messages(activity: &Value, origin: &str, pictures: &[String]) -> Result<Vec<Made>, Refused> {
     let mut made = Vec::new();
-    if let Some(text) = activity["text"].as_str().filter(|text| !text.trim().is_empty()) {
+    let text = activity["text"].as_str().filter(|text| !text.trim().is_empty());
+    if text.is_some() || !pictures.is_empty() {
         let format = activity["textFormat"].as_str().unwrap_or("markdown");
-        made.push(Made {
-            kind: HTML,
-            content: html(text, format),
-        });
+        let mut content = text.map(|text| html(text, format)).unwrap_or_default();
+        content.extend(pictures.iter().map(String::as_str));
+        made.push(Made { kind: HTML, content });
     }
     let attachments = activity["attachments"].as_array().map_or(&[][..], Vec::as_slice);
     if !attachments.is_empty() {
@@ -223,19 +248,19 @@ mod tests {
             {"contentType": "application/vnd.microsoft.card.adaptive", "content": card},
             {"contentType": "application/vnd.microsoft.card.hero", "content": {"title": "h"}}],
             "suggestedActions": {"actions": [{"type": "imBack", "title": "Yes", "value": "yes"}]}});
-        let made = messages(&both, "https://own.example.test").unwrap();
+        let made = messages(&both, "https://own.example.test", &[]).unwrap();
         assert_eq!(made.len(), 2);
         assert_eq!(made[0].kind, HTML);
         assert_eq!(made[1].kind, CARD);
         let parsed = teams_card(&made[1].content);
         assert_eq!(parsed["attachments"].as_array().unwrap().len(), 2);
         assert_eq!(parsed["suggestedActions"]["actions"][0]["value"], "yes");
-        assert_eq!(messages(&json!({"text": "  "}), "o"), Err(Refused::Empty));
+        assert_eq!(messages(&json!({"text": "  "}), "o", &[]), Err(Refused::Empty));
         let file = json!({"attachments": [{"contentType": "image/png", "contentUrl": "https://x.example.test/a.png"}]});
-        assert_eq!(messages(&file, "o"), Err(Refused::Attachment));
+        assert_eq!(messages(&file, "o", &[]), Err(Refused::Attachment));
         let broken = json!({"attachments": [{"contentType": "application/vnd.microsoft.card.adaptive",
             "content": {"type": "AdaptiveCard", "body": [{"text": "no type"}]}}]});
-        assert_eq!(messages(&broken, "o"), Err(Refused::Attachment));
+        assert_eq!(messages(&broken, "o", &[]), Err(Refused::Attachment));
     }
 
     fn teams_card(content: &str) -> Value {

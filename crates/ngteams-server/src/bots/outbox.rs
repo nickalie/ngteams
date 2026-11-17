@@ -143,8 +143,12 @@ macro_rules! enqueue {
 }
 pub(crate) use enqueue;
 
-/// Whether a bot in a chat gets `event`: in a 1:1 chat everything; in a group chat a message that mentions it.
+/// Whether a bot in a chat gets `event`: a reaction when the message is the bot's own; otherwise in a 1:1 chat
+/// everything, in a group chat a message that mentions it.
 pub(crate) fn concerns(event: &super::activity::Event<'_>, personal: bool, bot: &str) -> bool {
+    if let super::activity::Event::Reaction { owner, .. } = event {
+        return *owner == bot;
+    }
     if personal {
         return true;
     }

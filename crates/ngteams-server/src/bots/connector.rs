@@ -22,13 +22,13 @@ use crate::app::App;
 use crate::chatsvc::service::{self as chats, BotChange, BotPost};
 use crate::db::DbError;
 
-/// The largest activity a bot may send.
-const MAX_ACTIVITY: usize = 256 * 1024;
+/// The largest request a bot may send: an activity, or a picture in base64 (`super::pictures`).
+const MAX_BODY: usize = 4 * 1024 * 1024;
 
 pub(super) fn router() -> axum::Router<Arc<App>> {
     axum::Router::new()
         .route("/bot/{*rest}", any(dispatch))
-        .layer(DefaultBodyLimit::max(MAX_ACTIVITY))
+        .layer(DefaultBodyLimit::max(MAX_BODY))
 }
 
 /// A refusal in the Bot Framework's `ErrorResponse` shape.
@@ -137,6 +137,11 @@ async fn route(
     if is(path.get(1), "conversations") {
         return conversations(&caller, method, &path[2..], body).await;
     }
+    if is(path.get(1), "attachments") && method == Method::GET {
+        return super::pictures::read(app, &bot, &path[2..])
+            .await
+            .map_err(|refused| picture_refused(&refused));
+    }
     Err(unserved(path))
 }
 
@@ -203,6 +208,7 @@ enum Operation<'a> {
     Roster,
     Paged,
     Member(&'a str),
+    Upload,
 }
 
 fn operation<'a>(method: &Method, rest: &[&'a str]) -> Option<Operation<'a>> {
@@ -216,6 +222,7 @@ fn operation<'a>(method: &Method, rest: &[&'a str]) -> Option<Operation<'a>> {
             Operation::Roster
         }
         ("GET", [paged]) if named(paged, "pagedmembers") => Operation::Paged,
+        ("POST", [attachments]) if named(attachments, "attachments") => Operation::Upload,
         ("GET", [members, member]) if named(members, "members") => Operation::Member(member),
         _ => return None,
     };
@@ -243,6 +250,9 @@ async fn conversations(caller: &Caller<'_>, method: &Method, path: &[&str], body
             Ok(Json(json!({"members": members})).into_response())
         }
         Operation::Member(member) => one_member(caller, conversation, member).await,
+        Operation::Upload => super::pictures::upload(caller.app, caller.bot, conversation, body)
+            .await
+            .map_err(|refused| picture_refused(&refused)),
     }
 }
 
@@ -258,6 +268,34 @@ fn refused(refused: &Refused) -> Refusal {
         Refused::Empty => Refusal::bad("The activity has neither text nor an attachment."),
         Refused::Attachment => Refusal::bad("An attachment isn't a card this server carries."),
     }
+}
+
+fn picture_refused(refused: &super::pictures::Refused) -> Refusal {
+    use super::pictures::Refused;
+    match refused {
+        Refused::NotAPicture => Refusal::bad("An attachment isn't a picture this server keeps."),
+        Refused::Denied => Refusal::forbidden(),
+        Refused::Missing => Refusal::missing(),
+        Refused::Quota => Refusal::new(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "InsufficientStorage",
+            "The bot's storage is full.",
+        ),
+        Refused::Failed => Refusal::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "ServiceError",
+            "The service can't answer now.",
+        ),
+    }
+}
+
+/// The messages `activity` makes in `conversation`, its pictures kept or found first.
+async fn made(caller: &Caller<'_>, conversation: &str, activity: &Value) -> Result<Vec<activity::Made>, Refusal> {
+    let mut activity = activity.clone();
+    let pictures = super::pictures::take(caller.app, caller.bot, conversation, &mut activity)
+        .await
+        .map_err(|refused| picture_refused(&refused))?;
+    activity::messages(&activity, &caller.app.config.origin(), &pictures).map_err(|error| refused(&error))
 }
 
 fn resource(id: i64) -> Response {
@@ -285,7 +323,7 @@ async fn send(caller: &Caller<'_>, conversation: &str, body: &[u8]) -> Result<Re
 
 /// Posts each message `activity` makes; the last one's id.
 async fn post(caller: &Caller<'_>, conversation: &str, activity: &Value) -> Result<i64, Refusal> {
-    let made = activity::messages(activity, &caller.app.config.origin()).map_err(|error| refused(&error))?;
+    let made = made(caller, conversation, activity).await?;
     let mut last = None;
     for message in made {
         let posted = chats::bot_post(
@@ -320,7 +358,7 @@ fn changed(change: BotChange) -> Result<(), Refusal> {
 async fn update(caller: &Caller<'_>, conversation: &str, id: &str, body: &[u8]) -> Result<Response, Refusal> {
     let id = message_id(id)?;
     let activity = parse(body)?;
-    let made = activity::messages(&activity, &caller.app.config.origin()).map_err(|error| refused(&error))?;
+    let made = made(caller, conversation, &activity).await?;
     // one message is changed: an activity of text and cards keeps its cards
     let message = made.last().ok_or_else(|| refused(&Refused::Empty))?;
     changed(

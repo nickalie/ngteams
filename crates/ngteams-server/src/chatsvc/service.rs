@@ -572,3 +572,67 @@ pub(crate) async fn bot_chat(app: &App, person: &str, bot: &str) -> Result<Optio
         }
     }
 }
+
+/// Where a person's invoke of a bot acts ([`invoke_place`]).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum InvokePlace {
+    /// A 1:1 chat or a group chat both are in now.
+    Chat { personal: bool },
+    /// A channel both are in now: its id, and its team's id and group.
+    Channel {
+        channel: String,
+        team: String,
+        group: String,
+    },
+    /// One of them isn't in the thread, or there is no such thread.
+    Denied,
+    /// The message named isn't one the person may read there.
+    NoMessage,
+}
+
+/// Where `person` asks `bot` in `thread` (a chat, or a channel's thread), about `message` when one is named.
+pub(crate) async fn invoke_place(
+    app: &App,
+    thread: &str,
+    person: &str,
+    bot: &str,
+    message: Option<i64>,
+) -> Result<InvokePlace, DbError> {
+    let Some(chat) = repo::chat(&app.db, thread).await? else {
+        return Ok(InvokePlace::Denied);
+    };
+    let members = repo::members(&app.db, thread).await?;
+    let person_in = members.iter().any(|member| member.user_id == person && !member.app);
+    let bot_in = members.iter().any(|member| member.user_id == bot && member.app);
+    if !person_in || !bot_in {
+        return Ok(InvokePlace::Denied);
+    }
+    if let Some(id) = message {
+        let readable: i64 = with_conn!(&app.db, |conn| chat_messages::table
+            .inner_join(
+                chat_members::table.on(chat_members::chat_id
+                    .eq(chat_messages::chat_id)
+                    .and(chat_members::user_id.eq(person))
+                    .and(chat_members::left_at.is_null())),
+            )
+            .filter(chat_messages::chat_id.eq(thread))
+            .filter(chat_messages::id.eq(id))
+            .filter(chat_messages::id.ge(chat_members::history_from))
+            .count()
+            .get_result(conn)
+            .await?);
+        if readable == 0 {
+            return Ok(InvokePlace::NoMessage);
+        }
+    }
+    Ok(match super::channels::place(&app.db, thread).await? {
+        Some(place) => InvokePlace::Channel {
+            channel: place.channel.id,
+            team: place.team.id,
+            group: place.team.group_id,
+        },
+        None => InvokePlace::Chat {
+            personal: chat.unique_roster,
+        },
+    })
+}
