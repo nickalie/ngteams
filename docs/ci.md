@@ -172,8 +172,8 @@ slowest shard's 0:30:08 and the 0:18:02 aggregate; the server's `e2e` target alo
 includes a first attempt that ended red after 2:09:53, when `share_window`'s far end presented no new frame during
 one 10-second hold, and the rerun of that shard and the aggregate, which passed.
 
-The warm execution path of **1:02:36 misses the 45-minute goal**. Workspace target reuse is a
-separate follow-up on `team/ci-speed-reuse`; it is not part of this checkpoint.
+The warm execution path of **1:02:36 misses the 45-minute goal**. The November 17 runs below measure the
+workspace target reuse.
 
 | Job | Cold queue | Cold execution | Cold tests | Warm queue | Warm execution | Warm tests |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -206,6 +206,63 @@ Coverage for the exact commit `c7673cd1a06841c7d34280388b0efe1e729ccc7a`. Packag
 skipped; no release or tag was created. The gate executed for 0:00:08 after a 0:08:06 queue (0:08:17 total workflow time).
 The earlier [negative gate proof](https://github.com/nickalie/ngteams/actions/runs/43574788930)
 rejected a cancelled same-commit Coverage run.
+
+### Workspace target reuse (November 17, 2026)
+
+These runs measure the workspace target reuse on 394 invocations and 26 runtime crates, on four-vCPU hosted runners
+with no runner queue of note. The cold run had no reuse source, no instrumented-dependency cache and no SDK cache.
+The warm run changes one line of `crates/teams-ui/src/calendar.rs` and reuses the cold run's build.
+
+| Measurement | Commit | Workflow wall | Execution path |
+| --- | --- | ---: | ---: |
+| [Cold](https://github.com/nickalie/ngteams/actions/runs/44006779247) | `93328561` | 1:14:28 | 1:14:19 |
+| [Warm, one `teams-ui` line](https://github.com/nickalie/ngteams/actions/runs/44011188000) | `a6f6f9cc` | 1:17:59 | 1:16:38 |
+
+| Job | Cold queue | Cold execution | Cold tests | Warm queue | Warm execution | Warm tests |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Coverage gate tests | 0:00:34 | 0:01:41 | — | 0:00:30 | 0:01:32 | — |
+| Build instrumented tests | 0:00:02 | 0:35:52 | — | 0:01:14 | 0:37:09 | — |
+| Coverage shard 0 | 0:00:03 | 0:25:18 | 0:20:34 | 0:00:02 | 0:24:47 | 0:20:22 |
+| Coverage shard 1 | 0:00:02 | 0:21:23 | 0:18:06 | 0:00:02 | 0:21:04 | 0:17:50 |
+| Coverage shard 2 | 0:00:03 | 0:22:38 | 0:19:24 | 0:00:03 | 0:25:19 | 0:19:08 |
+| Coverage shard 3 | 0:00:02 | 0:25:57 | 0:22:37 | 0:00:02 | 0:26:06 | 0:22:40 |
+| Coverage shard 4 | 0:00:03 | 0:25:43 | 0:18:52 | 0:00:02 | 0:26:29 | 0:22:22 |
+| Coverage shard 5 | 0:00:03 | 0:22:27 | 0:17:14 | 0:00:02 | 0:23:17 | 0:18:26 |
+| Coverage shard 6 | 0:00:02 | 0:25:58 | 0:21:55 | 0:00:03 | 0:25:04 | 0:19:35 |
+| Coverage shard 7 | 0:00:02 | 0:20:25 | 0:17:17 | 0:00:03 | 0:20:35 | 0:17:25 |
+| Coverage ≥90% | 0:00:02 | 0:12:29 | — | 0:00:02 | 0:13:00 | — |
+
+| Build step | Cold | Warm |
+| --- | ---: | ---: |
+| Environment and image | 0:02:36 | 0:03:36 |
+| Restore of the reused build (download 0:03:04, unpack 0:09:48) | — | 0:13:07 |
+| Compile | 0:24:46 | 0:10:28 |
+| Bundle the executables | 0:04:10 | 0:06:43 |
+| Compiler span | 0:21:56 | 0:09:57 |
+| Workspace units fresh / reused | 426 / 0 | 148 / 278 |
+| Dependency units fresh / reused | 1233 / 0 | 0 / 1233 |
+
+The reuse works as designed: the warm build compiles only `teams-ui`, `ngteams` and their test targets. But the
+restore downloads and unpacks about 12.6 GB of compressed test executables, because Cargo needs every output of a
+fresh unit. That costs as much time as the compile saves, so **the warm execution path of 1:16:38 misses the
+45-minute goal by 31.6 minutes**, and it is not faster than the cold path.
+
+The changes that do save time in these runs:
+
+- Measured weights balance the shards: the slowest shard ran its tests for 22.7 minutes, not 30.1.
+- A shard skips the disk cleanup when the runner has 40 GiB free: its environment step takes about 1 minute, not 3 to 5.
+- The build and report jobs remove the hosted SDKs while the image builds.
+
+What is left, largest first:
+
+1. The test executables are large because each one also contains the instrumented code of its dependencies. If only
+   workspace crates get instrumentation, the compile, the bundles, the restore and the profile merge all get smaller.
+2. A reuse that does not move the executables: keep each unchanged executable in the artifact of the run that built
+   it, and let the shards download it from there.
+3. The longest targets set the shortest possible shard: `ngteams/test/accounts_window` runs for 18.6 minutes (6
+   seconds before November 16), the server's `e2e` target for 17 minutes. More shards help only after a split of these
+   targets.
+4. The report job needs 7.5 minutes to merge the profiles and 3.3 minutes for its environment.
 
 ## Windows portability
 
