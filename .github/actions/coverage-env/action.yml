@@ -35,8 +35,10 @@ runs:
             /usr/local/share/boost /usr/local/share/powershell /usr/local/share/chromium /usr/share/swift \
             /usr/lib/jvm /usr/local/julia* /opt/az /opt/microsoft /opt/google)
         fi
-        nohup bash -c 'sudo rm -rf "$@"; echo $? > "$RUNNER_TEMP/coverage-disk-freed"' cleanup "${paths[@]}" \
-          > /dev/null 2>&1 &
+        # The rename writes the status file in one operation. The log keeps the rm errors for the wait step.
+        nohup bash -c 'sudo rm -rf "$@"; status=$?; out="$RUNNER_TEMP/coverage-disk-freed"
+          echo "$status" > "$out.tmp" && mv "$out.tmp" "$out"' cleanup "${paths[@]}" \
+          > "$RUNNER_TEMP/coverage-disk-freed.log" 2>&1 &
     - name: Allow browser sandbox namespaces on this disposable VM
       shell: bash
       run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -64,9 +66,15 @@ runs:
         for _ in $(seq 600); do
           if [[ -f "$RUNNER_TEMP/coverage-disk-freed" ]]; then
             df -h /
-            exit "$(cat "$RUNNER_TEMP/coverage-disk-freed")"
+            status=$(cat "$RUNNER_TEMP/coverage-disk-freed")
+            if [[ "$status" != 0 ]]; then
+              echo "the disk cleanup failed with status $status" >&2
+              cat "$RUNNER_TEMP/coverage-disk-freed.log" >&2 || true
+            fi
+            exit "$status"
           fi
           sleep 1
         done
         echo "the disk cleanup did not end in 10 minutes" >&2
+        cat "$RUNNER_TEMP/coverage-disk-freed.log" >&2 || true
         exit 1
