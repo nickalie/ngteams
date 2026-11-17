@@ -137,9 +137,63 @@ class CompilerStateTests(unittest.TestCase):
                 self.assertNotEqual(CACHE.compiler_key("native-image-and-flags"), original)
                 (root / "Cargo.toml").write_text("synthetic manifest\n")
                 self.assertEqual(CACHE.compiler_key("native-image-and-flags"), original)
-                # A build without the cached SDK compiled webrtc-sys without LK_CUSTOM_WEBRTC.
+                # The SDK cache comes and goes; the archive carries the SDK state instead of the key.
                 CACHE.SDK.mkdir(parents=True)
-                self.assertNotEqual(CACHE.compiler_key("native-image-and-flags"), original)
+                self.assertEqual(CACHE.compiler_key("native-image-and-flags"), original)
+
+    def test_a_restore_gives_the_build_the_sdk_state_it_was_compiled_with(self):
+        real_run = subprocess.run
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.initialize(root)
+            (root / "source.rs").write_text("synthetic source\n")
+            self.command(root, "git", "add", ".")
+            output = root / CACHE.DIRECTORIES[0] / "output"
+            sdk_file = root / CACHE.SDK / "synthetic.h"
+            archives = {}
+            with contextlib.chdir(root), contextlib.redirect_stdout(io.StringIO()):
+                for with_sdk in [False, True]:
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_text("synthetic compiler output\n")
+                    if with_sdk:
+                        sdk_file.parent.mkdir(parents=True)
+                        sdk_file.write_text("synthetic SDK header\n")
+                    CACHE.pack("key")
+                    archives[with_sdk] = root / f"archive-{with_sdk}.tar.zst"
+                    shutil.move("target/compiler-workspace.tar.zst", archives[with_sdk])
+                    shutil.rmtree(output.parent)
+                    shutil.rmtree(CACHE.WEBRTC, ignore_errors=True)
+
+                def restore(with_sdk, cached_sdk, key="key"):
+                    if cached_sdk:
+                        sdk_file.parent.mkdir(parents=True, exist_ok=True)
+                        sdk_file.write_text("synthetic SDK header\n")
+
+                    def run(arguments, **options):
+                        if arguments[0] == "gh":
+                            shutil.copy(archives[with_sdk], CACHE.INPUTS / "compiler-key.tar.zst")
+                            return subprocess.CompletedProcess(arguments, 0)
+                        # the repository's own unpack.sh, run in the synthetic checkout
+                        return real_run([str(ROOT / part) if part.startswith(".github/") else part
+                                         for part in arguments], **options)
+
+                    with patch.dict(os.environ, {"GITHUB_REPOSITORY": "owner/repo", "GITHUB_REF_NAME": "main"}), \
+                            patch.object(CACHE, "find_run", return_value=(1, ["compiler-key"])), \
+                            patch.object(CACHE.subprocess, "run", side_effect=run):
+                        return CACHE.restore(key, "compiler-key")
+
+                # a build that downloaded its own SDK: the cached one is hidden, so LK_CUSTOM_WEBRTC stays unset
+                self.assertTrue(restore(with_sdk=False, cached_sdk=True))
+                self.assertTrue(output.exists())
+                self.assertFalse(CACHE.WEBRTC.exists())
+                # a build that used the SDK: the archive brings it back after the cache evicted it
+                self.assertTrue(restore(with_sdk=True, cached_sdk=False))
+                self.assertEqual(sdk_file.read_text(), "synthetic SDK header\n")
+                shutil.rmtree(CACHE.WEBRTC)
+                # a failed restore leaves neither its output nor an SDK the cache did not give
+                self.assertFalse(restore(with_sdk=True, cached_sdk=False, key="other-key"))
+                self.assertFalse(output.parent.exists())
+                self.assertFalse(CACHE.WEBRTC.exists())
 
     @unittest.skipUnless(shutil.which("cargo"), "Cargo unavailable")
     def test_restored_unchanged_crate_stays_fresh_and_changed_crate_rebuilds_with_new_behavior(self):

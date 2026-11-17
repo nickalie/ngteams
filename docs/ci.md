@@ -127,8 +127,10 @@ Coverage run on the same repository and branch whose build job succeeded. The bu
 test results, so a run whose shards failed, a run that a later push cancelled and a run that still tests are all
 sources. The key also includes all workspace Cargo manifests and
 the workflow, so changes to features, flags or target declarations cannot select an incompatible compiler state.
-It also records whether the cached libwebrtc SDK was present: `docker.sh` then sets `LK_CUSTOM_WEBRTC`, and a
-change of that variable rebuilds `webrtc-sys` and every workspace crate above it.
+When the cached libwebrtc SDK is present, `docker.sh` sets `LK_CUSTOM_WEBRTC`, and a change of that variable
+rebuilds `webrtc-sys` and every workspace crate above it. The repository's cache often evicts the SDK, so the
+compiler-metadata artifact carries the SDK that its build used. A restore puts that SDK back, or hides a cached SDK
+when the reused build downloaded its own.
 Restoration checks every tracked file's content hash before restoring its exact previous timestamp; changed or new
 files keep fresh timestamps so Cargo rebuilds their dependents. Both compiler metadata and executable archives retain
 nanosecond timestamps. This includes the normal Chrome bootstrap's dependencies as well as the instrumented targets.

@@ -16,8 +16,10 @@ DIRECTORIES = (Path("target/coverage-continuous-build"), Path("target/ci-bootstr
 SOURCES = Path("target/compiler-workspace-sources.json")
 INPUTS = Path(".ci-cache/workspace-inputs")
 # webrtc-sys rebuilds, and every crate above it, when LK_CUSTOM_WEBRTC appears or goes: docker.sh sets it when the
-# cached SDK is present.
-SDK = Path(".ci-cache/webrtc/include")
+# cached SDK is present. The cache is often evicted, so the archive carries the SDK that the build used, and a restore
+# makes the SDK state the same as in that build.
+WEBRTC = Path(".ci-cache/webrtc")
+SDK = WEBRTC / "include"
 
 
 def tracked():
@@ -30,7 +32,7 @@ def digest(path):
 
 
 def source_stamps(key):
-    return {"key": key, "sources": {str(path): [digest(path), path.stat().st_mtime_ns]
+    return {"key": key, "sdk": SDK.is_dir(), "sources": {str(path): [digest(path), path.stat().st_mtime_ns]
                                     for path in tracked() if path.is_file() and not path.is_symlink()}}
 
 
@@ -49,6 +51,7 @@ def restore_stamps(key):
         else:
             os.utime(path, None)
     print(f"Restored timestamps of {reused} content-verified tracked files", flush=True)
+    return saved["sdk"]
 
 
 def pack(key):
@@ -56,6 +59,8 @@ def pack(key):
     bundled = {line for listing in Path("target").glob("bundle-*-files") for line in listing.read_text().splitlines()}
     files = [SOURCES, *(path for root in DIRECTORIES for path in root.rglob("*")
                         if path.is_file() and str(path) not in bundled and path.suffix not in (".profraw", ".profdata"))]
+    if SDK.is_dir():
+        files += [path for path in WEBRTC.rglob("*") if path.is_file() or path.is_symlink()]
     listing = Path("target/compiler-workspace-files")
     listing.write_bytes(b"".join(os.fsencode(path) + b"\0" for path in sorted(files)))
     subprocess.run(["tar", "--format=posix", "--null", "-I", "zstd --long=30 -T4 -3",
@@ -99,6 +104,7 @@ def find_run(repository, branch, name, current=None):
 
 
 def restore(key, name):
+    cached_sdk = SDK.is_dir()
     try:
         found = find_run(os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_REF_NAME"], name,
                          os.environ.get("GITHUB_RUN_ID"))
@@ -124,14 +130,22 @@ def restore(key, name):
         for root in DIRECTORIES:
             if any(root.rglob("*.profraw")) or any(root.rglob("*.profdata")):
                 raise ValueError("cached compiler artifacts contain profiles")
-        restore_stamps(key)
+        if restore_stamps(key):
+            if not SDK.is_dir():
+                raise ValueError("the archive lacks the SDK of its build")
+        elif SDK.is_dir():
+            # that build downloaded its own SDK into its output: without LK_CUSTOM_WEBRTC it stays fresh
+            shutil.rmtree(WEBRTC)
+            print("Hid the cached SDK: the reused build did not use it", flush=True)
         print(f"Checked the sources in {time.monotonic() - start:.0f}s", flush=True)
-        print(f"Reused compiler artifacts from successful Coverage {run_id}", flush=True)
+        print(f"Reused compiler artifacts from Coverage run {run_id}", flush=True)
         return True
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"Workspace cache miss ({type(error).__name__}); compiling normally", flush=True)
         for root in DIRECTORIES:
             shutil.rmtree(root, ignore_errors=True)
+        if not cached_sdk:
+            shutil.rmtree(WEBRTC, ignore_errors=True)
         return False
     finally:
         shutil.rmtree(INPUTS, ignore_errors=True)
@@ -140,13 +154,12 @@ def restore(key, name):
 def compiler_key(native_key):
     manifests = "".join(f"{path}:{digest(path)}\n" for path in sorted(tracked())
                         if path.name == "Cargo.toml" or path == Path(".github/workflows/coverage.yml"))
-    sdk = f"webrtc-sdk:{SDK.is_dir()}\n"
-    return hashlib.sha256((native_key + manifests + sdk).encode()).hexdigest()
+    return hashlib.sha256((native_key + manifests).encode()).hexdigest()
 
 
 def main():
     if sys.argv[1] == "pack":
-        # The key of the restore step: the SDK cache can appear after the build.
+        # The key of the restore step: bundle.sh can add the SDK cache after the build.
         pack(os.environ["COVERAGE_WORKSPACE_NAME"].removeprefix("compiler-workspace-"))
         return
     key = compiler_key(os.environ["COVERAGE_COMPILER_KEY"])
