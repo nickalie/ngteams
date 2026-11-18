@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::connector::Setup;
 use super::endpoint::TestBot;
 use super::{APPS, app_path, call, error_code};
-use crate::support::Backend;
+use crate::support::{Backend, backends};
 
 /// The app's health once `check` holds for it (or after `within`).
 async fn health_when(setup: &Setup, check: impl Fn(&Value) -> bool, within: Duration) -> Value {
@@ -38,49 +38,51 @@ fn listed_health(list: &Value, id: &str) -> Value {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_admin_reads_a_bots_delivery_health_in_the_list_and_the_app() {
-    let setup = Setup::open_with(Backend::Sqlite, |config| config.bots.retry_delays = vec![1, 1]).await;
-    let fresh = health_when(&setup, |_| true, Duration::ZERO).await;
-    assert_eq!(fresh["state"], "new", "{fresh}");
-    assert_eq!(fresh["failures"], 0);
-    assert_eq!(fresh["outbox"], json!({"pending": 0, "sent": 0, "failed": 0}));
+    for backend in backends() {
+        let setup = Setup::open_with(backend, |config| config.bots.retry_delays = vec![1, 1]).await;
+        let fresh = health_when(&setup, |_| true, Duration::ZERO).await;
+        assert_eq!(fresh["state"], "new", "{fresh}");
+        assert_eq!(fresh["failures"], 0);
+        assert_eq!(fresh["outbox"], json!({"pending": 0, "sent": 0, "failed": 0}));
 
-    setup.bot.answer(500);
-    let chat = setup.chat();
-    setup.send(&chat, "to a failing bot").await;
-    let failing = health_when(
-        &setup,
-        |health| health["outbox"]["failed"] == 1,
-        Duration::from_secs(15),
-    )
-    .await;
-    assert_eq!(failing["state"], "failing", "{failing}");
-    assert_eq!(failing["failures"], 3, "{failing}");
-    assert_eq!(failing["paused_until"], Value::Null);
-    assert!(failing["last_error"].as_str().unwrap().contains("500"), "{failing}");
-    assert_eq!(failing["last_success"], Value::Null);
-    assert_eq!(failing["outbox"], json!({"pending": 0, "sent": 0, "failed": 1}));
-    let (_, list) = setup.registry.call(Method::GET, APPS, None).await;
-    assert_eq!(listed_health(&list, &setup.bot_id), failing);
-
-    setup.bot.answer(200);
-    setup.send(&chat, "to a bot that works again").await;
-    let healthy = health_when(&setup, |health| health["outbox"]["sent"] == 1, Duration::from_secs(10)).await;
-    assert_eq!(healthy["state"], "healthy", "{healthy}");
-    assert_eq!(healthy["failures"], 0);
-    assert_eq!(healthy["last_error"], Value::Null);
-    assert!(healthy["last_success"].as_i64().unwrap() > 0, "{healthy}");
-    assert_eq!(healthy["outbox"], json!({"pending": 0, "sent": 1, "failed": 1}));
-
-    // an app without a bot has no health
-    let (status, form) = setup
-        .registry
-        .call(Method::POST, APPS, Some(json!({"name": "No endpoint (synthetic)"})))
+        setup.bot.answer(500);
+        let chat = setup.chat();
+        setup.send(&chat, "to a failing bot").await;
+        let failing = health_when(
+            &setup,
+            |health| health["outbox"]["failed"] == 1,
+            Duration::from_secs(15),
+        )
         .await;
-    assert_eq!(status, 201, "{form}");
-    let (_, list) = setup.registry.call(Method::GET, APPS, None).await;
-    let quiet = listed_health(&list, form["id"].as_str().unwrap());
-    assert_eq!(quiet["state"], "new", "{quiet}");
-    setup.stop().await;
+        assert_eq!(failing["state"], "failing", "{failing}");
+        assert_eq!(failing["failures"], 3, "{failing}");
+        assert_eq!(failing["paused_until"], Value::Null);
+        assert!(failing["last_error"].as_str().unwrap().contains("500"), "{failing}");
+        assert_eq!(failing["last_success"], Value::Null);
+        assert_eq!(failing["outbox"], json!({"pending": 0, "sent": 0, "failed": 1}));
+        let (_, list) = setup.registry.call(Method::GET, APPS, None).await;
+        assert_eq!(listed_health(&list, &setup.bot_id), failing);
+
+        setup.bot.answer(200);
+        setup.send(&chat, "to a bot that works again").await;
+        let healthy = health_when(&setup, |health| health["outbox"]["sent"] == 1, Duration::from_secs(10)).await;
+        assert_eq!(healthy["state"], "healthy", "{healthy}");
+        assert_eq!(healthy["failures"], 0);
+        assert_eq!(healthy["last_error"], Value::Null);
+        assert!(healthy["last_success"].as_i64().unwrap() > 0, "{healthy}");
+        assert_eq!(healthy["outbox"], json!({"pending": 0, "sent": 1, "failed": 1}));
+
+        // an app without a bot has no health
+        let (status, form) = setup
+            .registry
+            .call(Method::POST, APPS, Some(json!({"name": "No endpoint (synthetic)"})))
+            .await;
+        assert_eq!(status, 201, "{form}");
+        let (_, list) = setup.registry.call(Method::GET, APPS, None).await;
+        let quiet = listed_health(&list, form["id"].as_str().unwrap());
+        assert_eq!(quiet["state"], "new", "{quiet}");
+        setup.stop().await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
