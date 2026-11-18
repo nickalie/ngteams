@@ -67,11 +67,11 @@ async fn keep_delivering(app: Arc<App>, mut stopping: watch::Receiver<bool>) {
             // a closed fan-out closes every subscription: subscribe again, and poll meanwhile
             wake = app.fanout.subscribe(WAKE).await.ok();
         }
-        rounds(&app, &node, &stopping).await;
+        let since = rounds(&app, &node, &stopping).await;
         if *stopping.borrow() {
             return;
         }
-        let nap = nap(&app).await;
+        let nap = nap(&app, since).await;
         let woken = async {
             match wake.as_mut() {
                 Some(subscription) => !matches!(subscription.recv().await, Err(crate::fanout::Missed::Closed)),
@@ -90,10 +90,11 @@ async fn keep_delivering(app: Arc<App>, mut stopping: watch::Receiver<bool>) {
     }
 }
 
-/// How long the sender waits for a wake-up before it looks again: until the soonest row comes due (each turn a send
-/// limit gave, each try again), at most [`POLL`].
-async fn nap(app: &App) -> Duration {
-    match outbox::next_due(&app.db).await {
+/// How long the sender waits for a wake-up before it looks again: until the soonest row that comes due after `since`,
+/// the time of the last claim (each turn a send limit gave, each try again), at most [`POLL`]. A row that came due
+/// after that claim gives no wait.
+async fn nap(app: &App, since: i64) -> Duration {
+    match outbox::next_due(&app.db, since).await {
         Ok(Some(due)) => {
             let wait = u64::try_from(due - crate::chatsvc::now()).unwrap_or(0);
             Duration::from_millis(wait).min(POLL)
@@ -106,19 +107,25 @@ async fn nap(app: &App) -> Duration {
     }
 }
 
-/// Rounds until one sends nothing and leaves no due row behind, or `stopping` turns true.
-async fn rounds(app: &App, node: &str, stopping: &watch::Receiver<bool>) {
+/// Rounds until one sends nothing and leaves no due row behind, or `stopping` turns true; the time of the last
+/// claim (milliseconds since the epoch).
+async fn rounds(app: &App, node: &str, stopping: &watch::Receiver<bool>) -> i64 {
+    let mut since = crate::chatsvc::now();
     while !*stopping.borrow() {
         let done = round(app, node).await;
+        since = done.since;
         // a full claim the send limits held back leaves more due rows, maybe of other bots: claim them too
         if done.sent == 0 && !done.more {
             break;
         }
     }
+    since
 }
 
 /// What a round did.
 struct Round {
+    /// When it claimed (milliseconds since the epoch, at or before the time the claim used).
+    since: i64,
     /// The rows sent (whatever the bot answered).
     sent: usize,
     /// Whether the claim was full and its send limits held some rows back.
@@ -130,11 +137,16 @@ async fn round(app: &App, node: &str) -> Round {
     let lease = i64::try_from(app.config.bots.delivery_lease)
         .unwrap_or(i64::MAX / 2_000)
         .saturating_mul(1000);
+    let since = crate::chatsvc::now();
     let claimed = match outbox::claim(&app.db, node, lease, BATCH).await {
         Ok(claimed) => claimed,
         Err(error) => {
             tracing::warn!(%error, "bot deliveries couldn't be taken");
-            return Round { sent: 0, more: false };
+            return Round {
+                since,
+                sent: 0,
+                more: false,
+            };
         }
     };
     let full = i64::try_from(claimed.len()).is_ok_and(|claimed| claimed >= BATCH);
@@ -142,6 +154,7 @@ async fn round(app: &App, node: &str) -> Round {
     let sent = due.len();
     futures_util::future::join_all(due.into_iter().map(|row| send(app, node, row))).await;
     Round {
+        since,
         sent,
         more: full && held,
     }
@@ -294,10 +307,10 @@ mod tests {
         .await?;
         let (_stop, stopping) = watch::channel(false);
         let started = std::time::Instant::now();
-        rounds(&app, "node", &stopping).await;
+        let since = rounds(&app, "node", &stopping).await;
         // the whole seconds the rounds took, and one more
         let took = usize::try_from(started.elapsed().as_secs()).unwrap_or(usize::MAX) + 1;
-        assert!(outbox::next_due(&app.db).await?.is_some());
+        assert!(outbox::next_due(&app.db, since).await?.is_some());
 
         let free = deliveries(&app.db, "free").await?;
         assert_eq!(free[0].state, FAILED, "{free:?}");

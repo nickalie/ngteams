@@ -2,7 +2,8 @@
 //!
 //! - the server's sends to one bot keep to `bots.send_rate` (a burst of `bots.send_burst`): a send over it waits for
 //!   its turn, as a row of the outbox due later, and the wait is no failed attempt; the held rows of one bot get
-//!   turns one after the other, so they don't all come due at once, and a row held once more keeps its turn;
+//!   turns one after the other, so they don't all come due at once; a row held once more after its turn goes at the
+//!   first opening that no other such row of its bot has, not at the end of the line;
 //! - one app's calls to the connector keep to `bots.connector_rate` (a burst of `bots.connector_burst`); more get
 //!   the Bot Framework's `429` with `Retry-After` ([`connector`]).
 
@@ -47,12 +48,14 @@ pub struct SendLimit {
 struct Turns {
     /// Per bot, when the turn after the last one given to a held row starts.
     next: HashMap<String, Instant>,
+    /// Per bot, the first opening after the last one given to a row held once more after its turn.
+    late: HashMap<String, Instant>,
     /// Per held row (by its id), the turn it got.
     rows: HashMap<String, Instant>,
 }
 
-/// How long a row keeps the turn it got after that turn started: a row its bot's limit holds once more in that time
-/// keeps its place in the line.
+/// How long the turn of a held row stays after that turn started, when the limit has more than [`TRACKED`] turns and
+/// forgets the old ones. Below that number, a held row keeps its turn until it goes.
 const KEPT: Duration = Duration::from_secs(60);
 
 impl std::fmt::Debug for SendLimit {
@@ -86,8 +89,9 @@ impl SendLimit {
     }
 
     /// Takes one send of the outbox's row `row` to `bot`: `None` when it may go now, else how long until its turn. A
-    /// row held for the first time gets the turn after the one the last held row got. A row that got a turn before
-    /// keeps it: when the limit holds it once more, it waits only until the limit has room.
+    /// row held for the first time gets the turn after the one the last held row got. A row held once more before its
+    /// turn keeps that turn. A row held once more after its turn gets the first opening of the limit that no other such
+    /// row of the bot got, so these rows also come due one at a time, and the turns given after them start later.
     pub(crate) fn take(&self, bot: &str, row: &str) -> Option<Duration> {
         let wait = self.take_now(bot);
         let now = Instant::now();
@@ -102,15 +106,28 @@ impl SendLimit {
         if turns.next.len() > TRACKED {
             turns.next.retain(|_, turn| *turn > now);
         }
-        if let Some(turn) = turns.rows.get(row) {
-            return Some(turn.saturating_duration_since(now).max(wait));
+        if turns.late.len() > TRACKED {
+            turns.late.retain(|_, turn| *turn > now);
         }
-        let turn = turns
-            .next
-            .get(bot)
-            .copied()
-            .map_or(now + wait, |turn| turn.max(now + wait));
-        turns.next.insert(bot.to_owned(), turn + self.interval);
+        let open = now + wait;
+        let turn = match turns.rows.get(row).copied() {
+            // held once more before its turn: it keeps that turn
+            Some(turn) if turn > now => return Some(turn.max(open) - now),
+            // held once more after its turn: the first opening that no other such row got
+            Some(_) => {
+                let turn = turns.late.get(bot).copied().map_or(open, |late| late.max(open));
+                let after = turn + self.interval;
+                turns.late.insert(bot.to_owned(), after);
+                let next = turns.next.entry(bot.to_owned()).or_insert(after);
+                *next = (*next).max(after);
+                turn
+            }
+            None => {
+                let turn = turns.next.get(bot).copied().map_or(open, |turn| turn.max(open));
+                turns.next.insert(bot.to_owned(), turn + self.interval);
+                turn
+            }
+        };
         turns.rows.insert(row.to_owned(), turn);
         Some(turn.saturating_duration_since(now))
     }
@@ -240,6 +257,29 @@ mod tests {
         assert!(again <= first, "{first:?} {again:?}");
         // and the line didn't move: r3 gets the turn after r2's
         one_interval_after(second, limit.take("a", "r3").unwrap());
+    }
+
+    #[test]
+    fn rows_held_once_more_after_their_turns_come_due_one_at_a_time() {
+        let config = BotsConfig {
+            send_rate: 10,
+            send_burst: 1,
+            ..BotsConfig::default()
+        };
+        let limit = SendLimit::new(&config);
+        assert_eq!(limit.take("a", "r0"), None);
+        for row in 1..4 {
+            limit.take("a", &format!("r{row}")).unwrap();
+        }
+        // the three turns pass (as when the sender comes back late); r1 takes the one opening
+        std::thread::sleep(Duration::from_millis(350));
+        assert_eq!(limit.take("a", "r1"), None);
+        let second = limit.take("a", "r2").unwrap();
+        assert!(second <= Duration::from_millis(100), "{second:?}");
+        let third = limit.take("a", "r3").unwrap();
+        one_interval_after(second, third);
+        // and a row held for the first time gets the turn after them
+        one_interval_after(third, limit.take("a", "r4").unwrap());
     }
 
     #[test]

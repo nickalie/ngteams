@@ -297,13 +297,13 @@ pub(crate) async fn defer(db: &Db, node: &str, row: &Delivery, delay: i64) -> Re
     Ok(())
 }
 
-/// When the soonest row still to be sent that isn't due yet comes due (milliseconds since the epoch): a row a send
-/// limit held back or one to try again.
-pub(crate) async fn next_due(db: &Db) -> Result<Option<i64>, DbError> {
-    let now = crate::chatsvc::now();
+/// When the soonest row still to be sent that comes due after `since` comes due (milliseconds since the epoch): a row
+/// a send limit held back or one to try again. `since` is the time of the last claim, so a row that came due after
+/// that claim (even one due now) counts, and a row that was due at that claim and wasn't taken doesn't.
+pub(crate) async fn next_due(db: &Db, since: i64) -> Result<Option<i64>, DbError> {
     with_conn!(db, |conn| Ok(bot_deliveries::table
         .filter(bot_deliveries::state.eq(PENDING))
-        .filter(bot_deliveries::due_at.gt(now))
+        .filter(bot_deliveries::due_at.gt(since))
         .select(diesel::dsl::min(bot_deliveries::due_at))
         .first::<Option<i64>>(conn)
         .await?))
@@ -465,6 +465,26 @@ mod tests {
             .map(|seq| ("paused".to_owned(), format!("c{seq}"), seq))
             .collect();
         assert_eq!(second, paused);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_next_due_row_is_one_due_after_the_last_claim_even_when_it_is_due_now() -> Result<(), DbError> {
+        let dir = tempfile::tempdir().map_err(|error| DbError::Pool(error.to_string()))?;
+        let db = Db::connect(&format!("sqlite://{}", dir.path().join("server.sqlite").display()), 1).await?;
+        with_conn!(db, |conn| conn.batch_execute("PRAGMA foreign_keys = OFF").await?);
+        // a row due now (put gives the time it was put)
+        put(&db, "a", "c", 1).await?;
+        let due = with_conn!(db, |conn| Ok::<i64, DbError>(
+            bot_deliveries::table
+                .select(bot_deliveries::due_at)
+                .first::<i64>(conn)
+                .await?
+        ))?;
+        // a claim just before it came due: the sender must look again at once
+        assert_eq!(next_due(&db, due - 1).await?, Some(due));
+        // a claim after it came due left it: it isn't the next due row
+        assert_eq!(next_due(&db, due).await?, None);
         Ok(())
     }
 
