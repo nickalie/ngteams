@@ -32,12 +32,15 @@ const MAX_BODY: usize = 4 * 1024 * 1024;
 pub(super) fn router(app: &Arc<App>) -> Router<Arc<App>> {
     let routes = Router::new().route("/bot/{*rest}", any(dispatch));
     let limited = match super::limits::connector(&app.config.bots) {
-        Some(limit) => routes.layer(GovernorLayer::new(limit).error_handler(|error| super::limits::refused(&error))),
+        Some(limit) => {
+            routes.route_layer(GovernorLayer::new(limit).error_handler(|error| super::limits::refused(&error)))
+        }
         None => routes,
     };
-    // the last layer runs first: the credential, then the app's rate
+    // the last layer runs first: the credential, then the app's rate; only on these routes, not on the merged
+    // router's fallback
     limited
-        .layer(middleware::from_fn_with_state(Arc::clone(app), authenticate))
+        .route_layer(middleware::from_fn_with_state(Arc::clone(app), authenticate))
         .layer(DefaultBodyLimit::max(MAX_BODY))
 }
 
