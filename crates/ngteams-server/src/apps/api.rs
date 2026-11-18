@@ -204,13 +204,18 @@ async fn replace(
     package: Bytes,
 ) -> Result<Response, ApiError> {
     let record = super::replace_package(Registry::of(&app), Actor::account(&admin), &id, package).await?;
-    Ok(answer(StatusCode::OK, &app_json(&record)))
+    shown(&app, &record).await
 }
 
 /// `GET /api/admin/v1/apps/{id}`.
 async fn read(State(app): State<Arc<App>>, Admin(_): Admin, Path(id): Path<String>) -> Result<Response, ApiError> {
     let record = repo::get(&app.db, &id).await?.ok_or(AppError::NoSuchApp)?;
-    let mut shown = with_health(&app, std::slice::from_ref(&record)).await?;
+    shown(&app, &record).await
+}
+
+/// `record` with its bot's health, as `GET` shows it: the client takes this app in place of the one it had.
+async fn shown(app: &App, record: &Record) -> Result<Response, ApiError> {
+    let mut shown = with_health(app, std::slice::from_ref(record)).await?;
     Ok(answer(StatusCode::OK, &shown.pop().unwrap_or(Value::Null)))
 }
 
@@ -230,7 +235,7 @@ async fn update(
         auth_mode: request.auth_mode,
     };
     let record = super::update(Registry::of(&app), Actor::account(&admin), &id, changes).await?;
-    Ok(answer(StatusCode::OK, &app_json(&record)))
+    shown(&app, &record).await
 }
 
 /// `POST /api/admin/v1/apps/{id}/secret`: a new secret for its bot, shown once; the old one stops working.

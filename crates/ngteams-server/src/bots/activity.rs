@@ -15,7 +15,7 @@ pub(crate) const HTML: &str = "RichText/Html";
 pub(crate) const CARD: &str = "RichText/Media_Card";
 
 /// The locale activities name: the server has no account locale yet.
-const LOCALE: &str = "en-US";
+pub(super) const LOCALE: &str = "en-US";
 
 /// The bot an activity goes to.
 pub(crate) struct Recipient<'a> {

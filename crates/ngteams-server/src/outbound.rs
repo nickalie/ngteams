@@ -46,6 +46,15 @@ pub struct Guard {
 }
 
 impl Guard {
+    /// The guard of the sends to bots, as `bots.*` sets it; one for the check at save and at each send.
+    #[must_use]
+    pub fn for_bots(config: &crate::apps::BotsConfig) -> Self {
+        Self {
+            allow_http: config.allow_http_endpoints,
+            networks: config.allowed_networks.clone(),
+        }
+    }
+
     /// Whether the server may connect to `address`.
     #[must_use]
     pub fn allows(&self, address: IpAddr) -> bool {

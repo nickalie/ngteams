@@ -691,7 +691,7 @@ An app is `{"id", "version", "name", "full_name", "short_description", "full_des
 "updated_at", "health"}`; `bot` is null or `{"id", "mri", "endpoint", "auth_mode", "scopes"}`; `health` is null
 without a bot, else its delivery health: `{"state", "failures", "paused_until", "last_error", "last_success",
 "outbox": {"pending", "sent", "failed"}}`. `state` is `paused` (until `paused_until`, ms), `failing` (its last send
-failed; `failures` in a row, `last_error` why), `healthy` (its last send went; `last_success`, ms) or `new`; the
+failed; `failures` in a row since the last pause, which starts a new count, `last_error` why), `healthy` (its last send went; `last_success`, ms) or `new`; the
 outbox counts are the rows of the last day. The secret (256 random bits,
 base64url) is in the answer that made it and nowhere else: the database keeps its SHA-256, and no read, list, log or
 audit entry holds it.
@@ -1955,6 +1955,17 @@ podman run -d --rm --name ngts-coturn --network host docker.io/coturn/coturn -n 
 NGTS_TEST_COTURN=127.0.0.1:53478 NGTS_TEST_COTURN_SECRET=test-secret \
   cargo test -p ngteams-server relayed_by_coturn
 podman stop ngts-coturn
+```
+
+`binary::bots::containers` runs each SDK's echo-and-cards bot (`tests/bots/`, the Teams SDK's and the Agents SDK's)
+in a container against the real binary, when `NGTEAMS_SERVER_BOT_IMAGES` names them (`teams,agents`); without it the
+cases pass and do nothing. `tests/bots/build.sh` builds the images. The engine is `podman` unless
+`NGTEAMS_SERVER_BOT_ENGINE` names another, and a bot joins the host's network unless `NGTEAMS_SERVER_BOT_NETWORK`
+names another (CI's Coverage job sets `docker` and the network of its test container, and sets the images):
+
+```sh
+tests/bots/build.sh
+NGTEAMS_SERVER_BOT_IMAGES=teams,agents cargo test -p ngteams-server --test e2e -- binary::bots::containers
 ```
 
 `binary::cluster` runs the server as [Operations](#operations) deploys it: two `serve --role api` nodes and a

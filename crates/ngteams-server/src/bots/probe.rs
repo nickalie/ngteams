@@ -121,15 +121,14 @@ pub(crate) async fn test_activity(app: &App, id: &str, admin: &User) -> Result<P
 fn activity(app: &App, bot: &Bot, admin: &User, service_url: &str) -> Value {
     let now = crate::chatsvc::now();
     let time = crate::chatsvc::iso(now);
-    let mut ids = [admin.id.as_str(), bot.id.as_str()];
-    ids.sort_unstable();
     let mut activity = json!({
         "type": "event", "name": NAME,
         "id": format!("test-{}", uuid::Uuid::new_v4().simple()),
-        "timestamp": time, "localTimestamp": time, "channelId": crate::apps::keys::CHANNEL, "locale": "en-US",
+        "timestamp": time, "localTimestamp": time, "channelId": crate::apps::keys::CHANNEL,
+        "locale": super::activity::LOCALE,
         "from": {"id": format!("29:{}", admin.id), "name": admin.display_name, "aadObjectId": admin.id},
         "recipient": {"id": format!("28:{}", bot.id), "name": bot.name},
-        "conversation": {"id": format!("19:{}_{}@unq.gbl.spaces", ids[0], ids[1]), "conversationType": "personal",
+        "conversation": {"id": super::personal_chat(&admin.id, &bot.id), "conversationType": "personal",
             "isGroup": false},
         "channelData": {},
         "value": {"sentAt": time},

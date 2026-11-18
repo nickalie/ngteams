@@ -55,6 +55,11 @@ pub fn summary(health: Option<&BotHealth>, now: i64) -> (String, bool) {
                 .unwrap_or_default();
             (format!("Delivering.{when}"), false)
         }
+        // the server starts a new count when a pause starts
+        HealthState::Failing if health.failures == 0 => (
+            format!("Not delivering after a pause; the server tries again.{reason}"),
+            true,
+        ),
         HealthState::Failing => (
             format!("Not delivering: {}.{reason}", failed_in_a_row(health.failures)),
             true,
@@ -146,6 +151,17 @@ mod tests {
             summary(Some(&failing), NOW),
             (
                 "Not delivering: 3 failed in a row. Last error: the bot answered 500.".to_owned(),
+                true
+            )
+        );
+        let after_a_pause = BotHealth {
+            failures: 0,
+            ..failing.clone()
+        };
+        assert_eq!(
+            summary(Some(&after_a_pause), NOW),
+            (
+                "Not delivering after a pause; the server tries again. Last error: the bot answered 500.".to_owned(),
                 true
             )
         );

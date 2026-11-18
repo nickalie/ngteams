@@ -1,13 +1,15 @@
 //! Send limits (`docs/server.md` "Bots"), on each node, with governor's GCRA:
 //!
 //! - the server's sends to one bot keep to `bots.send_rate` (a burst of `bots.send_burst`): a send over it waits for
-//!   its turn, as a row of the outbox due later, and the wait is no failed attempt;
+//!   its turn, as a row of the outbox due later, and the wait is no failed attempt; the held rows of one bot get
+//!   turns one after the other, so they don't all come due at once;
 //! - one app's calls to the connector keep to `bots.connector_rate` (a burst of `bots.connector_burst`); more get
 //!   the Bot Framework's `429` with `Retry-After` ([`connector`]).
 
+use std::collections::HashMap;
 use std::num::NonZeroU32;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -32,7 +34,13 @@ fn quota(rate: u32, burst: u32) -> Quota {
 }
 
 /// The server's sends to each bot.
-pub struct SendLimit(DefaultKeyedRateLimiter<String>);
+pub struct SendLimit {
+    limiter: DefaultKeyedRateLimiter<String>,
+    /// The time between two sends to one bot at its rate.
+    interval: Duration,
+    /// Per bot, when the turn after the last one given to a held row starts.
+    next_turn: Mutex<HashMap<String, Instant>>,
+}
 
 impl std::fmt::Debug for SendLimit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -43,18 +51,35 @@ impl std::fmt::Debug for SendLimit {
 impl SendLimit {
     #[must_use]
     pub fn new(config: &BotsConfig) -> Self {
-        Self(RateLimiter::keyed(quota(config.send_rate, config.send_burst)))
+        Self {
+            limiter: RateLimiter::keyed(quota(config.send_rate, config.send_burst)),
+            interval: Duration::from_secs(1) / config.send_rate.max(1),
+            next_turn: Mutex::new(HashMap::new()),
+        }
     }
 
-    /// Takes one send to `bot`: `None` when it may go now, else how long until it may.
+    /// Takes one send to `bot`: `None` when it may go now, else how long until its turn. Each held send gets the turn
+    /// after the one the last held send got.
     pub(crate) fn take(&self, bot: &str) -> Option<Duration> {
-        if self.0.len() > TRACKED {
-            self.0.retain_recent();
+        if self.limiter.len() > TRACKED {
+            self.limiter.retain_recent();
         }
-        self.0
+        let wait = self
+            .limiter
             .check_key(&bot.to_owned())
-            .err()
-            .map(|not_until| not_until.wait_time_from(DefaultClock::default().now()))
+            .err()?
+            .wait_time_from(DefaultClock::default().now());
+        let now = Instant::now();
+        let mut next_turn = self.next_turn.lock().unwrap_or_else(PoisonError::into_inner);
+        if next_turn.len() > TRACKED {
+            next_turn.retain(|_, turn| *turn > now);
+        }
+        let turn = next_turn
+            .get(bot)
+            .copied()
+            .map_or(now + wait, |turn| turn.max(now + wait));
+        next_turn.insert(bot.to_owned(), turn + self.interval);
+        Some(turn.saturating_duration_since(now))
     }
 }
 
@@ -84,14 +109,15 @@ impl KeyExtractor for ByApp {
     }
 }
 
-/// The connector's limit per app; none only for a zero rate or burst, which the config check refuses.
+/// The connector's limit per app. governor gives none for a zero period or burst; the rate and burst are held to at
+/// least one and the period to at least a nanosecond, so there is always one.
 pub(super) fn connector(
     config: &BotsConfig,
 ) -> Option<Arc<GovernorConfig<ByApp, governor::middleware::NoOpMiddleware>>> {
     let rate = u64::from(config.connector_rate.max(1));
     GovernorConfigBuilder::default()
-        .period(Duration::from_nanos(1_000_000_000 / rate))
-        .burst_size(config.connector_burst)
+        .period(Duration::from_nanos((1_000_000_000 / rate).max(1)))
+        .burst_size(config.connector_burst.max(1))
         .key_extractor(ByApp)
         .finish()
         .map(Arc::new)
@@ -137,6 +163,38 @@ mod tests {
         assert!(wait <= Duration::from_secs(1), "{wait:?}");
         assert_eq!(limit.take("b"), None);
         assert!(format!("{limit:?}").contains("SendLimit"));
+    }
+
+    #[test]
+    fn the_held_sends_of_a_bot_get_turns_one_after_the_other() {
+        let config = BotsConfig {
+            send_rate: 10,
+            send_burst: 1,
+            ..BotsConfig::default()
+        };
+        let limit = SendLimit::new(&config);
+        assert_eq!(limit.take("a"), None);
+        let turns: Vec<Duration> = (0..3).map(|_| limit.take("a").unwrap()).collect();
+        assert!(turns[0] <= Duration::from_millis(100), "{turns:?}");
+        for pair in turns.windows(2) {
+            // a turn later by one interval (100 ms), less the time the test took between the two takes
+            let gap = pair[1].saturating_sub(pair[0]);
+            assert!(
+                gap > Duration::from_millis(90) && gap <= Duration::from_millis(100),
+                "{turns:?}"
+            );
+        }
+        assert_eq!(limit.take("b"), None);
+    }
+
+    #[test]
+    fn the_connector_limit_holds_for_a_zero_burst_and_a_rate_past_a_nanosecond() {
+        let config = BotsConfig {
+            connector_rate: u32::MAX,
+            connector_burst: 0,
+            ..BotsConfig::default()
+        };
+        assert!(connector(&config).is_some());
     }
 
     #[test]

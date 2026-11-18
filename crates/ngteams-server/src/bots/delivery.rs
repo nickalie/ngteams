@@ -69,15 +69,8 @@ async fn keep_delivering(app: Arc<App>, mut stopping: watch::Receiver<bool>) {
             // a closed fan-out closes every subscription: subscribe again, and poll meanwhile
             wake = app.fanout.subscribe(WAKE).await.ok();
         }
-        while !*stopping.borrow() {
-            let done = round(&app, &node).await;
-            if let Some(held) = done.held {
-                let due = tokio::time::Instant::now() + held;
-                held_until = Some(held_until.map_or(due, |soonest| soonest.min(due)));
-            }
-            if done.sent == 0 {
-                break;
-            }
+        if let Some(due) = rounds(&app, &node, &stopping).await {
+            held_until = Some(held_until.map_or(due, |soonest| soonest.min(due)));
         }
         if *stopping.borrow() {
             return;
@@ -103,12 +96,32 @@ async fn keep_delivering(app: Arc<App>, mut stopping: watch::Receiver<bool>) {
     }
 }
 
+/// Rounds until one sends nothing and leaves no due row behind, or `stopping` turns true; when the soonest row a
+/// bot's send limit held back is due again.
+async fn rounds(app: &App, node: &str, stopping: &watch::Receiver<bool>) -> Option<tokio::time::Instant> {
+    let mut held_until: Option<tokio::time::Instant> = None;
+    while !*stopping.borrow() {
+        let done = round(app, node).await;
+        if let Some(held) = done.held {
+            let due = tokio::time::Instant::now() + held;
+            held_until = Some(held_until.map_or(due, |soonest| soonest.min(due)));
+        }
+        // a full claim the send limits held back leaves more due rows, maybe of other bots: claim them too
+        if done.sent == 0 && !done.more {
+            break;
+        }
+    }
+    held_until
+}
+
 /// What a round did.
 struct Round {
     /// The rows sent (whatever the bot answered).
     sent: usize,
     /// The shortest wait of a row its bot's send limit held back, when one was.
     held: Option<Duration>,
+    /// Whether the claim was full and its send limits held some rows back.
+    more: bool,
 }
 
 /// One round: the rows this node took, each sent unless its bot's send limit holds it back.
@@ -120,13 +133,22 @@ async fn round(app: &App, node: &str) -> Round {
         Ok(claimed) => claimed,
         Err(error) => {
             tracing::warn!(%error, "bot deliveries couldn't be taken");
-            return Round { sent: 0, held: None };
+            return Round {
+                sent: 0,
+                held: None,
+                more: false,
+            };
         }
     };
+    let full = i64::try_from(claimed.len()).is_ok_and(|claimed| claimed >= BATCH);
     let (due, held) = within_limits(app, node, claimed).await;
     let sent = due.len();
     futures_util::future::join_all(due.into_iter().map(|row| send(app, node, row))).await;
-    Round { sent, held }
+    Round {
+        sent,
+        held,
+        more: full && held.is_some(),
+    }
 }
 
 /// The rows whose bots' send limits let them go now; the others go back to the outbox, due when their bot has room,
@@ -219,4 +241,74 @@ fn retry(app: &App, row: &Delivery, error: String) -> Outcome {
         i64::try_from(delay).unwrap_or(i64::MAX / 2_000).saturating_mul(1000),
         error,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use diesel_async::{RunQueryDsl as _, SimpleAsyncConnection as _};
+    use serde_json::json;
+
+    use super::*;
+    use crate::bots::outbox::{FAILED, PENDING, deliveries};
+    use crate::bots::schema::bot_deliveries;
+    use crate::config::Config;
+    use crate::db::{DbError, with_conn};
+
+    async fn put(db: &crate::db::Db, row: &Delivery) -> Result<(), DbError> {
+        with_conn!(db, |conn| diesel::insert_into(bot_deliveries::table)
+            .values(row)
+            .execute(conn)
+            .await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_bot_its_limit_holds_for_more_than_two_claims_doesnt_hold_up_another_bot() -> Result<(), DbError> {
+        let dir = tempfile::tempdir().map_err(|error| DbError::Pool(error.to_string()))?;
+        let mut config = Config {
+            database_url: format!("sqlite://{}", dir.path().join("server.sqlite").display()),
+            database_pool: 1,
+            ..Config::default()
+        };
+        config.bots.send_rate = 1;
+        config.bots.send_burst = 1;
+        let app = App::start(config)
+            .await
+            .map_err(|error| DbError::Pool(error.to_string()))?;
+        // the rows' bots aren't registered: each send fails for good, which is a send all the same
+        with_conn!(app.db, |conn| conn.batch_execute("PRAGMA foreign_keys = OFF").await?);
+        // the heads of more lines than two claims take, then one row of another bot
+        for seq in 0..70 {
+            put(
+                &app.db,
+                &Delivery::new("held", &format!("c{seq}"), seq, &json!({"type": "message"}), false),
+            )
+            .await?;
+        }
+        put(
+            &app.db,
+            &Delivery::new("free", "c", 100, &json!({"type": "message"}), false),
+        )
+        .await?;
+        let (_stop, stopping) = watch::channel(false);
+        let held_until = rounds(&app, "node", &stopping).await;
+        assert!(held_until.is_some());
+
+        let free = deliveries(&app.db, "free").await?;
+        assert_eq!(free[0].state, FAILED, "{free:?}");
+        let held = deliveries(&app.db, "held").await?;
+        let mut due: Vec<i64> = held
+            .iter()
+            .filter(|row| row.state == PENDING)
+            .map(|row| row.due_at)
+            .collect();
+        // one went at once, and one more each second the rounds took
+        assert!((60..=69).contains(&due.len()), "{due:?}");
+        // one turn a second each, not all at once
+        due.sort_unstable();
+        for pair in due.windows(2) {
+            assert!(pair[1] - pair[0] >= 900, "{due:?}");
+        }
+        Ok(())
+    }
 }

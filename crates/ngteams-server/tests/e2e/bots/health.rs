@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::connector::Setup;
 use super::endpoint::TestBot;
-use super::{APPS, app_path, call, error_code};
+use super::{APPS, app_path, call, error_code, manifest, package, png};
 use crate::support::{Backend, backends};
 
 /// The app's health once `check` holds for it (or after `within`): a send's row and the bot's health are two writes.
@@ -77,15 +77,37 @@ async fn an_admin_reads_a_bots_delivery_health_in_the_list_and_the_app() {
         assert!(healthy["last_success"].as_i64().unwrap() > 0, "{healthy}");
         assert_eq!(healthy["outbox"], json!({"pending": 0, "sent": 1, "failed": 1}));
 
-        // an app without a bot has no health
+        // a change answers with the app as a read shows it, its health too
+        let (status, changed) = setup
+            .registry
+            .call(Method::PATCH, &app_path(&setup.bot_id), Some(json!({"everyone": true})))
+            .await;
+        assert_eq!(status, 200, "{changed}");
+        assert_eq!(changed["health"], healthy);
+
+        // an app whose bot has no endpoint yet is new
         let (status, form) = setup
             .registry
             .call(Method::POST, APPS, Some(json!({"name": "No endpoint (synthetic)"})))
             .await;
         assert_eq!(status, 201, "{form}");
+        // an app without a bot has no health
+        let mut tab_only = manifest(&uuid::Uuid::new_v4().to_string(), "unused", "1.0.0");
+        tab_only.as_object_mut().unwrap().remove("bots");
+        tab_only.as_object_mut().unwrap().remove("composeExtensions");
+        let (status, tab) = setup
+            .registry
+            .upload(
+                &format!("{APPS}/package"),
+                Method::POST,
+                package(&tab_only, &png(192, 192), &png(32, 32), &[]),
+            )
+            .await;
+        assert_eq!(status, 201, "{tab}");
         let (_, list) = setup.registry.call(Method::GET, APPS, None).await;
         let quiet = listed_health(&list, form["id"].as_str().unwrap());
         assert_eq!(quiet["state"], "new", "{quiet}");
+        assert_eq!(listed_health(&list, tab["id"].as_str().unwrap()), Value::Null);
         setup.stop().await;
     }
 }

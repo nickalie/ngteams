@@ -338,11 +338,7 @@ fn checked_endpoint(config: &Config, endpoint: &str) -> Result<String, AppError>
         return Err(AppError::Endpoint);
     }
     // an address written in it is checked now, as the guard checks it at each send; a name is checked then
-    let guard = crate::outbound::Guard {
-        allow_http: config.bots.allow_http_endpoints,
-        networks: config.bots.allowed_networks.clone(),
-    };
-    match guard.check(&url) {
+    match crate::outbound::Guard::for_bots(&config.bots).check(&url) {
         Ok(()) => Ok(url.to_string()),
         Err(crate::outbound::OutboundError::Refused) => Err(AppError::EndpointNetwork),
         Err(_) => Err(AppError::Endpoint),

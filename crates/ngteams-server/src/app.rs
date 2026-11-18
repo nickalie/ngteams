@@ -97,10 +97,7 @@ fn key_retention(config: &Config) -> Duration {
 
 /// What sends to bots, through the address guard `bots.*` sets.
 fn outbound(config: &Config) -> Result<crate::outbound::Outbound, StartError> {
-    let guard = crate::outbound::Guard {
-        allow_http: config.bots.allow_http_endpoints,
-        networks: config.bots.allowed_networks.clone(),
-    };
+    let guard = crate::outbound::Guard::for_bots(&config.bots);
     crate::outbound::Outbound::new(guard, Duration::from_secs(config.bots.send_timeout))
         .map_err(|error| StartError::Outbound(error.to_string()))
 }
