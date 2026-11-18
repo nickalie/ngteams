@@ -502,6 +502,9 @@ async fn no_user_token_reaches_the_bot_even_when_a_client_sends_one() {
         assert_eq!(setup.raw_invoke(&setup.bot_id, &json!([1])).await.0, 400);
         let nameless = json!({"appId": setup.bot_id, "value": {}, "conversation": {"id": chat}});
         assert_eq!(setup.raw_invoke(&setup.bot_id, &nameless).await.0, 400);
+        let odd_post = json!({"name": "task/fetch", "appId": setup.bot_id, "value": {},
+            "conversation": {"id": format!("{chat};messageid=x\"y")}});
+        assert_eq!(setup.raw_invoke(&setup.bot_id, &odd_post).await.0, 400);
         setup.stop().await;
     }
 }

@@ -166,7 +166,11 @@ async fn conversation(app: &App, asked: &Asked, person: &str, bot: &Bot) -> Resu
             place: InvokePlace::Chat { personal: true },
         });
     };
-    let thread = id.split_once(";messageid=").map_or(id.as_str(), |(thread, _)| thread);
+    let thread = match id.split_once(";messageid=") {
+        None => id.as_str(),
+        Some((thread, post)) if post.parse::<i64>().is_ok_and(|post| post > 0) => thread,
+        Some(_) => return Err(Failure::BadRequest),
+    };
     match invoke_place(app, thread, person, &bot.id, asked.message).await? {
         InvokePlace::Denied => Err(Failure::Denied),
         InvokePlace::NoMessage => Err(Failure::Missing),
