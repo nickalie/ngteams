@@ -2,8 +2,9 @@
 //! (`docs/server.md`, "Apps and bots"), behind `NGTEAMS_BOTS=1` ([`crate::bots_flag`]). It lists the server's apps
 //! with a search, registers a bot from a form, uploads a Teams app package, and opens an app to turn it on or off,
 //! change its bot's endpoint and mode and who may use it, give its bot a new secret, show the settings each SDK takes,
-//! or delete it after a confirmation. A bot's app id and secret are shown once, with Copy, when the bot is made or
-//! gets a new secret. Teams itself has no counterpart (Microsoft's apps are managed in a web admin centre), so the
+//! or delete it after a confirmation. A bot's delivery health shows as a mark on its row when it fails or is paused,
+//! and in its details with a "Send a test activity" button that says how the bot answered. A bot's app id and secret
+//! are shown once, with Copy, when the bot is made or gets a new secret. Teams itself has no counterpart (Microsoft's apps are managed in a web admin centre), so the
 //! page is drawn as Manage users ([`crate::user_admin`]) is: the settings' own boxes and the team dialogs' surfaces.
 //!
 //! The page asks nothing itself: every read and change goes through the [`AppAdmin`] the app attached for the
@@ -30,7 +31,10 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::spinner::Spinner;
 use gpui_component::{Sizable as _, Size};
-use teams_auth::admin::{AdminApp, AdminError, AppChanges, BotAuthMode, MadeApp, Refusal, UserPage, apps_not_served};
+use teams_auth::admin::{
+    AdminApp, AdminError, AppChanges, BotAuthMode, HealthState, MadeApp, Refusal, TestActivity, UserPage,
+    apps_not_served,
+};
 
 use crate::icons::{Glyph, selected_by};
 use crate::keyboard;
@@ -40,6 +44,7 @@ use crate::user_admin::{AdminProblem, badge, short};
 
 mod dialog;
 mod forms;
+pub mod health;
 pub mod sdk;
 
 pub use dialog::{AppDialog, AppDialogEvent, DialogKind};
@@ -73,6 +78,12 @@ pub struct BotConnection {
 pub enum AppProblem {
     InvalidName,
     InvalidEndpoint,
+    /// The address in the endpoint is on a network the server doesn't send to.
+    EndpointNotAllowed,
+    /// A test activity to a bot that has no endpoint.
+    NoEndpoint,
+    /// A test activity to an app that is off.
+    AppDisabled,
     UnsignedNotAllowed,
     InvalidPackage(String),
     PackageTooLarge,
@@ -99,6 +110,11 @@ impl AppProblem {
                 "Enter the bot's messaging endpoint as a full https address, like https://bot.example.com/api/messages."
                     .into()
             }
+            Self::EndpointNotAllowed => "The server doesn't send to this address. Use a public address, or ask the \
+                 server's operator to allow the bot's private network."
+                .into(),
+            Self::NoEndpoint => "Set the bot's messaging endpoint first.".into(),
+            Self::AppDisabled => "Turn the app on first.".into(),
             Self::UnsignedNotAllowed => {
                 "This server takes no unsigned bots. Choose Signed, or ask the server's operator to allow them.".into()
             }
@@ -123,6 +139,9 @@ impl AppProblem {
         match self {
             Self::InvalidName => "invalid-name",
             Self::InvalidEndpoint => "invalid-endpoint",
+            Self::EndpointNotAllowed => "endpoint-not-allowed",
+            Self::NoEndpoint => "no-endpoint",
+            Self::AppDisabled => "app-disabled",
             Self::UnsignedNotAllowed => "unsigned-not-allowed",
             Self::InvalidPackage(_) => "invalid-package",
             Self::PackageTooLarge => "package-too-large",
@@ -170,6 +189,9 @@ impl From<AdminError> for AppProblem {
         };
         match refusal {
             Refusal::InvalidEndpoint => Self::InvalidEndpoint,
+            Refusal::EndpointNotAllowed => Self::EndpointNotAllowed,
+            Refusal::NoEndpoint => Self::NoEndpoint,
+            Refusal::AppDisabled => Self::AppDisabled,
             Refusal::UnsignedNotAllowed => Self::UnsignedNotAllowed,
             Refusal::InvalidPackage | Refusal::BotChanged => Self::InvalidPackage(message.clone()),
             Refusal::PackageTooLarge => Self::PackageTooLarge,
@@ -225,6 +247,11 @@ pub trait AppAdmin: Send + Sync + 'static {
     /// # Errors
     /// [`AppProblem`].
     fn connection(&self) -> Result<BotConnection, AppProblem>;
+    /// Sends the bot of the app `id` a test activity; how the bot answered.
+    ///
+    /// # Errors
+    /// [`AppProblem`].
+    fn test_activity(&self, id: &str) -> Result<TestActivity, AppProblem>;
 }
 
 /// The app's tile: its first letter on its accent colour (the brand's when it has none).
@@ -271,6 +298,11 @@ fn marks(app: &AdminApp) -> Vec<(&'static str, Option<u32>)> {
         if bot.auth_mode == BotAuthMode::Unsigned {
             marks.push(("Unsigned", None));
         }
+    }
+    match app.health.as_ref().map(|health| health.state) {
+        Some(HealthState::Failing) => marks.push(("Not delivering", Some(theme::DANGER))),
+        Some(HealthState::Paused) => marks.push(("Paused", Some(theme::DANGER))),
+        _ => {}
     }
     if !app.everyone {
         marks.push(("Specific people", None));
@@ -697,6 +729,9 @@ mod tests {
             AppProblem::File("gone".to_owned()),
             AppProblem::Account(AdminProblem::SignedOut),
             AppProblem::Account(AdminProblem::NotAdmin),
+            AppProblem::EndpointNotAllowed,
+            AppProblem::NoEndpoint,
+            AppProblem::AppDisabled,
         ];
         for problem in &problems {
             assert!(!problem.words().is_empty() && !problem.kind().is_empty(), "{problem:?}");
@@ -715,6 +750,9 @@ mod tests {
         };
         let cases = [
             (refused(Refusal::InvalidEndpoint, ""), AppProblem::InvalidEndpoint),
+            (refused(Refusal::EndpointNotAllowed, ""), AppProblem::EndpointNotAllowed),
+            (refused(Refusal::NoEndpoint, ""), AppProblem::NoEndpoint),
+            (refused(Refusal::AppDisabled, ""), AppProblem::AppDisabled),
             (refused(Refusal::UnsignedNotAllowed, ""), AppProblem::UnsignedNotAllowed),
             (
                 refused(Refusal::InvalidPackage, "bad"),
@@ -763,15 +801,29 @@ mod tests {
                 auth_mode: BotAuthMode::Unsigned,
                 scopes: Vec::new(),
             }),
+            health: Some(teams_auth::admin::BotHealth {
+                state: HealthState::Failing,
+                failures: 3,
+                paused_until: None,
+                last_error: None,
+                last_success: None,
+                pending: 0,
+                sent: 0,
+                failed: 1,
+            }),
             created_at: 0,
             updated_at: 0,
         };
         let words: Vec<&str> = marks(&app).into_iter().map(|(words, _)| words).collect();
-        assert_eq!(words, ["Off", "No endpoint", "Unsigned", "Specific people"]);
+        assert_eq!(
+            words,
+            ["Off", "No endpoint", "Unsigned", "Not delivering", "Specific people"]
+        );
         let fine = AdminApp {
             enabled: true,
             everyone: true,
             bot: None,
+            health: None,
             ..app
         };
         assert!(marks(&fine).is_empty());

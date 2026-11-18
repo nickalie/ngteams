@@ -11,7 +11,7 @@ use gpui::{
     Subscription, Task, WeakEntity, Window,
 };
 use gpui_component::input::{InputEvent, InputState};
-use teams_auth::admin::{AdminApp, AdminUser, AppChanges, BotAuthMode, MAX_PACKAGE, MadeApp};
+use teams_auth::admin::{AdminApp, AdminUser, AppChanges, BotAuthMode, MAX_PACKAGE, MadeApp, TestActivity};
 
 use super::sdk::Sdk;
 use super::{AppAdmin, AppProblem, BotConnection, BotForm, MAX_BOT_NAME};
@@ -117,6 +117,10 @@ pub struct AppDialog {
     pub(super) made: Option<Made>,
     pub(super) sdk: Sdk,
     pub(super) connection: Option<Result<BotConnection, AppProblem>>,
+    /// How the bot answered the last test activity of this dialog.
+    pub(super) test: Option<Result<TestActivity, AppProblem>>,
+    /// The test activity under way.
+    pub(super) testing: Option<Task<()>>,
     pub(super) busy: bool,
     pub(super) problem: Option<SharedString>,
     /// A confirmation takes the keyboard to its first button (Cancel) once it is drawn.
@@ -195,6 +199,8 @@ impl AppDialog {
             made: None,
             sdk: Sdk::DotNet,
             connection: None,
+            test: None,
+            testing: None,
             busy: false,
             problem: None,
             focus_first_button: false,
@@ -639,6 +645,51 @@ impl AppDialog {
         self.trace
             .record(&TraceLine::new("app-admin", "dialog").kind(DialogKind::Made.key()));
         cx.emit(AppDialogEvent::Changed);
+        cx.notify();
+    }
+
+    /// How the bot answered the last test activity, once it answered.
+    #[must_use]
+    pub fn test_result(&self) -> Option<&Result<TestActivity, AppProblem>> {
+        self.test.as_ref()
+    }
+
+    /// Whether a test activity is under way.
+    #[must_use]
+    pub fn testing(&self) -> bool {
+        self.testing.is_some()
+    }
+
+    /// Sends the app's bot a test activity; how the bot answered shows in the details.
+    pub fn send_test(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self
+            .app
+            .as_ref()
+            .filter(|app| app.bot.is_some())
+            .map(|app| app.id.clone())
+        else {
+            return;
+        };
+        if self.testing.is_some() {
+            return;
+        }
+        self.test = None;
+        self.trace.record(&TraceLine::new("app-admin", "test"));
+        let admin = Arc::clone(&self.admin);
+        self.testing = Some(cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let went = cx.background_spawn(async move { admin.test_activity(&id) }).await;
+            let _ = this.update(cx, |this, cx| {
+                let kind = match &went {
+                    Ok(test) if test.delivered => "delivered",
+                    Ok(_) => "not-delivered",
+                    Err(problem) => problem.kind(),
+                };
+                this.trace.record(&TraceLine::new("app-admin", "tested").kind(kind));
+                this.test = Some(went);
+                this.testing = None;
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 

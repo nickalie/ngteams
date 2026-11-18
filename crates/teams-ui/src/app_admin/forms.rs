@@ -15,7 +15,7 @@ use teams_auth::admin::{AdminApp, AdminUser, BotAuthMode};
 use super::dialog::{AppDialog, AppDialogEvent, DialogKind, Made};
 use super::sdk::Sdk;
 use super::{short, tile};
-use crate::icons::{Glyph, icon_button, selected_by};
+use crate::icons::{Glyph, Spinning as _, icon_button, selected_by};
 use crate::keyboard;
 use crate::team_dialogs::{buttons, problem, surface, title};
 use crate::theme::{self, Palette};
@@ -303,9 +303,85 @@ impl AppDialog {
             form.push(label("Messaging endpoint"));
             form.push(Self::field("app-dialog-endpoint", &self.endpoint, self.busy));
             form.extend(self.mode_choice(palette, cx));
+            form.push(Self::delivery(&app, palette));
+            form.push(self.test_row(&app, palette, cx));
         }
         form.push(self.access_summary(&app, palette, cx));
         form
+    }
+
+    /// How the server's deliveries to the app's bot go.
+    fn delivery(app: &AdminApp, palette: Palette) -> gpui::Div {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX));
+        let (summary, attention) = super::health::summary(app.health.as_ref(), now);
+        let counts = super::health::counts(app.health.as_ref());
+        div()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .child(label("Delivery"))
+            .child(
+                div()
+                    .debug_selector(|| "app-dialog-health".to_owned())
+                    .flex()
+                    .items_start()
+                    .gap_1p5()
+                    .text_sm()
+                    .text_color(rgb(if attention { theme::DANGER } else { palette.foreground }))
+                    .when(attention, |line| {
+                        line.child(Glyph::CIRCLE_ALERT.icon().size(px(14.0)).flex_none().mt_0p5())
+                    })
+                    .child(div().flex_1().min_w_0().child(summary)),
+            )
+            .children(
+                counts.map(|counts| muted(counts, palette).debug_selector(|| "app-dialog-health-counts".to_owned())),
+            )
+    }
+
+    /// "Send a test activity" and how the bot answered the last one.
+    fn test_row(&self, app: &AdminApp, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
+        let ready = app.enabled && app.bot.as_ref().is_some_and(|bot| bot.endpoint.is_some());
+        let testing = self.testing.is_some();
+        let said = match &self.test {
+            Some(result) => {
+                let (words, took) = super::health::went(result);
+                let color = if took { theme::SUCCESS } else { theme::DANGER };
+                Some(
+                    div()
+                        .debug_selector(|| "app-dialog-test-result".to_owned())
+                        .text_sm()
+                        .text_color(rgb(color))
+                        .child(words),
+                )
+            }
+            None if !ready => Some(muted("Turn the app on and set its endpoint to test it.", palette)),
+            None => None,
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(label("Test the bot"))
+                    .child(muted("Sends the bot a test event and shows how it answers.", palette))
+                    .children(said),
+            )
+            .child(selected_by(
+                "app-dialog-test",
+                Button::new("app-dialog-test")
+                    .outline()
+                    .label("Send a test activity")
+                    .spinning(testing)
+                    .disabled(self.busy || testing || !ready)
+                    .on_click(cx.listener(|this, _, _, cx| this.send_test(cx))),
+            ))
     }
 
     fn access_summary(&self, app: &AdminApp, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {

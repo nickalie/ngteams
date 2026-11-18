@@ -14,7 +14,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
-use teams_auth::admin::{AdminApp, AdminBot, AdminUser, AppChanges, AppSource, BotAuthMode, MadeApp, UserPage};
+use teams_auth::admin::{
+    AdminApp, AdminBot, AdminUser, AppChanges, AppSource, BotAuthMode, BotHealth, HealthState, MadeApp, TestActivity,
+    UserPage,
+};
 use teams_ui::app_admin::sdk::Sdk;
 use teams_ui::app_admin::{AppAdmin, AppDialog, AppProblem, BotConnection, BotForm, DialogKind, ManageApps};
 use teams_ui::bots_flag::BotsFlag;
@@ -47,6 +50,7 @@ fn app(id: &str, name: &str, bot: bool) -> AdminApp {
             auth_mode: BotAuthMode::Signed,
             scopes: vec!["personal".to_owned()],
         }),
+        health: None,
         created_at: 1,
         updated_at: 2,
     }
@@ -70,6 +74,8 @@ struct Server {
     asked: Mutex<Vec<String>>,
     refuse: Mutex<Option<AppProblem>>,
     made: Mutex<u32>,
+    /// How the bot answers the next test activity; it takes it unless set.
+    test: Mutex<Option<TestActivity>>,
 }
 
 impl Server {
@@ -196,6 +202,16 @@ impl AppAdmin for Server {
                 .collect(),
             next: None,
         })
+    }
+
+    fn test_activity(&self, id: &str) -> Result<TestActivity, AppProblem> {
+        self.note(format!("test {id}"))?;
+        Ok(self.test.lock().unwrap().take().unwrap_or(TestActivity {
+            delivered: true,
+            status: Some(200),
+            error: None,
+            elapsed_ms: 12,
+        }))
     }
 
     fn connection(&self) -> Result<BotConnection, AppProblem> {
@@ -764,4 +780,124 @@ fn the_list_is_read_again_when_the_settings_open_again(cx: &mut TestAppContext) 
     opened.settle();
     assert_eq!(opened.listed(), ["Made-up Notes", "Made-up Tab", "Made-up Zed"]);
     assert_eq!(server.asked(), ["apps", "apps"]);
+}
+
+fn failing() -> BotHealth {
+    BotHealth {
+        state: HealthState::Failing,
+        failures: 3,
+        paused_until: None,
+        last_error: Some("the bot answered 500".to_owned()),
+        last_success: None,
+        pending: 0,
+        sent: 4,
+        failed: 1,
+    }
+}
+
+#[gpui::test]
+fn a_bot_that_fails_is_marked_and_its_details_say_why(cx: &mut TestAppContext) {
+    let mut notes = app(NOTES, "Made-up Notes", true);
+    notes.health = Some(failing());
+    let mut quiet = app("00000000-0000-4000-8000-0000000000b3", "Made-up Quiet", true);
+    quiet.health = Some(BotHealth {
+        state: HealthState::Healthy,
+        failures: 0,
+        last_error: None,
+        ..failing()
+    });
+    let server = Server::with(vec![notes, quiet]);
+    let mut opened = opened_with(&held(&server), true, cx);
+    opened.click("settings-page-apps");
+    // the row's mark is the unit test's (`marks`); here the details
+    opened.click_owned(&format!("app-row-{NOTES}"));
+    assert!(opened.shows("app-dialog-health"));
+    assert!(opened.shows("app-dialog-health-counts"));
+    assert!(opened.shows("app-dialog-test"));
+    let dialog = opened.dialog().unwrap();
+    let health = opened
+        .cx
+        .read(|cx| dialog.read(cx).app().and_then(|app| app.health.clone()));
+    let (words, attention) = teams_ui::app_admin::health::summary(health.as_ref(), 0);
+    assert!(attention && words.contains("3 failed in a row"), "{words}");
+}
+
+#[gpui::test]
+fn a_test_activity_is_sent_and_how_the_bot_answered_shows(cx: &mut TestAppContext) {
+    let (server, mut opened) = page_opened(cx);
+    let (_, before) = opened.written.lines();
+    assert!(!before.contains("tested"));
+    opened.click_owned(&format!("app-row-{NOTES}"));
+    assert!(!opened.shows("app-dialog-test-result"));
+    opened.click("app-dialog-test");
+    assert!(
+        server.asked().contains(&format!("test {NOTES}")),
+        "{:?}",
+        server.asked()
+    );
+    assert!(opened.shows("app-dialog-test-result"));
+    let result = |opened: &mut Opened| {
+        let dialog = opened.dialog().unwrap();
+        opened
+            .cx
+            .read(|cx| dialog.read(cx).test_result().cloned())
+            .map(|result| teams_ui::app_admin::health::went(&result))
+    };
+    assert_eq!(
+        result(&mut opened),
+        Some(("The bot took it (200) in 12 ms.".to_owned(), true))
+    );
+
+    *server.test.lock().unwrap() = Some(TestActivity {
+        delivered: false,
+        status: None,
+        error: Some("the address is on a network the server doesn't reach".to_owned()),
+        elapsed_ms: 1,
+    });
+    opened.click("app-dialog-test");
+    let (words, took) = result(&mut opened).unwrap();
+    assert!(!took && words.contains("network"), "{words}");
+
+    server.refuse_next(AppProblem::AppDisabled);
+    opened.click("app-dialog-test");
+    assert_eq!(result(&mut opened), Some(("Turn the app on first.".to_owned(), false)));
+    // the details stay open and nothing else was asked
+    assert_eq!(opened.kind(), Some(DialogKind::Details));
+    assert!(
+        server.changes().iter().all(|asked| asked.starts_with("test ")),
+        "{:?}",
+        server.changes()
+    );
+    let (lines, text) = opened.written.lines();
+    let tested: Vec<_> = lines.iter().filter(|(change, _)| change == "tested").collect();
+    assert_eq!(tested.len(), 3, "{lines:?}");
+    assert!(!text.contains(NOTES), "the trace names no app");
+}
+
+#[gpui::test]
+fn an_app_that_is_off_offers_no_test(cx: &mut TestAppContext) {
+    let mut notes = app(NOTES, "Made-up Notes", true);
+    notes.enabled = false;
+    let server = Server::with(vec![notes]);
+    let mut opened = opened_with(&held(&server), true, cx);
+    opened.click("settings-page-apps");
+    opened.click_owned(&format!("app-row-{NOTES}"));
+    opened.click("app-dialog-test");
+    assert!(
+        !server.asked().iter().any(|asked| asked.starts_with("test ")),
+        "{:?}",
+        server.asked()
+    );
+}
+
+#[gpui::test]
+fn an_endpoint_on_a_closed_network_is_said_in_the_details(cx: &mut TestAppContext) {
+    let (server, mut opened) = page_opened(cx);
+    opened.click_owned(&format!("app-row-{NOTES}"));
+    server.refuse_next(AppProblem::EndpointNotAllowed);
+    opened.with_dialog(|dialog, window, cx| dialog.fill("", "", "https://169.254.169.254/latest", window, cx));
+    opened.click("app-dialog-confirm");
+    let said = opened.dialog_problem().unwrap();
+    assert!(said.contains("doesn't send to this address"), "{said}");
+    assert_eq!(opened.kind(), Some(DialogKind::Details));
 }

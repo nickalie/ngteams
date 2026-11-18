@@ -23,7 +23,8 @@ use crate::wire;
 
 mod apps;
 pub use apps::{
-    AdminApp, AdminBot, AppChanges, AppSource, BotAuthMode, BotMetadata, MAX_PACKAGE, MadeApp, NewBot, apps_not_served,
+    AdminApp, AdminBot, AppChanges, AppSource, BotAuthMode, BotHealth, BotMetadata, HealthState, MAX_PACKAGE, MadeApp,
+    NewBot, TestActivity, apps_not_served,
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -67,6 +68,12 @@ pub enum Refusal {
     NoBot,
     /// The bot's endpoint isn't one the server takes.
     InvalidEndpoint,
+    /// The address written in the bot's endpoint is on a network the server doesn't send to.
+    EndpointNotAllowed,
+    /// The bot has no endpoint to send to.
+    NoEndpoint,
+    /// The app is turned off.
+    AppDisabled,
     /// The server takes no unsigned bot.
     UnsignedNotAllowed,
     /// An account named isn't one the server has.
@@ -101,6 +108,9 @@ impl Refusal {
             "BotChanged" => Self::BotChanged,
             "NoBot" => Self::NoBot,
             "InvalidEndpoint" => Self::InvalidEndpoint,
+            "EndpointNotAllowed" => Self::EndpointNotAllowed,
+            "NoEndpoint" => Self::NoEndpoint,
+            "AppDisabled" => Self::AppDisabled,
             "UnsignedNotAllowed" => Self::UnsignedNotAllowed,
             "UnknownUser" => Self::UnknownUser,
             "InvalidPackage" => Self::InvalidPackage,

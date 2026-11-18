@@ -4,7 +4,8 @@
 
 use serde_json::{Value, json};
 use teams_auth::admin::{
-    AdminClient, AdminError, AppChanges, AppSource, BotAuthMode, NewBot, Refusal, apps_not_served,
+    AdminClient, AdminError, AppChanges, AppSource, BotAuthMode, BotHealth, HealthState, NewBot, Refusal, TestActivity,
+    apps_not_served,
 };
 use teams_auth::secrets::Secret;
 use wiremock::matchers::{body_bytes, body_json, header, method, path};
@@ -197,6 +198,9 @@ async fn the_servers_refusals_name_what_is_wrong() -> TestResult {
         (409, "AppExists", Refusal::AppExists),
         (409, "BotExists", Refusal::BotExists),
         (413, "PackageTooLarge", Refusal::PackageTooLarge),
+        (400, "EndpointNotAllowed", Refusal::EndpointNotAllowed),
+        (400, "NoEndpoint", Refusal::NoEndpoint),
+        (409, "AppDisabled", Refusal::AppDisabled),
     ];
     for (status, code, expected) in refusals {
         server.reset().await;
@@ -368,5 +372,100 @@ async fn the_bots_metadata_is_asked_without_a_token() -> TestResult {
         Err(AdminError::UnexpectedResponse { status: 200 })
     ));
     assert_eq!(client.origin(), server.uri());
+    Ok(())
+}
+
+#[tokio::test]
+async fn each_bots_delivery_health_is_read_with_its_app() -> TestResult {
+    let (server, client) = server().await?;
+    let mut failing = app(true);
+    failing["health"] = json!({"state": "failing", "failures": 3, "paused_until": null,
+        "last_error": "the bot answered 500", "last_success": 1_700_000_000_000_i64,
+        "outbox": {"pending": 1, "sent": 7, "failed": 2}});
+    let mut paused = app(true);
+    paused["id"] = json!("00000000-0000-4000-8000-0000000000b3");
+    paused["health"] = json!({"state": "paused", "failures": 0, "paused_until": 1_800_000_000_000_i64,
+        "last_error": "the request timed out", "last_success": null, "outbox": {"pending": 4, "sent": 0, "failed": 20}});
+    let mut odd = app(true);
+    odd["id"] = json!("00000000-0000-4000-8000-0000000000b4");
+    odd["health"] = json!({"state": "resting"});
+    let older = app(true);
+    Mock::given(method("GET"))
+        .and(path("/api/admin/v1/apps"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"apps": [failing, paused, odd, older]})))
+        .mount(&server)
+        .await;
+    let apps = client.apps(&Secret::new(TOKEN)).await?;
+    assert_eq!(
+        apps[0].health,
+        Some(BotHealth {
+            state: HealthState::Failing,
+            failures: 3,
+            paused_until: None,
+            last_error: Some("the bot answered 500".to_owned()),
+            last_success: Some(1_700_000_000_000),
+            pending: 1,
+            sent: 7,
+            failed: 2,
+        })
+    );
+    let paused = apps[1].health.as_ref().ok_or("health")?;
+    assert_eq!(
+        (paused.state, paused.paused_until, paused.failed),
+        (HealthState::Paused, Some(1_800_000_000_000), 20)
+    );
+    assert_eq!(
+        apps[2].health.as_ref().map(|health| health.state),
+        Some(HealthState::Other)
+    );
+    // a server from before the health says none
+    assert_eq!(apps[3].health, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_test_activity_says_how_it_went() -> TestResult {
+    let (server, client) = server().await?;
+    let token = Secret::new(TOKEN);
+    Mock::given(method("POST"))
+        .and(path(format!("/api/admin/v1/apps/{APP}/test")))
+        .and(header("authorization", format!("Bearer {TOKEN}").as_str()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"delivered": false, "status": 500, "error": "the bot answered 500", "elapsed_ms": 42}),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let went = client.test_activity(&token, APP).await?;
+    assert_eq!(
+        went,
+        TestActivity {
+            delivered: false,
+            status: Some(500),
+            error: Some("the bot answered 500".to_owned()),
+            elapsed_ms: 42,
+        }
+    );
+    server.reset().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "2")
+                .set_body_json(json!({"error": {"code": "TooManyRequests", "message": "Made-up words."}})),
+        )
+        .mount(&server)
+        .await;
+    let held = client.test_activity(&token, APP).await.err().ok_or("held")?;
+    assert!(matches!(held, AdminError::Throttled { .. }), "{held:?}");
+    server.reset().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": 200})))
+        .mount(&server)
+        .await;
+    let unread = client.test_activity(&token, APP).await.err().ok_or("unread")?;
+    assert!(
+        matches!(unread, AdminError::UnexpectedResponse { status: 200 }),
+        "{unread:?}"
+    );
     Ok(())
 }

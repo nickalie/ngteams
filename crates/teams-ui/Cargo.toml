@@ -220,6 +220,12 @@ name = "app_card_window"
 harness = false
 
 [[test]]
+# Manage apps with each bot's delivery health and a test activity, over a made-up server, in the UI sandbox,
+# screenshotted in each theme under `target/ui-shots/app-health-*.png`
+name = "app_health_window"
+harness = false
+
+[[test]]
 # a bot's cards with the bots shown, over the fake engine, in the UI sandbox, screenshotted in each theme under
 # `target/ui-shots/bot-cards-*.png`
 name = "bot_cards_window"

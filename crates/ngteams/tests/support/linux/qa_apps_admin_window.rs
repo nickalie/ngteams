@@ -10,10 +10,10 @@
 //! - **The administrator** (`bots.allow_unsigned` off): register a bot from the keyboard (its secret once), the
 //!   secret gets a token; refusals (unsigned, a plain `http` endpoint, credentials in the endpoint, a long name);
 //!   upload a good package, one too large, a broken one, one without a manifest, the same one again; turn an app off
-//!   (no token) and on (a token); change the endpoint (good, private, metadata address, `http`, unsigned); limit it
-//!   to selected people; a new secret (the old one stops); delete it after a confirmation that starts on Back; many
-//!   apps with long names and no picture, and the search. Afterwards no secret is in the app's files, its debug log,
-//!   its stderr or the server's log.
+//!   (no token) and on (a token); change the endpoint (good; private, metadata, loopback, `http`, unsigned refused);
+//!   limit it to selected people; a new secret (the old one stops); delete it after a confirmation that starts on Back;
+//!   many apps with long names and no picture, and the search. Afterwards no secret is in the app's files, its debug
+//!   log, its stderr or the server's log.
 //! - **A user who is no administrator**: Settings offer neither Manage users nor Manage apps.
 //! - **A server with `apps.enabled = false`**: its administrator gets Manage users and no Manage apps.
 //! - **A server with `bots.allow_unsigned`**: an unsigned bot is registered, marked and gets no token.
@@ -677,7 +677,7 @@ fn off_and_on(qa: &mut Qa<'_>, _: &mut Tally) -> SandboxResult {
     })
 }
 
-fn endpoint(qa: &mut Qa<'_>, tally: &mut Tally) -> SandboxResult {
+fn endpoint(qa: &mut Qa<'_>, _: &mut Tally) -> SandboxResult {
     let good = "https://bots.example.test/v2/messages";
     qa.act(&format!("open {BOT_NAME}"))?;
     qa.act(&format!("endpoint {good}"))?;
@@ -702,16 +702,9 @@ fn endpoint(qa: &mut Qa<'_>, tally: &mut Tally) -> SandboxResult {
             state["dialog"].is_null() || (state["dialog"]["problem"].is_string())
         })?;
         if state["dialog"].is_null() {
+            // the server refuses each: a private, metadata or loopback address as it is saved (no network is opened)
             let server = qa.server_apps()?;
-            let refused_expected = matches!(case, "plain-http" | "unsigned");
-            if refused_expected {
-                failures.push(format!("{case}: taken, the server holds {}", server[BOT_NAME]));
-            } else {
-                tally.note(format!(
-                    "the endpoint change {case} was taken: the server holds {}",
-                    server[BOT_NAME]["endpoint"]
-                ));
-            }
+            failures.push(format!("{case}: taken, the server holds {}", server[BOT_NAME]));
         } else {
             say(&format!("endpoint {case}: {}", state["dialog"]["problem"]));
             qa.shot(&format!("endpoint-refused-{case}"))?;

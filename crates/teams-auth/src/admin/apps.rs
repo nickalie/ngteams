@@ -1,5 +1,6 @@
 //! An own server's apps and bots as its administrator manages them (`docs/server.md`, "Apps and bots"):
-//! `/api/admin/v1/apps…` with the account's access token, and the metadata bots check the server with
+//! `/api/admin/v1/apps…` with the account's access token (with each bot's delivery health, and a test activity to a
+//! bot), and the metadata bots check the server with
 //! (`/bot/v1/.well-known/openidconfiguration`, asked with no token) that a bot's settings name.
 //!
 //! A bot's secret is in the answer that made it and nowhere else. It is plain text, as [`super::suggested_password`]
@@ -69,6 +70,83 @@ pub struct AdminBot {
     pub scopes: Vec<String>,
 }
 
+/// How the server's deliveries to a bot go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HealthState {
+    /// Nothing sent yet.
+    New,
+    /// Its last send went.
+    Healthy,
+    /// Its last send failed.
+    Failing,
+    /// It gets nothing for a while after many failures in a row.
+    Paused,
+    /// A state this client doesn't know.
+    Other,
+}
+
+/// A bot's delivery health, as the server keeps it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BotHealth {
+    pub state: HealthState,
+    /// Failed sends in a row.
+    pub failures: u32,
+    /// Milliseconds since the Unix epoch, while it is paused.
+    pub paused_until: Option<i64>,
+    /// Why its last send failed, while it is failing.
+    pub last_error: Option<String>,
+    /// Milliseconds since the Unix epoch.
+    pub last_success: Option<i64>,
+    /// The server's activities to it of the last day, by how they stand.
+    pub pending: u64,
+    pub sent: u64,
+    pub failed: u64,
+}
+
+impl BotHealth {
+    fn parse(value: &Value) -> Option<Self> {
+        let state = match value.get("state")?.as_str()? {
+            "new" => HealthState::New,
+            "healthy" => HealthState::Healthy,
+            "failing" => HealthState::Failing,
+            "paused" => HealthState::Paused,
+            _ => HealthState::Other,
+        };
+        let count = |key: &str| {
+            value
+                .pointer(&format!("/outbox/{key}"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        };
+        Some(Self {
+            state,
+            failures: value
+                .get("failures")
+                .and_then(Value::as_u64)
+                .and_then(|failures| u32::try_from(failures).ok())
+                .unwrap_or(0),
+            paused_until: value.get("paused_until").and_then(Value::as_i64),
+            last_error: text(value, "last_error").filter(|error| !error.is_empty()),
+            last_success: value.get("last_success").and_then(Value::as_i64),
+            pending: count("pending"),
+            sent: count("sent"),
+            failed: count("failed"),
+        })
+    }
+}
+
+/// How a test activity to a bot went.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TestActivity {
+    /// The bot took it (it answered 2xx).
+    pub delivered: bool,
+    /// The bot's status, when it answered.
+    pub status: Option<u16>,
+    /// Why it wasn't delivered, as the server says it.
+    pub error: Option<String>,
+    pub elapsed_ms: u64,
+}
+
 /// An app as its administrator sees it. Never its bot's secret.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdminApp {
@@ -86,6 +164,8 @@ pub struct AdminApp {
     /// The account ids that may use it while not [`AdminApp::everyone`].
     pub users: Vec<String>,
     pub bot: Option<AdminBot>,
+    /// Its bot's delivery health; none without a bot, or from a server that doesn't say.
+    pub health: Option<BotHealth>,
     /// Seconds since the Unix epoch.
     pub created_at: i64,
     pub updated_at: i64,
@@ -142,6 +222,7 @@ impl AdminApp {
             everyone: flag("everyone")?,
             users: texts(value, "users").unwrap_or_default(),
             bot,
+            health: value.get("health").and_then(BotHealth::parse),
             created_at: time("created_at"),
             updated_at: time("updated_at"),
         })
@@ -333,6 +414,29 @@ impl AdminClient {
         self.send(bearer(self.http.delete(url), token), &[token.expose()])
             .await?;
         Ok(())
+    }
+
+    /// `POST /api/admin/v1/apps/{id}/test`: a test activity to the app's bot; how it went.
+    ///
+    /// # Errors
+    /// [`AdminError::Refused`] with [`super::Refusal::NoEndpoint`], [`super::Refusal::AppDisabled`],
+    /// [`super::Refusal::NoBot`] or [`super::Refusal::NotFound`]; [`AdminError::Throttled`] over the bot's send rate.
+    pub async fn test_activity(&self, token: &Secret, id: &str) -> Result<TestActivity, AdminError> {
+        let url = self.app_url(id, &["test"])?;
+        let (status, body) = self.send(bearer(self.http.post(url), token), &[token.expose()]).await?;
+        let delivered = body
+            .get("delivered")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| unexpected(status))?;
+        Ok(TestActivity {
+            delivered,
+            status: body
+                .get("status")
+                .and_then(Value::as_u64)
+                .and_then(|status| u16::try_from(status).ok()),
+            error: text(&body, "error").filter(|error| !error.is_empty()),
+            elapsed_ms: body.get("elapsed_ms").and_then(Value::as_u64).unwrap_or(0),
+        })
     }
 
     /// `GET /bot/v1/.well-known/openidconfiguration`: what the server publishes for bots to check its tokens with,

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use teams_auth::admin::{
     AdminApp, AdminClient, AdminError, AdminUser, AppChanges, FirstAdmin, MadeApp, NewBot, NewUser, Refusal,
-    UserChanges, UserPage, apps_not_served,
+    TestActivity, UserChanges, UserPage, apps_not_served,
 };
 use teams_auth::secrets::{Secret, SecretStore};
 use teams_auth::session::Session;
@@ -332,6 +332,10 @@ impl<S: SecretStore + 'static> AppAdmin for AdminService<S> {
 
     fn people(&self, query: &str, after: Option<&str>) -> Result<UserPage, AppProblem> {
         self.asked_as(async |client, token| client.users(token, query, after, PAGE).await)
+    }
+
+    fn test_activity(&self, id: &str) -> Result<TestActivity, AppProblem> {
+        self.asked_as(async |client, token| client.test_activity(token, id).await)
     }
 
     fn connection(&self) -> Result<BotConnection, AppProblem> {
