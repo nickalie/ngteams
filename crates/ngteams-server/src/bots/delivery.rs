@@ -62,22 +62,16 @@ impl Drop for Senders {
 async fn keep_delivering(app: Arc<App>, mut stopping: watch::Receiver<bool>) {
     let node = uuid::Uuid::new_v4().simple().to_string();
     let mut wake = None;
-    // when the soonest row a bot's send limit held back is due again
-    let mut held_until: Option<tokio::time::Instant> = None;
     loop {
         if wake.is_none() {
             // a closed fan-out closes every subscription: subscribe again, and poll meanwhile
             wake = app.fanout.subscribe(WAKE).await.ok();
         }
-        if let Some(due) = rounds(&app, &node, &stopping).await {
-            held_until = Some(held_until.map_or(due, |soonest| soonest.min(due)));
-        }
+        rounds(&app, &node, &stopping).await;
         if *stopping.borrow() {
             return;
         }
-        let now = tokio::time::Instant::now();
-        held_until = held_until.filter(|due| *due > now);
-        let nap = held_until.map_or(POLL, |due| (due - now).min(POLL));
+        let nap = nap(&app).await;
         let woken = async {
             match wake.as_mut() {
                 Some(subscription) => !matches!(subscription.recv().await, Err(crate::fanout::Missed::Closed)),
@@ -96,30 +90,37 @@ async fn keep_delivering(app: Arc<App>, mut stopping: watch::Receiver<bool>) {
     }
 }
 
-/// Rounds until one sends nothing and leaves no due row behind, or `stopping` turns true; when the soonest row a
-/// bot's send limit held back is due again.
-async fn rounds(app: &App, node: &str, stopping: &watch::Receiver<bool>) -> Option<tokio::time::Instant> {
-    let mut held_until: Option<tokio::time::Instant> = None;
+/// How long the sender waits for a wake-up before it looks again: until the soonest row comes due (each turn a send
+/// limit gave, each try again), at most [`POLL`].
+async fn nap(app: &App) -> Duration {
+    match outbox::next_due(&app.db).await {
+        Ok(Some(due)) => {
+            let wait = u64::try_from(due - crate::chatsvc::now()).unwrap_or(0);
+            Duration::from_millis(wait).min(POLL)
+        }
+        Ok(None) => POLL,
+        Err(error) => {
+            tracing::warn!(%error, "the next due bot delivery couldn't be read; the senders poll");
+            POLL
+        }
+    }
+}
+
+/// Rounds until one sends nothing and leaves no due row behind, or `stopping` turns true.
+async fn rounds(app: &App, node: &str, stopping: &watch::Receiver<bool>) {
     while !*stopping.borrow() {
         let done = round(app, node).await;
-        if let Some(held) = done.held {
-            let due = tokio::time::Instant::now() + held;
-            held_until = Some(held_until.map_or(due, |soonest| soonest.min(due)));
-        }
         // a full claim the send limits held back leaves more due rows, maybe of other bots: claim them too
         if done.sent == 0 && !done.more {
             break;
         }
     }
-    held_until
 }
 
 /// What a round did.
 struct Round {
     /// The rows sent (whatever the bot answered).
     sent: usize,
-    /// The shortest wait of a row its bot's send limit held back, when one was.
-    held: Option<Duration>,
     /// Whether the claim was full and its send limits held some rows back.
     more: bool,
 }
@@ -133,11 +134,7 @@ async fn round(app: &App, node: &str) -> Round {
         Ok(claimed) => claimed,
         Err(error) => {
             tracing::warn!(%error, "bot deliveries couldn't be taken");
-            return Round {
-                sent: 0,
-                held: None,
-                more: false,
-            };
+            return Round { sent: 0, more: false };
         }
     };
     let full = i64::try_from(claimed.len()).is_ok_and(|claimed| claimed >= BATCH);
@@ -146,22 +143,21 @@ async fn round(app: &App, node: &str) -> Round {
     futures_util::future::join_all(due.into_iter().map(|row| send(app, node, row))).await;
     Round {
         sent,
-        held,
-        more: full && held.is_some(),
+        more: full && held,
     }
 }
 
-/// The rows whose bots' send limits let them go now; the others go back to the outbox, due when their bot has room,
-/// and the shortest of those waits.
-async fn within_limits(app: &App, node: &str, claimed: Vec<Delivery>) -> (Vec<Delivery>, Option<Duration>) {
-    let mut held: Option<Duration> = None;
+/// The rows whose bots' send limits let them go now; the others go back to the outbox, due at their turn. Whether
+/// the limits held one back.
+async fn within_limits(app: &App, node: &str, claimed: Vec<Delivery>) -> (Vec<Delivery>, bool) {
+    let mut held = false;
     let mut due = Vec::new();
     for row in claimed {
-        let Some(wait) = app.bot_sends.take(&row.bot_id) else {
+        let Some(wait) = app.bot_sends.take(&row.bot_id, &row.id) else {
             due.push(row);
             continue;
         };
-        held = Some(held.map_or(wait, |shortest| shortest.min(wait)));
+        held = true;
         let delay = i64::try_from(wait.as_millis())
             .unwrap_or(i64::MAX / 2)
             .saturating_add(1);
@@ -262,21 +258,27 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn a_bot_its_limit_holds_for_more_than_two_claims_doesnt_hold_up_another_bot() -> Result<(), DbError> {
-        let dir = tempfile::tempdir().map_err(|error| DbError::Pool(error.to_string()))?;
+    /// An app on a new SQLite database whose bots send at `send_rate` a second, a burst of one. Its outbox's rows
+    /// need no registered bot: each send to one fails for good, which is a send all the same.
+    async fn app(dir: &tempfile::TempDir, send_rate: u32) -> Result<std::sync::Arc<App>, DbError> {
         let mut config = Config {
             database_url: format!("sqlite://{}", dir.path().join("server.sqlite").display()),
             database_pool: 1,
             ..Config::default()
         };
-        config.bots.send_rate = 1;
+        config.bots.send_rate = send_rate;
         config.bots.send_burst = 1;
         let app = App::start(config)
             .await
             .map_err(|error| DbError::Pool(error.to_string()))?;
-        // the rows' bots aren't registered: each send fails for good, which is a send all the same
         with_conn!(app.db, |conn| conn.batch_execute("PRAGMA foreign_keys = OFF").await?);
+        Ok(app)
+    }
+
+    #[tokio::test]
+    async fn a_bot_its_limit_holds_for_more_than_two_claims_doesnt_hold_up_another_bot() -> Result<(), DbError> {
+        let dir = tempfile::tempdir().map_err(|error| DbError::Pool(error.to_string()))?;
+        let app = app(&dir, 1).await?;
         // the heads of more lines than two claims take, then one row of another bot
         for seq in 0..70 {
             put(
@@ -291,8 +293,11 @@ mod tests {
         )
         .await?;
         let (_stop, stopping) = watch::channel(false);
-        let held_until = rounds(&app, "node", &stopping).await;
-        assert!(held_until.is_some());
+        let started = std::time::Instant::now();
+        rounds(&app, "node", &stopping).await;
+        // the whole seconds the rounds took, and one more
+        let took = usize::try_from(started.elapsed().as_secs()).unwrap_or(usize::MAX) + 1;
+        assert!(outbox::next_due(&app.db).await?.is_some());
 
         let free = deliveries(&app.db, "free").await?;
         assert_eq!(free[0].state, FAILED, "{free:?}");
@@ -303,12 +308,44 @@ mod tests {
             .map(|row| row.due_at)
             .collect();
         // one went at once, and one more each second the rounds took
-        assert!((60..=69).contains(&due.len()), "{due:?}");
-        // one turn a second each, not all at once
+        assert!(due.len() < 70 && due.len() + took >= 70, "{took} s: {due:?}");
+        // one turn a second each, not all at once: only the rows whose turns came while the rounds went on can wait
+        // for the same opening
         due.sort_unstable();
-        for pair in due.windows(2) {
-            assert!(pair[1] - pair[0] >= 900, "{due:?}");
+        for (at, first) in due.iter().enumerate() {
+            let together = due[at..].iter().take_while(|due| **due - first < 900).count();
+            assert!(together <= took, "{took} s: {due:?}");
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_sender_wakes_for_each_turn_of_a_held_backlog() -> Result<(), DbError> {
+        let dir = tempfile::tempdir().map_err(|error| DbError::Pool(error.to_string()))?;
+        let app = app(&dir, 10).await?;
+        for seq in 0..6 {
+            put(
+                &app.db,
+                &Delivery::new("held", &format!("c{seq}"), seq, &json!({"type": "message"}), false),
+            )
+            .await?;
+        }
+        let senders = Senders::start(std::sync::Arc::clone(&app));
+        // at 10 a second the six go in about half a second; a sender that slept a poll (2 s) after a turn is late
+        let started = std::time::Instant::now();
+        let left = loop {
+            let left = deliveries(&app.db, "held")
+                .await?
+                .into_iter()
+                .filter(|row| row.state == PENDING)
+                .count();
+            if left == 0 || started.elapsed() > Duration::from_millis(1500) {
+                break left;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        senders.stop(Duration::from_secs(5)).await;
+        assert_eq!(left, 0, "rows not sent in 1.5 s");
         Ok(())
     }
 }

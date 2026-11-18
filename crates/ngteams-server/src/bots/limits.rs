@@ -2,7 +2,7 @@
 //!
 //! - the server's sends to one bot keep to `bots.send_rate` (a burst of `bots.send_burst`): a send over it waits for
 //!   its turn, as a row of the outbox due later, and the wait is no failed attempt; the held rows of one bot get
-//!   turns one after the other, so they don't all come due at once;
+//!   turns one after the other, so they don't all come due at once, and a row held once more keeps its turn;
 //! - one app's calls to the connector keep to `bots.connector_rate` (a burst of `bots.connector_burst`); more get
 //!   the Bot Framework's `429` with `Retry-After` ([`connector`]).
 
@@ -38,9 +38,22 @@ pub struct SendLimit {
     limiter: DefaultKeyedRateLimiter<String>,
     /// The time between two sends to one bot at its rate.
     interval: Duration,
-    /// Per bot, when the turn after the last one given to a held row starts.
-    next_turn: Mutex<HashMap<String, Instant>>,
+    /// The turns given to held rows.
+    turns: Mutex<Turns>,
 }
+
+/// The turns [`SendLimit`] gave.
+#[derive(Default)]
+struct Turns {
+    /// Per bot, when the turn after the last one given to a held row starts.
+    next: HashMap<String, Instant>,
+    /// Per held row (by its id), the turn it got.
+    rows: HashMap<String, Instant>,
+}
+
+/// How long a row keeps the turn it got after that turn started: a row its bot's limit holds once more in that time
+/// keeps its place in the line.
+const KEPT: Duration = Duration::from_secs(60);
 
 impl std::fmt::Debug for SendLimit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -54,31 +67,51 @@ impl SendLimit {
         Self {
             limiter: RateLimiter::keyed(quota(config.send_rate, config.send_burst)),
             interval: Duration::from_secs(1) / config.send_rate.max(1),
-            next_turn: Mutex::new(HashMap::new()),
+            turns: Mutex::new(Turns::default()),
         }
     }
 
-    /// Takes one send to `bot`: `None` when it may go now, else how long until its turn. Each held send gets the turn
-    /// after the one the last held send got.
-    pub(crate) fn take(&self, bot: &str) -> Option<Duration> {
+    /// Takes one send to `bot` now, as a send that can't wait for a turn: `None` when it may go now, else how long
+    /// until the limit has room. It gives no turn.
+    pub(crate) fn take_now(&self, bot: &str) -> Option<Duration> {
         if self.limiter.len() > TRACKED {
             self.limiter.retain_recent();
         }
-        let wait = self
-            .limiter
-            .check_key(&bot.to_owned())
-            .err()?
-            .wait_time_from(DefaultClock::default().now());
+        Some(
+            self.limiter
+                .check_key(&bot.to_owned())
+                .err()?
+                .wait_time_from(DefaultClock::default().now()),
+        )
+    }
+
+    /// Takes one send of the outbox's row `row` to `bot`: `None` when it may go now, else how long until its turn. A
+    /// row held for the first time gets the turn after the one the last held row got. A row that got a turn before
+    /// keeps it: when the limit holds it once more, it waits only until the limit has room.
+    pub(crate) fn take(&self, bot: &str, row: &str) -> Option<Duration> {
+        let wait = self.take_now(bot);
         let now = Instant::now();
-        let mut next_turn = self.next_turn.lock().unwrap_or_else(PoisonError::into_inner);
-        if next_turn.len() > TRACKED {
-            next_turn.retain(|_, turn| *turn > now);
+        let mut turns = self.turns.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(wait) = wait else {
+            turns.rows.remove(row);
+            return None;
+        };
+        if turns.rows.len() > TRACKED {
+            turns.rows.retain(|_, turn| *turn + KEPT > now);
         }
-        let turn = next_turn
+        if turns.next.len() > TRACKED {
+            turns.next.retain(|_, turn| *turn > now);
+        }
+        if let Some(turn) = turns.rows.get(row) {
+            return Some(turn.saturating_duration_since(now).max(wait));
+        }
+        let turn = turns
+            .next
             .get(bot)
             .copied()
             .map_or(now + wait, |turn| turn.max(now + wait));
-        next_turn.insert(bot.to_owned(), turn + self.interval);
+        turns.next.insert(bot.to_owned(), turn + self.interval);
+        turns.rows.insert(row.to_owned(), turn);
         Some(turn.saturating_duration_since(now))
     }
 }
@@ -157,12 +190,21 @@ mod tests {
             ..BotsConfig::default()
         };
         let limit = SendLimit::new(&config);
-        assert_eq!(limit.take("a"), None);
-        assert_eq!(limit.take("a"), None);
-        let wait = limit.take("a").unwrap();
+        assert_eq!(limit.take("a", "r1"), None);
+        assert_eq!(limit.take("a", "r2"), None);
+        let wait = limit.take("a", "r3").unwrap();
         assert!(wait <= Duration::from_secs(1), "{wait:?}");
-        assert_eq!(limit.take("b"), None);
+        assert_eq!(limit.take("b", "r4"), None);
         assert!(format!("{limit:?}").contains("SendLimit"));
+    }
+
+    /// Asserts that `later` is one interval (100 ms) after `earlier`, less the time the test took between the takes.
+    fn one_interval_after(earlier: Duration, later: Duration) {
+        let gap = later.saturating_sub(earlier);
+        assert!(
+            gap > Duration::from_millis(90) && gap <= Duration::from_millis(100),
+            "{earlier:?} {later:?}"
+        );
     }
 
     #[test]
@@ -173,18 +215,49 @@ mod tests {
             ..BotsConfig::default()
         };
         let limit = SendLimit::new(&config);
-        assert_eq!(limit.take("a"), None);
-        let turns: Vec<Duration> = (0..3).map(|_| limit.take("a").unwrap()).collect();
+        assert_eq!(limit.take("a", "r0"), None);
+        let turns: Vec<Duration> = (1..4).map(|row| limit.take("a", &format!("r{row}")).unwrap()).collect();
         assert!(turns[0] <= Duration::from_millis(100), "{turns:?}");
         for pair in turns.windows(2) {
-            // a turn later by one interval (100 ms), less the time the test took between the two takes
-            let gap = pair[1].saturating_sub(pair[0]);
-            assert!(
-                gap > Duration::from_millis(90) && gap <= Duration::from_millis(100),
-                "{turns:?}"
-            );
+            one_interval_after(pair[0], pair[1]);
         }
-        assert_eq!(limit.take("b"), None);
+        assert_eq!(limit.take("b", "r4"), None);
+    }
+
+    #[test]
+    fn a_row_held_once_more_keeps_its_turn() {
+        let config = BotsConfig {
+            send_rate: 10,
+            send_burst: 1,
+            ..BotsConfig::default()
+        };
+        let limit = SendLimit::new(&config);
+        assert_eq!(limit.take("a", "r0"), None);
+        let first = limit.take("a", "r1").unwrap();
+        let second = limit.take("a", "r2").unwrap();
+        // r1 again: its own turn, not one after r2's
+        let again = limit.take("a", "r1").unwrap();
+        assert!(again <= first, "{first:?} {again:?}");
+        // and the line didn't move: r3 gets the turn after r2's
+        one_interval_after(second, limit.take("a", "r3").unwrap());
+    }
+
+    #[test]
+    fn a_send_that_cant_wait_gives_no_turn() {
+        let config = BotsConfig {
+            send_rate: 10,
+            send_burst: 1,
+            ..BotsConfig::default()
+        };
+        let limit = SendLimit::new(&config);
+        assert_eq!(limit.take_now("a"), None);
+        for _ in 0..3 {
+            let wait = limit.take_now("a").unwrap();
+            assert!(wait <= Duration::from_millis(100), "{wait:?}");
+        }
+        // the refused sends took no turn: the first held row gets the first one
+        let turn = limit.take("a", "r1").unwrap();
+        assert!(turn <= Duration::from_millis(100), "{turn:?}");
     }
 
     #[test]

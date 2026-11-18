@@ -93,11 +93,9 @@ async fn the_server_sends_to_a_bot_at_its_rate_and_a_wait_is_no_failed_attempt()
         assert_eq!(got.activity["text"], format!("quick {index}"));
         arrived.push(started.elapsed());
     }
-    // one a second: the third no sooner than two seconds after the first
-    assert!(
-        arrived[2].saturating_sub(arrived[0]) >= Duration::from_millis(1800),
-        "{arrived:?}"
-    );
+    // one a second: the third no sooner than two seconds after the first was taken, which was after the start (a
+    // slow first delivery can arrive late, so the time from its arrival can be shorter)
+    assert!(arrived[2] >= Duration::from_millis(1900), "{arrived:?}");
     // each send is recorded after the bot answered it
     let deadline = Instant::now() + Duration::from_secs(5);
     let rows = loop {

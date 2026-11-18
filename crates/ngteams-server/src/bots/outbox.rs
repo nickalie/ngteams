@@ -297,6 +297,18 @@ pub(crate) async fn defer(db: &Db, node: &str, row: &Delivery, delay: i64) -> Re
     Ok(())
 }
 
+/// When the soonest row still to be sent that isn't due yet comes due (milliseconds since the epoch): a row a send
+/// limit held back or one to try again.
+pub(crate) async fn next_due(db: &Db) -> Result<Option<i64>, DbError> {
+    let now = crate::chatsvc::now();
+    with_conn!(db, |conn| Ok(bot_deliveries::table
+        .filter(bot_deliveries::state.eq(PENDING))
+        .filter(bot_deliveries::due_at.gt(now))
+        .select(diesel::dsl::min(bot_deliveries::due_at))
+        .first::<Option<i64>>(conn)
+        .await?))
+}
+
 /// A bot's run of failed sends, as kept.
 #[derive(Insertable, AsChangeset)]
 #[diesel(table_name = bot_health, treat_none_as_null = true)]

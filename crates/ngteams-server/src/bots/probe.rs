@@ -73,7 +73,7 @@ pub(crate) async fn test_activity(app: &App, id: &str, admin: &User) -> Result<P
     if !bot.enabled {
         return Err(ProbeError::Disabled);
     }
-    if let Some(wait) = app.bot_sends.take(&bot.id) {
+    if let Some(wait) = app.bot_sends.take_now(&bot.id) {
         return Err(ProbeError::Limited(wait));
     }
     let service_url = super::service_url(app, &bot);
