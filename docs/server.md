@@ -772,7 +772,7 @@ is 403.
 | Request | Does | Answers |
 |---|---|---|
 | `POST v3/conversations/{id}/activities`, `…/activities/{replyToId}` | a `message` as the bot: `text` in `textFormat` `markdown` (the default; turned into HTML with pulldown-cmark), `plain` or `xml`, cleaned with ammonia (no scripts, styles, handlers or pictures; links `https`, `http`, `mailto`); card attachments (Adaptive, hero, thumbnail, up to 10, with `suggestedActions`) as one `RichText/Media_Card` message after the text. A `typing` activity is the bot typing | 200 `{"id"}` (the last message's) |
-| `PUT v3/conversations/{id}/activities/{activityId}` | the bot's own message, its text or cards now the activity's | 200 `{"id"}` |
+| `PUT v3/conversations/{id}/activities/{activityId}` | replaces the bot's own message. If the activity has cards with text or pictures, the server returns 400 because it makes two messages. | 200 `{"id"}` |
 | `DELETE v3/conversations/{id}/activities/{activityId}` | the bot's own message, soft-deleted | 200 |
 | `GET v3/conversations/{id}/members`, `…/activities/{activityId}/members` | the chat's people as `TeamsChannelAccount` (`id` `29:<id>`, `name`, `aadObjectId`, `objectId`, `givenName`, `surname`, `email`, `userPrincipalName`, `tenantId`, `userRole`) | 200 list |
 | `GET v3/conversations/{id}/pagedmembers` | the same | 200 `{"members"}` |
@@ -791,8 +791,9 @@ picture that no message uses. A request may be up to 4 MiB.
 
 A bot acts only in a chat it is in (403) and changes only its own messages (403). Refusals take the Bot Framework's
 `{"error": {"code", "message"}}`: 400 `BadArgument` (not an activity, no text or card, an attachment that isn't a card
-the client draws or a picture the server keeps, a group conversation), 401 `Unauthorized`, 403 `Forbidden`, 404
-`NotFound`, 507 `InsufficientStorage` (the bot's pictures fill its `media.user_quota_bytes`).
+the client draws or a picture the server keeps, a group conversation, an update that makes more than one message),
+401 `Unauthorized`, 403 `Forbidden`, 404 `NotFound` (also when a picture reference disappears before a post or update
+commits), 507 `InsufficientStorage` (the bot's pictures fill its `media.user_quota_bytes`).
 
 ### Invokes
 

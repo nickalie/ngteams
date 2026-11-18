@@ -226,7 +226,7 @@ async fn send_unused_picture_activity(setup: &Setup, connector: &Connector, case
         let path = format!("v3/conversations/{}/activities/{id}", encode(&chat));
         assert_eq!(
             connector.call(Method::PUT, &path, Some(activity)).await.0,
-            if case == 3 { 404 } else { 200 }
+            if case == 3 { 404 } else { 400 }
         );
     } else {
         assert_eq!(
@@ -257,6 +257,45 @@ async fn refused_activities_and_unused_update_pictures_do_not_consume_quota() {
             );
             setup.stop().await;
         }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_update_cannot_discard_text_or_pictures_when_it_has_a_card() {
+    for backend in backends() {
+        let (setup, connector) = picture_setup(backend).await;
+        let chat = setup.chat();
+        let (status, sent) = connector.send(&chat, json!({"text": "before"})).await;
+        assert_eq!(status, 200);
+        let id = sent["id"].as_str().unwrap();
+        for (text, picture) in [(true, false), (false, true), (true, true)] {
+            let mut activity = json!({"attachments": [{
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {"type": "AdaptiveCard", "version": "1.5",
+                    "body": [{"type": "TextBlock", "text": "Synthetic card"}]}
+            }]});
+            if text {
+                activity["text"] = json!("chart");
+            }
+            if picture {
+                activity["attachments"].as_array_mut().unwrap().push(inline_picture());
+            }
+            let (status, answer) = connector.update(&chat, id, activity).await;
+            assert_eq!(status, 400, "{answer}");
+            assert_eq!(answer["error"]["code"], "BadArgument");
+            let messages = setup.synced(&chat).await;
+            let original = messages.iter().find(|message| message.id == id).unwrap();
+            assert_eq!(original.content, "<p>before</p>");
+            assert!(original.edit_time.is_none());
+        }
+        assert_eq!(
+            connector
+                .send(&chat, json!({"attachments": [inline_picture()]}))
+                .await
+                .0,
+            200
+        );
+        setup.stop().await;
     }
 }
 

@@ -363,7 +363,10 @@ async fn post(caller: &Caller<'_>, conversation: &str, activity: &Value) -> Resu
 async fn post_messages(caller: &Caller<'_>, conversation: &str, prepared: &Prepared) -> Result<i64, Refusal> {
     let mut last = None;
     for message in &prepared.messages {
-        let posted = chats::bot_post(caller.app, bot_post(caller, conversation, prepared, message)).await?;
+        let posted = match chats::bot_post(caller.app, bot_post(caller, conversation, prepared, message)).await {
+            Err(DbError::Conflict) => return Err(Refusal::missing()),
+            other => other?,
+        };
         last = Some(posted.ok_or_else(Refusal::forbidden)?);
     }
     last.ok_or_else(|| refused(&Refused::Empty))
@@ -387,7 +390,9 @@ async fn update(caller: &Caller<'_>, conversation: &str, id: &str, body: &[u8]) 
     let activity = parse(body)?;
     let prepared = made(caller, conversation, &activity).await?;
     let result = async {
-        let message = prepared.messages.last().ok_or_else(|| refused(&Refused::Empty))?;
+        let [message] = prepared.messages.as_slice() else {
+            return Err(Refusal::bad("An update must contain one message."));
+        };
         changed(chats::bot_edit(caller.app, bot_post(caller, conversation, &prepared, message), id).await?)?;
         Ok(resource(id))
     }

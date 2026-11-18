@@ -133,7 +133,7 @@ macro_rules! insert_in {
             row.version = version;
             let mut body = row.value()?;
             if poster == Poster::Bot && !crate::media::pictures_exist!(conn, &row.owner_id, &row.chat_id, body) {
-                return Ok(None);
+                return Err(DbError::Conflict);
             }
             if let Some(root) = row.root_id {
                 let root = if root == 0 { version } else { root };

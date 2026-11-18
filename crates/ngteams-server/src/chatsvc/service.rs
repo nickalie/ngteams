@@ -361,8 +361,8 @@ pub(crate) struct BotPost<'a> {
     pub pictures: &'a [String],
 }
 
-/// Posts the message and tells the thread's people. Returns its id, or `None` if the bot is absent or a picture
-/// reference no longer exists for this chat.
+/// Posts the message and tells the thread's people. Returns its id, or `None` if the bot is absent.
+/// Returns `DbError::Conflict` if a picture reference no longer exists for this chat.
 pub(crate) async fn bot_post(app: &App, post: BotPost<'_>) -> Result<Option<i64>, DbError> {
     let base = wire::base(app);
     let mut body = json!({
@@ -404,7 +404,7 @@ fn picture_references(body: &mut Value, pictures: &[String]) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BotChange {
     Done,
-    /// No such message, or one deleted.
+    /// The message is absent or deleted, or a picture reference no longer exists for this chat.
     Missing,
     /// Not the bot's own message, or a thread it isn't in.
     Denied,
@@ -612,7 +612,8 @@ pub(crate) enum InvokePlace {
     NoMessage,
 }
 
-/// Where `person` asks `bot` in `thread` (a chat, or a channel's thread), about `message` when one is named.
+/// Where `person` asks `bot` in `thread` (a chat, or a channel's thread).
+/// Each of `messages` (the channel post and the invoke's `messageId`) must be readable by `person` there.
 pub(crate) async fn invoke_place(
     app: &App,
     thread: &str,

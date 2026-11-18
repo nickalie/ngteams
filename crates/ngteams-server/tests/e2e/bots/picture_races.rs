@@ -126,7 +126,7 @@ async fn prepared_picture_after_cleanup(backend: crate::support::Backend, update
         assert_eq!(result.0, 200);
     };
     let (answer, ()) = tokio::join!(pending, remove);
-    assert!((400..500).contains(&answer.0), "{answer:?}");
+    assert_eq!(answer.0, 404, "{answer:?}");
     let messages = setup.synced(&chat).await;
     assert!(messages.iter().all(|message| !message.content.contains(picture)));
     setup.stop().await;
