@@ -710,3 +710,31 @@ async fn reactions_to_the_bots_message_reach_it_and_others_dont() {
         setup.stop().await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_invoke_cannot_name_a_deleted_message() {
+    for backend in backends() {
+        let setup = Setup::open(backend).await;
+        let chat = setup.chat();
+        let id = setup.send(&chat, "remove this").await;
+        setup.bot.next_of("message").await;
+        let row = setup
+            .engine
+            .write(teams_core::engine::Action::Delete {
+                conversation: chat.clone(),
+                message_id: id.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(row.state, teams_store::OutboxState::Sent);
+        setup.bot.next_of("messageDelete").await;
+        assert_eq!(
+            setup
+                .invoke(Some(&chat), InvokeKind::TaskFetch(card_invoke(&id, None, json!({}))))
+                .await,
+            InvokeAnswer::Refused(404)
+        );
+        assert!(!setup.bot.gets_within("invoke", Duration::from_millis(300)).await);
+        setup.stop().await;
+    }
+}

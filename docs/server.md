@@ -777,7 +777,7 @@ is 403.
 | `GET v3/conversations/{id}/members`, `…/activities/{activityId}/members` | the chat's people as `TeamsChannelAccount` (`id` `29:<id>`, `name`, `aadObjectId`, `objectId`, `givenName`, `surname`, `email`, `userPrincipalName`, `tenantId`, `userRole`) | 200 list |
 | `GET v3/conversations/{id}/pagedmembers` | the same | 200 `{"members"}` |
 | `GET v3/conversations/{id}/members/{member}` | one, by `29:<id>`, `8:orgid:<id>`, id or address | 200 account |
-| `POST v3/conversations/{id}/attachments` | keeps a picture for the chat (`AttachmentData`: `type`, `name`, `originalBase64`; PNG, JPEG, GIF or WebP up to `media.max_picture_bytes`) as a media object of the bot's own, made for that chat | 200 `{"id"}` |
+| `POST v3/conversations/{id}/attachments` | keeps a picture for the chat (`AttachmentData`: `type`, `name`, `originalBase64`; PNG, JPEG, GIF or WebP, limited by `media.max_picture_bytes` and the 4 MiB JSON request limit; base64 permits less than 3 MiB of picture bytes) as a media object of the bot's own, made for that chat | 200 `{"id"}` |
 | `GET v3/attachments/{id}`, `…/views/original` | a picture the bot made or one of a chat it is in: its `AttachmentInfo` (`name`, `type`, `views` `[{"viewId": "original", "size"}]`), or its bytes | 200 |
 | `POST v3/conversations` | the bot's 1:1 chat with one person (`members[0].id` `29:<id>` or `8:orgid:<id>`, or `aadObjectId`) who may use its app, with `activity` posted in it when given | 201 `{"id", "activityId", "serviceUrl"}` |
 | `v3/batch/…`, `v3/teams/…`, `v1/meetings/…`, `…/history` | not served | 501 |
@@ -785,7 +785,9 @@ is 403.
 A message's picture attachment (`contentType` `image/…`) names a picture the bot kept (its `contentUrl` the
 `…/v3/attachments/{id}/views/original` above) or carries one as a `data:` URL (kept then, as an upload is). The
 message shows it as a pasted picture does ([Pictures in messages](#pictures-in-messages-ams-ams)): an `<img>` of
-the object's `imgo` view after the text, read by the chat's people alone. A request may be up to 4 MiB.
+the object's `imgo` view after the text, read by the chat's people alone. An uploaded picture can appear only in
+its upload chat. A delete or edit releases a picture when no message uses it. A refused request releases each new
+picture that no message uses. A request may be up to 4 MiB.
 
 A bot acts only in a chat it is in (403) and changes only its own messages (403). Refusals take the Bot Framework's
 `{"error": {"code", "message"}}`: 400 `BadArgument` (not an activity, no text or card, an attachment that isn't a card
@@ -809,7 +811,7 @@ delivery is; a card's plain submit (`name` `message`) is a `message` activity wi
 | The bot's answer | The person gets |
 |---|---|
 | 2xx, empty | the same status, empty |
-| 2xx, `{"composeExtension": …}` or `{"task": …}` | 200 with `responseType` added, as Teams' chat service answers |
+| 2xx, `{"composeExtension": …}` or `{"task": …}` | the same status, with `responseType` added |
 | 2xx, other JSON (an `Action.Execute`'s `{"statusCode", "type", "value"}`) | that JSON as it is |
 | 400–599 but 401, 403, 407 | the bot's status and JSON body |
 | 401, 403, 407, a redirect, a body that isn't JSON, no endpoint, a refused address | 502 |

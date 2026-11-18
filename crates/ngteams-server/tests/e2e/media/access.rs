@@ -396,3 +396,56 @@ async fn a_file_that_is_no_picture_has_no_thumbnail_and_odd_links_name_nothing()
     assert_eq!(raw(server, Method::GET, nobody, Some(&graph), &[], None).await.0, 404);
     trio.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_who_left_a_chat_cannot_read_its_picture() {
+    for backend in backends() {
+        let trio = Trio::start(backend).await;
+        let row = trio
+            .a
+            .write(teams_core::engine::Action::CreateChat {
+                others: trio.ids[1..]
+                    .iter()
+                    .map(|id| teams_proto::Mri::new(format!("8:orgid:{id}")))
+                    .collect(),
+                topic: Some("Pictures (synthetic)".into()),
+            })
+            .await
+            .unwrap();
+        let chat = row.message_id.unwrap();
+        let writer = client(&trio.server, "a@own.test", &trio.ids[0]).await;
+        let made = writer
+            .write(CreatePicture::new(&chat, PastedFormat::Png).unwrap())
+            .await
+            .unwrap();
+        let object = CreatePicture::read_answer(made.body()).unwrap();
+        let picture = PastedPicture {
+            format: PastedFormat::Png,
+            bytes: png(4, 4),
+        };
+        assert_eq!(
+            writer
+                .write(UploadPicture::new(&object, &picture).unwrap())
+                .await
+                .unwrap()
+                .status(),
+            201
+        );
+        let ic3 = token(&trio.server, "b@own.test", IC3).await;
+        let path = format!("/ams/v1/objects/{object}/views/imgo");
+        assert_eq!(
+            raw(&trio.server, Method::GET, &path, Some(&ic3), &[], None).await.0,
+            200
+        );
+        let remove = crate::chatsvc::members::RemoveMember {
+            chat,
+            member: format!("8:orgid:{}", trio.ids[1]),
+        };
+        assert_eq!(writer.write(remove).await.unwrap().status(), 200);
+        assert_eq!(
+            raw(&trio.server, Method::GET, &path, Some(&ic3), &[], None).await.0,
+            403
+        );
+        trio.stop().await;
+    }
+}

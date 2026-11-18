@@ -78,8 +78,8 @@ pub(super) async fn edit(
     Ok(StatusCode::OK)
 }
 
-/// Notes the media objects of the pictures `body` shows (`amsreferences`), before its delete takes them out.
-fn keep(shown: &Mutex<Vec<String>>, body: &Value) {
+/// Notes the picture IDs before a change removes them from the message.
+pub(super) fn keep(shown: &Mutex<Vec<String>>, body: &Value) {
     let named = body["amsreferences"].as_array().into_iter().flatten();
     if let Ok(mut shown) = shown.lock() {
         *shown = named.filter_map(Value::as_str).map(str::to_owned).collect();

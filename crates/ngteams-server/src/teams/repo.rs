@@ -360,6 +360,7 @@ pub(crate) async fn channel_by_group(db: &Db, group: &str) -> Result<Option<Chan
 pub(crate) async fn joined(db: &Db, user: &str, ids: &[String]) -> Result<Vec<String>, DbError> {
     with_conn!(db, |conn| Ok(chat_members::table
         .filter(chat_members::user_id.eq(user))
+        .filter(chat_members::left_at.is_null())
         .filter(chat_members::chat_id.eq_any(ids))
         .select(chat_members::chat_id)
         .load(conn)

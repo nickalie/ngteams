@@ -99,38 +99,66 @@ pub(super) async fn read(app: &App, bot: &Bot, path: &[&str]) -> Result<Response
     })
 }
 
-/// Takes the pictures out of a message `activity`'s attachments: each kept (a `data:` URL's) or found (the bot's
-/// own, by its connector URL) and made the HTML that shows it. Other attachments stay for the card message.
-pub(super) async fn take(app: &App, bot: &Bot, chat: &str, activity: &mut Value) -> Result<Vec<String>, Refused> {
+#[derive(Default)]
+pub(super) struct Taken {
+    pub html: Vec<String>,
+    pub ids: Vec<String>,
+    created: Vec<String>,
+}
+
+impl Taken {
+    pub async fn release(&self, app: &App, bot: &Bot) {
+        for objects in self.created.chunks(crate::media::RELEASED) {
+            crate::media::release(app, &bot.id, objects).await;
+        }
+    }
+}
+
+pub(super) fn extract(activity: &mut Value) -> Vec<Value> {
     let Some(attachments) = activity.get_mut("attachments").and_then(Value::as_array_mut) else {
-        return Ok(Vec::new());
+        return Vec::new();
     };
     let (pictures, rest): (Vec<Value>, Vec<Value>) = attachments.drain(..).partition(is_picture);
     *attachments = rest;
-    let mut shown = Vec::new();
+    pictures
+}
+
+pub(super) async fn take(app: &App, bot: &Bot, chat: &str, pictures: &[Value]) -> Result<Taken, Refused> {
+    let mut taken = Taken::default();
     for picture in pictures {
-        let url = picture["contentUrl"].as_str().unwrap_or_default();
-        let id = match url.strip_prefix("data:") {
-            Some(data) => {
-                let bytes = data_url(data).ok_or(Refused::NotAPicture)?;
-                let name = picture["name"].as_str().unwrap_or("image");
-                keep(app, bot, chat, name, bytes.into()).await?
-            }
-            None => own(app, bot, url).await?,
-        };
-        let size = crate::media::bot_picture(app, &bot.id, &id)
-            .await
-            .and_then(|picture| {
-                image::ImageReader::new(std::io::Cursor::new(picture.bytes))
-                    .with_guessed_format()
-                    .ok()?
-                    .into_dimensions()
-                    .ok()
-            })
-            .ok_or(Refused::Missing)?;
-        shown.push(html(&app.config.origin(), &id, size));
+        if let Err(error) = take_one(app, bot, chat, picture, &mut taken).await {
+            taken.release(app, bot).await;
+            return Err(error);
+        }
     }
-    Ok(shown)
+    Ok(taken)
+}
+
+async fn take_one(app: &App, bot: &Bot, chat: &str, picture: &Value, taken: &mut Taken) -> Result<(), Refused> {
+    let url = picture["contentUrl"].as_str().unwrap_or_default();
+    let id = match url.strip_prefix("data:") {
+        Some(data) => {
+            let bytes = data_url(data).ok_or(Refused::NotAPicture)?;
+            let name = picture["name"].as_str().unwrap_or("image");
+            let id = keep(app, bot, chat, name, bytes.into()).await?;
+            taken.created.push(id.clone());
+            id
+        }
+        None => own(app, bot, chat, url).await?,
+    };
+    let size = crate::media::bot_picture(app, &bot.id, &id)
+        .await
+        .and_then(|picture| {
+            image::ImageReader::new(std::io::Cursor::new(picture.bytes))
+                .with_guessed_format()
+                .ok()?
+                .into_dimensions()
+                .ok()
+        })
+        .ok_or(Refused::Missing)?;
+    taken.html.push(html(&app.config.origin(), &id, size));
+    taken.ids.push(id);
+    Ok(())
 }
 
 fn is_picture(attachment: &Value) -> bool {
@@ -150,7 +178,7 @@ fn data_url(data: &str) -> Option<Vec<u8>> {
 }
 
 /// The id of the bot's own picture a connector URL (`…/v3/attachments/<id>/views/original`) names.
-async fn own(app: &App, bot: &Bot, url: &str) -> Result<String, Refused> {
+async fn own(app: &App, bot: &Bot, chat: &str, url: &str) -> Result<String, Refused> {
     let path = url::Url::parse(url).map_err(|_| Refused::NotAPicture)?;
     let segments: Vec<&str> = path.path_segments().map_or_else(Vec::new, |segments| {
         segments.filter(|segment| !segment.is_empty()).collect()
@@ -165,7 +193,7 @@ async fn own(app: &App, bot: &Bot, url: &str) -> Result<String, Refused> {
         }
         _ => return Err(Refused::NotAPicture),
     };
-    if !crate::media::bot_owns_picture(app, &bot.id, id).await {
+    if !crate::media::bot_owns_picture(app, &bot.id, chat, id).await {
         return Err(Refused::Missing);
     }
     Ok(id.to_owned())

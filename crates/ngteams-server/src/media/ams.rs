@@ -168,9 +168,8 @@ pub(super) async fn remove(db: &Db, storage: &dyn Storage, owner: &str, id: &str
     Ok(true)
 }
 
-/// Removes `owner`'s picture when no message of the chats it was made for names it any more: the key of its
-/// bytes, for the caller to clear. A message posted between the check and the removal isn't seen and shows the
-/// picture missing; the client makes a new object for each picture it sends, so only a hand-made repost meets it.
+/// Removes `owner`'s picture when no message in its chats names it. Returns the key of its bytes.
+/// A concurrent repost can name the object between the check and removal, then show a missing picture.
 pub(super) async fn release(db: &Db, owner: &str, id: &str) -> Result<Option<String>, DbError> {
     let theirs = repo::object(db, id)
         .await?
@@ -303,8 +302,18 @@ pub(crate) async fn keep_bot_picture(app: &App, bot: &str, chat: &str, filename:
         tracing::warn!(%error, "a bot's picture wasn't made");
         return BotPicture::Failed;
     }
-    match store(&app.db, app.storage.as_ref(), &object, content_type, bytes, quota(app)).await {
-        Ok(()) => BotPicture::Made(object.id),
+    fill_bot_picture(app, &object, content_type, bytes).await
+}
+
+async fn fill_bot_picture(app: &App, object: &repo::Object, content_type: &str, bytes: Bytes) -> BotPicture {
+    let stored = store(&app.db, app.storage.as_ref(), object, content_type, bytes, quota(app)).await;
+    if stored.is_err()
+        && let Err(error) = remove(&app.db, app.storage.as_ref(), &object.owner_id, &object.id).await
+    {
+        tracing::warn!(%error, "the refused bot picture was not removed");
+    }
+    match stored {
+        Ok(()) => BotPicture::Made(object.id.clone()),
         Err(Error::Quota) => BotPicture::Quota,
         Err(_) => BotPicture::Failed,
     }
@@ -321,9 +330,10 @@ pub(crate) async fn bot_picture(app: &App, bot: &str, id: &str) -> Option<Kept> 
     })
 }
 
-/// Whether `bot` made the picture `id`.
-pub(crate) async fn bot_owns_picture(app: &App, bot: &str, id: &str) -> bool {
+/// If `bot` made the picture `id` for `chat`.
+pub(crate) async fn bot_owns_picture(app: &App, bot: &str, chat: &str, id: &str) -> bool {
     matches!(repo::object(&app.db, id).await, Ok(Some(object)) if object.owner_id == bot)
+        && matches!(repo::object_chats(&app.db, id).await, Ok(chats) if chats.iter().any(|id| id == chat))
 }
 
 #[cfg(test)]

@@ -241,15 +241,15 @@ async fn clear(storage: &dyn crate::storage::Storage, key: &str) {
     }
 }
 
-/// The pictures one message's delete frees at most.
-const RELEASED: usize = 64;
+/// The most pictures one cleanup batch releases.
+pub(crate) const RELEASED: usize = 64;
 
 /// Frees those of `objects` that are `owner`'s pictures and that no message names any more, after a message that
 /// named them was deleted. The delete stands when this fails: the owner, or the operator, can still delete the
 /// object. Their bytes come off the owner's count here and leave the store in a task of its own, so a store out
 /// of reach neither holds the delete's answer back nor loses the clearing to the request's deadline. A node that
 /// stops waits for that task ([`Clearing`]).
-pub(crate) async fn release(app: &Arc<App>, owner: &str, objects: &[String]) {
+pub(crate) async fn release(app: &App, owner: &str, objects: &[String]) {
     let mut unread = Vec::new();
     for id in objects.iter().take(RELEASED) {
         match ams::release(&app.db, owner, id).await {
@@ -261,11 +261,12 @@ pub(crate) async fn release(app: &Arc<App>, owner: &str, objects: &[String]) {
         return;
     }
     app.clearing.0.send_modify(|keys| keys.extend(unread.iter().cloned()));
-    let app = Arc::clone(app);
+    let storage = Arc::clone(&app.storage);
+    let clearing = app.clearing.0.clone();
     tokio::spawn(async move {
         for key in unread {
-            clear(app.storage.as_ref(), &key).await;
-            app.clearing.0.send_modify(|keys| {
+            clear(storage.as_ref(), &key).await;
+            clearing.send_modify(|keys| {
                 keys.remove(&key);
             });
         }

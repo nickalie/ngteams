@@ -135,3 +135,184 @@ async fn refusals(setup: &Setup, connector: &Connector, service_url: &str, id: &
         404
     );
 }
+
+fn inline_picture() -> serde_json::Value {
+    json!({"contentType": "image/png", "contentUrl": format!("data:image/png;base64,{}", STANDARD.encode(png(8, 8)))})
+}
+
+async fn picture_setup(backend: crate::support::Backend) -> (Setup, Connector) {
+    let setup = Setup::open_with(backend, |config| config.media.user_quota_bytes = png(8, 8).len() as u64).await;
+    setup.send(&setup.chat(), "pictures").await;
+    let got = setup.bot.next_of("message").await;
+    let connector = setup.connector(got.activity["serviceUrl"].as_str().unwrap()).await;
+    (setup, connector)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_picture_cannot_be_posted_in_another_chat() {
+    for backend in backends() {
+        let (setup, connector) = picture_setup(backend).await;
+        let upload = json!({"originalBase64": STANDARD.encode(png(8, 8))});
+        let path = format!("v3/conversations/{}/attachments", encode(&setup.chat()));
+        let (status, answer) = connector.call(Method::POST, &path, Some(upload)).await;
+        assert_eq!(status, 200);
+        let bob = setup.registry.server.add_user("bob@own.test", "Bob (synthetic)").await;
+        let (_, made) = connector
+            .call(
+                Method::POST,
+                "v3/conversations",
+                Some(json!({"members": [{"id": format!("29:{bob}")}]})),
+            )
+            .await;
+        let picture = json!({"attachments": [{"contentType": "image/png", "contentUrl": format!("{}v3/attachments/{}/views/original", connector.base, answer["id"].as_str().unwrap())}]});
+        assert_eq!(connector.send(made["id"].as_str().unwrap(), picture).await.0, 404);
+        setup.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bot_delete_releases_a_picture_only_after_its_last_message() {
+    for backend in backends() {
+        let (setup, connector) = picture_setup(backend).await;
+        let chat = setup.chat();
+        let (status, first) = connector.send(&chat, json!({"attachments": [inline_picture()]})).await;
+        assert_eq!(status, 200);
+        let messages = setup.synced(&chat).await;
+        let src = picture_srcs(&messages.last().unwrap().content).remove(0);
+        let id = src.split("/objects/").nth(1).unwrap().split('/').next().unwrap();
+        let attachment = json!({"attachments": [{"contentType": "image/png", "contentUrl": format!("{}v3/attachments/{id}/views/original", connector.base)}]});
+        let (status, second) = connector.send(&chat, attachment).await;
+        assert_eq!(status, 200);
+        for (message, expected) in [(&first, 200), (&second, 404)] {
+            let path = format!(
+                "v3/conversations/{}/activities/{}",
+                encode(&chat),
+                message["id"].as_str().unwrap()
+            );
+            assert_eq!(connector.call(Method::DELETE, &path, None).await.0, 200);
+            assert_eq!(
+                fetch(&connector, &format!("v3/attachments/{id}/views/original"))
+                    .await
+                    .0,
+                expected
+            );
+        }
+        assert_eq!(
+            connector
+                .send(&chat, json!({"attachments": [inline_picture()]}))
+                .await
+                .0,
+            200
+        );
+        setup.stop().await;
+    }
+}
+
+async fn send_unused_picture_activity(setup: &Setup, connector: &Connector, case: usize) {
+    let chat = setup.chat();
+    let mut activity = json!({"attachments": [inline_picture()]});
+    let attachments = activity["attachments"].as_array_mut().unwrap();
+    match case {
+        0 => attachments.push(json!({"contentType": "application/vnd.microsoft.card.adaptive", "content": {"type": "AdaptiveCard", "body": [{"text": "no type"}]}})),
+        1 => attachments.push(json!({"contentType": "image/png", "contentUrl": "data:image/png;base64,bad!"})),
+        2 => attachments.push(json!({"contentType": "image/png", "contentUrl": format!("{}v3/attachments/missing/views/original", connector.base)})),
+        3 => {},
+        4 => attachments.push(json!({"contentType": "application/vnd.microsoft.card.hero", "content": {"title": "card"}})),
+        _ => attachments.push(inline_picture()),
+    }
+    if (3..=4).contains(&case) {
+        let (_, sent) = connector.send(&chat, json!({"text": "before"})).await;
+        let id = if case == 3 { "1" } else { sent["id"].as_str().unwrap() };
+        let path = format!("v3/conversations/{}/activities/{id}", encode(&chat));
+        assert_eq!(
+            connector.call(Method::PUT, &path, Some(activity)).await.0,
+            if case == 3 { 404 } else { 200 }
+        );
+    } else {
+        assert_eq!(
+            connector.send(&chat, activity).await.0,
+            match case {
+                2 => 404,
+                5 => 507,
+                _ => 400,
+            }
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refused_activities_and_unused_update_pictures_do_not_consume_quota() {
+    for backend in backends() {
+        for case in 0..6 {
+            let (setup, connector) = picture_setup(backend).await;
+            let chat = setup.chat();
+            send_unused_picture_activity(&setup, &connector, case).await;
+            assert_eq!(
+                connector
+                    .send(&chat, json!({"attachments": [inline_picture()]}))
+                    .await
+                    .0,
+                200,
+                "case {case}"
+            );
+            setup.stop().await;
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bot_edit_releases_the_picture_it_removes() {
+    for backend in backends() {
+        let (setup, connector) = picture_setup(backend).await;
+        let chat = setup.chat();
+        let (status, sent) = connector.send(&chat, json!({"attachments": [inline_picture()]})).await;
+        assert_eq!(status, 200);
+        let path = format!(
+            "v3/conversations/{}/activities/{}",
+            encode(&chat),
+            sent["id"].as_str().unwrap()
+        );
+        assert_eq!(
+            connector
+                .call(Method::PUT, &path, Some(json!({"text": "without picture"})))
+                .await
+                .0,
+            200
+        );
+        assert_eq!(
+            connector
+                .send(&chat, json!({"attachments": [inline_picture()]}))
+                .await
+                .0,
+            200
+        );
+        setup.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_bot_delete_releases_more_than_one_batch_of_pictures() {
+    for backend in backends() {
+        let setup = Setup::open_with(backend, |config| {
+            config.media.user_quota_bytes = (65 * png(8, 8).len()) as u64;
+        })
+        .await;
+        let chat = setup.chat();
+        setup.send(&chat, "many pictures").await;
+        let got = setup.bot.next_of("message").await;
+        let connector = setup.connector(got.activity["serviceUrl"].as_str().unwrap()).await;
+        let activity = json!({"attachments": vec![inline_picture(); 65]});
+        let (status, sent) = connector.send(&chat, activity.clone()).await;
+        assert_eq!(status, 200);
+        let messages = setup.synced(&chat).await;
+        assert_eq!(picture_srcs(&messages.last().unwrap().content).len(), 65);
+        let path = format!(
+            "v3/conversations/{}/activities/{}",
+            encode(&chat),
+            sent["id"].as_str().unwrap()
+        );
+        assert_eq!(connector.call(Method::DELETE, &path, None).await.0, 200);
+        assert_eq!(connector.send(&chat, activity).await.0, 200);
+        setup.stop().await;
+    }
+}

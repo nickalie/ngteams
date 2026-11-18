@@ -289,13 +289,48 @@ fn picture_refused(refused: &super::pictures::Refused) -> Refusal {
     }
 }
 
-/// The messages `activity` makes in `conversation`, its pictures kept or found first.
-async fn made(caller: &Caller<'_>, conversation: &str, activity: &Value) -> Result<Vec<activity::Made>, Refusal> {
+struct Prepared {
+    messages: Vec<activity::Made>,
+    pictures: super::pictures::Taken,
+}
+
+async fn made(caller: &Caller<'_>, conversation: &str, activity: &Value) -> Result<Prepared, Refusal> {
     let mut activity = activity.clone();
-    let pictures = super::pictures::take(caller.app, caller.bot, conversation, &mut activity)
+    let attachments = super::pictures::extract(&mut activity);
+    let placeholder = if attachments.is_empty() {
+        Vec::new()
+    } else {
+        vec![String::new()]
+    };
+    let origin = caller.app.config.origin();
+    let mut messages = activity::messages(&activity, &origin, &placeholder).map_err(|error| refused(&error))?;
+    let pictures = super::pictures::take(caller.app, caller.bot, conversation, &attachments)
         .await
         .map_err(|refused| picture_refused(&refused))?;
-    activity::messages(&activity, &caller.app.config.origin(), &pictures).map_err(|error| refused(&error))
+    if let Some(message) = messages.iter_mut().find(|message| message.kind == activity::HTML) {
+        message.content.extend(pictures.html.iter().map(String::as_str));
+    }
+    Ok(Prepared { messages, pictures })
+}
+
+fn bot_post<'a>(
+    caller: &'a Caller<'_>,
+    conversation: &'a str,
+    prepared: &'a Prepared,
+    message: &'a activity::Made,
+) -> BotPost<'a> {
+    BotPost {
+        thread: conversation,
+        bot: &caller.bot.id,
+        name: &caller.bot.name,
+        kind: message.kind,
+        content: &message.content,
+        pictures: if message.kind == activity::HTML {
+            &prepared.pictures.ids
+        } else {
+            &[]
+        },
+    }
 }
 
 fn resource(id: i64) -> Response {
@@ -323,20 +358,16 @@ async fn send(caller: &Caller<'_>, conversation: &str, body: &[u8]) -> Result<Re
 
 /// Posts each message `activity` makes; the last one's id.
 async fn post(caller: &Caller<'_>, conversation: &str, activity: &Value) -> Result<i64, Refusal> {
-    let made = made(caller, conversation, activity).await?;
+    let prepared = made(caller, conversation, activity).await?;
+    let result = post_messages(caller, conversation, &prepared).await;
+    prepared.pictures.release(caller.app, caller.bot).await;
+    result
+}
+
+async fn post_messages(caller: &Caller<'_>, conversation: &str, prepared: &Prepared) -> Result<i64, Refusal> {
     let mut last = None;
-    for message in made {
-        let posted = chats::bot_post(
-            caller.app,
-            BotPost {
-                thread: conversation,
-                bot: &caller.bot.id,
-                name: &caller.bot.name,
-                kind: message.kind,
-                content: &message.content,
-            },
-        )
-        .await?;
+    for message in &prepared.messages {
+        let posted = chats::bot_post(caller.app, bot_post(caller, conversation, prepared, message)).await?;
         last = Some(posted.ok_or_else(Refusal::forbidden)?);
     }
     last.ok_or_else(|| refused(&Refused::Empty))
@@ -358,21 +389,15 @@ fn changed(change: BotChange) -> Result<(), Refusal> {
 async fn update(caller: &Caller<'_>, conversation: &str, id: &str, body: &[u8]) -> Result<Response, Refusal> {
     let id = message_id(id)?;
     let activity = parse(body)?;
-    let made = made(caller, conversation, &activity).await?;
-    // one message is changed: an activity of text and cards keeps its cards
-    let message = made.last().ok_or_else(|| refused(&Refused::Empty))?;
-    changed(
-        chats::bot_edit(
-            caller.app,
-            conversation,
-            &caller.bot.id,
-            id,
-            message.kind,
-            &message.content,
-        )
-        .await?,
-    )?;
-    Ok(resource(id))
+    let prepared = made(caller, conversation, &activity).await?;
+    let result = async {
+        let message = prepared.messages.last().ok_or_else(|| refused(&Refused::Empty))?;
+        changed(chats::bot_edit(caller.app, bot_post(caller, conversation, &prepared, message), id).await?)?;
+        Ok(resource(id))
+    }
+    .await;
+    prepared.pictures.release(caller.app, caller.bot).await;
+    result
 }
 
 /// `DELETE …/activities/{id}`: the bot's own message, soft-deleted.

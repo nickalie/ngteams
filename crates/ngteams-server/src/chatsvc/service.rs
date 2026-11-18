@@ -2,6 +2,8 @@
 //! who is in it, and post or change a message as an account that is in it. Each goes through the same rows and
 //! the same fan-out as a client's request, so every reader and every sync sees it as one.
 
+use std::sync::Mutex;
+
 use diesel::prelude::*;
 use diesel_async::{AsyncConnection as _, RunQueryDsl};
 use serde_json::{Map, Value, json};
@@ -356,13 +358,14 @@ pub(crate) struct BotPost<'a> {
     pub name: &'a str,
     pub kind: &'a str,
     pub content: &'a str,
+    pub pictures: &'a [String],
 }
 
 /// Posts it (a new post of its own in a channel) and tells the thread's people; its id, or `None` when the bot
 /// isn't in the thread.
 pub(crate) async fn bot_post(app: &App, post: BotPost<'_>) -> Result<Option<i64>, DbError> {
     let base = wire::base(app);
-    let body = json!({
+    let mut body = json!({
         "type": "Message", "conversationid": post.thread,
         "conversationLink": format!("{base}/v1/users/ME/conversations/{}", post.thread),
         "from": format!("{base}/v1/users/ME/contacts/28:{}", post.bot),
@@ -370,6 +373,7 @@ pub(crate) async fn bot_post(app: &App, post: BotPost<'_>) -> Result<Option<i64>
         "messagetype": post.kind, "contenttype": "text", "content": post.content,
         "properties": {},
     });
+    picture_references(&mut body, post.pictures);
     let root_id = super::channels::root(&app.db, post.thread, None).await?;
     let draft = message_repo::Message {
         chat_id: post.thread.to_owned(),
@@ -385,6 +389,15 @@ pub(crate) async fn bot_post(app: &App, post: BotPost<'_>) -> Result<Option<i64>
     };
     events::tell(app, "NewMessage", &posted.row.value()?, &posted.readers, &posted.told).await;
     Ok(Some(posted.row.id))
+}
+
+fn picture_references(body: &mut Value, pictures: &[String]) {
+    if let Some(body) = body.as_object_mut() {
+        body.remove("amsreferences");
+        if !pictures.is_empty() {
+            body.insert("amsreferences".into(), json!(pictures));
+        }
+    }
 }
 
 /// What became of a bot's change of a message.
@@ -417,7 +430,13 @@ where
         effect,
         base: &base,
     };
-    let changed = match message_repo::update(&app.db, change, transform).await {
+    let shown = Mutex::new(Vec::new());
+    let changed = match message_repo::update(&app.db, change, |body, at| {
+        super::mutations::keep(&shown, body);
+        transform(body, at)
+    })
+    .await
+    {
         Err(DbError::Conflict) => return Ok(BotChange::Missing),
         other => other?,
     };
@@ -426,6 +445,9 @@ where
         message_repo::Updated::Denied => Ok(BotChange::Denied),
         message_repo::Updated::Unchanged(_) => Ok(BotChange::Done),
         message_repo::Updated::Message(changed) => {
+            for objects in shown.into_inner().unwrap_or_default().chunks(crate::media::RELEASED) {
+                crate::media::release(app, bot, objects).await;
+            }
             events::tell(
                 app,
                 "MessageUpdate",
@@ -439,24 +461,25 @@ where
     }
 }
 
-/// The bot's own message `id`, its type and content now `kind` and `content`.
-pub(crate) async fn bot_edit(
-    app: &App,
-    thread: &str,
-    bot: &str,
-    id: i64,
-    kind: &str,
-    content: &str,
-) -> Result<BotChange, DbError> {
-    bot_change(app, thread, bot, id, message_repo::Effect::Edited, |body, at| {
-        if body["properties"].get("deletetime").is_some() {
-            return Err(DbError::Conflict);
-        }
-        body["content"] = content.into();
-        body["messagetype"] = kind.into();
-        body["properties"]["edittime"] = json!(at);
-        Ok(true)
-    })
+/// The bot's own message `id`, with the content and pictures of `post`.
+pub(crate) async fn bot_edit(app: &App, post: BotPost<'_>, id: i64) -> Result<BotChange, DbError> {
+    bot_change(
+        app,
+        post.thread,
+        post.bot,
+        id,
+        message_repo::Effect::Edited,
+        |body, at| {
+            if body["properties"].get("deletetime").is_some() {
+                return Err(DbError::Conflict);
+            }
+            body["content"] = post.content.into();
+            body["messagetype"] = post.kind.into();
+            picture_references(body, post.pictures);
+            body["properties"]["edittime"] = json!(at);
+            Ok(true)
+        },
+    )
     .await
 }
 
@@ -468,6 +491,7 @@ pub(crate) async fn bot_delete(app: &App, thread: &str, bot: &str, id: i64) -> R
         }
         body["content"] = "".into();
         body["properties"] = json!({"deletetime": at});
+        picture_references(body, &[]);
         Ok(true)
     })
     .await
@@ -514,9 +538,7 @@ pub(crate) async fn bot_roster(app: &App, thread: &str, bot: &str) -> Result<Opt
 /// The 1:1 chat of `person` and `bot` (`19:<a>_<b>@unq.gbl.spaces`, the two ids in order), made when it isn't there
 /// and the person's account is in use; its id, or `None` for an account that isn't.
 pub(crate) async fn bot_chat(app: &App, person: &str, bot: &str) -> Result<Option<String>, DbError> {
-    let mut ids = [person, bot];
-    ids.sort_unstable();
-    let id = format!("19:{}_{}@unq.gbl.spaces", ids[0], ids[1]);
+    let id = crate::bots::personal_chat(person, bot);
     let at = wire::now();
     let made: Option<bool> = with_conn!(&app.db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
@@ -607,23 +629,10 @@ pub(crate) async fn invoke_place(
     if !person_in || !bot_in {
         return Ok(InvokePlace::Denied);
     }
-    if let Some(id) = message {
-        let readable: i64 = with_conn!(&app.db, |conn| chat_messages::table
-            .inner_join(
-                chat_members::table.on(chat_members::chat_id
-                    .eq(chat_messages::chat_id)
-                    .and(chat_members::user_id.eq(person))
-                    .and(chat_members::left_at.is_null())),
-            )
-            .filter(chat_messages::chat_id.eq(thread))
-            .filter(chat_messages::id.eq(id))
-            .filter(chat_messages::id.ge(chat_members::history_from))
-            .count()
-            .get_result(conn)
-            .await?);
-        if readable == 0 {
-            return Ok(InvokePlace::NoMessage);
-        }
+    if let Some(id) = message
+        && message_repo::readable(&app.db, thread, person, &[id]).await?.is_empty()
+    {
+        return Ok(InvokePlace::NoMessage);
     }
     Ok(match super::channels::place(&app.db, thread).await? {
         Some(place) => InvokePlace::Channel {
