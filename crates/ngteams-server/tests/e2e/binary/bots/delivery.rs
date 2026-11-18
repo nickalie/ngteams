@@ -37,6 +37,8 @@ use super::super::support::{Deployment, Node, TLS_DIR, tls_parent};
 use super::support::{APPS, app_path, call, code, first_admin, tenant};
 use crate::support::{Backend, PASSWORD, PG_ENV, backends, redis_url};
 
+mod invoke;
+
 const ADA: &str = "ada@bots.own.test";
 const BEA: &str = "bea@bots.own.test";
 const CORA: &str = "cora@bots.own.test";
@@ -255,6 +257,7 @@ async fn bot_token(node: &Node, id: &str, secret: &str) -> String {
 /// A person signed in at a node over TLS, with the client's own engine on the HTTPS transport an own server's account
 /// gets (no test origin override).
 struct Actor {
+    session: Arc<teams_auth::session::Session<teams_auth::secrets::MemorySecretStore>>,
     mri: Mri,
     engine: EngineHandle,
     _dir: tempfile::TempDir,
@@ -272,6 +275,8 @@ impl Actor {
                 Cloud::own(&node.endpoint).unwrap(),
             )
             .unwrap()
+            .with_ams(&session.service_base(teams_core::account::AMS_GTM).unwrap())
+            .unwrap()
             .for_account(mri.clone())
         };
         let dir = tempfile::tempdir().unwrap();
@@ -288,7 +293,12 @@ impl Actor {
             known_names: Vec::new(),
         })
         .unwrap();
-        Self { mri, engine, _dir: dir }
+        Self {
+            session,
+            mri,
+            engine,
+            _dir: dir,
+        }
     }
 
     fn engine(&self) -> &EngineHandle {
