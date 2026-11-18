@@ -300,6 +300,44 @@ async fn an_update_cannot_discard_text_or_pictures_when_it_has_a_card() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_mixed_update_is_refused_before_picture_storage() {
+    for backend in backends() {
+        let (setup, connector) = picture_setup(backend).await;
+        let chat = setup.chat();
+        let (status, sent) = connector.send(&chat, json!({"text": "before"})).await;
+        assert_eq!(status, 200);
+        let id = sent["id"].as_str().unwrap();
+        for pictures in [
+            vec![inline_picture(), inline_picture()],
+            vec![json!({"contentType": "image/png", "contentUrl":
+                format!("{}v3/attachments/missing/views/original", connector.base)})],
+        ] {
+            let mut attachments = vec![json!({
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {"type": "AdaptiveCard", "version": "1.5",
+                    "body": [{"type": "TextBlock", "text": "Synthetic card"}]}
+            })];
+            attachments.extend(pictures);
+            let (status, answer) = connector.update(&chat, id, json!({"attachments": attachments})).await;
+            assert_eq!(status, 400, "{answer}");
+            assert_eq!(answer["error"]["code"], "BadArgument");
+            let messages = setup.synced(&chat).await;
+            let original = messages.iter().find(|message| message.id == id).unwrap();
+            assert_eq!(original.content, "<p>before</p>");
+            assert!(original.edit_time.is_none());
+        }
+        assert_eq!(
+            connector
+                .send(&chat, json!({"attachments": [inline_picture()]}))
+                .await
+                .0,
+            200
+        );
+        setup.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_bot_edit_releases_the_picture_it_removes() {
     for backend in backends() {
         let (setup, connector) = picture_setup(backend).await;

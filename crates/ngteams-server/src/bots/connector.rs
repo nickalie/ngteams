@@ -294,12 +294,15 @@ struct Prepared {
     pictures: super::pictures::Taken,
 }
 
-async fn made(caller: &Caller<'_>, conversation: &str, activity: &Value) -> Result<Prepared, Refusal> {
+async fn made(caller: &Caller<'_>, conversation: &str, activity: &Value, single: bool) -> Result<Prepared, Refusal> {
     let mut activity = activity.clone();
     let attachments = super::pictures::extract(&mut activity);
     let origin = caller.app.config.origin();
     let mut messages =
         activity::messages(&activity, &origin, !attachments.is_empty()).map_err(|error| refused(&error))?;
+    if single && messages.len() != 1 {
+        return Err(Refusal::bad("An update must contain one message."));
+    }
     let pictures = super::pictures::take(caller.app, caller.bot, conversation, &attachments)
         .await
         .map_err(|refused| picture_refused(&refused))?;
@@ -354,7 +357,7 @@ async fn send(caller: &Caller<'_>, conversation: &str, body: &[u8]) -> Result<Re
 
 /// Posts each message `activity` makes; the last one's id.
 async fn post(caller: &Caller<'_>, conversation: &str, activity: &Value) -> Result<i64, Refusal> {
-    let prepared = made(caller, conversation, activity).await?;
+    let prepared = made(caller, conversation, activity, false).await?;
     let result = post_messages(caller, conversation, &prepared).await;
     prepared.pictures.release(caller.app, caller.bot).await;
     result
@@ -388,7 +391,7 @@ fn changed(change: BotChange) -> Result<(), Refusal> {
 async fn update(caller: &Caller<'_>, conversation: &str, id: &str, body: &[u8]) -> Result<Response, Refusal> {
     let id = message_id(id)?;
     let activity = parse(body)?;
-    let prepared = made(caller, conversation, &activity).await?;
+    let prepared = made(caller, conversation, &activity, true).await?;
     let result = async {
         let [message] = prepared.messages.as_slice() else {
             return Err(Refusal::bad("An update must contain one message."));
