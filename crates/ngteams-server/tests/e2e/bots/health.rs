@@ -12,7 +12,7 @@ use super::endpoint::TestBot;
 use super::{APPS, app_path, call, error_code};
 use crate::support::{Backend, backends};
 
-/// The app's health once `check` holds for it (or after `within`).
+/// The app's health once `check` holds for it (or after `within`): a send's row and the bot's health are two writes.
 async fn health_when(setup: &Setup, check: impl Fn(&Value) -> bool, within: Duration) -> Value {
     let deadline = tokio::time::Instant::now() + within;
     loop {
@@ -50,7 +50,7 @@ async fn an_admin_reads_a_bots_delivery_health_in_the_list_and_the_app() {
         setup.send(&chat, "to a failing bot").await;
         let failing = health_when(
             &setup,
-            |health| health["outbox"]["failed"] == 1,
+            |health| health["outbox"]["failed"] == 1 && health["failures"] == 3,
             Duration::from_secs(15),
         )
         .await;
@@ -65,7 +65,12 @@ async fn an_admin_reads_a_bots_delivery_health_in_the_list_and_the_app() {
 
         setup.bot.answer(200);
         setup.send(&chat, "to a bot that works again").await;
-        let healthy = health_when(&setup, |health| health["outbox"]["sent"] == 1, Duration::from_secs(10)).await;
+        let healthy = health_when(
+            &setup,
+            |health| health["outbox"]["sent"] == 1 && health["state"] == "healthy",
+            Duration::from_secs(10),
+        )
+        .await;
         assert_eq!(healthy["state"], "healthy", "{healthy}");
         assert_eq!(healthy["failures"], 0);
         assert_eq!(healthy["last_error"], Value::Null);
