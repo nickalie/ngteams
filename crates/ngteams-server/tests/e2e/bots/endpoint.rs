@@ -241,6 +241,17 @@ impl Connector {
 
     /// A call under the service URL; its status and JSON (null without one).
     pub async fn call(&self, method: Method, path: &str, body: Option<Value>) -> (u16, Value) {
+        let (status, answer, _) = self.call_with_headers(method, path, body).await;
+        (status, answer)
+    }
+
+    /// [`Self::call`] with the answer's headers.
+    pub async fn call_with_headers(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> (u16, Value, reqwest::header::HeaderMap) {
         let mut request = reqwest::Client::new().request(method, format!("{}{path}", self.base));
         if let Some(token) = &self.token {
             request = request.bearer_auth(token);
@@ -250,8 +261,9 @@ impl Connector {
         }
         let response = request.send().await.unwrap();
         let status = response.status().as_u16();
+        let headers = response.headers().clone();
         let text = response.text().await.unwrap();
-        (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+        (status, serde_json::from_str(&text).unwrap_or(Value::Null), headers)
     }
 
     /// Sends `activity` to the conversation; the status and answer.

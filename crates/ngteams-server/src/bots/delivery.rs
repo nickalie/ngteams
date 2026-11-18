@@ -62,15 +62,29 @@ impl Drop for Senders {
 async fn keep_delivering(app: Arc<App>, mut stopping: watch::Receiver<bool>) {
     let node = uuid::Uuid::new_v4().simple().to_string();
     let mut wake = None;
+    // when the soonest row a bot's send limit held back is due again
+    let mut held_until: Option<tokio::time::Instant> = None;
     loop {
         if wake.is_none() {
             // a closed fan-out closes every subscription: subscribe again, and poll meanwhile
             wake = app.fanout.subscribe(WAKE).await.ok();
         }
-        while !*stopping.borrow() && round(&app, &node).await > 0 {}
+        while !*stopping.borrow() {
+            let done = round(&app, &node).await;
+            if let Some(held) = done.held {
+                let due = tokio::time::Instant::now() + held;
+                held_until = Some(held_until.map_or(due, |soonest| soonest.min(due)));
+            }
+            if done.sent == 0 {
+                break;
+            }
+        }
         if *stopping.borrow() {
             return;
         }
+        let now = tokio::time::Instant::now();
+        held_until = held_until.filter(|due| *due > now);
+        let nap = held_until.map_or(POLL, |due| (due - now).min(POLL));
         let woken = async {
             match wake.as_mut() {
                 Some(subscription) => !matches!(subscription.recv().await, Err(crate::fanout::Missed::Closed)),
@@ -83,14 +97,22 @@ async fn keep_delivering(app: Arc<App>, mut stopping: watch::Receiver<bool>) {
                     wake = None;
                 }
             }
-            () = tokio::time::sleep(POLL) => {}
+            () = tokio::time::sleep(nap) => {}
             _ = stopping.wait_for(|stopped| *stopped) => return,
         }
     }
 }
 
-/// One round: the rows this node took, each sent; how many.
-async fn round(app: &App, node: &str) -> usize {
+/// What a round did.
+struct Round {
+    /// The rows sent (whatever the bot answered).
+    sent: usize,
+    /// The shortest wait of a row its bot's send limit held back, when one was.
+    held: Option<Duration>,
+}
+
+/// One round: the rows this node took, each sent unless its bot's send limit holds it back.
+async fn round(app: &App, node: &str) -> Round {
     let lease = i64::try_from(app.config.bots.delivery_lease)
         .unwrap_or(i64::MAX / 2_000)
         .saturating_mul(1000);
@@ -98,12 +120,34 @@ async fn round(app: &App, node: &str) -> usize {
         Ok(claimed) => claimed,
         Err(error) => {
             tracing::warn!(%error, "bot deliveries couldn't be taken");
-            return 0;
+            return Round { sent: 0, held: None };
         }
     };
-    let count = claimed.len();
-    futures_util::future::join_all(claimed.into_iter().map(|row| send(app, node, row))).await;
-    count
+    let (due, held) = within_limits(app, node, claimed).await;
+    let sent = due.len();
+    futures_util::future::join_all(due.into_iter().map(|row| send(app, node, row))).await;
+    Round { sent, held }
+}
+
+/// The rows whose bots' send limits let them go now; the others go back to the outbox, due when their bot has room,
+/// and the shortest of those waits.
+async fn within_limits(app: &App, node: &str, claimed: Vec<Delivery>) -> (Vec<Delivery>, Option<Duration>) {
+    let mut held: Option<Duration> = None;
+    let mut due = Vec::new();
+    for row in claimed {
+        let Some(wait) = app.bot_sends.take(&row.bot_id) else {
+            due.push(row);
+            continue;
+        };
+        held = Some(held.map_or(wait, |shortest| shortest.min(wait)));
+        let delay = i64::try_from(wait.as_millis())
+            .unwrap_or(i64::MAX / 2)
+            .saturating_add(1);
+        if let Err(error) = outbox::defer(&app.db, node, &row, delay).await {
+            tracing::warn!(%error, "a bot delivery held by its send limit wasn't given back; its lease runs out");
+        }
+    }
+    (due, held)
 }
 
 async fn send(app: &App, node: &str, row: Delivery) {

@@ -165,29 +165,47 @@ async fn a_chat_with_a_deleted_bot_still_takes_messages() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_private_loopback_or_metadata_address_is_refused_unless_allowed() {
     for backend in backends() {
-        let setup = Setup::open_with(backend, |config| config.bots.allowed_networks.clear()).await;
-        let local = setup.bot.url.replace("127.0.0.1", "localhost");
-        let metadata = setup
-            .registry
-            .register("Metadata (synthetic)", "http://169.254.169.254/latest")
-            .await;
-        let named = setup.registry.register("Named (synthetic)", &local).await;
-        for bot in [
-            setup.bot_id.clone(),
-            metadata["id"].as_str().unwrap().to_owned(),
-            named["id"].as_str().unwrap().to_owned(),
-        ] {
-            setup.send(&personal_chat(&setup.ada, &bot), "is anyone there").await;
-            let rows = settled(&setup.registry.server, &bot, Duration::from_secs(10)).await;
-            let [(state, attempts, error)] = rows.as_slice() else {
-                panic!("{rows:?}");
-            };
-            assert_eq!(state, FAILED);
-            assert_eq!(*attempts, 1, "a refused address isn't tried again");
-            assert!(error.as_deref().unwrap().contains("network"), "{error:?}");
+        let registry = super::Registry::open_with(backend, |config| {
+            loopback(config);
+            config.bots.allowed_networks.clear();
+        })
+        .await;
+        let bot = TestBot::start().await;
+        // an address written in the endpoint is refused when it is saved
+        for literal in [bot.url.as_str(), "http://169.254.169.254/latest"] {
+            let body = json!({"name": "Literal (synthetic)", "endpoint": literal});
+            let (status, answer) = registry.call(Method::POST, super::APPS, Some(body)).await;
+            assert_eq!(
+                (status, super::error_code(&answer)),
+                (400, "EndpointNotAllowed"),
+                "{answer}"
+            );
         }
-        assert_eq!(setup.bot.hits(), 0);
-        setup.stop().await;
+        // a name, when the server sends
+        let local = bot.url.replace("127.0.0.1", "localhost");
+        let named = registry.register("Named (synthetic)", &local).await;
+        let named = named["id"].as_str().unwrap();
+        let ada = registry.server.add_user("ada@own.test", "Ada Lovelace").await;
+        let dir = tempfile::tempdir().unwrap();
+        let engine = crate::chatsvc::engine(&registry.server, "ada@own.test", &ada, dir.path()).await;
+        let row = engine
+            .write(teams_core::engine::Action::Send {
+                conversation: personal_chat(&ada, named),
+                text: teams_proto::chat::MessageText::plain("is anyone there").unwrap(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(row.state, teams_store::OutboxState::Sent, "{row:?}");
+        let rows = settled(&registry.server, named, Duration::from_secs(10)).await;
+        let [(state, attempts, error)] = rows.as_slice() else {
+            panic!("{rows:?}");
+        };
+        assert_eq!(state, FAILED);
+        assert_eq!(*attempts, 1, "a refused address isn't tried again");
+        assert!(error.as_deref().unwrap().contains("network"), "{error:?}");
+        assert_eq!(bot.hits(), 0);
+        engine.shutdown();
+        registry.server.stop().await;
     }
 }
 

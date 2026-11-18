@@ -373,8 +373,11 @@ libsqlite3-sys = { version = "0.38.2", features = ["bundled"] }
 # its fan-out and counters between nodes: Redis or Valkey (RESP3 pushes, the connection manager reconnecting).
 # redis-rs, not fred: fred 10's redis-protocol pins cookie-factory =0.3.2, PipeWire's libspa needs ^0.3.3
 redis = { version = "1.8.1", default-features = false, features = ["connection-manager", "tokio-comp", "tokio-rustls-comp"] }
-# a workflow webhook's rate limit within one node (GCRA, keyed by workflow); Redis counts it across nodes
+# a workflow webhook's rate limit within one node (GCRA, keyed by workflow), and a bot's sends; Redis counts a
+# webhook's across nodes
 governor = { version = "0.10.4", default-features = false, features = ["std", "quanta"] }
+# a bot's calls to the Bot Connector, per app id within one node (the governor layer for tower)
+tower_governor = { version = "0.8.0", default-features = false, features = ["axum"] }
 # a bot's Markdown text as the chat service's HTML, and that HTML cleaned to what a message may carry
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 ammonia = "4.2.5"

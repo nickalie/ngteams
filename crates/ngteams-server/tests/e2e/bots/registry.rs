@@ -159,6 +159,7 @@ async fn unsigned_bots_and_plain_http_endpoints_take_the_servers_consent() {
     let registry = Registry::open_with(Backend::Sqlite, |config| {
         config.bots.allow_unsigned = true;
         config.bots.allow_http_endpoints = true;
+        config.bots.allowed_networks = vec!["127.0.0.0/8".parse().unwrap()];
     })
     .await;
     let body = json!({"name": "Local", "endpoint": "http://127.0.0.1:3978/api/messages", "auth_mode": "unsigned"});

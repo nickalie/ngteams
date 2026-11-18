@@ -257,15 +257,15 @@ async fn bot_token(node: &Node, id: &str, secret: &str) -> String {
 
 /// A person signed in at a node over TLS, with the client's own engine on the HTTPS transport an own server's account
 /// gets (no test origin override).
-struct Actor {
+pub(super) struct Actor {
     session: Arc<teams_auth::session::Session<teams_auth::secrets::MemorySecretStore>>,
-    mri: Mri,
+    pub(super) mri: Mri,
     engine: EngineHandle,
     _dir: tempfile::TempDir,
 }
 
 impl Actor {
-    async fn sign_in(node: &Node, upn: &str) -> Self {
+    pub(super) async fn sign_in(node: &Node, upn: &str) -> Self {
         let session = Arc::new(node.sign_in(upn, PASSWORD).await);
         let skype = session.skypetoken().await.unwrap();
         let mri = Mri::new(format!("8:{}", skype.skype_id.as_deref().unwrap()));
@@ -305,11 +305,11 @@ impl Actor {
         }
     }
 
-    fn engine(&self) -> &EngineHandle {
+    pub(super) fn engine(&self) -> &EngineHandle {
         &self.engine
     }
 
-    async fn sync(&self) {
+    pub(super) async fn sync(&self) {
         let report = self.engine.sync().await.unwrap();
         assert!(report.failed.is_empty(), "{report:?}");
     }
@@ -320,7 +320,7 @@ impl Actor {
         row
     }
 
-    async fn send(&self, chat: &str, text: &str) -> String {
+    pub(super) async fn send(&self, chat: &str, text: &str) -> String {
         self.write(Action::Send {
             conversation: chat.into(),
             text: MessageText::plain(text).unwrap(),
@@ -344,7 +344,7 @@ impl Actor {
 // --- the deployment ---
 
 /// An account's id, as its MRI and a bot chat's id carry it.
-fn id_of(actor: &Actor) -> String {
+pub(super) fn id_of(actor: &Actor) -> String {
     actor
         .mri
         .as_str()
@@ -353,7 +353,7 @@ fn id_of(actor: &Actor) -> String {
         .to_owned()
 }
 
-fn personal_chat(user: &str, bot: &str) -> String {
+pub(super) fn personal_chat(user: &str, bot: &str) -> String {
     let mut ids = [user, bot];
     ids.sort_unstable();
     format!("19:{}_{}@unq.gbl.spaces", ids[0], ids[1])
@@ -430,7 +430,7 @@ async fn one_node(backend: Backend, table: &str) -> (Deployment, Node, String, S
     (deployment, node, base, root)
 }
 
-async fn synced(actor: &Actor, chat: &str) -> Vec<Message> {
+pub(super) async fn synced(actor: &Actor, chat: &str) -> Vec<Message> {
     actor.sync().await;
     let mut page = actor.engine().messages(chat, None, 200).await.unwrap().messages;
     page.reverse();
@@ -777,11 +777,11 @@ fn failed_with(rows: &[Delivery], reason: &str, attempts: Option<i32>) -> bool {
             .is_some_and(|error| error.contains(reason))
 }
 
-/// With no network allowed: each address refused at the first send, with its reason in the log; what went wrong.
+/// With no network allowed: an address written in the endpoint refused when saved, a name at the first send, with
+/// its reason in the log; what went wrong.
 async fn closed_guard(node: &Node, root: &Secret, ada: &Actor, port: u16) -> Vec<String> {
-    let refused = [
+    let literal = [
         format!("https://127.0.0.1:{port}/api/messages"),
-        format!("https://localhost:{port}/api/messages"),
         format!("https://[::1]:{port}/api/messages"),
         format!("https://[::ffff:127.0.0.1]:{port}/api/messages"),
         "https://10.20.30.40/api/messages".to_owned(),
@@ -796,7 +796,16 @@ async fn closed_guard(node: &Node, root: &Secret, ada: &Actor, port: u16) -> Vec
         "https://0.0.0.0/api/messages".to_owned(),
     ];
     let mut problems = Vec::new();
-    for (n, endpoint) in refused.iter().enumerate() {
+    for endpoint in &literal {
+        let body = json!({"name": "Guard (synthetic)", "endpoint": endpoint});
+        let (status, answer) = call(node, Method::POST, APPS, Some(root), Some(body)).await;
+        eprintln!("guard: {endpoint}: saved {status} {}", code(&answer));
+        if (status, code(&answer)) != (400, "EndpointNotAllowed") {
+            problems.push(format!("{endpoint}: saved {status} {answer}"));
+        }
+    }
+    let named = [format!("https://localhost:{port}/api/messages")];
+    for (n, endpoint) in named.iter().enumerate() {
         let (id, _) = register(node, root, &format!("Guard {n} (synthetic)"), endpoint, false).await;
         ada.send(&personal_chat(&id_of(ada), &id), "is anyone there").await;
         let rows = settled(node, &id, 1, Duration::from_secs(15)).await;
@@ -807,8 +816,8 @@ async fn closed_guard(node: &Node, root: &Secret, ada: &Actor, port: u16) -> Vec
     }
     let reasons = log_of(node).matches("failed for good").count();
     eprintln!("guard: {reasons} log lines name a send that failed for good");
-    if reasons < refused.len() {
-        problems.push(format!("the log names {reasons} of {} refused sends", refused.len()));
+    if reasons < named.len() {
+        problems.push(format!("the log names {reasons} of {} refused sends", named.len()));
     }
     problems
 }
@@ -831,26 +840,34 @@ async fn refused_for(node: &Node, name: &str, id: &str, reason: &str) -> Option<
     (!failed_with(&rows, reason, None)).then(|| format!("{name}: {:?}", summary(&rows)))
 }
 
+/// A metadata address, even with link-local open, refused when saved; otherwise what the server said.
+async fn metadata_closed(node: &Node, root: &Secret) -> Option<String> {
+    let metadata = json!({"name": "Metadata (synthetic)", "endpoint": "https://169.254.169.254/latest/meta-data"});
+    let (status, answer) = call(node, Method::POST, APPS, Some(root), Some(metadata)).await;
+    ((status, code(&answer)) != (400, "EndpointNotAllowed"))
+        .then(|| format!("metadata with link-local open: saved {status} {answer}"))
+}
+
 /// With loopback and link-local allowed: a redirect, a slow and a huge answer fail with their reasons, the
-/// redirect isn't followed, metadata stays closed, and the loopback bot gets its activity; what went wrong.
+/// redirect isn't followed, metadata stays closed (refused when saved), and the loopback bot gets its activity; what
+/// went wrong.
 async fn open_guard(node: &Node, root: &Secret, ada: &Actor, bot: &QaBot) -> Vec<String> {
     let other = QaBot::start(Mode::Status(200)).await;
     let redirect = QaBot::start(Mode::Redirect(other.url.clone())).await;
     let slow = QaBot::start(Mode::Slow(Duration::from_secs(6))).await;
     let huge = QaBot::start(Mode::Huge).await;
     let opened = register(node, root, "Opened (synthetic)", &bot.url, false).await.0;
-    let cases: [(&str, &str, &str); 4] = [
+    let cases: [(&str, &str, &str); 3] = [
         ("Redirect", &redirect.url, "307"),
         ("Slow", &slow.url, "timed out"),
         ("Huge", &huge.url, "bigger"),
-        ("Metadata", "https://169.254.169.254/latest/meta-data", "network"),
     ];
     let ids = write_to_each(node, root, ada, &cases).await;
+    let mut problems: Vec<String> = metadata_closed(node, root).await.into_iter().collect();
     let sent = ada
         .send(&personal_chat(&id_of(ada), &opened), "loopback is open now")
         .await;
     bot.wait_for("message", &sent, Duration::from_secs(15)).await;
-    let mut problems = Vec::new();
     for ((name, _, reason), id) in cases.iter().zip(&ids) {
         problems.extend(refused_for(node, name, id, reason).await);
     }

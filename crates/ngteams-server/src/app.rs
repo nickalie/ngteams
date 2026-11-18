@@ -62,6 +62,8 @@ pub struct App {
     pub bot_keys: crate::apps::keys::BotKeys,
     /// What sends activities to bots, through the address guard.
     pub(crate) outbound: crate::outbound::Outbound,
+    /// The server's sends to each bot (`bots.send_rate`).
+    pub(crate) bot_sends: crate::bots::SendLimit,
 }
 
 /// Why a node can't start.
@@ -174,6 +176,7 @@ impl App {
         let fetcher =
             crate::media::Fetcher::new(&config.media).map_err(|error| StartError::Previews(error.to_string()))?;
         let outbound = outbound(&config)?;
+        let bot_sends = crate::bots::SendLimit::new(&config.bots);
         let app = Arc::new(Self {
             config,
             db,
@@ -192,6 +195,7 @@ impl App {
             redis: shared,
             bot_keys,
             outbound,
+            bot_sends,
         });
         Ok(app)
     }
@@ -234,7 +238,7 @@ pub fn router(app: Arc<App>) -> Router {
         // after the trace: a webhook's link carries its secret in the query, which that trace would log
         .merge(crate::workflows::hook::router(&app.config))
         // after the trace too: an unsigned bot's service URL carries its credential
-        .merge(crate::bots::router(&app.config))
+        .merge(crate::bots::router(&app))
         .merge(crate::outgoing::router(&app.config))
         .layer(axum::middleware::from_fn(crate::serve::drain_unread_body))
         .with_state(app)

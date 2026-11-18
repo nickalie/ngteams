@@ -14,8 +14,17 @@ use url::Url;
 /// The environment variables' prefix.
 pub const ENV_PREFIX: &str = "NGTEAMS_SERVER_";
 /// Variables under the prefix that aren't configuration keys: the command line's file and log filter, and the tests'
-/// Postgres, S3 store and the Redis they stop.
-const NOT_KEYS: [&str; 5] = ["config", "log", "pg_url", "s3_url", "stop_redis"];
+/// Postgres, S3 store, the Redis they stop and their SDK bot containers.
+const NOT_KEYS: [&str; 8] = [
+    "config",
+    "log",
+    "pg_url",
+    "s3_url",
+    "stop_redis",
+    "bot_images",
+    "bot_engine",
+    "bot_network",
+];
 
 /// Audiences the client asks tokens for (`teams-proto`'s and `teams-auth`'s resources): a token request for any other
 /// resource is refused.
@@ -384,8 +393,8 @@ pub enum ConfigError {
     Mixer,
     #[error(
         "bots.scope must be an absolute URL without a trailing slash that no person's token is issued for, \
-         bots.issuer and bots.service_url absolute URLs, the bots' lifetimes, key rotation and send timeout above zero, \
-         and bots.delivery_lease longer than bots.send_timeout"
+         bots.issuer and bots.service_url absolute URLs, the bots' lifetimes, key rotation, send timeout, rates and \
+         bursts above zero, and bots.delivery_lease longer than bots.send_timeout"
     )]
     Bots,
 }

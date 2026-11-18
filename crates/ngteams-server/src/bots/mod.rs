@@ -16,9 +16,12 @@
 pub(crate) mod activity;
 mod connector;
 mod delivery;
+pub(crate) mod health;
 mod invoke;
+mod limits;
 pub(crate) mod outbox;
 mod pictures;
+mod probe;
 
 pub use outbox::{Delivery, FAILED, PENDING, SENT, deliveries};
 pub(crate) mod schema;
@@ -36,6 +39,9 @@ use crate::db::{Db, DbError, with_conn};
 
 pub use delivery::Senders;
 pub(crate) use delivery::wake;
+pub use limits::SendLimit;
+pub(crate) use limits::retry_after;
+pub(crate) use probe::{ProbeError, test_activity};
 
 /// A registered bot, as delivery and the connector need it.
 #[derive(Clone, Debug)]
@@ -165,11 +171,11 @@ pub(crate) async fn open_chat(app: &App, chat: &str, person: &str) -> Result<(),
 }
 
 /// The connector routes; nothing while apps are off.
-pub(crate) fn router(config: &crate::config::Config) -> Router<Arc<App>> {
-    if !config.apps.enabled {
+pub(crate) fn router(app: &Arc<App>) -> Router<Arc<App>> {
+    if !app.config.apps.enabled {
         return Router::new();
     }
-    connector::router().merge(invoke::router())
+    connector::router(app).merge(invoke::router())
 }
 
 /// Typing by `user` in `chat` at the chat service's moment `at`, for the bots in it.

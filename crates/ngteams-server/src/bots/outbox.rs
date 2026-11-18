@@ -276,6 +276,27 @@ pub(crate) async fn finish(db: &Db, node: &str, row: &Delivery, outcome: &Outcom
     health(db, &row.bot_id, error, now).await
 }
 
+/// Gives back `node`'s lease of `row` unsent, due again after `delay` milliseconds: its bot's send limit holds it,
+/// which is no attempt.
+pub(crate) async fn defer(db: &Db, node: &str, row: &Delivery, delay: i64) -> Result<(), DbError> {
+    let now = crate::chatsvc::now();
+    with_conn!(db, |conn| diesel::update(
+        bot_deliveries::table
+            .find(&row.id)
+            .filter(bot_deliveries::locked_by.eq(node))
+            .filter(bot_deliveries::state.eq(PENDING)),
+    )
+    .set((
+        bot_deliveries::due_at.eq(now + delay),
+        bot_deliveries::locked_until.eq(0),
+        bot_deliveries::attempts.eq(bot_deliveries::attempts - 1),
+        bot_deliveries::updated_at.eq(now),
+    ))
+    .execute(conn)
+    .await?);
+    Ok(())
+}
+
 /// A bot's run of failed sends, as kept.
 #[derive(Insertable, AsChangeset)]
 #[diesel(table_name = bot_health, treat_none_as_null = true)]

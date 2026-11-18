@@ -92,6 +92,14 @@ pub struct BotsConfig {
     pub delivery_lease: u64,
     /// Seconds a request to a bot may take, from connecting to the end of its answer.
     pub send_timeout: u64,
+    /// Activities a second the server sends one bot, on each node; a send over it waits ([`crate::bots`]).
+    pub send_rate: u32,
+    /// Activities the server may send one bot at once before [`Self::send_rate`] holds.
+    pub send_burst: u32,
+    /// Requests a second one bot may make to the connector, on each node; more get `429` with `Retry-After`.
+    pub connector_rate: u32,
+    /// Requests one bot may make to the connector at once before [`Self::connector_rate`] holds.
+    pub connector_burst: u32,
 }
 
 impl Default for BotsConfig {
@@ -109,6 +117,10 @@ impl Default for BotsConfig {
             retry_delays: vec![15, 45],
             delivery_lease: 30,
             send_timeout: 10,
+            send_rate: 50,
+            send_burst: 50,
+            connector_rate: 50,
+            connector_burst: 50,
         }
     }
 }
@@ -149,6 +161,14 @@ impl BotsConfig {
             && self.key_rotation > 0
             && self.send_timeout > 0
             && self.delivery_lease > self.send_timeout
+            && [
+                self.send_rate,
+                self.send_burst,
+                self.connector_rate,
+                self.connector_burst,
+            ]
+            .iter()
+            .all(|limit| *limit > 0)
     }
 }
 
@@ -200,6 +220,11 @@ pub enum AppError {
     Name,
     #[error("a bot's endpoint is an absolute https URL without credentials")]
     Endpoint,
+    #[error(
+        "the endpoint's address is on a network the server doesn't send to: never a cloud metadata address; a \
+         private, loopback or link-local one only when bots.allowed_networks names it"
+    )]
+    EndpointNetwork,
     #[error("this server takes no bot without authentication (bots.allow_unsigned)")]
     Unsigned,
     #[error("no such user")]
@@ -309,10 +334,18 @@ fn checked_endpoint(config: &Config, endpoint: &str) -> Result<String, AppError>
     let url = Url::parse(endpoint.trim()).map_err(|_| AppError::Endpoint)?;
     let scheme = url.scheme() == "https" || (url.scheme() == "http" && config.bots.allow_http_endpoints);
     let bare = url.username().is_empty() && url.password().is_none() && url.fragment().is_none();
-    if scheme && bare && url.has_host() && url.as_str().len() <= MAX_ENDPOINT {
-        Ok(url.to_string())
-    } else {
-        Err(AppError::Endpoint)
+    if !(scheme && bare && url.has_host() && url.as_str().len() <= MAX_ENDPOINT) {
+        return Err(AppError::Endpoint);
+    }
+    // an address written in it is checked now, as the guard checks it at each send; a name is checked then
+    let guard = crate::outbound::Guard {
+        allow_http: config.bots.allow_http_endpoints,
+        networks: config.bots.allowed_networks.clone(),
+    };
+    match guard.check(&url) {
+        Ok(()) => Ok(url.to_string()),
+        Err(crate::outbound::OutboundError::Refused) => Err(AppError::EndpointNetwork),
+        Err(_) => Err(AppError::Endpoint),
     }
 }
 

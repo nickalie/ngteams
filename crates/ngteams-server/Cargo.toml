@@ -61,6 +61,7 @@ tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sig
 tokio-tungstenite.workspace = true
 tower.workspace = true
 tower-http.workspace = true
+tower_governor.workspace = true
 tracing = { workspace = true, features = ["std", "attributes"] }
 tracing-subscriber.workspace = true
 unicode-normalization.workspace = true

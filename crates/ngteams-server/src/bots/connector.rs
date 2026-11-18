@@ -4,17 +4,21 @@
 //! Answers and refusals take the Bot Framework's shapes (`ResourceResponse`, `ErrorResponse`).
 //!
 //! A bot acts only as itself and only in a chat it is in; it starts a chat only with a person who may use its app.
+//! Its credential is checked first, then its app's rate (`bots.connector_rate`, [`super::limits`]).
 
 use std::sync::Arc;
 
 use axum::Json;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, Path, Request, State};
 use axum::http::{HeaderMap, Method, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
+use axum::{Extension, Router};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tower_governor::GovernorLayer;
 
 use super::Bot;
 use super::activity::{self, Refused};
@@ -25,10 +29,55 @@ use crate::db::DbError;
 /// The largest request a bot may send: an activity, or a picture in base64 (`super::pictures`).
 const MAX_BODY: usize = 4 * 1024 * 1024;
 
-pub(super) fn router() -> axum::Router<Arc<App>> {
-    axum::Router::new()
-        .route("/bot/{*rest}", any(dispatch))
+pub(super) fn router(app: &Arc<App>) -> Router<Arc<App>> {
+    let routes = Router::new().route("/bot/{*rest}", any(dispatch));
+    let limited = match super::limits::connector(&app.config.bots) {
+        Some(limit) => routes.layer(GovernorLayer::new(limit).error_handler(|error| super::limits::refused(&error))),
+        None => routes,
+    };
+    // the last layer runs first: the credential, then the app's rate
+    limited
+        .layer(middleware::from_fn_with_state(Arc::clone(app), authenticate))
         .layer(DefaultBodyLimit::max(MAX_BODY))
+}
+
+/// The bot a connector request's credential proved, and how many of its path's segments name the credential
+/// (`u/<bot id>.<credential>/` of an unsigned bot).
+#[derive(Clone, Debug)]
+struct Authenticated {
+    bot: Bot,
+    skip: usize,
+}
+
+/// Checks a request's credential before its app's rate: the bot it proves goes with the request.
+async fn authenticate(State(app): State<Arc<App>>, mut request: Request, next: Next) -> Response {
+    let path = request.uri().path().strip_prefix("/bot").unwrap_or_default().to_owned();
+    let segments: Vec<&str> = path.split('/').filter(|segment| !segment.is_empty()).collect();
+    match authenticated(&app, request.headers(), &segments).await {
+        Ok(found) => {
+            request
+                .extensions_mut()
+                .insert(super::limits::AppKey(found.bot.app_id.clone()));
+            request.extensions_mut().insert(found);
+            next.run(request).await
+        }
+        Err(refusal) => refusal.into_response(),
+    }
+}
+
+async fn authenticated(app: &App, headers: &HeaderMap, segments: &[&str]) -> Result<Authenticated, Refusal> {
+    if is(segments.first(), "u") {
+        let credential = segments.get(1).ok_or_else(Refusal::missing)?;
+        Ok(Authenticated {
+            bot: unsigned(app, credential).await?,
+            skip: 2,
+        })
+    } else {
+        Ok(Authenticated {
+            bot: signed(app, headers).await?,
+            skip: 0,
+        })
+    }
 }
 
 /// A refusal in the Bot Framework's `ErrorResponse` shape.
@@ -97,13 +146,14 @@ struct BotClaims {
 
 async fn dispatch(
     State(app): State<Arc<App>>,
+    Extension(found): Extension<Authenticated>,
     method: Method,
-    headers: HeaderMap,
     Path(rest): Path<String>,
     body: Bytes,
 ) -> Response {
     let segments: Vec<&str> = rest.split('/').filter(|segment| !segment.is_empty()).collect();
-    match route(&app, &method, &headers, &segments, &body).await {
+    let path = &segments[found.skip.min(segments.len())..];
+    match route(&app, &method, &found.bot, path, &body).await {
         Ok(response) => response,
         Err(refusal) => refusal.into_response(),
     }
@@ -114,23 +164,11 @@ fn is(segment: Option<&&str>, name: &str) -> bool {
     segment.is_some_and(|segment| segment.eq_ignore_ascii_case(name))
 }
 
-async fn route(
-    app: &App,
-    method: &Method,
-    headers: &HeaderMap,
-    segments: &[&str],
-    body: &[u8],
-) -> Result<Response, Refusal> {
-    let (bot, path) = if is(segments.first(), "u") {
-        let credential = segments.get(1).ok_or_else(Refusal::missing)?;
-        (unsigned(app, credential).await?, &segments[2.min(segments.len())..])
-    } else {
-        (signed(app, headers).await?, segments)
-    };
+async fn route(app: &App, method: &Method, bot: &Bot, path: &[&str], body: &[u8]) -> Result<Response, Refusal> {
     if !bot.enabled {
         return Err(Refusal::forbidden());
     }
-    let caller = Caller { app, bot: &bot };
+    let caller = Caller { app, bot };
     if !is(path.first(), "v3") {
         return Err(unserved(path));
     }
@@ -138,7 +176,7 @@ async fn route(
         return conversations(&caller, method, &path[2..], body).await;
     }
     if is(path.get(1), "attachments") && method == Method::GET {
-        return super::pictures::read(app, &bot, &path[2..])
+        return super::pictures::read(app, bot, &path[2..])
             .await
             .map_err(|refused| picture_refused(&refused));
     }

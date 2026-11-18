@@ -1,7 +1,8 @@
 //! The admin API's app routes (`/api/admin/v1/apps…`, `docs/server.md` has the shapes): register a bot from the
-//! form, upload or replace a Teams app package, read and list apps, change who may use one, its state or its bot's
-//! endpoint and mode, give its bot a new secret, delete it. Admins only, as the account routes ([`Admin`]); each
-//! change is audited. A bot's secret is in the answer that made it and nowhere else.
+//! form, upload or replace a Teams app package, read and list apps with their bot's delivery health, change who may
+//! use one, its state or its bot's endpoint and mode, give its bot a new secret, send its bot a test activity
+//! ([`crate::bots::test_activity`]), delete it. Admins only, as the account routes ([`Admin`]); each change is
+//! audited. A bot's secret is in the answer that made it and nowhere else.
 
 use std::sync::Arc;
 
@@ -34,6 +35,7 @@ pub(super) fn router() -> Router<Arc<App>> {
         .route("/api/admin/v1/apps", get(list).post(register))
         .route("/api/admin/v1/apps/{id}", get(read).patch(update).delete(remove))
         .route("/api/admin/v1/apps/{id}/secret", post(rotate))
+        .route("/api/admin/v1/apps/{id}/test", post(test))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .merge(packages)
 }
@@ -66,6 +68,7 @@ impl From<AppError> for ApiError {
             AppError::NoBot => (StatusCode::BAD_REQUEST, "NoBot"),
             AppError::Name => (StatusCode::BAD_REQUEST, "InvalidName"),
             AppError::Endpoint => (StatusCode::BAD_REQUEST, "InvalidEndpoint"),
+            AppError::EndpointNetwork => (StatusCode::BAD_REQUEST, "EndpointNotAllowed"),
             AppError::Unsigned => (StatusCode::BAD_REQUEST, "UnsignedNotAllowed"),
             AppError::UnknownUser => (StatusCode::BAD_REQUEST, "UnknownUser"),
             AppError::Package(_) => (StatusCode::BAD_REQUEST, "InvalidPackage"),
@@ -146,9 +149,31 @@ struct UpdateBody {
     auth_mode: Option<AuthMode>,
 }
 
+/// `records` as the API shows them, each with its bot's delivery health (none without a bot).
+async fn with_health(app: &App, records: &[Record]) -> Result<Vec<Value>, ApiError> {
+    let bots: Vec<String> = records
+        .iter()
+        .filter_map(|record| record.bot.as_ref().map(|bot| bot.id.clone()))
+        .collect();
+    let health = crate::bots::health::of(&app.db, &bots).await?;
+    let now = crate::chatsvc::now();
+    Ok(records
+        .iter()
+        .map(|record| {
+            let mut json = app_json(record);
+            json["health"] = record
+                .bot
+                .as_ref()
+                .and_then(|bot| health.get(&bot.id))
+                .map_or(Value::Null, |health| health.json(now));
+            json
+        })
+        .collect())
+}
+
 /// `GET /api/admin/v1/apps`: every app, by name.
 async fn list(State(app): State<Arc<App>>, Admin(_): Admin) -> Result<Response, ApiError> {
-    let apps: Vec<Value> = repo::list(&app.db).await?.iter().map(app_json).collect();
+    let apps = with_health(&app, &repo::list(&app.db).await?).await?;
     Ok(answer(StatusCode::OK, &json!({ "apps": apps })))
 }
 
@@ -185,7 +210,8 @@ async fn replace(
 /// `GET /api/admin/v1/apps/{id}`.
 async fn read(State(app): State<Arc<App>>, Admin(_): Admin, Path(id): Path<String>) -> Result<Response, ApiError> {
     let record = repo::get(&app.db, &id).await?.ok_or(AppError::NoSuchApp)?;
-    Ok(answer(StatusCode::OK, &app_json(&record)))
+    let mut shown = with_health(&app, std::slice::from_ref(&record)).await?;
+    Ok(answer(StatusCode::OK, &shown.pop().unwrap_or(Value::Null)))
 }
 
 /// `PATCH /api/admin/v1/apps/{id}`: its state, who may use it, its bot's endpoint and mode, each when given.
@@ -215,6 +241,35 @@ async fn rotate(
 ) -> Result<Response, ApiError> {
     let secret = super::rotate_secret(&app.db, Actor::account(&admin), &id).await?;
     Ok(answer(StatusCode::OK, &json!({ "secret": secret })))
+}
+
+/// `POST /api/admin/v1/apps/{id}/test`: a test activity to its bot; how it went.
+async fn test(State(app): State<Arc<App>>, Admin(admin): Admin, Path(id): Path<String>) -> Result<Response, ApiError> {
+    use crate::bots::ProbeError;
+    let probe = crate::bots::test_activity(&app, &id, &admin)
+        .await
+        .map_err(|error| match error {
+            ProbeError::Db(error) => ApiError::from(error),
+            ProbeError::NoSuchApp => ApiError::from(AppError::NoSuchApp),
+            ProbeError::NoBot => ApiError::from(AppError::NoBot),
+            ProbeError::NoEndpoint => refused(StatusCode::BAD_REQUEST, "NoEndpoint", error.to_string()),
+            ProbeError::Disabled => refused(StatusCode::CONFLICT, "AppDisabled", error.to_string()),
+            ProbeError::Limited(wait) => ApiError::Refused {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                code: "TooManyRequests",
+                message: error.to_string(),
+                retry_after: Some(std::time::Duration::from_secs(crate::bots::retry_after(wait))),
+            },
+            ProbeError::Token(_) => {
+                tracing::error!(%error, "admin API failed");
+                refused(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ServerError",
+                    "The server can't do this now.",
+                )
+            }
+        })?;
+    Ok(answer(StatusCode::OK, &probe.json()))
 }
 
 /// `DELETE /api/admin/v1/apps/{id}`.
