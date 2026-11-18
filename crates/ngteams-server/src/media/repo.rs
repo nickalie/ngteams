@@ -133,12 +133,48 @@ pub(super) async fn fill_object(
         .await)
 }
 
+/// If a message in a reader chat names `$id`, under the lock that message writes hold.
+macro_rules! shown {
+    ($conn:expr, $id:expr) => {{
+        let chats: Vec<String> = media_object_readers::table
+            .filter(media_object_readers::object_id.eq($id))
+            .select(media_object_readers::chat_id)
+            .load($conn)
+            .await?;
+        let named = format!("%{}%", $id);
+        diesel::select(diesel::dsl::exists(
+            chat_messages::table
+                .filter(chat_messages::chat_id.eq_any(chats))
+                .filter(chat_messages::body.like(named)),
+        ))
+        .get_result::<bool>($conn)
+        .await?
+    }};
+}
+
 /// Removes `owner`'s object and takes its bytes off the owner's count: the version it read from (`None` inside:
 /// it was never filled), or `None` when the owner has no such object. The row is held as a fill holds it, so the
 /// size taken off is the one counted.
 pub(super) async fn remove_object(db: &Db, owner: &str, id: &str) -> Result<Option<Option<String>>, DbError> {
+    remove_object_if(db, owner, id, false).await
+}
+
+pub(super) async fn release_object(db: &Db, owner: &str, id: &str) -> Result<Option<Option<String>>, DbError> {
+    remove_object_if(db, owner, id, true).await
+}
+
+async fn remove_object_if(db: &Db, owner: &str, id: &str, unshown: bool) -> Result<Option<Option<String>>, DbError> {
     with_conn!(db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
+            use crate::chatsvc::schema::chat_clock;
+            // Message writes hold this row, so cleanup cannot race their reference checks.
+            diesel::update(chat_clock::table)
+                .set(chat_clock::version.eq(chat_clock::version))
+                .execute(conn)
+                .await?;
+            if unshown && shown!(conn, id) {
+                return Ok(None);
+            }
             let own = media_objects::table
                 .filter(media_objects::id.eq(id))
                 .filter(media_objects::owner_id.eq(owner));
@@ -166,18 +202,36 @@ pub(super) async fn remove_object(db: &Db, owner: &str, id: &str) -> Result<Opti
         .await)
 }
 
-/// Whether a message of a chat the object was made for still names it.
-pub(super) async fn shown(db: &Db, id: &str) -> Result<bool, DbError> {
-    let chats = object_chats(db, id).await?;
-    let named = format!("%{id}%");
-    with_conn!(db, |conn| Ok(diesel::select(diesel::dsl::exists(
-        chat_messages::table
-            .filter(chat_messages::chat_id.eq_any(&chats))
-            .filter(chat_messages::body.like(&named))
-    ))
-    .get_result(conn)
-    .await?))
+/// If each bot picture still exists for the chat, under the lock that cleanup holds.
+macro_rules! pictures_exist {
+    ($conn:expr, $owner:expr, $chat:expr, $body:expr) => {{
+        use $crate::media::schema::{media_object_readers, media_objects};
+        let pictures: std::collections::BTreeSet<&str> = $body["amsreferences"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        pictures.is_empty() || {
+            let expected = i64::try_from(pictures.len()).unwrap_or(i64::MAX);
+            let owned: i64 = media_objects::table
+                .filter(media_objects::id.eq_any(&pictures))
+                .filter(media_objects::owner_id.eq($owner))
+                .filter(media_objects::blob.is_not_null())
+                .count()
+                .get_result($conn)
+                .await?;
+            let readable: i64 = media_object_readers::table
+                .filter(media_object_readers::object_id.eq_any(&pictures))
+                .filter(media_object_readers::chat_id.eq($chat))
+                .count()
+                .get_result($conn)
+                .await?;
+            owned == expected && readable == expected
+        }
+    }};
 }
+pub(crate) use pictures_exist;
 
 pub(super) async fn objects(db: &Db, owner: &str) -> Result<Vec<Object>, DbError> {
     with_conn!(db, |conn| Ok(media_objects::table

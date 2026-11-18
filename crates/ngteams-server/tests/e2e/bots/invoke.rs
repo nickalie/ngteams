@@ -738,3 +738,45 @@ async fn an_invoke_cannot_name_a_deleted_message() {
         setup.stop().await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_invoke_checks_the_suffix_even_with_a_separate_message_id() {
+    for backend in backends() {
+        let setup = Setup::open(backend).await;
+        let chat = setup.chat();
+        let deleted = setup.send(&chat, "remove this").await;
+        setup.bot.next_of("message").await;
+        let readable = setup.send(&chat, "keep this").await;
+        setup.bot.next_of("message").await;
+        let row = setup
+            .engine
+            .write(teams_core::engine::Action::Delete {
+                conversation: chat.clone(),
+                message_id: deleted.clone(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(row.state, teams_store::OutboxState::Sent);
+        setup.bot.next_of("messageDelete").await;
+        setup.bot.script(answers);
+        for suffix in [&deleted, "1"] {
+            for message in [None, Some(&readable)] {
+                let body = json!({"name": "task/fetch", "appId": setup.bot_id,
+                    "conversation": {"id": format!("{chat};messageid={suffix}")}, "messageId": message});
+                assert_eq!(setup.raw_invoke(&setup.bot_id, &body).await.0, 404);
+            }
+        }
+        let body = json!({"name": "task/fetch", "appId": setup.bot_id,
+            "conversation": {"id": format!("{chat};messageid={readable}")}, "messageId": deleted});
+        assert_eq!(setup.raw_invoke(&setup.bot_id, &body).await.0, 404);
+        assert!(!setup.bot.gets_within("invoke", Duration::from_millis(300)).await);
+        let body = json!({"name": "task/fetch", "appId": setup.bot_id,
+            "conversation": {"id": format!("{chat};messageid={readable}")}});
+        assert_eq!(setup.raw_invoke(&setup.bot_id, &body).await.0, 200);
+        assert_eq!(
+            setup.bot.next_of("invoke").await.activity["conversation"]["id"],
+            format!("{chat};messageid={readable}")
+        );
+        setup.stop().await;
+    }
+}

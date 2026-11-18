@@ -44,11 +44,25 @@ impl Setup {
     }
 
     pub async fn open_with(backend: Backend, configure: impl FnOnce(&mut ngteams_server::config::Config)) -> Self {
-        let registry = Registry::open_with(backend, |config| {
-            loopback(config);
-            configure(config);
-        })
+        Self::open_changed(backend, configure, |_| {}).await
+    }
+
+    pub async fn open_changed(
+        backend: Backend,
+        configure: impl FnOnce(&mut ngteams_server::config::Config),
+        change: impl FnOnce(&mut ngteams_server::app::App),
+    ) -> Self {
+        let server = crate::support::TestServer::start_changed(
+            backend,
+            |config| {
+                config.setup.require_code = false;
+                loopback(config);
+                configure(config);
+            },
+            change,
+        )
         .await;
+        let registry = Registry::over(server).await;
         let ada = registry.server.add_user("ada@own.test", "Ada Lovelace").await;
         let dir = tempfile::tempdir().unwrap();
         let engine = engine(&registry.server, "ada@own.test", &ada, dir.path()).await;

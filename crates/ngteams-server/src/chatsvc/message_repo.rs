@@ -59,7 +59,7 @@ pub(crate) struct Posted {
 macro_rules! may_post {
     ($conn:expr, $draft:expr, $poster:expr) => {
         match $poster {
-            Poster::Member => {
+            Poster::Member | Poster::Bot => {
                 diesel::select(diesel::dsl::exists(
                     chat_members::table
                         .filter(chat_members::chat_id.eq(&$draft.chat_id))
@@ -88,6 +88,8 @@ pub(super) async fn insert(db: &Db, draft: &Message, base: &str) -> Result<Optio
 pub(crate) enum Poster {
     /// One of its people.
     Member,
+    /// A bot whose picture references must exist when it posts.
+    Bot,
     /// An app posting into it (the Workflows bot), which is none of its people.
     App,
 }
@@ -130,6 +132,9 @@ macro_rules! insert_in {
             row.id = version;
             row.version = version;
             let mut body = row.value()?;
+            if poster == Poster::Bot && !crate::media::pictures_exist!(conn, &row.owner_id, &row.chat_id, body) {
+                return Ok(None);
+            }
             if let Some(root) = row.root_id {
                 let root = if root == 0 { version } else { root };
                 row.root_id = Some(root);
@@ -205,7 +210,8 @@ macro_rules! message_connection {
 message_connection!(diesel_async::AsyncPgConnection);
 message_connection!(crate::db::Sqlite);
 
-/// Posts `draft` for its owner, `poster` to its thread: a member must be in it, an app's thread must be there.
+/// Posts `draft` for its owner. A member must be in the thread. An app's thread must exist.
+/// A bot's picture references must also exist for the thread.
 pub(super) async fn insert_by(db: &Db, draft: &Message, base: &str, poster: Poster) -> Result<Option<Posted>, DbError> {
     let at = wire::now();
     with_conn!(db, |conn| conn
@@ -358,6 +364,7 @@ pub(super) struct Change<'a> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Who {
     Owner,
+    BotOwner,
     AnyMember,
 }
 
@@ -392,12 +399,15 @@ where
                 return Ok(Updated::Missing);
             };
             let before = row.value()?;
-            if (change.who == Who::Owner && row.owner_id != actor) || is_event(&before) {
+            if (change.who != Who::AnyMember && row.owner_id != actor) || is_event(&before) {
                 return Ok(Updated::Denied);
             }
             let mut body = before.clone();
             if !transform(&mut body, version)? {
                 return Ok(Updated::Unchanged(row));
+            }
+            if change.who == Who::BotOwner && !crate::media::pictures_exist!(conn, actor, chat, body) {
+                return Ok(Updated::Missing);
             }
             row.version = version;
             body["version"] = version.to_string().into();

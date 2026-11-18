@@ -800,6 +800,7 @@ the client draws or a picture the server keeps, a group conversation), 401 `Unau
 message extension's command, search or dialog ([bots.md](protocol/bots.md)). The server checks that the person may
 use the bot's app (`appId` the app's or the bot's id; else 404), and that both are in `conversation.id` now (a chat,
 or a channel post's `<channel>;messageid=<post>`; else 403) and the person may read `messageId` there (else 404).
+The channel's `;messageid=` suffix must also name a message that the person may read, even with a separate `messageId`.
 Without a conversation (an app's commands asked with none open) the invoke names their 1:1 chat. Then it posts one
 activity to the bot, signed as a delivery is and through the same address guard, and waits at most
 `bots.send_timeout` seconds; nothing is kept and nothing is sent again, so any node serves it.
@@ -1199,8 +1200,9 @@ deleted:
 
 - **A picture** is deleted with the last message that shows it: when its sender deletes a message, each picture
   of the sender's that the message showed (`amsreferences`), and that no other message in its chats still names,
-  is deleted. `DELETE /ams/v1/objects/<id>` deletes one whatever shows it. A picture taken out of a message by
-  an edit, or pasted and never sent, stays until its object is deleted.
+  is deleted. `DELETE /ams/v1/objects/<id>` deletes one whatever shows it. A picture that a person removes by
+  an edit, or pastes and never sends, stays until its object is deleted. A bot edit releases the pictures it
+  removes, as a delete does ([Apps and bots](#apps-and-bots)).
 - **A channel file** stays in its channel's folder when its post is deleted. `DELETE …/GetFileById('<id>')/recycle`
   deletes it.
 - **A file** stays in its sender's drive when its message is deleted, as a file stays in the sender's OneDrive in

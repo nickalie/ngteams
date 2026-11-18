@@ -361,8 +361,8 @@ pub(crate) struct BotPost<'a> {
     pub pictures: &'a [String],
 }
 
-/// Posts it (a new post of its own in a channel) and tells the thread's people; its id, or `None` when the bot
-/// isn't in the thread.
+/// Posts the message and tells the thread's people. Returns its id, or `None` if the bot is absent or a picture
+/// reference no longer exists for this chat.
 pub(crate) async fn bot_post(app: &App, post: BotPost<'_>) -> Result<Option<i64>, DbError> {
     let base = wire::base(app);
     let mut body = json!({
@@ -384,7 +384,7 @@ pub(crate) async fn bot_post(app: &App, post: BotPost<'_>) -> Result<Option<i64>
         body: body.to_string(),
         root_id,
     };
-    let Some(posted) = message_repo::insert(&app.db, &draft, &base).await? else {
+    let Some(posted) = message_repo::insert_by(&app.db, &draft, &base, message_repo::Poster::Bot).await? else {
         return Ok(None);
     };
     events::tell(app, "NewMessage", &posted.row.value()?, &posted.readers, &posted.told).await;
@@ -426,7 +426,7 @@ where
         chat: thread,
         id,
         actor: bot,
-        who: message_repo::Who::Owner,
+        who: message_repo::Who::BotOwner,
         effect,
         base: &base,
     };
@@ -618,7 +618,7 @@ pub(crate) async fn invoke_place(
     thread: &str,
     person: &str,
     bot: &str,
-    message: Option<i64>,
+    messages: &[i64],
 ) -> Result<InvokePlace, DbError> {
     let Some(chat) = repo::chat(&app.db, thread).await? else {
         return Ok(InvokePlace::Denied);
@@ -629,9 +629,8 @@ pub(crate) async fn invoke_place(
     if !person_in || !bot_in {
         return Ok(InvokePlace::Denied);
     }
-    if let Some(id) = message
-        && message_repo::readable(&app.db, thread, person, &[id]).await?.is_empty()
-    {
+    let readable = message_repo::readable(&app.db, thread, person, messages).await?;
+    if messages.iter().any(|id| !readable.contains(id)) {
         return Ok(InvokePlace::NoMessage);
     }
     Ok(match super::channels::place(&app.db, thread).await? {

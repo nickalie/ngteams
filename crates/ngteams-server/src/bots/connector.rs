@@ -297,13 +297,9 @@ struct Prepared {
 async fn made(caller: &Caller<'_>, conversation: &str, activity: &Value) -> Result<Prepared, Refusal> {
     let mut activity = activity.clone();
     let attachments = super::pictures::extract(&mut activity);
-    let placeholder = if attachments.is_empty() {
-        Vec::new()
-    } else {
-        vec![String::new()]
-    };
     let origin = caller.app.config.origin();
-    let mut messages = activity::messages(&activity, &origin, &placeholder).map_err(|error| refused(&error))?;
+    let mut messages =
+        activity::messages(&activity, &origin, !attachments.is_empty()).map_err(|error| refused(&error))?;
     let pictures = super::pictures::take(caller.app, caller.bot, conversation, &attachments)
         .await
         .map_err(|refused| picture_refused(&refused))?;

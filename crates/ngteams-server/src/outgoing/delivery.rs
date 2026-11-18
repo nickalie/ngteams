@@ -353,7 +353,7 @@ fn replies(outcome: &Outcome, origin: &str) -> Vec<(&'static str, String)> {
     use crate::bots::activity::{Refused, messages};
     match outcome {
         Outcome::Answered(None) | Outcome::Stale => Vec::new(),
-        Outcome::Answered(Some(answer)) => match messages(&activity::kept(answer.clone()), origin) {
+        Outcome::Answered(Some(answer)) => match messages(&activity::kept(answer.clone()), origin, false) {
             Ok(made) => made.into_iter().map(|made| (made.kind, made.content)).collect(),
             Err(Refused::Empty) => Vec::new(),
             Err(Refused::Attachment) => vec![apology()],

@@ -166,12 +166,19 @@ async fn conversation(app: &App, asked: &Asked, person: &str, bot: &Bot) -> Resu
             place: InvokePlace::Chat { personal: true },
         });
     };
-    let thread = match id.split_once(";messageid=") {
-        None => id.as_str(),
-        Some((thread, post)) if post.parse::<i64>().is_ok_and(|post| post > 0) => thread,
-        Some(_) => return Err(Failure::BadRequest),
+    let (thread, post) = match id.split_once(";messageid=") {
+        None => (id.as_str(), None),
+        Some((thread, post)) => {
+            let post = post
+                .parse::<i64>()
+                .ok()
+                .filter(|post| *post > 0)
+                .ok_or(Failure::BadRequest)?;
+            (thread, Some(post))
+        }
     };
-    match invoke_place(app, thread, person, &bot.id, asked.message).await? {
+    let messages: Vec<i64> = [post, asked.message].into_iter().flatten().collect();
+    match invoke_place(app, thread, person, &bot.id, &messages).await? {
         InvokePlace::Denied => Err(Failure::Denied),
         InvokePlace::NoMessage => Err(Failure::Missing),
         place => Ok(Conversation { id: id.clone(), place }),

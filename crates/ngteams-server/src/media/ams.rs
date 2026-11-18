@@ -169,15 +169,8 @@ pub(super) async fn remove(db: &Db, storage: &dyn Storage, owner: &str, id: &str
 }
 
 /// Removes `owner`'s picture when no message in its chats names it. Returns the key of its bytes.
-/// A concurrent repost can name the object between the check and removal, then show a missing picture.
 pub(super) async fn release(db: &Db, owner: &str, id: &str) -> Result<Option<String>, DbError> {
-    let theirs = repo::object(db, id)
-        .await?
-        .is_some_and(|object| object.owner_id == owner);
-    if !theirs || repo::shown(db, id).await? {
-        return Ok(None);
-    }
-    let blob = repo::remove_object(db, owner, id).await?.flatten();
+    let blob = repo::release_object(db, owner, id).await?.flatten();
     Ok(blob.map(|blob| key(id, &blob)))
 }
 

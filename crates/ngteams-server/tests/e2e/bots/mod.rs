@@ -10,6 +10,7 @@ pub mod endpoint;
 mod invoke;
 mod keys;
 mod people;
+mod picture_races;
 mod registry;
 
 use std::io::{Cursor, Write as _};

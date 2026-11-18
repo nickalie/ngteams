@@ -149,7 +149,9 @@ pub(super) async fn delete(
     }
     let resource = changed.row.value();
     // before the event: a fan-out that hangs past the request's deadline would leave the pictures charged
-    crate::media::release(&app, &caller.id, &shown.into_inner().unwrap_or_default()).await;
+    for objects in shown.into_inner().unwrap_or_default().chunks(crate::media::RELEASED) {
+        crate::media::release(&app, &caller.id, objects).await;
+    }
     events::tell(&app, "MessageUpdate", &resource?, &changed.readers, &changed.told).await;
     Ok(Json(Value::Null))
 }

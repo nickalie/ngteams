@@ -13,9 +13,10 @@ mod drive;
 mod fetch;
 mod graph;
 mod repo;
-mod schema;
+pub(crate) mod schema;
 mod site_repo;
 mod sites;
+pub(crate) use repo::pictures_exist;
 mod thumbs;
 mod urlp;
 
@@ -244,11 +245,10 @@ async fn clear(storage: &dyn crate::storage::Storage, key: &str) {
 /// The most pictures one cleanup batch releases.
 pub(crate) const RELEASED: usize = 64;
 
-/// Frees those of `objects` that are `owner`'s pictures and that no message names any more, after a message that
-/// named them was deleted. The delete stands when this fails: the owner, or the operator, can still delete the
-/// object. Their bytes come off the owner's count here and leave the store in a task of its own, so a store out
-/// of reach neither holds the delete's answer back nor loses the clearing to the request's deadline. A node that
-/// stops waits for that task ([`Clearing`]).
+/// Frees pictures of `owner` that no message names after a change. Processes at most [`RELEASED`] objects.
+/// Callers must split longer lists into batches. The change stands if cleanup fails. The owner or operator can
+/// still delete the object. The transaction reduces the owner's usage. A separate task clears the stored bytes.
+/// The request does not wait for storage. A node waits for that task before it stops ([`Clearing`]).
 pub(crate) async fn release(app: &App, owner: &str, objects: &[String]) {
     let mut unread = Vec::new();
     for id in objects.iter().take(RELEASED) {

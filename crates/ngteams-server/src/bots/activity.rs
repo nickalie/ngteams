@@ -144,15 +144,14 @@ pub(crate) struct Made {
     pub content: String,
 }
 
-/// The messages `activity` makes, in order: its text with `pictures` (each one's HTML) after it, then one card
-/// message carrying its cards.
-pub(crate) fn messages(activity: &Value, origin: &str, pictures: &[String]) -> Result<Vec<Made>, Refused> {
+/// The messages `activity` makes: its text, then one card message. If `has_pictures` is true, the caller adds
+/// the pictures to the HTML message, which can have no text.
+pub(crate) fn messages(activity: &Value, origin: &str, has_pictures: bool) -> Result<Vec<Made>, Refused> {
     let mut made = Vec::new();
     let text = activity["text"].as_str().filter(|text| !text.trim().is_empty());
-    if text.is_some() || !pictures.is_empty() {
+    if text.is_some() || has_pictures {
         let format = activity["textFormat"].as_str().unwrap_or("markdown");
-        let mut content = text.map(|text| html(text, format)).unwrap_or_default();
-        content.extend(pictures.iter().map(String::as_str));
+        let content = text.map(|text| html(text, format)).unwrap_or_default();
         made.push(Made { kind: HTML, content });
     }
     let attachments = activity["attachments"].as_array().map_or(&[][..], Vec::as_slice);
@@ -248,19 +247,19 @@ mod tests {
             {"contentType": "application/vnd.microsoft.card.adaptive", "content": card},
             {"contentType": "application/vnd.microsoft.card.hero", "content": {"title": "h"}}],
             "suggestedActions": {"actions": [{"type": "imBack", "title": "Yes", "value": "yes"}]}});
-        let made = messages(&both, "https://own.example.test", &[]).unwrap();
+        let made = messages(&both, "https://own.example.test", false).unwrap();
         assert_eq!(made.len(), 2);
         assert_eq!(made[0].kind, HTML);
         assert_eq!(made[1].kind, CARD);
         let parsed = teams_card(&made[1].content);
         assert_eq!(parsed["attachments"].as_array().unwrap().len(), 2);
         assert_eq!(parsed["suggestedActions"]["actions"][0]["value"], "yes");
-        assert_eq!(messages(&json!({"text": "  "}), "o", &[]), Err(Refused::Empty));
+        assert_eq!(messages(&json!({"text": "  "}), "o", false), Err(Refused::Empty));
         let file = json!({"attachments": [{"contentType": "image/png", "contentUrl": "https://x.example.test/a.png"}]});
-        assert_eq!(messages(&file, "o", &[]), Err(Refused::Attachment));
+        assert_eq!(messages(&file, "o", false), Err(Refused::Attachment));
         let broken = json!({"attachments": [{"contentType": "application/vnd.microsoft.card.adaptive",
             "content": {"type": "AdaptiveCard", "body": [{"text": "no type"}]}}]});
-        assert_eq!(messages(&broken, "o", &[]), Err(Refused::Attachment));
+        assert_eq!(messages(&broken, "o", false), Err(Refused::Attachment));
     }
 
     fn teams_card(content: &str) -> Value {
