@@ -90,9 +90,12 @@ class EnvironmentTests(unittest.TestCase):
         self.assertIn("NGTEAMS_SERVER_PG_URL: postgres://postgres:ngts@host.docker.internal:5432/postgres", step)
         self.assertIn("NGTEAMS_SERVER_REDIS_URL: redis://host.docker.internal:6379", step)
         self.assertIn("NGTEAMS_SERVER_S3_URL: http://ngtsaccess:ngtssecret@host.docker.internal:9000/ngts-test", step)
+        self.assertIn("NGTEAMS_SERVER_BOT_IMAGES: teams,agents", step)
         self.assertIn(".github/ci/docker.sh test", step)
+        images = shards.split("      - name: Build the SDK bot images", 1)[1].split("      - ", 1)[0]
+        self.assertIn("tests/bots/build.sh", images)
         urls = {"NGTEAMS_SERVER_PG_URL": "synthetic-postgres", "NGTEAMS_SERVER_REDIS_URL": "synthetic-redis",
-                "NGTEAMS_SERVER_S3_URL": "synthetic-s3"}
+                "NGTEAMS_SERVER_S3_URL": "synthetic-s3", "NGTEAMS_SERVER_BOT_IMAGES": "teams,agents"}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             docker = root / "bin/docker"
@@ -107,6 +110,10 @@ class EnvironmentTests(unittest.TestCase):
                 arguments = (root / "arguments").read_text().splitlines()
                 self.assertIn("--add-host=host.docker.internal:host-gateway", arguments)
                 self.assertEqual([name for name in urls if name in arguments], forwarded)
+                # the bot images run on the runner's Docker, in the measuring container's network
+                bots = ["/var/run/docker.sock:/docker.sock", "DOCKER_HOST=unix:///docker.sock",
+                        "NGTEAMS_SERVER_BOT_NETWORK=container:ngteams-coverage-tests"]
+                self.assertEqual([part for part in bots if part in arguments], bots if forwarded else [])
             for missing in urls:
                 environment = dict(base, **urls)
                 del environment[missing]

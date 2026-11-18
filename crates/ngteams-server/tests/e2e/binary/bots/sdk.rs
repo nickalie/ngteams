@@ -72,7 +72,7 @@ fn run(image: &str, args: &[&str], env: &[(&str, &str)], input: &str) -> Value {
 
 /// Runs `test` again in a child with its own CA, as the harness's `tls_parent` does, but with a CA and a leaf of
 /// different names: OpenSSL (Python's `ssl`) takes a leaf named as its issuer for a self-signed one.
-fn tls_parent(test: &str) -> bool {
+pub(super) fn tls_parent(test: &str) -> bool {
     if std::env::var_os(TLS_DIR).is_some() {
         return false;
     }

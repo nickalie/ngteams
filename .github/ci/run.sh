@@ -20,10 +20,11 @@ case "${1:-}" in
         .github/ci/bundle.sh strip
         ;;
     test)
-        # Without these the server's Postgres, Redis and S3 cases skip themselves and still pass.
+        # Without these the server's Postgres, Redis, S3 and SDK bot cases skip themselves and still pass.
         : "${NGTEAMS_SERVER_PG_URL:?the shard needs its Postgres service}"
         : "${NGTEAMS_SERVER_REDIS_URL:?the shard needs its Redis service}"
         : "${NGTEAMS_SERVER_S3_URL:?the shard needs its S3 service}"
+        : "${NGTEAMS_SERVER_BOT_IMAGES:?the shard needs the SDK bot images}"
         coverage-ci-smoke
         target/ci-bootstrap-build/debug/proto-lab chrome install
         coverage-ci-smoke "$(target/ci-bootstrap-build/debug/proto-lab chrome path)"

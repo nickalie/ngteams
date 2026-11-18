@@ -289,12 +289,20 @@ jobs:
           done
           echo "the S3 store didn't come up" >&2
           exit 1
+      - name: Build the SDK bot images
+        # the server's container tests run them through the runner's Docker (tests/bots, docs/server.md)
+        env:
+          NGTEAMS_SERVER_BOT_ENGINE: docker
+        run: |
+          tests/bots/build.sh
+          sudo chmod 666 /var/run/docker.sock
       - name: Run every assigned target, retaining failures
         env:
           SHARD: ${{ matrix.shard }}
           NGTEAMS_SERVER_PG_URL: postgres://postgres:ngts@host.docker.internal:5432/postgres
           NGTEAMS_SERVER_REDIS_URL: redis://host.docker.internal:6379
           NGTEAMS_SERVER_S3_URL: http://ngtsaccess:ngtssecret@host.docker.internal:9000/ngts-test
+          NGTEAMS_SERVER_BOT_IMAGES: teams,agents
         run: .github/ci/docker.sh test "$SHARD"
       - name: Bundle current LLVM profiles
         if: always()

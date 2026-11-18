@@ -11,6 +11,13 @@ for name in NGTEAMS_SERVER_PG_URL NGTEAMS_SERVER_REDIS_URL NGTEAMS_SERVER_S3_URL
         arguments+=(--env "$name")
     fi
 done
+# The server's SDK bot images run on the runner's Docker, in this container's network: the test's server listens on
+# its loopback. The socket goes outside /run, which the test sandbox replaces.
+if [[ -n "${NGTEAMS_SERVER_BOT_IMAGES:-}" ]]; then
+    arguments+=(--name ngteams-coverage-tests --volume /var/run/docker.sock:/docker.sock
+        --env NGTEAMS_SERVER_BOT_IMAGES --env NGTEAMS_SERVER_BOT_ENGINE=docker
+        --env NGTEAMS_SERVER_BOT_NETWORK=container:ngteams-coverage-tests --env DOCKER_HOST=unix:///docker.sock)
+fi
 exec docker run --rm --init --privileged --shm-size=2g \
     --tmpfs /dev/dri:rw,nosuid,nodev,noexec,size=1m \
     --add-host=host.docker.internal:host-gateway \

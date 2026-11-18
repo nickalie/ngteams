@@ -1,0 +1,12 @@
+# The Teams SDK v2 (TypeScript) echo-and-cards bot of ngteams-server's container tests; versions pinned by the lock.
+# Build from tests/bots: `podman build -f teams/Containerfile -t localhost/ngteams-bot-teams:1 .`
+FROM docker.io/library/node:22-slim
+WORKDIR /bot
+COPY teams/package.json teams/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY teams/tsconfig.json teams/bot.ts ./
+RUN npx tsc && npm prune --omit=dev --no-audit --no-fund
+COPY --chmod=755 entrypoint.sh /entrypoint.sh
+USER node
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["dist/bot.js"]

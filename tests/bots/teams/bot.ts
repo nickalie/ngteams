@@ -1,0 +1,123 @@
+// An echo-and-cards bot on the Teams SDK v2 (TypeScript) for ngteams-server's container tests. It runs against an own
+// server by configuration and one token callback: `cloud` points the SDK's checks of the server's activity tokens at
+// the server's keys and issuer; the SDK's msal-node takes no known authorities, so the bot gets its own token through
+// `token`, with msal-node told the server's host. All names and texts are synthetic.
+import { ConfidentialClientApplication } from '@azure/msal-node';
+import { PUBLIC, withOverrides } from '@microsoft/teams.api';
+import { App } from '@microsoft/teams.apps';
+
+const env = (name: string): string => {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is not set`);
+  return value;
+};
+
+const origin = env('ORIGIN');
+const tenant = env('TENANT');
+const scope = env('SCOPE');
+const clientId = env('BOT_ID');
+const name = 'teams-sdk';
+
+const msal = new ConfidentialClientApplication({
+  auth: {
+    clientId,
+    clientSecret: env('BOT_SECRET'),
+    authority: `${origin}/${tenant}`,
+    knownAuthorities: [new URL(origin).host],
+  },
+});
+
+const app = new App({
+  clientId,
+  tenantId: tenant,
+  serviceUrl: `${origin}/bot/`,
+  cloud: withOverrides(PUBLIC, {
+    // the SDK takes an issuer under its login endpoint for an Entra one: keep the two apart
+    loginEndpoint: `${origin}/login`,
+    loginTenant: tenant,
+    botScope: `${scope}/.default`,
+    tokenServiceUrl: origin,
+    openIdMetadataUrl: `${origin}/bot/v1/.well-known/openidconfiguration`,
+    tokenIssuer: `${origin}/bot`,
+  }),
+  token: async (wanted: string | string[]) => {
+    const scopes = Array.isArray(wanted) ? wanted : [wanted];
+    const result = await msal.acquireTokenByClientCredential({ scopes });
+    if (!result) throw new Error('no token');
+    return result.accessToken;
+  },
+});
+
+const card = {
+  type: 'AdaptiveCard',
+  version: '1.5',
+  body: [
+    { type: 'TextBlock', text: `Pick one (${name}, synthetic)` },
+    { type: 'Input.Text', id: 'comment', placeholder: 'Why?' },
+  ],
+  actions: [
+    { type: 'Action.Submit', title: 'Vote yes', data: { choice: 'yes', sdk: name } },
+    { type: 'Action.OpenUrl', title: 'Docs', url: 'https://docs.example.test/sdk' },
+  ],
+};
+
+const sorted = (value: Record<string, unknown>): string =>
+  Object.keys(value)
+    .sort()
+    .map((key) => `${key}=${String(value[key])}`)
+    .join(' ');
+
+app.on('message', async ({ activity, send, api }) => {
+  const conversation = activity.conversation.id;
+  const text = (activity.text ?? '').trim();
+  if (activity.value && typeof activity.value === 'object' && !text) {
+    await send(`submitted from ${name}: ${sorted(activity.value as Record<string, unknown>)}`);
+    return;
+  }
+  switch (text) {
+    case 'card':
+      await send({
+        type: 'message',
+        attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', content: card }],
+      } as never);
+      return;
+    case 'markdown':
+      await send(`**bold** from ${name}`);
+      return;
+    case 'edit': {
+      const draft = await send(`draft from ${name}`);
+      await api.conversations.updateActivity(conversation, draft.id, {
+        type: 'message',
+        text: `final from ${name}`,
+      } as never);
+      return;
+    }
+    case 'delete': {
+      const doomed = await send(`gone soon from ${name}`);
+      await api.conversations.deleteActivity(conversation, doomed.id);
+      await send(`deleted from ${name}`);
+      return;
+    }
+    case 'typing':
+      await send({ type: 'typing' } as never);
+      await send(`typed from ${name}`);
+      return;
+    case 'member': {
+      const member = await api.conversations.getMemberById(conversation, activity.from.id);
+      await send(`member from ${name}: ${member.name}`);
+      return;
+    }
+    case 'proactive':
+      setTimeout(() => {
+        app.send(conversation, `proactive from ${name}`).catch((error: unknown) => console.error(error));
+      }, 200);
+      return;
+    default:
+      await send(`echo from ${name}: ${text}`);
+  }
+});
+
+app.start(Number(process.env.PORT ?? 3978)).catch((error: unknown) => {
+  console.error(error);
+  process.exit(1);
+});

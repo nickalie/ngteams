@@ -3,6 +3,7 @@
 //! own session token, the `app` commands, MSAL's client-credentials requests (raw, and msal-python, msal-node and the
 //! Bot Framework SDK in podman) and the keys a bot checks activities with. Every account, app and bot is synthetic.
 
+mod containers;
 mod credentials;
 mod delivery;
 mod nodes;

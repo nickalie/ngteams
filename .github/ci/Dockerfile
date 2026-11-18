@@ -11,6 +11,8 @@ RUN pacman -Syu --noconfirm --needed \
     vulkan-swrast wayland weston wireplumber wpewebkit \
     && pacman -Scc --noconfirm \
     && useradd --create-home --uid "$CI_UID" ci
+# the Docker client: the server's SDK bot tests run their images on the runner's Docker
+RUN pacman -S --noconfirm --needed docker && pacman -Scc --noconfirm
 
 USER ci
 ENV HOME="/home/ci" PATH="/home/ci/.cargo/bin:${PATH}"

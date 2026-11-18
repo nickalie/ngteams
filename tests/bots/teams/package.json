@@ -1,0 +1,17 @@
+{
+  "name": "ngteams-bot-teams-sdk",
+  "private": true,
+  "description": "An echo-and-cards bot on the Teams SDK v2 for ngteams-server's container tests (synthetic).",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@azure/msal-node": "7.2.2",
+    "@microsoft/teams.api": "2.2.1",
+    "@microsoft/teams.apps": "2.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "5.9.3"
+  }
+}

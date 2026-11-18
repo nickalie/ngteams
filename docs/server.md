@@ -159,6 +159,8 @@ takes a double underscore: `NGTEAMS_SERVER_TLS__CERT`, `NGTEAMS_SERVER_TOKENS__A
 | `bots.retry_delays` | `[15, 45]` | seconds before each new attempt of an activity a bot didn't take; one attempt more than there are entries |
 | `bots.delivery_lease` | `30` | seconds a node holds an activity it sends before another node may take it over; longer than `bots.send_timeout` |
 | `bots.send_timeout` | `10` | seconds a send to a bot may take, from connecting to the end of its answer |
+| `bots.send_rate`, `bots.send_burst` | `50`, `50` | activities a second the server sends one bot, and how many at once, on each node; a send over it waits its turn, which is no failed attempt |
+| `bots.connector_rate`, `bots.connector_burst` | `50`, `50` | requests a second one app's bot may make to the connector, and how many at once, on each node; more get 429 with `Retry-After` |
 | `outgoing_webhooks.enabled` | `true` | whether the server serves a team's outgoing webhooks ([below](#outgoing-webhooks)): their routes, their mentions and authz's `outgoingWebhookService` |
 | `outgoing_webhooks.timeout_ms` | `5000` | milliseconds a webhook has for its answer, from connecting to its end: Teams' 5 seconds |
 | `outgoing_webhooks.max_picture_bytes` | `1048576` | the largest picture (PNG or JPEG) a webhook may have |
@@ -674,26 +676,34 @@ Admins only, with the same bearer token and refusals as the [account routes](#ad
 
 | Request | Does | Answers |
 |---|---|---|
-| `POST /api/admin/v1/apps` | registers a bot from the form: `name` (1–30 characters), optional `description`, optional `endpoint` (an absolute `https` URL without credentials; `http` with `bots.allow_http_endpoints`; without one the bot has none until a `PATCH` sets it), `auth_mode` (`signed`, the default, or `unsigned` with `bots.allow_unsigned`). The app and its bot share a new id | 201 app with `secret` |
+| `POST /api/admin/v1/apps` | registers a bot from the form: `name` (1–30 characters), optional `description`, optional `endpoint` (an absolute `https` URL without credentials; `http` with `bots.allow_http_endpoints`; an address written in it only on a network the server sends to, as the address guard below says; without one the bot has none until a `PATCH` sets it), `auth_mode` (`signed`, the default, or `unsigned` with `bots.allow_unsigned`). The app and its bot share a new id | 201 app with `secret` |
 | `POST /api/admin/v1/apps/package` | registers the app a Teams app package holds (`Content-Type: application/zip`, at most 5 MiB): `manifest.json` (a GUID `id`, `version`, `name.short` up to 30 characters, `description`, `developer.name`, `accentColor` `#RRGGBB`, at most one bot with a GUID `botId` and scopes of `personal`, `team`, `groupChat`) and its two icons (PNG, color 192×192, outline 32×32, kept in the file store as `apps/<id>/color.png` and `outline.png`). The bot has no endpoint until a `PATCH` sets it | 201 app, with `secret` when it has a bot |
 | `PUT /api/admin/v1/apps/{id}/package` | a new package of the same app and bot: version, names, manifest, icons. The bot keeps its endpoint, mode and secret | 200 app |
 | `GET /api/admin/v1/apps` | every app, by name in any case, then by id | 200 `{"apps": [app]}` |
 | `GET /api/admin/v1/apps/{id}` | one app | 200 app |
 | `PATCH /api/admin/v1/apps/{id}` | any of `enabled`, `everyone` (every account may use it) and `users` (the account ids that may when not), the bot's `endpoint` and `auth_mode` | 200 app |
 | `POST /api/admin/v1/apps/{id}/secret` | a new secret for its bot; the old one stops working at once | 200 `{"secret"}` |
+| `POST /api/admin/v1/apps/{id}/test` | sends its bot a test activity (below) | 200 `{"delivered", "status", "error", "elapsed_ms"}` |
 | `DELETE /api/admin/v1/apps/{id}` | deletes the app; its bot gets no token any more, and its row stays (deleted, with its name) for what it posted. The same bot id may be registered again | 204 |
 
 An app is `{"id", "version", "name", "full_name", "short_description", "full_description", "developer",
 "accent_color", "source" ("form" or "package"), "enabled", "everyone", "users", "manifest", "bot", "created_at",
-"updated_at"}`; `bot` is null or `{"id", "mri", "endpoint", "auth_mode", "scopes"}`. The secret (256 random bits,
+"updated_at", "health"}`; `bot` is null or `{"id", "mri", "endpoint", "auth_mode", "scopes"}`; `health` is null
+without a bot, else its delivery health: `{"state", "failures", "paused_until", "last_error", "last_success",
+"outbox": {"pending", "sent", "failed"}}`. `state` is `paused` (until `paused_until`, ms), `failing` (its last send
+failed; `failures` in a row, `last_error` why), `healthy` (its last send went; `last_success`, ms) or `new`; the
+outbox counts are the rows of the last day. The secret (256 random bits,
 base64url) is in the answer that made it and nowhere else: the database keeps its SHA-256, and no read, list, log or
 audit entry holds it.
 
 | Status | `code` | When |
 |---|---|---|
+| 400 | `EndpointNotAllowed` | an endpoint whose written address is a cloud metadata address, or a private, loopback or link-local one that `bots.allowed_networks` doesn't name; a name is checked at each send |
 | 400 | `InvalidName`, `InvalidEndpoint`, `UnsignedNotAllowed`, `UnknownUser`, `NoBot`, `InvalidPackage`, `BotChanged`, `InvalidRequest` | `message` says what is wrong; `UnknownUser` also for a bot's id |
 | 404 | `NotFound` | no such app |
 | 409 | `AppExists`, `BotExists` | the app id is registered; the bot id is another app's bot, a person's or the Workflows bot's |
+| 400, 409 | `NoEndpoint`, `AppDisabled` | a test activity to a bot without an endpoint, or of an app that is off |
+| 429 | `TooManyRequests` | a test activity over the bot's send rate; `Retry-After` says when |
 | 413 | | a package over 5 MiB |
 
 The operator has the same on the command line: `app add --name <name> [--endpoint <url>] [--description <text>]
@@ -749,13 +759,28 @@ before a kill: the Compose file gives 60 s. After a crash or a kill, a bot can g
 runs out, as with Bot Framework. Its id is the same each time, so a bot can drop the repeat. After 20 failed sends in
 a row a bot gets nothing for a minute (`bot_health`). Sent and failed rows go after a day.
 
+**Send limits.** The server sends one bot at most `bots.send_rate` activities a second (a burst of `bots.send_burst`),
+on each node; an activity over it goes back to the outbox, due when the bot's rate has room, and the wait is no
+attempt. A bot's calls to the connector keep to `bots.connector_rate` a second per app (a burst of
+`bots.connector_burst`), on each node, checked after its credential; more get 429 with the Bot Framework's
+`{"error": {"code": "TooManyRequests"}}` and `Retry-After` in seconds. Both are in each node, so a deployment of
+several API nodes lets a bot have that much from each.
+
+**The test activity** (`POST /api/admin/v1/apps/{id}/test`, "Send a test activity" in Manage apps) sends the bot one
+`event` activity, `name` `ngteams/testActivity`, `value` `{"sentAt"}`, from the administrator in their 1:1 chat with
+the bot, as any activity goes: to the registered endpoint through the address guard, signed when the bot is, within
+its send rate. The answer says whether the bot took it (2xx), its status and, when it didn't, why (the bot's status,
+or the guard's or the connection's reason). It is no chat event: no outbox row, and the bot's health stays as its
+deliveries left it. No account's token is in it.
+
 **The address guard.** A bot's endpoint is set by an administrator, and the server checks every send: `https` only
 (`http` with `bots.allow_http_endpoints`), no user info, no redirects followed, no proxy, the answer read up to
 256 KiB. The connection goes only to addresses the guard's own resolver passed, so a name can't answer one way for the
 check and another for the connection. Public addresses pass; a private, loopback, link-local, shared or otherwise
 reserved one passes only when it is in `bots.allowed_networks` (CIDR, for a self-hosted bot on a private network);
-a cloud metadata address (`169.254.169.254`, `fd00:ec2::254`, `100.100.100.200`) never. A refused address fails the
-row at once.
+a cloud metadata address (`169.254.169.254`, `fd00:ec2::254`, `100.100.100.200`) never. An address written in the
+endpoint is checked when an administrator saves it (400 `EndpointNotAllowed`); a name, which may resolve elsewhere
+later, at each send. A refused address fails the row at once.
 
 **Signed and unsigned.** A signed bot's activity carries the server's RS256 token (above); the bot answers with its own
 token at `serviceUrl` `<bots.service_url>` (`<origin>/bot/` by default). An unsigned bot (`auth_mode` `unsigned`,
@@ -794,7 +819,8 @@ A bot acts only in a chat it is in (403) and changes only its own messages (403)
 `{"error": {"code", "message"}}`: 400 `BadArgument` (not an activity, no text or card, an attachment that isn't a card
 the client draws or a picture the server keeps, a group conversation, an update that makes more than one message),
 401 `Unauthorized`, 403 `Forbidden`, 404 `NotFound` (also when a picture reference disappears before a post or update
-commits), 507 `InsufficientStorage` (the bot's pictures fill its `media.user_quota_bytes`).
+commits), 429 `TooManyRequests` with `Retry-After` (over `bots.connector_rate`), 507 `InsufficientStorage` (the
+bot's pictures fill its `media.user_quota_bytes`).
 
 ### Invokes
 
@@ -845,6 +871,23 @@ minutes of skew and three housekeeping rounds), then goes. A node that serves th
 makes the first key and rotates these keys, at its start and at its housekeeping; a `media` node does neither.
 
 With `apps.enabled = false` none of these routes is served.
+
+### What each SDK needs
+
+From the container tests (`binary::bots::containers`, `tests/bots/`: each SDK's echo-and-cards bot against the real
+binary over TLS) and the QA test of task 229 (`binary::bots::sdk`). A signed bot needs the server's origin over
+`https` (every MSAL refuses another authority).
+
+| SDK | Checks the server's activity token | Gets its own token | Seen |
+|---|---|---|---|
+| Teams SDK v2, TypeScript (`@microsoft/teams.apps` 2.2.1) | `cloud: withOverrides(PUBLIC, {openIdMetadataUrl: "<origin>/bot/v1/.well-known/openidconfiguration", tokenIssuer: "<origin>/bot", loginEndpoint})`, with a `loginEndpoint` the issuer doesn't start with (the SDK takes an issuer under it for an Entra one), `clientId`, `tenantId` | code: the SDK's msal-node takes no known authorities, so a `token` callback with msal-node, authority `<origin>/<tenant>` and `knownAuthorities: ["<origin host>"]`; `serviceUrl: "<origin>/bot/"` for a proactive send | text, Markdown, a card, edit, delete, typing, a member, proactive, the test activity |
+| Microsoft 365 Agents SDK, JavaScript (`@microsoft/agents-hosting` 1.10.1) | by configuration: `authorityEndpoint: "<origin>"`, `tenantId` (its keys at `<origin>/<tenant>/discovery/v2.0/keys`), `issuers: ["<origin>/bot"]`, `clientId` | code: its msal-node asks Microsoft about any authority it doesn't know, and the adapter takes no token provider, so one of a few lines (msal-node as above, scope `<bots.scope>/.default`) set as the adapter's `connectionManager.getTokenProvider` and `getTokenProviderFromActivity` | the same |
+| Bot Framework SDK, Python (botbuilder 4) | `ToBotFromChannelTokenIssuer`, `ToBotFromChannelOpenIdMetadataUrl` (upper snake case) | by configuration: msal-python takes an `<origin>/adfs` authority without asking Microsoft | tokens, the SDK's own check of an activity's token, a wrong secret, rotation |
+| msal-node alone | | `knownAuthorities: ["<origin host>"]`, authority `<origin>/<tenant>` or `<origin>/botframework.com` | tokens, refusals, the hold |
+| botbuilder-dotnet, botbuilder-js, Teams SDK Python and .NET, Agents SDK Python and .NET | | | not run yet: the design's expectations stand (botbuilder-dotnet by configuration; Agents SDK Python only unsigned) |
+
+Every SDK has its own unauthenticated mode (an empty app id, or its "allow unauthenticated" switch), which an
+unsigned bot uses with no code; the container tests run the signed mode.
 
 ## Outgoing webhooks
 
