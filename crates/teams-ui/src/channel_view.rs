@@ -256,6 +256,10 @@ impl ChannelView {
         if let Some((team, channel)) = self.place.clone() {
             view.update(cx, |view, cx| view.set_channel_place(team, channel, cx));
         }
+        let posts = self.posts.read(cx).translation().clone();
+        let picker = crate::chat_translate::picker::picker_of(&posts, window, cx);
+        let translation = view.read(cx).translation().clone();
+        translation.update(cx, |translation, _| translation.share_picker(picker));
         let compose = view.read(cx).compose().clone();
         compose.update(cx, |compose, cx| compose.focus(window, cx));
         let events = Self::follow(&view, window, cx);

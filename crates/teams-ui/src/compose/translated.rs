@@ -192,7 +192,7 @@ impl Compose {
             .translated
             .model
             .as_ref()
-            .is_some_and(|model| model.read(cx).language().is_some());
+            .is_some_and(|model| model.read(cx).whole().is_some());
         let failed = self.translated.failed.clone().filter(|_| translating)?;
         let again = Button::new("compose-translate-retry")
             .label("Try again")

@@ -1,13 +1,23 @@
 //! A chat read and written in a language of the user's choosing, translated on this computer by the AI command-line
 //! tool the user has ([`crate::local_ai`]: Claude Code or the Codex CLI, the chat model [`Work::Chat`]). Teams' own
 //! message translation needs Microsoft's service and works a message at a time; this one translates the whole chat,
-//! both ways, with the chat as context.
+//! both ways, with the chat as context, or the messages the user asks for, one at a time.
 //!
 //! - **Per chat, off by default**: the chat's header has a language picker ([`header_button`]); the choice is kept per
 //!   account and chat in the settings ([`crate::settings::Settings::chat_languages`]), so it holds across restarts.
 //!   Nothing goes to a tool until a language is picked; the tool and its model are the General settings' Chat
 //!   translation ([`crate::settings::Settings::chat_translator`]: Automatic, Claude Code when it is installed, else
 //!   Codex; by default the fast model, as a send waits on it).
+//! - **Every message, or one at a time**: the picker's "Translate every message" (on by default, kept with the
+//!   chat's language, and settable before one is picked) chooses between translating the whole chat, as below, and
+//!   translating a message at a time ([`ChatTranslation::ask`]). Off, the chat shows as written and nothing goes to
+//!   the tool until the user asks for a message: another person's text message offers "Translate" on its hover bar and
+//!   in its "More options" ([`Shown::offer_of`]; with no language picked yet, it opens the picker). That message alone
+//!   takes the reading's path below (the store, then the tool's session and batch, then the store), waits as
+//!   "Translating…" and shows its translation with its mark; its "See original message" shows it as written, and
+//!   "Translate" its kept translation again, without asking the tool. Nothing else is marked, the header's progress
+//!   counts only what was asked for, nothing sent is translated, the chat's text outside the view shows as written,
+//!   and picking another language or turning the toggle back on forgets what was asked.
 //! - **Reading**: every text message the view holds (history, new ones, edits, replies with their quotes) is shown in
 //!   the language, as Teams shows a translated message: its translation, with Teams' translation mark beside its time
 //!   ([`Mark`]: "See original message" shows it as written, and back). One already in the language is shown as it is,
@@ -41,7 +51,7 @@
 //! - **Failures** stop the reading ([`Status::Failed`]: the tool missing, signed out, too slow, or stopped): the chat
 //!   shows a notice saying why, with Try again, and its messages as written.
 //! - **Outside the view** ([`Previews`]): the chat list's preview, a new message's notification and the search's cards
-//!   show a translated chat's messages in its language too, through the same store, tool and prompts; the view tells it
+//!   show a chat translated whole in its language too, through the same store, tool and prompts; the view tells it
 //!   what it translates, so nothing is asked twice. A reply's quote shows in the box as the chat shows the message.
 //! - **The picker** ([`header_button`], [`picker`]): the header's menu of languages, with a search field that filters it.
 //! - **Private**: no message, translation or tool output is logged or traced.
@@ -152,6 +162,34 @@ pub enum Mark {
     Failed,
 }
 
+/// What another person's text message offers for its translation, on its hover bar and in its "More options", in a
+/// chat not translated whole ([`Shown::offer_of`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Offer {
+    /// "Translate", with no language picked: the header's language menu opens.
+    PickLanguage,
+    /// "Translate": asked for, or its kept translation shown again.
+    Translate,
+    /// "See original message": shown translated, it shows as written.
+    SeeOriginal,
+}
+
+/// What [`Offer::Translate`] and [`Offer::PickLanguage`] say.
+pub const TRANSLATE: &str = "Translate";
+/// What [`Offer::SeeOriginal`] says.
+pub const SEE_ORIGINAL: &str = "See original message";
+
+impl Offer {
+    /// Its name, as its button's tooltip and its menu entry say it.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::PickLanguage | Self::Translate => TRANSLATE,
+            Self::SeeOriginal => SEE_ORIGINAL,
+        }
+    }
+}
+
 /// A held text message, as the translation reads it.
 #[derive(Clone, Debug)]
 pub struct Source {
@@ -180,6 +218,8 @@ struct Sent {
 #[derive(Clone, Debug, Default)]
 pub struct Shown {
     pub language: Option<&'static str>,
+    by_message: bool,
+    requested: Arc<HashSet<String>>,
     entries: Arc<HashMap<String, Entry>>,
     originals: Arc<HashSet<String>>,
     sent: Arc<Vec<Sent>>,
@@ -187,11 +227,15 @@ pub struct Shown {
 }
 
 impl Shown {
+    fn wanted(&self, message: &Message) -> bool {
+        !self.by_message || self.requested.contains(&message.id)
+    }
+
     /// The text `message` shows instead of its own, when it shows translated.
     #[must_use]
     pub fn text_of(&self, message: &Message) -> Option<Arc<RichText>> {
         self.language?;
-        if self.originals.contains(&message.id) {
+        if self.originals.contains(&message.id) || !self.wanted(message) {
             return None;
         }
         match self.entries.get(&message.id) {
@@ -208,6 +252,9 @@ impl Shown {
     #[must_use]
     pub fn mark_of(&self, message: &Message) -> Option<Mark> {
         let target = self.language.and_then(language).map(|(_, name)| name)?;
+        if !self.wanted(message) {
+            return None;
+        }
         let entry = self
             .entries
             .get(&message.id)
@@ -237,6 +284,36 @@ impl Shown {
             Some(Entry::Failed { .. }) => Some(Mark::Failed),
             None if self.failed => None,
             None => Some(Mark::Waiting),
+        }
+    }
+
+    /// What `message` offers for its translation when it is another person's text message (see the module docs):
+    /// `None` in a chat translated whole, while it waits for its translation, or once the tool found it in the
+    /// language.
+    #[must_use]
+    pub fn offer_of(&self, message: &Message) -> Option<Offer> {
+        if !translatable(message) {
+            return None;
+        }
+        if self.language.is_none() {
+            return Some(Offer::PickLanguage);
+        }
+        if !self.by_message {
+            return None;
+        }
+        if !self.requested.contains(&message.id) {
+            return Some(Offer::Translate);
+        }
+        let entry = self
+            .entries
+            .get(&message.id)
+            .filter(|entry| entry.version() == message.version);
+        match entry {
+            Some(Entry::Translated { .. }) if self.originals.contains(&message.id) => Some(Offer::Translate),
+            Some(Entry::Translated { .. }) => Some(Offer::SeeOriginal),
+            Some(Entry::Failed { .. }) => Some(Offer::Translate),
+            None if self.failed => Some(Offer::Translate),
+            Some(Entry::Same { .. } | Entry::Original { .. }) | None => None,
         }
     }
 
@@ -314,6 +391,8 @@ pub struct ChatTranslation {
     /// The chat as the settings name it: where its messages are stored (a channel's post's thread is its channel's).
     chat: String,
     language: Option<&'static str>,
+    every: bool,
+    requested: Arc<HashSet<String>>,
     choice: AiChoice,
     status: Status,
     limits: Limits,
@@ -376,6 +455,8 @@ impl ChatTranslation {
             settings,
             chat,
             language: None,
+            every: true,
+            requested: Arc::default(),
             choice: AiChoice::default(),
             status: Status::Off,
             limits: Limits::default(),
@@ -420,6 +501,22 @@ impl ChatTranslation {
         self.language
     }
 
+    /// Whether every message is translated once a language is picked, or only those the user asks for.
+    #[must_use]
+    pub fn every_message(&self) -> bool {
+        self.every
+    }
+
+    /// The language every message is translated into: `None` when the chat is read as written, or a message at a time.
+    #[must_use]
+    pub fn whole(&self) -> Option<&'static str> {
+        self.language.filter(|_| self.every)
+    }
+
+    fn wants(&self, source: &Source) -> bool {
+        self.every || self.requested.contains(&source.id)
+    }
+
     #[must_use]
     pub fn status(&self) -> &Status {
         &self.status
@@ -432,26 +529,24 @@ impl ChatTranslation {
     }
 
     /// Whether the chat's messages are being translated now: a language is picked, nothing failed, and a message the
-    /// view holds still waits for its translation. The header's button shows it from the moment a language is picked.
+    /// view holds (one asked for, when the chat is translated a message at a time) still waits for its translation.
+    /// The header's button shows it from the moment a language is picked.
     #[must_use]
     pub fn busy(&self) -> bool {
         self.progress().is_some_and(|progress| progress.done < progress.total)
     }
 
-    /// How far the reading has come, while the chat is translated (`None`: off or failed).
+    /// How far the reading of what is translated has come, while the chat is translated (`None`: off or failed).
     #[must_use]
     pub fn progress(&self) -> Option<Progress> {
         if self.status != Status::On || self.language.is_none() {
             return None;
         }
-        let done = self
-            .sources
-            .iter()
-            .filter(|source| self.entry_of(source).is_some())
-            .count();
+        let wanted: Vec<&Source> = self.sources.iter().filter(|source| self.wants(source)).collect();
+        let done = wanted.iter().filter(|source| self.entry_of(source).is_some()).count();
         Some(Progress {
             done,
-            total: self.sources.len(),
+            total: wanted.len(),
         })
     }
 
@@ -461,7 +556,9 @@ impl ChatTranslation {
         self.picker.as_ref()
     }
 
-    fn keep_picker(&mut self, picker: Entity<picker::LanguagePicker>) {
+    /// Takes `picker` as its language menu: its own once drawn, or the one a view of the same chat draws (a channel's
+    /// header's, for a post's thread).
+    pub fn share_picker(&mut self, picker: Entity<picker::LanguagePicker>) {
         self.picker = Some(picker);
     }
 
@@ -470,6 +567,8 @@ impl ChatTranslation {
     pub fn shown(&self) -> Shown {
         Shown {
             language: self.language,
+            by_message: !self.every,
+            requested: Arc::clone(&self.requested),
             entries: Arc::clone(&self.entries),
             originals: Arc::clone(&self.originals),
             sent: Arc::clone(&self.sent),
@@ -485,6 +584,58 @@ impl ChatTranslation {
         });
         // a model kept in memory only still follows it
         self.reconcile(cx);
+    }
+
+    /// Has every message of the chat translated, or only those the user asks for ([`Self::ask`]), kept in the settings
+    /// with or without a language.
+    pub fn set_every_message(&mut self, every: bool, cx: &mut Context<Self>) {
+        let (account, chat) = (self.core.me().to_owned(), self.chat.clone());
+        self.settings.update(cx, |model, cx| {
+            model.change(
+                |settings| settings.set_translate_every_message(&account, &chat, every),
+                cx,
+            );
+        });
+        self.reconcile(cx);
+    }
+
+    /// The user's Translate, or See original message, on `message` while the chat is translated a message at a time
+    /// (see the module docs): asked for (from the store, else the tool), shown as written, or its kept translation
+    /// shown again; one the tool left out, or never answered as it failed, is asked again.
+    pub fn ask(&mut self, message: &str, cx: &mut Context<Self>) {
+        if self.language.is_none() || self.every {
+            return;
+        }
+        let failed = matches!(self.status, Status::Failed(_));
+        if !self.requested.contains(message) {
+            Arc::make_mut(&mut self.requested).insert(message.to_owned());
+            if failed {
+                self.retry(cx);
+            }
+            self.read_store(cx);
+            return cx.notify();
+        }
+        let entry = self
+            .sources
+            .iter()
+            .find(|source| source.id == message)
+            .and_then(|source| self.entry_of(source))
+            .cloned();
+        match entry {
+            Some(Entry::Translated { .. }) => return self.toggle_original(message, cx),
+            Some(Entry::Failed { version }) => {
+                Arc::make_mut(&mut self.entries).remove(message);
+                self.attempts.remove(&(message.to_owned(), version));
+            }
+            Some(Entry::Same { .. } | Entry::Original { .. }) => return,
+            None => {}
+        }
+        if failed {
+            self.retry(cx);
+        } else {
+            self.pump(cx);
+            cx.notify();
+        }
     }
 
     /// Shows `message` as written, or translated again.
@@ -548,9 +699,9 @@ impl ChatTranslation {
     /// it knows of them, so they aren't asked of the tool twice and show translated outside the view at once.
     fn share(&self, cx: &mut Context<Self>) {
         let view = cx.entity_id();
+        let language = self.whole();
         // while it holds nothing yet (loading), all of its chat's
-        let followed = self
-            .language
+        let followed = language
             .filter(|_| self.status == Status::On)
             .map(|language| previews::Followed {
                 conversation: self
@@ -564,12 +715,12 @@ impl ChatTranslation {
         let learned = self
             .sources
             .iter()
+            .filter(|_| language.is_some())
             .filter_map(|source| {
                 let entry = self.entry_of(source)?;
                 Some((source.conversation_id.clone(), source.id.clone(), entry.clone()))
             })
             .collect();
-        let language = self.language;
         self.previews.update(cx, |previews, cx| {
             previews.from_view(view, followed, learned, language, cx);
         });
@@ -591,20 +742,23 @@ impl ChatTranslation {
         text
     }
 
-    /// Follows the settings: a new language or tool starts over.
+    /// Follows the settings: a new language, tool, or choice of every message or a message at a time starts over.
     fn reconcile(&mut self, cx: &mut Context<Self>) {
         let settings = self.settings.read(cx).settings();
         let language = settings.chat_language_of(self.core.me(), &self.chat);
+        let every = settings.translates_every_message(self.core.me(), &self.chat);
         let choice = settings.chat_translator.clone();
-        if language == self.language && choice == self.choice {
+        if language == self.language && every == self.every && choice == self.choice {
             return;
         }
         self.language = language;
+        self.every = every;
         self.choice = choice;
         self.stop_session();
         self.reading = None;
         self.read_again = false;
         self.entries = Arc::default();
+        self.requested = Arc::default();
         self.asked.clear();
         self.attempts.clear();
         self.originals = Arc::default();
@@ -679,7 +833,9 @@ impl ChatTranslation {
             .sources
             .iter()
             .filter(|source| {
-                self.entry_of(source).is_none() && !self.asked.contains(&(source.id.clone(), source.version))
+                self.wants(source)
+                    && self.entry_of(source).is_none()
+                    && !self.asked.contains(&(source.id.clone(), source.version))
             })
             .cloned()
             .collect();
@@ -785,12 +941,16 @@ impl ChatTranslation {
             return;
         }
         let Some(language) = self.language else { return };
-        self.bind_sent(language);
+        if self.every {
+            self.bind_sent(language);
+        }
         let due: Vec<usize> = (0..self.sources.len())
             .rev()
             .filter(|at| {
                 let source = &self.sources[*at];
-                self.entry_of(source).is_none() && self.asked.contains(&(source.id.clone(), source.version))
+                self.wants(source)
+                    && self.entry_of(source).is_none()
+                    && self.asked.contains(&(source.id.clone(), source.version))
             })
             .collect();
         if due.is_empty() {
@@ -1147,9 +1307,9 @@ impl ChatTranslation {
 
     /// The account's own message `text` (written in the chat's chosen language) as it is to be sent: translated into
     /// the chat's language, or `None` to send it as written (it is in that language already). `None` for the whole
-    /// task when the chat isn't translated: the message goes as written.
+    /// task when the chat isn't translated whole: the message goes as written.
     pub fn outgoing(&mut self, text: &RichText, cx: &mut Context<Self>) -> Option<Task<Outgoing>> {
-        let language = self.language?;
+        let language = self.whole()?;
         let target = self.chat_language();
         if target.as_deref().is_some_and(|target| same_language(language, target)) {
             return Some(Task::ready(Ok(None)));
@@ -1191,7 +1351,7 @@ impl ChatTranslation {
     /// is how the store keeps it ([`SentOriginal::key`]) when it is known now (an edit's); a post's comes with its row
     /// ([`Self::sent_as`]).
     pub fn sent(&mut self, original: &RichText, sent: &RichText, key: Option<String>, cx: &mut Context<Self>) {
-        let Some(language) = self.language else { return };
+        let Some(language) = self.whole() else { return };
         let original = Arc::new(original.clone());
         let line = one_line(sent, usize::MAX);
         Arc::make_mut(&mut self.sent).push(Sent {
@@ -1238,8 +1398,14 @@ impl ChatTranslation {
 
     /// The notice the chat shows while translating stopped: why, with Try again.
     pub fn notice(model: &Entity<Self>, palette: Palette, cx: &App) -> Option<AnyElement> {
-        let Status::Failed(failure) = model.read(cx).status() else {
+        let translation = model.read(cx);
+        let Status::Failed(failure) = translation.status() else {
             return None;
+        };
+        let what = if translation.every {
+            "This chat isn't being translated."
+        } else {
+            "The messages you asked for weren't translated."
         };
         let retry = model.clone();
         let again = Button::new("chat-translate-retry")
@@ -1262,12 +1428,7 @@ impl ChatTranslation {
                 .bg(rgb(palette.surface))
                 .text_sm()
                 .child(Glyph::LANGUAGES.icon().size(px(16.0)).text_color(rgb(theme::DANGER)))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(format!("This chat isn't being translated. {}", failure.message())),
-                )
+                .child(div().flex_1().min_w_0().child(format!("{what} {}", failure.message())))
                 .child(selected_by("chat-translate-retry", again))
                 .into_any_element(),
         )

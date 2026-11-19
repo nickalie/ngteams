@@ -375,7 +375,8 @@ pub struct Settings {
     pub first_account: Option<String>,
     /// Other people's calendars each account added to its calendar (its Add calendar), in the order added.
     pub people_calendars: Vec<PersonCalendar>,
-    /// The language each account reads a chat in ([`crate::chat_translate`]), for the chats it chose one for.
+    /// The language each account reads a chat in ([`crate::chat_translate`]), and whether every message of it is
+    /// translated, for the chats it chose either for.
     pub chat_languages: Vec<ChatLanguage>,
     /// Which tool, and model, translates chats.
     pub chat_translator: AiChoice,
@@ -390,15 +391,17 @@ pub struct Settings {
     pub sounds: SoundSettings,
 }
 
-/// The language an account reads a chat in, translated on this computer ([`crate::chat_translate`]).
+/// The language an account reads a chat in, translated on this computer ([`crate::chat_translate`]), and how.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatLanguage {
     /// The account, by its MRI.
     pub account: String,
     /// The chat (or channel, or a channel post's thread), by its id.
     pub chat: String,
-    /// The language, by its code in [`crate::translate::TARGET_LANGUAGES`].
-    pub language: &'static str,
+    /// The language, by its code in [`crate::translate::TARGET_LANGUAGES`]; `None`: as written.
+    pub language: Option<&'static str>,
+    /// Whether every message is translated (the default), or only those the account asks for, one at a time.
+    pub every_message: bool,
 }
 
 /// Another person's calendar an account added to its calendar (Add calendar, "People's calendars").
@@ -495,21 +498,53 @@ impl Settings {
     /// The language `account` reads `chat` in; `None`: as it is written.
     #[must_use]
     pub fn chat_language_of(&self, account: &str, chat: &str) -> Option<&'static str> {
+        self.chat_translation_of(account, chat).and_then(|kept| kept.language)
+    }
+
+    /// Whether `account` has every message of `chat` translated once a language is picked (the default), rather than
+    /// only those it asks for.
+    #[must_use]
+    pub fn translates_every_message(&self, account: &str, chat: &str) -> bool {
+        self.chat_translation_of(account, chat)
+            .is_none_or(|kept| kept.every_message)
+    }
+
+    /// The language `account` reads every message of `chat` in: `None` when it reads it as written, or has only the
+    /// messages it asks for translated.
+    #[must_use]
+    pub fn whole_chat_language_of(&self, account: &str, chat: &str) -> Option<&'static str> {
+        self.chat_language_of(account, chat)
+            .filter(|_| self.translates_every_message(account, chat))
+    }
+
+    fn chat_translation_of(&self, account: &str, chat: &str) -> Option<&ChatLanguage> {
         self.chat_languages
             .iter()
             .find(|kept| kept.account == account && kept.chat == chat)
-            .map(|kept| kept.language)
     }
 
     /// Sets the language `account` reads `chat` in; `None` reads it as it is written.
     pub fn set_chat_language(&mut self, account: &str, chat: &str, language: Option<&'static str>) {
+        let every_message = self.translates_every_message(account, chat);
+        self.set_chat_translation(account, chat, language, every_message);
+    }
+
+    /// Sets whether `account` has every message of `chat` translated, or only those it asks for: kept with or without
+    /// a language.
+    pub fn set_translate_every_message(&mut self, account: &str, chat: &str, every_message: bool) {
+        let language = self.chat_language_of(account, chat);
+        self.set_chat_translation(account, chat, language, every_message);
+    }
+
+    fn set_chat_translation(&mut self, account: &str, chat: &str, language: Option<&'static str>, every_message: bool) {
         self.chat_languages
             .retain(|kept| !(kept.account == account && kept.chat == chat));
-        if let Some(language) = language {
+        if language.is_some() || !every_message {
             self.chat_languages.push(ChatLanguage {
                 account: account.to_owned(),
                 chat: chat.to_owned(),
                 language,
+                every_message,
             });
         }
     }
@@ -654,8 +689,11 @@ pub mod keys {
     pub const FIRST_ACCOUNT: &str = "first_account";
     /// Other people's calendars the accounts added: an array of tables (`account`, `address`, `name`).
     pub const PEOPLE_CALENDARS: &str = "people_calendars";
-    /// The languages chats are read in: an array of tables (`account`, `chat`, `language`).
+    /// The languages chats are read in: an array of tables (`account`, `chat`, `language` unless as written, and
+    /// [`EVERY_MESSAGE`] when only the messages asked for are translated; a file of an earlier build has none: every
+    /// message).
     pub const CHAT_LANGUAGES: &str = "chat_languages";
+    pub const EVERY_MESSAGE: &str = "every_message";
     pub const CHAT_TRANSLATOR: &str = "chat_translator";
     pub const MESSAGE_CORRECTOR: &str = "message_corrector";
     /// The language a draft is translated into in its box, by its name.
@@ -825,8 +863,8 @@ fn take_people_calendars(settings: &mut Settings, value: &Value) -> Result<(), P
 }
 
 /// Takes the chats' local AI settings: the tool proofreading drafts, the tool translating chats, or the language each
-/// account reads a chat in (an array of tables naming the account, the chat and the language; one that is bad is left
-/// out, the others are taken).
+/// account reads a chat in (an array of tables naming the account, the chat, the language and whether every message is
+/// translated; one that is bad is left out, the others are taken).
 fn take_chat_translation(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem> {
     if key == keys::MESSAGE_CORRECTOR {
         settings.message_corrector = ai_choice(value).ok_or(Problem::BadValue {
@@ -844,7 +882,8 @@ fn take_chat_translation(settings: &mut Settings, key: &str, value: &Value) -> R
     }
     let bad = Problem::BadValue {
         key: keys::CHAT_LANGUAGES,
-        why: "not a list of chats, each with an account, a chat id and a language chats are translated into",
+        why: "not a list of chats, each with an account, a chat id, a language chats are translated into and whether \
+              every message is",
     };
     let entries = value.as_array().ok_or(bad.clone())?;
     let mut failed = false;
@@ -852,11 +891,12 @@ fn take_chat_translation(settings: &mut Settings, key: &str, value: &Value) -> R
         let id = |key: &str| entry.get(key).and_then(chat_id);
         let language = entry
             .get("language")
-            .and_then(Value::as_str)
-            .and_then(translate::language)
-            .map(|(code, _)| code);
-        match (id("account"), id("chat"), language) {
-            (Some(account), Some(chat), Some(language)) => settings.set_chat_language(&account, &chat, Some(language)),
+            .map(|value| value.as_str().and_then(translate::language).map(|(code, _)| code));
+        let every = entry.get(keys::EVERY_MESSAGE).map(Value::as_bool);
+        match (id("account"), id("chat"), language, every) {
+            (Some(account), Some(chat), None | Some(Some(_)), None | Some(Some(_))) => {
+                settings.set_chat_translation(&account, &chat, language.flatten(), every.flatten().unwrap_or(true));
+            }
             _ => failed = true,
         }
     }
@@ -1216,7 +1256,12 @@ fn render_chat_translation(settings: &Settings, table: &mut Table) {
                 let mut entry = Table::new();
                 entry.insert("account".to_owned(), Value::String(kept.account.clone()));
                 entry.insert("chat".to_owned(), Value::String(kept.chat.clone()));
-                entry.insert("language".to_owned(), Value::String(kept.language.to_owned()));
+                if let Some(language) = kept.language {
+                    entry.insert("language".to_owned(), Value::String(language.to_owned()));
+                }
+                if !kept.every_message {
+                    entry.insert(keys::EVERY_MESSAGE.to_owned(), Value::Boolean(false));
+                }
                 Value::Table(entry)
             })
             .collect();

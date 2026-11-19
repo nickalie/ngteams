@@ -521,3 +521,103 @@ fn a_preview_s_reply_goes_with_what_it_answers_and_its_chat_s_terms_are_kept() {
         "{kept:?}"
     );
 }
+
+#[test]
+fn a_chat_translated_a_message_at_a_time_shows_its_previews_as_written() {
+    let mut rig = Rigged::new(FAKE_CLAUDE);
+    let messages = history(&rig.core);
+    let newest = messages[0].clone();
+    rig.settings.update(&mut rig.app, |model, cx| {
+        model.change(|settings| settings.set_translate_every_message(LAB_A, CHAT, false), cx);
+    });
+    rig.translate(CHAT, Some("de"));
+    let previews = rig.previews();
+    assert_eq!(rig.lookup(&previews, &newest), Lookup::Off);
+    assert_eq!(
+        previews.read_with(&rig.app, |previews, cx| previews.language_of(CHAT, cx)),
+        None
+    );
+    rig.want(&previews, vec![newest.clone()]);
+    rig.app.executor().advance_clock(Duration::from_secs(1));
+    rig.app.run_until_parked();
+    assert!(questions(rig.dir.path()).is_empty());
+
+    let (core, settings) = (Arc::clone(&rig.shared), rig.settings.clone());
+    let view = rig
+        .app
+        .new(|cx| ChatTranslation::new(core, settings, CHAT, cx).with_limits(quick()));
+    let held: Vec<Message> = messages.iter().rev().cloned().collect();
+    view.update(&mut rig.app, |view, cx| {
+        let held: Vec<&Message> = held.iter().collect();
+        view.follow(&held, &|message| format!("Name of {}", message.id), cx);
+        view.ask(&newest.id, cx);
+    });
+    for _ in 0..1500 {
+        rig.app.run_until_parked();
+        if view.read_with(&rig.app, |view, _| view.shown().text_of(&newest).is_some()) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(view.read_with(&rig.app, |view, _| view.shown().text_of(&newest).is_some()));
+    assert_eq!(
+        rig.lookup(&previews, &newest),
+        Lookup::Off,
+        "the view's translation isn't the preview's"
+    );
+    assert_eq!(questions(rig.dir.path()).len(), 1);
+
+    drop(view);
+    rig.app.run_until_parked();
+    rig.settings.update(&mut rig.app, |model, cx| {
+        model.change(|settings| settings.set_translate_every_message(LAB_A, CHAT, true), cx);
+    });
+    rig.want(&previews, vec![newest.clone()]);
+    let shown = rig.until_known(&previews, &newest);
+    assert_eq!(text_of(&shown).as_deref(), Some("DE See you soon"));
+    assert_eq!(
+        questions(rig.dir.path()).len(),
+        1,
+        "read from the store the view kept it in"
+    );
+}
+
+fn waiting_previews_are_dropped(leave: impl FnOnce(&mut ChatTranslation, &mut gpui::Context<ChatTranslation>)) {
+    let mut rig = Rigged::new(FAKE_CLAUDE);
+    let messages = history(&rig.core);
+    rig.translate(CHAT, Some("de"));
+    let (core, settings) = (Arc::clone(&rig.shared), rig.settings.clone());
+    let view = rig
+        .app
+        .new(|cx| ChatTranslation::new(core, settings, CHAT, cx).with_limits(quick()));
+    let previews = rig.previews();
+    let (newest, oldest) = (messages[0].clone(), messages[2].clone());
+    rig.want(&previews, vec![oldest.clone()]);
+    let notified = previews.update(&mut rig.app, |previews, cx| {
+        previews.translated_within(newest.clone(), teams_ui::chat_translate::previews::NOTIFY_BUDGET, cx)
+    });
+    rig.app.run_until_parked();
+    assert_eq!(rig.lookup(&previews, &newest), Lookup::Unknown, "waits for the view");
+    assert_eq!(previews.read_with(&rig.app, |previews, _| previews.batches()), 0);
+
+    view.update(&mut rig.app, leave);
+    assert_eq!(rig.wait(notified), None, "the notification shows as written at once");
+    rig.app
+        .executor()
+        .advance_clock(teams_ui::chat_translate::previews::DEFER_LIMIT);
+    rig.app.run_until_parked();
+    assert_eq!(rig.lookup(&previews, &newest), Lookup::Off);
+    assert_eq!(rig.lookup(&previews, &oldest), Lookup::Off);
+    assert_eq!(previews.read_with(&rig.app, |previews, _| previews.batches()), 0);
+    assert!(questions(rig.dir.path()).is_empty());
+}
+
+#[test]
+fn a_chat_s_waiting_previews_are_not_sent_once_it_is_translated_a_message_at_a_time() {
+    waiting_previews_are_dropped(|view, cx| view.set_every_message(false, cx));
+}
+
+#[test]
+fn a_chat_s_waiting_previews_are_not_sent_once_it_shows_as_written() {
+    waiting_previews_are_dropped(|view, cx| view.set_language(None, cx));
+}

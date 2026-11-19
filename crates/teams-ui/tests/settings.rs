@@ -105,7 +105,8 @@ fn changed() -> Settings {
         chat_languages: vec![teams_ui::settings::ChatLanguage {
             account: "8:orgid:00000000-0000-4000-8000-00000000000a".to_owned(),
             chat: CHAT.to_owned(),
-            language: "de",
+            language: Some("de"),
+            every_message: false,
         }],
         sounds: teams_ui::sounds::SoundSettings::default(),
         chat_translator: AiChoice {
@@ -1096,6 +1097,56 @@ fn a_chat_s_language_is_changed_turned_off_and_forgotten_with_its_account() {
     assert_eq!(Settings::default().chat_translator, AiChoice::default());
     assert_eq!(parse("chat_translator = \"luna\"").unwrap().1.len(), 1);
     assert_eq!(parse("chat_languages = 3").unwrap().1.len(), 1);
+}
+
+#[test]
+fn every_message_is_translated_by_default_and_a_message_at_a_time_is_kept_with_or_without_a_language() {
+    const ONE: &str = "19:one@thread.v2";
+    const TWO: &str = "19:two@thread.v2";
+    let (read, problems) = parse(
+        "[[chat_languages]]\naccount = \"8:orgid:a\"\nchat = \"19:one@thread.v2\"\nlanguage = \"de\"\n\
+         [[chat_languages]]\naccount = \"8:orgid:a\"\nchat = \"19:two@thread.v2\"\nevery_message = false\n\
+         [[chat_languages]]\naccount = \"8:orgid:a\"\nchat = \"19:three@thread.v2\"\nevery_message = \"no\"\n",
+    )
+    .unwrap();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(
+        read.translates_every_message("8:orgid:a", ONE),
+        "a file of an earlier build"
+    );
+    assert_eq!(read.whole_chat_language_of("8:orgid:a", ONE), Some("de"));
+    assert!(!read.translates_every_message("8:orgid:a", TWO));
+    assert_eq!(read.chat_language_of("8:orgid:a", TWO), None);
+    assert!(read.translates_every_message("8:orgid:a", "19:three@thread.v2"));
+    assert!(Settings::default().translates_every_message("8:orgid:a", ONE));
+    let again = parse(&render(&read)).unwrap().0;
+    assert_eq!(again.chat_languages, read.chat_languages);
+}
+
+#[test]
+fn every_message_and_the_language_are_set_apart() {
+    const ONE: &str = "19:one@thread.v2";
+    const TWO: &str = "19:two@thread.v2";
+    let (mut settings, _) = parse(
+        "[[chat_languages]]\naccount = \"8:orgid:a\"\nchat = \"19:one@thread.v2\"\nlanguage = \"de\"\n\
+         [[chat_languages]]\naccount = \"8:orgid:a\"\nchat = \"19:two@thread.v2\"\nevery_message = false\n",
+    )
+    .unwrap();
+    settings.set_chat_language("8:orgid:a", TWO, Some("fr"));
+    assert!(!settings.translates_every_message("8:orgid:a", TWO));
+    assert_eq!(settings.chat_language_of("8:orgid:a", TWO), Some("fr"));
+    assert_eq!(settings.whole_chat_language_of("8:orgid:a", TWO), None);
+    settings.set_translate_every_message("8:orgid:a", TWO, true);
+    assert_eq!(settings.whole_chat_language_of("8:orgid:a", TWO), Some("fr"));
+    settings.set_translate_every_message("8:orgid:a", ONE, false);
+    assert_eq!(settings.chat_language_of("8:orgid:a", ONE), Some("de"));
+    assert_eq!(settings.whole_chat_language_of("8:orgid:a", ONE), None);
+    settings.set_chat_language("8:orgid:a", TWO, None);
+    assert_eq!(
+        settings.chat_languages.len(),
+        1,
+        "as written, every message: nothing kept"
+    );
 }
 
 #[test]

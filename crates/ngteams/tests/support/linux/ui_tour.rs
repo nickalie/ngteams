@@ -190,7 +190,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 320 + 8 + 5 + 15] = [
+const STEPS: [Step; 5 + 322 + 8 + 5 + 15] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -1164,10 +1164,30 @@ const STEPS: [Step; 5 + 320 + 8 + 5 + 15] = [
             });
         });
     }),
+    ("chat-translate-menu-by-message-dark", |shell, window, cx| {
+        picture_viewer::close(cx);
+        chat_tools(FAKE_CHAT_CLAUDE, cx);
+        if let Some(chat) = shell.read(cx).chat().cloned() {
+            chat.update(cx, teams_ui::ChatView::jump_to_newest);
+        }
+        every_message(shell, false, cx);
+        translate_chat(shell, Some("de"), cx);
+        language_menu(shell, Some(""), window, cx);
+    }),
+    ("chat-translated-by-message-dark", |shell, window, cx| {
+        language_menu(shell, None, window, cx);
+        translate_and_select_another(shell, window, cx);
+    }),
     // c's messages with files (`seed_files`), the newest at the bottom: a grid of five cards, two in a row, the videos'
     // with their thumbnails as Graph and the media host (the mock) gave them, the zip's and the document's with their
     // type's icon, in Teams Dark
     ("chat-files-dark", |shell, window, cx| {
+        if let Some(chat) = shell.read(cx).chat().cloned() {
+            chat.update(cx, |chat, cx| chat.select(None, cx));
+        }
+        every_message(shell, true, cx);
+        translate_chat(shell, None, cx);
+        cx.set_global(teams_ui::local_ai::Tools::default());
         picture_viewer::close(cx);
         shell.update(cx, |shell, cx| shell.open_chat(AC_CHAT.to_owned(), window, cx));
     }),
@@ -3463,6 +3483,39 @@ fn translate_chat(shell: &Entity<Shell>, language: Option<&'static str>, cx: &mu
         let translation = chat.read(cx).translation().clone();
         translation.update(cx, |translation, cx| translation.set_language(language, cx));
     }
+}
+
+fn every_message(shell: &Entity<Shell>, every: bool, cx: &mut App) {
+    if let Some(chat) = shell.read(cx).chat().cloned() {
+        let translation = chat.read(cx).translation().clone();
+        translation.update(cx, |translation, cx| translation.set_every_message(every, cx));
+    }
+}
+
+fn translate_and_select_another(shell: &Entity<Shell>, window: &mut Window, cx: &mut App) {
+    let Some(chat) = shell.read(cx).chat().cloned() else {
+        return;
+    };
+    let offering: Vec<String> = chat
+        .read(cx)
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            Item::Message(message) if message.translate == Some(teams_ui::chat_translate::Offer::Translate) => {
+                Some(message.id.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    let [.., asked, _, offered] = offering.as_slice() else {
+        return;
+    };
+    let (asked, offered) = (asked.clone(), offered.clone());
+    chat.update(cx, |chat, cx| {
+        chat.translate_message(&asked, window, cx);
+        chat.hover(None, cx);
+        chat.select(Some(offered), cx);
+    });
 }
 
 /// The second chat of the list read in `language` (`None`: as written) without opening it: its row's preview is

@@ -159,6 +159,7 @@ mod email;
 mod events;
 pub mod reactors;
 mod saved;
+mod translated;
 
 use channel::{ChannelLooks, THREAD_EVENT};
 pub use channel::{MeetingCall, MeetingCard, Place, Replies};
@@ -621,6 +622,9 @@ pub struct MessageItem {
     pub replies: Option<Box<Replies>>,
     /// How its translation is marked beside its time, while the chat is translated ([`crate::chat_translate`]).
     pub translation: Option<chat_translate::Mark>,
+    /// What it offers for its translation on its hover bar and in its menu ([`chat_translate::Shown::offer_of`]):
+    /// another person's text message, in a chat not translated whole.
+    pub translate: Option<chat_translate::Offer>,
 }
 
 /// Where a message stands in a channel's threads.
@@ -3084,6 +3088,10 @@ impl ChatView {
             .then(|| self.translated.0.mark_of(message))
             .flatten();
         let own = message.sender.as_deref() == Some(me.as_str());
+        let writes = self.writes();
+        let translate = (matches!(body, Body::Text(_)) && !own && writes != ChatWrites::ReadOnly)
+            .then(|| self.translated.0.offer_of(message))
+            .flatten();
         let policy = matches!(body, Body::Text(_))
             .then(|| policy_notice::of(message.properties.as_deref(), own))
             .flatten();
@@ -3109,13 +3117,7 @@ impl ChatView {
             email,
             app_cards,
             unshown,
-            writes: if self.core.read_only() {
-                ChatWrites::AppReadOnly
-            } else if self.conversation == NOTES {
-                ChatWrites::ReadOnly
-            } else {
-                ChatWrites::Taken
-            },
+            writes,
             forwarded,
             thread: match self.place {
                 Place::Chat => Threaded::No,
@@ -3124,7 +3126,18 @@ impl ChatView {
             },
             replies: None,
             translation,
+            translate,
         })
+    }
+
+    fn writes(&self) -> ChatWrites {
+        if self.core.read_only() {
+            ChatWrites::AppReadOnly
+        } else if self.conversation == NOTES {
+            ChatWrites::ReadOnly
+        } else {
+            ChatWrites::Taken
+        }
     }
 
     /// A channel post's subject and the email it came from ([`email`]); none in a chat, or for what isn't a text.
@@ -4073,6 +4086,7 @@ impl ChatView {
                     .find(|action| actions.contains(action))
                     .map(|action| bar_button(item, action, cx)),
             )
+            .children(self.translate_button(item, cx))
             .child(self.options_button(item, cx));
         // over the bubble: its right edge the bubble's, its left never left of the bubble's
         let place = div()
@@ -4119,6 +4133,7 @@ impl ChatView {
             .filter(|action| actions.contains(action))
             .map(|action| menu_entry(&message, action, palette, window, cx))
             .collect::<Vec<_>>();
+        entries.extend(self.translate_entry(&message, palette, cx));
         entries.extend(self.refresh_entry(&message, palette, cx));
         // Teams' workflows run on any message of a chat that takes the account's writes
         let offers_workflows = self.core.capabilities().workflows

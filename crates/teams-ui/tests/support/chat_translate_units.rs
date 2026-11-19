@@ -296,3 +296,78 @@ fn a_message_replied_to_goes_whole_from_the_view_or_the_store() {
     assert!(!sources[0].line.contains("the end"));
     assert!(context[1].text.ends_with("the end"), "{}", context[1].text);
 }
+
+fn hello() -> Message {
+    Message {
+        conversation_id: "19:synthetic@thread.v2".to_owned(),
+        id: "1".to_owned(),
+        version: 3,
+        client_message_id: None,
+        sender: None,
+        sender_name: None,
+        message_type: "Text".to_owned(),
+        content: "Hello".to_owned(),
+        properties: None,
+        arrival_time: 0,
+        compose_time: None,
+        edit_time: None,
+        delete_time: None,
+    }
+}
+
+fn asked_in_german() -> Shown {
+    Shown {
+        language: Some("de"),
+        by_message: true,
+        requested: Arc::new(HashSet::from(["1".to_owned()])),
+        ..Shown::default()
+    }
+}
+
+#[test]
+fn a_message_at_a_time_offers_translate_until_asked() {
+    let message = hello();
+    let mut shown = Shown::default();
+    assert_eq!(shown.offer_of(&message), Some(Offer::PickLanguage));
+    assert_eq!(Offer::PickLanguage.label(), TRANSLATE);
+    let deleted = Message {
+        delete_time: Some(4),
+        ..message.clone()
+    };
+    assert_eq!(shown.offer_of(&deleted), None);
+    shown.language = Some("de");
+    assert_eq!(shown.offer_of(&message), None, "a chat translated whole");
+    shown.by_message = true;
+    assert_eq!(shown.offer_of(&message), Some(Offer::Translate));
+    assert_eq!(shown.mark_of(&message), None);
+    let mut shown = asked_in_german();
+    assert_eq!(shown.mark_of(&message), Some(Mark::Waiting));
+    assert_eq!(shown.offer_of(&message), None);
+    shown.failed = true;
+    assert_eq!(shown.offer_of(&message), Some(Offer::Translate));
+}
+
+#[test]
+fn a_message_asked_for_offers_its_original_then_its_translation_again() {
+    let message = hello();
+    let entry = |entry: Entry| Arc::new(HashMap::from([("1".to_owned(), entry)]));
+    let mut shown = asked_in_german();
+    shown.entries = entry(Entry::Translated {
+        version: 3,
+        text: Arc::new(RichText::plain("Hallo")),
+        source: None,
+    });
+    assert_eq!(shown.offer_of(&message), Some(Offer::SeeOriginal));
+    assert_eq!(Offer::SeeOriginal.label(), SEE_ORIGINAL);
+    assert!(shown.text_of(&message).is_some());
+    shown.originals = Arc::new(HashSet::from(["1".to_owned()]));
+    assert_eq!(shown.offer_of(&message), Some(Offer::Translate));
+    assert_eq!(shown.text_of(&message), None);
+    shown.entries = entry(Entry::Failed { version: 3 });
+    assert_eq!(shown.offer_of(&message), Some(Offer::Translate));
+    shown.entries = entry(Entry::Same {
+        version: 3,
+        source: Some("de".to_owned()),
+    });
+    assert_eq!(shown.offer_of(&message), None);
+}

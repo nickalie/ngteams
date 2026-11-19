@@ -9,6 +9,9 @@
 #![cfg(test)]
 
 mod common;
+#[path = "support/fake_tool.rs"]
+#[expect(dead_code, reason = "the shared fake CLI helper serves several test harnesses")]
+mod fake_tool;
 
 use std::sync::Arc;
 
@@ -16,7 +19,9 @@ use common::{LAB_A, LAB_B, Rig, Written};
 use gpui::{AppContext as _, Entity, Modifiers, TestAppContext, VisualTestContext};
 use teams_core::{Action, EngineError, Event, NameFrom, Person, READING_TEAMS};
 use teams_store::{ChannelKind, Message, Team, TeamChannel};
+use teams_ui::chat_translate::{Mark, Offer};
 use teams_ui::chat_view::{Body, ChatView, MessageAction, MessageItem, Place};
+use teams_ui::local_ai::{Backend, Tools};
 use teams_ui::settings::{Settings, SettingsModel};
 use teams_ui::shell::{Main, Shell, ShellParts};
 use teams_ui::sidebar::Section;
@@ -509,6 +514,61 @@ fn a_posts_replies_summary_opens_its_thread_too() {
     let (post, view) = thread(&shell, cx).expect("the thread opens");
     assert_eq!(post, POST);
     assert_eq!(shown(&view, cx), [POST, "1760000300100", "1760000300200"]);
+    assert_nothing_written(&rig);
+}
+
+#[test]
+fn a_threads_translate_with_no_language_opens_the_channel_headers_menu_and_then_translates_the_reply() {
+    const THEIRS: &str = "1760000300100";
+    let rig = rig();
+    let dir = tempfile::tempdir().unwrap();
+    let holding = fake_tool::write(
+        dir.path(),
+        "claude",
+        "#!/bin/bash\nwhile IFS= read -r line; do :; done\n",
+    );
+    rig.cx
+        .update(|cx| cx.set_global(Tools::with(vec![(Backend::Claude, holding)])));
+    let (shell, cx) = opened(&rig, Arc::new(ViewTrace::off()));
+    click(cx, &format!("replies-{POST}"));
+    let (_, view) = thread(&shell, cx).expect("the thread opens");
+    let reply = |cx: &mut VisualTestContext| {
+        rows(&view, cx)
+            .into_iter()
+            .find(|item| item.id == THEIRS)
+            .map(|item| (item.translate, item.translation))
+            .expect("the reply")
+    };
+    assert_eq!(reply(cx), (Some(Offer::PickLanguage), None));
+    assert!(bounds(cx, "chat-translate-menu").is_none());
+
+    hover(cx, THEIRS);
+    click(cx, "action-translate");
+    let channel = posts(&shell, cx);
+    let open = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let picker = channel.read(cx).translation().read(cx).picker().cloned();
+            picker.is_some_and(|picker| picker.read(cx).is_open())
+        })
+    };
+    assert!(open(cx), "the channel header's menu");
+    assert!(bounds(cx, "chat-translate-menu").is_some());
+
+    click(cx, "chat-translate-every");
+    cx.simulate_input("germ");
+    cx.simulate_keystrokes("enter");
+    assert!(!open(cx));
+    assert!(bounds(cx, "chat-translate-menu").is_none());
+    let model = cx.update(|_, cx| view.read(cx).translation().clone());
+    cx.update(|_, cx| {
+        assert_eq!(model.read(cx).language(), Some("de"));
+        assert!(!model.read(cx).every_message());
+    });
+    assert_eq!(reply(cx), (Some(Offer::Translate), None));
+
+    hover(cx, THEIRS);
+    click(cx, "action-translate");
+    assert_eq!(reply(cx).1, Some(Mark::Waiting));
     assert_nothing_written(&rig);
 }
 

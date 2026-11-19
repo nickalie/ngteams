@@ -24,7 +24,7 @@ use gpui::{AppContext as _, Entity, TestAppContext};
 use teams_proto::chat::RichText;
 use teams_store::{Message, SentOriginal, TranslationKind};
 use teams_ui::chat_translate::picker::tip_of;
-use teams_ui::chat_translate::{ChatTranslation, Limits, Mark, Progress, SendFailure, Status, language_name};
+use teams_ui::chat_translate::{ChatTranslation, Limits, Mark, Offer, Progress, SendFailure, Status, language_name};
 use teams_ui::local_ai::{Backend, Failure, Tools};
 use teams_ui::settings::{Settings, SettingsModel};
 
@@ -1045,4 +1045,214 @@ fn a_reply_to_a_message_the_view_hasn_t_loaded_carries_it_read_from_the_store() 
     ] {
         assert!(asked[0].contains(told), "{told}: {}", asked[0]);
     }
+}
+
+fn items_asked(question: &str) -> usize {
+    question
+        .rsplit("<translate>")
+        .next()
+        .map_or(0, |items| items.matches("<m id=").count())
+}
+
+fn every_message(rig: &mut Rig, translation: &Entity<ChatTranslation>, every: bool) {
+    translation.update(&mut rig.app, |translation, cx| translation.set_every_message(every, cx));
+}
+
+fn ask(rig: &mut Rig, translation: &Entity<ChatTranslation>, message: &str) {
+    translation.update(&mut rig.app, |translation, cx| translation.ask(message, cx));
+}
+
+fn offer_of(rig: &Rig, translation: &Entity<ChatTranslation>, message: &Message) -> Option<Offer> {
+    translation.read_with(&rig.app, |translation, _| translation.shown().offer_of(message))
+}
+
+fn a_message_at_a_time(rig: &mut Rig) -> (Entity<ChatTranslation>, Vec<Message>) {
+    let messages = history();
+    let translation = rig.open();
+    rig.follow(&translation, &messages);
+    assert_eq!(offer_of(rig, &translation, &messages[0]), Some(Offer::PickLanguage));
+    every_message(rig, &translation, false);
+    let kept = rig.settings.read_with(&rig.app, |model, _| {
+        let settings = model.settings();
+        (
+            settings.chat_language_of(LAB_A, CHAT),
+            settings.translates_every_message(LAB_A, CHAT),
+        )
+    });
+    assert_eq!(kept, (None, false), "kept while the chat shows as written");
+    translation.update(&mut rig.app, |translation, cx| translation.set_language(Some("de"), cx));
+    rig.app.run_until_parked();
+    translation.read_with(&rig.app, |translation, _| {
+        assert_eq!(translation.status(), &Status::On);
+        assert!(!translation.every_message() && translation.whole().is_none());
+        assert_eq!(translation.progress(), Some(Progress { done: 0, total: 0 }));
+        assert!(!translation.busy());
+        assert_eq!(tip_of(translation), "Messages translated into German one at a time");
+        for message in &messages {
+            assert_eq!(translation.shown().mark_of(message), None);
+            assert_eq!(shown_text(translation, message), None);
+        }
+    });
+    assert_eq!(offer_of(rig, &translation, &messages[3]), Some(Offer::Translate));
+    assert!(
+        questions(rig.dir.path()).is_empty(),
+        "nothing asked before a message is"
+    );
+    (translation, messages)
+}
+
+#[test]
+fn a_message_asked_for_alone_is_translated_kept_and_shown_as_written_on_request() {
+    let mut rig = Rig::new(FAKE_CLAUDE);
+    let (translation, messages) = a_message_at_a_time(&mut rig);
+    let written = RichText::plain("Hallo");
+    let outgoing = translation.update(&mut rig.app, |translation, cx| translation.outgoing(&written, cx));
+    assert!(outgoing.is_none(), "nothing written goes translated");
+
+    ask(&mut rig, &translation, "4");
+    ask(&mut rig, &translation, "4");
+    translation.read_with(&rig.app, |translation, _| {
+        assert_eq!(translation.shown().mark_of(&messages[3]), Some(Mark::Waiting));
+        assert_eq!(translation.shown().offer_of(&messages[3]), None);
+        assert!(translation.busy());
+        assert_eq!(translation.shown().mark_of(&messages[0]), None);
+    });
+    rig.until(&translation, |translation| {
+        shown_text(translation, &messages[3]).is_some()
+    });
+    translation.read_with(&rig.app, |translation, _| {
+        assert_eq!(
+            shown_text(translation, &messages[3]).as_deref(),
+            Some("DE Sure & <soon>")
+        );
+        assert_eq!(
+            translation.shown().mark_of(&messages[3]),
+            Some(Mark::Translated {
+                tip: "See original message (English)".into()
+            })
+        );
+        assert_eq!(translation.shown().offer_of(&messages[3]), Some(Offer::SeeOriginal));
+        assert_eq!(translation.progress(), Some(Progress { done: 1, total: 1 }));
+        assert_eq!(shown_text(translation, &messages[0]), None);
+    });
+    let asked = questions(rig.dir.path());
+    assert_eq!(asked.len(), 1);
+    assert_eq!(items_asked(&asked[0]), 1, "{}", asked[0]);
+    let kept = rig.core.translations.lock().unwrap().clone();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert!(kept[0].message_id == "4" && kept[0].version == 4 && kept[0].language == "de");
+
+    ask(&mut rig, &translation, "4");
+    translation.read_with(&rig.app, |translation, _| {
+        assert_eq!(shown_text(translation, &messages[3]), None);
+        assert_eq!(translation.shown().offer_of(&messages[3]), Some(Offer::Translate));
+    });
+    ask(&mut rig, &translation, "4");
+    translation.read_with(&rig.app, |translation, _| {
+        assert!(shown_text(translation, &messages[3]).is_some());
+    });
+    ask(&mut rig, &translation, "2");
+    rig.until(&translation, |translation| !translation.busy());
+    translation.read_with(&rig.app, |translation, _| {
+        assert_eq!(translation.shown().mark_of(&messages[1]), None);
+        assert_eq!(translation.shown().offer_of(&messages[1]), None);
+    });
+    ask(&mut rig, &translation, "2");
+    assert_eq!(
+        questions(rig.dir.path()).len(),
+        2,
+        "the kept translation shown again asks nothing"
+    );
+    assert_eq!(rig.core.translations.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn turning_every_message_on_or_off_or_another_language_forgets_what_was_asked() {
+    let mut rig = Rig::new(FAKE_CLAUDE);
+    let (translation, messages) = a_message_at_a_time(&mut rig);
+    ask(&mut rig, &translation, "4");
+    rig.until(&translation, |translation| !translation.busy());
+    assert_eq!(questions(rig.dir.path()).len(), 1);
+
+    every_message(&mut rig, &translation, true);
+    rig.until(&translation, |translation| {
+        translation.progress().is_some_and(|progress| progress.done == 4)
+    });
+    let asked = questions(rig.dir.path());
+    assert_eq!(asked.len(), 2);
+    assert_eq!(
+        items_asked(&asked[1]),
+        3,
+        "what the store keeps isn't asked again: {}",
+        asked[1]
+    );
+    translation.read_with(&rig.app, |translation, _| {
+        assert_eq!(translation.whole(), Some("de"));
+        assert_eq!(shown_text(translation, &messages[0]).as_deref(), Some("DE Hello"));
+        assert_eq!(translation.shown().offer_of(&messages[0]), None);
+    });
+
+    every_message(&mut rig, &translation, false);
+    translation.read_with(&rig.app, |translation, _| {
+        assert_eq!(shown_text(translation, &messages[0]), None);
+        assert_eq!(translation.shown().mark_of(&messages[0]), None);
+    });
+    ask(&mut rig, &translation, "1");
+    rig.until(&translation, |translation| {
+        shown_text(translation, &messages[0]).is_some()
+    });
+    assert_eq!(questions(rig.dir.path()).len(), 2, "read from the store");
+
+    translation.update(&mut rig.app, |translation, cx| translation.set_language(Some("fr"), cx));
+    rig.app.run_until_parked();
+    translation.read_with(&rig.app, |translation, _| {
+        assert_eq!(translation.shown().mark_of(&messages[0]), None);
+        assert_eq!(translation.shown().offer_of(&messages[0]), Some(Offer::Translate));
+    });
+    assert_eq!(questions(rig.dir.path()).len(), 2);
+}
+
+#[test]
+fn a_message_asked_for_that_fails_is_asked_again_on_translate() {
+    let mut rig = Rig::new(SIGNED_OUT);
+    let (translation, messages) = a_message_at_a_time(&mut rig);
+    ask(&mut rig, &translation, "1");
+    rig.until(&translation, |translation| {
+        matches!(translation.status(), Status::Failed(_))
+    });
+    assert_eq!(offer_of(&rig, &translation, &messages[0]), Some(Offer::Translate));
+    assert_eq!(offer_of(&rig, &translation, &messages[3]), Some(Offer::Translate));
+    for again in ["1", "4"] {
+        ask(&mut rig, &translation, again);
+        translation.read_with(&rig.app, |translation, _| assert_eq!(translation.status(), &Status::On));
+        rig.until(&translation, |translation| {
+            matches!(translation.status(), Status::Failed(_))
+        });
+    }
+}
+
+#[test]
+fn a_message_the_tool_leaves_out_is_asked_again_on_translate() {
+    let messages = with_a_product();
+    let mut rig = Rig::new(&PLANNED_CLAUDE.replace("@PLAN@", "omit"));
+    let translation = rig.open();
+    rig.follow(&translation, &messages);
+    every_message(&mut rig, &translation, false);
+    translation.update(&mut rig.app, |translation, cx| translation.set_language(Some("de"), cx));
+    ask(&mut rig, &translation, "2");
+    rig.until(&translation, |translation| {
+        translation.shown().mark_of(&messages[1]) == Some(Mark::Failed)
+    });
+    assert_eq!(questions(rig.dir.path()).len(), 2);
+    assert_eq!(offer_of(&rig, &translation, &messages[1]), Some(Offer::Translate));
+    ask(&mut rig, &translation, "2");
+    translation.read_with(&rig.app, |translation, _| {
+        assert_eq!(translation.shown().mark_of(&messages[1]), Some(Mark::Waiting));
+    });
+    rig.until(&translation, |translation| {
+        translation.shown().mark_of(&messages[1]) == Some(Mark::Failed)
+    });
+    let asked = questions(rig.dir.path());
+    assert_eq!(asked.len(), 4);
+    assert!(asked.iter().all(|question| items_asked(question) == 1), "{asked:?}");
 }

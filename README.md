@@ -53,7 +53,7 @@ built for your desktop instead of a web page in a wrapper.
 - Join from the calendar through the pre-join screen, or with a meeting ID
 
 **Optional extras on your computer**
-- Read and write a chat in another language, with translated messages kept for next time
+- Read and write a chat in another language, or translate only the messages you pick, with translations kept for next time
 - Have a draft corrected before you send it, in any language: spelling, grammar and the word that fits best, previewed word by word
 - Translate the message you are writing into any language, in place, keeping its mentions, links and formatting (Ctrl+Z brings it back)
 - Translate live captions as people speak

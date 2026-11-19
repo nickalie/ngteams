@@ -388,6 +388,7 @@ fn row(id: &str, sender: &str, at: i64) -> MessageItem {
         thread: teams_ui::chat_view::Threaded::No,
         replies: None,
         translation: None,
+        translate: None,
     }
 }
 

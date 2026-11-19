@@ -118,7 +118,8 @@ fn translated_chat(rig: &Rig) -> (Entity<ChatView>, &'static mut VisualTestConte
         chat_languages: vec![ChatLanguage {
             account: LAB_A.to_owned(),
             chat: AB.to_owned(),
-            language: "de",
+            language: Some("de"),
+            every_message: true,
         }],
         ..Settings::default()
     };
@@ -510,4 +511,241 @@ fn a_chat_being_translated_spins_its_button_and_says_translating_on_each_message
     draw(header_cx);
     assert!(header_cx.debug_bounds("chat-translate-busy").is_none());
     assert!(header_cx.debug_bounds("chat-translate").is_some());
+}
+
+struct Pane(Entity<ChatView>);
+
+impl Render for Pane {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let model = self.0.read(cx).translation().clone();
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .h(px(48.0))
+                    .flex()
+                    .justify_end()
+                    .child(header_button(&model, window, cx)),
+            )
+            .child(div().flex_1().min_h_0().child(self.0.clone()))
+    }
+}
+
+fn chat_pane(
+    rig: &Rig,
+    language: Option<&'static str>,
+    every_message: bool,
+) -> (Entity<ChatView>, Entity<SettingsModel>, &'static mut VisualTestContext) {
+    rig.core.messages.lock().unwrap().insert(
+        AB.to_owned(),
+        vec![
+            message("1003", 3_000, LAB_B, "See you"),
+            message("1002", 2_000, LAB_A, "Lunch?"),
+            message("1001", 1_000, LAB_B, "Hello"),
+        ],
+    );
+    rig.cx.update(teams_ui::window::init);
+    let settings = Settings {
+        chat_languages: vec![ChatLanguage {
+            account: LAB_A.to_owned(),
+            chat: AB.to_owned(),
+            language,
+            every_message,
+        }],
+        ..Settings::default()
+    };
+    let parts = parts::parts(rig, settings, Arc::new(ViewTrace::off()));
+    let settings = parts.settings.clone();
+    let app: &'static mut TestAppContext = Box::leak(Box::new(rig.cx.clone()));
+    let (pane, cx) = app.add_window_view(|window, cx| {
+        let view = cx.new(|cx| ChatView::new(parts, AB.to_owned(), window, cx));
+        Pane(view)
+    });
+    cx.simulate_resize(size(px(800.0), px(600.0)));
+    let view = cx.update(|_, cx| pane.read(cx).0.clone());
+    draw(cx);
+    (view, settings, cx)
+}
+
+fn offer_of(view: &Entity<ChatView>, cx: &mut VisualTestContext, id: &str) -> Option<teams_ui::chat_translate::Offer> {
+    cx.update(|_, cx| {
+        view.read(cx).items().iter().find_map(|item| match item {
+            Item::Message(message) if message.id == id => message.translate,
+            _ => None,
+        })
+    })
+}
+
+fn hover(cx: &mut VisualTestContext, row: &'static str) {
+    let row = cx.debug_bounds(row).unwrap();
+    cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+    draw(cx);
+}
+
+fn click(cx: &mut VisualTestContext, selector: &'static str) {
+    let at = cx.debug_bounds(selector).unwrap();
+    cx.simulate_click(at.center(), Modifiers::none());
+    draw(cx);
+}
+
+#[test]
+fn a_chat_translated_a_message_at_a_time_translates_another_s_message_from_its_hover_bar_or_menu() {
+    use teams_ui::chat_translate::{Mark, Offer};
+    let rig = Rig::start();
+    let dir = tempfile::tempdir().unwrap();
+    let fake = tool(dir.path(), "claude", HOLDING);
+    rig.cx
+        .update(|cx| cx.set_global(Tools::with(vec![(Backend::Claude, fake)])));
+    let (view, _, cx) = chat_pane(&rig, Some("de"), false);
+    assert_eq!(offer_of(&view, cx, "1001"), Some(Offer::Translate));
+    assert_eq!(offer_of(&view, cx, "1002"), None, "the account's own");
+    assert_eq!(mark_of(&view, cx, "1001"), None);
+    hover(cx, "message-1002");
+    assert!(cx.debug_bounds("message-actions").is_some());
+    assert!(cx.debug_bounds("action-translate").is_none());
+
+    hover(cx, "message-1001");
+    click(cx, "action-translate");
+    assert_eq!(mark_of(&view, cx, "1001"), Some(Mark::Waiting));
+    assert!(cx.debug_bounds("translation-mark-1001").is_some());
+    assert!(cx.debug_bounds("action-translate").is_none(), "hidden while it waits");
+    assert_eq!(mark_of(&view, cx, "1003"), None);
+    fs::write(dir.path().join("go"), "").unwrap();
+    until(cx, |cx| {
+        matches!(mark_of(&view, cx, "1001"), Some(Mark::Translated { .. }))
+    });
+    assert_eq!(offer_of(&view, cx, "1001"), Some(Offer::SeeOriginal));
+    assert_eq!(mark_of(&view, cx, "1003"), None);
+    assert_eq!(offer_of(&view, cx, "1003"), Some(Offer::Translate));
+    original_and_back(&view, cx);
+}
+
+fn original_and_back(view: &Entity<ChatView>, cx: &mut VisualTestContext) {
+    use teams_ui::chat_translate::{Mark, Offer};
+    hover(cx, "message-1001");
+    click(cx, "action-translate");
+    assert!(matches!(mark_of(view, cx, "1001"), Some(Mark::Original { .. })));
+    assert_eq!(offer_of(view, cx, "1001"), Some(Offer::Translate));
+    hover(cx, "message-1001");
+    click(cx, "message-more");
+    click(cx, "menu-translate");
+    assert!(matches!(mark_of(view, cx, "1001"), Some(Mark::Translated { .. })));
+    assert!(cx.debug_bounds("message-menu").is_none());
+}
+
+#[test]
+fn a_chat_translated_whole_offers_no_translate_on_its_messages() {
+    let rig = Rig::start();
+    rig.cx.update(|cx| cx.set_global(Tools::with(Vec::new())));
+    let (view, cx) = translated_chat(&rig);
+    draw(cx);
+    assert_eq!(offer_of(&view, cx, "1001"), None);
+    hover(cx, "message-1001");
+    assert!(cx.debug_bounds("message-actions").is_some());
+    assert!(cx.debug_bounds("action-translate").is_none());
+    click(cx, "message-more");
+    assert!(cx.debug_bounds("message-menu").is_some());
+    assert!(cx.debug_bounds("menu-translate").is_none());
+
+    let model = translation(&view, cx);
+    cx.update(|_, cx| model.update(cx, |model, cx| model.set_language(None, cx)));
+    draw(cx);
+    assert_eq!(
+        offer_of(&view, cx, "1001"),
+        Some(teams_ui::chat_translate::Offer::PickLanguage)
+    );
+    hover(cx, "message-1001");
+    assert!(
+        cx.debug_bounds("action-translate").is_none(),
+        "no language menu drawn to open"
+    );
+    cx.update(|window, cx| view.update(cx, |view, cx| view.translate_message("1001", window, cx)));
+    draw(cx);
+    assert!(cx.debug_bounds("chat-translate-menu").is_none());
+}
+
+#[test]
+fn a_message_asked_for_whose_tool_fails_says_so_in_the_chat() {
+    let rig = Rig::start();
+    let dir = tempfile::tempdir().unwrap();
+    let fake = tool(dir.path(), "claude", SIGNED_OUT);
+    rig.cx
+        .update(|cx| cx.set_global(Tools::with(vec![(Backend::Claude, fake)])));
+    let (view, _, cx) = chat_pane(&rig, Some("de"), false);
+    assert!(cx.debug_bounds("chat-translate-notice").is_none());
+    hover(cx, "message-1001");
+    click(cx, "action-translate");
+    until(cx, |cx| cx.debug_bounds("chat-translate-notice").is_some());
+    assert_eq!(
+        offer_of(&view, cx, "1001"),
+        Some(teams_ui::chat_translate::Offer::Translate)
+    );
+}
+
+#[test]
+fn with_no_language_translate_opens_the_header_s_menu_whose_switch_keeps_a_message_at_a_time() {
+    use teams_ui::chat_translate::Offer;
+    let rig = Rig::start();
+    rig.cx.update(|cx| cx.set_global(Tools::with(Vec::new())));
+    *rig.core.read_only.lock().unwrap() = true;
+    let (view, settings, cx) = chat_pane(&rig, None, true);
+    let model = translation(&view, cx);
+    assert_eq!(offer_of(&view, cx, "1001"), Some(Offer::PickLanguage));
+    hover(cx, "message-1001");
+    click(cx, "action-translate");
+    assert!(
+        cx.debug_bounds("chat-translate-menu").is_some(),
+        "the bar's Translate opens it"
+    );
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert!(cx.debug_bounds("chat-translate-menu").is_none());
+    hover(cx, "message-1001");
+    click(cx, "message-more");
+    click(cx, "menu-translate");
+    assert!(
+        cx.debug_bounds("chat-translate-menu").is_some(),
+        "the menu's Translate opens it"
+    );
+    assert!(cx.debug_bounds("message-menu").is_none());
+
+    click(cx, "chat-translate-every");
+    assert!(cx.debug_bounds("chat-translate-menu").is_some(), "the menu stays open");
+    cx.update(|_, cx| {
+        let kept = settings.read(cx).settings();
+        assert!(!kept.translates_every_message(LAB_A, AB));
+        assert_eq!(kept.chat_language_of(LAB_A, AB), None);
+    });
+    cx.simulate_input("germ");
+    draw(cx);
+    assert!(
+        cx.debug_bounds("chat-translate-every").is_some(),
+        "whatever the search leaves"
+    );
+    cx.simulate_keystrokes("enter");
+    draw(cx);
+    cx.update(|_, cx| {
+        assert_eq!(model.read(cx).language(), Some("de"));
+        assert!(!model.read(cx).every_message());
+        assert_eq!(model.read(cx).batches(), 0);
+    });
+    assert_eq!(mark_of(&view, cx, "1001"), None);
+    assert_eq!(offer_of(&view, cx, "1001"), Some(Offer::Translate));
+
+    click(cx, "chat-translate");
+    cx.simulate_keystrokes("up enter");
+    draw(cx);
+    cx.update(|_, cx| {
+        assert!(model.read(cx).every_message());
+        assert!(settings.read(cx).settings().translates_every_message(LAB_A, AB));
+    });
+    assert!(
+        cx.debug_bounds("chat-translate-menu").is_some(),
+        "the switch leaves it open"
+    );
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert!(cx.debug_bounds("chat-translate-menu").is_none());
 }

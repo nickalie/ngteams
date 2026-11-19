@@ -6,7 +6,8 @@
 //!
 //! - **One per account** ([`Previews::of`]), shared by the list, the notifications, the search and every open chat's
 //!   translation.
-//! - **What is shown** ([`Previews::lookup`]): a message of a chat with a language picked shows its kept translation;
+//! - **What is shown** ([`Previews::lookup`]): a message of a chat with a language picked for every message (one
+//!   translated a message at a time shows as written here) shows its kept translation;
 //!   the account's own message, sent translated, shows as it was written ([`SentOriginal`]), never as it went out. The
 //!   account's own message kept as nothing else shows as written: it is the account's own wording, and never goes to
 //!   the tool from here.
@@ -15,7 +16,8 @@
 //!   (or an earlier run) translated costs nothing. What is left waits [`GATHER`] so the rows drawn together go together,
 //!   then goes to the tool a chat at a time: up to [`BATCH_ITEMS`] messages in one batch, the messages before them
 //!   as context, through one tool process per language that is closed once idle for [`IDLE`]. Each message is asked at
-//!   most once a run: one the answer left out shows as written.
+//!   most once a run: one the answer left out shows as written. What still waits of a chat no longer read whole in its
+//!   language ([`Previews::language_of`]) is dropped, never sent.
 //! - **An open chat's view translates its own** ([`Previews::from_view`]): a message the view holds waits for the
 //!   view's translation rather than asking the tool twice, and what the view translates is shown here at once.
 //! - **Failures** pause the tool for [`PAUSE`]: until then, what is left shows as written.
@@ -252,11 +254,19 @@ impl Previews {
         self.sessions.len()
     }
 
-    /// The language `conversation` is read in, if one was picked.
+    /// The language `conversation` is read in, if one was picked for every message of it: one translated a message at
+    /// a time shows as written here.
     #[must_use]
     pub fn language_of(&self, conversation: &str, cx: &App) -> Option<&'static str> {
         let chat = teams_proto::stored_conversation(conversation);
-        self.settings.read(cx).settings().chat_language_of(self.core.me(), chat)
+        self.settings
+            .read(cx)
+            .settings()
+            .whole_chat_language_of(self.core.me(), chat)
+    }
+
+    fn current(&self, key: &Key, cx: &App) -> bool {
+        self.language_of(&key.conversation, cx) == Some(key.language)
     }
 
     fn key_of(&self, message: &Message, cx: &App) -> Option<Key> {
@@ -462,6 +472,32 @@ impl Previews {
         self.known.insert(key, known);
     }
 
+    fn forget(&mut self, key: &Key) {
+        self.pending.remove(key);
+        self.waiters.remove(key);
+    }
+
+    fn drop_stale(&mut self, cx: &App) {
+        let stale: HashSet<Key> = self
+            .gathered
+            .iter()
+            .chain(&self.queue)
+            .map(|(key, _)| key)
+            .chain(self.deferred.keys())
+            .filter(|key| !self.current(key, cx))
+            .cloned()
+            .collect();
+        if stale.is_empty() {
+            return;
+        }
+        self.gathered.retain(|(key, _)| !stale.contains(key));
+        self.queue.retain(|(key, _)| !stale.contains(key));
+        self.deferred.retain(|key, _| !stale.contains(key));
+        for key in &stale {
+            self.forget(key);
+        }
+    }
+
     /// The settings changed: another tool or model starts over; a language picked or dropped is drawn again.
     fn settings_changed(&mut self, cx: &mut Context<Self>) {
         let choice = self.settings.read(cx).settings().chat_translator.clone();
@@ -470,6 +506,7 @@ impl Previews {
             self.stop_tools();
             self.paused_until = None;
         }
+        self.drop_stale(cx);
         cx.notify();
     }
 
@@ -553,6 +590,10 @@ impl Previews {
                 // known meanwhile (an open view's), or the tool was changed
                 continue;
             }
+            if !self.current(&key, cx) {
+                self.forget(&key);
+                continue;
+            }
             let row = kept
                 .iter()
                 .find(|row| row.message_id == key.id && row.version == key.version)
@@ -591,6 +632,7 @@ impl Previews {
 
     /// Hands the tool the next chat's batch, when none runs: up to [`BATCH_ITEMS`] of its messages, the newest first.
     fn pump(&mut self, cx: &mut Context<Self>) {
+        self.drop_stale(cx);
         if self.running.is_some() || self.preparing.is_some() {
             return;
         }
@@ -654,6 +696,12 @@ impl Previews {
         cx: &mut Context<Self>,
     ) {
         self.preparing = None;
+        if keys.iter().any(|(key, _)| !self.current(key, cx)) {
+            for (key, _) in &keys {
+                self.forget(key);
+            }
+            return self.pump(cx);
+        }
         if self.ensure_session(language, cx).is_err() {
             self.failed(keys.into_iter().map(|(key, _)| key).collect(), cx);
             return;

@@ -3,7 +3,12 @@
 //! opening a menu of "Show as written" and every language ([`TARGET_LANGUAGES`]), the chosen one checked.
 //! The list is long, so the menu opens with a search field on top, as Teams' long menus have: typing filters the
 //! languages by name (or code), Up and Down move through what is left, Enter picks the one highlighted (the first
-//! when none is), Escape closes it.
+//! when none is), Escape closes it. Under the list, "Translate every message" ([`EVERY_MESSAGE`]) is a switch, on by
+//! default, whatever the search leaves: off, the chat is translated a message at a time
+//! ([`super::ChatTranslation::ask`]). It is the last row Up and Down reach, Enter turns it over, and the menu stays
+//! open. The menu opens from its button, or from a message's Translate with no language picked: its own open state
+//! drives its popover ([`LanguagePicker::set_open`]), so a thread's view uses its channel's
+//! ([`super::ChatTranslation::share_picker`]).
 
 use std::time::Duration;
 
@@ -18,6 +23,8 @@ use gpui_component::Selectable;
 use gpui_component::button::Button;
 use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
 use gpui_component::popover::Popover;
+use gpui_component::switch::Switch;
+use gpui_component::{Sizable as _, Size};
 
 use super::{ChatTranslation, Progress};
 use crate::icons::{Glyph, icon_button};
@@ -30,6 +37,8 @@ pub const SEARCH_HINT: &str = "Search languages";
 pub const NO_MATCH: &str = "No languages found";
 /// The first row: the chat read as written.
 pub const AS_WRITTEN: &str = "Show as written";
+/// The switch under the languages: every message translated, or a message at a time.
+pub const EVERY_MESSAGE: &str = "Translate every message";
 
 /// One of the menu's rows: a language by its code, or `None` for "Show as written".
 type Row = (Option<&'static str>, &'static str);
@@ -119,29 +128,42 @@ impl LanguagePicker {
         cx.notify();
     }
 
-    /// Moves the keyboard's row by `step`, within the rows shown.
+    /// Moves the keyboard's row by `step`, within the rows shown and the switch after them.
     pub fn move_highlight(&mut self, step: isize, cx: &mut Context<Self>) {
-        let count = self.rows(cx).len();
-        if count == 0 {
-            self.highlighted = None;
-        } else {
-            let at = match self.highlighted {
-                None if step < 0 => count - 1,
-                None => 0,
-                Some(at) => at.saturating_add_signed(step).min(count - 1),
-            };
-            self.highlighted = Some(at);
-        }
+        let last = self.rows(cx).len();
+        let at = match self.highlighted {
+            None if step < 0 => last,
+            None => 0,
+            Some(at) => at.saturating_add_signed(step).min(last),
+        };
+        self.highlighted = Some(at);
         cx.notify();
     }
 
-    /// Enter: the row highlighted, else the first one the query leaves.
+    /// Enter: the row highlighted (the switch turned over), else the first one the query leaves.
     fn enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let rows = self.rows(cx);
         let chosen = self.highlighted.or_else(|| (!rows.is_empty()).then_some(0));
-        if let Some((code, _)) = chosen.and_then(|at| rows.get(at)).copied() {
-            self.choose(code, window, cx);
+        match chosen {
+            Some(at) if at == rows.len() => self.toggle_every(window, cx),
+            Some(at) => {
+                if let Some((code, _)) = rows.get(at).copied() {
+                    self.choose(code, window, cx);
+                }
+            }
+            None => {}
         }
+    }
+
+    /// Turns "Translate every message" over, with or without a language; the menu stays open, its search field
+    /// holding the keyboard.
+    pub fn toggle_every(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = self.model.update(cx, |translation, cx| {
+            let every = translation.every_message();
+            translation.set_every_message(!every, cx);
+        });
+        self.input.update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
     }
 
     /// Reads the chat in `language` (`None`: as written), and closes the menu.
@@ -193,6 +215,40 @@ impl LanguagePicker {
             .child(div().flex_1().min_w_0().truncate().child(label))
             .into_any_element()
     }
+
+    fn every_row(&self, highlighted: bool, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
+        let every = self.model.upgrade().is_none_or(|model| model.read(cx).every_message());
+        let switch = Switch::new("chat-translate-every-switch")
+            .checked(every)
+            .with_size(Size::Small)
+            .tab_stop(false)
+            .accessibility_label(EVERY_MESSAGE);
+        let row = div()
+            .debug_selector(|| "chat-translate-every".to_owned())
+            .id("chat-translate-every")
+            .w_full()
+            .h(px(32.0))
+            .px_2()
+            .flex()
+            .items_center()
+            .gap_2()
+            .rounded_md()
+            .cursor_pointer()
+            .text_sm()
+            .text_color(rgb(palette.foreground))
+            .when(highlighted, |row| row.bg(rgb(palette.hover)))
+            .hover(move |row| row.bg(rgb(palette.hover)))
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_every(window, cx)))
+            .child(div().w(px(14.0)).flex_none())
+            .child(div().flex_1().min_w_0().truncate().child(EVERY_MESSAGE))
+            .child(switch);
+        div()
+            .pt_1()
+            .border_t_1()
+            .border_color(rgb(palette.border))
+            .child(row)
+            .into_any_element()
+    }
 }
 
 impl Focusable for LanguagePicker {
@@ -207,6 +263,7 @@ impl Render for LanguagePicker {
         let chosen = self.model.upgrade().and_then(|model| model.read(cx).language());
         let rows = self.rows(cx);
         let empty = rows.is_empty();
+        let every = self.every_row(self.highlighted == Some(rows.len()), palette, cx);
         let rows: Vec<AnyElement> = rows
             .into_iter()
             .enumerate()
@@ -277,6 +334,7 @@ impl Render for LanguagePicker {
             .gap_1()
             .child(search)
             .child(list)
+            .child(every)
     }
 }
 
@@ -287,7 +345,7 @@ pub fn picker_of(model: &Entity<ChatTranslation>, window: &mut Window, cx: &mut 
     }
     let weak = model.downgrade();
     let picker = cx.new(|cx| LanguagePicker::new(weak, window, cx));
-    model.update(cx, |model, _| model.keep_picker(picker.clone()));
+    model.update(cx, |model, _| model.share_picker(picker.clone()));
     picker
 }
 
@@ -302,6 +360,7 @@ pub fn tip_of(translation: &ChatTranslation) -> String {
     }
     match translation.progress() {
         Some(Progress { done, total }) if done < total => format!("Translating into {name}… {done} of {total}"),
+        _ if !translation.every_message() => format!("Messages translated into {name} one at a time"),
         _ => format!("Chat translated into {name}"),
     }
 }
