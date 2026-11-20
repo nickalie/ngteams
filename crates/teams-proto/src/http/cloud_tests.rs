@@ -144,8 +144,8 @@ fn bases_refuse_other_clouds_ports_and_normalized_paths() {
 fn calling_links_are_bound_to_cloud_and_prefix() {
     for suffix in ["epconv", "ep/controller/conv/call/leave?i=one&e=two"] {
         let url = Url::parse(&format!("https://chat.example:8443/flightproxy/api/v2/{suffix}")).unwrap();
-        assert!(calling_base_in(&cloud(), &url));
-        assert!(!calling_base_in(&Cloud::Microsoft, &url));
+        assert!(calling_service_in(&cloud(), &url));
+        assert!(!calling_service_in(&Cloud::Microsoft, &url));
     }
     for link in [
         "https://api.flightproxy.teams.microsoft.com/api/v2/epconv",
@@ -154,8 +154,18 @@ fn calling_links_are_bound_to_cloud_and_prefix() {
         "https://elsewhere.example:8443/flightproxy/api/v2/epconv",
         "https://chat.example:8443/flightproxy/api/v2/epconv?token=x",
     ] {
-        assert!(!calling_base_in(&cloud(), &Url::parse(link).unwrap()), "{link}");
+        assert!(!calling_service_in(&cloud(), &Url::parse(link).unwrap()), "{link}");
     }
+}
+
+#[test]
+fn a_regional_flight_proxy_takes_a_calls_links_but_never_its_start() {
+    let regional = "https://api-apac.flightproxy.teams.microsoft.com/api/v2";
+    let leave = Url::parse(&format!("{regional}/ep/host/conv/x/leave?i=1")).unwrap();
+    assert!(calling_service_in(&Cloud::Microsoft, &leave));
+    assert!(!calling_service_in(&cloud(), &leave));
+    let start = Url::parse(&format!("{regional}/epconv")).unwrap();
+    assert!(!calling_service_in(&Cloud::Microsoft, &start));
 }
 
 #[test]

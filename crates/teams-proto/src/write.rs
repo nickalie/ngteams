@@ -24,7 +24,7 @@ pub use calendar::{
     EventDraft, EventShowAs, MeetNow, MeetNowMeeting, MeetingChannel, Organizer, RespondEvent, RsvpAnswer,
     UpdateChannelEvent, UpdateEvent, ZonedTime,
 };
-pub(crate) use call::on_calling_base;
+pub(crate) use call::on_calling_service;
 pub use call::{
     AcceptCall, AcceptParts, AcceptTransfer, AcknowledgeAcceptance, AcknowledgeMediaAnswer, AddParts, AddToCall,
     AnswerMedia, AnswerMediaParts, ApplyChannelParameters, AttachCall, AttachParts, CALL_REACTIONS, CALL_START_URL,

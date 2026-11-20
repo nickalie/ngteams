@@ -14,7 +14,7 @@ pub use self::meeting::{
     DEFAULT_TIMER_MS, MeetingJoinInfo, MeetingTimer, MuteParticipants, TimerState, TimerUpdate, UpdateMeetingSettings,
     UpdateMeetingStates, meeting_locked,
 };
-pub(crate) use self::parts::on_calling_base;
+pub(crate) use self::parts::on_calling_service;
 pub use self::parts::{
     CALL_START_URL, CALLING_BASE, CALLING_HOST, CallContext, CallLink, CallParticipant, ChannelParameters, ClientInfo,
     Invitee, Links, MediaContent, MediaDescription, MediaDescriptions,
@@ -117,7 +117,7 @@ struct Plan<'a> {
 
 /// Builds `plan`'s request and classifies it (see the module docs).
 fn build(plan: Plan<'_>) -> Result<Built, CallWriteError> {
-    if !crate::http::calling_base_in(plan.context.cloud(), plan.url)
+    if !crate::http::calling_service_in(plan.context.cloud(), plan.url)
         || plan
             .body
             .as_ref()

@@ -29,7 +29,7 @@ use crate::request::Request;
 use crate::search::{SUBSTRATE_AUDIENCE, SUBSTRATE_HOST, SubstrateSearch};
 use crate::sticker::{STICKERS_HOST, STICKERS_PATH};
 use crate::thumbnail::{ThumbnailLink, is_thumbnail_link_in};
-use crate::write::on_calling_base;
+use crate::write::on_calling_service;
 
 mod bot;
 mod captions;
@@ -416,7 +416,7 @@ impl<C: Credentials> HttpTransport<C> {
             return Err(HttpError::Refused(Refusal::Loki));
         }
         let url = match request.call {
-            Some(url) if request.service == Service::Calling && calling_base_in(&self.cloud, &url) => url,
+            Some(url) if request.service == Service::Calling && calling_service_in(&self.cloud, &url) => url,
             Some(_) => return Err(HttpError::Refused(Refusal::NotAllowed)),
             None => self.url_for(request.service, &request.endpoint)?,
         };
@@ -1858,13 +1858,13 @@ fn on_base_in(cloud: &Cloud, service: Service, base: &Url, url: &Url, endpoint: 
     on_base(service, &projected_base, &projected_url, endpoint)
 }
 
-pub(crate) fn calling_base_in(cloud: &Cloud, url: &Url) -> bool {
+pub(crate) fn calling_service_in(cloud: &Cloud, url: &Url) -> bool {
     if cloud.is_microsoft() {
-        on_calling_base(url)
+        on_calling_service(url)
     } else {
         cloud
             .project(url, "/flightproxy", "https://api.flightproxy.teams.microsoft.com")
-            .is_some_and(|url| on_calling_base(&url))
+            .is_some_and(|url| on_calling_service(&url))
     }
 }
 

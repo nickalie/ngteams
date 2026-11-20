@@ -73,10 +73,7 @@ same body; then it shows a retry screen (`calling-retry-screen`, `calling-retry-
 
 `StartCall::in_chat` builds this captured shape. The tracker registers attempts and binds the answer and later
 callbacks; the core call floor coordinates starts, joins and answers across accounts. No member-read policy or permit
-runs before the write. The start's answer is the conversation, as for the test call. A meeting hosted in another
-region answers on that region's flight proxy: its `conversationController`, `links` and the acceptance's links are on
-`api-<region>.flightproxy.teams.microsoft.com` (`api-apac` for a conversation on `conv-maso-…`, seen 2026-11-20), and
-the call's later writes follow them there.
+runs before the write. The start's answer is the conversation, as for the test call.
 
 ## The invitation
 
@@ -456,6 +453,12 @@ what joining a room's audio sends (the room device is told to join, a write to i
 search is Outlook's (`outlook.office.com/SchedulingB2`), for which the native client has no token (its sign-in asks for
 Teams' audiences only); and a write to a room reaches the room's device, which the lab rule can't judge without a room
 of the lab's own.
+
+**A meeting hosted in another region.** A native join's start answer (seen 2026-11-20) had its
+`conversationController` on that region's flight proxy, `api-apac.flightproxy.teams.microsoft.com`, for a conversation
+on `conv-maso-…`. The start itself stays on `api.flightproxy.teams.microsoft.com`. The native client reads the
+answer's links on `api-<region>.flightproxy.teams.microsoft.com` and sends the call's later writes there. That the
+acceptance's links and the later writes are regional is expected, not seen: no capture shows them yet.
 
 ## A channel's meeting
 

@@ -60,8 +60,10 @@ pub enum Service {
     /// The calling service: the flight proxy, `https://api.flightproxy.teams.microsoft.com/api/v2/`, with the account's
     /// skypetoken (`X-Skypetoken`, not a bearer token). The call writes go here (`crate::StartCall` and the others):
     /// the call start to `epconv`, every other write to a link the call's services handed out
-    /// (`ep/<service host>/…`, a [`crate::CallLink`]), sent exactly as given and checked against the base. Only
-    /// authorized call writes are sent here: a read or a plain request on it is refused.
+    /// (`ep/<service host>/…`, a [`crate::CallLink`]), sent exactly as given and checked against the flight proxy's
+    /// hosts. A meeting hosted in another region hands out its links on that region's
+    /// `api-<region>.flightproxy.teams.microsoft.com`. Only authorized call writes are sent here: a read or a plain
+    /// request on it is refused.
     Calling,
     /// The TURN relay's credentials, `https://teams.microsoft.com/trap/`, with the account's `ic3` token and
     /// `x-ms-migration: True` and `api-version: 2`, as the web client's Entra form of the read

@@ -393,7 +393,7 @@ The native transport reaches the async gateway as `Service::Ams`, using the acco
 | `PUT` | `v1/me/forceavailability/` | the manual status from the account menu (Busy, Do not disturb, Appear away, Available), and with no body its reset | Typed write (`ForceAvailability`) | [trouter.md](trouter.md#own-presence-m2-task-18) · M2 T18 | seen (`own-presence-manual-held`, 15 denied); allowed and answered `200` (`own-presence-manual` of 2026-10-23); native live (M2 T19: `Busy` and the reset each answered with a success, b saw Busy over the live endpoint, then `Available`); own server: served |
 | `POST` | `v1/pubsub/subscriptions/<epid>` (no trailing slash) | subscribes the account's Trouter endpoint to others' presence, with the presence read's headers plus `x-ms-correlation-id` (a fresh GUID), `x-ms-client-version` (the client build) and `x-ms-endpoint-id` (the `epid` again); without the first two UPS answers 400 "Missing mandatory header '<name>'": `{"trouterUri": "<the socket's push URL>unifiedPresenceService", "shouldPurgePreviousSubscriptions", "subscriptionsToAdd": [{"mri", "source": "ups"}], "subscriptionsToRemove": […]}`, answered `{"addStatuses": [{"mri", "source", "status": 20200}], "removeStatuses": […]}`; UPS then pushes each change (the `unifiedPresenceService` delivery below) | PostRead (`PresenceSubscription::new_in`, `trouterUri` checked against the account cloud at construction and send) | [trouter.md](trouter.md#others-presence) · M1 T14 | seen (755 in the captures of 2026-10-20 to 2026-10-26, allowed and answered `200` since 2026-10-23); native live (2026-11-04: lab a's subscription of a, b and the user's own account answered `200`, each `20200`; b's start then reached a as a `unifiedPresenceService` change); own server: served, with the snapshot and the change deliveries |
 
-## Calling (`teams.microsoft.com/trap/`, `api.flightproxy.teams.microsoft.com/api/v2/`)
+## Calling (`teams.microsoft.com/trap/`, `api.flightproxy.teams.microsoft.com/api/v2/`, `api-<region>.flightproxy.teams.microsoft.com/api/v2/`)
 
 An Own account uses `/flightproxy/api/v2/epconv` for starts and retains every controller link, including its routing
 query, under that origin's `/flightproxy/api/v2/ep/`. Both typed construction and transport refuse other origins
@@ -407,10 +407,11 @@ through those servers (`teams_core::Relay::Teams` reads them, `teams_media::rela
 Teams' relay host.
 
 Services behind the flight proxy are addressed as `ep/<service host>/…`, each URL handed out by the service. The start
-always goes to `api.flightproxy.teams.microsoft.com`; a meeting hosted in another region answers it with links on that
-region's flight proxy, `api-<region>.flightproxy.teams.microsoft.com` (`api-apac` for a conversation on `conv-maso-…`,
-seen 2026-11-20), and every later write of the call goes there with the same skypetoken, as the web client follows the
-links it is given. Typed call writes go through `Service::Calling` with the account's skypetoken; `teams-call` chooses actions and tracks invitations/callbacks, while `teams-core` shares the account call floor and sends through its outbox. Typed writes are single-attempt in the transport; the outbox manages explicit retry decisions and never blindly resends unknown outcomes. Calling delivery replies use the delivery's own connection.
+always goes to `api.flightproxy.teams.microsoft.com`. A meeting hosted in another region can answer it with its
+`conversationController` on that region's flight proxy, `api-<region>.flightproxy.teams.microsoft.com` (native join,
+`api-apac` for a conversation on `conv-maso-…`, seen 2026-11-20). The native client reads links on such a host and
+sends the call's later writes to them with the same skypetoken. No capture shows the later writes or the web client
+there yet. Typed call writes go through `Service::Calling` with the account's skypetoken; `teams-call` chooses actions and tracks invitations/callbacks, while `teams-core` shares the account call floor and sends through its outbox. Typed writes are single-attempt in the transport; the outbox manages explicit retry decisions and never blindly resends unknown outcomes. Calling delivery replies use the delivery's own connection.
 
 | Method | Path | What it does | Native | Notes · task | Evidence |
 | --- | --- | --- | --- | --- | --- |

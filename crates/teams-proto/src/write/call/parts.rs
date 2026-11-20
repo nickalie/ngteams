@@ -11,11 +11,12 @@ use percent_encoding::percent_decode_str;
 use serde_json::{Map, Value, json};
 use url::Url;
 
-/// The flight proxy every call request goes through: the call start, and every link the call's services hand out.
+/// The main flight proxy host: every call start goes here. A call's other links are on this host, or on the
+/// regional flight proxy host of a meeting hosted in another region ([`CallLink`]).
 pub const CALLING_HOST: &str = crate::CALL_PROXY_HOST;
 
-/// The calling service's base (`Service::Calling`): every call request goes under it, the call start to `epconv`
-/// and every other to a link the call's services handed out, `ep/<service host>/…`.
+/// The calling service's main base (`Service::Calling`): the call start goes to its `epconv`. Every other call request
+/// goes to a link the call's services handed out, `ep/<service host>/…`, here or on a regional flight proxy host.
 pub const CALLING_BASE: &str = "https://api.flightproxy.teams.microsoft.com/api/v2";
 
 /// Where a call starts: [`CALLING_BASE`] plus `epconv`, no query.
@@ -25,9 +26,9 @@ pub use crate::ids::CALL_START_URL;
 /// invitation's `attach`, …), kept exactly as it was given, its routing query (`?i=…&e=…`) included: the call registry
 /// knows each by its exact text, and the query may be signed, so it is never decoded and built again.
 ///
-/// Only a link under [`CALLING_BASE`]'s `ep/<host>/…` reads: `https`, [`CALLING_HOST`] or a region's own flight proxy
-/// host (`api-<region>.flightproxy.teams.microsoft.com`) with no port, no user info or fragment, the path
-/// `/api/v2/ep/<host>/<at least one more segment>`, no segment empty, `.` or `..` once decoded.
+/// Only a link at `ep/<host>/…` on a flight proxy host reads: `https`, [`CALLING_HOST`] or a region's own flight proxy
+/// host (`api-<region>.flightproxy.teams.microsoft.com`, the region lowercase ASCII letters) with no port, no user info or fragment, the
+/// path `/api/v2/ep/<host>/<at least one more segment>`, no segment empty, `.` or `..` once decoded.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct CallLink(Url);
 
@@ -76,17 +77,17 @@ impl fmt::Debug for CallLink {
     }
 }
 
-/// Whether `url` is on [`CALLING_BASE`]: `https`, no port, no user info or fragment, and either the call start
+/// Whether `url` is on the calling service: `https`, no port, no user info or fragment, and either the call start
 /// (`/api/v2/epconv` on [`CALLING_HOST`], no query) or `/api/v2/ep/<host>/<one or more segments>` on a flight proxy
 /// host ([`is_proxy_host`]), no segment empty, `.` or `..` once decoded.
-pub(crate) fn on_calling_base(url: &Url) -> bool {
+pub(crate) fn on_calling_service(url: &Url) -> bool {
     let start = url.host_str() == Some(CALLING_HOST) && url.path() == "/api/v2/epconv" && url.query().is_none();
     plain_proxy_url(url) && (start || is_ep_link(url))
 }
 
 /// The flight proxy's hosts: [`CALLING_HOST`], or a region's own `api-<region>.flightproxy.teams.microsoft.com`, the
-/// region lowercase ASCII letters. A meeting hosted in another region hands out its links on that region's host
-/// (`api-apac.…` for a meeting on `conv-maso-…`, seen 2026-11-20).
+/// region lowercase ASCII letters. A meeting hosted in another region answers its start with links on that region's
+/// host (`api-apac.…` for a meeting on `conv-maso-…`, seen 2026-11-20).
 fn is_proxy_host(host: &str) -> bool {
     host == CALLING_HOST
         || host
