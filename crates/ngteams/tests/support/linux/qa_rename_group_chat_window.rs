@@ -500,17 +500,17 @@ fn mock_scene() -> SandboxResult {
         Err(error) => (Err(error), None),
     };
     user.finish(outcome)?;
-    let pencil = pencil.ok_or("no pencil picture")?;
+    let (pencil, place) = pencil.ok_or("no pencil picture")?;
     let mut user = User::start(&sandbox, root.path(), "mock:ab", &env)?;
     let outcome = after_restart(&mut user);
     user.finish(outcome)?;
     let mut user = User::start(&sandbox, root.path(), "mock:ab:ro", &env)?;
-    let outcome = read_only(&mut user, &pencil);
+    let outcome = read_only(&mut user, &pencil, place);
     user.finish(outcome)
 }
 
-/// The flows of the first run; the pencil's picture in Teams Light at 100 %.
-fn mock_flows(user: &mut User<'_>, mock: &Mock) -> SandboxResult<RgbImage> {
+/// The flows of the first run; the pencil's picture in Teams Light at 100 %, and its centre.
+fn mock_flows(user: &mut User<'_>, mock: &Mock) -> SandboxResult<(RgbImage, (u32, u32))> {
     let state = user.until("a shown, the group chat listed", |state| {
         state["shown"] == "a" && User::row(state, ABC_CHAT).is_some()
     })?;
@@ -520,7 +520,7 @@ fn mock_flows(user: &mut User<'_>, mock: &Mock) -> SandboxResult<RgbImage> {
     let unnamed = row["chat_with"].is_string() || row["named"] == false;
     user.open_by_switcher(&first, ABC_CHAT)?;
     user.shot("1-group-chat")?;
-    let pencil = pencil_picture(user)?;
+    let (pencil, place) = pencil_picture(user)?;
     let current = if unnamed { String::new() } else { first.clone() };
     escape_and_cancel(user, mock, &current, &first)?;
     save_and_enter(user, mock, &current)?;
@@ -530,11 +530,12 @@ fn mock_flows(user: &mut User<'_>, mock: &Mock) -> SandboxResult<RgbImage> {
     unname(user, mock)?;
     no_pencil_elsewhere(user, &pencil)?;
     looks(user)?;
-    Ok(pencil)
+    Ok((pencil, place))
 }
 
-/// The pencil found, cut out of the screen (for the chats that must not show it), its tooltip's place hovered.
-fn pencil_picture(user: &mut User<'_>) -> SandboxResult<RgbImage> {
+/// The pencil found, cut out of the screen (for the chats that must not show it), and its centre, hovered for its
+/// tooltip.
+fn pencil_picture(user: &mut User<'_>) -> SandboxResult<(RgbImage, (u32, u32))> {
     let blob = user.pencil()?;
     let image = user.image()?;
     note(&format!("the header's pencil at {blob:?}"));
@@ -547,7 +548,7 @@ fn pencil_picture(user: &mut User<'_>) -> SandboxResult<RgbImage> {
         fs::create_dir_all(&dir)?;
         fs::copy(&png, dir.join("qa661-2-pencil-hover.png"))?;
     }
-    Ok(pixels::crop(&image, blob))
+    Ok((pixels::crop(&image, blob), (x, y)))
 }
 
 /// Escape and Cancel close the popup with nothing sent; the name stays.
@@ -830,8 +831,8 @@ fn after_restart(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// The read-only mode shows no pencil, and its place opens nothing.
-fn read_only(user: &mut User<'_>, pencil: &RgbImage) -> SandboxResult {
+/// The read-only mode shows no pencil, and a click on its place (`place`) opens nothing.
+fn read_only(user: &mut User<'_>, pencil: &RgbImage, place: (u32, u32)) -> SandboxResult {
     user.until("a shown", |state| state["shown"] == "a")?;
     user.ask(&format!("open-chat {ABC_CHAT}"))?;
     user.until("the group chat open", |state| state["chat"] == ABC_CHAT)?;
@@ -840,7 +841,16 @@ fn read_only(user: &mut User<'_>, pencil: &RgbImage) -> SandboxResult {
     ensure(!user.shows_pencil(pencil)?, || {
         "the read-only mode shows the pencil".to_owned()
     })?;
-    note("read-only: no pencil");
+    user.click(place)?;
+    thread::sleep(SETTLE);
+    let state = user.state()?;
+    ensure(state["rename"].is_null(), || {
+        format!(
+            "a click on the pencil's place opened the popup in the read-only mode: {}",
+            state["rename"]
+        )
+    })?;
+    note("read-only: no pencil, its place opens nothing");
     Ok(())
 }
 

@@ -4334,8 +4334,17 @@ async fn named(native: &mut Native, chat: &str, topic: Option<&str>) {
 async fn a_group_chat_renamed_is_called_by_its_new_name_at_once_and_its_people_see_it_live() {
     let lab = Lab::start().await;
     let chat = lab.mock.add_group("Lab trio 39", &[LAB_A, LAB_B, LAB_C]).unwrap();
-    let mut a = native(&lab, LAB_A, How::default());
-    a.ready().await;
+    // a takes no pushes: only its own write can name the chat in its store
+    let mut a = native(
+        &lab,
+        LAB_A,
+        How {
+            push: false,
+            ..How::default()
+        },
+    );
+    let report = a.handle.sync().await.unwrap();
+    assert!(report.failed.is_empty(), "{report:?}");
     let mut b = native(&lab, LAB_B, How::default());
     b.ready().await;
     assert_eq!(topic_of(&b, &chat).await.as_deref(), Some("Lab trio 39"));
