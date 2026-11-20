@@ -264,9 +264,10 @@ Captured on 2026-11-20 (`team-manage`, lab account a in its own notes, which rea
   "This is your space" and "This chat is just for you...with you. Use it for drafts, send files to yourself, or get
   to know chat features a little better."
 
-The native client writes the notes through the same outbox as any chat. A file sent there is shared with nobody,
-because the notes have no other member. Whether Trouter delivers a note written on another device was not seen: a
-delivery naming `48:notes` is stored as any chat's.
+The native client writes the notes through the same outbox as any chat. It does not move their read horizon: a
+read receipt names a message from another person, and each note comes from the account itself. A file sent there is
+shared with nobody, because the notes have no other member. Whether Trouter delivers a note written on another device
+was not seen: a delivery naming `48:notes` is stored as any chat's.
 
 ## Message pages (ab-chat-full, b)
 

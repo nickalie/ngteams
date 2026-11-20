@@ -2613,7 +2613,7 @@ impl ChatView {
                     let oldest = thread_oldest(&*core, &conversation, &place, oldest).await;
                     window(&*core, &conversation, oldest, first, &held, &find).await
                 }
-                Load::Older => older(&*core, &conversation, (oldest, next), asked, &held).await,
+                Load::Older => older(&*core, &conversation, oldest, next, asked, &held).await,
             };
             let read = match read {
                 Ok(read) if place.in_channel() => Ok(in_channel(&*core, &conversation, &writes_to, read).await),
@@ -5095,7 +5095,8 @@ async fn in_channel(core: &dyn Core, conversation: &str, writes_to: &str, mut re
 async fn older(
     core: &dyn Core,
     conversation: &str,
-    (oldest, next): (Option<(i64, String)>, Option<PageCursor>),
+    oldest: Option<(i64, String)>,
+    next: Option<PageCursor>,
     asked: bool,
     held: &HashMap<String, i64>,
 ) -> Result<Read, EngineError> {

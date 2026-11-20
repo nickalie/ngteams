@@ -996,6 +996,50 @@ fn load_older_in_a_chat_whose_sync_failed_syncs_it_and_shows_what_it_stored() {
 }
 
 #[test]
+fn load_older_in_a_never_synced_chat_that_holds_messages_syncs_once_and_puts_older_pages_first() {
+    let all = many(70);
+    let rig = rig_with(all[60..].to_vec());
+    rig.core.unsynced.lock().unwrap().insert(AB.to_owned());
+    let synced = |rig: &Rig| rig.core.synced.lock().unwrap().iter().filter(|c| *c == AB).count();
+    let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    let history = |cx: &mut VisualTestContext| cx.update(|_, cx| view.read(cx).history());
+    for _ in 0..3 {
+        draw(cx);
+    }
+    assert_eq!(history(cx), History::Unsynced);
+    assert_eq!(ids(&view, cx).len(), 10);
+    assert_eq!(
+        synced(&rig),
+        1,
+        "only the open synced: an older load the user did not ask for does not sync"
+    );
+
+    // the service answers now: the sync stores the older history, the button reads it as older pages
+    rig.core.settled_by_sync.lock().unwrap().insert(AB.to_owned());
+    rig.core
+        .messages
+        .lock()
+        .unwrap()
+        .get_mut(AB)
+        .unwrap()
+        .extend(all[..60].iter().cloned());
+    assert!(cx.debug_bounds("load-older").is_some(), "the top offers to load again");
+    // what the button does (it is above the place the window shows)
+    cx.update(|_, cx| view.update(cx, ChatView::load_older));
+    for _ in 0..3 {
+        draw(cx);
+    }
+    assert_eq!(synced(&rig), 2, "the asked load synced once");
+    let shown: Vec<u32> = ids(&view, cx).iter().map(|id| id.parse().unwrap()).collect();
+    assert!(shown.len() > 10, "an older page came in: {shown:?}");
+    assert_eq!(shown.last(), Some(&70));
+    assert!(
+        shown.windows(2).all(|pair| pair[1] == pair[0] + 1),
+        "the older pages come before what was held, in arrival order: {shown:?}"
+    );
+}
+
+#[test]
 fn the_notes_with_nothing_in_them_show_teams_this_is_your_space() {
     let rig = rig_with(Vec::new());
     let parts = parts::parts(&rig, Settings::default(), Arc::new(ViewTrace::off()));
@@ -1009,7 +1053,12 @@ fn the_notes_with_nothing_in_them_show_teams_this_is_your_space() {
         cx.debug_bounds("history-top").is_none(),
         "no \"beginning of the chat\" under it"
     );
-    assert!(!NOTES_INTRO_TEXT.is_empty());
+    for shown in [
+        format!("chat-notes-intro-title: {NOTES_INTRO_TITLE}"),
+        format!("chat-notes-intro-text: {NOTES_INTRO_TEXT}"),
+    ] {
+        assert!(cx.debug_bounds(shown.clone().leak()).is_some(), "{shown}");
+    }
 
     // a note in them: the intro gives way to it
     let mut note = message("1", LAB_A, "<p>a made-up note</p>", NOON);

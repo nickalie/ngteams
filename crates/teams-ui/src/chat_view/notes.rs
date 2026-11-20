@@ -42,6 +42,7 @@ impl ChatView {
             .gap_2()
             .child(
                 div()
+                    .debug_selector(|| format!("chat-notes-intro-title: {NOTES_INTRO_TITLE}"))
                     .text_lg()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(rgb(palette.foreground))
@@ -49,6 +50,7 @@ impl ChatView {
             )
             .child(
                 div()
+                    .debug_selector(|| format!("chat-notes-intro-text: {NOTES_INTRO_TEXT}"))
                     .max_w(px(420.0))
                     .text_sm()
                     .text_center()

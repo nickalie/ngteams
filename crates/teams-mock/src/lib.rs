@@ -28,7 +28,7 @@
 //! channel's messages, its `conversationLink` naming the post. The ids are the constants below, made up (never a real tenant's).
 //! Each account also has its own notes ([`NOTES`], its chat with itself): none until its first post there (a read
 //! answers 404, as the service does), then read and written as a chat of its own, in no conversation list
-//! ([`ChatServiceMock::add_note`], [`ChatServiceMock::notes`]).
+//! ([`ChatServiceMock::notes`]).
 //!
 //! **What it serves** (paths under [`CHAT_BASE`]):
 //! - reads: the conversation list (`GET v1/users/ME/conversations`, and the sync link it hands out, which names the
@@ -410,14 +410,6 @@ impl ChatServiceMock {
     ) -> Option<String> {
         self.lock()
             .add_message(conversation, (from, name), message_type, content)
-    }
-
-    /// `owner` writes `html` (a rich-text message) in their own notes ([`NOTES`]), as one of their clients would: the
-    /// notes are made with the first note. Its id, or `None` when `owner` isn't one of the mock's accounts.
-    #[must_use = "None says no note was written"]
-    pub fn add_note(&self, owner: &str, html: &str) -> Option<String> {
-        self.lock()
-            .with_notes(owner, true, |world| writes::post_text(world, owner, NOTES, html))
     }
 
     /// `owner`'s own notes ([`NOTES`]) as a read gives them back, oldest first: none before the first note.
