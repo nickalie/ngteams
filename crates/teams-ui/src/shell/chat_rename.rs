@@ -1,7 +1,7 @@
 //! The chat header's "Name group chat" ([`crate::chat_rename`]): a group chat's header shows a pencil after its name,
 //! and the pencil opens the popup under the name, or closes it. A 1:1 chat, a meeting's chat and the read-only mode
-//! show none. Another chat, a channel or another page opened closes the popup. A popup closed while its save is on its way is kept out of view
-//! until the save ends, and a failed save shows as a toast.
+//! show none. Another chat, a channel or another page opened closes the popup (each page switch puts the chat away). A
+//! popup closed while its save is on its way is kept out of view until the save ends, and a failed save shows as a toast.
 
 use super::*;
 use crate::chat_list::RowKind;
@@ -98,7 +98,8 @@ impl Shell {
                     // the popup shown says so itself; one closed before, or not shown, is told as a toast
                     ChatRenameEvent::NotSaved => {
                         let shown = this.rename.open.as_ref().is_some_and(|(open, _)| open == view)
-                            && matches!(&this.main, Main::Chat(id) if id.as_str() == view.read(cx).chat());
+                            && matches!(&this.main, Main::Chat(id) if id.as_str() == view.read(cx).chat())
+                            && !this.signed_out_shown(cx);
                         if !shown {
                             this.rename.forget(view);
                             this.show_toast(NOT_SAVED, cx);

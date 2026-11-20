@@ -992,7 +992,6 @@ impl Shell {
             self.before_settings = before;
         }
         self.put_chat_away(cx);
-        self.rename.close(cx);
         self.leave_workflows(cx);
         self.close_switcher(window, cx);
         self.close_search(cx);
@@ -2052,7 +2051,6 @@ impl Shell {
     /// Shows `main` in the conversation pane, the chat that was there put away.
     fn show_main(&mut self, main: Main, window: &mut Window, cx: &mut Context<Self>) {
         self.put_chat_away(cx);
-        self.rename.close(cx);
         self.teams.update(cx, |teams, cx| teams.select(None, cx));
         self.list.update(cx, |list, cx| list.select(None, cx));
         self.main = main;
@@ -2694,13 +2692,14 @@ impl Shell {
         cx.notify();
     }
 
-    /// The chat shown was put away (another view took the pane): it isn't shown (no read receipts go), and a meeting
-    /// recap's recording stops playing.
-    fn put_chat_away(&self, cx: &mut App) {
+    /// The chat shown was put away (another view took the pane): it isn't shown (no read receipts go), a meeting
+    /// recap's recording stops playing, and its "Name group chat" popup closes.
+    fn put_chat_away(&mut self, cx: &mut App) {
         if let Some(chat) = &self.chat {
             chat.update(cx, |chat, cx| chat.set_shown(false, cx));
         }
         self.pause_meeting_tabs(cx);
+        self.rename.close(cx);
     }
 
     /// Keeps the boxes holding a draft of the channel shown (its posts' and its threads'), which another channel's view
@@ -2875,7 +2874,6 @@ impl Shell {
                 self.before_settings = before;
             }
             self.put_chat_away(cx);
-            self.rename.close(cx);
             self.leave_workflows(cx);
             cx.notify();
         }

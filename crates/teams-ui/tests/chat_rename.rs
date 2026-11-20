@@ -20,7 +20,7 @@ use teams_store::{Conversation, ConversationKind, Member, Message, OutboxKind, O
 use teams_ui::ViewTrace;
 use teams_ui::chat_rename::{ChatRename, NOT_SAVED};
 use teams_ui::settings::Settings;
-use teams_ui::shell::Shell;
+use teams_ui::shell::{Main, Shell};
 
 const LAB_C: &str = "8:orgid:00000000-0000-4000-8000-00000000000c";
 const AB: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-8000-00000000000b@unq.gbl.spaces";
@@ -383,7 +383,7 @@ fn a_popup_closed_while_its_save_is_on_its_way_tells_a_failure_as_a_toast() {
 #[test]
 fn the_calendar_closes_a_saving_popup_and_a_stopped_engine_ends_its_save_as_not_saved() {
     let rig = seeded();
-    // the save waits in the outbox, and then the engine stops: no row is read again
+    // the save waits in the outbox, and then the engine stops: the fake core has no row queued, so it answers Stopped
     rig.core.write_answers.lock().unwrap().push_back(common::outbox_row(
         7,
         OutboxKind::RenameChat,
@@ -401,11 +401,61 @@ fn the_calendar_closes_a_saving_popup_and_a_stopped_engine_ends_its_save_as_not_
     shell.update_in(cx, Shell::show_calendar);
     draw(cx);
     assert!(popup(&shell, cx).is_none(), "the calendar closes it");
-    *rig.core.stopped.lock().unwrap() = true;
     cx.executor().advance_clock(std::time::Duration::from_secs(1));
     draw(cx);
     assert_eq!(toast(cx), Some(NOT_SAVED.into()));
     assert!(!cx.update(|_, cx| view.read(cx).saving()), "the watch ended");
+}
+
+/// Opens a page of the shell.
+type PageOpener = fn(&mut Shell, &mut gpui::Window, &mut gpui::Context<Shell>);
+
+#[test]
+fn workflows_and_apps_close_a_saving_popup_and_its_failure_shows_as_a_toast() {
+    let rig = seeded();
+    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
+    // each save waits in the outbox, then fails
+    for id in [7, 8] {
+        rig.core.write_answers.lock().unwrap().push_back(common::outbox_row(
+            id,
+            OutboxKind::RenameChat,
+            OutboxState::Pending,
+        ));
+        rig.core.outbox_answers.lock().unwrap().push_back(common::outbox_row(
+            id,
+            OutboxKind::RenameChat,
+            OutboxState::Failed,
+        ));
+    }
+    let (shell, cx) = shell_window(&rig);
+    let toast = |cx: &mut VisualTestContext| cx.update(|_, cx| shell.read(cx).toast().cloned());
+    let pages: [(&str, PageOpener); 2] = [
+        ("Workflows", |shell, window, cx| shell.open_workflows(false, window, cx)),
+        ("Apps", Shell::open_apps),
+    ];
+    for (name, page) in pages {
+        open(&shell, cx, NAMED);
+        click(cx, "chat-header-rename");
+        cx.simulate_input("Lab trio 40");
+        draw(cx);
+        click(cx, "chat-rename-save");
+        let view = popup(&shell, cx).expect("open while it saves");
+        shell.update_in(cx, page);
+        draw(cx);
+        assert_ne!(
+            cx.update(|_, cx| shell.read(cx).main().clone()),
+            Main::Chat(NAMED.to_owned()),
+            "{name}"
+        );
+        assert!(popup(&shell, cx).is_none(), "{name} closes it");
+        cx.executor().advance_clock(std::time::Duration::from_secs(1));
+        draw(cx);
+        assert_eq!(toast(cx), Some(NOT_SAVED.into()), "{name}");
+        assert!(!cx.update(|_, cx| view.read(cx).saving()), "{name}: the watch ended");
+        cx.executor().advance_clock(std::time::Duration::from_secs(5));
+        draw(cx);
+        assert_eq!(toast(cx), None);
+    }
 }
 
 #[test]

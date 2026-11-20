@@ -506,6 +506,15 @@ fn a_listing_of_the_same_version_gives_a_name_with_no_thread_version_its_version
     chat.topic = Some("Lab trio 41".to_owned());
     store.upsert_conversation(&chat).expect("insert");
     let topic = |store: &Store| store.conversation(GROUP).expect("read").expect("group").topic;
+    let raw = rusqlite::Connection::open(store_path(&dir)).expect("open directly");
+    let topic_version = || -> Option<i64> {
+        raw.query_row(
+            "SELECT topic_version FROM conversations WHERE id = ?1",
+            [GROUP],
+            |row| row.get(0),
+        )
+        .expect("read the thread version")
+    };
 
     // a listing of the same version with another name changes nothing, so a replayed push still names it
     let mut listed = chat.clone();
@@ -515,11 +524,17 @@ fn a_listing_of_the_same_version_gives_a_name_with_no_thread_version_its_version
         Applied::Ignored
     );
     assert_eq!(topic(&store).as_deref(), Some("Lab trio 41"));
+    assert_eq!(
+        topic_version(),
+        None,
+        "another name gives the stored name no thread version"
+    );
     // one with the same name gives the name its thread version: an older push (replayed on connect) changes nothing
     assert_eq!(
         store.upsert_conversation_at(&chat, Some(300)).expect("listed"),
         Applied::Ignored
     );
+    assert_eq!(topic_version(), Some(300));
     assert!(!store.set_topic(GROUP, Some("Lab trio 40"), Some(200)).expect("older"));
     assert_eq!(topic(&store).as_deref(), Some("Lab trio 41"));
     // a stored thread version stays: a later listing of the same version doesn't change it
