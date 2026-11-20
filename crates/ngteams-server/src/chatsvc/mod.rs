@@ -21,6 +21,7 @@ mod rich;
 pub(crate) mod schema;
 pub(crate) mod service;
 mod streams;
+mod topic;
 mod wire;
 
 use std::collections::HashMap;

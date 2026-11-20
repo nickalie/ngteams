@@ -28,7 +28,7 @@ pub(crate) async fn chat_of(app: &App, a: &str, b: &str) -> Result<Option<String
     Ok(repo::chat(&app.db, &id).await?.map(|chat| chat.id))
 }
 
-fn escaped(text: &str) -> String {
+pub(super) fn escaped(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 

@@ -19,8 +19,9 @@ requested time) under `/api/chatsvc/<region>/v1/`. These routes require an IC3 b
 disabled users are refused even while their token is live. A repeated 1:1 roster returns the existing chat, and
 group rosters and names persist in SQLite or PostgreSQL. Requests are limited to 64 KiB. Authz advertises
 `chatServiceAfd`. It also serves the account's own streams (notes, the activity feed, the mentions stream, the call
-log) and a group chat's people (below). Mentions and quotes are stored as Teams gives them back
-([Rich messages](#rich-messages)).
+log), a group chat's people (below) and its name (`PUT v1/threads/<chat>/properties?name=topic`, from any member, at
+most 250 characters, `""` takes it off; each member gets a `ThreadActivity/TopicUpdate` and the `ThreadUpdate`).
+Mentions and quotes are stored as Teams gives them back ([Rich messages](#rich-messages)).
 
 ## Stack
 

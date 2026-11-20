@@ -247,8 +247,9 @@ pub(crate) async fn farewell(app: &App, tenant: &str, thread: &str) -> Vec<(Stri
 
 type Params = HashMap<String, String>;
 
-/// `PUT v1/threads/<thread>/properties?name=…`: a team's settings (`spaceAdminSettings`, on its general channel's
-/// thread) or a standard channel's moderation (`channelSettings`), each the whole JSON as text, from a team owner.
+/// `PUT v1/threads/<thread>/properties?name=…`: a group chat's name (`topic`, [`super::topic`]), a team's settings
+/// (`spaceAdminSettings`, on its general channel's thread) or a standard channel's moderation (`channelSettings`),
+/// each the whole JSON as text, from a team owner.
 pub(super) async fn set_property(
     State(app): State<Arc<App>>,
     caller: Caller,
@@ -257,10 +258,13 @@ pub(super) async fn set_property(
     body: Result<Json<Value>, JsonRejection>,
 ) -> Result<StatusCode, Error> {
     let thread = super::reads::target(&path)?;
-    member_of(&app, &caller, thread).await?;
-    let place = place(&app.db, thread).await?.ok_or(Error::BadRequest)?;
+    let (found, _) = member_of(&app, &caller, thread).await?;
     let name = query.get("name").map(String::as_str).ok_or(Error::BadRequest)?;
     let Json(body) = body.map_err(|_| Error::BadRequest)?;
+    if name == "topic" {
+        return super::topic::set(&app, &caller, &found.id, &body).await;
+    }
+    let place = place(&app.db, thread).await?.ok_or(Error::BadRequest)?;
     let text = body[name].as_str().ok_or(Error::BadRequest)?;
     let settings: Value = serde_json::from_str(text).map_err(|_| Error::BadRequest)?;
     let owner = repo::membership(&app.db, &place.team.id, &caller.id)

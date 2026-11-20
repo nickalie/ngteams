@@ -9,10 +9,8 @@ use super::activity;
 use super::message_repo::Message;
 use super::repo::{Chat, Member, advance};
 use super::schema::{chat_members, chat_messages, chats};
-use super::streams;
 use crate::db::schema::users;
 use crate::db::{Db, DbError, with_conn};
-use crate::teams::schema::channels;
 
 pub(super) enum Outcome {
     /// The actor isn't in the chat (any more).
@@ -51,6 +49,9 @@ pub(super) type Event<'a> = &'a (dyn Fn(i64, &[(String, i64)]) -> String + Sync)
 /// The group chat `$chat` for `$actor`, one of its people now; else the [`Outcome`] that refuses the change.
 macro_rules! group {
     ($conn:expr, $chat:expr, $actor:expr) => {{
+        use $crate::chatsvc::member_repo::Outcome;
+        use $crate::chatsvc::repo::Chat;
+        use $crate::chatsvc::schema::{chat_members, chats};
         let chat: Option<Chat> = chats::table
             .find($chat)
             .select(Chat::as_select())
@@ -71,15 +72,16 @@ macro_rules! group {
         if !member {
             return Ok(Outcome::Denied);
         }
-        let channel: bool = diesel::select(diesel::dsl::exists(channels::table.find($chat)))
+        let channel: bool = diesel::select(diesel::dsl::exists($crate::teams::schema::channels::table.find($chat)))
             .get_result($conn)
             .await?;
-        if chat.unique_roster || channel || streams::name_of($chat).is_some() {
+        if chat.unique_roster || channel || $crate::chatsvc::streams::name_of($chat).is_some() {
             return Ok(Outcome::NotAGroup);
         }
         chat
     }};
 }
+pub(super) use group;
 
 /// Writes the event and moves the chat and its roster to `$version`; the [`Done`].
 macro_rules! finish {

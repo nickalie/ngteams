@@ -14,6 +14,7 @@ pub(crate) mod properties;
 mod reactions;
 mod rich;
 mod security;
+mod topic;
 mod typing;
 
 use std::sync::Arc;

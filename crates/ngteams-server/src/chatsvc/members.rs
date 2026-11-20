@@ -98,7 +98,7 @@ pub(super) async fn remove(
 
 /// Answers a roster change and tells its people: the event to everyone who may read it, the thread as it is now to
 /// the people in it. Someone taken out hears the event of their going and nothing of the thread after it.
-async fn finish(app: &App, caller: &Caller, outcome: Outcome) -> Result<StatusCode, Error> {
+pub(super) async fn finish(app: &App, caller: &Caller, outcome: Outcome) -> Result<StatusCode, Error> {
     let done: Box<Done> = match outcome {
         Outcome::Denied => return Err(Error::Denied),
         Outcome::NotAGroup | Outcome::Unknown => return Err(Error::BadRequest),
@@ -134,7 +134,7 @@ fn event_content(tag: &str, initiator: &str, version: i64, people: &[(String, i6
 }
 
 /// A thread's own event as a message: sent by the thread itself.
-fn event_body(base: &str, chat: &str, version: i64, kind: &str, content: &str) -> String {
+pub(super) fn event_body(base: &str, chat: &str, version: i64, kind: &str, content: &str) -> String {
     json!({
         "type": "Message", "id": version.to_string(), "version": version.to_string(), "sequenceId": version,
         "conversationid": chat, "conversationLink": format!("{base}/v1/users/ME/conversations/{chat}"),
