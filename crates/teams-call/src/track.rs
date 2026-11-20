@@ -714,8 +714,9 @@ fn calling_url_fits(cloud: &Cloud, url: &Url) -> bool {
     start.as_ref() == Some(url) || teams_proto::CallLink::parse_in(cloud, url.as_str()).is_some()
 }
 
-/// A flight proxy operation link at `/api/v2/ep/<host>/…`: `https` on [`teams_proto::CALLING_HOST`] without a port
-/// for Microsoft, or the exact Own origin (including its port) under `/flightproxy`; no user info or fragment.
+/// A flight proxy operation link at `/api/v2/ep/<host>/…`: `https` on [`teams_proto::CALLING_HOST`] or a region's
+/// `api-<region>.flightproxy.teams.microsoft.com` without a port for Microsoft, or the exact Own origin (including its
+/// port) under `/flightproxy`; no user info or fragment.
 fn proxy_link_in(cloud: &Cloud, link: &Value) -> Option<Url> {
     let link = teams_proto::CallLink::parse_in(cloud, link.as_str()?)?;
     Url::parse(link.as_str()).ok()

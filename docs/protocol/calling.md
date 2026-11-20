@@ -73,7 +73,10 @@ same body; then it shows a retry screen (`calling-retry-screen`, `calling-retry-
 
 `StartCall::in_chat` builds this captured shape. The tracker registers attempts and binds the answer and later
 callbacks; the core call floor coordinates starts, joins and answers across accounts. No member-read policy or permit
-runs before the write. The start's answer is the conversation, as for the test call.
+runs before the write. The start's answer is the conversation, as for the test call. A meeting hosted in another
+region answers on that region's flight proxy: its `conversationController`, `links` and the acceptance's links are on
+`api-<region>.flightproxy.teams.microsoft.com` (`api-apac` for a conversation on `conv-maso-…`, seen 2026-11-20), and
+the call's later writes follow them there.
 
 ## The invitation
 

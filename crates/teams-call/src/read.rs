@@ -809,6 +809,15 @@ mod tests {
         assert_eq!(read.add.unwrap().as_str(), conv("/add"));
         assert!(conversation(b"{\"links\":{}}").is_none(), "no conversation");
 
+        let regional = |rest: &str| conv(rest).replace("://api.flightproxy.", "://api-apac.flightproxy.");
+        let answer = json!({
+            "conversationController": regional(""),
+            "links": {"leave": regional("/leave"), "addParticipantAndModality": regional("/add")},
+        });
+        let read = conversation(answer.to_string().as_bytes()).unwrap();
+        assert_eq!(read.controller.unwrap().as_str(), regional(""));
+        assert_eq!(read.leave.unwrap().as_str(), regional("/leave"));
+
         let attach = json!({
             "callInvitation": {"links": {"progress": cc("incoming", "progress"),
                 "acceptance": cc("incoming", "accept"), "callLeg": cc("incoming", "reject")}},

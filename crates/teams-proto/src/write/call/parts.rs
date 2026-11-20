@@ -25,8 +25,9 @@ pub use crate::ids::CALL_START_URL;
 /// invitation's `attach`, …), kept exactly as it was given, its routing query (`?i=…&e=…`) included: the call registry
 /// knows each by its exact text, and the query may be signed, so it is never decoded and built again.
 ///
-/// Only a link under [`CALLING_BASE`]'s `ep/<host>/…` reads: `https`, [`CALLING_HOST`] with no port, no user info or
-/// fragment, the path `/api/v2/ep/<host>/<at least one more segment>`, no segment empty, `.` or `..` once decoded.
+/// Only a link under [`CALLING_BASE`]'s `ep/<host>/…` reads: `https`, [`CALLING_HOST`] or a region's own flight proxy
+/// host (`api-<region>.flightproxy.teams.microsoft.com`) with no port, no user info or fragment, the path
+/// `/api/v2/ep/<host>/<at least one more segment>`, no segment empty, `.` or `..` once decoded.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct CallLink(Url);
 
@@ -75,18 +76,29 @@ impl fmt::Debug for CallLink {
     }
 }
 
-/// Whether `url` is on [`CALLING_BASE`]: `https`, [`CALLING_HOST`] with no port, no user info or fragment, and a path
-/// that is `/api/v2/epconv` with no query (the call start) or `/api/v2/ep/<host>/<one or more segments>`, no segment
-/// empty, `.` or `..` once decoded.
+/// Whether `url` is on [`CALLING_BASE`]: `https`, no port, no user info or fragment, and either the call start
+/// (`/api/v2/epconv` on [`CALLING_HOST`], no query) or `/api/v2/ep/<host>/<one or more segments>` on a flight proxy
+/// host ([`is_proxy_host`]), no segment empty, `.` or `..` once decoded.
 pub(crate) fn on_calling_base(url: &Url) -> bool {
-    let start = url.path() == "/api/v2/epconv" && url.query().is_none();
+    let start = url.host_str() == Some(CALLING_HOST) && url.path() == "/api/v2/epconv" && url.query().is_none();
     plain_proxy_url(url) && (start || is_ep_link(url))
 }
 
-/// `https`, [`CALLING_HOST`] with no port, no user info or fragment.
+/// The flight proxy's hosts: [`CALLING_HOST`], or a region's own `api-<region>.flightproxy.teams.microsoft.com`, the
+/// region lowercase ASCII letters. A meeting hosted in another region hands out its links on that region's host
+/// (`api-apac.…` for a meeting on `conv-maso-…`, seen 2026-11-20).
+fn is_proxy_host(host: &str) -> bool {
+    host == CALLING_HOST
+        || host
+            .strip_suffix(".flightproxy.teams.microsoft.com")
+            .and_then(|label| label.strip_prefix("api-"))
+            .is_some_and(|region| !region.is_empty() && region.bytes().all(|byte| byte.is_ascii_lowercase()))
+}
+
+/// `https`, a flight proxy host ([`is_proxy_host`]) with no port, no user info or fragment.
 fn plain_proxy_url(url: &Url) -> bool {
     url.scheme() == "https"
-        && url.host_str() == Some(CALLING_HOST)
+        && url.host_str().is_some_and(is_proxy_host)
         && url.port().is_none()
         && url.username().is_empty()
         && url.password().is_none()

@@ -405,7 +405,11 @@ The own server serves 1:1 calls on these paths and `/trap/tokens`, and a group c
 through those servers (`teams_core::Relay::Teams` reads them, `teams_media::relay::RelayServer::parse`), never
 Teams' relay host.
 
-Services behind the flight proxy are addressed as `ep/<service host>/…`, each URL handed out by the service. Typed call writes go through `Service::Calling` with the account's skypetoken; `teams-call` chooses actions and tracks invitations/callbacks, while `teams-core` shares the account call floor and sends through its outbox. Typed writes are single-attempt in the transport; the outbox manages explicit retry decisions and never blindly resends unknown outcomes. Calling delivery replies use the delivery's own connection.
+Services behind the flight proxy are addressed as `ep/<service host>/…`, each URL handed out by the service. The start
+always goes to `api.flightproxy.teams.microsoft.com`; a meeting hosted in another region answers it with links on that
+region's flight proxy, `api-<region>.flightproxy.teams.microsoft.com` (`api-apac` for a conversation on `conv-maso-…`,
+seen 2026-11-20), and every later write of the call goes there with the same skypetoken, as the web client follows the
+links it is given. Typed call writes go through `Service::Calling` with the account's skypetoken; `teams-call` chooses actions and tracks invitations/callbacks, while `teams-core` shares the account call floor and sends through its outbox. Typed writes are single-attempt in the transport; the outbox manages explicit retry decisions and never blindly resends unknown outcomes. Calling delivery replies use the delivery's own connection.
 
 | Method | Path | What it does | Native | Notes · task | Evidence |
 | --- | --- | --- | --- | --- | --- |
