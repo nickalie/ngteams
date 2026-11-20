@@ -5,7 +5,8 @@
 //!
 //! - **The popup**: "Group name" over a box that holds the chat's name (empty while it has none: "Type a group name"),
 //!   all of it selected, the keyboard in it; Cancel and Save under it, Save lit even while the box is empty. 400 px
-//!   wide, as Teams draws it.
+//!   wide, as Teams draws it. It stays in the window: moved left when the window ends before its right edge, and
+//!   narrower when the window is narrower than it.
 //! - **The limit**: the box takes 250 characters. A 251st is refused and "Your group name can't be longer than 250
 //!   characters." shows under the box until the next change it takes.
 //! - **Save** (or Enter) sends the name through the outbox ([`Action::RenameChat`]): trimmed, and an empty one takes
@@ -54,6 +55,8 @@ pub const NOT_SAVED: &str = "We couldn't save the group name. Check your connect
 
 /// The popup's width, px, as Teams draws it.
 const WIDTH: f32 = 400.0;
+/// The space the popup keeps from the window's edges, px.
+pub const EDGE: f32 = 8.0;
 
 /// What the popup tells the shell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,25 +267,29 @@ impl ChatRename {
 
     fn buttons(&self, cx: &mut Context<Self>) -> gpui::Div {
         let busy = self.saving.is_some();
-        let cancel = selected_by(
-            "chat-rename-cancel",
-            Button::new("chat-rename-cancel")
-                .label("Cancel")
-                .outline()
-                .w(px(96.0))
-                .disabled(busy)
-                .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
-        );
-        let save = selected_by(
-            "chat-rename-save",
-            Button::new("chat-rename-save")
-                .label("Save")
-                .primary()
-                .w(px(96.0))
-                .disabled(busy)
-                .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
-        );
-        div().pt_5().flex().justify_end().gap_4().child(cancel).child(save)
+        let cancel = Button::new("chat-rename-cancel")
+            .label("Cancel")
+            .outline()
+            .w_full()
+            .disabled(busy)
+            .on_click(cx.listener(|this, _, _, cx| this.cancel(cx)));
+        let save = Button::new("chat-rename-save")
+            .label("Save")
+            .primary()
+            .w_full()
+            .disabled(busy)
+            .on_click(cx.listener(|this, _, window, cx| this.save(window, cx)));
+        // a window narrower than the popup narrows the buttons too
+        let fitted = |selector: &'static str, button: Button| {
+            selected_by(selector, button).w(px(96.0)).flex_shrink(1.0).min_w_0()
+        };
+        div()
+            .pt_5()
+            .flex()
+            .justify_end()
+            .gap_4()
+            .child(fitted("chat-rename-cancel", cancel))
+            .child(fitted("chat-rename-save", save))
     }
 }
 
@@ -293,8 +300,9 @@ impl Focusable for ChatRename {
 }
 
 impl Render for ChatRename {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = theme::current(cx);
+        let room = window.viewport_size().width - px(2.0 * EDGE);
         let notice = self.notice();
         let popup = div()
             .id("chat-rename")
@@ -317,6 +325,7 @@ impl Render for ChatRename {
             }))
             .occlude()
             .w(px(WIDTH))
+            .max_w(room)
             .p_4()
             .flex()
             .flex_col()

@@ -6,7 +6,7 @@
 use super::*;
 use crate::chat_list::RowKind;
 use crate::chat_people::Placed;
-use crate::chat_rename::{ChatRename, ChatRenameEvent, ChatRenameParts, NAME_TIP, NOT_SAVED};
+use crate::chat_rename::{ChatRename, ChatRenameEvent, ChatRenameParts, EDGE, NAME_TIP, NOT_SAVED};
 use gpui_component::Selectable as _;
 
 /// The popup while it is open, the popups closed while their save was on its way, and where the header's pencil was
@@ -120,11 +120,15 @@ impl Shell {
         self.rename.open.as_ref().map(|(view, _)| view)
     }
 
-    /// The popup over the conversation pane, under the chat's name, while it is the chat shown's.
+    /// The popup over the conversation pane, under the chat's name, while it is the chat shown's; moved left as far as
+    /// the window's right edge needs, as Teams keeps it in the window.
     pub(super) fn rename_layer(&self, id: &str, cx: &App) -> Option<AnyElement> {
         let (view, _) = self.rename.open.as_ref()?;
         (view.read(cx).chat() == id).then(|| {
-            gpui::deferred(div().absolute().top(px(42.0)).left(px(4.0)).child(view.clone()))
+            let popup = gpui::anchored()
+                .snap_to_window_with_margin(px(EDGE))
+                .child(view.clone());
+            gpui::deferred(div().absolute().top(px(42.0)).left(px(4.0)).child(popup))
                 .with_priority(1)
                 .into_any_element()
         })

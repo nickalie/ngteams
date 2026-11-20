@@ -210,6 +210,51 @@ fn a_group_chat_s_pencil_opens_its_name_and_enter_renames_it() {
     assert_eq!(row_name(&shell, cx, NAMED), "Lab trio 40");
 }
 
+/// The popup and its buttons drawn whole inside a window `width` px wide, 8 px from its edges.
+fn whole_in(cx: &mut VisualTestContext, width: f32) -> gpui::Bounds<gpui::Pixels> {
+    let drawn = cx.debug_bounds("chat-rename").expect("the popup");
+    assert!(
+        drawn.left() >= px(8.0) && drawn.right() <= px(width - 8.0) + px(0.5),
+        "{drawn:?} in {width} px"
+    );
+    for button in ["chat-rename-cancel", "chat-rename-save"] {
+        let placed = cx.debug_bounds(button).expect(button);
+        assert!(
+            placed.left() >= drawn.left() && placed.right() <= drawn.right() && placed.size.width > px(0.0),
+            "{button} {placed:?} in the popup {drawn:?}"
+        );
+    }
+    drawn
+}
+
+#[test]
+fn a_narrow_window_moves_the_popup_left_and_a_narrower_one_narrows_it() {
+    let rig = seeded();
+    let (shell, cx) = shell_window(&rig);
+    cx.simulate_resize(size(px(640.0), px(800.0)));
+    draw(cx);
+    open(&shell, cx, NAMED);
+    click(cx, "chat-header-rename");
+    assert!(popup(&shell, cx).is_some());
+    // half a 1280 px screen: Teams' width, moved left from under the name as far as the window's edge needs
+    let pencil = cx.debug_bounds("chat-header-rename").expect("the pencil");
+    let drawn = whole_in(cx, 640.0);
+    assert!((drawn.size.width - px(400.0)).abs() < px(1.0), "{drawn:?}");
+    assert!((drawn.right() - px(632.0)).abs() < px(1.0), "{drawn:?}");
+    assert!(drawn.left() < pencil.left(), "{drawn:?} {pencil:?}");
+    let save = cx.debug_bounds("chat-rename-save").expect("Save");
+    assert!((save.size.width - px(96.0)).abs() < px(1.0), "{save:?}");
+
+    // a window narrower than the popup: the popup and its buttons narrow to fit, and still work
+    cx.simulate_resize(size(px(240.0), px(800.0)));
+    draw(cx);
+    let drawn = whole_in(cx, 240.0);
+    assert!((drawn.size.width - px(224.0)).abs() < px(1.0), "{drawn:?}");
+    click(cx, "chat-rename-cancel");
+    assert!(popup(&shell, cx).is_none(), "Cancel closed it");
+    assert!(renames(&rig).is_empty());
+}
+
 #[test]
 fn the_box_refuses_a_251st_character_and_says_so_until_the_next_change() {
     let rig = seeded();
