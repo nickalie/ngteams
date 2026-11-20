@@ -969,6 +969,11 @@ known shell HWNDs, with a unique per-run synthetic icon label; capture includes 
 Pass `-Executable <absolute-native_shell-test.exe>` to rerun an already-built fixture. Its GUI subsystem prevents a
 driver console from taking focus away from the popup. Signed-in application flows remain a separate Windows gate.
 
+`scripts/test-windows-file-drop.ps1` drags two made-up files from a real File Explorer window onto a chat's message
+box (the `native_file_drop` fixture: a real GPUI window and OLE drop target over the fake engine) in that console. UI
+Automation finds the files in Explorer, `SendInput` drags them, and the fixture must show the drop highlight and stage
+both files. `-Executable <absolute-native_file_drop-test.exe>` reruns a built fixture.
+
 
 ### Windows release packaging
 

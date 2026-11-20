@@ -38,6 +38,8 @@ use gpui::{App, AsyncApp, Context, Entity, ListOffset, Window, WindowHandle, Win
 use ngteams::app::{self, Launch};
 #[path = "ui_tour_compose_edge.rs"]
 mod compose_edge;
+#[path = "ui_tour_file_drop.rs"]
+mod file_drop;
 #[path = "../window.rs"]
 mod support;
 use ngteams::descriptors::adopt_trace;
@@ -196,7 +198,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 330 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 333 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -380,6 +382,17 @@ const STEPS: [Step; 5 + 330 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
             eprintln!("tour attachment cleanup: {error}");
             cx.quit();
         }
+        type_in_compose(shell, "Lunch at noon?", window, cx);
+    }),
+    // two files dragged from a file manager over the chat, a draft in its box: the drop highlight
+    (file_drop::HOVER, |shell, window, cx| {
+        with_compose(shell, cx, |compose, cx| compose.discard(window, cx));
+        type_in_compose(shell, "Here are the notes", window, cx);
+    }),
+    // let go on the box: both files in it beside the draft
+    (file_drop::DROPPED, |_, _, _| {}),
+    ("chat-file-drop-cleared", |shell, window, cx| {
+        with_compose(shell, cx, |compose, cx| compose.discard(window, cx));
         type_in_compose(shell, "Lunch at noon?", window, cx);
     }),
     // the box expanded with its format bar (Ctrl+Shift+X), holding formatted text: a heading, bold, a colour and a
@@ -4132,6 +4145,20 @@ fn tour(sandbox: &Sandbox) -> SandboxResult {
         } else {
             None
         };
+        let held = if name == file_drop::HOVER {
+            let said = running
+                .line_where(WAIT, |line| line.starts_with(file_drop::BOX))
+                .map_err(|error| running.fail(&format!("no message box for {name}: {error:?}")))?;
+            Some(file_drop::hover(sandbox, &said).map_err(|error| running.fail(&format!("{name}: {error}")))?)
+        } else {
+            None
+        };
+        if name == file_drop::DROPPED {
+            let said = running
+                .line_where(WAIT, |line| line.starts_with(file_drop::STAGED))
+                .map_err(|error| running.fail(&format!("no files said for {name}: {error:?}")))?;
+            file_drop::check(&said).map_err(|error| running.fail(&format!("{name}: {error}")))?;
+        }
         running
             .line_where(WAIT, |line| line == format!("shot {name}"))
             .map_err(|error| running.fail(&format!("no shot {name}: {error:?}")))?;
@@ -4147,6 +4174,9 @@ fn tour(sandbox: &Sandbox) -> SandboxResult {
         }
         if let Some(said) = edge {
             compose_edge::check(&png, &said).map_err(|error| running.fail(&format!("{name}: {error}")))?;
+        }
+        if let Some(held) = held {
+            file_drop::release(held).map_err(|error| running.fail(&format!("{name}: {error}")))?;
         }
         fs::write(sandbox.dir().join(NEXT), "")?;
     }
@@ -4876,6 +4906,14 @@ fn walk(window: WindowHandle<KitRoot>, cx: &mut App) {
                         .ok()
                 });
                 say(&edge.unwrap_or_else(|| format!("{}none", compose_edge::PREFIX)));
+            }
+            if name == file_drop::HOVER || name == file_drop::DROPPED {
+                let said = shown(window, cx).and_then(|shell| {
+                    window
+                        .update(cx, |_, window, cx| file_drop::said(name, &shell, window, cx))
+                        .ok()
+                });
+                say(&said.unwrap_or_else(|| format!("{}none", file_drop::BOX)));
             }
             say(&format!("shot {name}"));
             while fs::remove_file(&next).is_err() {

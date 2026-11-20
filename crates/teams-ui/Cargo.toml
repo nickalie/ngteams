@@ -282,3 +282,8 @@ harness = false
 # Real GPUI Desktop over two synthetic accounts, with native tray and taskbar in the VM console.
 name = "native_shell"
 harness = false
+
+[[test]]
+# Files dragged from File Explorer onto a chat's message box in the VM console (scripts/test-windows-file-drop.ps1).
+name = "native_file_drop"
+harness = false
