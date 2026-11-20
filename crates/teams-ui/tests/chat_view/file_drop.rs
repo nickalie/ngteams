@@ -211,3 +211,45 @@ fn a_box_that_edits_a_message_takes_no_files_and_says_why_on_the_drop() {
     );
     assert_eq!(draft(&compose, cx), "A made-up message");
 }
+
+#[test]
+fn files_dropped_after_typed_keys_go_in_and_the_keys_still_type() {
+    let rig = rig_with(Vec::new());
+    let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    let compose = compose(&view, cx);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.focus(window, cx)));
+    cx.simulate_keystrokes("h i");
+    draw(cx);
+    assert_eq!(draft(&compose, cx), "hi");
+    let dir = tempfile::tempdir().unwrap();
+    let files = made_up_files(dir.path(), &["made-up notes.txt"]);
+    let the_box = cx.debug_bounds("compose-box").unwrap();
+
+    entered(cx, the_box.center(), &files);
+    dropped(cx, the_box.center());
+
+    assert_eq!(staged(&compose, cx), ["made-up notes.txt"]);
+    assert!(cx.debug_bounds("chat-file-drop-highlight").is_none());
+    cx.simulate_keystrokes("!");
+    draw(cx);
+    assert_eq!(draft(&compose, cx), "hi!");
+}
+
+#[test]
+fn the_drop_target_goes_with_a_drag_whose_drop_no_listener_took() {
+    let rig = rig_with(Vec::new());
+    let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    let dir = tempfile::tempdir().unwrap();
+    let files = made_up_files(dir.path(), &["made-up notes.txt"]);
+    let chat = cx.debug_bounds("chat-view").unwrap();
+
+    entered(cx, chat.center(), &files);
+    assert!(cx.debug_bounds("chat-file-drop-highlight").is_some());
+    cx.simulate_keystrokes("escape");
+    cx.simulate_mouse_up(chat.center(), gpui::MouseButton::Left, gpui::Modifiers::default());
+    draw(cx);
+
+    assert!(!cx.update(|_, cx| view.read(cx).file_drop_active()));
+    assert!(cx.debug_bounds("chat-file-drop-highlight").is_none());
+    assert!(staged(&compose(&view, cx), cx).is_empty());
+}

@@ -1571,6 +1571,14 @@ impl ChatView {
         &self.translation
     }
 
+    /// The drop target goes with the drag, also when no listener of this view saw its drop or its cancel.
+    fn file_drop_shown(&mut self, cx: &App) -> bool {
+        if !cx.has_active_drag() {
+            self.file_drop = FileDrop::Idle;
+        }
+        self.file_drop == FileDrop::Hovering
+    }
+
     /// Whether the operating-system file drop target is currently highlighted.
     #[must_use]
     pub fn file_drop_active(&self) -> bool {
@@ -6061,6 +6069,7 @@ impl Render for ChatView {
         self.drawn.clear();
         #[cfg(feature = "test-support")]
         self.placed.faces.borrow_mut().clear();
+        let file_drop = self.file_drop_shown(cx);
         let more = self.more_overlay();
         let options = self.options_overlay(palette, window, cx);
         let selection_menu = self.selection_menu(palette, window, cx);
@@ -6143,7 +6152,7 @@ impl Render for ChatView {
             .children(reactors)
             .children(options)
             .children(selection_menu)
-            .children((self.file_drop == FileDrop::Hovering).then(|| file_drop_overlay(palette)))
+            .children(file_drop.then(|| file_drop_overlay(palette)))
     }
 }
 

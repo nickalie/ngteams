@@ -5,7 +5,8 @@
 #   gpui-pre       `ExternalSurface` (a dmabuf or CPU pixels) as the Linux payload of `PaintSurface`, and
 #                  `Window::paint_external_surface` (0001); and, our own, no line break right after opening
 #                  punctuation (UAX #14 LB14), so `[[account]]` wraps whole (0002); a path prompt's title and file
-#                  filters (0003), so the account picture's chooser shows the picture files
+#                  filters (0003), so the account picture's chooser shows the picture files; a file manager's drag
+#                  put in mouse input mode (0004), so a drop after typed keys reaches the element under the pointer
 #   gpui-pre-wgpu  the renderer's side: dmabufs imported through wgpu-hal Vulkan and copied on the GPU, CPU pixels
 #                  uploaded into a texture kept per surface, by damaged rectangle (0001); and, our own, a weight or
 #                  style the family has no face of drawn anyway: a variable face at that weight, else synthesized (0002)
