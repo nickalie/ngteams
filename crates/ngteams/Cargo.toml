@@ -333,6 +333,11 @@ harness = false
 name = "qa_account_picture_window"
 harness = false
 
+[[test]]
+# QA of task 661: a group chat named, renamed and unnamed from its header, in the app's window over the mock and the own server
+name = "qa_rename_group_chat_window"
+harness = false
+
 [build-dependencies]
 embed-resource.workspace = true
 
