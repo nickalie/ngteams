@@ -1442,9 +1442,10 @@ impl ChatView {
             .relative()
             .on_drag_move(
                 cx.listener(|this, event: &gpui::DragMoveEvent<gpui::ExternalPaths>, _, cx| {
+                    // any file drag is shown as Teams shows it: a folder or a file too large is told on the drop
                     let hovered = event.bounds.contains(&event.event.position)
                         && this.compose.read(cx).accepts_files()
-                        && compose::attachments::supported(event.drag(cx));
+                        && !event.drag(cx).paths().is_empty();
                     let state = if hovered { FileDrop::Hovering } else { FileDrop::Idle };
                     if this.file_drop != state {
                         this.file_drop = state;
@@ -1458,8 +1459,13 @@ impl ChatView {
             }))
             .on_drop(cx.listener(|this, paths: &gpui::ExternalPaths, window, cx| {
                 this.file_drop = FileDrop::Idle;
-                this.compose
-                    .update(cx, |compose, cx| compose.attach_files(paths.paths(), window, cx));
+                this.compose.update(cx, |compose, cx| {
+                    if compose.accepts_files() {
+                        compose.attach_files(paths.paths(), window, cx);
+                    } else {
+                        compose.refuse_files(cx);
+                    }
+                });
                 cx.notify();
             }))
     }
@@ -6141,30 +6147,34 @@ impl Render for ChatView {
     }
 }
 
-/// Teams covers the conversation while a local file hovers it, leaving a clear drop target.
+/// Teams covers the conversation while a local file hovers it, leaving a clear drop target: its picture and "Share in
+/// this chat" in a frame of the brand's light stroke.
 fn file_drop_overlay(palette: Palette) -> impl IntoElement {
+    static PICTURE: std::sync::OnceLock<std::sync::Arc<gpui::Image>> = std::sync::OnceLock::new();
+    let picture = std::sync::Arc::clone(PICTURE.get_or_init(|| {
+        std::sync::Arc::new(gpui::Image::from_bytes(
+            gpui::ImageFormat::Svg,
+            include_bytes!("../assets/illustrations/drop-files.svg").to_vec(),
+        ))
+    }));
     div()
         .debug_selector(|| "chat-file-drop-highlight".to_owned())
         .absolute()
         .inset_0()
-        .p_1()
         .bg(rgb(palette.background).opacity(0.94))
+        .border_2()
+        .border_color(rgb(theme::mix(palette.background, palette.brand, 0.35)))
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .text_color(rgb(palette.foreground))
+        .child(gpui::img(picture).size(px(52.0)))
         .child(
             div()
-                .size_full()
-                .border_2()
-                .border_color(rgb(palette.brand).opacity(0.4))
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap_3()
-                .text_color(rgb(palette.foreground))
-                .child(
-                    div()
-                        .text_xl()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .child("Share in this chat"),
-                ),
+                .text_xl()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child("Share in this chat"),
         )
 }

@@ -77,12 +77,6 @@ impl Attachment {
     }
 }
 
-/// Whether an operating-system file drag includes a file the editor can take.
-#[must_use]
-pub fn supported(paths: &gpui::ExternalPaths) -> bool {
-    paths.paths().iter().any(|path| Attachment::of(path).is_ok())
-}
-
 fn size_label(size: u64) -> String {
     if size < 1024 {
         format!("{size} B")
@@ -116,6 +110,19 @@ impl Compose {
         }
         self.focus(window, cx);
         cx.notify();
+    }
+
+    /// Says why files dropped on a box that takes none stay out ([`Compose::accepts_files`]); the read-only box says
+    /// so already.
+    pub fn refuse_files(&mut self, cx: &mut Context<Self>) {
+        let why = if self.read_only.is_some() {
+            return;
+        } else if matches!(self.mode, super::Mode::Edit { .. }) {
+            "Files can't be added to a message you edit. Send them in a new message."
+        } else {
+            "Files can't be shared in a channel from this app."
+        };
+        self.show_problem(why, cx);
     }
 
     /// Files belong to new messages and replies; an existing message's files aren't edited here.

@@ -20,6 +20,8 @@ or a read nobody has made yet:
 - **Files in a channel.** Teams puts a channel's files in its team's SharePoint folder (`sharepointChannelDocsFolder`
   on the channel's thread), not the account's OneDrive, and shares them with the team. The box offers no Attach in a
   channel and the engine refuses a channel message with files until that upload and its permissions are captured.
+  Files dropped on a channel's box get no "Share in this channel" highlight; the box says "Files can't be shared in a
+  channel from this app."
 - **Mentions in a channel.** The box's picker offers a chat's stored members; a channel stores none, so it offers
   nobody. Teams offers the team's people and the channel and the team themselves (`@channel`, `@team`).
 - **"Send to: thread and channel".** Teams' thread box can also post the reply to the channel; the app says "Send to:
