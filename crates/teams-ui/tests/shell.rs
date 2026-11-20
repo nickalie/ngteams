@@ -221,7 +221,7 @@ fn the_list_shows_the_chats_by_last_activity_with_names_previews_and_unread_coun
         shown,
         [
             (TRIO, RowKind::Group, "Lab trio", true, "", 0),
-            (AB, RowKind::OneToOne, "Lab Bee", true, "hello there", 2),
+            (AB, RowKind::OneToOne, "Lab Bee", true, "hello there second line", 2),
             (AC, RowKind::OneToOne, UNKNOWN_USER, false, "You: mine", 0),
             (UNNAMED, RowKind::Group, unnamed.as_str(), false, DELETED, 0),
         ]
@@ -376,7 +376,10 @@ fn a_name_delivered_in_one_chat_renames_every_row_named_by_that_person() {
 fn a_text_message_s_preview_is_its_text_as_it_came() {
     let mut plain = message(AB, "1", LAB_B, "Use <name> here &amp; there\nsecond line", 1);
     plain.message_type = "Text".to_owned();
-    assert_eq!(preview(&[plain], LAB_A).as_ref(), "Use <name> here &amp; there");
+    assert_eq!(
+        preview(&[plain], LAB_A).as_ref(),
+        "Use <name> here &amp; there second line"
+    );
     let rich = message(AB, "2", LAB_B, "<p>a &amp; <b>b</b></p>", 2);
     assert_eq!(preview(&[rich], LAB_A).as_ref(), "a & b");
 }
