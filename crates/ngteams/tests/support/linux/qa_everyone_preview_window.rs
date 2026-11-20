@@ -1391,7 +1391,7 @@ fn on_shell(shell: &Entity<Shell>, verb: &str, window: &mut Window, cx: &mut App
         "tab-messages" => {
             let search = shell.read(cx).search().clone();
             search.update(cx, |search, cx| {
-                search.set_tab(teams_ui::global_search::Tab::Messages, cx)
+                search.set_tab(teams_ui::global_search::Tab::Messages, cx);
             });
             "ok".to_owned()
         }
