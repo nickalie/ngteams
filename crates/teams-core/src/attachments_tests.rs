@@ -389,6 +389,19 @@ async fn native_share_requires_every_current_recipient_to_have_a_readable_addres
     }
 }
 #[tokio::test]
+async fn a_file_sent_to_the_account_s_own_notes_is_shared_with_nobody() {
+    let server = MockServer::start().await;
+    let (client, outbox) = native(&server);
+    Uploads::new(client, outbox)
+        .share(crate::NOTES, &[staged_file()])
+        .await
+        .unwrap();
+    assert!(
+        server.received_requests().await.unwrap().is_empty(),
+        "no member read and no grant: nobody else is in the notes"
+    );
+}
+#[tokio::test]
 async fn native_share_confirms_exact_people_after_the_single_successful_grant() {
     use std::sync::atomic::AtomicUsize;
     for outsider in [true, false] {

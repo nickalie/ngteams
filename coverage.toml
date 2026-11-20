@@ -145,7 +145,7 @@ reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-
 context = { "crates/teams-proto/src/http.rs" = "cd44aadf51d337e941dc8cfe278e74fbd2794e47785923645e8b1156ee52bf6a" }
 
 [unmapped_sources."crates/teams-core/src/attachments_tests.rs"]
-sha256 = "9dd845ed73f53a7a32137d505c45018d56bf8529060c3cfdee1ebe7059968e96"
+sha256 = "21185314c93b938203f846bc9c73d0fcfe387e1cce5dead93fa797f64b061cac"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
 context = { "crates/teams-core/src/attachments.rs" = "81e912b968d14089704bd004607313de15e17274d5633a0e5522f8828e644b11" }
 

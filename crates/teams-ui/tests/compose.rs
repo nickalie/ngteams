@@ -2381,6 +2381,33 @@ fn react_and_delete_note(rig: &Rig, view: &Entity<ChatView>, cx: &mut VisualTest
     );
 }
 
+#[test]
+fn the_notes_take_attached_files_and_send_them_with_the_note() {
+    let rig = rig_with(Vec::new());
+    let (view, cx, _) = notes_window(&rig);
+    let compose = compose(&view, cx);
+    assert!(cx.update(|_, cx| compose.read(cx).accepts_files()));
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("made-up-plan.txt");
+    std::fs::write(&file, b"synthetic file").unwrap();
+    type_text(cx, "the plan");
+    cx.update(|window, cx| {
+        compose.update(cx, |compose, cx| {
+            compose.attach_files(std::slice::from_ref(&file), window, cx);
+        });
+    });
+    draw(cx);
+    assert_eq!(rig.core.uploads.lock().unwrap().len(), 1);
+    keys(cx, "enter");
+    let sent = actions(&rig);
+    let Action::Send { conversation, text } = &sent[0] else {
+        panic!("a post: {sent:?}")
+    };
+    assert_eq!(conversation, NOTES);
+    assert_eq!(text.files().len(), 1);
+    assert_eq!(text.files()[0].name(), "made-up-plan.txt");
+}
+
 // --- the app's read-only mode ---
 
 #[test]
