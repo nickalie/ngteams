@@ -79,6 +79,8 @@ pub enum Skip {
     NotPicture,
     #[error("is larger than 10 MB")]
     TooLarge,
+    #[error("is larger than 8 MB as a sticker")]
+    TooLargeSticker,
     #[error("is larger than {MAX_SOURCE_SIDE} pixels")]
     TooBig,
     #[error("has more than {MAX_FRAMES} frames")]
@@ -511,7 +513,7 @@ pub fn convert(bytes: &[u8]) -> Result<Converted, Skip> {
         encode_png(&frame)?
     };
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_STICKER {
-        return Err(Skip::TooLarge);
+        return Err(Skip::TooLargeSticker);
     }
     Ok(Converted {
         bytes,
@@ -625,16 +627,19 @@ pub fn import_from(
         let outcome = if made.len() == MAX_STICKERS {
             Err(Skip::PackFull)
         } else {
-            source.read(index).and_then(|bytes| {
-                read = read.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
-                if read > MAX_TOTAL {
-                    return Ok(None);
+            match source.read(index) {
+                Ok(bytes) => {
+                    read = read.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+                    if read > MAX_TOTAL {
+                        return Err(ImportError::TooMuch);
+                    }
+                    convert(&bytes)
                 }
-                convert(&bytes).map(Some)
-            })
+                Err(why) => Err(why),
+            }
         };
         match outcome {
-            Ok(Some(converted)) => {
+            Ok(converted) => {
                 let extension = if converted.animated { "gif" } else { "png" };
                 let sticker = Sticker {
                     file: format!("{:03}.{extension}", made.len() + 1),
@@ -643,7 +648,6 @@ pub fn import_from(
                 };
                 made.push((sticker, converted));
             }
-            Ok(None) => return Err(ImportError::TooMuch),
             Err(why) => skipped.push(Skipped { name, why }),
         }
         progress(Progress { done: index + 1, total });

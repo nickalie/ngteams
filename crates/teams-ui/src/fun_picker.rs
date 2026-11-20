@@ -14,9 +14,10 @@
 //! A pick only tells ([`FunPickerEvent`]): the box puts an emoji in its text, and a sticker in the box as a picture
 //! (sent to the media service at once, then with the message, as Teams' box sends a sticker). A box that takes no
 //! picture offers no sticker. The picker is reached by the keyboard as by the pointer: its search field has the focus
-//! as it opens; Up from there reaches the tabs (Left and Right choose one), Down the tab's items (the arrows move
-//! among them, Enter or Space picks one, Up from the first row goes back to the field); Ctrl+Tab and Ctrl+Shift+Tab
-//! change the tab from anywhere in it; Escape or a click outside closes it.
+//! as it opens; Up from there reaches the tabs (Left and Right choose one), Down the items of All and Stickers (the
+//! arrows move among them, Enter or Space picks one, Up from the first row goes back to the field); on Emoji, the
+//! keyboard picks by a search and Enter, as in the emoji picker it shows; Ctrl+Tab and Ctrl+Shift+Tab change the tab
+//! from anywhere in it; Escape or a click outside closes it.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -238,13 +239,14 @@ pub struct FunPicker {
     scroll: ScrollHandle,
     /// The add-a-pack menu, the pack's menu or the question before a removal, open.
     panel: Panel,
-    renaming: Option<Entity<InputState>>,
+    /// The pack's new name being typed, with the subscription to its Enter.
+    renaming: Option<(Entity<InputState>, Subscription)>,
     /// What went wrong with the last rename or removal.
     problem: Option<SharedString>,
     /// The item drawn with the keyboard's ring, and whether the tabs have the focus, as this frame draws them.
     ring: Option<Item>,
     tabs_ringed: bool,
-    subscriptions: Vec<Subscription>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<FunPickerEvent> for FunPicker {}
@@ -300,7 +302,7 @@ impl FunPicker {
             problem: None,
             ring: None,
             tabs_ringed: false,
-            subscriptions,
+            _subscriptions: subscriptions,
         }
     }
 
@@ -312,12 +314,6 @@ impl FunPicker {
     #[must_use]
     pub fn sticker_view(&self) -> &StickerView {
         &self.view
-    }
-
-    /// The emoji tab's picker.
-    #[must_use]
-    pub fn emoji(&self) -> &Entity<ReactionPicker> {
-        &self.emoji
     }
 
     /// Where the keyboard is.
@@ -359,7 +355,7 @@ impl FunPicker {
             || self
                 .renaming
                 .as_ref()
-                .is_some_and(|field| field.focus_handle(cx).contains_focused(window, cx))
+                .is_some_and(|(field, _)| field.focus_handle(cx).contains_focused(window, cx))
     }
 
     /// Opens `tab`, its search kept.
@@ -526,16 +522,19 @@ impl FunPicker {
                 this.save_name(window, cx);
             }
         });
-        self.subscriptions.push(subscription);
         field.update(cx, |field, cx| field.focus(window, cx));
         self.panel = Panel::None;
         self.problem = None;
-        self.renaming = Some(field);
+        self.renaming = Some((field, subscription));
         cx.notify();
     }
 
+    fn renaming_field(&self) -> Option<Entity<InputState>> {
+        self.renaming.as_ref().map(|(field, _)| field.clone())
+    }
+
     fn save_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(id), Some(field)) = (self.shown_pack(), self.renaming.clone()) else {
+        let (Some(id), Some(field)) = (self.shown_pack(), self.renaming_field()) else {
             return;
         };
         let name = field.read(cx).value().to_string();
@@ -604,7 +603,7 @@ impl FunPicker {
         let renaming = self
             .renaming
             .as_ref()
-            .is_some_and(|field| field.focus_handle(cx).contains_focused(window, cx));
+            .is_some_and(|(field, _)| field.focus_handle(cx).contains_focused(window, cx));
         if renaming {
             if key == "escape" {
                 self.activate(&Item::CancelName, window, cx);
@@ -1363,7 +1362,7 @@ impl FunPicker {
     }
 
     fn renaming_row(&mut self, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
-        let Some(field) = self.renaming.clone() else {
+        let Some(field) = self.renaming_field() else {
             return div().into_any_element();
         };
         let save = self.button(&Item::SaveName, "Save", true, palette, cx);

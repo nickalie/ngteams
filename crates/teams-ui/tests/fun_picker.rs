@@ -306,6 +306,36 @@ fn a_sticker_beside_text_is_sent_in_the_text() {
 }
 
 #[test]
+fn a_sticker_does_not_split_a_code_block() {
+    let place = Setup::new().with_cats();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    cx.simulate_input("let x");
+    keys(cx, "ctrl-shift-b");
+    let compose = compose(&view, cx);
+    let in_code = cx.update(|_, cx| compose.read(cx).editor().read(cx).block_kind());
+    assert_eq!(in_code, teams_ui::editor::doc::Kind::Code);
+    click(cx, "compose-emoji");
+    click(cx, "fun-tab-stickers");
+    click(cx, "sticker-pack-lab-cats");
+    click(cx, "sticker-lab-cats-001");
+    assert!(picker(&view, cx).is_none(), "the pick closes the picker");
+    assert!(rig.core.picture_uploads.lock().unwrap().is_empty(), "nothing is sent");
+    assert!(!drawn(cx, "editor-picture-1"));
+    assert_eq!(
+        cx.update(|_, cx| compose.read(cx).problem().cloned()),
+        Some("A sticker can't go in a code block.".into())
+    );
+    let blocks = cx.update(|_, cx| compose.read(cx).editor().read(cx).doc().blocks.len());
+    assert_eq!(blocks, 1, "the code block stays whole");
+    let shelf = cx.update(|_, cx| Shelf::of(Some(place.stickers.clone()), cx));
+    assert!(
+        cx.update(|_, cx| shelf.read(cx).recent().is_empty()),
+        "not sent: not recent"
+    );
+}
+
+#[test]
 fn search_finds_emoji_and_stickers_and_enter_picks_the_first() {
     let place = Setup::new().with_cats();
     let rig = new_rig();
@@ -553,6 +583,18 @@ fn a_pack_is_renamed_and_removed_from_its_menu() {
 fn a_picker_without_stickers_has_no_stickers_tab() {
     let place = Setup::new().with_cats();
     let rig = new_rig();
+    // New message's box takes no picture: its picker offers no sticker
+    let (view, cx) = chat_window(&rig, &place);
+    let compose = compose(&view, cx);
+    cx.update(|_, cx| compose.update(cx, Compose::for_new_chat));
+    click(cx, "compose-emoji");
+    assert!(picker(&view, cx).is_some());
+    assert!(drawn(cx, "fun-tab-all") && drawn(cx, "fun-tab-emoji"));
+    assert!(
+        !drawn(cx, "fun-tab-stickers"),
+        "New message's picker has no Stickers tab"
+    );
+
     let core = rig.cx.read(|cx| rig.bridge.read(cx).core());
     let stickers = place.stickers.clone();
     let app: &'static mut gpui::TestAppContext = Box::leak(Box::new(rig.cx.clone()));

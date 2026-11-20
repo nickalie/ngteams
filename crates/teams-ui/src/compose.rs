@@ -1889,6 +1889,10 @@ impl Compose {
         if self.read_only.is_some() || !self.editor.read(cx).takes_pictures() {
             return;
         }
+        // as a paste, a picture doesn't split a code block
+        if !self.editor.read(cx).takes_picture_here() {
+            return self.show_problem("A sticker can't go in a code block.", cx);
+        }
         packs.update(cx, |packs, cx| packs.record_recent(sticker, cx));
         self.editor.update(cx, |editor, cx| {
             editor.insert_picture(picture, cx);

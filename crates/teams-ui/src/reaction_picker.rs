@@ -10,9 +10,10 @@
 //! it. A reaction the account already set on the message is marked, and picking it takes it back. The reaction under
 //! the pointer plays its animation, as Teams' picker does ([`reactions::animation`]). The list is laid out only as it
 //! comes into view. The picker only tells what was picked ([`ReactionPickerEvent`]); the chat view writes it. The
-//! compose box's emoji picker is the same picker ([`ReactionPicker::for_emoji`]), nothing marked: Teams offers the same
-//! emoji in both, and the box puts the one picked into its text. The compose box's picker shows it as its Emoji tab
-//! ([`ReactionPicker::embedded`]): the list and its section tabs alone, searched from the tab's own field.
+//! emoji pickers of a shared file's message and of an event's description are the same picker
+//! ([`ReactionPicker::for_emoji`]), nothing marked: Teams offers the same emoji in each, and the box puts the one picked
+//! into its text. The compose box's picker ([`crate::fun_picker`]) shows it as its Emoji tab
+//! ([`ReactionPicker::embedded`]): the list and its section tabs alone, searched from that picker's field.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -171,7 +172,7 @@ const REACTIONS: Flavour = Flavour {
     embedded: false,
 };
 
-/// The compose box's emoji.
+/// The emoji picker of a shared file's message and of an event's description.
 const COMPOSE_EMOJI: Flavour = Flavour {
     selector: "compose-emoji-picker",
     placeholder: "Search emoji",
@@ -193,7 +194,8 @@ impl ReactionPicker {
         Self::make(mine, core, REACTIONS, window, cx)
     }
 
-    /// The compose box's emoji picker: the emoji Teams offers, none of them marked, its search field focused.
+    /// The emoji picker of a shared file's message or an event's description: the emoji Teams offers, none of them
+    /// marked, its search field focused.
     pub fn for_emoji(core: Arc<dyn Core>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self::make(HashSet::new(), core, COMPOSE_EMOJI, window, cx)
     }
@@ -370,7 +372,7 @@ impl ReactionPicker {
     }
 
     /// Enter: the first reaction found, when something was searched.
-    pub fn pick_first(&mut self, cx: &mut Context<Self>) {
+    fn pick_first(&mut self, cx: &mut Context<Self>) {
         let first = self
             .found
             .as_ref()

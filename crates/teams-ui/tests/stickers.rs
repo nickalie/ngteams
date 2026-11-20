@@ -10,7 +10,8 @@ use std::path::Path;
 use image::codecs::gif::{GifEncoder, Repeat};
 use image::{Delay, Frame, ImageFormat, Rgba, RgbaImage};
 use teams_ui::stickers::import::{
-    self, Archive, Folder, ImportError, ImportKind, KEPT_SIDE, MAX_FILE, MAX_FRAMES, Progress, SHOWN_SIDE, Skip, Source,
+    self, Archive, Folder, ImportError, ImportKind, KEPT_SIDE, MAX_FILE, MAX_FRAMES, MAX_TOTAL, Progress, SHOWN_SIDE,
+    Skip, Source,
 };
 use teams_ui::stickers::store::{self, MAX_STICKERS, StickerRef};
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -349,6 +350,9 @@ fn bad_oversized_and_overlong_files_are_skipped_each_with_its_reason() {
     let imported = import::import(source.path(), ImportKind::Folder, stickers.path(), &mut no_progress()).unwrap();
     assert_eq!(imported.skipped.len(), 1);
     assert_eq!(imported.skipped[0].to_string(), "huge.png is larger than 10 MB");
+    // a picture made larger than a sticker may be is told apart from a file too large to read
+    assert_eq!(Skip::TooLargeSticker.to_string(), "is larger than 8 MB as a sticker");
+    assert_eq!(store::MAX_STICKER, 8 * 1024 * 1024);
     // the same in an archive, whose entry says its size
     let zipped = source.path().join("huge.zip");
     archive(
@@ -585,4 +589,111 @@ fn an_archive_from_memory_and_a_folder_tell_their_files() {
     assert_eq!(files.file_name(0), "top.png");
     assert_eq!(files.read(3).unwrap_err(), Skip::Unreadable);
     assert_eq!(files.file_name(3), "");
+}
+
+/// A `.zip` of one deflated entry `name` holding `bytes`, whose two headers say it is `declared` bytes uncompressed.
+fn archive_that_lies(name: &str, bytes: &[u8], declared: u32) -> Vec<u8> {
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    zip.start_file(name, options).unwrap();
+    zip.write_all(bytes).unwrap();
+    let mut out = zip.finish().unwrap().into_inner();
+    let real = u32::try_from(bytes.len()).unwrap().to_le_bytes();
+    let local = out
+        .windows(4)
+        .position(|four| four == [0x50, 0x4b, 0x03, 0x04])
+        .unwrap()
+        + 22;
+    let central = out
+        .windows(4)
+        .rposition(|four| four == [0x50, 0x4b, 0x01, 0x02])
+        .unwrap()
+        + 24;
+    for at in [local, central] {
+        assert_eq!(out[at..at + 4], real, "the uncompressed size at {at}");
+        out[at..at + 4].copy_from_slice(&declared.to_le_bytes());
+    }
+    out
+}
+
+#[test]
+fn a_zip_entry_that_says_it_is_small_is_not_read_past_its_word() {
+    let mut huge = still(8, 8, [1, 2, 3], ImageFormat::Png);
+    huge.resize(usize::try_from(MAX_FILE).unwrap() + 1024 * 1024, 0);
+    let bytes = archive_that_lies("huge.png", &huge, 100);
+    let mut zip = Archive::over("Liar".to_owned(), Cursor::new(bytes)).unwrap();
+    // the archive's reader stops at the size it declares, and the entry's check then fails
+    assert_eq!(zip.read(0).unwrap_err(), Skip::Unreadable);
+    let stickers = tempfile::tempdir().unwrap();
+    match import::import_from(&mut zip, stickers.path(), &mut no_progress()) {
+        Err(ImportError::NoStickers(skipped)) => assert_eq!(skipped[0].why, Skip::Unreadable),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_folder_s_symbolic_links_are_not_followed() {
+    let outside = tempfile::tempdir().unwrap();
+    folder(
+        outside.path(),
+        &[("secret.png", still(8, 8, [9, 9, 9], ImageFormat::Png))],
+    );
+    let source = tempfile::tempdir().unwrap();
+    let pack = source.path().join("Linked");
+    folder(&pack, &[("fine.png", still(8, 8, [1, 2, 3], ImageFormat::Png))]);
+    std::os::unix::fs::symlink(outside.path().join("secret.png"), pack.join("link.png")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), pack.join("linked-folder")).unwrap();
+    let stickers = tempfile::tempdir().unwrap();
+    let imported = import::import(&pack, ImportKind::Folder, stickers.path(), &mut no_progress()).unwrap();
+    let labels: Vec<&str> = imported
+        .pack
+        .stickers
+        .iter()
+        .map(|sticker| sticker.label.as_str())
+        .collect();
+    assert_eq!(labels, ["Fine"], "a link to a file or a folder is passed over");
+    assert!(imported.skipped.is_empty(), "{:?}", imported.skipped);
+}
+
+/// A source of a picture, then files of [`MAX_FILE`] bytes each, more than [`MAX_TOTAL`] together.
+struct Heavy {
+    picture: Vec<u8>,
+}
+
+impl Source for Heavy {
+    fn name(&self) -> String {
+        "Heavy".to_owned()
+    }
+
+    fn len(&self) -> usize {
+        usize::try_from(MAX_TOTAL / MAX_FILE).unwrap() + 2
+    }
+
+    fn file_name(&self, index: usize) -> String {
+        format!("{index:02}.png")
+    }
+
+    fn read(&mut self, index: usize) -> Result<Vec<u8>, Skip> {
+        if index == 0 {
+            return Ok(self.picture.clone());
+        }
+        Ok(vec![0; usize::try_from(MAX_FILE).unwrap()])
+    }
+}
+
+#[test]
+fn an_import_stops_at_its_total_and_keeps_nothing() {
+    let stickers = tempfile::tempdir().unwrap();
+    let mut source = Heavy {
+        picture: still(4, 4, [1, 2, 3], ImageFormat::Png),
+    };
+    let mut done = 0;
+    let outcome = import::import_from(&mut source, stickers.path(), &mut |progress| done = progress.done);
+    assert_eq!(outcome.unwrap_err(), ImportError::TooMuch);
+    assert!(done < source.len(), "it stops at the file past the total");
+    assert!(
+        std::fs::read_dir(stickers.path()).unwrap().next().is_none(),
+        "no pack is made"
+    );
 }

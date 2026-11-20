@@ -193,9 +193,15 @@ impl Editor {
         self.takes_pictures
     }
 
+    /// Whether a picture may go in at the cursor: the box takes pictures and the cursor isn't in a code block.
+    #[must_use]
+    pub fn takes_picture_here(&self) -> bool {
+        self.takes_pictures && self.block_kind() != Kind::Code
+    }
+
     /// Pastes the clipboard's pictures and files, if it pastes those (see the module docs); whether it did.
     pub(super) fn paste_pictures(&mut self, item: &ClipboardItem, scale: f32, cx: &mut Context<Self>) -> bool {
-        if !self.takes_pictures || self.block_kind() == Kind::Code {
+        if !self.takes_picture_here() {
             return false;
         }
         let Some(pasted) = Pasted::of(item, scale) else {
