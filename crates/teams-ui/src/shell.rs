@@ -992,6 +992,7 @@ impl Shell {
             self.before_settings = before;
         }
         self.put_chat_away(cx);
+        self.rename.close(cx);
         self.leave_workflows(cx);
         self.close_switcher(window, cx);
         self.close_search(cx);
@@ -2051,6 +2052,7 @@ impl Shell {
     /// Shows `main` in the conversation pane, the chat that was there put away.
     fn show_main(&mut self, main: Main, window: &mut Window, cx: &mut Context<Self>) {
         self.put_chat_away(cx);
+        self.rename.close(cx);
         self.teams.update(cx, |teams, cx| teams.select(None, cx));
         self.list.update(cx, |list, cx| list.select(None, cx));
         self.main = main;
@@ -2474,6 +2476,7 @@ impl Shell {
     pub fn open_channel(&mut self, chosen: ChannelChosen, window: &mut Window, cx: &mut Context<Self>) {
         self.trace
             .record(&TraceLine::new("channel", "opened").conversation(&chosen.id));
+        self.rename.close(cx);
         let shown = self
             .channel
             .as_ref()
@@ -2872,6 +2875,7 @@ impl Shell {
                 self.before_settings = before;
             }
             self.put_chat_away(cx);
+            self.rename.close(cx);
             self.leave_workflows(cx);
             cx.notify();
         }

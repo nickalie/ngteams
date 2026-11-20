@@ -40,7 +40,8 @@ pub(crate) async fn settled_row(
     settle(core, reply, executor, false).await
 }
 
-/// [`settled_row`] for a watch no view owns (a profile card's quick message, which outlives its card): it ends, with
+/// [`settled_row`] for a watch no view owns (a profile card's quick message, which outlives its card, or a group
+/// chat's rename, whose popup the shell keeps out of view after a close until the save ends): it ends, with
 /// none, once the engine stopped, rather than watching a row nobody settles any more.
 pub(crate) async fn settled_row_unowned(
     core: &dyn Core,

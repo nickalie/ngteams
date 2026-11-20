@@ -498,6 +498,45 @@ fn a_listing_names_a_group_chat_only_when_its_thread_version_is_not_older_than_t
 }
 
 #[test]
+fn a_listing_of_the_same_version_gives_a_name_with_no_thread_version_its_version() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut store = open(&dir).expect("open the store");
+    // a row from before thread versions were kept: its name has none
+    let mut chat = conversation(GROUP, ConversationKind::Group, 10);
+    chat.topic = Some("Lab trio 41".to_owned());
+    store.upsert_conversation(&chat).expect("insert");
+    let topic = |store: &Store| store.conversation(GROUP).expect("read").expect("group").topic;
+
+    // a listing of the same version with another name changes nothing, so a replayed push still names it
+    let mut listed = chat.clone();
+    listed.topic = Some("Lab trio 39".to_owned());
+    assert_eq!(
+        store.upsert_conversation_at(&listed, Some(250)).expect("listed"),
+        Applied::Ignored
+    );
+    assert_eq!(topic(&store).as_deref(), Some("Lab trio 41"));
+    // one with the same name gives the name its thread version: an older push (replayed on connect) changes nothing
+    assert_eq!(
+        store.upsert_conversation_at(&chat, Some(300)).expect("listed"),
+        Applied::Ignored
+    );
+    assert!(!store.set_topic(GROUP, Some("Lab trio 40"), Some(200)).expect("older"));
+    assert_eq!(topic(&store).as_deref(), Some("Lab trio 41"));
+    // a stored thread version stays: a later listing of the same version doesn't change it
+    assert_eq!(
+        store.upsert_conversation_at(&chat, Some(150)).expect("listed"),
+        Applied::Ignored
+    );
+    assert!(
+        !store
+            .set_topic(GROUP, Some("Lab trio 40"), Some(200))
+            .expect("still older")
+    );
+    assert!(store.set_topic(GROUP, Some("Lab trio 42"), Some(400)).expect("newer"));
+    assert_eq!(topic(&store).as_deref(), Some("Lab trio 42"));
+}
+
+#[test]
 fn an_unknown_conversation_kind_is_kept_as_text() {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut store = open(&dir).expect("open the store");

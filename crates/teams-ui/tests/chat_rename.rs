@@ -1,7 +1,7 @@
 //! A group chat's name from its header (the chat header's "Name group chat"), on the fake core in a window of its own:
 //! the pencil and its popup, Save and Enter, the 250-character limit, an empty name, Cancel and Escape, a save that
-//! fails (also after the popup closed), the chats that show no pencil, and the new name in the header and the list
-//! once the engine tells it.
+//! fails (also after the popup closed, or once the engine stopped), the chats that show no pencil, and the new name in
+//! the header and the list once the engine tells it.
 //! Synthetic accounts and chats only.
 
 // test code throughout (its helpers unwrap like the tests do)
@@ -378,6 +378,34 @@ fn a_popup_closed_while_its_save_is_on_its_way_tells_a_failure_as_a_toast() {
             (NAMED.to_owned(), "Lab trio 41".to_owned())
         ]
     );
+}
+
+#[test]
+fn the_calendar_closes_a_saving_popup_and_a_stopped_engine_ends_its_save_as_not_saved() {
+    let rig = seeded();
+    // the save waits in the outbox, and then the engine stops: no row is read again
+    rig.core.write_answers.lock().unwrap().push_back(common::outbox_row(
+        7,
+        OutboxKind::RenameChat,
+        OutboxState::Pending,
+    ));
+    let (shell, cx) = shell_window(&rig);
+    open(&shell, cx, NAMED);
+    let toast = |cx: &mut VisualTestContext| cx.update(|_, cx| shell.read(cx).toast().cloned());
+
+    click(cx, "chat-header-rename");
+    cx.simulate_input("Lab trio 40");
+    draw(cx);
+    click(cx, "chat-rename-save");
+    let view = popup(&shell, cx).expect("open while it saves");
+    shell.update_in(cx, Shell::show_calendar);
+    draw(cx);
+    assert!(popup(&shell, cx).is_none(), "the calendar closes it");
+    *rig.core.stopped.lock().unwrap() = true;
+    cx.executor().advance_clock(std::time::Duration::from_secs(1));
+    draw(cx);
+    assert_eq!(toast(cx), Some(NOT_SAVED.into()));
+    assert!(!cx.update(|_, cx| view.read(cx).saving()), "the watch ended");
 }
 
 #[test]

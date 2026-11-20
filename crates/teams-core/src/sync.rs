@@ -1594,12 +1594,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             version: 0,
             last_activity: None,
         };
-        let named_at = thread
-            .version
-            .clone()
-            .known()
-            .and_then(|version| i64::try_from(version).ok());
-        let added = store.upsert_conversation_at(&row, named_at)?;
+        let added = store.upsert_conversation_at(&row, known_i64(&thread.version))?;
         self.conversation_changed(id, added);
         if !thread.kind().is_read_only() {
             self.store_members(store, &thread)?;
@@ -1757,16 +1752,13 @@ fn not_found(error: &CatchUpError) -> bool {
     matches!(error, CatchUpError::Read(ChatReadError::Http(HttpError::Status(answer))) if answer.status() == 404)
 }
 
-/// A conversation of the list as the store keeps it, at `version`.
 /// The thread version of `listed`'s name (`threadProperties.version`), when it reads: what orders it against a name a
 /// push brought ([`Store::set_topic`]).
 fn thread_version(listed: &chat::Conversation) -> Option<i64> {
-    listed
-        .thread_version()
-        .known()
-        .and_then(|version| i64::try_from(version).ok())
+    known_i64(&listed.thread_version())
 }
 
+/// A conversation of the list as the store keeps it, at `version`.
 fn conversation_row(listed: &chat::Conversation, version: i64) -> Conversation {
     Conversation {
         id: listed.id.clone(),

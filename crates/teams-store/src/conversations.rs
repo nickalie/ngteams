@@ -131,7 +131,9 @@ impl Store {
     /// [`Store::upsert_conversation`] for a conversation whose name is of the thread version `thread_version`, when it
     /// is known (a listing's `threadProperties.version`, a thread read's `version`). A newer conversation version
     /// replaces the name too, unless the stored name is of a newer thread version ([`Store::set_topic`]): a push
-    /// brought it after the listing was read.
+    /// brought it after the listing was read. An as-new or older conversation version keeps the stored name, but when
+    /// the stored name has no thread version (a row from before thread versions were kept) and is the listing's name,
+    /// it takes `thread_version`: then an older push cannot bring back an older name.
     ///
     /// # Errors
     ///
@@ -186,12 +188,19 @@ impl Store {
                 Applied::Updated
             }
             Some(_) => {
-                // the version's fields stay, but a later last activity is still taken
+                // the version's fields stay, but a later last activity is still taken, and the same name's thread
+                // version when the store has none
                 tx.execute(
                     "UPDATE conversations
-                     SET last_activity = MAX(COALESCE(last_activity, ?2), COALESCE(?2, last_activity))
+                     SET last_activity = MAX(COALESCE(last_activity, ?2), COALESCE(?2, last_activity)),
+                         topic_version = CASE WHEN topic_version IS NULL AND topic IS ?3 THEN ?4 ELSE topic_version END
                      WHERE id = ?1",
-                    params![conversation.id, conversation.last_activity],
+                    params![
+                        conversation.id,
+                        conversation.last_activity,
+                        conversation.topic,
+                        thread_version
+                    ],
                 )?;
                 Applied::Ignored
             }

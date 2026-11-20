@@ -37,7 +37,7 @@ use teams_store::OutboxState;
 use crate::bridge::Core;
 use crate::chat_people::Placed;
 use crate::icons::{Glyph, selected_by};
-use crate::sending::settled_row;
+use crate::sending::settled_row_unowned;
 use crate::theme;
 use crate::trace::{TraceLine, ViewTrace};
 
@@ -212,7 +212,8 @@ impl ChatRename {
         };
         self.problem = None;
         self.saving = Some(cx.spawn_in(window, async move |this, cx: &mut AsyncWindowContext| {
-            let row = settled_row(core.as_ref(), core.write(action), cx.background_executor()).await;
+            // the shell keeps a closed popup out of view until its save ends: a stopped engine ends the watch too
+            let row = settled_row_unowned(core.as_ref(), core.write(action), cx.background_executor()).await;
             let saved = row.is_some_and(|row| row.state == OutboxState::Sent);
             let _ = this.update(cx, |this, cx| this.saved(saved, cx));
         }));
