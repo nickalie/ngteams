@@ -1286,9 +1286,25 @@ fn a_call_link_is_a_link_on_the_flight_proxy_kept_as_given() {
         "https://api.flightproxy.teams.microsoft.com/api/v3/ep/host/conv/x",
         "https://evil.example/api/v2/ep/host/conv/x",
         "https://API.flightproxy.teams.microsoft.com/api/v2/ep/host/conv/x",
+        "https://api-.flightproxy.teams.microsoft.com/api/v2/ep/host/conv/x",
+        "https://api-ap1.flightproxy.teams.microsoft.com/api/v2/ep/host/conv/x",
+        "https://api-ap.ac.flightproxy.teams.microsoft.com/api/v2/ep/host/conv/x",
+        "https://web-apac.flightproxy.teams.microsoft.com/api/v2/ep/host/conv/x",
+        "https://api-apac.flightproxy.teams.microsoft.com.evil.example/api/v2/ep/host/conv/x",
+        "https://api-apac.flightproxy.teams.microsoft.com:8443/api/v2/ep/host/conv/x",
     ] {
         assert!(CallLink::parse(bad).is_none(), "{bad}");
     }
+}
+
+#[test]
+fn a_meeting_hosted_in_another_region_hands_out_links_on_that_regions_flight_proxy() {
+    let regional = "https://api-apac.flightproxy.teams.microsoft.com/api/v2/ep/conv-zz-02-prod-aks.conv.skype.com/conv/SyntheticConv?i=10-0-0-1&e=1";
+    assert_eq!(link(regional).as_str(), regional);
+    let leave = regional.replace("/SyntheticConv?", "/SyntheticConv/leave?");
+    assert_eq!(link(&leave).as_str(), leave);
+    let own = teams_proto::Cloud::own("https://calls.example:8443").unwrap();
+    assert!(CallLink::parse_in(&own, regional).is_none());
 }
 
 #[test]
