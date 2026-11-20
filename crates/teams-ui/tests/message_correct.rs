@@ -27,7 +27,7 @@ use teams_ui::chat_view::ChatView;
 use teams_ui::compose::{Compose, CorrectionStatus, Editor, Quoted};
 use teams_ui::local_ai::{AiChoice, Backend, ToolChoice, Tools};
 use teams_ui::message_correct::Limits;
-use teams_ui::settings::{Settings, SettingsModel};
+use teams_ui::settings::{ComposeTool, Settings, SettingsModel};
 
 const AB: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-8000-00000000000b@unq.gbl.spaces";
 const OTHER: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-8000-00000000000c@unq.gbl.spaces";
@@ -238,13 +238,10 @@ fn click(cx: &mut VisualTestContext, selector: &'static str) {
     draw(cx);
 }
 
-/// The AI button's menu opened, then its Correct row clicked.
+/// "+" opened, then its Correct row clicked: Correct is there until the user shows it on the toolbar.
 fn correct_by_menu(cx: &mut VisualTestContext) {
-    click(cx, "compose-ai");
-    assert!(
-        cx.debug_bounds("compose-ai-menu").is_some(),
-        "the AI button opens its menu"
-    );
+    click(cx, "compose-apps");
+    assert!(cx.debug_bounds("compose-apps-menu").is_some(), "\"+\" opens its menu");
     click(cx, "compose-correct-row");
 }
 
@@ -735,8 +732,19 @@ fn with_the_ai_features_off_the_box_offers_no_ai_and_no_tool_runs() {
     let rig = Rig::start();
     let fake = Fake::new(&rig);
     let (compose, settings, cx) = chat_and_settings(&rig);
+    cx.update(|_, cx| {
+        settings.update(cx, |model, cx| {
+            model.change(
+                |settings| {
+                    settings.show_compose_tool(ComposeTool::Correct, true);
+                    settings.show_compose_tool(ComposeTool::Translate, true);
+                },
+                cx,
+            );
+        });
+    });
     draw(cx);
-    let tools = ["compose-ai"];
+    let tools = ["compose-correct", "compose-translate", "compose-language"];
     for tool in tools {
         assert!(cx.debug_bounds(tool).is_some(), "{tool}");
     }

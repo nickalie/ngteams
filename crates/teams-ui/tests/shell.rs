@@ -1521,21 +1521,26 @@ fn an_upgrade_asks_about_the_ai_features_once_and_keep_on_turns_them_on() {
 #[test]
 fn use_ai_features_off_hides_every_ai_control_and_on_brings_them_back() {
     let rig = seeded();
-    let (shell, cx) = shell_window(&rig, Settings::default(), Arc::new(ViewTrace::off()));
+    let mut shown = Settings::default();
+    shown.show_compose_tool(teams_ui::settings::ComposeTool::Correct, true);
+    shown.show_compose_tool(teams_ui::settings::ComposeTool::Translate, true);
+    let (shell, cx) = shell_window(&rig, shown, Arc::new(ViewTrace::off()));
     // no tool of this computer is asked while the settings are drawn
     cx.update(|_, cx| {
         cx.set_global(Tools::default());
         cx.set_global(Catalog::with(Vec::new(), Vec::new()));
     });
     click(cx, "chat-row-1");
-    let chat_controls = ["chat-translate", "compose-ai"];
+    let chat_controls = ["chat-translate", "compose-correct", "compose-translate"];
     assert_drawn(cx, &chat_controls, true);
     cx.update(|_, cx| shell.update(cx, Shell::show_settings));
     let settings_boxes = [
         "ai-providers",
         "chat-translator",
+        "reading-language",
         "message-corrector",
         "message-translator",
+        "message-language",
     ];
     assert_drawn(cx, &settings_boxes, true);
     click(cx, "use-ai-features");
@@ -1585,16 +1590,22 @@ fn the_appearance_page_lists_the_message_box_buttons_that_can_hide() {
         "compose-tool-emoji",
         "compose-tool-attach",
         "compose-tool-loop",
-        "compose-tool-ai",
+        "compose-tool-correct",
+        "compose-tool-translate",
     ];
     assert_drawn(cx, &switches, true);
     click(cx, "compose-tool-emoji");
     assert_eq!(settings_of(&shell, cx).compose_hidden, [ComposeTool::Emoji]);
+    // the AI tools are off until the user turns them on; their rows are at the page's foot
+    cx.update(|_, cx| shell.read(cx).settings_view().read(cx).scroll_to_end());
+    click(cx, "compose-tool-translate");
+    assert_eq!(settings_of(&shell, cx).compose_shown, [ComposeTool::Translate]);
     cx.update(|window, cx| shell.update(cx, |shell, cx| shell.show_chats(window, cx)));
     click(cx, "chat-row-1");
     assert!(bounds(cx, "compose-emoji").is_none(), "the box follows the switch");
     assert!(bounds(cx, "compose-attach").is_some());
-    // with the AI features off, the AI button has no row
+    assert!(bounds(cx, "compose-translate").is_some() && bounds(cx, "compose-correct").is_none());
+    // with the AI features off, the AI tools have no row
     cx.update(|_, cx| {
         shell.update(cx, |shell, cx| {
             shell
@@ -1605,7 +1616,7 @@ fn the_appearance_page_lists_the_message_box_buttons_that_can_hide() {
     cx.update(|_, cx| shell.update(cx, Shell::show_settings));
     click(cx, "settings-page-appearance");
     assert_drawn(cx, &switches[..4], true);
-    assert_drawn(cx, &["compose-tool-ai"], false);
+    assert_drawn(cx, &switches[4..], false);
 }
 
 /// Asserts that each of `selectors` is drawn (`shown`), or that none is.

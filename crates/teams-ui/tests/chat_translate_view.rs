@@ -1125,3 +1125,108 @@ fn tab_and_shift_tab_in_the_menu_close_it_and_give_the_keys_back() {
     assert!(cx.debug_bounds("message-translation-menu").is_none());
     assert!(list_focused(&view, cx), "the keys are back on the message list");
 }
+
+/// A fake draft translator: the draft's "privet" in English, the language it was asked for kept.
+struct DraftFake(std::sync::Mutex<Vec<String>>);
+
+struct DraftEngine(Arc<DraftFake>);
+
+struct DraftSession(Arc<DraftFake>);
+
+impl teams_ui::draft_translate::Engine for DraftEngine {
+    fn start(
+        &self,
+        _: &teams_ui::local_ai::Launch,
+        _: &std::sync::atomic::AtomicBool,
+    ) -> Result<Box<dyn teams_ui::draft_translate::Session>, teams_ui::local_ai::Failure> {
+        Ok(Box::new(DraftSession(Arc::clone(&self.0))))
+    }
+}
+
+impl teams_ui::draft_translate::Session for DraftSession {
+    fn ask(
+        &mut self,
+        message: &str,
+        _: Duration,
+        _: &std::sync::atomic::AtomicBool,
+    ) -> Result<String, teams_ui::local_ai::Failure> {
+        self.0.0.lock().unwrap().push(message.to_owned());
+        let body = message.split("<message>\n").nth(1).unwrap_or_default();
+        let body = body.strip_suffix("\n</message>").unwrap_or_default();
+        Ok(format!("<translated>{}</translated>", body.replace("privet", "hello")))
+    }
+
+    fn close(self: Box<Self>) {}
+}
+
+#[test]
+fn a_user_reads_in_russian_and_sends_in_english() {
+    use teams_ui::chat_translate::{Mark, Offer};
+    let rig = Rig::start();
+    let dir = tempfile::tempdir().unwrap();
+    let fake = tool(dir.path(), "claude", FAKE_CLAUDE);
+    let drafts = Arc::new(DraftFake(std::sync::Mutex::new(Vec::new())));
+    let engine: Arc<dyn teams_ui::draft_translate::Engine> = Arc::new(DraftEngine(Arc::clone(&drafts)));
+    rig.cx.update(|cx| {
+        cx.set_global(Tools::with(vec![(Backend::Claude, fake)]));
+        teams_ui::draft_translate::set_engine(cx, engine);
+    });
+    let (view, settings, cx) = plain_chat_and_settings(&rig);
+    cx.update(|_, cx| {
+        settings.update(cx, |model, cx| {
+            model.change(
+                |settings| {
+                    settings.message_translate_to = "Russian".to_owned();
+                    settings.draft_translate_to = "English".to_owned();
+                },
+                cx,
+            );
+        });
+    });
+    draw(cx);
+
+    // a message of the other person, read in Russian
+    translate_from_menu(cx, "1001");
+    until(cx, |cx| {
+        matches!(mark_of(&view, cx, "1001"), Some(Mark::Translated { .. }))
+    });
+    let kept = rig.core.translations.lock().unwrap().clone();
+    assert!(
+        kept.iter().any(|row| row.message_id == "1001" && row.language == "ru"),
+        "read in Russian: {kept:?}"
+    );
+    assert_eq!(offer_of(&view, cx, "1001"), Some(Offer::SeeOriginal(Some("English"))));
+
+    // the user's draft, translated into English and sent
+    let compose = cx.update(|_, cx| view.read(cx).compose().clone());
+    cx.update(|window, cx| {
+        compose.update(cx, |compose, cx| {
+            compose.focus(window, cx);
+            compose.editor().update(cx, |editor, cx| editor.insert("privet", cx));
+        });
+    });
+    draw(cx);
+    cx.simulate_keystrokes("ctrl-shift-y");
+    until(cx, |cx| {
+        cx.update(|_, cx| compose.read(cx).value(cx).to_string()) == "hello"
+    });
+    let asked = drafts.0.lock().unwrap().clone();
+    assert!(
+        asked
+            .first()
+            .is_some_and(|asked| asked.starts_with("<language>English</language>")),
+        "{asked:?}"
+    );
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.send(window, cx)));
+    until(cx, |_| sent_texts(&rig) == ["hello"]);
+
+    // the two languages stay apart
+    let languages = cx.update(|_, cx| {
+        let settings = settings.read(cx).settings();
+        (
+            settings.message_translate_to.clone(),
+            settings.draft_translate_to.clone(),
+        )
+    });
+    assert_eq!(languages, ("Russian".to_owned(), "English".to_owned()));
+}

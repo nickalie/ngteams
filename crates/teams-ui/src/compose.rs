@@ -36,10 +36,10 @@
 //!   controls inside it on the right: Format, Emoji, Attach, Loop (shown disabled, saying the app doesn't have it yet),
 //!   Actions and apps (the "+": a menu of the hidden tools' actions and "Customize toolbar"; with `NGTEAMS_BOTS=1`, an
 //!   account whose cloud serves apps, and a box that writes a chat's new message outside read-only mode, it opens the
-//!   apps' flyout with those rows over the apps, [`apps`]), the AI button (one menu of Correct, Translate and the
-//!   translation language, [`menus`]), a thin divider, then Send. The user hides the buttons they do not use, by a
+//!   apps' flyout with those rows over the apps, [`apps`]), the AI tools that the user shows (Correct, and Translate
+//!   with its language's chevron, [`ai_tools`]), a thin divider, then Send. The user shows and hides the buttons by a
 //!   right click on the toolbar, "Customize toolbar" or Settings ([`crate::settings::ComposeTool`]); a hidden one's
-//!   action stays in "+", with its key. Send and "+" never hide. The box can hold apps' cards (a message extension's
+//!   action stays in "+", with its key. The AI tools are in "+" until the user shows them. Send and "+" never hide. The box can hold apps' cards (a message extension's
 //!   result), drawn over the tools, each with a close mark, and sent with the message. Its placeholder stays on one
 //!   line, cut short with an ellipsis. A box too narrow for its text beside its tools (a call's Chat pane) is
 //!   stacked, as Teams' is: the text on top, the tools and Send on a row under it, and the tools that do not fit in
@@ -55,7 +55,7 @@
 //!
 //! - **A channel's box** ([`Compose::in_channel`]): "Message in <channel>" posting to the channel, or a post's
 //!   thread's "Reply in thread" posting to the post's chain, with Teams' "Send to: thread only" over its text. It
-//!   offers Format, Emoji, "+", the AI button and Send, no more: it sends no typing (no capture showed a channel's)
+//!   offers Format, Emoji, "+", the AI tools and Send, no more: it sends no typing (no capture showed a channel's)
 //!   and takes no file (a channel's files go to its team's site, which this app doesn't upload to).
 //! - **New message's box** ([`Compose::for_new_chat`]): a chat's box for a chat not made yet. It sends no typing and
 //!   takes no pasted picture; its first message is handed to New message ([`ComposeEvent::Start`]), which makes the
@@ -64,15 +64,17 @@
 //!   of the text area and its send: nothing can be typed, sent, replied to or edited there, and no typing goes out.
 //!   The account's own notes ([`teams_core::NOTES`]) take a full box, as any chat does.
 //!
-//! - **Correct** ([`correction`], the AI button's row or Ctrl+Shift+G): the draft's spelling, grammar and style checked by the AI
+//! - **Correct** ([`correction`], its row in "+", its button or Ctrl+Shift+G): the draft's spelling, grammar and style checked by the AI
 //!   tool the settings name, the proposal shown over the box word by word; nothing changes or goes out until the user
 //!   takes it.
-//! - **Translate** ([`draft_translation`], the AI button's row or Ctrl+Shift+Y): the draft translated by the AI tool the
-//!   settings name into the language every box shares (the row under it), in place, as one edit Ctrl+Z takes back.
+//! - **Translate** ([`draft_translation`], its row in "+", its button or Ctrl+Shift+Y): the draft translated by the AI
+//!   tool the settings name into the language every box shares (the row under it, or the chevron by its button), in
+//!   place, as one edit Ctrl+Z takes back. That language is apart from the one messages are read in.
 //!
 //! What the box does is traced (`compose opened` when the box is made, `sent`, `replying`, `editing`, `cancelled`, and
 //! `changed` each time what it holds changes), never its text.
 
+mod ai_tools;
 mod apps;
 pub mod attachments;
 mod correction;
@@ -110,7 +112,7 @@ use teams_store::Message;
 pub use correction::{CorrectDraft, CorrectionStatus, KeepOriginal, SendCorrection, UseCorrection};
 pub use customize::{CustomizeClose, CustomizeDown, CustomizeToggle, CustomizeUp, SHOW_IN_TOOLBAR};
 pub use draft_translation::{DraftTranslationStatus, OpenTranslationSettings, TranslateDraft};
-pub use menus::{AI_TOOLS, CUSTOMIZE, MenuKind};
+pub use menus::{CUSTOMIZE, MenuKind};
 
 pub use crate::editor::Editor;
 use crate::editor::convert::{self, CantLoad};
@@ -137,6 +139,8 @@ pub const BOX_HEIGHT: f32 = 56.0;
 const BOX_PADDING: f32 = 6.0;
 /// A toolbar button in the box, px (its icon three quarters of it).
 const TOOL: f32 = 28.0;
+/// The width of the chevron by a shown Translate button, which opens its language menu, px.
+const LANGUAGE_CHEVRON: f32 = 16.0;
 /// Below this width, px, the box is stacked when its text has no room beside its tools ([`fit`]), as in a thread's
 /// pane.
 const NARROW_BOX: f32 = 560.0;
@@ -737,7 +741,7 @@ pub struct Compose {
     box_at: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// The window's rem size as the box was last drawn: its gaps and padding follow it ([`fit`]).
     rem: Pixels,
-    /// The menu of tools that is open: More options, the AI button's or "+" ([`menus`]).
+    /// The menu of tools that is open: More options or "+" ([`menus`]).
     menu: Option<menus::ToolMenu>,
     /// The customize list, while it is open ([`customize`]).
     customize: Option<customize::Customize>,
@@ -2099,7 +2103,7 @@ impl Compose {
     }
 
     /// The box's controls, inside it on the right as Teams has them: Format, Emoji, Attach, Loop (not in this app yet:
-    /// shown disabled, saying so) and Actions and apps, then this app's AI button, a thin divider, then Send. The
+    /// shown disabled, saying so) and Actions and apps, then the AI tools the user shows, a thin divider, then Send. The
     /// tools that `fit` puts in the menu go into "More options"; a stacked box's row has its tools on the left and Send
     /// on the right. A right click on it lists the buttons to show or hide.
     fn toolbar(&self, palette: Palette, fit: &fit::Fit, cx: &mut Context<Self>) -> AnyElement {
@@ -2148,7 +2152,8 @@ impl Compose {
             fit::Tool::Loop => unavailable("compose-loop", Glyph::REPEAT, NO_LOOP),
             fit::Tool::Apps if self.offers_apps(cx) => self.apps_button(fit, cx),
             fit::Tool::Apps => self.menu_button(MenuKind::Plus, fit, cx),
-            fit::Tool::Ai => self.menu_button(MenuKind::Ai, fit, cx),
+            fit::Tool::Correct => self.correct_button(cx),
+            fit::Tool::Translate => self.translate_button(cx),
         }
     }
 

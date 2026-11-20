@@ -557,23 +557,28 @@ to paste. There is no separate write-decision log.
 #### Translating the message you write
 
 Every message box (a chat's, a channel's post and reply boxes, editing a message, New message) has Translate
-(Ctrl+Shift+Y) in the menu of its AI button, with Correct and the "Translation language" row. Translate replaces the
+(Ctrl+Shift+Y) in "+", with Correct and the "Translation language" row, until the user shows it on the toolbar; a
+shown Translate has a chevron beside it that opens the language list. Translate replaces the
 draft with its translation, in place and as one edit, so Ctrl+Z brings the draft back; mentions, links that show their
 address, inline code, blocks of code, pictures and line breaks never go to the tool and come back as they were, and
 formatted words stay formatted. While it runs, a line over the box shows the language and the tool with Cancel (Escape
-or the menu's "Stop translating" row cancel too); a failure keeps the draft and says why, with Try again, and with no
+or its "Stop translating" row or button cancel too); a failure keeps the draft and says why, with Try again, and with no
 tool installed it offers the settings. The "Translation language" row opens a searchable list of common languages, and
 any other language can be typed. The language is one setting for every box and account in the app, kept across restarts;
-it and the tool are in Settings → General → Message translation (the tool: Automatic, which is Claude Code when
+it and the tool are in Settings → General → Message translation ("Translate my messages into") (the tool: Automatic, which is Claude Code when
 installed and else Codex, or either one; by default Claude Sonnet or GPT-6.1-Terra). Only the draft's words and the
 language go to the tool and its provider, never the chat, names or tokens (`crates/teams-ui/src/draft_translate.rs`).
+This language is apart from the one a message's "Translate" shows it in (Settings → General → Chat translation,
+"Translate messages into this language"), so a user can read in one language and write in another. A settings file
+of an earlier build, with one language, gives it to both.
 
 #### The message box toolbar
 
-The toolbar shows Format, Emoji, Attach files, Loop components, "+" (Actions and apps), the AI button and Send. To
-hide a button, right-click the toolbar or select "Customize toolbar" at the end of "+", and remove its check; the
+The toolbar shows Format, Emoji, Attach files, Loop components, "+" (Actions and apps) and Send. The AI tools,
+Correct and Translate, are rows of "+" until the user shows them; then they are buttons after "+". To show or hide a
+button, right-click the toolbar or select "Customize toolbar" at the end of "+", and set or remove its check; the
 same list is in Settings → Appearance → Message box toolbar. "+" and Send cannot hide. A hidden button's action
-stays in "+", with its icon and key. The choice is one setting for every box, kept across restarts
+stays in "+", with its icon and key: Teams' own actions first, then the AI tools. The choice is one setting for every box, kept across restarts
 (`crates/teams-ui/src/compose/menus.rs`).
 
 ## Captures and fixtures

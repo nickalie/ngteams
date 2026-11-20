@@ -1,14 +1,15 @@
-//! QA of task 584 (round 1), in the UI sandbox: the message box's toolbar with one AI button, and the buttons that the
-//! user can hide. The real app runs as a child in the sandbox, as lab account a on `teams-mock` (its chat service, its
+//! QA of tasks 584 and 700, in the UI sandbox: the message box's toolbar with no AI button (the AI tools are rows of
+//! "+" until the user shows them), and the buttons that the user can show or hide. The real app runs as a child in the sandbox, as lab account a on `teams-mock` (its chat service, its
 //! calling service, its Trouter and its group video). The parent drives it with the sandbox's virtual pointer and
 //! keyboard. It asks the child what the boxes hold through a file in the sandbox dir (`harness = false`: GPUI runs on
 //! the process's main thread). The app tells no positions: a button is clicked where a user sees it on the screen.
 //!
-//! - **The bar and the AI menu**: Format, Emoji, Attach, Loop, "+", the AI button and Send. The AI menu's rows
+//! - **The bar and the AI rows of "+"**: Format, Emoji, Attach, Loop, "+" and Send. The AI tools' rows of "+"
 //!   (Correct, Translate, the language) by the pointer and the keys, with a made-up `claude` on the app's `PATH`;
-//!   Ctrl+Shift+G and Ctrl+Shift+Y; the language stays saved.
+//!   Ctrl+Shift+G and Ctrl+Shift+Y; the language stays saved. Correct and Translate shown on the bar from the list, and
+//!   Translate's chevron opens the language menu.
 //! - **The customize list**: a right click on the toolbar, and "Customize toolbar" in "+". Each click hides or shows a
-//!   button; Send and "+" do not hide. A hidden button's action is in "+" and works from there.
+//!   button (the AI tools too); Send and "+" do not hide. A hidden button's action is in "+" and works from there.
 //! - **Settings** > Appearance > "Message box toolbar": its switches and the box's list agree, both ways.
 //! - **Every box**: a channel post, a thread reply, New message, edit mode, the call's Chat pane, a narrow window, a
 //!   large font, Teams Dark.
@@ -168,10 +169,11 @@ fn wanted(name: &str) -> bool {
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
 /// The first run of the app: a new settings file, the AI features on.
-const FIRST: [Check; 15] = [
-    ("bar_and_ai_menu", bar_and_ai_menu),
-    ("ai_menu_rows_act", ai_menu_rows_act),
+const FIRST: [Check; 16] = [
+    ("bar_and_ai_in_plus", bar_and_ai_in_plus),
+    ("ai_rows_act", ai_rows_act),
     ("ai_keys_and_language", ai_keys_and_language),
+    ("ai_tools_on_the_bar", ai_tools_on_the_bar),
     ("right_click_list", right_click_list),
     ("list_down_selects_format", list_down_selects_format),
     ("send_and_plus_stay", send_and_plus_stay),
@@ -768,7 +770,7 @@ const CALL_ROW_GAP: (i32, i32) = (1170, CALL_ROW_Y);
 const MAIN_TEXT: (i32, i32) = (700, 750);
 const MAIN_ROW_Y: i32 = 749;
 const MAIN_SEND: (i32, i32) = (1236, MAIN_ROW_Y);
-/// The rightmost tool of the main box (the AI button, else "+") at 1280 px.
+/// The rightmost tool of the main box ("+" while no AI tool shows) at 1280 px.
 const MAIN_LAST_TOOL_X: i32 = 1194;
 const TOOL_STEP: i32 = 31;
 
@@ -778,8 +780,8 @@ fn main_tool(from_right: i32) -> (i32, i32) {
 }
 
 /// The switches of "Message box toolbar" on the Appearance page, scrolled to its foot.
-const SETTINGS_FORMAT: (i32, i32) = (1135, 475);
-const SETTINGS_EMOJI: (i32, i32) = (1135, 539);
+const SETTINGS_FORMAT: (i32, i32) = (1135, 411);
+const SETTINGS_EMOJI: (i32, i32) = (1135, 475);
 
 fn main_box(state: &Value) -> &Value {
     &state["chat"]
@@ -794,6 +796,18 @@ fn hidden(state: &Value) -> Vec<String> {
 
 fn hidden_is(state: &Value, names: &[&str]) -> bool {
     hidden(state) == names
+}
+
+/// The AI tools that the toolbar shows.
+fn shown(state: &Value) -> Vec<String> {
+    state["shown"]
+        .as_array()
+        .map(|names| names.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
+fn shown_is(state: &Value, names: &[&str]) -> bool {
+    shown(state) == names
 }
 
 fn call_box(state: &Value) -> &Value {
@@ -839,10 +853,17 @@ impl User<'_> {
         })
     }
 
-    /// The buttons in `names` hidden, by the setting (as the customize list sets it), and waits for it.
+    /// Teams' buttons in `names` hidden, the others shown, by the setting (as the customize list sets it), and waits
+    /// for it.
     fn hide(&mut self, names: &[&str]) -> SandboxResult<Value> {
         self.ask(&format!("hide {}", names.join(",")))?;
         self.until("the hidden buttons", |state| hidden_is(state, names))
+    }
+
+    /// The AI tools in `names` shown on the bar, the others in "+", by the setting, and waits for it.
+    fn show_ai(&mut self, names: &[&str]) -> SandboxResult<Value> {
+        self.ask(&format!("show-ai {}", names.join(",")))?;
+        self.until("the shown AI tools", |state| shown_is(state, names))
     }
 
     /// Opens the menu of the main box's tool `from_right` by a click; waits for the menu `kind`.
@@ -864,7 +885,7 @@ impl User<'_> {
     }
 
     /// Takes the customize list's row `up` places from its foot by the keys: Up from no row selects the last row that
-    /// can be taken (AI tools, or Loop components while AI is off), and each Up the row over it.
+    /// can be taken (Translate, or Loop components while AI is off), and each Up the row over it.
     fn take_row_by_up(&mut self, up: usize) -> SandboxResult {
         // the pointer off the list: a row under it is selected by its hover
         self.park()?;
@@ -906,43 +927,42 @@ impl User<'_> {
     }
 }
 
-/// The bar: Format, Emoji, Attach, Loop, "+", the AI button and Send; the AI menu by the pointer; Escape.
-fn bar_and_ai_menu(user: &mut User<'_>) -> SandboxResult {
+/// The bar: Format, Emoji, Attach, Loop, "+" and Send, no AI button; "+" holds the AI tools' rows; Escape.
+fn bar_and_ai_in_plus(user: &mut User<'_>) -> SandboxResult {
     let state = user.main_chat()?;
-    ensure(hidden(&state).is_empty() && state["ai"] == true, || {
-        format!("not the first run's settings: {state}")
-    })?;
+    ensure(
+        hidden(&state).is_empty() && shown(&state).is_empty() && state["ai"] == true,
+        || format!("not the first run's settings: {state}"),
+    )?;
     ensure(main_box(&state)["stacked"] == false, || {
         format!("stacked at 1280: {state}")
     })?;
     user.type_text("a draft for the bar")?;
     user.shots_in_both_themes("bar")?;
-    // the AI button's tooltip
+    // the tooltip of "+", the rightmost tool
     user.input
         .move_to(u32::try_from(main_tool(0).0)?, u32::try_from(MAIN_ROW_Y)?)?;
     thread::sleep(Duration::from_millis(1500));
-    user.shot("ai-tooltip")?;
+    user.shot("plus-tooltip")?;
     user.park()?;
     for theme in ["light", "dark"] {
         user.ask(&format!("theme-{theme}"))?;
-        let state = user.click_menu(0, "Ai")?;
+        let state = user.click_menu(0, "Plus")?;
         ensure(main_box(&state)["focused"] == false, || {
-            format!("the text keeps the keyboard with the AI menu open: {state}")
+            format!("the text keeps the keyboard with \"+\" open: {state}")
         })?;
-        user.settled_shot(&format!("ai-menu-{theme}"))?;
+        user.settled_shot(&format!("plus-ai-rows-{theme}"))?;
         user.press("escape")?;
-        let state = user.until("the AI menu closed", |state| main_box(state)["menu"].is_null())?;
+        let state = user.until("\"+\" closed", |state| main_box(state)["menu"].is_null())?;
         ensure(main_box(&state)["focused"] == true, || {
             format!("Escape did not give the keyboard back: {state}")
         })?;
     }
     user.ask("theme-light")?;
     // a second click on the button closes its menu
-    user.click_menu(0, "Ai")?;
+    user.click_menu(0, "Plus")?;
     user.click(main_tool(0))?;
-    user.until("the AI menu closed by its button", |state| {
-        main_box(state)["menu"].is_null()
-    })?;
+    user.until("\"+\" closed by its button", |state| main_box(state)["menu"].is_null())?;
     user.type_text(" ok")?;
     user.until("the keyboard after the menu", |state| {
         text_of(main_box(state)) == "a draft for the bar ok"
@@ -951,50 +971,55 @@ fn bar_and_ai_menu(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// The AI menu's rows by the keys: Correct, its "Stop correcting", the proposal taken, the language, Translate.
-fn ai_menu_rows_act(user: &mut User<'_>) -> SandboxResult {
+/// The AI rows of "+" by the keys: Correct, its "Stop correcting", the proposal taken, the language, Translate.
+fn ai_rows_act(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
     user.ask("language English")?;
     user.type_text("hello teh team")?;
-    user.click_menu(0, "Ai")?;
+    user.click_menu(0, "Plus")?;
     user.tool.hold(true)?;
     user.press("down")?;
-    user.settled_shot("ai-menu-first-row")?;
+    user.settled_shot("plus-first-row")?;
     user.press("enter")?;
     let state = user.until("Correct by its row", |state| main_box(state)["correction"] == "Running")?;
     ensure(main_box(&state)["menu"].is_null(), || {
         format!("the menu stays open: {state}")
     })?;
-    user.click_menu(0, "Ai")?;
-    user.settled_shot("ai-menu-stop-correcting")?;
+    user.click_menu(0, "Plus")?;
+    user.settled_shot("plus-stop-correcting")?;
     user.press("escape")?;
     user.tool.hold(false)?;
     user.until("the correction", |state| main_box(state)["correction"] == "Proposed")?;
     user.settled_shot("ai-correction-proposed")?;
-    user.click_menu(0, "Ai")?;
+    user.click_menu(0, "Plus")?;
     user.press("down")?;
     user.press("enter")?;
     user.press("enter")?;
     user.until("the correction taken", |state| {
         text_of(main_box(state)) == "hello the team"
     })?;
-    // Up from no row: the language row
-    user.click_menu(0, "Ai")?;
+    // Up from no row: Customize toolbar; Up again: the language row
+    user.click_menu(0, "Plus")?;
     user.press("up")?;
-    user.settled_shot("ai-menu-language-row")?;
+    user.press("up")?;
+    user.settled_shot("plus-language-row")?;
     user.press("enter")?;
     let state = user.until("the language menu", |state| main_box(state)["language_open"] == true)?;
     ensure(main_box(&state)["menu"].is_null(), || {
-        format!("the AI menu stays open: {state}")
+        format!("\"+\" stays open: {state}")
     })?;
     user.shots_in_both_themes("ai-language-menu")?;
     user.type_text("German")?;
     user.press("enter")?;
     user.until("German chosen", |state| state["language"] == "German")?;
+    let state = user.state()?;
+    ensure(state["reading"] == "English", || {
+        format!("the language messages are read in changed: {state}")
+    })?;
     user.press("escape")?;
     user.close_menus("chat")?;
-    user.click_menu(0, "Ai")?;
-    user.settled_shot("ai-menu-german")?;
+    user.click_menu(0, "Plus")?;
+    user.settled_shot("plus-german")?;
     user.press("down")?;
     user.press("down")?;
     user.press("enter")?;
@@ -1010,8 +1035,11 @@ fn ai_menu_rows_act(user: &mut User<'_>) -> SandboxResult {
 fn ai_keys_and_language(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
     let text = user.settings_text();
-    ensure(text.contains("message_translate_to = \"German\""), || {
+    ensure(text.contains("draft_translate_to = \"German\""), || {
         format!("the language is not saved: {text}")
+    })?;
+    ensure(text.contains("message_translate_to = \"English\""), || {
+        format!("the language messages are read in changed: {text}")
     })?;
     user.type_text("hello teh keys")?;
     user.tool.hold(true)?;
@@ -1027,8 +1055,8 @@ fn ai_keys_and_language(user: &mut User<'_>) -> SandboxResult {
     user.until("Translate by Ctrl+Shift+Y", |state| {
         main_box(state)["translation"] == "Running"
     })?;
-    user.click_menu(0, "Ai")?;
-    user.settled_shot("ai-menu-stop-translating")?;
+    user.click_menu(0, "Plus")?;
+    user.settled_shot("plus-stop-translating")?;
     user.press("escape")?;
     user.press("ctrl+shift+y")?;
     user.until("the translation stopped by its key", |state| {
@@ -1043,15 +1071,72 @@ fn ai_keys_and_language(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
+/// Correct and Translate shown from the list: their buttons sit after "+", Translate with its chevron, which opens the
+/// language menu; "+" has no AI rows then. Back into "+" from the list.
+fn ai_tools_on_the_bar(user: &mut User<'_>) -> SandboxResult {
+    user.main_chat()?;
+    user.type_text("hello teh bar")?;
+    open_list_on_attach(user)?;
+    user.settled_shot("customize-ai-in-plus")?;
+    user.click((LIST_X, LIST_CORRECT_Y))?;
+    user.until("Correct shown by its row", |state| shown_is(state, &["correct"]))?;
+    user.click((LIST_X, LIST_TRANSLATE_Y))?;
+    user.until("Translate shown by its row", |state| {
+        shown_is(state, &["correct", "translate"])
+    })?;
+    user.settled_shot("customize-ai-shown")?;
+    user.close_menus("chat")?;
+    user.shots_in_both_themes("bar-ai-shown")?;
+    // the chevron is the rightmost tool now: it opens the language menu
+    user.click(MAIN_CHEVRON)?;
+    user.until("the language menu by the chevron", |state| {
+        main_box(state)["language_open"] == true
+    })?;
+    user.shots_in_both_themes("bar-ai-language")?;
+    user.press("escape")?;
+    user.close_menus("chat")?;
+    // Correct's button, then Translate's
+    user.click(MAIN_CORRECT)?;
+    user.until("Correct by its button", |state| {
+        main_box(state)["correction"] == "Proposed"
+    })?;
+    // Translate drops the proposal and translates the draft as written
+    user.click(MAIN_TRANSLATE)?;
+    user.until("Translate by its button", |state| {
+        text_of(main_box(state)) == "hallo teh bar"
+    })?;
+    // "+" holds no AI row now: Down from no row is Customize toolbar
+    user.click((MAIN_TRANSLATE.0 - 2 * TOOL_STEP, MAIN_ROW_Y))?;
+    user.until("\"+\" with the AI tools shown", |state| {
+        main_box(state)["menu"] == "Plus"
+    })?;
+    user.settled_shot("plus-ai-shown")?;
+    user.press("down")?;
+    user.press("enter")?;
+    user.until("the list from \"+\"", |state| main_box(state)["customize"] == true)?;
+    user.close_menus("chat")?;
+    user.show_ai(&[])?;
+    user.ask("clear")?;
+    Ok(())
+}
+
+/// The main box's Translate, its chevron and Correct while both show at 1280 px: the chevron is the rightmost tool, 16
+/// px wide; Translate is just left of it, Correct a tool's step further.
+const MAIN_CHEVRON: (i32, i32) = (MAIN_LAST_TOOL_X + 6, MAIN_ROW_Y);
+const MAIN_TRANSLATE: (i32, i32) = (MAIN_LAST_TOOL_X - 16, MAIN_ROW_Y);
+const MAIN_CORRECT: (i32, i32) = (MAIN_LAST_TOOL_X - 16 - TOOL_STEP, MAIN_ROW_Y);
+
 /// Where the customize list's rows are after a right click on the main box's Attach at 1280 px: the list opens over the
 /// toolbar's buttons and to the right of the pointer, moved left to stay in the window.
 const LIST_X: i32 = 1110;
-const LIST_EMOJI_Y: i32 = 576;
+const LIST_EMOJI_Y: i32 = 548;
+const LIST_CORRECT_Y: i32 = 632;
+const LIST_TRANSLATE_Y: i32 = 660;
 const LIST_PLUS_Y: i32 = 688;
 const LIST_SEND_Y: i32 = 716;
 
 fn open_list_on_attach(user: &mut User<'_>) -> SandboxResult {
-    user.right_click(main_tool(3))?;
+    user.right_click(main_tool(2))?;
     user.until("the list by a right click", |state| {
         main_box(state)["customize"] == true
     })?;
@@ -1094,14 +1179,14 @@ fn right_click_list(user: &mut User<'_>) -> SandboxResult {
     open_list_on_attach(user)?;
     user.click((LIST_X, LIST_EMOJI_Y))?;
     user.until("Emoji shown again by a click", |state| hidden(state).is_empty())?;
-    // the keys: Format's row, five rows over the foot's AI tools
-    user.take_row_by_up(5)?;
+    // the keys: Format's row, six rows over the foot's Translate
+    user.take_row_by_up(6)?;
     let state = user.until("Format hidden by its row", |state| hidden_is(state, &["format"]))?;
     ensure(main_box(&state)["customize"] == true, || {
         format!("the list closed: {state}")
     })?;
     user.settled_shot("customize-format-off")?;
-    user.take_row_by_up(5)?;
+    user.take_row_by_up(6)?;
     user.until("Format shown again by its row", |state| hidden(state).is_empty())?;
     user.press("escape")?;
     let state = user.until("the list closed", |state| main_box(state)["customize"] == false)?;
@@ -1141,7 +1226,7 @@ fn list_down_selects_format(user: &mut User<'_>) -> SandboxResult {
     user.close_menus("chat")?;
     open_list_on_attach(user)?;
     user.park()?;
-    // Up selects AI tools, the last row; Down from it goes round
+    // Up selects Translate, the last row; Down from it goes round
     user.press("up")?;
     user.press("down")?;
     user.settled_shot("customize-down-from-last")?;
@@ -1155,22 +1240,23 @@ fn list_down_selects_format(user: &mut User<'_>) -> SandboxResult {
     round.map(|_| ())
 }
 
-/// Send and "+" cannot hide: the keys pass over their rows; Up from no row is the AI row, the last that can be taken.
+/// Send and "+" cannot hide: the keys pass over their rows; Up from no row is Translate, the last that can be taken.
 fn send_and_plus_stay(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
-    user.right_click(main_tool(2))?;
+    user.right_click(main_tool(1))?;
     user.until("the list", |state| main_box(state)["customize"] == true)?;
     user.press("up")?;
     user.settled_shot("customize-up-last")?;
     user.press("enter")?;
-    let state = user.until("a button hidden by the last row", |state| !hidden(state).is_empty())?;
-    ensure(hidden_is(&state, &["ai"]), || {
-        format!("the last row that can be taken is not AI tools: {state}")
+    let state = user.until("a button shown by the last row", |state| !shown(state).is_empty())?;
+    ensure(shown_is(&state, &["translate"]) && hidden(&state).is_empty(), || {
+        format!("the last row that can be taken is not Translate: {state}")
     })?;
-    user.settled_shot("customize-ai-off")?;
+    user.settled_shot("customize-translate-on")?;
     user.press("escape")?;
     user.close_menus("chat")?;
-    let state = user.hide(&["format", "emoji", "attach", "loop", "ai"])?;
+    user.show_ai(&[])?;
+    let state = user.hide(&["format", "emoji", "attach", "loop"])?;
     ensure(main_box(&state)["stacked"] == false, || format!("stacked: {state}"))?;
     user.shots_in_both_themes("all-hidden")?;
     // "+" is now the rightmost tool
@@ -1189,14 +1275,14 @@ fn hidden_in_plus(user: &mut User<'_>) -> SandboxResult {
     user.shots_in_both_themes("hidden-format-emoji")?;
     for theme in ["light", "dark"] {
         user.ask(&format!("theme-{theme}"))?;
-        user.click_menu(1, "Plus")?;
+        user.click_menu(0, "Plus")?;
         user.settled_shot(&format!("plus-format-emoji-{theme}"))?;
         user.press("escape")?;
         user.close_menus("chat")?;
     }
     user.ask("theme-light")?;
     // Down, Enter: Format's row shows the formatting options
-    user.click_menu(1, "Plus")?;
+    user.click_menu(0, "Plus")?;
     user.press("down")?;
     user.press("enter")?;
     user.until("formatting by its row in +", |state| {
@@ -1209,7 +1295,7 @@ fn hidden_in_plus(user: &mut User<'_>) -> SandboxResult {
     })?;
     // Down, Down, Enter: Emoji's row opens the picker
     user.close_menus("chat")?;
-    user.click_menu(1, "Plus")?;
+    user.click_menu(0, "Plus")?;
     user.press("down")?;
     user.press("down")?;
     user.press("enter")?;
@@ -1233,9 +1319,9 @@ fn hidden_in_plus(user: &mut User<'_>) -> SandboxResult {
     ai_rows_in_plus(user)
 }
 
-/// The AI button hidden too: its three rows in "+" work; "+" is then the rightmost tool.
+/// The AI tools' three rows in "+" under Teams' own hidden ones work.
 fn ai_rows_in_plus(user: &mut User<'_>) -> SandboxResult {
-    user.hide(&["format", "emoji", "ai"])?;
+    user.hide(&["format", "emoji"])?;
     user.type_text("hello teh plus")?;
     user.click_menu(0, "Plus")?;
     user.shots_in_both_themes("plus-ai-hidden")?;
@@ -1275,25 +1361,25 @@ fn ai_rows_in_plus(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// "Customize toolbar" in "+" opens the list by "+"; with nothing hidden, "+" holds that row alone.
+/// "Customize toolbar" in "+" opens the list by "+"; with nothing of Teams hidden, "+" holds the AI rows and that row.
 fn customize_from_plus(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
     user.reopened_shots("plus-nothing-hidden", "chat", |user| {
-        user.click_menu(1, "Plus").map(|_| ())
+        user.click_menu(0, "Plus").map(|_| ())
     })?;
     user.reopened_shots("customize-from-plus", "chat", |user| {
-        user.click_menu(1, "Plus")?;
+        user.click_menu(0, "Plus")?;
         user.press("up")?;
         user.press("enter")?;
         let state = user.until("the list from +", |state| main_box(state)["customize"] == true)?;
         ensure(main_box(&state)["menu"].is_null(), || format!("+ stays open: {state}"))
     })?;
-    // with nothing hidden, Customize is the only row of "+": Down selects it
-    user.click_menu(1, "Plus")?;
-    user.press("down")?;
+    // Customize toolbar is the last row of "+": Up selects it
+    user.click_menu(0, "Plus")?;
+    user.press("up")?;
     user.press("enter")?;
-    user.until("the list from + by Down", |state| main_box(state)["customize"] == true)?;
-    user.take_row_by_up(3)?;
+    user.until("the list from + by Up", |state| main_box(state)["customize"] == true)?;
+    user.take_row_by_up(4)?;
     user.until("Attach hidden from the list of +", |state| {
         hidden_is(state, &["attach"])
     })?;
@@ -1302,7 +1388,7 @@ fn customize_from_plus(user: &mut User<'_>) -> SandboxResult {
     ensure(main_box(&state)["focused"] == true, || {
         format!("no keyboard after the list: {state}")
     })?;
-    user.click_menu(1, "Plus")?;
+    user.click_menu(0, "Plus")?;
     user.settled_shot("plus-attach-hidden")?;
     user.press("escape")?;
     user.close_menus("chat")?;
@@ -1352,7 +1438,7 @@ fn every_box(user: &mut User<'_>) -> SandboxResult {
     user.press("up")?;
     user.until("the edit", |state| main_box(state)["mode"] == "edit")?;
     user.shots_in_both_themes("edit-mode")?;
-    user.click_menu(1, "Plus")?;
+    user.click_menu(0, "Plus")?;
     user.settled_shot("edit-mode-plus")?;
     user.press("escape")?;
     user.close_menus("chat")?;
@@ -1398,7 +1484,7 @@ fn call_chat_box(user: &mut User<'_>) -> SandboxResult {
     user.right_click(CALL_ROW_GAP)?;
     user.until("the list in the call", |state| call_box(state)["customize"] == true)?;
     user.settled_shot("call-chat-customize")?;
-    user.take_row_by_up(5)?;
+    user.take_row_by_up(6)?;
     user.until("Format shown again from the call", |state| hidden(state).is_empty())?;
     user.settled_shot("call-chat-format-shown")?;
     user.press("escape")?;
@@ -1459,8 +1545,8 @@ fn narrow_font_dark(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// "Use AI features" off: no AI button, no AI rows in "+", the list or Settings; on again: all back; a hidden AI button
-/// stays hidden.
+/// "Use AI features" off: no AI tools on the bar, no AI rows in "+", the list or Settings; on again: all back; an AI
+/// tool shown while off shows on the bar after on.
 fn ai_off_and_on(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
     user.hide(&["format"])?;
@@ -1491,17 +1577,18 @@ fn ai_off_and_on(user: &mut User<'_>) -> SandboxResult {
     user.input.scroll(800, 450, 10)?;
     thread::sleep(SETTLE);
     user.settled_shot("ai-off-settings")?;
-    // the AI hidden while off stays hidden after on; the AI rows are back in "+"
-    user.ask("hide ai")?;
+    // Correct shown while off shows after on; Translate's rows are back in "+"
+    user.ask("show-ai correct")?;
     user.ask("ai on")?;
-    user.until("AI on", |state| state["ai"] == true && hidden_is(state, &["ai"]))?;
+    user.until("AI on", |state| state["ai"] == true && shown_is(state, &["correct"]))?;
     user.settled_shot("ai-on-settings")?;
     user.main_chat()?;
-    user.settled_shot("ai-on-hidden-bar")?;
-    user.click_menu(0, "Plus")?;
-    user.settled_shot("ai-on-hidden-plus")?;
+    user.settled_shot("ai-on-correct-bar")?;
+    user.click_menu(1, "Plus")?;
+    user.settled_shot("ai-on-translate-plus")?;
     user.press("escape")?;
     user.close_menus("chat")?;
+    user.show_ai(&[])?;
     user.hide(&[])?;
     user.settled_shot("ai-on-bar")?;
     Ok(())
@@ -1511,15 +1598,15 @@ fn ai_off_and_on(user: &mut User<'_>) -> SandboxResult {
 fn font_key_with_menu_open(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
     let mut faults = Vec::new();
-    for (what, open) in [("the AI menu", 0), ("the customize list", 1)] {
+    for (what, open) in [("\"+\"", 0), ("the customize list", 1)] {
         if open == 0 {
-            user.click_menu(0, "Ai")?;
+            user.click_menu(0, "Plus")?;
         } else {
             open_list_on_attach(user)?;
         }
         user.press("ctrl+=")?;
         thread::sleep(SETTLE);
-        user.settled_shot(&format!("font-key-{}", if open == 0 { "ai" } else { "list" }))?;
+        user.settled_shot(&format!("font-key-{}", if open == 0 { "plus" } else { "list" }))?;
         user.press("escape")?;
         thread::sleep(SETTLE);
         let state = user.state()?;
@@ -1537,9 +1624,9 @@ fn font_key_with_menu_open(user: &mut User<'_>) -> SandboxResult {
 /// Hides Emoji and Loop by the list, for the restart.
 fn hide_for_restart(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
-    user.right_click(main_tool(2))?;
+    user.right_click(main_tool(1))?;
     user.until("the list", |state| main_box(state)["customize"] == true)?;
-    user.take_row_by_up(4)?;
+    user.take_row_by_up(5)?;
     user.until("Emoji hidden", |state| hidden_is(state, &["emoji"]))?;
     // Emoji's row stays selected: Loop is two rows below it
     for key in ["down", "down", "enter"] {
@@ -1559,7 +1646,7 @@ fn kept_after_restart(user: &mut User<'_>) -> SandboxResult {
     ensure(hidden_is(&state, &["emoji", "loop"]), || format!("not kept: {state}"))?;
     ensure(state["language"] == "German", || format!("the language: {state}"))?;
     user.shots_in_both_themes("after-restart")?;
-    user.click_menu(1, "Plus")?;
+    user.click_menu(0, "Plus")?;
     user.settled_shot("after-restart-plus")?;
     user.press("down")?;
     user.press("enter")?;
@@ -2012,14 +2099,18 @@ fn on_shell_with(shell: &Entity<Shell>, other: &str, window: &mut Window, cx: &m
         shell.update(cx, |shell, cx| shell.open_chat(id.to_owned(), window, cx));
         "ok".to_owned()
     } else if let Some(names) = other.strip_prefix("hide") {
-        let hidden: Vec<ComposeTool> = names
-            .trim()
-            .split(',')
-            .filter_map(|name| ComposeTool::ALL.into_iter().find(|tool| tool.key() == name.trim()))
-            .collect();
+        let hidden = tools_named(names);
         change_settings(shell, cx, |settings| {
-            for tool in ComposeTool::ALL {
+            for tool in ComposeTool::ALL.into_iter().filter(|tool| !tool.uses_ai()) {
                 settings.show_compose_tool(tool, !hidden.contains(&tool));
+            }
+        });
+        "ok".to_owned()
+    } else if let Some(names) = other.strip_prefix("show-ai") {
+        let shown = tools_named(names);
+        change_settings(shell, cx, |settings| {
+            for tool in ComposeTool::ALL.into_iter().filter(|tool| tool.uses_ai()) {
+                settings.show_compose_tool(tool, shown.contains(&tool));
             }
         });
         "ok".to_owned()
@@ -2031,7 +2122,7 @@ fn on_shell_with(shell: &Entity<Shell>, other: &str, window: &mut Window, cx: &m
         box_menu(shell, rest, window, cx)
     } else if let Some(language) = other.strip_prefix("language ") {
         let language = language.to_owned();
-        change_settings(shell, cx, |settings| settings.message_translate_to = language);
+        change_settings(shell, cx, |settings| settings.draft_translate_to = language);
         "ok".to_owned()
     } else if let Some(size) = other.strip_prefix("font ") {
         let Ok(size) = size.parse::<u16>() else {
@@ -2042,6 +2133,15 @@ fn on_shell_with(shell: &Entity<Shell>, other: &str, window: &mut Window, cx: &m
     } else {
         format!("unknown {other}")
     }
+}
+
+/// The buttons named in a comma list.
+fn tools_named(names: &str) -> Vec<ComposeTool> {
+    names
+        .trim()
+        .split(',')
+        .filter_map(|name| ComposeTool::ALL.into_iter().find(|tool| tool.key() == name.trim()))
+        .collect()
 }
 
 /// The main window's chat: its last message quoted in a reply, or the format bar's colour menu opened or closed.
@@ -2068,7 +2168,6 @@ fn change_settings(shell: &Entity<Shell>, cx: &mut App, change: impl FnOnce(&mut
 fn menu_kind(name: &str) -> Option<MenuKind> {
     match name {
         "plus" => Some(MenuKind::Plus),
-        "ai" => Some(MenuKind::Ai),
         "more" => Some(MenuKind::More),
         _ => None,
     }
@@ -2157,7 +2256,16 @@ fn state_of(shell: &Entity<Shell>, window: &Window, cx: &App) -> Value {
         "post": post,
         "thread": thread,
         "prejoin": calls.prejoin().is_some(),
-        "language": shell_ref.settings().read(cx).settings().message_translate_to,
+        "language": shell_ref.settings().read(cx).settings().draft_translate_to,
+        "reading": shell_ref.settings().read(cx).settings().message_translate_to,
+        "shown": shell_ref
+            .settings()
+            .read(cx)
+            .settings()
+            .compose_shown
+            .iter()
+            .map(|tool| tool.key())
+            .collect::<Vec<_>>(),
         "hidden": shell_ref
             .settings()
             .read(cx)

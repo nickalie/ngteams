@@ -1,10 +1,10 @@
 //! The box's menus of tools ([`fit`]):
 //!
-//! - **The AI button** ("AI tools"): Correct, Translate and the translation language, in one menu. Each keeps its key
-//!   (Ctrl+Shift+G, Ctrl+Shift+Y), shown in its row; the language row opens the language menu by the button.
-//! - **"+"** (Actions and apps): the actions of the tools the user hid, each with its icon and key, then "Customize
-//!   toolbar". With apps offered, the same rows are over the apps in its flyout, as Teams lists its own actions there,
-//!   and "Customize toolbar" is at the flyout's foot.
+//! - **"+"** (Actions and apps): the actions of the tools that do not show on the toolbar, each with its icon and key:
+//!   Teams' own tools first, then the AI tools (Correct, Translate and the translation language, which opens the
+//!   language menu by "+"), then "Customize toolbar". The AI tools are there until the user shows them. With apps
+//!   offered, the same rows are over the apps in its flyout, as Teams lists its own actions there, and "Customize
+//!   toolbar" is at the flyout's foot.
 //! - **"More options"**, on a stacked box's row: the tools that do not fit; with "+" in it, the hidden tools too.
 //! - **The customize list** ([`super::customize`]): a right click on the toolbar, or "Customize toolbar", lists the
 //!   buttons that can hide.
@@ -29,8 +29,6 @@ use crate::draft_translate::menu;
 use crate::editor;
 use crate::icons::{Glyph, icon_button, selected_by};
 
-/// The AI button's tooltip and name.
-pub const AI_TOOLS: &str = "AI tools";
 /// The row that opens the customize list.
 pub const CUSTOMIZE: &str = "Customize toolbar";
 
@@ -39,8 +37,6 @@ pub const CUSTOMIZE: &str = "Customize toolbar";
 pub enum MenuKind {
     /// "More options" of a stacked box.
     More,
-    /// The AI button's menu.
-    Ai,
     /// "+" while it offers no apps: the hidden tools and "Customize toolbar".
     Plus,
 }
@@ -51,7 +47,6 @@ impl MenuKind {
     pub fn selector(self) -> &'static str {
         match self {
             Self::More => "compose-more",
-            Self::Ai => "compose-ai",
             Self::Plus => "compose-apps",
         }
     }
@@ -59,7 +54,6 @@ impl MenuKind {
     fn popover(self) -> &'static str {
         match self {
             Self::More => "compose-more-popover",
-            Self::Ai => "compose-ai-popover",
             Self::Plus => "compose-apps-popover",
         }
     }
@@ -67,7 +61,6 @@ impl MenuKind {
     fn menu_selector(self) -> &'static str {
         match self {
             Self::More => "compose-more-menu",
-            Self::Ai => "compose-ai-menu",
             Self::Plus => "compose-apps-menu",
         }
     }
@@ -75,7 +68,6 @@ impl MenuKind {
     fn face(self) -> (Glyph, &'static str) {
         match self {
             Self::More => (Glyph::MORE, "More options"),
-            Self::Ai => (Glyph::SPARKLES, AI_TOOLS),
             Self::Plus => (Glyph::PLUS, ACTIONS_AND_APPS),
         }
     }
@@ -135,6 +127,11 @@ impl Item {
         }
     }
 
+    /// Whether it is an AI tool's row: the AI tools' rows stand apart from Teams' own.
+    fn uses_ai(self) -> bool {
+        matches!(self, Self::Correct | Self::Translate | Self::Language)
+    }
+
     pub(crate) fn action(self) -> Option<&'static dyn gpui::Action> {
         match self {
             Self::Format => Some(&editor::ToggleExpanded),
@@ -156,7 +153,8 @@ fn items_of(tool: Tool, apps: bool) -> Vec<Item> {
         Tool::Loop => vec![Item::Loop],
         Tool::Apps if apps => vec![Item::Apps],
         Tool::Apps => Vec::new(),
-        Tool::Ai => vec![Item::Correct, Item::Translate, Item::Language],
+        Tool::Correct => vec![Item::Correct],
+        Tool::Translate => vec![Item::Translate, Item::Language],
     }
 }
 
@@ -208,7 +206,6 @@ impl Compose {
         };
         let mut items = Vec::new();
         match kind {
-            MenuKind::Ai => items.extend(items_of(Tool::Ai, apps)),
             MenuKind::Plus => hidden(&mut items),
             MenuKind::More => {
                 items.extend(fit.more.iter().flat_map(|tool| items_of(*tool, apps)));
@@ -251,7 +248,7 @@ impl Compose {
                 (label, !busy && !can, busy)
             }
             Item::Language => {
-                let language = self.settings.read(cx).settings().message_translate_to.clone();
+                let language = self.settings.read(cx).settings().draft_translate_to.clone();
                 (format!("Translation language: {language}").into(), false, false)
             }
             Item::Customize => (CUSTOMIZE.into(), false, self.customize.is_some()),
@@ -305,17 +302,17 @@ impl Compose {
         let text = self.editor.read(cx).focus.clone();
         let built = rows.clone();
         let menu = PopupMenu::build(window, cx, move |menu, window, _| {
+            let mut before: Option<Item> = None;
             built
                 .iter()
                 .fold(menu.min_w(px(260.0)).action_context(text.clone()), |menu, row| {
                     let compose = compose.clone();
                     let item = row.item;
-                    // the hidden tools' rows stand apart from the list's own rows and from Customize
-                    let menu = if item == Item::Customize {
-                        menu.separator()
-                    } else {
-                        menu
-                    };
+                    // Customize, and the AI tools' rows, stand apart from the rows before them
+                    let apart =
+                        before.is_some_and(|before| item == Item::Customize || before.uses_ai() != item.uses_ai());
+                    before = Some(item);
+                    let menu = if apart { menu.separator() } else { menu };
                     menu.item(menu_row(row, &text, window).on_click(move |_, window, cx| {
                         let _ = compose.update(cx, |this, cx| this.take(item, window, cx));
                     }))
@@ -384,17 +381,11 @@ impl Compose {
         self.menu.as_ref().map(|menu| menu.kind)
     }
 
-    /// Whether the AI button is lit: its menu is open, or a correction or a translation of the draft runs or waits.
-    fn ai_lit(&self, cx: &App) -> bool {
-        self.menu_open() == Some(MenuKind::Ai) || self.correct_state(cx).1 || self.translate_state(cx).1
-    }
-
     /// The button of the menu `kind` on the box's row: a menu of its rows, each with its icon, its key and its state.
     /// Escape closes it and gives the keyboard back to the text. What a row of it opens (the language menu, the emoji
     /// picker, apps) opens by this button.
     pub(super) fn menu_button(&self, kind: MenuKind, fit: &Fit, cx: &mut Context<Self>) -> AnyElement {
         let open = self.menu_open() == Some(kind);
-        let lit = if kind == MenuKind::Ai { self.ai_lit(cx) } else { open };
         let menu = self
             .menu
             .as_ref()
@@ -406,7 +397,7 @@ impl Compose {
         let popover = Popover::new(kind.popover())
             .anchor(kind.anchor())
             .appearance(false)
-            .trigger(button.selected(lit))
+            .trigger(button.selected(open))
             .open(open)
             .on_open_change(move |open, window, cx| {
                 let open = *open;
@@ -442,8 +433,9 @@ impl Compose {
         if plus_home(fit) == kind {
             anchors.push(measured(&self.customize_at));
         }
-        let language = kind == MenuKind::Ai || anchor_home(fit, Tool::Ai) == Some(kind);
-        anchors.extend(language.then(|| self.hidden_language_anchor(kind, cx)).flatten());
+        if anchor_home(fit, Tool::Translate) == Some(kind) {
+            anchors.extend(self.hidden_language_anchor(kind, cx));
+        }
         anchors
     }
 

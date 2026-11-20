@@ -1,5 +1,6 @@
 //! The Appearance page's "Message box toolbar" group: a switch for each toolbar button that can hide, the same list as
 //! the box's customize list ([`crate::compose::SHOW_IN_TOOLBAR`]). A hidden button's action stays in the box's "+".
+//! The AI tools (Correct, Translate) are off until the user turns them on.
 
 use gpui::{AnyElement, App, IntoElement as _, SharedString};
 use gpui_component::switch::Switch;
@@ -16,18 +17,19 @@ fn description(tool: ComposeTool) -> &'static str {
         ComposeTool::Emoji => "Put an emoji in your message.",
         ComposeTool::Attach => "Send files from this computer in a chat.",
         ComposeTool::Loop => "Loop components, which this app does not have yet.",
-        ComposeTool::Ai => "Correct or translate your message with your AI tool.",
+        ComposeTool::Correct => "Correct the spelling and style of your message with your AI tool.",
+        ComposeTool::Translate => "Translate your message with your AI tool, and pick its language.",
     }
 }
 
 impl SettingsView {
-    /// The "Message box toolbar" group: a row for each button that can hide (`compose-tool-<key>`), the AI button's
-    /// only while the AI features are on.
+    /// The "Message box toolbar" group: a row for each button that can show or hide (`compose-tool-<key>`), the AI
+    /// tools' only while the AI features are on. A button that does not show has its action in "+".
     pub(super) fn message_box(&self, settings: &Settings, palette: Palette, cx: &App) -> AnyElement {
         let uses_ai = self.model.read(cx).uses_ai();
         let rows = ComposeTool::ALL
             .into_iter()
-            .filter(|tool| *tool != ComposeTool::Ai || uses_ai)
+            .filter(|tool| !tool.uses_ai() || uses_ai)
             .map(|tool| {
                 row(
                     tool.label(),

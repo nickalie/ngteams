@@ -1,9 +1,11 @@
 //! The message box's toolbar, drawn on the real platform in the UI sandbox (`harness = false`: GPUI runs on the process's
 //! main thread), for its screenshots: the app's window over the fake engine (`common`), a chat with a made-up draft in
-//! its box. Each surface — the bar with its one AI button, the AI menu, the language menu by it, the customize list
-//! from "+" and from a right click on the bar (its first row selected by Down), "+" with hidden buttons, the settings' list, a narrow window's stacked box with its More options and its "+", and a
-//! large font — runs the test again inside the sandbox in Teams Light and Teams Dark; the parent screenshots each window
-//! into `target/ui-shots/compose-toolbar-<surface>-<theme>.png`. No AI tool runs.
+//! its box. Each surface — the bar with no AI button, "+" with the AI tools' rows, the bar with Correct and Translate
+//! shown, the language menu by Translate's chevron, the customize list from "+" and from a right click on the bar (its
+//! first row selected by Down), "+" with hidden buttons, the settings' list, a narrow window's stacked box with the AI
+//! tools in its More options and its "+", and a large font — runs the test again inside the sandbox in Teams Light and
+//! Teams Dark; the parent screenshots each window into `target/ui-shots/compose-toolbar-<surface>-<theme>.png`. No AI
+//! tool runs.
 //!
 //! Without weston 15, niri or `dbus-daemon` it says so and passes, unless `GPUI_SMOKE_REQUIRE=1`.
 
@@ -51,9 +53,10 @@ const WAIT: Duration = Duration::from_secs(20);
 /// Frames the window presents before each step, and before the child says `ready`.
 const FRAMES: usize = 30;
 /// The surfaces shot in a wide window.
-const WIDE: [&str; 8] = [
+const WIDE: [&str; 9] = [
     "bar",
-    "ai-menu",
+    "ai-plus",
+    "ai-shown",
     "ai-language",
     "customize",
     "customize-click",
@@ -220,6 +223,14 @@ fn child(mode: &str) -> SandboxResult {
     Ok(())
 }
 
+/// The AI tools `surface` shows on the bar.
+fn shown_in(surface: &str) -> Vec<ComposeTool> {
+    match surface {
+        "ai-shown" | "ai-language" | "narrow" | "narrow-more" => vec![ComposeTool::Correct, ComposeTool::Translate],
+        _ => Vec::new(),
+    }
+}
+
 /// The buttons `surface` hides.
 fn hidden_in(surface: &str) -> Vec<ComposeTool> {
     match surface {
@@ -252,8 +263,9 @@ fn open(theme: &'static str, surface: String, cx: &mut App) -> gpui::Result<()> 
             ..Appearance::default()
         },
         selected_chat: Some(AB.to_owned()),
-        message_translate_to: "German".to_owned(),
+        draft_translate_to: "German".to_owned(),
         compose_hidden: hidden_in(&surface),
+        compose_shown: shown_in(&surface),
         ai_features: Some(true),
         ..Settings::default()
     };
@@ -316,11 +328,12 @@ fn show(shell: &Entity<Shell>, surface: &str, window: &mut Window, cx: &mut App)
         let surface = surface.to_owned();
         move |window, cx| {
             compose.update(cx, |compose, cx| match surface.as_str() {
-                "ai-menu" | "large-font" => compose.open_menu(MenuKind::Ai, window, cx),
                 "ai-language" => compose.open_language_menu(window, cx),
                 "customize" => compose.customize_toolbar(window, cx),
                 "customize-click" => right_click_list(compose, window, cx),
-                "hidden" | "narrow-hidden" => compose.open_menu(MenuKind::Plus, window, cx),
+                "ai-plus" | "large-font" | "hidden" | "narrow-hidden" => {
+                    compose.open_menu(MenuKind::Plus, window, cx);
+                }
                 "narrow-more" => compose.open_more(window, cx),
                 _ => {}
             });

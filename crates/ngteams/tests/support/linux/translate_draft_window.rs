@@ -11,13 +11,13 @@
 //!
 //! The child opens views where a user's click on a list row would (a chat, the team's channel, a post's thread) and
 //! answers the parent's questions about the boxes through a file in the sandbox dir; everything else comes from the
-//! sandbox's virtual pointer and keyboard. Buttons are found on the screen: Send's lit disc, the AI button left of it
-//! by the pointer resting on it (a ghost button's hover), the AI menu's rows over it, the line over the box by its dark
-//! text, a menu's row by the keys' highlight, the settings' rows from their selected segment.
+//! sandbox's virtual pointer and keyboard. Buttons are found on the screen: Send's lit disc, "+" left of it by the
+//! pointer resting on it (a ghost button's hover), the AI tools' rows of its menu over it, the line over the box by
+//! its dark text, a menu's row by the keys' highlight, the settings' rows from their selected segment.
 //!
-//! - **The language menu**: the AI menu's language row opens it with the language chosen first; typing filters it,
+//! - **The language menu**: the language row of "+" opens it with the language chosen first; typing filters it,
 //!   Enter or a click picks one, any other language can be typed and is offered as "Use …"; Escape closes it.
-//! - **Translate** by the AI menu's row and by Ctrl+Shift+Y in a chat's box, a reply, an edit, the channel's post box,
+//! - **Translate** by its row in "+" and by Ctrl+Shift+Y in a chat's box, a reply, an edit, the channel's post box,
 //!   a thread's reply box and New message: the draft replaced in place, only the draft's words and the language sent,
 //!   Ctrl+Z bringing the draft back. Mentions, links, bold, emoji, line breaks and code stay as they were.
 //! - **Progress and cancel**: the line over the box while it runs; Cancel, Escape and the row again stop it, its
@@ -32,7 +32,7 @@
 //!   model's name typed under "Other model…" and the tool then started with it, and Codex chosen again (not
 //!   installed: said so in the box, "Install it").
 //! - **A narrow box**: the post box beside a thread keeps its placeholder on one line; the thread's narrow box shows
-//!   the AI button's tooltip, and its menu's language row opens the language menu.
+//!   the tooltip of "+", and its language row opens the language menu.
 //!
 //! Screenshots are kept under `target/ui-shots/translate-*.png`, in Teams Light and Dark.
 //!
@@ -379,20 +379,22 @@ impl Rect {
 #[derive(Clone, Copy, Debug)]
 struct Toolbar {
     send: Rect,
-    /// The AI button: its menu holds Correct, Translate and the language.
+    /// "+": its menu holds Correct, Translate and the language while the AI tools are not on the toolbar.
     ai: Rect,
 }
 
-/// The rows of the AI button's menu, top down: Correct, Translate, the language.
+/// The AI tools' rows of the menu of "+", top down: Correct, Translate, the language; "Customize toolbar" is under
+/// them, apart.
 const TRANSLATE_ROW: u32 = 1;
 const LANGUAGE_ROW: u32 = 2;
 
 impl Toolbar {
-    /// Where the AI menu's row `row` is: the menu opens over the button, its right edge at the button's, rows 28 px
-    /// high, the last one 33 px over the button's middle (measured on this sandbox's 1280 × 800 screen).
+    /// Where the AI tools' row `row` is: the menu opens over the button, its right edge at the button's, rows 28 px
+    /// high, "Customize toolbar" the last one, 33 px over the button's middle, and 36 px under the language row (a
+    /// line between them) (measured on this sandbox's 1280 × 800 screen).
     fn row(self, row: u32) -> (u32, u32) {
         let (x, y) = self.ai.center();
-        (x - 150, y - 33 - 28 * (LANGUAGE_ROW - row))
+        (x - 150, y - 33 - 36 - 28 * (LANGUAGE_ROW - row))
     }
 
     /// The row the line over the box is drawn on, and the right end of the box.
@@ -602,8 +604,8 @@ impl<'a> User<'a> {
         }))
     }
 
-    /// The controls of the box in the columns `pane`, found on the screen: Send's lit disc, and the AI button just
-    /// left of the divider by it.
+    /// The controls of the box in the columns `pane`, found on the screen: Send's lit disc, and "+" just left of the
+    /// divider by it.
     fn toolbar(&mut self, pane: Range<u32>) -> SandboxResult<Toolbar> {
         self.park()?;
         thread::sleep(SETTLE);
@@ -616,7 +618,7 @@ impl<'a> User<'a> {
             x1: send.x0,
             y1: row + 15,
         };
-        // the AI button ends a divider's width left of Send
+        // "+" ends a divider's width left of Send
         let mut ai = None;
         for _ in 0..3 {
             let found = self.hovered((send.x0 - 26, row), band)?;
@@ -626,13 +628,13 @@ impl<'a> User<'a> {
             if ai.is_some() {
                 break;
             }
-            say(&format!("note: the AI button probe left of {send:?} found {found:?}"));
+            say(&format!("note: the \"+\" probe left of {send:?} found {found:?}"));
         }
-        let ai = ai.ok_or_else(|| format!("no AI button left of Send {send:?}"))?;
+        let ai = ai.ok_or_else(|| format!("no \"+\" left of Send {send:?}"))?;
         Ok(Toolbar { send, ai })
     }
 
-    /// Opens the AI button's menu, then clicks its row `row`.
+    /// Opens the menu of "+", then clicks its AI tools' row `row`.
     fn ai_row(&mut self, bar: Toolbar, row: u32) -> SandboxResult {
         self.click(bar.ai.center())?;
         self.park()?;
@@ -968,7 +970,7 @@ fn first_run(user: &mut User) -> SandboxResult {
     new_message(user)
 }
 
-/// The AI menu's language row opens the language menu.
+/// The language row of "+" opens the language menu.
 fn open_menu(user: &mut User, bar: Toolbar) -> SandboxResult {
     ai_row_until(user, bar, LANGUAGE_ROW, "the language menu opens", |state| {
         state["menu"]["open"] == true
@@ -1011,7 +1013,7 @@ fn tip_shown(user: &mut User, button: Rect, name: &str) -> SandboxResult {
     Ok(())
 }
 
-/// The AI menu's row `row` taken until `wanted`, at most three times.
+/// The row `row` of "+" taken until `wanted`, at most three times.
 fn ai_row_until(user: &mut User, bar: Toolbar, row: u32, what: &str, wanted: impl Fn(&Value) -> bool) -> SandboxResult {
     for attempt in 0..3 {
         user.ai_row(bar, row)?;
@@ -1027,10 +1029,10 @@ fn ai_row_until(user: &mut User, bar: Toolbar, row: u32, what: &str, wanted: imp
         }
         user.shot(&format!("translate-missed-row-{}.png", user.asked))?;
     }
-    Err(format!("{what}: three tries of the AI menu's row {row} didn't").into())
+    Err(format!("{what}: three tries of the row {row} of \"+\" didn't").into())
 }
 
-/// The AI menu's language row opens the menu with the language chosen first; a search picked by Enter; a language
+/// The language row of "+" opens the menu with the language chosen first; a search picked by Enter; a language
 /// typed; Escape; a row clicked.
 fn the_language_menu(user: &mut User) -> SandboxResult {
     let state = user.until("the a–b chat's box has the keys", |state| focused(state, "chat"))?;
@@ -1179,7 +1181,7 @@ fn progress_and_cancel(user: &mut User) -> SandboxResult {
     let stopped_by: [(&str, Stop); 3] = [
         ("Cancel", |user, bar| user.click_line(bar, 0)),
         ("Escape", |user, _| user.key(keys::ESC)),
-        ("the AI menu's row again", |user, bar| user.ai_row(bar, TRANSLATE_ROW)),
+        ("the row in \"+\" again", |user, bar| user.ai_row(bar, TRANSLATE_ROW)),
     ];
     for (at, (how, stop)) in stopped_by.into_iter().enumerate() {
         let asked = user.tool.received().len();
@@ -1305,7 +1307,7 @@ fn nothing_to_translate(user: &mut User) -> SandboxResult {
     clear_box(user, "chat")?;
     let asked = user.tool.received().len();
     user.press("ctrl+shift+y")?;
-    // the row is off: the click takes nothing, and the AI button closes its menu
+    // the row is off: the click takes nothing, and "+" closes its menu
     user.ai_row(bar, TRANSLATE_ROW)?;
     user.click(bar.ai.center())?;
     user.park()?;
@@ -1458,7 +1460,7 @@ fn the_channel_s_boxes(user: &mut User) -> SandboxResult {
     if bar.send.x0 < THREAD.start || bar.send.x0 < POSTS.end {
         return Err(format!("the thread's toolbar isn't in the thread: {bar:?}").into());
     }
-    // the narrow box's AI button names itself, and its language row opens the menu
+    // the narrow box's "+" names itself, and its language row opens the menu
     tip_shown(user, bar.ai, "thread-ai-tip")?;
     open_menu(user, bar)?;
     user.key(keys::ESC)?;
@@ -1467,7 +1469,7 @@ fn the_channel_s_boxes(user: &mut User) -> SandboxResult {
     })?;
     translates(user, "thread", None, (DRAFT, GERMAN))?;
     user.ai_row(bar, TRANSLATE_ROW)?;
-    user.until("the AI menu translates the thread's reply too", |state| {
+    user.until("the row in \"+\" translates the thread's reply too", |state| {
         status(state, "thread") == "idle" && user.tool.received().len() > 1
     })?;
     user.shots_in_both_themes("thread")?;
@@ -1497,7 +1499,7 @@ fn second_run(user: &mut User) -> SandboxResult {
         return Err(format!("the language wasn't kept across the restart: {state}").into());
     }
     let kept = fs::read_to_string(user.sandbox.path("settings.toml"))?;
-    if !kept.contains("message_translate_to = \"German\"") {
+    if !kept.contains("draft_translate_to = \"German\"") {
         return Err(format!("the settings file doesn't keep the language: {kept}").into());
     }
     no_tool_installed(user)?;
@@ -2078,7 +2080,7 @@ fn state_of(shell: &Entity<Shell>, window: &Window, cx: &App) -> Value {
         "replyable": replyable,
         "boxes": boxes,
         "menu": menu,
-        "language": settings.message_translate_to,
+        "language": settings.draft_translate_to,
         "tool": format!("{:?}", choice.tool),
         "model": format!("{:?}", choice.model),
         "claude_models": cx

@@ -7,8 +7,8 @@
 //! - **A group call** (b rings a in the a–b–c chat, a answers) and **a meeting** (a joins a made-up meeting from its
 //!   meeting chat): the Chat pane open, its box is stacked, More options holds the tools that do not fit, Send stays
 //!   on the row. Type, paste, send, a long message, its edit.
-//! - **More options**: each row does what its button does (Correct and Translate with a made-up `claude` on the app's
-//!   `PATH`, the language row), the keys work with the buttons in the menu, the check and "Stop …" show, Up, Down,
+//! - **More options**: each row does what its button does (Correct and Translate, which the user shows on the toolbar,
+//!   with a made-up `claude` on the app's `PATH`, the language row), the keys work with the buttons in the menu, the check and "Stop …" show, Up, Down,
 //!   Enter and Escape, the keyboard back in the text.
 //! - **A narrow window**: the main window resized from wide to narrow and back with a draft: the box changes both ways
 //!   and keeps the draft and the focus. A thread's pane and a channel's box. At a normal width nothing changes.
@@ -1723,8 +1723,13 @@ fn child() -> SandboxResult {
     let first = support::started(Alias::A, engine)?;
     let runner = support::runner(&dir)?;
     let settings = SettingsFile::new(dir.join("settings.toml"));
+    // the user shows the AI tools on the toolbar: a narrow box puts them in More options
     let opened = teams_ui::settings::Settings {
         selected_chat: Some(AB_CHAT.to_owned()),
+        compose_shown: vec![
+            teams_ui::settings::ComposeTool::Correct,
+            teams_ui::settings::ComposeTool::Translate,
+        ],
         ..teams_ui::settings::Settings::default()
     };
     settings.save(&opened).map_err(|problem| format!("{problem:?}"))?;
@@ -2024,7 +2029,7 @@ fn on_shell(shell: &Entity<Shell>, verb: &str, window: &mut Window, cx: &mut App
                 "ok".to_owned()
             } else if let Some(language) = other.strip_prefix("language ") {
                 let language = language.to_owned();
-                change_settings(shell, cx, |settings| settings.message_translate_to = language);
+                change_settings(shell, cx, |settings| settings.draft_translate_to = language);
                 "ok".to_owned()
             } else if let Some(size) = other.strip_prefix("font ") {
                 let Ok(size) = size.parse::<u16>() else {
@@ -2111,7 +2116,7 @@ fn state_of(shell: &Entity<Shell>, window: &Window, cx: &App) -> Value {
         "post": post,
         "thread": thread,
         "prejoin": calls.prejoin().is_some(),
-        "language": shell_ref.settings().read(cx).settings().message_translate_to,
+        "language": shell_ref.settings().read(cx).settings().draft_translate_to,
     })
 }
 

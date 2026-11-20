@@ -199,7 +199,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 344 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 345 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -736,19 +736,28 @@ const STEPS: [Step; 5 + 344 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
         cx.set_global(teams_ui::local_ai::Tools::default());
         show_chat_in_theme(shell, teams_ui::theme::LIGHT_KEY, window, cx);
     }),
-    // the box's one AI button, its menu open: Correct, Translate and the language
-    ("compose-ai-menu", |shell, window, cx| {
+    // no AI button: "+" holds Correct, Translate and the language, over Customize toolbar
+    ("compose-ai-plus", |shell, window, cx| {
         type_in_compose(shell, TOUR_DRAFT, window, cx);
-        with_compose(shell, cx, |compose, cx| compose.open_menu(MenuKind::Ai, window, cx));
+        with_compose(shell, cx, |compose, cx| compose.open_menu(MenuKind::Plus, window, cx));
     }),
-    // the customize list: each button that can hide with its check, "+" and Send always shown
+    // Correct and Translate shown on the bar, the language menu open by Translate's chevron
+    ("compose-ai-shown", |shell, window, cx| {
+        with_compose(shell, cx, |compose, cx| compose.close_more(window, cx));
+        show_compose_ai_tools(shell, true, cx);
+        with_compose(shell, cx, |compose, cx| compose.open_language_menu(window, cx));
+    }),
+    // the customize list: each button that can show or hide with its check, "+" and Send always shown
     ("compose-customize", |shell, window, cx| {
+        show_compose_ai_tools(shell, false, cx);
         with_compose(shell, cx, |compose, cx| {
-            compose.close_more(window, cx);
+            if let Some(menu) = compose.language_menu() {
+                menu.update(cx, |menu, cx| menu.set_open(false, window, cx));
+            }
             compose.customize_toolbar(window, cx);
         });
     }),
-    // Format and Emoji hidden: their rows in "+", with their keys, over Customize toolbar
+    // Format and Emoji hidden: their rows in "+", with their keys, then the AI tools' rows, over Customize toolbar
     ("compose-hidden-plus", |shell, window, cx| {
         with_compose(shell, cx, |compose, cx| compose.close_customize(window, cx));
         hide_compose_tools(shell, &[ComposeTool::Format, ComposeTool::Emoji], cx);
@@ -3644,12 +3653,12 @@ fn tour_translator(cx: &mut App) {
     teams_ui::draft_translate::set_engine(cx, std::sync::Arc::new(TourTranslator));
 }
 
-/// The language every box translates into.
+/// The language every box translates a draft into.
 fn set_message_language(shell: &Entity<Shell>, language: &str, cx: &mut App) {
     let model = shell.read(cx).settings().clone();
     let language = language.to_owned();
     model.update(cx, |model, cx| {
-        model.change(|settings| settings.message_translate_to = language, cx);
+        model.change(|settings| settings.draft_translate_to = language, cx);
     });
 }
 
@@ -4697,7 +4706,21 @@ fn with_new_chat(shell: &Entity<Shell>, cx: &mut App, change: impl FnOnce(&mut N
     }
 }
 
-/// Hides `tools` from every box's toolbar, and shows the others.
+/// Shows Correct and Translate on every box's toolbar, or puts them in "+".
+fn show_compose_ai_tools(shell: &Entity<Shell>, shown: bool, cx: &mut App) {
+    let model = shell.read(cx).settings().clone();
+    model.update(cx, |model, cx| {
+        model.change(
+            |settings| {
+                settings.show_compose_tool(ComposeTool::Correct, shown);
+                settings.show_compose_tool(ComposeTool::Translate, shown);
+            },
+            cx,
+        );
+    });
+}
+
+/// Hides Teams' `tools` from every box's toolbar, and shows Teams' others.
 fn hide_compose_tools(shell: &Entity<Shell>, tools: &[ComposeTool], cx: &mut App) {
     let model = shell.read(cx).settings().clone();
     model.update(cx, |model, cx| {

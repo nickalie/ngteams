@@ -1,6 +1,8 @@
-//! The menu that picks the language drafts are translated into: the compose box's AI menu row "Translation language"
-//! and the settings' row open the same menu, and both set the one setting every box reads
-//! ([`crate::settings::Settings::message_translate_to`]).
+//! The menu that picks a language of translation ([`Translation`]): the language drafts are translated into (the
+//! compose box's row "Translation language", the chevron by its Translate button and the settings' row open it, and
+//! all set the one setting every box reads, [`crate::settings::Settings::draft_translate_to`]), or the language
+//! messages are read in (the settings' row, [`crate::settings::Settings::message_translate_to`]). The two are apart:
+//! a pick in one menu does not change the other language.
 //!
 //! A search field on top, as the chat header's language menu has it, and the language chosen first; typing filters
 //! the listed languages ([`super::COMMON_LANGUAGES`]) by name or code; a name no listed one starts with is offered
@@ -78,6 +80,47 @@ pub fn key_of(language: &str) -> String {
         .collect()
 }
 
+/// Which language of translation a menu picks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Translation {
+    /// The language messages are translated into for reading.
+    Reading,
+    /// The language a draft is translated into before it is sent.
+    Draft,
+}
+
+impl Translation {
+    /// The language the settings hold for it.
+    #[must_use]
+    pub fn language(self, settings: &crate::settings::Settings) -> &str {
+        match self {
+            Self::Reading => &settings.message_translate_to,
+            Self::Draft => &settings.draft_translate_to,
+        }
+    }
+
+    fn set(self, settings: &mut crate::settings::Settings, language: String) {
+        match self {
+            Self::Reading => settings.message_translate_to = language,
+            Self::Draft => settings.draft_translate_to = language,
+        }
+    }
+
+    /// The menu's title.
+    #[must_use]
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Reading => READING_TITLE,
+            Self::Draft => DRAFT_TITLE,
+        }
+    }
+}
+
+/// The title of the menu and the settings' row of the language messages are read in, as Teams says it.
+pub const READING_TITLE: &str = "Translate messages into this language";
+/// The title of the menu and the settings' row of the language drafts are written in.
+pub const DRAFT_TITLE: &str = "Translate my messages into";
+
 /// What the menu tells its owner.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LanguageMenuEvent {
@@ -90,6 +133,7 @@ pub enum LanguageMenuEvent {
 /// The menu (see the module docs).
 pub struct LanguageMenu {
     settings: Entity<SettingsModel>,
+    translation: Translation,
     prefix: &'static str,
     input: Entity<InputState>,
     open: bool,
@@ -105,6 +149,7 @@ impl EventEmitter<LanguageMenuEvent> for LanguageMenu {}
 impl LanguageMenu {
     pub fn new(
         settings: Entity<SettingsModel>,
+        translation: Translation,
         prefix: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -126,6 +171,7 @@ impl LanguageMenu {
         let observing = cx.observe(&settings, |_, _, cx| cx.notify());
         Self {
             settings,
+            translation,
             prefix,
             input,
             open: false,
@@ -139,7 +185,7 @@ impl LanguageMenu {
     /// The language the settings hold.
     #[must_use]
     pub fn chosen(&self, cx: &App) -> String {
-        self.settings.read(cx).settings().message_translate_to.clone()
+        self.translation.language(self.settings.read(cx).settings()).to_owned()
     }
 
     /// Whether the menu is open.
@@ -209,13 +255,14 @@ impl LanguageMenu {
         }
     }
 
-    /// Sets `language` for every box, and closes the menu.
+    /// Sets `language` (for every box, or for every chat), and closes the menu.
     pub fn choose(&mut self, language: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(language) = language_name(language) else {
             return;
         };
+        let translation = self.translation;
         self.settings.update(cx, |model, cx| {
-            model.change(|settings| settings.message_translate_to = language, cx);
+            model.change(|settings| translation.set(settings, language), cx);
         });
         self.set_open(false, window, cx);
         cx.emit(LanguageMenuEvent::Chosen);
@@ -357,7 +404,7 @@ impl Render for LanguageMenu {
                     .px_1()
                     .text_xs()
                     .text_color(rgb(palette.muted_foreground))
-                    .child("Translate messages into"),
+                    .child(self.translation.title()),
             )
             .child(self.search_field(palette, cx))
             .child(list)

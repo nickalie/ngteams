@@ -1,7 +1,8 @@
-//! The message box's toolbar, less crowded, on GPUI's test context over the fake engine (`common`): one AI button
-//! with a menu in place of Correct, Translate and the language, and buttons the user hides, by a right click on the
-//! toolbar or "Customize toolbar" in "+", or in Settings. A hidden button's action stays in "+", with its key. Send
-//! and "+" cannot hide. With the AI features off, nothing of AI shows. Every id, name and text is made up.
+//! The message box's toolbar, less crowded, on GPUI's test context over the fake engine (`common`): no AI button; the
+//! AI tools (Correct, Translate and its language) are rows of "+" until the user shows them, and buttons the user
+//! shows or hides, by a right click on the toolbar or "Customize toolbar" in "+", or in Settings. A hidden button's
+//! action stays in "+", with its key. Send and "+" cannot hide. With the AI features off, nothing of AI shows. Every
+//! id, name and text is made up.
 
 #![cfg(test)]
 
@@ -17,11 +18,12 @@ use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, px
 use teams_ui::ViewTrace;
 use teams_ui::chat_view::ChatView;
 use teams_ui::compose::{Compose, MenuKind, Writes};
+use teams_ui::local_ai::Tools;
 use teams_ui::settings::{ComposeTool, Settings, SettingsModel};
 
 const AB: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-8000-00000000000b@unq.gbl.spaces";
 
-/// The rows of the AI button's menu.
+/// The AI tools' rows in "+".
 const AI_ROWS: [&str; 3] = ["compose-correct-row", "compose-translate-row", "compose-language-row"];
 
 fn draw(cx: &mut VisualTestContext) {
@@ -67,6 +69,36 @@ fn hiding(tools: &[ComposeTool]) -> Settings {
     }
 }
 
+fn showing_ai() -> Settings {
+    Settings {
+        compose_shown: vec![ComposeTool::Correct, ComposeTool::Translate],
+        ..Settings::default()
+    }
+}
+
+fn shown_tools(settings: &Entity<SettingsModel>, cx: &mut VisualTestContext) -> Vec<ComposeTool> {
+    settings.read_with(cx, |model, _| model.settings().compose_shown.clone())
+}
+
+/// Whether the customize list's row of each of `tools` shows its check.
+fn checks(cx: &mut VisualTestContext, tools: &[&str]) -> Vec<bool> {
+    tools
+        .iter()
+        .map(|tool| {
+            cx.debug_bounds(Box::leak(format!("compose-customize-{tool}-check").into_boxed_str()))
+                .is_some()
+        })
+        .collect()
+}
+
+fn top(cx: &mut VisualTestContext, selector: &'static str) -> f32 {
+    f32::from(
+        cx.debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} is not shown"))
+            .top(),
+    )
+}
+
 fn shown(cx: &mut VisualTestContext, selector: &'static str) -> bool {
     cx.debug_bounds(selector).is_some()
 }
@@ -106,41 +138,180 @@ fn type_in(compose: &Entity<Compose>, cx: &mut VisualTestContext, text: &str) {
 }
 
 #[test]
-fn one_ai_button_holds_correct_translate_and_the_language() {
+fn there_is_no_ai_button_and_the_ai_tools_are_rows_of_plus() {
     let rig = Rig::start();
     let Opened { compose, cx, .. } = chat_with(&rig, Settings::default(), 900.0);
-    assert!(shown(cx, "compose-ai"));
-    for gone in ["compose-correct", "compose-translate", "compose-language"] {
-        assert!(!shown(cx, gone), "{gone} is in the AI button's menu, not on the bar");
+    for gone in ["compose-ai", "compose-correct", "compose-translate", "compose-language"] {
+        assert!(!shown(cx, gone), "{gone} is not on the bar");
     }
     type_in(&compose, cx, "A made-up draft");
-    click(cx, "compose-ai");
-    assert!(shown(cx, "compose-ai-menu"));
+    click(cx, "compose-apps");
+    assert!(shown(cx, "compose-apps-menu"));
     assert_eq!(
         compose.read_with(cx, |compose, _| compose.menu_open()),
-        Some(MenuKind::Ai)
+        Some(MenuKind::Plus)
     );
     for row in AI_ROWS {
-        assert!(shown(cx, row), "{row} is in the AI button's menu");
+        assert!(shown(cx, row), "{row} is in \"+\"");
     }
-    // the language row opens the language menu by the AI button, and the AI menu closes
+    for key in ["compose-correct-row-key", "compose-translate-row-key"] {
+        assert!(shown(cx, key), "{key} shows in \"+\"");
+    }
+    // the AI tools come before Customize toolbar, at the foot
+    let order = AI_ROWS
+        .into_iter()
+        .chain(["compose-customize-row"])
+        .map(|row| top(cx, row));
+    let order: Vec<f32> = order.collect();
+    assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
+    // the language row opens the language menu by "+", and "+" closes
     click(cx, "compose-language-row");
-    assert!(!shown(cx, "compose-ai-menu"));
+    assert!(!shown(cx, "compose-apps-menu"));
     assert!(shown(cx, "compose-language-menu"));
-    let ai = cx.debug_bounds("compose-ai").unwrap();
+    let plus = cx.debug_bounds("compose-apps").unwrap();
     let menu = cx.debug_bounds("compose-language-menu").unwrap();
     assert!(
-        menu.bottom() <= ai.top() + px(1.0),
-        "the menu opens over the button: {menu:?}, {ai:?}"
+        menu.bottom() <= plus.top() + px(1.0),
+        "the menu opens over the button: {menu:?}, {plus:?}"
     );
     cx.simulate_keystrokes("escape");
     draw(cx);
-    // Escape closes the AI menu and gives the keyboard back to the text
-    click(cx, "compose-ai");
+    assert!(!shown(cx, "compose-language-menu"));
+    assert!(cx.update(|window, cx| compose.read(cx).focused(window, cx)));
+}
+
+#[test]
+fn the_ai_tools_come_after_teams_own_rows_in_plus() {
+    let rig = Rig::start();
+    let Opened { cx, .. } = chat_with(&rig, hiding(&[ComposeTool::Format, ComposeTool::Emoji]), 900.0);
+    click(cx, "compose-apps");
+    let rows = [
+        "compose-format-row",
+        "compose-emoji-row",
+        "compose-correct-row",
+        "compose-translate-row",
+        "compose-language-row",
+        "compose-customize-row",
+    ];
+    let order: Vec<f32> = rows.into_iter().map(|row| top(cx, row)).collect();
+    assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
+}
+
+#[test]
+fn customize_shows_and_hides_each_ai_tool_on_the_toolbar() {
+    let rig = Rig::start();
+    let Opened {
+        compose, settings, cx, ..
+    } = chat_with(&rig, Settings::default(), 900.0);
+    right_click(cx, "compose-attach");
+    assert_eq!(
+        checks(cx, &["correct", "translate"]),
+        [false, false],
+        "the AI tools are in \"+\" by default: their rows are unchecked"
+    );
+    // Correct on the bar: its button shows, its row leaves "+"
+    click(cx, "compose-customize-correct");
+    assert_eq!(shown_tools(&settings, cx), [ComposeTool::Correct]);
+    assert!(shown(cx, "compose-customize-correct-check"));
+    assert!(shown(cx, "compose-correct") && !shown(cx, "compose-translate"));
+    // Translate on the bar too, with its language's chevron
+    click(cx, "compose-customize-translate");
+    assert_eq!(
+        shown_tools(&settings, cx),
+        [ComposeTool::Correct, ComposeTool::Translate]
+    );
+    assert!(shown(cx, "compose-translate") && shown(cx, "compose-language"));
     cx.simulate_keystrokes("escape");
     draw(cx);
-    assert!(!shown(cx, "compose-ai-menu"));
+    click(cx, "compose-apps");
+    for row in AI_ROWS {
+        assert!(!shown(cx, row), "{row} has a button on the bar: no row in \"+\"");
+    }
+    assert!(shown(cx, "compose-customize-row"));
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    // the AI tools sit after "+", before Send
+    let plus = cx.debug_bounds("compose-apps").unwrap().right();
+    let correct = cx.debug_bounds("compose-correct").unwrap();
+    let send = cx.debug_bounds("compose-send").unwrap().left();
+    assert!(correct.left() >= plus && correct.right() <= send);
+    // and back into "+"
+    right_click(cx, "compose-attach");
+    click(cx, "compose-customize-translate");
+    click(cx, "compose-customize-correct");
+    assert!(shown_tools(&settings, cx).is_empty());
+    assert!(!shown(cx, "compose-correct") && !shown(cx, "compose-translate") && !shown(cx, "compose-language"));
+    cx.simulate_keystrokes("escape");
+    draw(cx);
     assert!(cx.update(|window, cx| compose.read(cx).focused(window, cx)));
+}
+
+#[test]
+fn a_shown_translate_reaches_its_language_by_its_chevron() {
+    let rig = Rig::start();
+    let Opened {
+        compose, settings, cx, ..
+    } = chat_with(&rig, showing_ai(), 900.0);
+    type_in(&compose, cx, "A made-up draft");
+    let translate = cx.debug_bounds("compose-translate").unwrap();
+    let chevron = cx.debug_bounds("compose-language").unwrap();
+    assert!(
+        chevron.left() >= translate.right() - px(1.0),
+        "the chevron is beside Translate"
+    );
+    click(cx, "compose-language");
+    assert!(shown(cx, "compose-language-menu"));
+    let menu = cx.debug_bounds("compose-language-menu").unwrap();
+    assert!(
+        menu.bottom() <= chevron.top() + px(1.0),
+        "the menu opens over the chevron: {menu:?}, {chevron:?}"
+    );
+    // the search field has the keyboard: a language typed, then Enter
+    cx.simulate_input("German");
+    cx.simulate_keystrokes("enter");
+    draw(cx);
+    assert!(!shown(cx, "compose-language-menu"));
+    let languages = settings.read_with(cx, |model, _| {
+        let settings = model.settings();
+        (
+            settings.draft_translate_to.clone(),
+            settings.message_translate_to.clone(),
+        )
+    });
+    assert_eq!(languages, ("German".to_owned(), "English".to_owned()));
+    // "+" has no language row while Translate is on the bar
+    click(cx, "compose-apps");
+    assert!(!shown(cx, "compose-language-row"));
+}
+
+#[test]
+fn the_ai_keys_reach_the_box_whether_their_buttons_show_or_not() {
+    for settings in [Settings::default(), showing_ai()] {
+        let rig = Rig::start();
+        // no AI tool is installed, so that nothing runs
+        rig.cx.update(|cx| cx.set_global(Tools::default()));
+        let Opened { compose, cx, .. } = chat_with(&rig, settings, 900.0);
+        type_in(&compose, cx, "A made-up draft");
+        // no tool is installed here: the key's run says so, which shows that the key reached the box
+        cx.simulate_keystrokes("ctrl-shift-y");
+        draw(cx);
+        assert!(
+            !matches!(
+                compose.read_with(cx, |compose, _| compose.draft_translation_status()),
+                teams_ui::compose::DraftTranslationStatus::Idle
+            ),
+            "Ctrl+Shift+Y started a translation"
+        );
+        cx.simulate_keystrokes("ctrl-shift-g");
+        draw(cx);
+        assert!(
+            !matches!(
+                compose.read_with(cx, |compose, _| compose.correction_status()),
+                teams_ui::compose::CorrectionStatus::Idle
+            ),
+            "Ctrl+Shift+G started a correction"
+        );
+    }
 }
 
 #[test]
@@ -152,10 +323,23 @@ fn a_right_click_on_the_toolbar_lists_its_buttons_and_a_click_hides_one() {
     right_click(cx, "compose-attach");
     assert!(compose.read_with(cx, |compose, _| compose.customize_open()));
     assert!(shown(cx, "compose-customize-menu"));
-    for tool in ["format", "emoji", "attach", "loop", "ai", "apps", "send"] {
-        let check: &'static str = Box::leak(format!("compose-customize-{tool}-check").into_boxed_str());
-        assert!(shown(cx, check), "{tool} shows, so its row is checked");
-    }
+    // the buttons that show are checked, the AI tools in "+" are not
+    assert_eq!(
+        checks(
+            cx,
+            &[
+                "format",
+                "emoji",
+                "attach",
+                "loop",
+                "apps",
+                "send",
+                "correct",
+                "translate"
+            ]
+        ),
+        [true, true, true, true, true, true, false, false]
+    );
     click(cx, "compose-customize-emoji");
     assert_eq!(hidden_tools(&settings, cx), [ComposeTool::Emoji]);
     assert!(!shown(cx, "compose-emoji"), "the button leaves the bar");
@@ -179,10 +363,10 @@ fn a_right_click_on_the_toolbar_lists_its_buttons_and_a_click_hides_one() {
 #[test]
 fn a_right_click_opens_the_list_over_the_toolbar_s_buttons() {
     let rig = Rig::start();
-    let Opened { cx, .. } = chat_with(&rig, Settings::default(), 1280.0);
+    let Opened { cx, .. } = chat_with(&rig, showing_ai(), 1280.0);
     right_click(cx, "compose-emoji");
     let list = cx.debug_bounds("compose-customize-menu").unwrap();
-    for tool in ["compose-format", "compose-emoji", "compose-ai", "compose-send"] {
+    for tool in ["compose-format", "compose-emoji", "compose-translate", "compose-send"] {
         let button = cx.debug_bounds(tool).unwrap();
         assert!(
             list.bottom() <= button.top() + px(1.0),
@@ -207,12 +391,14 @@ fn the_list_s_keys_pass_over_its_title_and_go_round() {
     cx.simulate_keystrokes("enter");
     draw(cx);
     assert!(hidden_tools(&settings, cx).is_empty());
-    // Up from Format goes round to AI tools, the last row that can hide; Down from it to Format
+    // Up from Format goes round to Translate, the last row that can show or hide; Down from it to Format
     cx.simulate_keystrokes("up enter");
     draw(cx);
-    assert_eq!(hidden_tools(&settings, cx), [ComposeTool::Ai]);
+    assert_eq!(shown_tools(&settings, cx), [ComposeTool::Translate]);
+    assert!(hidden_tools(&settings, cx).is_empty());
     cx.simulate_keystrokes("enter down enter");
     draw(cx);
+    assert!(shown_tools(&settings, cx).is_empty());
     assert_eq!(hidden_tools(&settings, cx), [ComposeTool::Format]);
     cx.simulate_keystrokes("escape");
     draw(cx);
@@ -236,12 +422,13 @@ fn customize_toolbar_in_plus_opens_the_same_list() {
 #[test]
 fn a_hidden_button_s_action_stays_in_plus_with_its_key() {
     let rig = Rig::start();
-    let Opened { compose, cx, .. } = chat_with(
-        &rig,
-        hiding(&[ComposeTool::Emoji, ComposeTool::Format, ComposeTool::Ai]),
-        900.0,
-    );
-    for gone in ["compose-emoji", "compose-format", "compose-ai"] {
+    let Opened { compose, cx, .. } = chat_with(&rig, hiding(&[ComposeTool::Emoji, ComposeTool::Format]), 900.0);
+    for gone in [
+        "compose-emoji",
+        "compose-format",
+        "compose-correct",
+        "compose-translate",
+    ] {
         assert!(!shown(cx, gone), "{gone} is hidden");
     }
     assert!(shown(cx, "compose-attach") && shown(cx, "compose-send"));
@@ -317,10 +504,16 @@ fn with_the_ai_features_off_nothing_of_ai_shows() {
     let rig = Rig::start();
     let Opened {
         compose, settings, cx, ..
-    } = chat_with(&rig, hiding(&[ComposeTool::Ai]), 900.0);
+    } = chat_with(&rig, showing_ai(), 900.0);
+    assert!(shown(cx, "compose-correct") && shown(cx, "compose-translate"));
     cx.update(|_, cx| settings.update(cx, |model, cx| model.set_ai_features(false, cx)));
     draw(cx);
-    assert!(!shown(cx, "compose-ai"));
+    for gone in ["compose-correct", "compose-translate", "compose-language"] {
+        assert!(
+            !shown(cx, gone),
+            "{gone} is not on the bar while the AI features are off"
+        );
+    }
     click(cx, "compose-apps");
     for row in AI_ROWS {
         assert!(!shown(cx, row), "{row} is not in \"+\" while the AI features are off");
@@ -329,16 +522,18 @@ fn with_the_ai_features_off_nothing_of_ai_shows() {
     draw(cx);
     right_click(cx, "compose-attach");
     assert!(shown(cx, "compose-customize-menu"));
-    assert!(!shown(cx, "compose-customize-ai"), "no AI row in the customize list");
+    for gone in ["compose-customize-correct", "compose-customize-translate"] {
+        assert!(!shown(cx, gone), "no AI row in the customize list");
+    }
     cx.simulate_keystrokes("escape");
     draw(cx);
-    // on again: the AI button stays where the user put it, in "+"
+    // on again: the AI tools are where the user put them, on the bar
     cx.update(|_, cx| settings.update(cx, |model, cx| model.set_ai_features(true, cx)));
     draw(cx);
-    assert!(!shown(cx, "compose-ai"));
+    assert!(shown(cx, "compose-correct") && shown(cx, "compose-translate"));
     cx.update(|window, cx| compose.update(cx, |compose, cx| compose.focus(window, cx)));
     click(cx, "compose-apps");
-    assert!(shown(cx, "compose-correct-row"));
+    assert!(!shown(cx, "compose-correct-row"));
 }
 
 #[test]

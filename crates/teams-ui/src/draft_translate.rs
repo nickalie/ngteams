@@ -1,6 +1,6 @@
 //! A draft translated in its box, on this computer, by the AI command-line tool the user picked ([`crate::local_ai`]:
 //! Claude Code or the Codex CLI, the model [`Work::Draft`]), into the one language the settings keep for every box and
-//! account ([`crate::settings::Settings::message_translate_to`]).
+//! account ([`crate::settings::Settings::draft_translate_to`]).
 //!
 //! - **Only when asked**: the compose box's Translate ([`crate::compose`]) starts one, and its result replaces the
 //!   draft as one edit, so Ctrl+Z brings the draft as written back.

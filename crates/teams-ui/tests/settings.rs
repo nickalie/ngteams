@@ -119,12 +119,14 @@ fn changed() -> Settings {
             model: teams_ui::local_ai::Model::ToolDefault,
         },
         message_translate_to: "Klingon".to_owned(),
+        draft_translate_to: "Portuguese (Brazil)".to_owned(),
         message_translator: AiChoice {
             tool: TranslatorChoice::cli(Backend::Codex),
             model: teams_ui::local_ai::Model::Recommended,
         },
         ai_providers: vec![teams_ui::local_ai::Provider::new_api(Backend::Anthropic, &[])],
-        compose_hidden: vec![ComposeTool::Emoji, ComposeTool::Ai],
+        compose_hidden: vec![ComposeTool::Emoji],
+        compose_shown: vec![ComposeTool::Translate],
     }
 }
 
@@ -907,6 +909,7 @@ fn the_message_corrector_goes_through_the_file() {
 fn a_drafts_translation_language_and_tool_go_through_the_file() {
     let defaults = Settings::default();
     assert_eq!(defaults.message_translate_to, "English");
+    assert_eq!(defaults.draft_translate_to, "English");
     assert_eq!(defaults.message_translator, AiChoice::default());
     for (choice, language) in ai_choices().into_iter().zip(
         ["German", "Klingon", "Portuguese (Brazil)", "Scots Gaelic"]
@@ -915,19 +918,21 @@ fn a_drafts_translation_language_and_tool_go_through_the_file() {
     ) {
         let settings = Settings {
             message_translator: choice,
-            message_translate_to: language.to_owned(),
+            draft_translate_to: language.to_owned(),
             ..Settings::default()
         };
         let text = render(&settings);
         assert!(text.contains("[message_translator]"), "{text}");
-        assert!(
-            text.contains(&format!("message_translate_to = \"{language}\"")),
-            "{text}"
-        );
+        assert!(text.contains(&format!("draft_translate_to = \"{language}\"")), "{text}");
+        assert!(text.contains("message_translate_to = \"English\""), "{text}");
         let (read, problems) = parse(&text).expect("TOML");
         assert_eq!(read, settings);
         assert!(problems.is_empty(), "{problems:?}");
     }
+}
+
+#[test]
+fn a_translation_language_is_kept_by_its_name_and_a_bad_one_reported() {
     let (read, problems) = parse("message_translate_to = \"german\"").expect("TOML");
     assert_eq!(
         read.message_translate_to, "German",
@@ -937,10 +942,12 @@ fn a_drafts_translation_language_and_tool_go_through_the_file() {
     for bad in [
         "message_translate_to = 3",
         "message_translate_to = \"<x0/>\"",
+        "draft_translate_to = 3\nmessage_translate_to = \"<x0/>\"",
         "message_translator = 3",
     ] {
         let (read, problems) = parse(bad).expect("TOML");
         assert_eq!(read.message_translate_to, "English", "{bad}");
+        assert_eq!(read.draft_translate_to, "English", "{bad}");
         assert_eq!(read.message_translator, AiChoice::default(), "{bad}");
         assert!(
             problems
@@ -958,12 +965,55 @@ fn a_drafts_translation_language_set_is_there_after_a_restart(cx: &mut TestAppCo
     let model = cx.update(|cx| cx.new(|_| SettingsModel::load(file)));
     cx.update(|cx| {
         model.update(cx, |model, cx| {
-            model.change(|settings| settings.message_translate_to = "Klingon".to_owned(), cx);
+            model.change(|settings| settings.draft_translate_to = "Klingon".to_owned(), cx);
         });
     });
     let (file, _) = file_in(&dir);
     let restarted = SettingsModel::load(file);
-    assert_eq!(restarted.settings().message_translate_to, "Klingon");
+    assert_eq!(restarted.settings().draft_translate_to, "Klingon");
+    assert_eq!(restarted.settings().message_translate_to, "English");
+}
+
+#[test]
+fn the_reading_and_the_draft_languages_are_two_settings() {
+    // read in Russian, write in English: each goes through the file as itself
+    let settings = Settings {
+        message_translate_to: "Russian".to_owned(),
+        draft_translate_to: "English".to_owned(),
+        ..Settings::default()
+    };
+    let text = render(&settings);
+    assert!(text.contains("message_translate_to = \"Russian\""), "{text}");
+    assert!(text.contains("draft_translate_to = \"English\""), "{text}");
+    let (read, problems) = parse(&text).expect("TOML");
+    assert_eq!(read, settings);
+    assert!(problems.is_empty(), "{problems:?}");
+    // the draft's language is read in either order of the keys
+    let (read, _) = parse("draft_translate_to = \"English\"\nmessage_translate_to = \"Russian\"").expect("TOML");
+    assert_eq!(
+        (read.message_translate_to.as_str(), read.draft_translate_to.as_str()),
+        ("Russian", "English")
+    );
+}
+
+#[test]
+fn a_file_with_one_translation_language_gives_it_to_reading_and_drafts() {
+    // a file of an earlier build had one language for both
+    let (read, problems) = parse("message_translate_to = \"German\"\n").expect("TOML");
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(read.message_translate_to, "German");
+    assert_eq!(read.draft_translate_to, "German");
+    // the next save keeps both, so a later change of one leaves the other
+    let text = render(&read);
+    assert!(text.contains("draft_translate_to = \"German\""), "{text}");
+    let (mut again, _) = parse(&text).expect("TOML");
+    again.message_translate_to = "Russian".to_owned();
+    let (last, _) = parse(&render(&again)).expect("TOML");
+    assert_eq!(last.draft_translate_to, "German");
+    assert_eq!(last.message_translate_to, "Russian");
+    // a bad earlier language leaves both at their default
+    let (read, _) = parse("message_translate_to = 3").expect("TOML");
+    assert_eq!(read.draft_translate_to, "English");
 }
 
 #[test]
@@ -1314,26 +1364,26 @@ fn the_ai_providers_go_through_the_file_without_their_keys() {
 }
 
 #[test]
-fn every_toolbar_button_shows_by_default_and_the_hidden_ones_go_through_the_file() {
+fn teams_toolbar_buttons_show_by_default_and_the_hidden_ones_go_through_the_file() {
     assert!(Settings::default().compose_hidden.is_empty());
     assert!(!render(&Settings::default()).contains("compose_hidden_tools"));
     let mut settings = Settings::default();
-    settings.show_compose_tool(ComposeTool::Ai, false);
+    settings.show_compose_tool(ComposeTool::Loop, false);
     settings.show_compose_tool(ComposeTool::Format, false);
     settings.show_compose_tool(ComposeTool::Format, false);
     assert_eq!(
         settings.compose_hidden,
-        [ComposeTool::Format, ComposeTool::Ai],
+        [ComposeTool::Format, ComposeTool::Loop],
         "each once, in the bar's order"
     );
     assert!(!settings.shows_compose_tool(ComposeTool::Format) && settings.shows_compose_tool(ComposeTool::Emoji));
     let text = render(&settings);
-    assert!(text.contains(r#"compose_hidden_tools = ["format", "ai"]"#), "{text}");
+    assert!(text.contains(r#"compose_hidden_tools = ["format", "loop"]"#), "{text}");
     let (read, problems) = parse(&text).expect("TOML");
     assert_eq!(read, settings);
     assert!(problems.is_empty(), "{problems:?}");
     settings.show_compose_tool(ComposeTool::Format, true);
-    assert_eq!(settings.compose_hidden, [ComposeTool::Ai]);
+    assert_eq!(settings.compose_hidden, [ComposeTool::Loop]);
 
     // a name of a newer build is passed over; a value that is not a list of names is reported, the default kept
     let (read, problems) = parse(r#"compose_hidden_tools = ["loop", "stickers", "loop"]"#).expect("TOML");
@@ -1352,6 +1402,71 @@ fn every_toolbar_button_shows_by_default_and_the_hidden_ones_go_through_the_file
             "{bad}: {problems:?}"
         );
     }
+}
+
+#[test]
+fn the_ai_tools_are_in_plus_by_default_and_the_shown_ones_go_through_the_file() {
+    let defaults = Settings::default();
+    for tool in [ComposeTool::Correct, ComposeTool::Translate] {
+        assert!(!defaults.shows_compose_tool(tool), "{tool:?} is in \"+\" by default");
+    }
+    assert!(!render(&defaults).contains("compose_shown_tools"));
+    let mut settings = Settings::default();
+    settings.show_compose_tool(ComposeTool::Translate, true);
+    settings.show_compose_tool(ComposeTool::Correct, true);
+    settings.show_compose_tool(ComposeTool::Correct, true);
+    assert_eq!(settings.compose_shown, [ComposeTool::Correct, ComposeTool::Translate]);
+    assert!(settings.compose_hidden.is_empty());
+    let text = render(&settings);
+    assert!(
+        text.contains(r#"compose_shown_tools = ["correct", "translate"]"#),
+        "{text}"
+    );
+    let (read, problems) = parse(&text).expect("TOML");
+    assert_eq!(read, settings);
+    assert!(problems.is_empty(), "{problems:?}");
+    settings.show_compose_tool(ComposeTool::Correct, false);
+    assert_eq!(settings.compose_shown, [ComposeTool::Translate]);
+
+    // a Teams button in the shown list, or an AI tool in the hidden list, is passed over
+    let (read, problems) =
+        parse("compose_shown_tools = [\"emoji\", \"correct\"]\ncompose_hidden_tools = [\"translate\", \"loop\"]")
+            .expect("TOML");
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(read.compose_shown, [ComposeTool::Correct]);
+    assert_eq!(read.compose_hidden, [ComposeTool::Loop]);
+    assert_eq!(parse("compose_shown_tools = 3").unwrap().1.len(), 1);
+}
+
+#[test]
+fn a_file_that_hid_the_one_ai_button_gets_the_ai_tools_in_plus() {
+    // an earlier build had one AI button, `ai`; shown or hidden there, its tools are now in "+"
+    for text in [
+        "compose_hidden_tools = [\"emoji\", \"ai\"]",
+        "compose_hidden_tools = [\"emoji\"]",
+    ] {
+        let (read, problems) = parse(text).expect("TOML");
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(read.compose_hidden, [ComposeTool::Emoji]);
+        assert!(!read.shows_compose_tool(ComposeTool::Correct) && !read.shows_compose_tool(ComposeTool::Translate));
+    }
+}
+
+#[gpui::test]
+fn a_shown_ai_tool_is_still_shown_after_a_restart(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let (file, _) = file_in(&dir);
+    let model = cx.update(|cx| cx.new(|_| SettingsModel::load(file)));
+    cx.update(|cx| {
+        model.update(cx, |model, cx| {
+            model.change(|settings| settings.show_compose_tool(ComposeTool::Correct, true), cx);
+        });
+    });
+    let (file, _) = file_in(&dir);
+    let restarted = SettingsModel::load(file);
+    assert_eq!(restarted.settings().compose_shown, [ComposeTool::Correct]);
+    assert!(restarted.settings().shows_compose_tool(ComposeTool::Correct));
+    assert!(!restarted.settings().shows_compose_tool(ComposeTool::Translate));
 }
 
 #[gpui::test]

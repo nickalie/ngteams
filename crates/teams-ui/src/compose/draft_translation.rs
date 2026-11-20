@@ -1,6 +1,7 @@
-//! The box's side of translating a draft ([`crate::draft_translate`]): Translate (the AI button's row or Ctrl+Shift+Y)
-//! sends what the box holds to the tool the settings name and puts the translation in its place; the language row
-//! under it shows the language every box translates into and opens the menu that changes it.
+//! The box's side of translating a draft ([`crate::draft_translate`]): Translate (its row in "+", its button or
+//! Ctrl+Shift+Y) sends what the box holds to the tool the settings name and puts the translation in its place; the
+//! language row under it, or the chevron by its button, shows the language every box translates into and opens the
+//! menu that changes it.
 //!
 //! - **One edit**: the translation replaces the draft as one edit, so Ctrl+Z brings the draft as written back.
 //! - **Of the draft it read**: the draft changing while the tool works drops the translation, saying so; a result that
@@ -21,7 +22,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Sizable as _, Size};
 
 use super::Compose;
-use crate::draft_translate::menu::{LanguageMenu, LanguageMenuEvent};
+use crate::draft_translate::menu::{LanguageMenu, LanguageMenuEvent, Translation};
 use crate::draft_translate::{self, Limits, MAX_DRAFT, Outcome, Request, Translating};
 use crate::editor::doc::Doc;
 use crate::icons::{Glyph, icon_button, selected_by};
@@ -175,7 +176,7 @@ impl Compose {
         }
         let settings = self.settings.read(cx).settings();
         let choice = settings.ai(Work::Draft).clone();
-        let language = settings.message_translate_to.clone();
+        let language = settings.draft_translate_to.clone();
         let picked = match crate::local_ai::pick(&choice.tool, cx) {
             Ok(picked) => picked,
             Err(failure) => return self.draft_translation_failed(&failure, cx),
@@ -313,7 +314,7 @@ impl Compose {
             return menu.clone();
         }
         let settings = self.settings.clone();
-        let menu = cx.new(|cx| LanguageMenu::new(settings, "compose-language", window, cx));
+        let menu = cx.new(|cx| LanguageMenu::new(settings, Translation::Draft, "compose-language", window, cx));
         let chosen = cx.subscribe_in(&menu, window, |this: &mut Self, _, event, window, cx| match event {
             LanguageMenuEvent::Chosen | LanguageMenuEvent::Escaped => this.focus(window, cx),
         });
@@ -332,7 +333,7 @@ impl Compose {
     /// whether it can start.
     pub(super) fn translate_state(&self, cx: &App) -> (SharedString, bool, bool) {
         let busy = self.translating_draft();
-        let language = &self.settings.read(cx).settings().message_translate_to;
+        let language = &self.settings.read(cx).settings().draft_translate_to;
         let tip: SharedString = if busy {
             "Stop translating".into()
         } else {

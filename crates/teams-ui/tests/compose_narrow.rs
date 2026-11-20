@@ -1,7 +1,8 @@
 //! The compose box at the width of a narrow pane (the call's Chat pane, a narrow window), on GPUI's test context over
 //! the fake engine (`common`): the text field keeps a usable width, the tools that do not fit go into the box's "More
 //! options" menu, and Send stays in the box. Each tool in the menu keeps its action, its key and its state. A wide box
-//! keeps all its tools. Every id, name and text is made up.
+//! keeps all its tools. The user here shows the AI tools (Correct, Translate) on the toolbar, so that the menu holds
+//! them when they do not fit. Every id, name and text is made up.
 
 #![cfg(test)]
 
@@ -17,7 +18,7 @@ use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, px, size};
 use teams_ui::ViewTrace;
 use teams_ui::chat_view::ChatView;
 use teams_ui::compose::{Compose, Writes};
-use teams_ui::settings::Settings;
+use teams_ui::settings::{ComposeTool, Settings};
 
 const AB: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-8000-00000000000b@unq.gbl.spaces";
 
@@ -28,16 +29,17 @@ const PANE: f32 = 360.0;
 const USABLE: f32 = 180.0;
 
 /// The tools of a chat's box, in their order, Send apart.
-const TOOLS: [&str; 6] = [
+const TOOLS: [&str; 7] = [
     "compose-format",
     "compose-emoji",
     "compose-attach",
     "compose-loop",
     "compose-apps",
-    "compose-ai",
+    "compose-correct",
+    "compose-translate",
 ];
 
-/// The AI button's rows, in a menu in its place.
+/// The AI tools' rows, in a menu in place of their buttons.
 const AI_ROWS: [&str; 3] = ["compose-correct", "compose-translate", "compose-language"];
 
 fn draw(cx: &mut VisualTestContext) {
@@ -54,7 +56,10 @@ fn draw(cx: &mut VisualTestContext) {
 fn chat(rig: &Rig, width: f32) -> (Entity<Compose>, &'static mut VisualTestContext) {
     rig.cx.update(teams_ui::window::init);
     rig.cx.update(teams_ui::chat_view::init);
-    let parts = parts::parts(rig, Settings::default(), Arc::new(ViewTrace::off()));
+    let mut settings = Settings::default();
+    settings.show_compose_tool(ComposeTool::Correct, true);
+    settings.show_compose_tool(ComposeTool::Translate, true);
+    let parts = parts::parts(rig, settings, Arc::new(ViewTrace::off()));
     let app: &'static mut TestAppContext = Box::leak(Box::new(rig.cx.clone()));
     let (view, cx) = app.add_window_view(|window, cx| ChatView::new(parts, AB.to_owned(), window, cx));
     cx.simulate_resize(size(px(width), px(640.0)));
@@ -157,12 +162,14 @@ fn the_menu_holds_each_tool_that_does_not_fit_and_its_rows_act() {
     let (compose, cx) = chat(&rig, PANE);
     click(cx, "compose-more");
     assert!(shown(cx, "compose-more-menu"));
-    for tool in TOOLS.into_iter().filter(|tool| *tool != "compose-ai") {
+    for tool in TOOLS {
         let in_box = shown(cx, tool);
         let in_menu = cx.debug_bounds(row(tool)).is_some();
         assert!(in_box != in_menu, "{tool}: in the box {in_box}, in the menu {in_menu}");
     }
-    assert!(!shown(cx, "compose-ai"), "the AI button is in the menu");
+    for tool in ["compose-correct", "compose-translate", "compose-language"] {
+        assert!(!shown(cx, tool), "{tool} is in the menu, not on the row");
+    }
     for tool in AI_ROWS {
         assert!(shown(cx, row(tool)), "{tool} is a row of the menu");
     }

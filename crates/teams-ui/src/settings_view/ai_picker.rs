@@ -9,9 +9,12 @@
 //! - **the model's name**, while another model is being typed or one the tool didn't list is set: any name the tool
 //!   takes, used on Enter (or when the field is left).
 //!
-//! A draft's translation adds its language's row on top: the menu the compose box's AI menu row "Translation language"
-//! opens
-//! ([`crate::draft_translate::menu`]), its button `message-language` and its rows `message-language-<language>`.
+//! A translation adds its language's row on top ([`crate::draft_translate::menu`]), each its own setting:
+//!
+//! - a draft's ("Translate my messages into"): the menu the compose box's row "Translation language" opens, its button
+//!   `message-language` and its rows `message-language-<language>`;
+//! - a chat's ("Translate messages into this language", Teams' words): the language a message's "Translate" shows it
+//!   in, its button `reading-language` and its rows `reading-language-<language>`.
 //!
 //! Changing the provider sets its recommended model again: a model of one provider means nothing to the other. Test
 //! selectors: the provider's dropdown `<setting>` and its rows `<setting>-<provider id>` (`caption-translator-claude`,
@@ -28,7 +31,7 @@ use gpui::{
 use gpui_component::input::{Input, InputEvent, InputState};
 
 use super::{Pick, group, picker, row_with};
-use crate::draft_translate::menu::{self, LanguageMenu};
+use crate::draft_translate::menu::{self, LanguageMenu, Translation};
 use crate::local_ai::providers::{ApiModels, Picked};
 use crate::local_ai::{
     AiChoice, Backend, Catalog, Failure, Listed, Model, Provider, Providers, ToolChoice, Tools, Work,
@@ -136,7 +139,7 @@ pub struct AiPicker {
     _observing: [Subscription; 5],
     /// The name field's Enter and leaving, while it is there.
     name_events: Option<Subscription>,
-    /// A draft's translation's language menu, made the first time it shows (it needs the window).
+    /// A translation's language menu, made the first time it shows (it needs the window).
     language: Option<Entity<LanguageMenu>>,
 }
 
@@ -231,17 +234,34 @@ impl AiPicker {
         })
     }
 
-    /// The language a draft is translated into, the same in every box: a button opening the menu the compose box's AI
-    /// menu row "Translation language" opens.
-    fn language_row(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// The language of `translation`, the same in every box or chat: a button opening its menu.
+    fn language_row(
+        &mut self,
+        translation: Translation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let palette = theme::current(cx);
         let settings = self.model.clone();
+        let (selector, popover, note) = match translation {
+            Translation::Draft => (
+                "message-language",
+                "message-language-popover",
+                "The language Translate in the message box writes your message in, the same in every chat. Pick one \
+                 or type any other.",
+            ),
+            Translation::Reading => (
+                "reading-language",
+                "reading-language-popover",
+                "The language a message shows in when you translate it in a chat. Pick one or type any other.",
+            ),
+        };
         let language = self
             .language
-            .get_or_insert_with(|| cx.new(|cx| LanguageMenu::new(settings, "message-language", window, cx)))
+            .get_or_insert_with(|| cx.new(|cx| LanguageMenu::new(settings, translation, selector, window, cx)))
             .clone();
-        let chosen = self.model.read(cx).settings().message_translate_to.clone();
-        let face = gpui_component::button::Button::new("message-language")
+        let chosen = translation.language(self.model.read(cx).settings()).to_owned();
+        let face = gpui_component::button::Button::new(selector)
             .outline()
             .min_w(px(220.0))
             .max_w(px(320.0))
@@ -269,21 +289,15 @@ impl AiPicker {
                     ),
             );
         row_with(
-            "Translate messages into".into(),
-            Some(
-                "The language Translate in the message box writes in, the same in every chat. Pick one or type any \
-                  other."
-                    .into(),
-            ),
-            div()
-                .debug_selector(|| "message-language".to_owned())
-                .child(menu::popover(
-                    &language,
-                    "message-language-popover",
-                    gpui::Anchor::TopRight,
-                    face,
-                    cx,
-                )),
+            translation.title().into(),
+            Some(note.into()),
+            div().debug_selector(move || selector.to_owned()).child(menu::popover(
+                &language,
+                popover,
+                gpui::Anchor::TopRight,
+                face,
+                cx,
+            )),
             palette,
         )
     }
@@ -506,8 +520,10 @@ impl Render for AiPicker {
         let picked = crate::local_ai::pick(&choice.tool, cx);
         let (listed, looking) = Self::listed(&choice, &list, picked.as_ref().ok(), cx);
         let mut rows = Vec::new();
-        if self.work == Work::Draft {
-            rows.push(self.language_row(window, cx));
+        match self.work {
+            Work::Draft => rows.push(self.language_row(Translation::Draft, window, cx)),
+            Work::Chat => rows.push(self.language_row(Translation::Reading, window, cx)),
+            Work::Captions | Work::Summary | Work::Correction => {}
         }
         rows.push(self.tool_row(&choice, &list, &picked, cx));
         let picks = self.model_picks(&choice, picked.as_ref().ok(), &listed, cx);

@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{LAB_B, Rig};
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, px, size};
+use gpui::{AppContext as _, Entity, Modifiers, TestAppContext, VisualTestContext, px, size};
 use teams_core::Action;
 use teams_ui::ViewTrace;
 use teams_ui::chat_view::ChatView;
@@ -188,13 +188,11 @@ fn click(cx: &mut VisualTestContext, selector: &'static str) {
     draw(cx);
 }
 
-/// The AI button's menu opened, then its row of `tool` (`compose-<tool>-row`) clicked.
-fn by_ai_menu(cx: &mut VisualTestContext, row: &'static str) {
-    click(cx, "compose-ai");
-    assert!(
-        cx.debug_bounds("compose-ai-menu").is_some(),
-        "the AI button opens its menu"
-    );
+/// "+" opened, then its row of `tool` (`compose-<tool>-row`) clicked: the AI tools are there until the user shows
+/// them on the toolbar.
+fn by_plus(cx: &mut VisualTestContext, row: &'static str) {
+    click(cx, "compose-apps");
+    assert!(cx.debug_bounds("compose-apps-menu").is_some(), "\"+\" opens its menu");
     click(cx, row);
 }
 
@@ -214,7 +212,7 @@ fn translate_replaces_the_draft_as_one_edit_and_undo_brings_it_back() {
     let fake = Fake::install(&rig);
     let (compose, cx) = chat(&rig);
     type_in(&compose, cx, "hello there");
-    by_ai_menu(cx, "compose-translate-row");
+    by_plus(cx, "compose-translate-row");
     until(cx, |cx| value(&compose, cx) == "hallo there");
     assert_eq!(status(&compose, cx), DraftTranslationStatus::Idle);
     assert_eq!(sent(&rig), 0, "translating sends nothing");
@@ -291,8 +289,8 @@ fn the_language_is_one_setting_every_box_shares() {
     let (other_view, other_cx) = open_chat(&rig, OTHER, &model);
     let other = compose_of(&other_view, other_cx);
 
-    // the AI button's language row shows the language and opens the menu; any language can be typed
-    click(cx, "compose-ai");
+    // the language row in "+" shows the language and opens the menu; any language can be typed
+    click(cx, "compose-apps");
     assert!(cx.debug_bounds("compose-language-row").is_some());
     click(cx, "compose-language-row");
     let menu = compose.read_with(cx, |compose, _| compose.language_menu().unwrap());
@@ -301,8 +299,13 @@ fn the_language_is_one_setting_every_box_shares() {
     click(cx, "compose-language-custom");
     assert!(!menu.read_with(cx, |menu, _| menu.is_open()));
     assert_eq!(
-        model.read_with(cx, |model, _| model.settings().message_translate_to.clone()),
+        model.read_with(cx, |model, _| model.settings().draft_translate_to.clone()),
         "Klingon"
+    );
+    assert_eq!(
+        model.read_with(cx, |model, _| model.settings().message_translate_to.clone()),
+        "English",
+        "the language messages are read in stays"
     );
 
     // the other chat's box translates into it too
@@ -336,7 +339,7 @@ fn the_language_is_one_setting_every_box_shares() {
     cx.update(|window, cx| menu.update(cx, |menu, cx| menu.search("germ", window, cx)));
     cx.update(|window, cx| menu.update(cx, |menu, cx| menu.enter(window, cx)));
     assert_eq!(
-        model.read_with(cx, |model, _| model.settings().message_translate_to.clone()),
+        model.read_with(cx, |model, _| model.settings().draft_translate_to.clone()),
         "German"
     );
 }
@@ -467,7 +470,7 @@ fn the_one_tool_chosen_missing_is_named_with_install_it() {
 }
 
 #[test]
-fn a_narrow_box_keeps_its_placeholder_on_one_line_and_its_language_in_the_ai_menu() {
+fn a_narrow_box_keeps_its_placeholder_on_one_line_and_its_language_in_plus() {
     let rig = Rig::start();
     let _fake = Fake::install(&rig);
     let (compose, cx) = chat(&rig);
@@ -484,11 +487,11 @@ fn a_narrow_box_keeps_its_placeholder_on_one_line_and_its_language_in_the_ai_men
     // as wide as a thread's pane: narrow, with room for the text beside its tools on one line
     cx.simulate_resize(size(px(460.0), px(600.0)));
     draw(cx);
-    assert!(cx.debug_bounds("compose-ai").is_some());
+    assert!(cx.debug_bounds("compose-apps").is_some());
     assert_eq!(cx.debug_bounds("compose-box").unwrap().size.height, one_line);
 
-    // the language menu opens from the AI button's menu, inside the window
-    by_ai_menu(cx, "compose-language-row");
+    // the language menu opens from "+", inside the window
+    by_plus(cx, "compose-language-row");
     draw(cx);
     let menu = cx
         .debug_bounds("compose-language-menu")
@@ -563,9 +566,9 @@ fn a_channels_box_translates_too() {
         compose.in_channel(Writes::Channel, "Message in General", cx);
     });
     draw(cx);
-    assert!(cx.debug_bounds("compose-ai").is_some());
+    assert!(cx.debug_bounds("compose-apps").is_some());
     type_in(&compose, cx, "hello");
-    by_ai_menu(cx, "compose-translate-row");
+    by_plus(cx, "compose-translate-row");
     until(cx, |cx| value(&compose, cx) == "hallo");
 }
 
@@ -588,15 +591,8 @@ fn a_hidden_translate_in_the_apps_flyout_follows_the_job_and_gives_the_keyboard_
     rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
     *rig.core.extension_apps.lock().unwrap() =
         teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
+    // Translate is in "+" by default
     let model = settings(&rig);
-    rig.cx.update(|cx| {
-        model.update(cx, |model, cx| {
-            model.change(
-                |settings| settings.show_compose_tool(teams_ui::settings::ComposeTool::Ai, false),
-                cx,
-            );
-        });
-    });
     let (compose, cx) = chat_in(&rig, &model);
     type_in(&compose, cx, "hello");
     fake.held.store(true, Ordering::Relaxed);
@@ -620,4 +616,40 @@ fn a_hidden_translate_in_the_apps_flyout_follows_the_job_and_gives_the_keyboard_
     assert_eq!(status(&compose, cx), DraftTranslationStatus::Running);
     fake.held.store(false, Ordering::Relaxed);
     until(cx, |cx| status(&compose, cx) == DraftTranslationStatus::Idle);
+}
+
+#[test]
+fn the_reading_and_the_draft_language_menus_set_each_their_own_language() {
+    use teams_ui::draft_translate::menu::{LanguageMenu, Translation};
+    let rig = Rig::start();
+    let _fake = Fake::install(&rig);
+    let model = settings(&rig);
+    let (_compose, cx) = chat_in(&rig, &model);
+    let languages = |cx: &mut VisualTestContext| {
+        model.read_with(cx, |model, _| {
+            let settings = model.settings();
+            (
+                settings.message_translate_to.clone(),
+                settings.draft_translate_to.clone(),
+            )
+        })
+    };
+    let menu_of = |translation, prefix, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| cx.new(|cx| LanguageMenu::new(model.clone(), translation, prefix, window, cx)))
+    };
+    let reading = menu_of(Translation::Reading, "reading-language", cx);
+    let draft = menu_of(Translation::Draft, "draft-language", cx);
+    // the reading language changed: the draft's stays
+    cx.update(|window, cx| reading.update(cx, |menu, cx| menu.choose("Russian", window, cx)));
+    assert_eq!(languages(cx), ("Russian".to_owned(), "English".to_owned()));
+    // the draft's changed: the reading one stays
+    cx.update(|window, cx| draft.update(cx, |menu, cx| menu.choose("German", window, cx)));
+    assert_eq!(languages(cx), ("Russian".to_owned(), "German".to_owned()));
+    // each menu shows its own language first, under its own title
+    let first =
+        |menu: &Entity<LanguageMenu>, cx: &mut VisualTestContext| cx.read(|cx| menu.read(cx).rows(cx)[0].clone());
+    assert_eq!(first(&reading, cx), Row::Listed("Russian"));
+    assert_eq!(first(&draft, cx), Row::Listed("German"));
+    assert_eq!(Translation::Reading.title(), "Translate messages into this language");
+    assert_eq!(Translation::Draft.title(), "Translate my messages into");
 }

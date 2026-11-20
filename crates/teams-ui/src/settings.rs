@@ -392,9 +392,15 @@ pub struct Settings {
     pub chat_translator: AiChoice,
     /// Which tool, and model, proofreads a draft when the user asks ([`crate::message_correct`]).
     pub message_corrector: AiChoice,
-    /// The language a draft is translated into in its box ([`crate::draft_translate`]): the app's for every box and
-    /// account, by its name (one of [`crate::translate::TARGET_LANGUAGES`]' or any the user typed).
+    /// The language a message is translated into for reading (a message's "Translate", Teams' "Translate messages into
+    /// this language", [`crate::chat_translate`]): the app's for every chat and account, by its name (one of
+    /// [`crate::translate::TARGET_LANGUAGES`]' or any the user typed). A chat read in a language of its own
+    /// ([`Settings::chat_languages`]) uses that one.
     pub message_translate_to: String,
+    /// The language a draft is translated into in its box before it is sent ([`crate::draft_translate`]): the app's
+    /// for every box and account, by its name. It is apart from [`Settings::message_translate_to`], so that the user
+    /// can read in one language and write in another.
+    pub draft_translate_to: String,
     /// Which tool, and model, translates a draft in its box.
     pub message_translator: AiChoice,
     /// The AI providers the user set, in the user's order ([`crate::local_ai::providers`]); the command-line tools
@@ -403,8 +409,10 @@ pub struct Settings {
     /// "Use AI features": `Some(false)` turns every AI feature off ([`crate::local_ai::enabled`]). `None`: the user
     /// was not asked yet, and the app shows the AI notice first ([`SettingsModel::awaiting_ai_notice`]).
     pub ai_features: Option<bool>,
-    /// The buttons the user hid from the message box's toolbar, in the toolbar's order ([`toolbar`]).
+    /// Teams' own buttons that the user hid from the message box's toolbar, in the toolbar's order ([`toolbar`]).
     pub compose_hidden: Vec<ComposeTool>,
+    /// The AI tools that the user shows on the message box's toolbar, in the toolbar's order ([`toolbar`]).
+    pub compose_shown: Vec<ComposeTool>,
     /// Which sound plays for each event, how loud, and the pack they come from ([`crate::sounds`]).
     pub sounds: SoundSettings,
 }
@@ -442,15 +450,24 @@ impl Settings {
     /// Whether the message box's toolbar shows `tool`.
     #[must_use]
     pub fn shows_compose_tool(&self, tool: ComposeTool) -> bool {
-        !self.compose_hidden.contains(&tool)
+        if tool.shown_by_default() {
+            !self.compose_hidden.contains(&tool)
+        } else {
+            self.compose_shown.contains(&tool)
+        }
     }
 
     /// Shows `tool` on the message box's toolbar, or hides it there.
     pub fn show_compose_tool(&mut self, tool: ComposeTool, shown: bool) {
-        self.compose_hidden.retain(|hidden| *hidden != tool);
-        if !shown {
-            self.compose_hidden.push(tool);
-            toolbar::tidy(&mut self.compose_hidden);
+        let (list, kept) = if tool.shown_by_default() {
+            (&mut self.compose_hidden, !shown)
+        } else {
+            (&mut self.compose_shown, shown)
+        };
+        list.retain(|other| *other != tool);
+        if kept {
+            list.push(tool);
+            toolbar::tidy(list);
         }
     }
 
@@ -643,10 +660,12 @@ impl Default for Settings {
             chat_translator: AiChoice::default(),
             message_corrector: AiChoice::default(),
             message_translate_to: crate::draft_translate::DEFAULT_LANGUAGE.to_owned(),
+            draft_translate_to: crate::draft_translate::DEFAULT_LANGUAGE.to_owned(),
             message_translator: AiChoice::default(),
             ai_providers: Vec::new(),
             ai_features: None,
             compose_hidden: Vec::new(),
+            compose_shown: Vec::new(),
             sounds: SoundSettings::default(),
         }
     }
@@ -699,11 +718,16 @@ pub mod keys {
     pub const CHAT_LANGUAGES: &str = "chat_languages";
     pub const CHAT_TRANSLATOR: &str = "chat_translator";
     pub const MESSAGE_CORRECTOR: &str = "message_corrector";
-    /// The language a draft is translated into in its box, by its name.
+    /// The language a message is translated into for reading, by its name. A file of an earlier build had only this
+    /// one language, for drafts too: a file without [`DRAFT_TRANSLATE_TO`] takes it for drafts as well.
     pub const MESSAGE_TRANSLATE_TO: &str = "message_translate_to";
+    /// The language a draft is translated into in its box, by its name.
+    pub const DRAFT_TRANSLATE_TO: &str = "draft_translate_to";
     pub const MESSAGE_TRANSLATOR: &str = "message_translator";
-    /// The buttons hidden from the message box's toolbar: an array of their names.
+    /// Teams' own buttons hidden from the message box's toolbar: an array of their names.
     pub const COMPOSE_HIDDEN: &str = "compose_hidden_tools";
+    /// The AI tools shown on the message box's toolbar: an array of their names.
+    pub const COMPOSE_SHOWN: &str = "compose_shown_tools";
     /// The sound pack chosen as a whole (`builtin/<key>` or `added/<id>`), "Play sounds when I'm busy", every sound's
     /// volume, and each event's sound: a table of tables, by the event's name.
     pub const SOUND_PACK: &str = "sound_pack";
@@ -740,6 +764,9 @@ pub fn parse(text: &str) -> Result<(Settings, Vec<Problem>), &'static str> {
         if let Err(problem) = take(&mut settings, key, value) {
             problems.push(problem);
         }
+    }
+    if !table.contains_key(keys::DRAFT_TRANSLATE_TO) {
+        settings.draft_translate_to.clone_from(&settings.message_translate_to);
     }
     Ok((settings, problems))
 }
@@ -813,11 +840,9 @@ fn take(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem
         }
         keys::ACCOUNTS => take_accounts(settings, value)?,
         keys::PEOPLE_CALENDARS => take_people_calendars(settings, value)?,
-        keys::CHAT_LANGUAGES | keys::CHAT_TRANSLATOR | keys::MESSAGE_CORRECTOR => {
-            take_chat_translation(settings, key, value)?;
-        }
-        keys::MESSAGE_TRANSLATE_TO | keys::MESSAGE_TRANSLATOR => take_message_translation(settings, key, value)?,
-        keys::COMPOSE_HIDDEN => settings.compose_hidden = toolbar::take(value)?,
+        key if TRANSLATIONS.contains(&key) => take_translation(settings, key, value)?,
+        keys::COMPOSE_HIDDEN => settings.compose_hidden = toolbar::take(keys::COMPOSE_HIDDEN, false, value)?,
+        keys::COMPOSE_SHOWN => settings.compose_shown = toolbar::take(keys::COMPOSE_SHOWN, true, value)?,
         keys::FIRST_ACCOUNT => {
             settings.first_account = Some(chat_id(value).ok_or(bad(keys::FIRST_ACCOUNT, "not an account's MRI"))?);
         }
@@ -908,8 +933,8 @@ fn take_chat_translation(settings: &mut Settings, key: &str, value: &Value) -> R
     if failed { Err(bad) } else { Ok(()) }
 }
 
-/// Takes a draft's translation in its box: the language (any name [`crate::draft_translate::language_name`] takes) or
-/// the tool.
+/// Takes a message's translation: the language messages are read in, the language drafts are written in (any name
+/// [`crate::draft_translate::language_name`] takes), or the tool that translates a draft.
 fn take_message_translation(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem> {
     if key == keys::MESSAGE_TRANSLATOR {
         settings.message_translator = ai_choice(value).ok_or(Problem::BadValue {
@@ -918,14 +943,18 @@ fn take_message_translation(settings: &mut Settings, key: &str, value: &Value) -
         })?;
         return Ok(());
     }
-    settings.message_translate_to =
-        value
-            .as_str()
-            .and_then(crate::draft_translate::language_name)
-            .ok_or(Problem::BadValue {
-                key: keys::MESSAGE_TRANSLATE_TO,
-                why: "not a language's name",
-            })?;
+    let (key, kept) = if key == keys::DRAFT_TRANSLATE_TO {
+        (keys::DRAFT_TRANSLATE_TO, &mut settings.draft_translate_to)
+    } else {
+        (keys::MESSAGE_TRANSLATE_TO, &mut settings.message_translate_to)
+    };
+    *kept = value
+        .as_str()
+        .and_then(crate::draft_translate::language_name)
+        .ok_or(Problem::BadValue {
+            key,
+            why: "not a language's name",
+        })?;
     Ok(())
 }
 
@@ -1009,6 +1038,26 @@ fn take_appearance(appearance: &mut Appearance, key: &str, value: &Value) -> Res
         }
     }
     Ok(())
+}
+
+/// The chats' and messages' translation and correction settings, which [`take_translation`] takes.
+const TRANSLATIONS: [&str; 6] = [
+    keys::CHAT_LANGUAGES,
+    keys::CHAT_TRANSLATOR,
+    keys::MESSAGE_CORRECTOR,
+    keys::MESSAGE_TRANSLATE_TO,
+    keys::DRAFT_TRANSLATE_TO,
+    keys::MESSAGE_TRANSLATOR,
+];
+
+/// Takes one of [`TRANSLATIONS`].
+fn take_translation(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem> {
+    match key {
+        keys::CHAT_LANGUAGES | keys::CHAT_TRANSLATOR | keys::MESSAGE_CORRECTOR => {
+            take_chat_translation(settings, key, value)
+        }
+        _ => take_message_translation(settings, key, value),
+    }
 }
 
 /// The settings that [`take_switch`] takes.
@@ -1233,7 +1282,7 @@ pub fn render(settings: &Settings) -> String {
     }
     render_people(settings, &mut table);
     render_chat_translation(settings, &mut table);
-    toolbar::render(&settings.compose_hidden, &mut table);
+    toolbar::render(&settings.compose_hidden, &settings.compose_shown, &mut table);
     sounds::render(&settings.sounds, &mut table);
     table.to_string()
 }
@@ -1292,6 +1341,10 @@ fn render_chat_translation(settings: &Settings, table: &mut Table) {
     table.insert(
         keys::MESSAGE_TRANSLATE_TO.to_owned(),
         Value::String(settings.message_translate_to.clone()),
+    );
+    table.insert(
+        keys::DRAFT_TRANSLATE_TO.to_owned(),
+        Value::String(settings.draft_translate_to.clone()),
     );
     table.insert(
         keys::MESSAGE_TRANSLATOR.to_owned(),

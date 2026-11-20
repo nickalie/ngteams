@@ -1,5 +1,6 @@
-//! The customize list: a right click on the toolbar, or "Customize toolbar", lists the buttons that can hide, each
-//! with a check. A click or Enter shows or hides one, and the list stays open. The choice is a setting
+//! The customize list: a right click on the toolbar, or "Customize toolbar", lists the buttons that can show or hide,
+//! each with its icon and a check while it shows: Teams' own, then the AI tools (Correct, Translate), which are in "+"
+//! until the user shows them. A click or Enter shows or hides one, and the list stays open. The choice is a setting
 //! ([`crate::settings::ComposeTool`]) of every box. Send and "+" are listed, and cannot hide.
 //!
 //! It is a list of its own, drawn as the kit's menus: the kit's menu selects its first item on the first Down and on
@@ -15,6 +16,7 @@ use gpui_component::{ActiveTheme as _, ThemeStyled as _};
 
 use super::Compose;
 use super::apps::ACTIONS_AND_APPS;
+use super::menus::Item;
 use crate::icons::Glyph;
 use crate::settings::ComposeTool;
 use crate::theme::{self, Palette};
@@ -61,6 +63,7 @@ pub(super) struct Customize {
 #[derive(Clone, Copy)]
 struct Line {
     tool: Option<ComposeTool>,
+    glyph: Glyph,
     key: &'static str,
     label: &'static str,
     checked: bool,
@@ -130,25 +133,28 @@ impl Compose {
         }
     }
 
-    /// The list's rows: a row with a check for each button that can hide (the AI button only while the AI features are
+    /// The list's rows: a row with a check for each button that can hide (the AI tools only while the AI features are
     /// on), then "+" and Send, checked and off, as they always show.
     fn customize_lines(&self, cx: &App) -> Vec<Line> {
         let settings = self.settings.read(cx).settings();
         let tools = ComposeTool::ALL
             .into_iter()
-            .filter(|tool| *tool != ComposeTool::Ai || crate::local_ai::enabled(cx))
+            .filter(|tool| !tool.uses_ai() || crate::local_ai::enabled(cx))
             .map(|tool| Line {
                 tool: Some(tool),
+                glyph: glyph_of(tool),
                 key: tool.key(),
                 label: tool.label(),
                 checked: settings.shows_compose_tool(tool),
             });
-        let fixed = [("apps", ACTIONS_AND_APPS), ("send", "Send")].map(|(key, label)| Line {
-            tool: None,
-            key,
-            label,
-            checked: true,
-        });
+        let fixed =
+            [("apps", Glyph::PLUS, ACTIONS_AND_APPS), ("send", Glyph::SEND, "Send")].map(|(key, glyph, label)| Line {
+                tool: None,
+                glyph,
+                key,
+                label,
+                checked: true,
+            });
         tools.chain(fixed).collect()
     }
 
@@ -247,7 +253,20 @@ impl Compose {
     }
 }
 
-/// A row of the list: its name, and a check while its button shows (`compose-customize-<key>`,
+/// The icon of `tool`'s button, as its row in "+" shows it.
+fn glyph_of(tool: ComposeTool) -> Glyph {
+    match tool {
+        ComposeTool::Format => Item::Format,
+        ComposeTool::Emoji => Item::Emoji,
+        ComposeTool::Attach => Item::Attach,
+        ComposeTool::Loop => Item::Loop,
+        ComposeTool::Correct => Item::Correct,
+        ComposeTool::Translate => Item::Translate,
+    }
+    .glyph()
+}
+
+/// A row of the list: a check while its button shows, its icon and its name (`compose-customize-<key>`,
 /// `compose-customize-<key>-check`); lit while selected. "+" and Send are drawn off and take nothing.
 fn customize_row(
     ix: usize,
@@ -275,6 +294,7 @@ fn customize_row(
         .gap_2()
         .rounded(radius)
         .child(div().flex_none().w(px(14.0)).children(check))
+        .child(line.glyph.icon().size(px(14.0)))
         .child(line.label)
         .when(!takes, |row| row.text_color(rgb(palette.muted_foreground)))
         .when(takes, |row| {
@@ -296,6 +316,7 @@ mod tests {
     fn lines(tools: usize) -> Vec<Line> {
         let line = |tool: Option<ComposeTool>| Line {
             tool,
+            glyph: Glyph::CHECK,
             key: "",
             label: "",
             checked: true,
