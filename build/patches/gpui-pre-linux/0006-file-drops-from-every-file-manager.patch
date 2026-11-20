@@ -1,7 +1,8 @@
-A file drop is accepted on its enter, with that enter's serial, once the offer's types are known, and refused
-(no type, no actions) when it offers no files. The files come from the URI list (RFC 2483: comments and
-localhost URIs too), else from a sandboxed program's document portal key (FileTransfer.RetrieveFiles). A drop
-that comes before the files were read is delivered once they are, and the files enter where the pointer is then.
+A file drop is accepted on its enter, with that enter's serial, once the offer's types are known, and refused (no
+type, no actions) when it offers no files, or when its read gives none while it is still over the window. The files
+come from the URI list (RFC 2483: comments and localhost URIs too), else from a sandboxed program's document portal
+key (FileTransfer.RetrieveFiles). A drop that comes before the files were read is delivered once they are, and the
+files enter where the pointer is then.
 
 --- a/Cargo.toml
 +++ b/Cargo.toml
@@ -26,7 +27,7 @@ that comes before the files were read is delivered once they are, and the files 
          cursor::Cursor,
          serial::{Serial, SerialKind, SerialTracker},
          to_shape,
-@@ -421,21 +423,36 @@
+@@ -421,21 +423,41 @@
      window: Option<Window>,
      position: Point<Pixels>,
      uri_read_generation: u64,
@@ -55,6 +56,11 @@ that comes before the files were read is delivered once they are, and the files 
          self.uri_read_generation == generation
      }
 +
++    /// The offer of `generation` is still over the window, not yet dropped: it can be refused.
++    fn is_offered_while_reading(&self, generation: u64) -> bool {
++        self.is_uri_read_current(generation) && !self.dropped_while_reading
++    }
++
 +    /// The read of `generation` gave no files: a drop that waited on it is let go.
 +    fn abandon_uri_read(&mut self, generation: u64) {
 +        if self.is_uri_read_current(generation) {
@@ -64,7 +70,7 @@ that comes before the files were read is delivered once they are, and the files 
  }
  
  trait FileDragDataOffer {
-@@ -458,24 +475,41 @@
+@@ -458,24 +480,41 @@
      DataOffer: FileDragDataOffer + Clone,
      Window: Clone,
  {
@@ -115,7 +121,7 @@ that comes before the files were read is delivered once they are, and the files 
          Some((
              window,
              PlatformInput::FileDrop(FileDropEvent::Submit {
-@@ -489,21 +523,74 @@
+@@ -489,21 +528,81 @@
          generation: u64,
          data_offer: DataOffer,
          window: Window,
@@ -154,6 +160,13 @@ that comes before the files were read is delivered once they are, and the files 
 +        self.window = Some(window);
 +        SmallVec::from_iter([entered])
 +    }
++}
++
++/// Takes back any accept of `data_offer` with the `serial` of its enter: the source then cancels its drop.
++fn refuse_drag_offer(drag: &mut DragState, data_offer: wl_data_offer::WlDataOffer, serial: u32) {
++    data_offer.accept(serial, None);
++    data_offer.set_actions(DndAction::empty(), DndAction::empty());
++    drag.refuse(data_offer);
 +}
 +
 +/// The offered type a file drop is read from: a list of file URIs, else a key of the document portal's file
@@ -200,7 +213,7 @@ that comes before the files were read is delivered once they are, and the files 
      }
  }
  
-@@ -1096,6 +1183,8 @@
+@@ -1096,6 +1195,8 @@
                  window: None,
                  position: Point::default(),
                  uri_read_generation: 0,
@@ -209,7 +222,7 @@ that comes before the files were read is delivered once they are, and the files 
              },
              external_drag: None,
              click: ClickState {
-@@ -2906,15 +2995,35 @@
+@@ -2906,15 +3007,33 @@
                  state.serial_tracker.update(SerialKind::DataDevice, serial);
                  if let Some(data_offer) = data_offer {
                      let Some(drag_window) = get_window(&mut state, &surface.id()) else {
@@ -229,9 +242,7 @@ that comes before the files were read is delivered once they are, and the files 
 +                    // accepted (or refused) with this enter's serial, once the offer's types are known: a source
 +                    // whose offer was never accepted for this enter cancels the drop
 +                    let Some(mime_type) = mime_type else {
-+                        data_offer.accept(serial, None);
-+                        data_offer.set_actions(DndAction::empty(), DndAction::empty());
-+                        state.drag.refuse(data_offer);
++                        refuse_drag_offer(&mut state.drag, data_offer, serial);
                          return;
                      };
 -                    let uri_read_generation = state.drag.begin_uri_read();
@@ -248,7 +259,7 @@ that comes before the files were read is delivered once they are, and the files 
                          BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
                      });
                      let fd = pipe.read;
-@@ -2933,47 +3042,34 @@
+@@ -2933,47 +3052,39 @@
                          .foreground_executor
                          .clone()
                          .spawn(async move {
@@ -288,10 +299,15 @@ that comes before the files were read is delivered once they are, and the files 
                              };
                              let mut state = client.borrow_mut();
 -                            let input = state.drag.complete_uri_read(
-+                            // Prevent dropping text from other programs.
 +                            if paths.is_empty() {
-+                                state.drag.abandon_uri_read(uri_read_generation);
-+                                data_offer.destroy();
++                                // non-file URIs, a failed read or no portal files: a drag still over the window is
++                                // refused, as a text drag is on its enter; a drop waiting on them is let go
++                                if state.drag.is_offered_while_reading(uri_read_generation) {
++                                    refuse_drag_offer(&mut state.drag, data_offer, serial);
++                                } else {
++                                    state.drag.abandon_uri_read(uri_read_generation);
++                                    data_offer.destroy();
++                                }
 +                                return;
 +                            }
 +                            let inputs = state.drag.complete_uri_read(
@@ -308,7 +324,7 @@ that comes before the files were read is delivered once they are, and the files 
                                  drag_window.handle_input(input);
                              }
                          })
-@@ -2981,11 +3077,12 @@
+@@ -2981,11 +3092,12 @@
                  }
              }
              wl_data_device::Event::Motion { x, y, .. } => {
@@ -323,7 +339,7 @@ that comes before the files were read is delivered once they are, and the files 
  
                  let input = PlatformInput::FileDrop(FileDropEvent::Pending { position });
                  drop(state);
-@@ -3027,14 +3124,7 @@
+@@ -3027,14 +3139,7 @@
          let mut state = client.borrow_mut();
  
          if let wl_data_offer::Event::Offer { mime_type } = event {
@@ -339,7 +355,7 @@ that comes before the files were read is delivered once they are, and the files 
              if let Some(offer) = state
                  .data_offers
                  .iter_mut()
-@@ -3305,6 +3395,8 @@
+@@ -3305,6 +3410,8 @@
              window: None,
              position: Point::default(),
              uri_read_generation: 0,
@@ -348,7 +364,7 @@ that comes before the files were read is delivered once they are, and the files 
          }
      }
  
-@@ -3313,22 +3405,23 @@
+@@ -3313,22 +3420,23 @@
          generation: u64,
          data_offer: FakeDataOffer,
          window: &'static str,
@@ -377,7 +393,7 @@ that comes before the files were read is delivered once they are, and the files 
          }
      }
  
-@@ -3336,7 +3429,7 @@
+@@ -3336,7 +3444,7 @@
      fn leave_discards_pending_drag_uri_read() {
          let mut drag = drag_state();
          let data_offer = FakeDataOffer::new("A");
@@ -386,7 +402,7 @@ that comes before the files were read is delivered once they are, and the files 
          let mut entered_windows = Vec::new();
  
          record_entered(drag.handle_leave(), &mut entered_windows);
-@@ -3352,37 +3445,77 @@
+@@ -3352,37 +3460,91 @@
      }
  
      #[test]
@@ -451,6 +467,20 @@ that comes before the files were read is delivered once they are, and the files 
 +    }
 +
 +    #[test]
++    fn only_an_offer_still_over_the_window_is_refused_after_its_read() {
++        let mut drag = drag_state();
++        let generation = drag.begin_uri_read(Point::default());
++        assert!(drag.is_offered_while_reading(generation));
++
++        assert!(drag.handle_drop().is_none());
++        assert!(!drag.is_offered_while_reading(generation));
++
++        let generation = drag.begin_uri_read(Point::default());
++        assert!(drag.handle_leave().is_none());
++        assert!(!drag.is_offered_while_reading(generation));
++    }
++
++    #[test]
 +    fn a_refused_offer_is_destroyed_when_the_drag_leaves() {
 +        let mut drag = drag_state();
 +        let data_offer = FakeDataOffer::new("text only");
@@ -478,7 +508,7 @@ that comes before the files were read is delivered once they are, and the files 
          record_entered(
              complete_drag_uri_read(&mut drag, generation_b, data_offer_b.clone(), "window B"),
              &mut entered_windows,
-@@ -3399,6 +3532,39 @@
+@@ -3399,6 +3561,39 @@
          assert_eq!(drag.window, Some("window B"));
      }
  

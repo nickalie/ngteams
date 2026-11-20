@@ -447,6 +447,11 @@ impl<DataOffer, Window> DragState<DataOffer, Window> {
         self.uri_read_generation == generation
     }
 
+    /// The offer of `generation` is still over the window, not yet dropped: it can be refused.
+    fn is_offered_while_reading(&self, generation: u64) -> bool {
+        self.is_uri_read_current(generation) && !self.dropped_while_reading
+    }
+
     /// The read of `generation` gave no files: a drop that waited on it is let go.
     fn abandon_uri_read(&mut self, generation: u64) {
         if self.is_uri_read_current(generation) {
@@ -548,6 +553,13 @@ where
         self.window = Some(window);
         SmallVec::from_iter([entered])
     }
+}
+
+/// Takes back any accept of `data_offer` with the `serial` of its enter: the source then cancels its drop.
+fn refuse_drag_offer(drag: &mut DragState, data_offer: wl_data_offer::WlDataOffer, serial: u32) {
+    data_offer.accept(serial, None);
+    data_offer.set_actions(DndAction::empty(), DndAction::empty());
+    drag.refuse(data_offer);
 }
 
 /// The offered type a file drop is read from: a list of file URIs, else a key of the document portal's file
@@ -3011,9 +3023,7 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     // accepted (or refused) with this enter's serial, once the offer's types are known: a source
                     // whose offer was never accepted for this enter cancels the drop
                     let Some(mime_type) = mime_type else {
-                        data_offer.accept(serial, None);
-                        data_offer.set_actions(DndAction::empty(), DndAction::empty());
-                        state.drag.refuse(data_offer);
+                        refuse_drag_offer(&mut state.drag, data_offer, serial);
                         return;
                     };
                     const ACTIONS: DndAction = DndAction::Copy;
@@ -3055,10 +3065,15 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                                 return;
                             };
                             let mut state = client.borrow_mut();
-                            // Prevent dropping text from other programs.
                             if paths.is_empty() {
-                                state.drag.abandon_uri_read(uri_read_generation);
-                                data_offer.destroy();
+                                // non-file URIs, a failed read or no portal files: a drag still over the window is
+                                // refused, as a text drag is on its enter; a drop waiting on them is let go
+                                if state.drag.is_offered_while_reading(uri_read_generation) {
+                                    refuse_drag_offer(&mut state.drag, data_offer, serial);
+                                } else {
+                                    state.drag.abandon_uri_read(uri_read_generation);
+                                    data_offer.destroy();
+                                }
                                 return;
                             }
                             let inputs = state.drag.complete_uri_read(
@@ -3491,6 +3506,20 @@ mod tests {
         assert!(!drag.reading);
         assert!(!drag.dropped_while_reading);
         assert!(drag.handle_leave().is_none());
+    }
+
+    #[test]
+    fn only_an_offer_still_over_the_window_is_refused_after_its_read() {
+        let mut drag = drag_state();
+        let generation = drag.begin_uri_read(Point::default());
+        assert!(drag.is_offered_while_reading(generation));
+
+        assert!(drag.handle_drop().is_none());
+        assert!(!drag.is_offered_while_reading(generation));
+
+        let generation = drag.begin_uri_read(Point::default());
+        assert!(drag.handle_leave().is_none());
+        assert!(!drag.is_offered_while_reading(generation));
     }
 
     #[test]

@@ -4,7 +4,8 @@
 //! Then the drops of the file managers people use, each from the sandbox's drag source ([`ui_sandbox::drag`]) onto
 //! the message box with what that file manager offers: Dolphin's URI lists, Nautilus's portal key before its list,
 //! Thunar's GTK 3 types, a sandboxed (Flatpak) program's portal key alone, and a source that answers late, so the
-//! drop comes before the files were read. A drag of text alone is refused: no highlight, and the source cancels.
+//! drop comes before the files were read. A drag of text alone, or of a web link, is refused: no highlight, and the
+//! source cancels.
 
 #[expect(
     dead_code,
@@ -156,10 +157,7 @@ fn parent() -> SandboxResult {
     }
     say("real Wayland file drop: ok");
     let only = std::env::var(ONLY).unwrap_or_default();
-    for source in file_managers()
-        .into_iter()
-        .filter(|source| only.is_empty() || only.split(',').any(|name| name == source.name))
-    {
+    for source in file_managers().filter(|source| only.is_empty() || only.split(',').any(|name| name == source.name)) {
         file_manager_drop(&sandbox, &source, &paths)?;
         say(&format!("{} drop: ok", source.name));
     }
@@ -185,7 +183,7 @@ fn offer(mime: &str, text: &str) -> (String, Vec<u8>) {
     (mime.to_owned(), text.as_bytes().to_vec())
 }
 
-fn file_managers() -> [FileManager; 6] {
+fn file_managers() -> impl Iterator<Item = FileManager> {
     let all = DndAction::Copy | DndAction::Move | DndAction::Ask;
     [
         FileManager {
@@ -243,12 +241,32 @@ fn file_managers() -> [FileManager; 6] {
             delay: Duration::from_millis(1500),
             takes: Some("text/uri-list"),
         },
+    ]
+    .into_iter()
+    .chain(drags_of_no_files())
+}
+
+/// Drags the app takes nothing from: text alone, and a web link's URI list.
+fn drags_of_no_files() -> [FileManager; 2] {
+    [
         FileManager {
             name: "text",
             offers: |_, _| {
                 vec![
                     offer("text/plain;charset=utf-8", "Some made-up words"),
                     offer("text/html", "<p>Some made-up words</p>"),
+                ]
+            },
+            actions: DndAction::Copy | DndAction::Move,
+            delay: Duration::ZERO,
+            takes: None,
+        },
+        FileManager {
+            name: "link",
+            offers: |_, _| {
+                vec![
+                    offer("text/uri-list", "https://example.invalid/made-up-page\r\n"),
+                    offer("text/plain;charset=utf-8", "https://example.invalid/made-up-page"),
                 ]
             },
             actions: DndAction::Copy | DndAction::Move,
@@ -396,6 +414,9 @@ fn taken(
             "the source wasn't told the drop was taken",
         ));
     }
+    if !copied(&seen) {
+        return Err(failed(target, source, drag, "the drop wasn't taken as a copy"));
+    }
     if mime.starts_with("application/vnd.portal")
         && !sandbox
             .bus()
@@ -408,12 +429,33 @@ fn taken(
     Ok(())
 }
 
-/// A drag of no files is refused: nothing read, and the drag cancelled.
+/// The drop was a copy: a move would make the file manager delete the files it dropped.
+fn copied(seen: &[DragEvent]) -> bool {
+    let action = |event: &DragEvent| match event {
+        DragEvent::Action(bits) => Some(*bits),
+        _ => None,
+    };
+    let moved = seen
+        .iter()
+        .filter_map(action)
+        .any(|bits| bits & DndAction::Move.bits() != 0);
+    let last_before_drop = seen
+        .iter()
+        .take_while(|event| **event != DragEvent::DropPerformed)
+        .filter_map(action)
+        .last();
+    !moved && last_before_drop == Some(DndAction::Copy.bits())
+}
+
+/// A drag of no files is refused: nothing read but a URI list, no drop performed, and the drag cancelled.
 fn refused(target: &mut Running, source: &FileManager, drag: &DragSource) -> SandboxResult {
     let cancelled = ui_sandbox::wait_until(WAIT, || drag.events().contains(&DragEvent::Cancelled).then_some(()));
-    let read = drag.events().iter().any(|event| matches!(event, DragEvent::Sent(_)));
-    if cancelled.is_none() || read {
-        return Err(failed(target, source, drag, "a drag of text wasn't refused"));
+    let seen = drag.events();
+    let read = seen
+        .iter()
+        .any(|event| matches!(event, DragEvent::Sent(mime) if mime != "text/uri-list"));
+    if cancelled.is_none() || read || seen.contains(&DragEvent::DropPerformed) {
+        return Err(failed(target, source, drag, "a drag of no files wasn't refused"));
     }
     Ok(())
 }

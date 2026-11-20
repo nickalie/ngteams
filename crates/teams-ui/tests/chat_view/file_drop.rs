@@ -1,7 +1,7 @@
 //! Files dragged from the file manager onto a chat, as the platform hands them to the window (`FileDropEvent`): Teams'
 //! "Share in this chat" over the conversation while they are over it, gone when they leave; several files dropped on
-//! the message box staged beside the draft; a folder told on the drop while the files with it go in; a channel's box,
-//! which takes no files, says why. Every file and name is made up.
+//! the message box staged beside the draft; a folder told on the drop while the files with it go in; a channel's box
+//! and a box that edits a message take no files and say why, the draft kept. Every file and name is made up.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use gpui::{Entity, ExternalPaths, FileDropEvent, Pixels, Point, VisualTestContext, size};
 use teams_ui::ViewTrace;
 use teams_ui::chat_view::{ChatView, Place};
-use teams_ui::compose::Compose;
+use teams_ui::compose::{Compose, Loaded};
 use teams_ui::editor::doc::{Attrs, Block, Doc, Kind, Run};
 use teams_ui::settings::Settings;
 
@@ -168,6 +168,7 @@ fn a_channel_s_box_takes_no_files_and_says_why_on_the_drop() {
     cx.simulate_resize(size(gpui::px(800.0), gpui::px(600.0)));
     draw(cx);
     let compose = compose(&view, cx);
+    type_draft(&compose, cx, "A made-up post");
     let dir = tempfile::tempdir().unwrap();
     let files = made_up_files(dir.path(), &["made-up notes.txt"]);
     let chat = cx.debug_bounds("chat-view").unwrap();
@@ -181,4 +182,32 @@ fn a_channel_s_box_takes_no_files_and_says_why_on_the_drop() {
         problem(&compose, cx).as_deref(),
         Some("Files can't be shared in a channel from this app.")
     );
+    assert_eq!(draft(&compose, cx), "A made-up post");
+}
+
+#[test]
+fn a_box_that_edits_a_message_takes_no_files_and_says_why_on_the_drop() {
+    let rig = rig_with(Vec::new());
+    let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    let compose = compose(&view, cx);
+    let loaded = Loaded {
+        doc: Doc::new(vec![Block::paragraph("A made-up message")]),
+        quotes: Vec::new(),
+    };
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.edit("1".to_owned(), loaded, window, cx)));
+    draw(cx);
+    let dir = tempfile::tempdir().unwrap();
+    let files = made_up_files(dir.path(), &["made-up notes.txt"]);
+    let the_box = cx.debug_bounds("compose-box").unwrap();
+
+    entered(cx, the_box.center(), &files);
+    assert!(cx.debug_bounds("chat-file-drop-highlight").is_none());
+    dropped(cx, the_box.center());
+
+    assert!(staged(&compose, cx).is_empty());
+    assert_eq!(
+        problem(&compose, cx).as_deref(),
+        Some("Files can't be added to a message you edit. Send them in a new message.")
+    );
+    assert_eq!(draft(&compose, cx), "A made-up message");
 }

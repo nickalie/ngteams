@@ -239,7 +239,14 @@ impl Clipboard {
         let serving = thread::Builder::new()
             .name("sandbox-clipboard".to_owned())
             .spawn(move || {
-                serve(&connection, &mut queue, &mut state, &stopped);
+                serve(
+                    &connection,
+                    &mut queue,
+                    &mut state,
+                    |state| stopped.load(Ordering::SeqCst) || state.ended,
+                    POLL,
+                    "the sandbox clipboard",
+                );
                 source.destroy();
                 device.destroy();
                 manager.destroy();
@@ -267,30 +274,38 @@ impl Drop for Clipboard {
     }
 }
 
-/// Answers pastes until the offer ends, `stop` is set or the connection fails.
-fn serve(connection: &Connection, queue: &mut EventQueue<State>, state: &mut State, stop: &AtomicBool) {
-    while !stop.load(Ordering::SeqCst) && !state.ended {
+/// Answers the compositor until `done`, polling `poll` at a time, or until the connection fails; `who` names the
+/// client in the log.
+pub(crate) fn serve<S: 'static>(
+    connection: &Connection,
+    queue: &mut EventQueue<S>,
+    state: &mut S,
+    done: impl Fn(&S) -> bool,
+    poll: Duration,
+    who: &str,
+) {
+    while !done(state) {
         if let Err(error) = queue.dispatch_pending(state) {
-            log::warn!("the sandbox clipboard lost the compositor: {error}");
+            log::warn!("{who} lost the compositor: {error}");
             return;
         }
         if let Err(WaylandError::Io(error)) = connection.flush()
             && error.kind() != ErrorKind::WouldBlock
         {
-            log::warn!("the sandbox clipboard lost the compositor: {error}");
+            log::warn!("{who} lost the compositor: {error}");
             return;
         }
         let Some(guard) = queue.prepare_read() else {
             continue;
         };
-        if !readable(guard.connection_fd(), POLL) {
+        if !readable(guard.connection_fd(), poll) {
             continue;
         }
         match guard.read() {
             Ok(_) => {}
             Err(WaylandError::Io(error)) if error.kind() == ErrorKind::WouldBlock => {}
             Err(error) => {
-                log::warn!("the sandbox clipboard lost the compositor: {error}");
+                log::warn!("{who} lost the compositor: {error}");
                 return;
             }
         }
@@ -298,7 +313,7 @@ fn serve(connection: &Connection, queue: &mut EventQueue<State>, state: &mut Sta
 }
 
 /// Whether `fd` has something to read (or hung up) within `wait`.
-pub(crate) fn readable(fd: BorrowedFd<'_>, wait: Duration) -> bool {
+fn readable(fd: BorrowedFd<'_>, wait: Duration) -> bool {
     let mut poll = libc::pollfd {
         fd: fd.as_raw_fd(),
         events: libc::POLLIN,

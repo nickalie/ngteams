@@ -10,7 +10,7 @@
 
 use std::{
     fs::File,
-    io::{ErrorKind, Write as _},
+    io::Write as _,
     os::{
         fd::{AsFd as _, OwnedFd},
         unix::net::UnixStream,
@@ -25,9 +25,7 @@ use std::{
 };
 
 use wayland_client::{
-    Connection, Dispatch, EventQueue, QueueHandle, WEnum,
-    backend::WaylandError,
-    delegate_noop, event_created_child,
+    Connection, Dispatch, EventQueue, QueueHandle, WEnum, delegate_noop, event_created_child,
     globals::{GlobalList, GlobalListContents, registry_queue_init},
     protocol::{
         wl_buffer::WlBuffer,
@@ -85,7 +83,7 @@ pub enum DragEvent {
     Action(u32),
     /// The target read this type.
     Sent(String),
-    /// The drop happened on a target that took it.
+    /// The user let go over a target; not yet an acceptance, as `Cancelled` may still follow.
     DropPerformed,
     /// The target finished with the drop.
     Finished,
@@ -414,7 +412,14 @@ impl DragSource {
         let serving = thread::Builder::new()
             .name("sandbox-drag-source".to_owned())
             .spawn(move || {
-                serve(&connection, &mut queue, &mut state, &stopped);
+                crate::clipboard::serve(
+                    &connection,
+                    &mut queue,
+                    &mut state,
+                    |state| stopped.load(Ordering::SeqCst) || state.closed,
+                    POLL,
+                    "the sandbox drag source",
+                );
                 if let Some(source) = state.source.take() {
                     source.destroy();
                 }
@@ -442,36 +447,6 @@ impl Drop for DragSource {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(serving) = self.serving.take() {
             let _ = serving.join();
-        }
-    }
-}
-
-/// Answers the compositor until `stop` is set, the surface is closed or the connection fails.
-fn serve(connection: &Connection, queue: &mut EventQueue<State>, state: &mut State, stop: &AtomicBool) {
-    while !stop.load(Ordering::SeqCst) && !state.closed {
-        if let Err(error) = queue.dispatch_pending(state) {
-            log::warn!("the sandbox drag source lost the compositor: {error}");
-            return;
-        }
-        if let Err(WaylandError::Io(error)) = connection.flush()
-            && error.kind() != ErrorKind::WouldBlock
-        {
-            log::warn!("the sandbox drag source lost the compositor: {error}");
-            return;
-        }
-        let Some(guard) = queue.prepare_read() else {
-            continue;
-        };
-        if !crate::clipboard::readable(guard.connection_fd(), POLL) {
-            continue;
-        }
-        match guard.read() {
-            Ok(_) => {}
-            Err(WaylandError::Io(error)) if error.kind() == ErrorKind::WouldBlock => {}
-            Err(error) => {
-                log::warn!("the sandbox drag source lost the compositor: {error}");
-                return;
-            }
         }
     }
 }
