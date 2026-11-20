@@ -126,6 +126,11 @@ const PICKER: Rect = Rect {
     w: 338,
     h: 382,
 };
+/// The stickers on All, and in a row of Recent on Stickers.
+const ALL_STICKERS: usize = 4;
+const ROW: usize = 4;
+/// The stickers in a row of a pack at its fewest (520 px, font 24).
+const NARROWEST_ROW: usize = 3;
 const MESSAGES: Rect = Rect {
     x: 456,
     y: 96,
@@ -746,6 +751,37 @@ impl<'a> User<'a> {
         Ok(image::open(path)?.to_rgb8())
     }
 
+    /// The faults `check` finds in a screenshot of a stable frame: the faces in `area` the same in two shots in a
+    /// row and no fault found, or after `WAIT` the last shot's faults. A loaded machine draws the pictures late.
+    fn drawn(
+        &mut self,
+        name: &str,
+        area: Rect,
+        check: impl Fn(&RgbImage) -> Vec<String>,
+    ) -> SandboxResult<Vec<String>> {
+        self.park()?;
+        let start = Instant::now();
+        let mut before = None;
+        loop {
+            thread::sleep(STEP);
+            let path = self.shot(name)?;
+            let image = image::open(path)?.to_rgb8();
+            let faces = faces_in(&image, area);
+            let stable = before.as_ref() == Some(&faces);
+            let mut faults = check(&image);
+            if stable && faults.is_empty() {
+                return Ok(faults);
+            }
+            if start.elapsed() > WAIT {
+                if !stable {
+                    faults.push(format!("{name}: the faces never stopped changing: {faces:?}"));
+                }
+                return Ok(faults);
+            }
+            before = Some(faces);
+        }
+    }
+
     /// Opens `chat` in the shown account's window and waits until it shows.
     fn open(&mut self, chat: &str) -> SandboxResult<Value> {
         self.ask(&format!("open {chat}"))?;
@@ -1171,8 +1207,11 @@ fn all_tab_and_see_all(user: &mut User<'_>) -> SandboxResult {
     let image = user.image("all-tab")?;
     let faces = faces_in(&image, PICKER);
     say(&format!("  faces on All: {faces:?}"));
-    if faces.len() != 4 {
-        faults.push(format!("{} sticker faces drawn on All, 4 expected", faces.len()));
+    if faces.len() != ALL_STICKERS {
+        faults.push(format!(
+            "{} sticker faces drawn on All, {ALL_STICKERS} expected",
+            faces.len()
+        ));
     }
     user.click(SEE_ALL_STICKERS)?;
     if let Err(error) = user.until("See all opened Stickers", |state| {
@@ -1418,19 +1457,47 @@ fn bare_faults(image: &RgbImage, face: Rect, what: &str) -> Vec<String> {
     faults
 }
 
-/// Whether the face of `colour` moves: its mouth changes between screenshots.
+/// Whether the face of `colour` moves: its mouth changes between screenshots within `WAIT`. A loaded machine plays
+/// the frames late.
 fn moves(user: &mut User<'_>, colour: Rgb, area: Rect, name: &str) -> SandboxResult<bool> {
     let mut seen = BTreeSet::new();
-    for frame in 0..8 {
-        let path = user.shot(&format!("{name}-{frame}"))?;
+    let start = Instant::now();
+    let mut frame = 0;
+    while seen.len() < 2 && start.elapsed() <= WAIT {
+        let path = user.shot(&format!("{name}-{}", frame % 8))?;
         let image = image::open(path)?.to_rgb8();
         if let Some(face) = face_of(&image, colour, area) {
             seen.insert(mouth_ink(&image, face));
         }
+        frame += 1;
         thread::sleep(Duration::from_millis(110));
     }
-    say(&format!("  {name}: mouth ink seen {seen:?}"));
+    say(&format!("  {name}: mouth ink seen {seen:?} in {frame} shots"));
     Ok(seen.len() >= 2)
+}
+
+/// a's still and animated stickers in b's a–b chat in `theme`: one whole at least, each whole one bare at 180 px.
+fn b_chat_faults(image: &RgbImage, theme: &str) -> Vec<String> {
+    let shown: Vec<(Rect, &str)> = [(files::SUNNY, "Zorb sunny"), (files::TANGY, "Zorb tangy")]
+        .into_iter()
+        .filter_map(|(colour, label)| face_of(image, colour, MESSAGES).map(|face| (face, label)))
+        .collect();
+    let mut faults = Vec::new();
+    if !shown.iter().any(|(face, _)| whole(*face)) {
+        faults.push(format!("{theme}: b sees no whole sticker of a's: {shown:?}"));
+    }
+    for (face, label) in shown.into_iter().filter(|(face, _)| whole(*face)) {
+        faults.extend(bare_faults(image, face, &format!("{theme} {label}")));
+    }
+    faults
+}
+
+/// The GIF sticker in b's words chat, bare at 180 px.
+fn gif_faults(image: &RgbImage) -> Vec<String> {
+    match face_of(image, files::PLUMMY, MESSAGES) {
+        Some(face) => bare_faults(image, face, "the GIF"),
+        None => vec!["b does not see the GIF sticker".to_owned()],
+    }
 }
 
 /// b: a's still and animated stickers bare at 180 px, the animated one playing; the GIF bare too, and the sticker
@@ -1444,17 +1511,9 @@ fn b_sees_stickers(user: &mut User<'_>) -> SandboxResult {
     let mut faults = b_items_faults(&state, &["Zorb sunny", "Zorb tangy"]);
     for theme in ["light", "dark"] {
         user.ask(&format!("theme-{theme}"))?;
-        let image = user.image(&format!("b-ab-chat-{theme}"))?;
-        let shown: Vec<(Rect, &str)> = [(files::SUNNY, "Zorb sunny"), (files::TANGY, "Zorb tangy")]
-            .into_iter()
-            .filter_map(|(colour, label)| face_of(&image, colour, MESSAGES).map(|face| (face, label)))
-            .collect();
-        if !shown.iter().any(|(face, _)| whole(*face)) {
-            faults.push(format!("{theme}: b sees no whole sticker of a's: {shown:?}"));
-        }
-        for (face, label) in shown.into_iter().filter(|(face, _)| whole(*face)) {
-            faults.extend(bare_faults(&image, face, &format!("{theme} {label}")));
-        }
+        faults.extend(user.drawn(&format!("b-ab-chat-{theme}"), MESSAGES, |image| {
+            b_chat_faults(image, theme)
+        })?);
     }
     user.ask("theme-light")?;
     if !moves(user, files::TANGY, MESSAGES, "b-tangy-plays")? {
@@ -1474,11 +1533,7 @@ fn b_sees_stickers(user: &mut User<'_>) -> SandboxResult {
         Some(item) if item["label"] == "Zorb rosy" && item["bare"] == false => {}
         other => faults.push(format!("the text and sticker message for b: {other:?}")),
     }
-    let image = user.image("b-words-chat")?;
-    match face_of(&image, files::PLUMMY, MESSAGES) {
-        Some(face) => faults.extend(bare_faults(&image, face, "the GIF")),
-        None => faults.push("b does not see the GIF sticker".to_owned()),
-    }
+    faults.extend(user.drawn("b-words-chat", MESSAGES, gif_faults)?);
     if !moves(user, files::PLUMMY, MESSAGES, "b-plummy-plays")? {
         faults.push("the GIF sticker does not play for b".to_owned());
     }
@@ -1737,12 +1792,17 @@ fn tile_margins(image: &RgbImage, face: Rect) -> Option<(i32, i32)> {
     Some((run(face.x - 3, -1) + 3, run(face.right() + 2, 1) + 3))
 }
 
-/// The faces in the picker at `width`: each whole (square), inside the window, apart from the others, and each
-/// sticker's tile whole (as much margin right of the face as left of it).
-fn size_faults(image: &RgbImage, width: i32, what: &str) -> Vec<String> {
+/// The faces in the picker at `width`: `least` stickers at least, each face whole (square), inside the window, apart
+/// from the others, and each sticker's tile whole (as much margin right of the face as left of it).
+fn size_faults(image: &RgbImage, width: i32, least: usize, what: &str) -> Vec<String> {
     let faces = faces_in(image, Rect::whole_screen());
     let tallest = faces.iter().map(|(_, face)| face.h).max().unwrap_or(0);
     let mut faults = Vec::new();
+    // a pack tile's small face is not a sticker
+    let stickers = faces.iter().filter(|(_, face)| face.h >= 40).count();
+    if stickers < least {
+        faults.push(format!("{what}: {stickers} stickers drawn, {least} at least"));
+    }
     for (index, (colour, face)) in faces.iter().enumerate() {
         if face.x < 0 || face.right() > width {
             faults.push(format!(
@@ -1783,15 +1843,24 @@ fn themes_fonts_narrow(user: &mut User<'_>) -> SandboxResult {
             user.open(&chat)?;
             let name = format!("size-{width}-font-{font}-{theme}");
             user.open_picker_by_keys()?;
-            let image = user.image(&format!("{name}-all"))?;
-            faults.extend(size_faults(&image, width, &format!("{name} All")));
+            faults.extend(user.drawn(&format!("{name}-all"), Rect::whole_screen(), |image| {
+                size_faults(image, width, ALL_STICKERS, &format!("{name} All"))
+            })?);
             user.press("ctrl+tab")?;
             user.press("ctrl+tab")?;
-            let image = user.image(&format!("{name}-stickers"))?;
-            faults.extend(size_faults(&image, width, &format!("{name} Stickers")));
-            user.key_open_pack(files::ZORBLETS_ID)?;
-            let image = user.image(&format!("{name}-pack"))?;
-            faults.extend(size_faults(&image, width, &format!("{name} pack")));
+            let state = user.until("the Stickers tab", |state| picker(state)["tab"] == "Stickers")?;
+            let recent = state["shelf"]["recent"].as_array().map_or(0, Vec::len).min(ROW);
+            faults.extend(user.drawn(&format!("{name}-stickers"), Rect::whole_screen(), |image| {
+                size_faults(image, width, recent, &format!("{name} Stickers"))
+            })?);
+            let state = user.key_open_pack(files::ZORBLETS_ID)?;
+            let stickers = pack(&state, files::ZORBLETS_ID)
+                .and_then(|pack| pack["stickers"].as_array())
+                .map_or(0, Vec::len)
+                .min(NARROWEST_ROW);
+            faults.extend(user.drawn(&format!("{name}-pack"), Rect::whole_screen(), |image| {
+                size_faults(image, width, stickers, &format!("{name} pack"))
+            })?);
             user.press("escape")?;
         }
     }

@@ -1803,6 +1803,36 @@ fn a_click_into_the_compose_box_closes_more_reactions_and_keeps_the_focus_there(
 }
 
 #[test]
+fn more_reactions_holds_a_whole_row_of_cells_at_each_font_size() {
+    let theirs = message(NOON, LAB_B, "<p>nice</p>");
+    let rig = rig_with(vec![theirs.clone()]);
+    let (view, cx, _) = chat_window(&rig, no_receipts());
+    for font in [14.0, 20.0, 24.0] {
+        cx.update(|window, _| window.set_rem_size(px(font)));
+        act(&view, cx, MessageAction::React, &theirs.id);
+        keys(cx, "5");
+        let picker = cx.debug_bounds("reaction-picker-more").expect("more reactions open");
+        let more = cx.update(|_, cx| view.read(cx).more_reactions().cloned()).unwrap();
+        let first_row: Vec<&str> = cx.update(|_, cx| more.read(cx).shown()).into_iter().take(8).collect();
+        let cells: Vec<_> = first_row
+            .iter()
+            .map(|id| {
+                cx.debug_bounds(format!("emoji-{id}").leak())
+                    .unwrap_or_else(|| panic!("at {font}: {id} is drawn"))
+            })
+            .collect();
+        let (first, last) = (cells[0], cells[7]);
+        // a row wider than the picker's inside runs into its right padding
+        let (left, right) = (first.left() - picker.left(), picker.right() - last.right());
+        assert!(
+            right >= left,
+            "at {font}: the row {first:?}..{last:?} has {left:?} left of it in the picker {picker:?}, {right:?} right"
+        );
+        keys(cx, "escape");
+    }
+}
+
+#[test]
 fn more_reactions_finds_and_picks_any_reaction_teams_offers() {
     let theirs = message(NOON, LAB_B, "<p>nice</p>");
     let rig = rig_with(vec![theirs.clone()]);

@@ -32,7 +32,9 @@ use crate::reactions;
 use crate::theme::{self, Palette};
 
 /// The picker's width, px: a row of cells and its padding.
-pub const WIDTH: f32 = 8.0 * CELL + 2.0 * 8.0 + 4.0;
+pub const WIDTH: f32 = 8.0 * CELL + 2.0 * PADDING + 4.0;
+/// The picker's padding, px.
+const PADDING: f32 = 8.0;
 /// The reactions Recent holds.
 pub const RECENT: usize = 24;
 /// What Teams' config offers a new account as recent reactions (`recentReactions.defaultReactions`), in its order:
@@ -576,7 +578,7 @@ impl Render for ReactionPicker {
             .occlude()
             .w(px(WIDTH))
             // in px, not rems: a larger font must not narrow the row of cells
-            .p(px(8.0))
+            .p(px(PADDING))
             .flex()
             .flex_col()
             .gap_1()
