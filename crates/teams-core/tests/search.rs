@@ -34,6 +34,24 @@ fn message(conversation: &str, id: &str, message_type: &str, content: &str) -> M
 }
 
 #[test]
+fn a_mention_of_everyone_is_found_by_the_reader_s_label() {
+    let mut rich = message(
+        GROUP,
+        "1",
+        "RichText/Html",
+        r#"<p><span itemtype="http://schema.skype.com/Mention" itemid="0">Все</span></p><p>a made-up build</p>"#,
+    );
+    rich.properties =
+        Some(r#"{"mentions":[{"itemid":"0","mri":"19:synthetic-abc@thread.v2","mentionType":"everyone"}]}"#.to_owned());
+    let text = search_text(&rich);
+    assert!(
+        text.contains("Everyone") && text.contains("a made-up build"),
+        "{text:?}"
+    );
+    assert!(!text.contains("Все"), "{text:?}");
+}
+
+#[test]
 fn a_message_is_found_by_the_text_its_reader_sees() {
     let rich = message(
         CHAT,

@@ -1199,6 +1199,15 @@ no wire form). Its compose box offers Everyone after the members in a group chat
 or meeting chat). A received one shows `Everyone`, is the account's own mention in someone else's message (the "@"
 mark, a notification at the "mentions only" level), and not in the account's own.
 
+A sender whose Teams is in another language writes its own label in the span (for example `Все`); the entry still
+has `mentionType` `everyone`. The bundle's chat list preview (its last message's sanitizer for previews) keeps only
+`div`, `img` and `video`, so a paragraph's text joins the next and a `<br>` becomes a space: the whole message on one
+line, cut at 85 characters, the mention's text as the sender wrote it. Its message view shows its own label instead.
+The native client shows the reader's `Everyone` in every summary of the message (the chat list's row, a desktop
+notification, the call window's chat bubble, a reply's quote, the local search's text), as its message view does,
+and puts the message on one line with a space at each paragraph and line break. The Activity feed's
+`messagePreview` is the service's own text and is shown as it comes.
+
 ## The native client's writes (M1 Task 12)
 
 `teams_proto` sends each chat write in the form above, key for key (its tests compare the bodies with `mention.json`,

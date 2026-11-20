@@ -174,7 +174,7 @@ fn a_reply_notifies_by_its_own_text_instead_of_its_quote() {
         );
         n.arrive(message(AB, "reply", LAB_B, &reply, 5_000), Source::Delivery);
         n.settle();
-        assert_eq!(n.server.shown()[0].body, "My reply");
+        assert_eq!(n.server.shown()[0].body, "My reply Second line");
     }
 }
 
@@ -225,7 +225,7 @@ fn a_withheld_message_still_notifies_by_its_policy_notice() {
 }
 
 #[test]
-fn a_delivered_message_from_someone_else_notifies_with_its_name_and_first_line() {
+fn a_delivered_message_from_someone_else_notifies_with_its_name_and_text_on_one_line() {
     let n = Notifying::start(Settings::default());
     n.arrive(
         message(AB, "1", LAB_B, "<p>lunch at <b>noon</b>?</p><p>second line</p>", 5_000),
@@ -238,7 +238,7 @@ fn a_delivered_message_from_someone_else_notifies_with_its_name_and_first_line()
             conversation: AB.to_owned(),
             kind: NoticeKind::Message,
             summary: "Bee".to_owned(),
-            body: "lunch at noon?".to_owned(),
+            body: "lunch at noon? second line".to_owned(),
             picture: None,
         }]
     );
@@ -273,6 +273,30 @@ fn a_delivered_message_from_someone_else_notifies_with_its_name_and_first_line()
         "{asked:?}"
     );
     assert_eq!(n.rig.shutdowns(), 0);
+}
+
+#[test]
+fn a_mention_of_everyone_notifies_in_the_reader_s_words_with_the_rest_of_the_message() {
+    let n = Notifying::start(Settings::default());
+    let mut said = message(
+        TRIO,
+        "1",
+        LAB_C,
+        "<p><readonly class=\"skipProofing\" itemtype=\"http://schema.skype.com/Mention\" spellcheck=\"false\"><span \
+     itemtype=\"http://schema.skype.com/Mention\" itemscope itemid=\"0\">Все</span></readonly></p><p>&nbsp;</p><p>The \
+     made-up build is ready, the made-up bug is fixed.</p>",
+        5_000,
+    );
+    said.properties = Some(r#"{"mentions":"[{\"@type\":\"http://schema.skype.com/Mention\",\"itemid\":\"0\",\"mri\":\"19:0000000000000000000000000000trio@thread.v2\",\"mentionType\":\"everyone\",\"displayName\":\"Все\"}]"}"#.to_owned());
+    n.arrive(said, Source::Delivery);
+    n.settle();
+    let shown = n.server.shown();
+    assert_eq!(shown.len(), 1);
+    assert_eq!(shown[0].kind, NoticeKind::Mention);
+    assert_eq!(
+        shown[0].body,
+        "Everyone The made-up build is ready, the made-up bug is fixed."
+    );
 }
 
 #[test]

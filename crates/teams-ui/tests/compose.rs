@@ -507,6 +507,23 @@ fn message(id: i64, sender: &str, content: &str) -> Message {
 }
 
 #[test]
+fn a_reply_quotes_a_mention_of_everyone_in_the_reader_s_words() {
+    let mut quoted = message(
+        NOON,
+        LAB_B,
+        "<p><readonly class=\"skipProofing\" itemtype=\"http://schema.skype.com/Mention\" spellcheck=\"false\"><span \
+     itemtype=\"http://schema.skype.com/Mention\" itemscope itemid=\"0\">Все</span></readonly></p><p>&nbsp;</p><p>The \
+     made-up build is ready, the made-up bug is fixed.</p>",
+    );
+    quoted.properties = Some(r#"{"mentions":"[{\"@type\":\"http://schema.skype.com/Mention\",\"itemid\":\"0\",\"mri\":\"19:00000000000000000000000000000group@thread.v2\",\"mentionType\":\"everyone\",\"displayName\":\"Все\"}]"}"#.to_owned());
+    let quote = Quoted::of(&quoted, "Lab Bee").unwrap();
+    assert_eq!(
+        quote.preview,
+        "Everyone The made-up build is ready, the made-up bug is fixed."
+    );
+}
+
+#[test]
 fn a_reply_quotes_the_message_its_sender_its_time_and_a_one_line_preview() {
     let quoted = message(NOON, LAB_B, "<p>first line</p><p>second   line</p>");
     let quote = Quoted::of(&quoted, "Lab Bee").unwrap();

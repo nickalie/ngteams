@@ -95,7 +95,7 @@ async fn a_list_page_preview_shows_until_stored_history_replaces_it() {
 }
 
 #[test]
-fn reply_previews_read_the_reply_s_own_first_line_including_when_translated() {
+fn reply_previews_read_the_reply_s_own_text_on_one_line_including_when_translated() {
     use teams_ui::chat_list::{message_line, preview, text_line};
 
     for quoted in [
@@ -107,12 +107,48 @@ fn reply_previews_read_the_reply_s_own_first_line_including_when_translated() {
              <p><br></p><p>My <b>reply</b> &amp; more</p><p>Second line</p>"
         );
         let own = message(AB, "reply", LAB_A, &html, 5_000);
-        assert_eq!(message_line(&own), "My reply & more");
-        assert_eq!(preview(&[own], LAB_A).as_ref(), "You: My reply & more");
-        assert_eq!(text_line(&teams_proto::chat::parse_html(&html)), "My reply & more");
+        assert_eq!(message_line(&own), "My reply & more Second line");
+        assert_eq!(
+            text_line(teams_proto::chat::parse_html(&html), &own),
+            "My reply & more Second line"
+        );
+        assert_eq!(preview(&[own], LAB_A).as_ref(), "You: My reply & more Second line");
         let other = message(AB, "reply", LAB_B, &html, 5_000);
-        assert_eq!(preview(&[other], LAB_A).as_ref(), "My reply & more");
+        assert_eq!(preview(&[other], LAB_A).as_ref(), "My reply & more Second line");
     }
+}
+
+/// A group chat's message that starts with a mention of everyone in a paragraph of its own, its label in its sender's
+/// language (a made-up "Все"), as a sender's client in another language writes one.
+const EVERYONE_FIRST: &str = "<p><readonly class=\"skipProofing\" itemtype=\"http://schema.skype.com/Mention\" spellcheck=\"false\"><span \
+     itemtype=\"http://schema.skype.com/Mention\" itemscope itemid=\"0\">Все</span></readonly></p><p>&nbsp;</p><p>The \
+     made-up build is ready, the made-up bug is fixed.</p>";
+
+/// The message's one mention, of everyone in the chat, as the service stores it.
+const EVERYONE_MENTIONED: &str = r#"{"mentions":"[{\"@type\":\"http://schema.skype.com/Mention\",\"itemid\":\"0\",\"mri\":\"19:00000000000000000000000000000group@thread.v2\",\"mentionType\":\"everyone\",\"displayName\":\"Все\"}]"}"#;
+
+#[test]
+fn a_message_that_starts_with_a_mention_of_everyone_previews_it_in_the_reader_s_words_then_its_text() {
+    use teams_ui::chat_list::{message_line, preview, text_line};
+
+    let said = |sender: &str| Message {
+        properties: Some(EVERYONE_MENTIONED.to_owned()),
+        ..message(GROUP, "1", sender, EVERYONE_FIRST, 5_000)
+    };
+    let line = "Everyone The made-up build is ready, the made-up bug is fixed.";
+    assert_eq!(message_line(&said(LAB_B)), line);
+    assert_eq!(preview(&[said(LAB_B)], LAB_A).as_ref(), line);
+    assert_eq!(preview(&[said(LAB_A)], LAB_A).as_ref(), format!("You: {line}"));
+    // a translated chat's preview, its mention kept by its itemid
+    let translated = teams_proto::chat::parse_html(
+        "<p><span itemtype=\"http://schema.skype.com/Mention\" itemid=\"0\">Все</span></p><p>Der Build ist fertig.</p>",
+    );
+    assert_eq!(text_line(translated, &said(LAB_B)), "Everyone Der Build ist fertig.");
+    // a mention the message's properties don't list as everyone's keeps the name its sender wrote
+    assert_eq!(
+        message_line(&message(GROUP, "2", LAB_B, EVERYONE_FIRST, 5_001)),
+        "Все The made-up build is ready, the made-up bug is fixed."
+    );
 }
 
 #[test]
@@ -128,7 +164,8 @@ fn preview_keeps_forwarded_content_and_bounds_the_reply_s_own_text() {
         "Forwarded text"
     );
     let quoted = "<blockquote><p>Earlier text</p></blockquote>";
-    assert!(text_line(&teams_proto::chat::parse_html(quoted)).is_empty());
+    let only_quote = message(AB, "quote", LAB_B, quoted, 5_000);
+    assert!(text_line(teams_proto::chat::parse_html(quoted), &only_quote).is_empty());
     let long = format!("{quoted}<p>{}</p>", "é".repeat(PREVIEW_CHARS + 1));
     assert_eq!(
         message_line(&message(AB, "reply", LAB_A, &long, 5_001)),

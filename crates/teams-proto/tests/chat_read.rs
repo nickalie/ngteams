@@ -19,7 +19,7 @@ use teams_proto::chat::{
     Field, FileKind, FilePreview, LinkPermission, List, MAX_CONTENT, MAX_DEPTH, Marks, MemberList, MentionKind,
     Message, MessagePage, MessageText, MessageType, Node, Quote, RichText, STICKER_ITEMTYPE, SharedFile, SharedFiles,
     Sticker, Table, TableCell, Thread, Token, Unshown, WEB_CLIENT, forwarded, link_endpoint, onedrive_page, parse_html,
-    read_link_permission, share_entry, share_token, shared_files, unshown_parts, web_chat_link,
+    read_link_permission, share_entry, share_token, shared_files, unshown_parts, web_chat_link, with_everyone_shown,
 };
 use teams_proto::{Client, Cloud, Credentials, HttpError, HttpTransport};
 use wiremock::matchers::{method, path_regex};
@@ -1230,6 +1230,55 @@ fn a_mention_elsewhere_than_a_span_is_text() {
             marks: Marks::BOLD
         }]
     );
+}
+
+/// A mention of everyone written in the sender's language (a made-up "Все"), as the sender's client writes one.
+const EVERYONE_IN_RUSSIAN: &str = "<p><readonly class=\"skipProofing\" itemtype=\"http://schema.skype.com/Mention\" \
+    spellcheck=\"false\"><span itemtype=\"http://schema.skype.com/Mention\" itemscope itemid=\"0\">Все</span>\
+    </readonly></p><p>The made-up build is <span itemtype=\"http://schema.skype.com/Mention\" itemscope itemid=\"1\">\
+    Lab Bee</span>'s</p><ul><li>Все <span itemtype=\"http://schema.skype.com/Mention\" itemscope itemid=\"0\">Все</span>\
+    </li></ul><blockquote><p><span itemtype=\"http://schema.skype.com/Mention\" itemid=\"0\">Все</span></p></blockquote>\
+    <table><tr><td><a href=\"https://example.com/made-up\"><span itemtype=\"http://schema.skype.com/Mention\" \
+    itemid=\"0\">Все</span></a></td></tr></table>";
+
+/// The mentions of [`EVERYONE_IN_RUSSIAN`]: everyone (`0`) and Lab B (`1`), as the service stores them.
+fn everyone_and_b(mentions: &Value) -> String {
+    json!({ "mentions": mentions }).to_string()
+}
+
+#[test]
+fn a_mention_of_everyone_shows_the_reader_s_label_whatever_its_sender_wrote() {
+    let entries = json!([
+        {"itemid": "0", "mri": ABC_CHAT, "mentionType": "everyone", "displayName": "Все"},
+        {"itemid": 1, "mri": LAB_B, "mentionType": "person", "displayName": "Lab Bee"},
+    ]);
+    let rich = parse_html(EVERYONE_IN_RUSSIAN);
+    assert!(rich.plain_text().contains("Все"));
+    // as read back (a list) and as sent (a JSON string)
+    for properties in [
+        everyone_and_b(&entries),
+        everyone_and_b(&Value::String(entries.to_string())),
+    ] {
+        let shown = with_everyone_shown(rich.clone(), Some(&properties)).plain_text();
+        assert!(!shown.contains("Все Все"), "{shown:?}");
+        assert_eq!(
+            shown.split_whitespace().collect::<Vec<_>>(),
+            [
+                "Everyone", "The", "made-up", "build", "is", "Lab", "Bee's", "Все", "Everyone", "Everyone", "Everyone"
+            ],
+            "the label in each place, a person's name and the text kept"
+        );
+    }
+    // no mention of everyone, no properties, or properties in a form no capture showed: as it came
+    let person_only = everyone_and_b(&json!([{"itemid": "0", "mri": LAB_B, "mentionType": "person"}]));
+    for properties in [
+        Some(person_only.as_str()),
+        None,
+        Some("not json"),
+        Some(r#"{"mentions": 7}"#),
+    ] {
+        assert_eq!(with_everyone_shown(rich.clone(), properties), rich, "{properties:?}");
+    }
 }
 
 // ---- reads through the native transport, against the mock ----

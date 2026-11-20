@@ -2,7 +2,8 @@
 //! thread), for its screenshots: the app's window over the fake engine (`common`), its store seeded with made-up
 //! chats as Teams lists them: the account's own notes under "Favorites" with its presence, then 1:1 chats with their
 //! presence badges (available, away, busy, do not disturb, offline, one unknown), group chats split between two
-//! members (one with a topic, one named by its members' first names), meetings' chats with their calendar, and a bot's
+//! members (one with a topic, whose message starts with a mention of everyone in another language, one named by its
+//! members' first names), meetings' chats with their calendar, and a bot's
 //! chat named "Bot". The test runs itself again inside the sandbox once per theme (Teams Light, Teams Dark); the parent
 //! screenshots each window into `target/ui-shots/chat-list-*.png`.
 //!
@@ -169,6 +170,24 @@ struct Seeded {
 
 const QUIET: &str = "19:meeting_000000000000000000000000quiet@thread.v2";
 
+/// The group chat whose message starts with a mention of everyone in a paragraph of its own, labeled in its sender's
+/// language (a made-up "Все"): its row previews it as "Everyone", then the text.
+const DESIGN_CREW: &str = "19:0000000000000000000000000000team@thread.v2";
+
+/// `message` (Dana's in [`DESIGN_CREW`]) starting with that mention of everyone.
+fn mentioning_everyone(message: &mut Message) {
+    message.content = format!(
+        "<p><readonly class=\"skipProofing\" itemtype=\"http://schema.skype.com/Mention\" spellcheck=\"false\"><span \
+         itemtype=\"http://schema.skype.com/Mention\" itemscope itemid=\"0\">Все</span></readonly></p><p>&nbsp;</p>{}",
+        message.content
+    );
+    message.properties = Some(
+        serde_json::json!({"mentions": [{"itemid": "0", "mri": DESIGN_CREW, "mentionType": "everyone",
+            "displayName": "Все"}]})
+        .to_string(),
+    );
+}
+
 /// A 1:1 chat of a with `other`, the last said by `sender`.
 fn pair(other: &'static str, sender: &'static str, said: &'static str) -> Seeded {
     let people: &'static [&'static str] = match other {
@@ -211,11 +230,11 @@ fn chats() -> Vec<Seeded> {
     let meeting = || ConversationKind::Other("thread_type:meeting".to_owned());
     vec![
         thread(
-            "19:0000000000000000000000000000team@thread.v2",
+            DESIGN_CREW,
             ConversationKind::Group,
             Some("Design crew"),
             &[DANA, ELI, FRAN],
-            (LAB_A, "Setup is ready, try it"),
+            (DANA, "Setup is ready, try it"),
         ),
         pair(DANA, LAB_A, "Here is the new build"),
         pair(ELI, ELI, "Looks good to me"),
@@ -263,7 +282,11 @@ fn seed(core: &FakeCore) {
         let (sender, said) = seeded.said;
         locked(&core.conversations).push(chat(&seeded.id, seeded.kind, seeded.topic, last));
         if !said.is_empty() {
-            locked(&core.messages).insert(seeded.id.clone(), vec![text(&seeded.id, sender, said, last)]);
+            let mut message = text(&seeded.id, sender, said, last);
+            if seeded.id == DESIGN_CREW {
+                mentioning_everyone(&mut message);
+            }
+            locked(&core.messages).insert(seeded.id.clone(), vec![message]);
         }
         let mut stored = vec![Member::new(LAB_A, None)];
         stored.extend(seeded.people.iter().map(|mri| Member::new(mri, None)));

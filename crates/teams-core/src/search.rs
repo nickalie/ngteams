@@ -11,7 +11,7 @@
 //!   a time ([`INDEX_BATCH`]), in the store's fixed order, from the engine's loop between its other work. The store
 //!   keeps what is indexed, so a backfill that stopped goes on at the next start where it was.
 
-use teams_proto::chat::{is_call_media, parse_html};
+use teams_proto::chat::{is_call_media, parse_html, with_everyone_shown};
 use teams_store::{IndexCursor, IndexText, Message, Store, StoreError};
 
 /// How many messages one step of the backfill indexes at most.
@@ -26,7 +26,7 @@ pub fn search_text(message: &Message) -> String {
         // plain text: its `<` and `&` are the text's own
         message.content.clone()
     } else if message.message_type.starts_with("RichText") {
-        parse_html(&message.content).plain_text()
+        with_everyone_shown(parse_html(&message.content), message.properties.as_deref()).plain_text()
     } else {
         String::new()
     }

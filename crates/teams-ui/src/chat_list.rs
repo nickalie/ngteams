@@ -1,4 +1,4 @@
-//! The chat list: the account's chats by last activity, each row with its avatar, name, last message's first line,
+//! The chat list: the account's chats by last activity, each row with its avatar, name, last message on one line,
 //! time and unread count, in the [`crate::sidebar`]'s "Chats" section, which draws the rows its [`ChatWindow`] shows
 //! and See more under them; the account's favourite chats above them, in the "Favorites" section, in the order Teams
 //! keeps them, and not again under "Chats".
@@ -69,7 +69,7 @@ use gpui::{
 use gpui_component::Size;
 use teams_core::{Availability, ChatListing, MAX_WATCHED, has_presence};
 use teams_proto::TEAMS_ECHO_BOT_MRI;
-use teams_proto::chat::parse_html;
+use teams_proto::chat::{RichText, parse_html, with_everyone_shown};
 use teams_store::{Conversation, ConversationKind, Member, Message, Team, TeamChannel};
 
 use crate::bridge::Core;
@@ -195,7 +195,7 @@ pub struct ChatRow {
     pub chat_with: Option<SharedString>,
     /// A channel's team's name, whose initial its avatar shows (none for a chat).
     pub team: Option<SharedString>,
-    /// The last message's first line.
+    /// The last message on one line.
     pub preview: SharedString,
     /// The text message `preview` reads, when it reads one: a translated chat shows it in its language
     /// ([`crate::chat_translate::Previews`]).
@@ -297,19 +297,21 @@ pub fn is_text(message: &Message) -> bool {
     message.message_type == "Text" || message.message_type.starts_with("RichText")
 }
 
-/// The first line of `text` with something in it, at most [`PREVIEW_CHARS`] characters.
-fn first_line(text: &str) -> String {
-    let line = text.lines().map(str::trim).find(|line| !line.is_empty()).unwrap_or("");
+/// `text` on one line, its whitespace folded to single spaces, at most [`PREVIEW_CHARS`] characters: Teams' list
+/// previews the whole message, its paragraphs and line breaks run together.
+fn one_line(text: &str) -> String {
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if line.chars().count() <= PREVIEW_CHARS {
-        return line.to_owned();
+        return line;
     }
     let mut cut: String = line.chars().take(PREVIEW_CHARS - 1).collect();
     cut.push('…');
     cut
 }
 
-/// A text message's first line with something in it, at most [`PREVIEW_CHARS`] characters: read from its sanitized
-/// rich text with quotes left out (forwarded content kept), or as it came for a `Text` message;
+/// A text message on one line, at most [`PREVIEW_CHARS`] characters ([`one_line`]): read from its sanitized rich text
+/// with quotes left out (forwarded content kept) and a mention of everyone in the reader's words
+/// ([`with_everyone_shown`]), or as it came for a `Text` message;
 /// [`DELETED`] for a deleted one; Teams' "Sent a card" for a card
 /// ([`crate::card_view::SENT_A_CARD`]: its fallback text is never shown); a policy's notice for one whose text a
 /// policy withheld ([`crate::policy_notice`]).
@@ -322,14 +324,14 @@ pub fn message_line(message: &Message) -> String {
     } else {
         let line = if message.message_type == "Text" {
             // plain text: its `<` and `&` are the text's own
-            first_line(&message.content)
+            one_line(&message.content)
         } else {
-            text_line(&parse_html(&message.content))
+            text_line(parse_html(&message.content), message)
         };
         if line.is_empty()
             && let Some(notice) = withheld(message)
         {
-            return first_line(crate::policy_notice::words(notice, false));
+            return one_line(crate::policy_notice::words(notice, false));
         }
         line
     }
@@ -347,7 +349,7 @@ pub async fn chat_name(core: &dyn Core, conversation: &Conversation) -> SharedSt
 }
 
 /// The preview line of a chat from its newest messages (newest first), as Teams' list words it: the newest text
-/// message's first line, read from its sanitized rich text, or as it came for a `Text` message ("You: " before the
+/// message on one line ([`message_line`]), read from its sanitized rich text, or as it came for a `Text` message ("You: " before the
 /// account's own); a meeting's start or end, a recording's state or a transcript in Teams' words
 /// ([`system_message::preview`]); empty when there is none.
 #[must_use]
@@ -390,11 +392,11 @@ fn own_line(text: String, message: &Message, me: &str) -> String {
     }
 }
 
-/// The first line with something in it of `text` (a message's translation, or the account's own as written), at most
-/// [`PREVIEW_CHARS`] characters, with quotes left out and forwarded content kept.
+/// `text` (`message`'s, or its translation) on one line ([`one_line`]), with quotes left out, forwarded content kept
+/// and a mention of everyone in the reader's words ([`with_everyone_shown`]).
 #[must_use]
-pub fn text_line(text: &teams_proto::chat::RichText) -> String {
-    first_line(&text.preview_text())
+pub fn text_line(text: teams_proto::chat::RichText, message: &Message) -> String {
+    one_line(&with_everyone_shown(text, message.properties.as_deref()).preview_text())
 }
 
 /// What a chat is called, whether that is a name, and its picture.
@@ -903,7 +905,7 @@ impl ChatList {
             return row.preview.clone();
         };
         match previews.read(cx).lookup(message, cx) {
-            Lookup::Text(text) => own_line(text_line(&text), message, self.core.me()).into(),
+            Lookup::Text(text) => own_line(text_line(RichText::clone(&text), message), message, self.core.me()).into(),
             Lookup::Unknown => {
                 let message = Message::clone(message);
                 previews.update(cx, |previews, cx| previews.want([message], cx));

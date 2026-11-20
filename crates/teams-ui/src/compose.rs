@@ -102,7 +102,9 @@ use gpui_component::Disableable as _;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{Selectable as _, Sizable as _, Size};
 use teams_core::{Action, Availability, NOTES, Transient};
-use teams_proto::chat::{ComposeError, Marks, MessageText, MessageType, Node, Quote, RichText, parse_html};
+use teams_proto::chat::{
+    ComposeError, Marks, MessageText, MessageType, Node, Quote, RichText, parse_html, with_everyone_shown,
+};
 use teams_proto::{Mri, is_group_chat_id};
 use teams_store::Message;
 
@@ -368,7 +370,10 @@ pub fn rich_text_of(message: &Message) -> RichText {
 /// A message's text on one line (what it quotes left out; a forward's content is the message's own, kept), at most
 /// [`PREVIEW_MAX`] characters.
 fn preview(message: &Message) -> String {
-    let line = one_line_of(rich_text_of(message));
+    let line = one_line_of(with_everyone_shown(
+        rich_text_of(message),
+        message.properties.as_deref(),
+    ));
     // a message whose text a policy withheld is quoted by its notice, as anyone but its sender reads it
     match crate::policy_notice::of(message.properties.as_deref(), false) {
         Some(notice) if line.is_empty() => crate::policy_notice::words(notice, false).to_owned(),

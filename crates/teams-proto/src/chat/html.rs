@@ -31,6 +31,8 @@
 //! - **Bounded**: containers nested deeper than [`MAX_DEPTH`] give their content to the one above, so the model's depth
 //!   (and every walk over it) stays bounded whatever the input; content over [`MAX_CONTENT`] is read up to it.
 
+use std::collections::HashSet;
+
 use ego_tree::iter::Edge;
 use scraper::node::Element;
 use scraper::{Html, Node as HtmlNode};
@@ -130,6 +132,44 @@ impl RichText {
         let mut text = String::new();
         text_of(&self.nodes, &mut text, false);
         text
+    }
+
+    /// This text with each mention whose `itemid` is in `item_ids` showing `label`, in quotes too.
+    #[must_use]
+    pub fn with_mentions_named(mut self, item_ids: &HashSet<String>, label: &str) -> Self {
+        name_mentions(&mut self.nodes, item_ids, label);
+        self
+    }
+}
+
+fn name_mentions(nodes: &mut [Node], item_ids: &HashSet<String>, label: &str) {
+    for node in nodes {
+        match node {
+            Node::Mention { item_id, text } if item_ids.contains(item_id.as_str()) => label.clone_into(text),
+            Node::Paragraph(children)
+            | Node::Heading { children, .. }
+            | Node::Indented { children, .. }
+            | Node::Link { children, .. }
+            | Node::Span { children, .. } => name_mentions(children, item_ids, label),
+            Node::Quote(quote) => name_mentions(&mut quote.body, item_ids, label),
+            Node::List(list) => {
+                for item in &mut list.items {
+                    name_mentions(item, item_ids, label);
+                }
+            }
+            Node::Table(table) => {
+                for cell in table.rows.iter_mut().flatten() {
+                    name_mentions(&mut cell.nodes, item_ids, label);
+                }
+            }
+            Node::Mention { .. }
+            | Node::Text { .. }
+            | Node::Break
+            | Node::Image(_)
+            | Node::Code(_)
+            | Node::Rule
+            | Node::Sticker(_) => {}
+        }
     }
 }
 

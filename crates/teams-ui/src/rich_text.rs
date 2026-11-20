@@ -660,9 +660,9 @@ pub struct Mentions {
     everyone: HashSet<String>,
 }
 
-/// What a mention of everyone shows, whatever name its sender's client wrote in it: the web client's English label
-/// (`compose_mention_everyone_tag`), as the web client shows its own.
-pub const EVERYONE: &str = "Everyone";
+/// What a mention of everyone shows, whatever name its sender's client wrote in it
+/// ([`teams_proto::chat::EVERYONE_LABEL`]).
+pub const EVERYONE: &str = teams_proto::chat::EVERYONE_LABEL;
 
 impl Mentions {
     /// The mentions `properties` (a stored message's `properties`, JSON text) lists, read as `teams-proto` reads

@@ -51,7 +51,7 @@
 //! through a
 //! [`NotificationServer`]: in the app [`BusNotifications`], `org.freedesktop.Notifications` over `zbus` on the
 //! connection to the bus the app is given ([`crate::bus`]); Windows uses `WinRT` toasts; in a view test a fake. What a notification says (a name,
-//! the message's first line) goes only to that bus, never to the view trace, which records the conversation id and
+//! the message on one line) goes only to that bus, never to the view trace, which records the conversation id and
 //! the kind.
 
 use std::collections::{HashMap, HashSet};
@@ -852,7 +852,7 @@ async fn describe(
             summary,
             body: text.map_or_else(
                 || chat_list::message_line(&candidate.message),
-                |text| chat_list::text_line(&text),
+                |text| chat_list::text_line(RichText::clone(&text), &candidate.message),
             ),
             picture: None,
         });

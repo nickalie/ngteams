@@ -5,7 +5,7 @@
 //! changes; gone while the pane shows the chat, which reads it. Each new message of someone else's that comes while
 //! the pane is closed (see [`fresh`]: never one from before the call, nor older history) shows for [`BUBBLE_FOR`] in
 //! Teams' chat bubble at the stage's top middle: the sender's avatar
-//! with their presence, their name over the message's first line, "Mute these notifications" (no more bubbles in this
+//! with their presence, their name over the message on one line, "Mute these notifications" (no more bubbles in this
 //! call, as More → Settings' "Don't show chat bubbles") and Close; a click on it opens the pane. One bubble at a time:
 //! a newer message takes its place.
 use super::*;
@@ -48,7 +48,7 @@ fn fresh(source: Source, arrival: i64, since: i64) -> bool {
     }
 }
 
-/// What a chat bubble shows: who sent the message, by MRI and name, and its first line.
+/// What a chat bubble shows: who sent the message, by MRI and name, and the message on one line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Bubble {
     from: String,
@@ -140,7 +140,7 @@ impl CallStage {
         self.bubble(message.clone(), (from, line), cx);
     }
 
-    /// Shows `message` (sent by `from`, its first line `line`) in the bubble for [`BUBBLE_FOR`], unless the pane
+    /// Shows `message` (sent by `from`, on one line `line`) in the bubble for [`BUBBLE_FOR`], unless the pane
     /// opened or bubbles were muted meanwhile.
     fn bubble(&mut self, message: teams_store::Message, (from, line): (String, SharedString), cx: &mut Context<Self>) {
         if self.pane == Pane::Chat || self.chat_unread.muted {
@@ -358,7 +358,7 @@ impl CallStage {
     }
 }
 
-/// The bubble's sender's name over the message's first line: a click opens the Chat pane.
+/// The bubble's sender's name over the message on one line: a click opens the Chat pane.
 fn bubble_words(bubble: &Bubble, palette: Palette, cx: &mut Context<CallStage>) -> gpui::Stateful<gpui::Div> {
     div()
         .debug_selector(|| "call-chat-bubble-open".to_owned())
