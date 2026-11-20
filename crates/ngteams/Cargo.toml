@@ -229,6 +229,11 @@ name = "qa_stickers_window"
 harness = false
 
 [[test]]
+# QA of task 653: the picker's Stickers tab, the sticker packs the user imports, and a sticker sent from the picker
+name = "qa_sticker_picker_window"
+harness = false
+
+[[test]]
 # QA of task 579: the AI notice and the "Use AI features" switch in the app's window over the mock
 name = "qa_ai_notice_window"
 harness = false
