@@ -186,6 +186,9 @@ pub(crate) struct Calling {
     /// The next call operation whose path ends with this segment is answered with this status and no body, the world
     /// changed as it is for its usual answer ([`crate::ChatServiceMock::refuse_next_call_op`]).
     pub(crate) refuse_next: Option<(String, u16)>,
+    /// The host every flight proxy link the calling service hands out is on, in place of the main host
+    /// ([`crate::ChatServiceMock::hand_out_call_links_on`]); the call start stays on the main host.
+    pub(crate) links_host: Option<String>,
 }
 
 /// The skypetoken the mock takes as `mri`'s.
@@ -1354,7 +1357,43 @@ pub(crate) fn hang_up(state: &mut State, id: &str) -> bool {
 }
 
 fn json_answer(state: &State, code: u16, body: &Value) -> ResponseTemplate {
-    crate::chatsvc::json(code, &in_cloud(&state.cloud, body.clone()))
+    crate::chatsvc::json(code, &handed_out(state, body.clone()))
+}
+
+/// `value` as the calling service hands it out: its flight proxy links on [`Calling::links_host`], then in the cloud.
+pub(crate) fn handed_out(state: &State, value: Value) -> Value {
+    let value = match &state.calling.links_host {
+        Some(host) => on_links_host(value, &format!("https://{host}/api/v2/ep/")),
+        None => value,
+    };
+    in_cloud(&state.cloud, value)
+}
+
+fn on_links_host(value: Value, links: &str) -> Value {
+    use base64::Engine as _;
+    match value {
+        Value::String(text) => Value::String(text.replace(&format!("{PROXY}/"), links)),
+        Value::Array(values) => Value::Array(values.into_iter().map(|value| on_links_host(value, links)).collect()),
+        Value::Object(mut fields) => {
+            let engine = base64::engine::general_purpose::STANDARD;
+            if let Some(decoded) = fields
+                .get("gp")
+                .and_then(Value::as_str)
+                .and_then(|gp| engine.decode(gp).ok())
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            {
+                let moved = on_links_host(decoded, links).to_string();
+                fields.insert("gp".into(), Value::String(engine.encode(moved)));
+            }
+            Value::Object(
+                fields
+                    .into_iter()
+                    .map(|(key, value)| (key, on_links_host(value, links)))
+                    .collect(),
+            )
+        }
+        other => other,
+    }
 }
 
 pub(crate) fn in_cloud(cloud: &teams_auth::cloud::Cloud, value: Value) -> Value {

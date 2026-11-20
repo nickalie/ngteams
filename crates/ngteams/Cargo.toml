@@ -269,6 +269,11 @@ name = "qa_channel_meeting_window"
 harness = false
 
 [[test]]
+# QA of task 710: a meeting hosted in another region, joined on its regional flight proxy, in the app's window over the mock
+name = "qa_regional_proxy_window"
+harness = false
+
+[[test]]
 # QA of task 523: a channel post that came by email in the app's window over the mock
 name = "qa_email_post_window"
 harness = false

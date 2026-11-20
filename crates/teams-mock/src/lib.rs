@@ -838,6 +838,14 @@ impl ChatServiceMock {
         self.lock().calling.delay_next = Some((segment.to_owned(), delay));
     }
 
+    /// Every flight proxy link the calling service hands out from now on (answers and deliveries) is on `host`, as a
+    /// meeting hosted in another region hands out its links on `api-<region>.flightproxy.teams.microsoft.com`; `None`
+    /// puts them back on the main host. The call start stays on the main host. A test may name a host that is not a
+    /// flight proxy's, to check that the client refuses it.
+    pub fn hand_out_call_links_on(&self, host: Option<&str>) {
+        self.lock().calling.links_host = host.map(str::to_owned);
+    }
+
     /// The next call operation whose path ends with `segment` (`progress`, `accept`, …) is answered `code` with no
     /// body, as a service that refuses it; the world changes as it does for the usual answer.
     pub fn refuse_next_call_op(&self, segment: &str, code: u16) {

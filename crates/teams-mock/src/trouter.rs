@@ -793,7 +793,7 @@ async fn deliver_calls(socket: &mut Socket, shared: &Shared, endpoint: &str) -> 
         let command = Command::DeliverCall {
             id,
             path: delivery.path,
-            body: crate::calling::in_cloud(&shared.world().cloud, delivery.body).to_string(),
+            body: crate::calling::handed_out(&shared.world(), delivery.body).to_string(),
         };
         carry_out(socket, endpoint, true, command, shared.push_prefix()).await?;
     }
