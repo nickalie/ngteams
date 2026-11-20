@@ -673,6 +673,15 @@ still preview and the play button yet. The builder (`Sticker::of_teams`, `sticke
 `amsreferences`) in the same element. That form is the best guess for a captioned or imported sticker until a capture
 shows the real one.
 
+**Stickers the user adds** (the native client only; Teams has no import). The compose box's picker has the tabs All,
+Emoji and Stickers (no GIFs tab: [backlog](../backlog/picker-gifs-tab.md)). The user imports a folder or a `.zip` of
+PNG, WebP or GIF pictures as a pack, kept for all the app's accounts beside the settings file
+(`teams_ui::stickers`). A pick puts the sticker in the compose box, as Teams does. The box sends the picture to AMS at
+once, as it sends a pasted picture (a still sticker as a PNG, an animated one as a GIF), and Send posts it in the
+`readonly` element of itemtype Sticker around the AMSImage `<img>` (`Sticker::of_picture`'s form), between two
+`<p>&nbsp;</p>` when the sticker is alone. An own server takes it with no change: its AMS rows keep the picture, and it
+keeps the message's HTML as it comes.
+
 ## Link previews
 
 How a received message carries the preview of a link, from the user's own chats as the personal build stored them,

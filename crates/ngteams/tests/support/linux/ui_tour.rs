@@ -67,6 +67,7 @@ use teams_ui::call_stage::CallStage;
 use teams_ui::chat_people::{ChatPeople, HistoryChoice, Picked};
 use teams_ui::chat_view::{Item, MessageAction};
 use teams_ui::compose::{Compose, MenuKind};
+use teams_ui::fun_picker::{FunPicker, Item as FunItem, Tab as FunTab};
 use teams_ui::global_search::{Mode as SearchMode, Tab};
 use teams_ui::new_chat::{NewChat, Recipient, Suggested};
 use teams_ui::profile_card::{CardOf, CardTab, Form};
@@ -198,7 +199,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 333 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 340 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -355,11 +356,39 @@ const STEPS: [Step; 5 + 333 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
             chat.update(cx, |chat, cx| chat.act(MessageAction::Reply, &message, window, cx));
         }
     }),
-    // the compose box's emoji picker, opened from its button over the box
+    // the compose box's picker, opened from its button over the box, on its All tab: emoji and stickers
     ("chat-emoji", |shell, window, cx| {
         with_compose(shell, cx, |compose, cx| {
             compose.cancel(window, cx);
             compose.toggle_emoji(window, cx);
+        });
+    }),
+    // its Emoji tab
+    ("chat-fun-emoji", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, _, cx| picker.show(FunTab::Emoji, cx));
+    }),
+    // its Stickers tab: Recent and the packs the user added (`seed_sticker_packs`)
+    ("chat-fun-stickers", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, _, cx| picker.show(FunTab::Stickers, cx));
+    }),
+    // a pack's stickers, with its "More options"
+    ("chat-fun-sticker-pack", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, window, cx| {
+            picker.activate(&FunItem::Pack(STICKER_PACK.to_owned()), window, cx);
+        });
+    }),
+    // the keyboard in the pack: from the search field down past Back and "More options" to its second sticker
+    ("chat-fun-sticker-keys", |_, window, cx| {
+        press(window, cx, "down down down right");
+    }),
+    // a sticker picked: in the box at its size, sent to the media service at once
+    ("chat-sticker-in-box", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, window, cx| {
+            let sticker = teams_ui::stickers::StickerRef {
+                pack: STICKER_PACK.to_owned(),
+                file: "001.png".to_owned(),
+            };
+            picker.activate(&FunItem::Sticker(sticker), window, cx);
         });
     }),
     // the box with the focus and text in it: its accent line, Send in the brand colour
@@ -1326,6 +1355,14 @@ const STEPS: [Step; 5 + 333 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     }),
     ("chat-dark-emoji", |shell, window, cx| {
         with_compose(shell, cx, |compose, cx| compose.toggle_emoji(window, cx));
+    }),
+    ("chat-dark-fun-stickers", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, _, cx| picker.show(FunTab::Stickers, cx));
+    }),
+    ("chat-dark-fun-sticker-pack", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, window, cx| {
+            picker.activate(&FunItem::Pack(STICKER_PACK.to_owned()), window, cx);
+        });
     }),
     // b's pasted picture with an emoticon in its text, b's wave alone, c's GIF from the GIF picker, b's link with its
     // preview card and b's phone screenshot alone in its square frame (`seed_pictures`), in Teams Dark
@@ -4651,6 +4688,27 @@ fn with_compose(shell: &Entity<Shell>, cx: &mut App, change: impl FnOnce(&mut Co
     }
 }
 
+/// Opens the compose box's picker if it is closed, then makes `change` to it.
+fn with_fun_picker(
+    shell: &Entity<Shell>,
+    window: &mut Window,
+    cx: &mut App,
+    change: impl FnOnce(&mut FunPicker, &mut Window, &mut Context<FunPicker>),
+) {
+    with_compose(shell, cx, |compose, cx| {
+        if compose.emoji_picker().is_none() {
+            compose.toggle_emoji(window, cx);
+        }
+    });
+    let picker = shell
+        .read(cx)
+        .chat()
+        .and_then(|chat| chat.read(cx).compose().read(cx).emoji_picker().cloned());
+    if let Some(picker) = picker {
+        picker.update(cx, |picker, cx| change(picker, window, cx));
+    }
+}
+
 /// Expands the compose box with its format bar and fills it with formatted text (made up): a heading, a paragraph of
 /// bold, coloured and highlighted runs, and a bulleted list, the cursor at its end.
 fn expand_with_formats(shell: &Entity<Shell>, window: &mut Window, cx: &mut App) {
@@ -5784,6 +5842,101 @@ fn made_up_phone() -> image::RgbaImage {
     picture
 }
 
+/// The sticker pack the tour opens (`seed_sticker_packs`).
+const STICKER_PACK: &str = "lab-doodles";
+
+/// Made-up stickers, by file name: what an import reads.
+struct Drawn {
+    name: &'static str,
+    files: Vec<(&'static str, Vec<u8>)>,
+}
+
+impl teams_ui::stickers::import::Source for Drawn {
+    fn name(&self) -> String {
+        self.name.to_owned()
+    }
+
+    fn len(&self) -> usize {
+        self.files.len()
+    }
+
+    fn file_name(&self, index: usize) -> String {
+        self.files
+            .get(index)
+            .map(|(name, _)| (*name).to_owned())
+            .unwrap_or_default()
+    }
+
+    fn read(&mut self, index: usize) -> Result<Vec<u8>, teams_ui::stickers::Skip> {
+        self.files
+            .get(index)
+            .map(|(_, bytes)| bytes.clone())
+            .ok_or(teams_ui::stickers::Skip::Unreadable)
+    }
+}
+
+/// A made-up still sticker as PNG bytes: a face of `colour` on a clear ground, smiling or not.
+fn drawn_face(colour: [u8; 3], smile: bool) -> SandboxResult<Vec<u8>> {
+    let picture = image::RgbaImage::from_fn(240, 240, |x, y| {
+        let (dx, dy) = (i64::from(x) - 120, i64::from(y) - 120);
+        let distance = dx * dx + dy * dy;
+        let eye = (dx + 35).pow(2) + (dy + 25).pow(2) <= 150 || (dx - 35).pow(2) + (dy + 25).pow(2) <= 150;
+        let mouth = if smile {
+            dy > 20
+                && dy < 50
+                && (dx * dx + (dy - 10) * (dy - 10)) <= 45 * 45
+                && (dx * dx + (dy - 10) * (dy - 10)) >= 33 * 33
+        } else {
+            dx.abs() <= 30 && (dy - 40).abs() <= 4
+        };
+        if distance > 100 * 100 {
+            image::Rgba([0, 0, 0, 0])
+        } else if distance >= 94 * 94 || eye || mouth {
+            image::Rgba([50, 35, 20, 255])
+        } else {
+            image::Rgba([colour[0], colour[1], colour[2], 255])
+        }
+    });
+    let mut bytes = Vec::new();
+    picture.write_to(&mut io::Cursor::new(&mut bytes), image::ImageFormat::Png)?;
+    Ok(bytes)
+}
+
+/// Two made-up sticker packs in `dir`, as an import of the user's makes them, and one sticker in Recent.
+fn seed_sticker_packs(dir: &Path) -> SandboxResult {
+    use teams_ui::stickers::import;
+    let mut waving = Vec::new();
+    write_made_up_sticker(&mut waving)?;
+    let mut doodles = Drawn {
+        name: "Lab doodles",
+        files: vec![
+            ("sunny_face.png", drawn_face([250, 200, 40], true)?),
+            ("blue_face.png", drawn_face([90, 150, 240], true)?),
+            ("green_face.png", drawn_face([110, 200, 110], false)?),
+            ("pink_face.png", drawn_face([240, 140, 190], true)?),
+            ("waving_face.gif", waving),
+            ("purple_face.png", drawn_face([170, 120, 230], false)?),
+        ],
+    };
+    let mut shapes = Drawn {
+        name: "Lab shapes",
+        files: vec![
+            ("orange_face.png", drawn_face([250, 150, 60], true)?),
+            ("grey_face.png", drawn_face([170, 170, 170], false)?),
+        ],
+    };
+    let made = import::import_from(&mut doodles, dir, &mut |_| {})?;
+    import::import_from(&mut shapes, dir, &mut |_| {})?;
+    teams_ui::stickers::store::record_recent(
+        dir,
+        &teams_ui::stickers::StickerRef {
+            pack: made.pack.id,
+            file: "002.png".to_owned(),
+        },
+    )?;
+    Ok(())
+}
+
 /// The "Lab stickers" chat `seed_stickers` made.
 static STICKER_CHAT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
@@ -6073,6 +6226,7 @@ fn child_window() -> SandboxResult {
     let (lab, engine) = MockLab::start()?;
     let first = support::started(Alias::A, engine)?;
     let settings = teams_ui::SettingsFile::new(lab.dir.path().join("ui").join("a.toml"));
+    seed_sticker_packs(&lab.dir.path().join("ui").join(teams_ui::stickers::store::DIR))?;
     let runner = support::runner(lab.dir.path())?;
     let failed = Arc::new(Mutex::new(None));
     let failed_in_app = Arc::clone(&failed);
