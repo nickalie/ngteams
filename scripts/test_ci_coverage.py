@@ -65,6 +65,15 @@ class EnvironmentTests(unittest.TestCase):
         ], env=environment, capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(result.stdout), ["1", "1", "vulkan", None, None, None, None])
 
+    def test_the_linker_drops_symbol_tables_that_would_fill_the_build_disk(self):
+        keys = ["CARGO_PROFILE_DEV_STRIP", "CARGO_PROFILE_TEST_STRIP", "CARGO_PROFILE_TEST_DEBUG"]
+        result = subprocess.run([
+            "bash", "-c", 'source "$1"; exec python3 -c "$2"', "test",
+            str(ROOT / ".github/ci/environment.sh"),
+            f"import os,json; print(json.dumps([os.environ.get(key) for key in {keys!r}]))",
+        ], capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout), ["symbols", "symbols", "0"])
+
     def test_every_shard_runs_beside_the_server_services_and_cannot_skip_them(self):
         workflow = (ROOT / ".github/workflows/coverage.yml").read_text()
         shards = workflow.split("\n  shards:\n", 1)[1].split("\n  coverage:\n", 1)[0]

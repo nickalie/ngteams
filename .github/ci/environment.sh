@@ -3,6 +3,8 @@ export TEAMS_WPE_TEST_SKIP_DMA=1 WGPU_BACKEND=vulkan
 export PROTO_LAB_REQUIRE_CHROME=1 GPUI_SMOKE_REQUIRE=1
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}
 export CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+# the linker drops the symbol tables (about 52 GB of 118 GB of test executables) and keeps the coverage sections
+export CARGO_PROFILE_DEV_STRIP=symbols CARGO_PROFILE_TEST_STRIP=symbols
 export CARGO_LLVM_COV_TARGET_DIR=/workspace/target/coverage-continuous-build
 export CARGO_TARGET_DIR=$CARGO_LLVM_COV_TARGET_DIR
 export RUSTFLAGS='-C llvm-args=-runtime-counter-relocation'
