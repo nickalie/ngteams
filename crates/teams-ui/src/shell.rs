@@ -110,6 +110,7 @@ mod apps;
 mod bot_chat;
 mod channel_management;
 mod chat_people;
+mod chat_rename;
 mod meeting_cards;
 pub use meeting_cards::{CardsDrawn, MAX_CARDS as MAX_MEETING_CARDS};
 mod meeting_tabs;
@@ -416,6 +417,8 @@ pub struct Shell {
     kept_new: new_chat::Kept,
     /// The chat header's people flyout, while it is open, and where its button was last drawn.
     people: chat_people::State,
+    /// The chat header's "Name group chat" popup, while it is open, and where its pencil was last drawn.
+    rename: chat_rename::State,
     /// The window's profile card, while one is open, and the pointer's way over faces and names.
     cards: profile_card::State,
     _subscriptions: [Subscription; 14],
@@ -528,6 +531,7 @@ impl Shell {
             new_chat: None,
             kept_new: Vec::new(),
             people: chat_people::State::default(),
+            rename: chat_rename::State::default(),
             _subscriptions: [
                 cx.observe_window_activation(window, Self::sync_activity_active),
                 opened,
@@ -2643,6 +2647,7 @@ impl Shell {
         }
         self.trace.record(&TraceLine::new("chat", "opened").conversation(&id));
         self.people.open = None;
+        self.rename.close();
         self.hide_calendar(window, cx);
         self.reset_meeting_tabs(&id, cx);
         // New message left for this chat gives its draft to it before the chat's view is chosen
@@ -3476,6 +3481,8 @@ impl Shell {
         let call = self.call_header_button(cx);
         let people = self.people_header_button(id, cx);
         let flyout = self.people_layer(id, cx);
+        let rename = self.rename_header_button(id, cx);
+        let renaming = self.rename_layer(id, cx);
         // the chat's language: its messages read in it, and the account's sent in the chat's own
         let translate = chat.as_ref().and_then(|chat| {
             let model = chat.read(cx).translation().clone();
@@ -3489,6 +3496,7 @@ impl Shell {
             .bot_header(id, palette, cx)
             .or_else(|| self.partner_header(id, &name, palette, cx))
             .unwrap_or_else(|| pane_header_led(face, name, palette))
+            .children(rename)
             .children(tabs)
             .children(presence)
             .children(apps)
@@ -3507,6 +3515,7 @@ impl Shell {
             .child(header)
             .child(body)
             .children(flyout)
+            .children(renaming)
             .into_any_element()
     }
 }

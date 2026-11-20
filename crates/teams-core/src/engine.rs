@@ -126,8 +126,8 @@ use teams_store::{
     StoredTranslation, Team, TranscriptLine,
 };
 use teams_trouter::{
-    Change, ChatEvent, Delivery, Down, MessageLoss, PushEvent, RegistrationReport, Stop, Trouter, TrouterCredentials,
-    TrouterHandle,
+    Change, ChatEvent, Delivery, Down, MessageLoss, PushEvent, RegistrationReport, Stop, ThreadTopic, Trouter,
+    TrouterCredentials, TrouterHandle,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, MissedTickBehavior};
@@ -301,6 +301,9 @@ pub enum Action {
         members: Vec<Mri>,
         history: ChatHistory,
     },
+    /// A group chat named `topic` (Teams' "Name group chat": trimmed, at most [`teams_proto::CHAT_TOPIC_MOST`]
+    /// characters; an empty one takes the name off, and the chat is called by its people again).
+    RenameChat { conversation: String, topic: String },
     /// An item of the account's activity feed ([`activity::FEED`]), by its feed message's id, marked read or unread.
     ActivityRead { item: String, read: bool },
     /// The Activity pane was opened: the feed's own horizon moves to its newest item, which clears the rail's count of
@@ -590,6 +593,12 @@ pub enum EngineError {
     /// People are added only to a stored group chat.
     #[error("{conversation} isn't a group chat the store knows, so nobody can be added to it")]
     NotAGroupChat { conversation: String },
+    /// A group chat's name is longer than Teams' "Group name" box takes.
+    #[error(
+        "a group chat's name can't be longer than {} characters",
+        teams_proto::CHAT_TOPIC_MOST
+    )]
+    NameTooLong,
     /// An add names nobody, the account itself, someone already in the chat, or someone twice.
     #[error("those people can't be added to {conversation}: none, the account, a member already, or one twice")]
     NotAddable { conversation: String },
@@ -677,6 +686,7 @@ impl EngineError {
             Self::NotAChat => "not a chat",
             Self::NotAGroupChat { .. } => "not a group chat",
             Self::NotAddable { .. } => "not addable",
+            Self::NameTooLong => "name too long",
             Self::NoEndpoint => "no endpoint",
             Self::Runtime(_) => "runtime",
             Self::Thread(_) => "thread",
@@ -3077,6 +3087,7 @@ where
                 members,
                 history,
             } => self.add_members(conversation, &members, history)?,
+            Action::RenameChat { conversation, topic } => self.rename_chat(conversation, &topic)?,
             Action::ActivityUndoTurnOffApp { row } => self.activity_undo_command(row)?,
             Action::ActivityRead { item, read } => {
                 self.standing(activity::FEED, &item)?;
@@ -3293,6 +3304,20 @@ where
         Ok(())
     }
 
+    /// The command naming the stored group chat `conversation` `topic`: trimmed, empty to take the name off.
+    fn rename_chat(&self, conversation: String, topic: &str) -> Result<Command, EngineError> {
+        let group = self
+            .store
+            .conversation(&conversation)?
+            .is_some_and(|stored| stored.kind == ConversationKind::Group);
+        if !group {
+            return Err(EngineError::NotAGroupChat { conversation });
+        }
+        let request = teams_proto::SetChatTopic::new(conversation.as_str(), topic).ok_or(EngineError::NameTooLong)?;
+        let topic = request.topic().to_owned();
+        Ok(Command::RenameChat { conversation, topic })
+    }
+
     /// The command adding `members` to the stored group chat `conversation`: nobody already in it, not the account,
     /// none twice.
     fn add_members(&self, conversation: String, members: &[Mri], history: ChatHistory) -> Result<Command, EngineError> {
@@ -3391,6 +3416,9 @@ where
         {
             self.missed("the sync after a write", error);
         }
+        if row.kind == OutboxKind::RenameChat && row.state == OutboxState::Sent {
+            self.renamed(row);
+        }
         // people added: the chat's roster as it now stands, for its people and its name
         if row.kind == OutboxKind::AddMembers
             && let Some(conversation) = conversation.as_deref()
@@ -3399,6 +3427,19 @@ where
             self.missed("the members' read after people were added", error);
         }
         self.emit(Event::Outbox(row.clone()));
+    }
+
+    /// The account's rename went through: the chat is called by the name it gave at once, before any push says so.
+    fn renamed(&mut self, row: &OutboxEntry) {
+        let Ok(Command::RenameChat { conversation, topic }) = serde_json::from_str::<Command>(&row.payload) else {
+            return;
+        };
+        let topic = Some(topic.as_str()).filter(|topic| !topic.is_empty());
+        match self.store.set_topic(&conversation, topic) {
+            Ok(true) => self.emit(Event::ConversationChanged { conversation }),
+            Ok(false) => {}
+            Err(error) => self.missed("storing a chat's new name", error),
+        }
     }
 
     // --- calls ---
@@ -3626,8 +3667,12 @@ where
                 }
                 self.brought(source);
             }
-            ChatEvent::ThreadUpdate { thread, roster_version } => {
-                self.on_thread(&thread, roster_version).await;
+            ChatEvent::ThreadUpdate {
+                thread,
+                roster_version,
+                topic,
+            } => {
+                self.on_thread(&thread, roster_version, topic).await;
                 self.brought(source);
             }
             // logged by its kind where it was read
@@ -3638,9 +3683,10 @@ where
     /// A thread changed (`ThreadUpdate`): a team's or a channel's thread reads the teams again from the tick once such
     /// changes pause (a team or channel made, renamed or removed, people added or gone, [`Teams::note_pushed`]), and a
     /// stored group or meeting chat reads its people again
-    /// unless the delivery's `rosterVersion` is no newer than the stored one. Any other thread (the service's stream
+    /// unless the delivery's `rosterVersion` is no newer than the stored one. A stored group chat takes the name the
+    /// delivery carries, at once (a member renamed it). Any other thread (the service's stream
     /// of blocked messages' copies, a 1:1 chat, a chat the store doesn't know yet) is left to what follows it.
-    async fn on_thread(&mut self, thread: &str, roster_version: Option<u64>) {
+    async fn on_thread(&mut self, thread: &str, roster_version: Option<u64>, topic: ThreadTopic) {
         if chat::is_generic_stream(thread) {
             return;
         }
@@ -3649,7 +3695,23 @@ where
             return;
         }
         match self.store.conversation(thread) {
-            Ok(Some(stored)) if stored.kind == ConversationKind::Group || stored.kind.is_meeting() => {}
+            Ok(Some(stored)) if stored.kind == ConversationKind::Group => {
+                let topic = match &topic {
+                    ThreadTopic::Unsaid => None,
+                    ThreadTopic::Unnamed => Some(None),
+                    ThreadTopic::Named(name) => Some(Some(name.as_str())),
+                };
+                if let Some(topic) = topic {
+                    match self.store.set_topic(thread, topic) {
+                        Ok(true) => self.emit(Event::ConversationChanged {
+                            conversation: thread.to_owned(),
+                        }),
+                        Ok(false) => {}
+                        Err(error) => self.missed("storing a renamed chat's name", error),
+                    }
+                }
+            }
+            Ok(Some(stored)) if stored.kind.is_meeting() => {}
             Ok(_) => return,
             Err(error) => return self.missed("reading a changed thread's chat", error),
         }

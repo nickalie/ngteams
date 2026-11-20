@@ -79,9 +79,9 @@ use teams_call::Tracker;
 use teams_proto::Mri;
 use teams_proto::chat::MessageText;
 use teams_proto::{
-    ACTIVITY_FEED, AddChatMembers, Author, CreateChat, DEFAULT_RETRY_WAIT, DeleteMessage, EditMessage, HttpError,
-    MarkFeedRead, Original, ReadReceipt, RemoveReaction, Request, Response, SendMessage, SetActivityRead, SetReaction,
-    SharedHistory, Transport, UnreadMark,
+    ACTIVITY_FEED, AddChatMembers, Author, CHAT_TOPIC_MOST, CreateChat, DEFAULT_RETRY_WAIT, DeleteMessage, EditMessage,
+    HttpError, MarkFeedRead, Original, ReadReceipt, RemoveReaction, Request, Response, SendMessage, SetActivityRead,
+    SetChatTopic, SetReaction, SharedHistory, Transport, UnreadMark,
 };
 use teams_store::{
     Applied, AttemptOutcome, CheckFailed, Message, NewOutboxEntry, OutboxEntry, OutboxKind, OutboxState, Reaction,
@@ -179,6 +179,8 @@ pub enum Command {
         members: Vec<String>,
         share_history_time: i64,
     },
+    /// Names the group chat `conversation` `topic` (trimmed; empty takes the name off), as Teams' "Name group chat".
+    RenameChat { conversation: String, topic: String },
     /// Marks an item of the account's activity feed ([`ACTIVITY_FEED`]) read or unread.
     ActivityRead { item: String, read: bool },
     /// Marks the whole activity feed read as of the row's time ("Mark all as read").
@@ -212,6 +214,8 @@ pub enum Lane<'a> {
     Message { conversation: &'a str, message_id: &'a str },
     /// The account's read horizon in a conversation.
     ReadHorizon { conversation: &'a str },
+    /// A group chat's name: an older rename sent after a newer one would bring the old name back.
+    Topic { conversation: &'a str },
 }
 
 /// What an edit sends again of the message it changes, as the store had it when the edit was asked for: its
@@ -276,6 +280,7 @@ impl Command {
             Self::ReadReceipt { .. } => OutboxKind::ReadReceipt,
             Self::CreateChat { .. } => OutboxKind::CreateChat,
             Self::AddMembers { .. } => OutboxKind::AddMembers,
+            Self::RenameChat { .. } => OutboxKind::RenameChat,
             Self::ActivityRead { .. } => OutboxKind::ActivityRead,
             Self::FeedRead => OutboxKind::FeedRead,
             Self::ActivityTurnOffApp { .. } => OutboxKind::ActivityTurnOffApp,
@@ -294,7 +299,8 @@ impl Command {
             | Self::React { conversation, .. }
             | Self::ReadReceipt { conversation, .. }
             | Self::UnreadMark { conversation, .. }
-            | Self::AddMembers { conversation, .. } => Some(conversation),
+            | Self::AddMembers { conversation, .. }
+            | Self::RenameChat { conversation, .. } => Some(conversation),
             Self::ActivityRead { .. } | Self::FeedRead => Some(ACTIVITY_FEED),
             Self::CreateChat { .. } | Self::ActivityTurnOffApp { .. } | Self::ActivityRestoreApp { .. } => None,
         }
@@ -326,6 +332,7 @@ impl Command {
             Self::ReadReceipt { conversation, .. } | Self::UnreadMark { conversation, .. } => {
                 Some(Lane::ReadHorizon { conversation })
             }
+            Self::RenameChat { conversation, .. } => Some(Lane::Topic { conversation }),
             Self::ActivityRead { item, .. } => Some(Lane::Message {
                 conversation: ACTIVITY_FEED,
                 message_id: item,
@@ -350,6 +357,7 @@ impl Command {
             Self::Send { .. }
             | Self::CreateChat { .. }
             | Self::AddMembers { .. }
+            | Self::RenameChat { .. }
             | Self::FeedRead
             | Self::ActivityTurnOffApp { .. }
             | Self::ActivityRestoreApp { .. }
@@ -1115,6 +1123,7 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
             },
             command @ (Command::AddMembers { .. }
             | Command::UnreadMark { .. }
+            | Command::RenameChat { .. }
             | Command::ActivityRead { .. }
             | Command::FeedRead
             | Command::ActivityTurnOffApp { .. }
@@ -1122,7 +1131,8 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
         }
     }
 
-    /// [`Outbox::attempt`]'s people added to a chat, the activity feed's writes and a conversation's unread mark.
+    /// [`Outbox::attempt`]'s people added to a chat, a chat renamed, the activity feed's writes and a conversation's
+    /// unread mark.
     async fn attempt_more(&self, command: Command, at: i64, row: i64) -> Tried {
         match command {
             Command::AddMembers {
@@ -1137,6 +1147,10 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
                     None => Tried::NotSent("nobody to add".to_owned()),
                 }
             }
+            Command::RenameChat { conversation, topic } => match SetChatTopic::new(conversation, &topic) {
+                Some(request) => self.deliver(request).await,
+                None => Tried::NotSent(format!("the name is longer than {CHAT_TOPIC_MOST} characters")),
+            },
             Command::ActivityRead { item, read } => match SetActivityRead::new(&item, read) {
                 Some(request) => self.deliver(request).await,
                 None => Tried::NotSent("the activity item's id can't be read".to_owned()),
@@ -1433,12 +1447,13 @@ fn token_service_down(error: &TokenError) -> bool {
 }
 
 /// The id a row that went through is kept with: a post's new message, a new chat's thread (from the answer), the
-/// message an edit, a delete or a reaction acted on; none for a read receipt and people added.
+/// message an edit, a delete or a reaction acted on; none for a read receipt, people added and a rename.
 fn answered_id(row: &OutboxEntry, answer: &Response) -> Option<String> {
     match row.kind {
         OutboxKind::Send | OutboxKind::CreateChat => message_id(answer),
         OutboxKind::ReadReceipt
         | OutboxKind::AddMembers
+        | OutboxKind::RenameChat
         | OutboxKind::FeedRead
         | OutboxKind::ActivityTurnOffApp
         | OutboxKind::ActivityRestoreApp

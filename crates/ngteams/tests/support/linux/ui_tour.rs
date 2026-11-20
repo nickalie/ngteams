@@ -14,9 +14,10 @@
 //! picture opened in the picture viewer, fitted and zoomed;
 //! the 12-hour time format and a chat's times on it; a group chat's presence; the "Chats" section's See more, what it
 //! brings and a chat opened from below the rows shown; New message, its To: line's suggestions, the chat two people
-//! already have and a group name, in Teams Dark and Light; a favourite channel opened from "Favorites", a post's hover
-//! bar and its thread beside the posts; forwarded messages; a call's own window, its participants' pane, its Call
-//! health, beside the main window with its in-call strip, and in Teams Dark; a group call with Raise and React, its
+//! already have and a group name, in Teams Dark and Light; a group chat's "Name group chat" in Teams Light and Dark;
+//! a favourite channel opened from "Favorites", a post's hover bar and its thread beside the posts; forwarded
+//! messages; a call's own window, its participants' pane, its Call health, beside the main window with its in-call
+//! strip, and in Teams Dark; a group call with Raise and React, its
 //! People pane, its speaker view and its chat, its organizer's Mute all, People added to the chat and Controls, an
 //! attendee's greyed controls and "You've been muted", in Teams Light and Dark; a person's profile card, compact beside
 //! a group chat's and a channel post's face and full on each of its tabs, in Teams Light and Dark) and says
@@ -195,7 +196,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 328 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 330 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -1532,6 +1533,21 @@ const STEPS: [Step; 5 + 328 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
         });
     }),
     ("chat-people-group-dark", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    // the a–b–c chat's "Name group chat" from the pencil after its name, a new name typed, in Teams Light and Dark
+    ("chat-rename", |shell, window, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        shell.update(cx, |shell, cx| {
+            shell.toggle_people(window, cx);
+            shell.toggle_rename(window, cx);
+        });
+        if let Some(view) = shell.read(cx).rename().cloned() {
+            let input = view.read(cx).input().clone();
+            input.update(cx, |input, cx| input.set_value("Lab trio 40", window, cx));
+        }
+    }),
+    ("chat-rename-dark", |shell, _, cx| {
         fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
     }),
     // the a–b chat in Teams Dark: the frame, the sheet, its own bubbles' tint and the reply's quote card

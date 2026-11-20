@@ -227,6 +227,33 @@ ngteams follows this: `Action::AddMembers` (one outbox row, `AddChatMembers`; th
 the user asks, so every attempt sends the same; an attempt whose outcome is unknown is failed, never sent twice), and
 after it went through the chat's members are read again as a thread.
 
+### Naming a group chat
+
+Seen 2026-11-20 in browser Teams with lab account a (`proto-lab run team-manage` steps) in a group chat of a, b and c
+alone; the renames were sent, and the chat's name was put back after:
+
+- **Where**: a group chat's header shows a pencil after its name ("Name group chat"). A 1:1 chat and a meeting's chat
+  have none, and neither the chat list's nor the header's "More chat options" menu, nor the chat's details panel,
+  offers a rename.
+- **The popup** under the name (400 by 150 px): "Group name" over a box that holds the name (empty for a chat without
+  one: "Type a group name"), the keyboard in it, then Cancel and Save. Save is lit even while the box is empty.
+- **The limit**: the box takes 250 characters. A paste or a key that would make it longer is refused whole, and "Your
+  group name can't be longer than 250 characters." shows under the box until the next change it takes.
+- **Save or Enter** closes the popup and sends `PUT v1/threads/<chat>/properties?name=topic` with `{"topic": <the
+  name>}`, answered 200. The name is trimmed (`"  Lab trio 41  "` went as `"Lab trio 41"`); an empty box sends
+  `{"topic": ""}`, which takes the name off: the header and the row are called by the people again.
+- **What every member gets** (the account too): the thread's `ThreadUpdate` (its `properties` carry the new `topic`,
+  or leave it out once the name is off), a `ThreadActivity/TopicUpdate` message from the thread
+  (`<topicupdate><eventtime>…</eventtime><initiator><mri></initiator><value>Lab trio 40</value></topicupdate>`; an
+  empty `<value />` for a name taken off; [chat.md](chat.md#system-messages)), and a `ConversationUpdate`. The chat
+  keeps its place in the list. The line reads "AI changed the group name to Lab trio 40." or "AI removed the group
+  name for this conversation."
+
+ngteams follows this: the header's pencil and popup, `Action::RenameChat` (one outbox row, `SetChatTopic`). Once the
+row went through, the account's own client calls the chat by the new name; another member's rename comes in with the
+thread's `ThreadUpdate`, whose `properties.topic` the engine takes at once, with no read. A name that is the same as
+before is not sent.
+
 `proto-lab` records browser traffic without a browser fence. A scenario that needs a request's shape without its
 side effect installs an explicit capture hold before navigation or the matching action. Held marker messages,
 including legacy queued probes, stay held on later sessions so the browser cannot resend them then. Holds are

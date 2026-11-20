@@ -4301,6 +4301,133 @@ async fn a_thread_update_of_a_stored_group_chat_reads_its_people_again_unless_it
     b.shutdown();
 }
 
+/// The name `native`'s store calls `chat` by.
+async fn topic_of(native: &Native, chat: &str) -> Option<String> {
+    let conversations = native.handle.conversations(100).await.unwrap();
+    conversations
+        .into_iter()
+        .find(|conversation| conversation.id == chat)
+        .and_then(|conversation| conversation.topic)
+}
+
+/// A group chat's `ThreadUpdate` as Teams pushes it after a rename (2026-11-20): the whole thread, its `properties`
+/// carrying the `topic`, or leaving it out once the name is taken off.
+fn renamed_update(thread: &str, topic: Option<&str>) -> Value {
+    let mut properties = json!({"threadType": "chat", "historydisclosed": "false"});
+    if let Some(topic) = topic {
+        properties["topic"] = json!(topic);
+    }
+    let resource = json!({"id": thread, "type": "Thread", "rosterVersion": 1, "properties": properties});
+    json!({"type": "EventMessage", "resourceType": "ThreadUpdate", "resource": resource})
+}
+
+#[tokio::test]
+async fn a_group_chat_renamed_is_called_by_its_new_name_at_once_and_its_people_see_it_live() {
+    let lab = Lab::start().await;
+    let chat = lab.mock.add_group("Lab trio 39", &[LAB_A, LAB_B, LAB_C]).unwrap();
+    let mut a = native(&lab, LAB_A, How::default());
+    a.ready().await;
+    let mut b = native(&lab, LAB_B, How::default());
+    b.ready().await;
+    assert_eq!(topic_of(&b, &chat).await.as_deref(), Some("Lab trio 39"));
+
+    // a renames it: once the write went through, a's own client calls it by the new name and holds the thread's
+    // "changed the group name" event
+    let renamed = a
+        .write(Action::RenameChat {
+            conversation: chat.clone(),
+            topic: "  Lab trio 40 ".to_owned(),
+        })
+        .await;
+    assert_eq!(renamed.state, OutboxState::Sent, "{renamed:?}");
+    assert_eq!(renamed.kind, OutboxKind::RenameChat);
+    a.event(|event| {
+        matches!(event, Event::ConversationChanged { conversation } if *conversation == chat).then_some(())
+    })
+    .await;
+    assert_eq!(topic_of(&a, &chat).await.as_deref(), Some("Lab trio 40"));
+    let page = a.handle.messages(&chat, None, 100).await.unwrap();
+    let event = page
+        .messages
+        .iter()
+        .find(|message| message.message_type == "ThreadActivity/TopicUpdate")
+        .expect("the rename's event");
+    assert!(
+        event.content.contains("<value>Lab trio 40</value>"),
+        "{}",
+        event.content
+    );
+    assert!(event.content.contains(LAB_A), "{}", event.content);
+
+    // b's client, which only looks on, takes the name the thread's update carries, with no read of its own
+    assert_eq!(
+        topic_of(&b, &chat).await.as_deref(),
+        Some("Lab trio 39"),
+        "nothing told b yet"
+    );
+    let reads = thread_reads_of(&lab, &chat).await;
+    lab.trouter
+        .deliver_chat(LAB_B, &renamed_update(&chat, Some("Lab trio 40")));
+    b.event(|event| {
+        matches!(event, Event::ConversationChanged { conversation } if *conversation == chat).then_some(())
+    })
+    .await;
+    assert_eq!(topic_of(&b, &chat).await.as_deref(), Some("Lab trio 40"));
+    assert_eq!(thread_reads_of(&lab, &chat).await, reads);
+
+    // an empty name takes it off: the chat is called by its people again, on both sides
+    let unnamed = a
+        .write(Action::RenameChat {
+            conversation: chat.clone(),
+            topic: String::new(),
+        })
+        .await;
+    assert_eq!(unnamed.state, OutboxState::Sent, "{unnamed:?}");
+    a.drain().await;
+    assert_eq!(topic_of(&a, &chat).await, None);
+    lab.trouter.deliver_chat(LAB_B, &renamed_update(&chat, None));
+    b.event(|event| {
+        matches!(event, Event::ConversationChanged { conversation } if *conversation == chat).then_some(())
+    })
+    .await;
+    assert_eq!(topic_of(&b, &chat).await, None);
+    // an update that says nothing of the name (no properties) leaves it as it is
+    lab.trouter.deliver_chat(LAB_B, &thread_update(&chat, Some(1)));
+    after_what_came_before(&lab, &mut b, &chat).await;
+    assert_eq!(topic_of(&b, &chat).await, None);
+
+    a.shutdown();
+    b.shutdown();
+}
+
+#[tokio::test]
+async fn a_rename_names_only_a_stored_group_chat_and_no_more_than_250_characters() {
+    let lab = Lab::start().await;
+    let chat = lab.mock.add_group("Lab trio 39", &[LAB_A, LAB_B, LAB_C]).unwrap();
+    let mut a = native(&lab, LAB_A, How::default());
+    a.ready().await;
+    // a 1:1 chat takes no name, and Teams' box takes 250 characters at most
+    let refused = a
+        .handle
+        .write(Action::RenameChat {
+            conversation: AB_CHAT.to_owned(),
+            topic: "Pair".to_owned(),
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, EngineError::NotAGroupChat { .. }), "{refused:?}");
+    let long = a
+        .handle
+        .write(Action::RenameChat {
+            conversation: chat.clone(),
+            topic: "n".repeat(teams_proto::CHAT_TOPIC_MOST + 1),
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(long, EngineError::NameTooLong), "{long:?}");
+    a.shutdown();
+}
+
 #[tokio::test]
 async fn a_thread_update_of_a_team_or_a_channel_reads_the_teams_again_and_of_a_1_1_chat_reads_nothing() {
     let lab = Lab::start().await;

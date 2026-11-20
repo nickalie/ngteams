@@ -1,0 +1,102 @@
+//! The chat header's "Name group chat" ([`crate::chat_rename`]): a group chat's header shows a pencil after its name,
+//! and the pencil opens the popup under the name, or closes it. A 1:1 chat, a meeting's chat and the read-only mode
+//! show none. Another chat opened closes the popup.
+
+use super::*;
+use crate::chat_list::RowKind;
+use crate::chat_people::Placed;
+use crate::chat_rename::{ChatRename, ChatRenameEvent, ChatRenameParts, NAME_TIP};
+use gpui_component::Selectable as _;
+
+/// The popup while it is open, and where the header's pencil was last drawn.
+#[derive(Default)]
+pub(super) struct State {
+    open: Option<(Entity<ChatRename>, Subscription)>,
+    button: Placed,
+}
+
+impl State {
+    /// Closes the popup, if it is open.
+    pub(super) fn close(&mut self) {
+        self.open = None;
+    }
+}
+
+impl Shell {
+    /// The header's pencil for chat `id`: a group chat's only, and none in the read-only mode.
+    pub(super) fn rename_header_button(&self, id: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let row = self.list.read(cx).row(id)?;
+        if row.kind != RowKind::Group || self.core.read_only() {
+            return None;
+        }
+        let button = icon_button("chat-header-rename", Glyph::PENCIL, NAME_TIP)
+            .small()
+            .selected(self.rename.open.is_some())
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_rename(window, cx)));
+        Some(
+            self.rename
+                .button
+                .keep(selected_by("chat-header-rename", button))
+                .into_any_element(),
+        )
+    }
+
+    /// Opens the chat shown's "Name group chat", or closes it.
+    pub fn toggle_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.rename.open.take().is_some() {
+            self.take_focus(window, cx);
+            cx.notify();
+            return;
+        }
+        let Main::Chat(id) = &self.main else { return };
+        let Some(row) = self.list.read(cx).row(id) else { return };
+        if row.kind != RowKind::Group || self.core.read_only() {
+            return;
+        }
+        // a group chat without a name is called by its people: its box starts empty
+        let topic = if row.named && row.chat_with.is_none() {
+            row.name.to_string()
+        } else {
+            String::new()
+        };
+        let parts = ChatRenameParts {
+            core: Arc::clone(&self.core),
+            trace: Arc::clone(&self.trace),
+            button: self.rename.button.clone(),
+        };
+        let chat = id.clone();
+        let view = cx.new(|cx| ChatRename::new(parts, chat, &topic, window, cx));
+        let events = cx.subscribe_in(
+            &view,
+            window,
+            |this: &mut Self, _, event: &ChatRenameEvent, window, cx| {
+                match event {
+                    ChatRenameEvent::Close => {
+                        this.rename.open = None;
+                        this.take_focus(window, cx);
+                    }
+                }
+                cx.notify();
+            },
+        );
+        view.update(cx, |view, cx| view.focus(window, cx));
+        self.rename.open = Some((view, events));
+        cx.notify();
+    }
+
+    /// The chat's "Name group chat" popup, while it is open.
+    #[must_use]
+    pub fn rename(&self) -> Option<&Entity<ChatRename>> {
+        self.rename.open.as_ref().map(|(view, _)| view)
+    }
+
+    /// The popup over the conversation pane, under the chat's name, while it is the chat shown's.
+    pub(super) fn rename_layer(&self, id: &str, cx: &App) -> Option<AnyElement> {
+        let (view, _) = self.rename.open.as_ref()?;
+        (view.read(cx).chat() == id).then(|| {
+            gpui::deferred(div().absolute().top(px(42.0)).left(px(4.0)).child(view.clone()))
+                .with_priority(1)
+                .into_any_element()
+        })
+    }
+}

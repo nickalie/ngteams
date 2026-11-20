@@ -9,7 +9,7 @@ use teams_proto::DroppedIndicator;
 use teams_proto::chat::{AppConsumptionHorizon, MessageType};
 use teams_trouter::frames::{Connected, DecodeError, Event, Incoming, decode, message_loss};
 use teams_trouter::socket::allowed;
-use teams_trouter::{Change, ChatEvent, Delivery};
+use teams_trouter::{Change, ChatEvent, Delivery, ThreadTopic};
 use url::Url;
 
 const SESSION: &str = include_str!("../../../tests/fixtures/trouter/session.json");
@@ -267,7 +267,8 @@ fn a_thread_update_names_its_thread_and_its_roster_version_and_one_naming_no_thr
         read(filled(POLICY_BLOCKED)["stream_thread"].clone()),
         ChatEvent::ThreadUpdate {
             thread: "48:generic".to_owned(),
-            roster_version: None
+            roster_version: None,
+            topic: ThreadTopic::Unnamed
         }
     );
     let thread = json!({"id": "19:made-up@thread.v2", "type": "Thread", "rosterVersion": 1_760_000_000_123_u64,
@@ -276,8 +277,26 @@ fn a_thread_update_names_its_thread_and_its_roster_version_and_one_naming_no_thr
         read(thread),
         ChatEvent::ThreadUpdate {
             thread: "19:made-up@thread.v2".to_owned(),
-            roster_version: Some(1_760_000_000_123)
+            roster_version: Some(1_760_000_000_123),
+            topic: ThreadTopic::Unnamed
         }
+    );
+    // a group chat named, renamed or unnamed (browser Teams, 2026-11-20): the thread's properties carry its `topic`, or
+    // leave it out once the name is taken off; a delivery without properties says nothing of the name
+    let named = |properties: Value| json!({"id": "19:made-up@thread.v2", "type": "Thread", "properties": properties});
+    let topic = |resource: Value| match read(resource) {
+        ChatEvent::ThreadUpdate { topic, .. } => topic,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        topic(named(json!({"topic": "Lab trio 40", "threadType": "chat"}))),
+        ThreadTopic::Named("Lab trio 40".to_owned())
+    );
+    assert_eq!(topic(named(json!({"threadType": "chat"}))), ThreadTopic::Unnamed);
+    assert_eq!(topic(named(json!({"topic": ""}))), ThreadTopic::Unnamed);
+    assert_eq!(
+        topic(json!({"id": "19:made-up@thread.v2", "type": "Thread"})),
+        ThreadTopic::Unsaid
     );
     for resource in [json!({}), json!({"id": ""}), json!({"id": 7})] {
         assert_eq!(

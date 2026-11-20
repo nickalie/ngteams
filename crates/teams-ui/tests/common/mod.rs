@@ -455,7 +455,8 @@ fn conversation_of(action: &Action) -> Option<String> {
         | Action::MarkUnread { conversation, .. }
         | Action::MarkRead { conversation }
         | Action::EndUnreadMark { conversation }
-        | Action::AddMembers { conversation, .. } => Some(conversation.clone()),
+        | Action::AddMembers { conversation, .. }
+        | Action::RenameChat { conversation, .. } => Some(conversation.clone()),
         Action::ActivityRead { .. } | Action::ActivitySeen | Action::ActivityAllRead => {
             Some(teams_core::activity::FEED.to_owned())
         }

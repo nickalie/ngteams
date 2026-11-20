@@ -41,6 +41,8 @@ pub enum OutboxKind {
     CreateChat,
     /// People added to a group chat.
     AddMembers,
+    /// A group chat named, renamed or unnamed.
+    RenameChat,
     /// An item of the account's activity feed marked read or unread.
     ActivityRead,
     /// The whole activity feed marked read.
@@ -106,6 +108,7 @@ text_enum!(OutboxKind {
     ReadReceipt => "read_receipt",
     CreateChat => "create_chat",
     AddMembers => "add_members",
+    RenameChat => "rename_chat",
     ActivityRead => "activity_read",
     FeedRead => "feed_read",
     ActivityTurnOffApp => "activity_turn_off_app",

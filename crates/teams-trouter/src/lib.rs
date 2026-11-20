@@ -60,7 +60,7 @@ pub mod socket;
 
 pub use calls::{CallDelivery, CallResponder, CallResponse, CallStack, RespondFailure};
 pub use credentials::TrouterCredentials;
-pub use events::{Change, ChatEvent, Delivery};
+pub use events::{Change, ChatEvent, Delivery, ThreadTopic};
 pub use presence::PresenceDelivery;
 pub use registration::{RegistrationReport, RegistrationTimes};
 pub use session::{BuildError, Down, Ignored, MessageLoss, Options, PushEvent, Stop, Trouter, TrouterHandle};

@@ -79,6 +79,10 @@ enum Route {
     AddMembers {
         id: String,
     },
+    /// `PUT v1/threads/<id>/properties?name=topic`: a group chat named.
+    Topic {
+        id: String,
+    },
     /// `POST v1/agents/<bot>/invoke` (`bots.rs`).
     BotInvoke {
         bot: String,
@@ -98,6 +102,7 @@ impl Route {
             ("GET", ["threads", id, "filtered"]) => Self::Filtered { id: text(id) },
             ("POST", ["threads"]) => Self::CreateChat,
             ("PUT", ["threads", id, "members"]) => Self::AddMembers { id: text(id) },
+            ("PUT", ["threads", id, "properties"]) => Self::Topic { id: text(id) },
             ("POST", ["agents", bot, "invoke"]) => Self::BotInvoke { bot: text(bot) },
             (method, ["users", "ME", "conversations", chat, rest @ ..]) => return Self::of_chat(method, chat, rest),
             _ => return None,
@@ -232,6 +237,7 @@ fn dispatch(state: &mut State, route: Route, call: &Call<'_>) -> ResponseTemplat
         Route::UserProperties { write } => user_properties(state, call, write),
         Route::CreateChat => writes::create_chat(state, call),
         Route::AddMembers { id } => writes::add_members(state, call, &id),
+        Route::Topic { id } => writes::topic(state, call, &id),
         Route::BotInvoke { bot } => crate::bots::invoke(state, call, &bot),
     }
 }
@@ -348,6 +354,12 @@ mod tests {
         assert_eq!(
             route("PUT", "threads/19:x@thread.v2/members"),
             Some(Route::AddMembers {
+                id: "19:x@thread.v2".to_owned()
+            })
+        );
+        assert_eq!(
+            route("PUT", "threads/19:x@thread.v2/properties"),
+            Some(Route::Topic {
                 id: "19:x@thread.v2".to_owned()
             })
         );

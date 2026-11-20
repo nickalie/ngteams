@@ -15,8 +15,9 @@
 //! - `CustomUserProperties`: the account's own properties that changed; its mark-all-read horizon when they name one
 //!   ([`ChatEvent::AppReadHorizon`], `docs/protocol/chat.md`), else [`ChatEvent::Unknown`].
 //! - `ThreadUpdate`: a thread changed (a chat's people, a team's or a channel's name, people or state, a thread made
-//!   or deleted), its `resource` the thread as a thread read gives it ([`ChatEvent::ThreadUpdate`]: its `id`, and its
-//!   `rosterVersion` when it carries one); one naming no thread is [`ChatEvent::Unknown`].
+//!   or deleted), its `resource` the thread as a thread read gives it ([`ChatEvent::ThreadUpdate`]: its `id`, its
+//!   `rosterVersion` when it carries one, and its `properties.topic`, which a renamed group chat's carries and an
+//!   unnamed one's leaves out); one naming no thread is [`ChatEvent::Unknown`].
 //! - anything else is [`ChatEvent::Unknown`] with its `resourceType`, and logged by that kind only.
 //!
 //! A delivery is applied by conversation, message id and version: the service replays unanswered ones on connect
@@ -66,13 +67,26 @@ pub enum ChatEvent {
     AppReadHorizon(AppConsumptionHorizon),
     /// The chat changed (its last message, its thread properties, …).
     ConversationUpdate { conversation: Box<Conversation> },
-    /// A thread changed: its id, and the `rosterVersion` the delivery carries, when it carries one.
+    /// A thread changed: its id, the `rosterVersion` the delivery carries, when it carries one, and its name as its
+    /// `properties` say it.
     ThreadUpdate {
         thread: String,
         roster_version: Option<u64>,
+        topic: ThreadTopic,
     },
     /// A delivery of another kind, or one whose body doesn't read: its `resourceType` (empty when there was none).
     Unknown { resource_type: String },
+}
+
+/// A thread's name as a [`ChatEvent::ThreadUpdate`] carries it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ThreadTopic {
+    /// The delivery carries no `properties`: it says nothing of the name.
+    Unsaid,
+    /// Its `properties` name nothing: a group chat's name was taken off, or it never had one.
+    Unnamed,
+    /// Its `properties.topic`.
+    Named(String),
 }
 
 /// What a [`ChatEvent::MessageUpdate`] changed, as the captures tell it apart.
@@ -181,9 +195,17 @@ fn change_of(message: &Message) -> Change {
 
 fn thread_update(resource: &Value) -> Option<ChatEvent> {
     let thread = resource["id"].as_str().filter(|id| !id.is_empty())?.to_owned();
+    let topic = match resource["properties"].as_object() {
+        None => ThreadTopic::Unsaid,
+        Some(properties) => match properties.get("topic").and_then(Value::as_str) {
+            Some(topic) if !topic.is_empty() => ThreadTopic::Named(topic.to_owned()),
+            _ => ThreadTopic::Unnamed,
+        },
+    };
     Some(ChatEvent::ThreadUpdate {
         thread,
         roster_version: resource["rosterVersion"].as_u64(),
+        topic,
     })
 }
 

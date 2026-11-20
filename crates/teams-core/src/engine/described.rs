@@ -39,6 +39,8 @@ pub(super) fn action(action: &Action) -> String {
         Action::AddMembers {
             conversation, members, ..
         } => format!("{} people added to {conversation}", members.len()),
+        // the name is the user's text: never logged
+        Action::RenameChat { conversation, .. } => format!("a new name for {conversation}"),
         Action::ActivityRead { item, read: true } => format!("activity item {item} marked read"),
         Action::ActivityRead { item, read: false } => format!("activity item {item} marked unread"),
         Action::ActivitySeen => "activity seen".to_owned(),

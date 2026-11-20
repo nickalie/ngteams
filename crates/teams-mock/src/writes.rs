@@ -1,4 +1,4 @@
-//! Writes: message posts and typing, edits, soft deletes, reactions, read receipts and chat creation. Each one changes
+//! Writes: message posts and typing, edits, soft deletes, reactions, read receipts, chat creation and group chat names. Each one changes
 //! the state as the service did in the captures behind the fixtures (`docs/protocol/chat.md`), answers as its fixture
 //! recorded, and queues a [`crate::ChatEvent`] for every other member of the chat.
 
@@ -425,6 +425,66 @@ pub(crate) fn add_members(state: &mut State, call: &Call<'_>, id: &str) -> Respo
     conversation.entry["threadProperties"]["rosterVersion"] = json!(time);
     state.changed();
     status(200)
+}
+
+/// `PUT v1/threads/<id>/properties?name=topic` (`docs/protocol/chat-service.md`, "Naming a group chat"):
+/// `{"topic": <name>}` from a member of the group chat `id`. The name is kept (an empty one takes it off), the chat's
+/// version moves on, the thread posts a `ThreadActivity/TopicUpdate` naming the caller and the name to every member,
+/// and it is answered 200. A 1:1 chat, a meeting's chat or a stream takes no name (400), as Teams offers none there.
+pub(crate) fn topic(state: &mut State, call: &Call<'_>, id: &str) -> ResponseTemplate {
+    let kind = match member_of(state, id, &call.caller) {
+        Ok(conversation) => conversation.kind,
+        Err(code) => return status(code),
+    };
+    let topic = call
+        .object()
+        .and_then(|body| body.get("topic")?.as_str().map(str::to_owned));
+    let (Some(topic), Some("topic")) = (topic, call.query("name")) else {
+        return status(400);
+    };
+    if kind != Kind::Group {
+        return status(400);
+    }
+    let arrival = state.tick();
+    let base = state.chat_base();
+    let Some(conversation) = state.conversation_mut(id) else {
+        return status(404);
+    };
+    let properties = object(&mut conversation.entry["threadProperties"]);
+    if topic.is_empty() {
+        properties.remove("topic");
+    } else {
+        properties.insert("topic".to_owned(), json!(topic));
+    }
+    let value = if topic.is_empty() {
+        "<value />".to_owned()
+    } else {
+        format!("<value>{}</value>", escape_text(&topic))
+    };
+    let message = json!({
+        "sequenceId": conversation.next_sequence(),
+        "conversationid": id,
+        "conversationLink": format!("{base}/v1/users/ME/conversations/{id}"),
+        "type": "Message",
+        "id": arrival.to_string(),
+        "version": arrival.to_string(),
+        "messagetype": "ThreadActivity/TopicUpdate",
+        "content": format!(
+            "<topicupdate><eventtime>{arrival}</eventtime><initiator>{}</initiator>{value}</topicupdate>",
+            call.caller
+        ),
+        "from": format!("{base}/v1/users/ME/contacts/{id}"),
+        "composetime": iso_time(arrival, 7),
+        "originalarrivaltime": iso_time(arrival, 7),
+        "properties": {},
+    });
+    store(state, id, id, None, message, arrival);
+    status(200)
+}
+
+/// `text` as XML character data.
+fn escape_text(text: &str) -> String {
+    text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 /// Whether `caller` may write to the chat `id`: a member, and not of a read-only conversation (403).

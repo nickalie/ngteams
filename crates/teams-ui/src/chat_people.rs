@@ -236,7 +236,7 @@ impl Placed {
             .child(element)
     }
 
-    fn holds(&self, point: gpui::Point<Pixels>) -> bool {
+    pub(crate) fn holds(&self, point: gpui::Point<Pixels>) -> bool {
         self.0.get().is_some_and(|bounds| bounds.contains(&point))
     }
 

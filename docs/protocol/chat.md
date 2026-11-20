@@ -413,7 +413,10 @@ reads them, `teams_ui::system_message` words them). A kind or a shape not listed
   after the name of someone who isn't verified (the user's Teams showed it for a note-taking bot invited to a
   meeting); the native client draws it for a Teams visitor (`8:teamsvisitor:`), the one such member a store showed.
 - **`ThreadActivity/TopicUpdate`** (`<topicupdate>` with `initiator` and `value`): "<name> named the meeting <value>."
-  in a meeting chat, "<name> changed the group name to <value>." elsewhere, "… removed the group name …" without one.
+  in a meeting chat, "<name> changed the group name to <value>." elsewhere, "<name> removed the group name for this
+  conversation." without one (an empty `<value />`, as a name taken off sent it on 2026-11-20). A group chat's rename
+  ([chat-service.md](chat-service.md#naming-a-group-chat)) also brings the thread's `ThreadUpdate`, whose
+  `properties.topic` is the new name, left out once the name is off.
 - **`ThreadActivity/DeleteMember`** (`<deletemember>` with `initiator` and `target`s): the initiator alone "left the
   chat.", else "<name> removed <names> from the chat.", or "<names> was/were removed from the chat." when the thread
   removed them.

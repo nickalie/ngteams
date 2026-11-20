@@ -17,8 +17,9 @@ use teams_proto::chat::{
     Sticker, parse_html, sticker_message,
 };
 use teams_proto::{
-    AddChatMembers, Author, CreateChat, Credentials, DeleteMessage, EditMessage, HttpTransport, Original, ReadReceipt,
-    RemoveReaction, Response, SendMessage, SetReaction, SharedHistory, Transport, Typing,
+    AddChatMembers, Author, CHAT_TOPIC_MOST, CreateChat, Credentials, DeleteMessage, EditMessage, HttpTransport,
+    Original, ReadReceipt, RemoveReaction, Response, SendMessage, SetChatTopic, SetReaction, SharedHistory, Transport,
+    Typing,
 };
 use wiremock::matchers::any;
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -145,6 +146,7 @@ enum ChatWrite {
     Typing(Typing),
     Create(CreateChat),
     Add(AddChatMembers),
+    Topic(SetChatTopic),
 }
 
 impl ChatWrite {
@@ -160,6 +162,7 @@ impl ChatWrite {
             Self::Typing(request) => transport.deliver(request).await,
             Self::Create(request) => transport.deliver(request).await,
             Self::Add(request) => transport.deliver(request).await,
+            Self::Topic(request) => transport.deliver(request).await,
         }
     }
 }
@@ -1062,6 +1065,37 @@ async fn adding_people_to_a_group_chat_puts_them_with_the_history_chosen() -> Te
     // a time before the epoch is no time: the history from its start, never "none" by accident
     assert_eq!(SharedHistory::Since(0).share_history_time(), 1);
     assert_eq!(SharedHistory::from_share_history_time(-5), SharedHistory::None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn naming_a_group_chat_puts_its_topic_trimmed() -> TestResult {
+    // browser Teams' "Name group chat" (2026-11-20): one PUT of the thread's `topic` property, the name trimmed; an
+    // empty name takes the name off with an empty topic
+    for (typed, topic) in [
+        ("Lab trio 40", "Lab trio 40"),
+        ("  Lab trio 41  ", "Lab trio 41"),
+        ("", ""),
+        ("   ", ""),
+    ] {
+        let rename = SetChatTopic::new(ABC_CHAT, typed).ok_or("a rename")?;
+        assert_eq!(rename.conversation(), ABC_CHAT);
+        assert_eq!(rename.topic(), topic);
+
+        let sent = sent(ChatWrite::Topic(rename)).await?;
+
+        assert_eq!(sent.method, "PUT");
+        assert_eq!(sent.path, format!("{BASE_PATH}/threads/{ABC_CHAT}/properties"));
+        assert_eq!(sent.query.as_deref(), Some("name=topic"));
+        assert_eq!(sent.body, Some(json!({"topic": topic})));
+    }
+    // Teams' box takes 250 characters (letters, not bytes), and refuses one more
+    let longest = "é".repeat(CHAT_TOPIC_MOST);
+    assert_eq!(
+        SetChatTopic::new(ABC_CHAT, &longest).map(|rename| rename.topic().chars().count()),
+        Some(CHAT_TOPIC_MOST)
+    );
+    assert_eq!(SetChatTopic::new(ABC_CHAT, &format!("{longest}x")), None);
     Ok(())
 }
 

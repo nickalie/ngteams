@@ -119,6 +119,7 @@ pub mod channel_menu;
 pub mod channel_view;
 pub mod chat_list;
 pub mod chat_people;
+pub mod chat_rename;
 pub mod chat_translate;
 pub mod chat_view;
 pub mod chat_window;

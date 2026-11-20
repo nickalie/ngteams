@@ -401,6 +401,31 @@ fn a_later_last_activity_is_taken_whatever_the_version() {
 }
 
 #[test]
+fn a_group_chat_renamed_keeps_its_version_and_a_newer_listing_still_replaces_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut store = open(&dir).expect("open the store");
+    let mut chat = conversation(GROUP, ConversationKind::Group, 10);
+    chat.topic = Some("Lab trio 39".to_owned());
+    store.upsert_conversation(&chat).expect("insert");
+    let topic = |store: &Store| store.conversation(GROUP).expect("read").expect("group").topic;
+
+    assert!(store.set_topic(GROUP, Some("Lab trio 40")).expect("renamed"));
+    assert_eq!(topic(&store).as_deref(), Some("Lab trio 40"));
+    assert!(!store.set_topic(GROUP, Some("Lab trio 40")).expect("the same name"));
+    assert!(store.set_topic(GROUP, None).expect("unnamed"));
+    assert_eq!(topic(&store), None);
+    assert!(!store.set_topic(GROUP, None).expect("still unnamed"));
+    assert!(!store.set_topic("19:not-stored@thread.v2", Some("x")).expect("unknown"));
+    assert_eq!(store.conversation(GROUP).expect("read").expect("group").version, 10);
+
+    let mut listed = chat.clone();
+    listed.version = 11;
+    listed.topic = Some("Lab trio 41".to_owned());
+    assert_eq!(store.upsert_conversation(&listed).expect("listed"), Applied::Updated);
+    assert_eq!(topic(&store).as_deref(), Some("Lab trio 41"));
+}
+
+#[test]
 fn an_unknown_conversation_kind_is_kept_as_text() {
     let dir = tempfile::tempdir().expect("tempdir");
     let mut store = open(&dir).expect("open the store");

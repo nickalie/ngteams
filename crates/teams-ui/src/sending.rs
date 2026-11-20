@@ -193,6 +193,7 @@ impl Note {
             | OutboxKind::ReadReceipt
             | OutboxKind::CreateChat
             | OutboxKind::AddMembers
+            | OutboxKind::RenameChat
             | OutboxKind::ActivityRead
             | OutboxKind::FeedRead
             | OutboxKind::ActivityTurnOffApp

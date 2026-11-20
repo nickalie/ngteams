@@ -763,6 +763,59 @@ impl Prepared for AddChatMembers {
     }
 }
 
+/// The longest group chat name Teams' "Group name" box takes, in characters: one more is refused with "Your group
+/// name can't be longer than 250 characters." (browser Teams, 2026-11-20).
+pub const CHAT_TOPIC_MOST: usize = 250;
+
+/// Names, renames or unnames a group chat: `PUT v1/threads/<chat>/properties?name=topic` with `{"topic": <name>}`,
+/// as browser Teams' "Name group chat" sent it (2026-11-20, `docs/protocol/chat-service.md`, "Naming a group chat").
+/// The name is trimmed; an empty one takes the name off (`{"topic": ""}`), and the chat is called by its people again.
+/// Every member gets the thread's `ThreadUpdate` and a `ThreadActivity/TopicUpdate` message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SetChatTopic {
+    conversation: String,
+    topic: String,
+}
+
+impl SetChatTopic {
+    /// `conversation` named `topic` (trimmed, empty to take the name off); `None` for a name longer than
+    /// [`CHAT_TOPIC_MOST`] characters.
+    #[must_use]
+    pub fn new(conversation: impl Into<String>, topic: &str) -> Option<Self> {
+        let topic = topic.trim();
+        (topic.chars().count() <= CHAT_TOPIC_MOST).then(|| Self {
+            conversation: conversation.into(),
+            topic: topic.to_owned(),
+        })
+    }
+
+    /// The chat it names.
+    #[must_use]
+    pub fn conversation(&self) -> &str {
+        &self.conversation
+    }
+
+    /// The name it sends: empty when it takes the name off.
+    #[must_use]
+    pub fn topic(&self) -> &str {
+        &self.topic
+    }
+}
+
+impl Prepared for SetChatTopic {
+    fn wire(&self) -> Option<Wire> {
+        Some(Wire {
+            raw: None,
+            service: Service::ChatService,
+            headers: Vec::new(),
+            method: Method::Put,
+            endpoint: Endpoint::new(["v1", "threads", self.conversation.as_str(), "properties"])
+                .with_query("name", "topic"),
+            body: Some(json!({"topic": self.topic})),
+        })
+    }
+}
+
 /// `v1/users/ME/conversations/<chat>/messages`.
 fn messages(conversation: &str) -> Endpoint {
     Endpoint::new(["v1", "users", "ME", "conversations", conversation, "messages"])

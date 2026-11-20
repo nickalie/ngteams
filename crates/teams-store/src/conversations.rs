@@ -178,6 +178,21 @@ impl Store {
         Ok(applied)
     }
 
+    /// Names the stored conversation `id` `topic` (`None` takes the name off), whatever its version: a group chat the
+    /// account renamed, or one a push says was renamed. Its version stays, so the next listing of a newer version still
+    /// replaces the row. Whether the name changed: `false` for the same name, or a conversation the store doesn't know.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlite`] when the write fails.
+    pub fn set_topic(&mut self, id: &str, topic: Option<&str>) -> Result<bool, StoreError> {
+        let changed = self.conn.execute(
+            "UPDATE conversations SET topic = ?2 WHERE id = ?1 AND topic IS NOT ?2",
+            params![id, topic],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// Forgets `id` and all that is kept of it: its members, messages (their reactions, reply roots and search
     /// entries), read horizons, sync state and its mark to be synced again all go with its row; its outbox rows and its
     /// place among the favourites, which don't reference it, go in the same transaction. For a thread the service says
