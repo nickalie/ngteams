@@ -28,6 +28,8 @@
 //!   the speaker staying large; a call of 2-9 shows everyone on one page, no pager; in a 1:1 call the account's own
 //!   tile floats at the stage's bottom right.
 //! - QA of task 447: each tile shows its raised hand with its place in the line of hands (`large_call_qa_hands.rs`).
+//! - QA of task 715: the call's chat bubble shows a mention of everyone in the reader's words
+//!   (`large_call_qa_everyone.rs`).
 //! - Each ring's banner on the sandbox's bus carries the caller's (b's) picture, round, as the mock's Graph gives it
 //!   (#114).
 //! - Screenshots of each under `target/ui-shots/large-call-*.png` (and `$LARGE_CALL_EVIDENCE`, if set), in Teams Light
@@ -83,6 +85,8 @@ mod meet_now;
 mod pixels;
 #[path = "large_call_qa_chat.rs"]
 mod qa_chat;
+#[path = "large_call_qa_everyone.rs"]
+mod qa_everyone;
 #[path = "large_call_qa_hands.rs"]
 mod qa_hands;
 #[path = "large_call_qa_order.rs"]
@@ -228,7 +232,7 @@ fn b_picture() -> SandboxResult<Vec<u8>> {
 /// Everything the user does, in order.
 fn scenarios(rig: &mut Rig<'_>) -> SandboxResult {
     type Step = fn(&mut Rig<'_>) -> SandboxResult;
-    let steps: [(&str, Step); 17] = [
+    let steps: [(&str, Step); 18] = [
         ("small", small_calls),
         ("mic-10", |rig| every_size(rig, 10)),
         ("mic-25", |rig| every_size(rig, 25)),
@@ -246,6 +250,7 @@ fn scenarios(rig: &mut Rig<'_>) -> SandboxResult {
         ("qa-reactions", qa_reactions::qa_reactions),
         ("qa-chat", qa_chat::qa_chat),
         ("qa-chat-calls", qa_chat::other_calls),
+        ("qa-everyone", qa_everyone::qa_everyone),
     ];
     // a run of some steps alone (`LARGE_CALL_STEPS=sizes,strips`), each setting up the call it needs
     let only = std::env::var(STEPS_ENV).ok();

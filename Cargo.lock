@@ -7988,6 +7988,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "rcgen",
  "reqwest 0.13.5",
+ "rusqlite",
  "rustix 1.1.5",
  "rustls",
  "serde",

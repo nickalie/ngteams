@@ -102,6 +102,8 @@ rcgen = { workspace = true, features = ["pem"] }
 reqwest.workspace = true
 # a synthetic Teams app package uploaded through Manage apps (`tests/support/own_admin_apps.rs`)
 zip.workspace = true
+# a store's search index put back as an older build wrote it (`tests/support/linux/qa_everyone_preview_window.rs`)
+rusqlite.workspace = true
 
 
 # the own server in-process, for an own-server account's sign-in and start (`tests/own_server.rs`,
@@ -356,6 +358,12 @@ harness = false
 [[test]]
 # QA of task 661: a group chat named, renamed and unnamed from its header, in the app's window over the mock and the own server
 name = "qa_rename_group_chat_window"
+harness = false
+
+[[test]]
+# QA of task 715: a mention of everyone in the reader's words in the chat list, notifications, a reply's quote and
+# search, in the app's window over the mock
+name = "qa_everyone_preview_window"
 harness = false
 
 [build-dependencies]
