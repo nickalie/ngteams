@@ -1,6 +1,7 @@
 //! Writes: message posts and typing, edits, soft deletes, reactions, read receipts, chat creation and group chat names. Each one changes
 //! the state as the service did in the captures behind the fixtures (`docs/protocol/chat.md`), answers as its fixture
-//! recorded, and queues a [`crate::ChatEvent`] for every other member of the chat.
+//! recorded, and queues a [`crate::ChatEvent`] for every other member of the chat; a group chat's name goes to every
+//! member, the writer too.
 
 use serde_json::{Map, Value, json};
 use wiremock::ResponseTemplate;
@@ -434,8 +435,11 @@ pub(crate) fn add_members(state: &mut State, call: &Call<'_>, id: &str) -> Respo
 /// the name go to every member, the caller too, as Teams sends them, and it is answered 200. A 1:1 chat,
 /// a meeting's chat or a stream takes no name (400), as Teams offers none there.
 pub(crate) fn topic(state: &mut State, call: &Call<'_>, id: &str) -> ResponseTemplate {
-    let kind = match member_of(state, id, &call.caller) {
-        Ok(conversation) => conversation.kind,
+    let (nameable, mut thread) = match member_of(state, id, &call.caller) {
+        Ok(conversation) => (
+            conversation.kind == Kind::Group && !conversation.is_meeting(),
+            thread_body(state, conversation),
+        ),
         Err(code) => return status(code),
     };
     let topic = call
@@ -444,44 +448,46 @@ pub(crate) fn topic(state: &mut State, call: &Call<'_>, id: &str) -> ResponseTem
     let (Some(topic), Some("topic")) = (topic, call.query("name")) else {
         return status(400);
     };
-    if kind != Kind::Group {
+    if !nameable {
         return status(400);
     }
     let arrival = state.tick();
+    let base = state.chat_base();
     let Some(conversation) = state.conversation_mut(id) else {
         return status(404);
     };
     let properties = object(&mut conversation.entry["threadProperties"]);
     // the thread's version moves on with its name, as the listing then shows it
     properties.insert("version".to_owned(), json!(arrival.to_string()));
+    name(properties, &topic);
+    let message = topic_line(&base, conversation, &call.caller, &topic, arrival);
+    let fields = object(&mut thread);
+    fields.insert("version".to_owned(), json!(arrival));
+    name(object(fields.entry("properties").or_insert(Value::Null)), &topic);
+    state.queue(id, id, EventKind::ThreadUpdate, &thread);
+    store(state, id, id, None, message, arrival);
+    status(200)
+}
+
+/// Gives `properties` the name `topic`, or takes its name off when `topic` is empty.
+fn name(properties: &mut Map<String, Value>, topic: &str) {
     if topic.is_empty() {
         properties.remove("topic");
     } else {
         properties.insert("topic".to_owned(), json!(topic));
     }
-    if let Some(conversation) = state.conversation(id) {
-        let mut thread = thread_body(state, conversation);
-        object(&mut thread).insert("version".to_owned(), json!(arrival));
-        state.queue(id, id, EventKind::ThreadUpdate, &thread);
-    }
-    let Some(message) = topic_line(state, id, &call.caller, &topic, arrival) else {
-        return status(404);
-    };
-    store(state, id, id, None, message, arrival);
-    status(200)
 }
 
-/// The thread's `ThreadActivity/TopicUpdate` line in the chat `id`: `initiator` gave it the name `topic` (an empty one
-/// took the name off) at `arrival`.
-fn topic_line(state: &mut State, id: &str, initiator: &str, topic: &str, arrival: u64) -> Option<Value> {
-    let base = state.chat_base();
-    let conversation = state.conversation_mut(id)?;
+/// The thread's `ThreadActivity/TopicUpdate` line in `conversation` (under the chat service at `base`): `initiator`
+/// gave it the name `topic` (an empty one took the name off) at `arrival`.
+fn topic_line(base: &str, conversation: &world::Conversation, initiator: &str, topic: &str, arrival: u64) -> Value {
+    let id = &conversation.id;
     let value = if topic.is_empty() {
         "<value />".to_owned()
     } else {
         format!("<value>{}</value>", escape_text(topic))
     };
-    Some(json!({
+    json!({
         "sequenceId": conversation.next_sequence(),
         "conversationid": id,
         "conversationLink": format!("{base}/v1/users/ME/conversations/{id}"),
@@ -496,7 +502,7 @@ fn topic_line(state: &mut State, id: &str, initiator: &str, topic: &str, arrival
         "composetime": iso_time(arrival, 7),
         "originalarrivaltime": iso_time(arrival, 7),
         "properties": {},
-    }))
+    })
 }
 
 /// `text` as XML character data.

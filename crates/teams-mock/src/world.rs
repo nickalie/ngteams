@@ -69,6 +69,11 @@ impl Conversation {
         )
     }
 
+    /// Whether it is a scheduled meeting's chat (its thread a `meeting`).
+    pub(crate) fn is_meeting(&self) -> bool {
+        self.entry["threadProperties"]["threadType"].as_str() == Some("meeting")
+    }
+
     /// The message with `id`, if any.
     pub(crate) fn message_mut(&mut self, id: &str) -> Option<&mut Value> {
         self.messages

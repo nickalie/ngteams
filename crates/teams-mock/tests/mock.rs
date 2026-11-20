@@ -2029,6 +2029,23 @@ async fn a_group_chat_name_reaches_every_member_as_the_threads_update_and_its_li
         .await?;
     assert_eq!(refused.status, 400);
     assert!(lab.mock.take_events(LAB_A).is_empty());
+
+    // nor does a meeting's chat
+    let meeting = "19:meeting_madeup0001@thread.v2";
+    assert!(lab.mock.add_meeting_chat(meeting, "Made-up meeting", &[LAB_A, LAB_B]));
+    let meeting_topic = format!("threads/{}/properties?name=topic", segment(meeting));
+    let refused = lab
+        .send(
+            LAB_A,
+            Method::PUT,
+            &meeting_topic,
+            Some(&json!({"topic": "Made-up name"})),
+        )
+        .await?;
+    assert_eq!(refused.status, 400);
+    for member in [LAB_A, LAB_B] {
+        assert!(lab.mock.take_events(member).is_empty(), "{member}");
+    }
     Ok(())
 }
 

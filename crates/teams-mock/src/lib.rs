@@ -203,14 +203,15 @@ pub const TEAM_CHANNEL: &str = "19:channel0002@thread.tacv2";
 /// a's notifications stream: read-only.
 pub const NOTIFICATIONS: &str = "48:notifications";
 
-/// What a write did, queued for each other member of its chat, until the mock's Trouter ([`TrouterMock`]) delivers it
-/// to one of the member's registered endpoints (a message, typing, an edit, a delete, a reaction; read receipts and
-/// chat creation stay queued: no capture showed their delivery to another member).
+/// What a write did, queued for each other member of its chat (a group chat's name for every member, the writer too),
+/// until the mock's Trouter ([`TrouterMock`]) delivers it to one of the member's registered endpoints (a message,
+/// typing, an edit, a delete, a reaction; read receipts and chat creation stay queued: no capture showed their delivery
+/// to another member).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChatEvent {
     /// The chat it happened in.
     pub conversation: String,
-    /// The writer's MRI.
+    /// The writer's MRI (the chat's id for an update or a line of the thread itself).
     pub from: String,
     pub kind: EventKind,
     /// The message as a read gives it after the write ([`EventKind::Message`], [`EventKind::Edit`],
