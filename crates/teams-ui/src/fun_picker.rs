@@ -32,7 +32,7 @@ use gpui_component::tooltip::Tooltip;
 use gpui_component::{Sizable as _, Size};
 
 use crate::bridge::Core;
-use crate::icons::Glyph;
+use crate::icons::{Glyph, selected_by};
 use crate::reaction_picker::{ReactionPicker, ReactionPickerEvent, Section};
 use crate::reactions;
 use crate::stickers::{ImportKind, ImportState, Shelf, StickerRef, Thumb};
@@ -42,8 +42,10 @@ use crate::theme::{self, Palette};
 pub const WIDTH: f32 = crate::reaction_picker::WIDTH;
 /// The tab's area under the search field, px: the emoji list and its section tabs.
 const CONTENT_HEIGHT: f32 = 300.0;
-/// The inside of the picker, px.
-const INNER: f32 = WIDTH - 16.0;
+/// The picker's padding, px: fixed, so that its grids fit at each font size.
+const PADDING: f32 = 7.0;
+/// The inside of the picker (its padding and border taken off), px.
+const INNER: f32 = WIDTH - 2.0 * PADDING - 2.0;
 /// The gap between tiles, px.
 const GAP: f32 = 4.0;
 /// The emoji All shows, and the most a search shows there.
@@ -393,6 +395,15 @@ impl FunPicker {
 
     fn query(&self, cx: &App) -> String {
         self.search.read(cx).value().trim().to_owned()
+    }
+
+    /// The search field's X: the search dropped, the field focused.
+    fn clear_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.update(cx, |search, cx| {
+            search.set_value("", window, cx);
+            search.focus(window, cx);
+        });
+        self.searched(cx);
     }
 
     fn searched(&mut self, cx: &mut Context<Self>) {
@@ -1247,37 +1258,7 @@ impl FunPicker {
     fn import_status(&mut self, items: &[Item], palette: Palette, cx: &mut Context<Self>) -> AnyElement {
         let state = self.shelf.read(cx).import_state().cloned();
         let body = match &state {
-            Some(ImportState::Running(progress)) => {
-                let text = if progress.total == 0 {
-                    "Importing stickers\u{2026}".to_owned()
-                } else {
-                    format!("Importing stickers\u{2026} {} of {}", progress.done, progress.total)
-                };
-                #[expect(clippy::cast_precision_loss, reason = "at most a thousand files")]
-                let share = if progress.total == 0 {
-                    0.0
-                } else {
-                    progress.done as f32 / progress.total as f32
-                };
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(
-                        div()
-                            .debug_selector(|| "sticker-import-progress".to_owned())
-                            .child(text),
-                    )
-                    .child(
-                        div().h(px(4.0)).w_full().rounded_full().bg(rgb(palette.border)).child(
-                            div()
-                                .h_full()
-                                .w(px(INNER * share))
-                                .rounded_full()
-                                .bg(rgb(palette.brand)),
-                        ),
-                    )
-            }
+            Some(ImportState::Running(progress)) => running(*progress, self.shelf.read(cx).refused(), palette),
             Some(ImportState::Done(imported)) => {
                 let count = imported.pack.stickers.len();
                 let plural = if count == 1 { "" } else { "s" };
@@ -1458,6 +1439,68 @@ impl FunPicker {
             .children(tabs)
             .into_any_element()
     }
+
+    /// The search field's end, as in Teams: a magnifier while it is empty, then an X that clears it.
+    fn search_mark(&self, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
+        if self.search.read(cx).value().is_empty() {
+            let magnifier = Glyph::SEARCH
+                .icon()
+                .size(px(16.0))
+                .text_color(rgb(palette.muted_foreground));
+            return selected_by("fun-search-icon", magnifier).into_any_element();
+        }
+        div()
+            .id("fun-search-clear")
+            .debug_selector(|| "fun-search-clear".to_owned())
+            .flex_none()
+            .p_0p5()
+            .rounded_md()
+            .cursor_pointer()
+            .hover(move |style| style.bg(rgb(palette.hover)))
+            .tooltip(|window, cx| Tooltip::new("Clear search").build(window, cx))
+            .on_click(cx.listener(|this, _, window, cx| this.clear_search(window, cx)))
+            .child(Glyph::X.icon().size(px(16.0)).text_color(rgb(palette.foreground)))
+            .into_any_element()
+    }
+}
+
+/// A running import: its progress, and why a second import is refused, when one was.
+fn running(progress: crate::stickers::Progress, refused: bool, palette: Palette) -> gpui::Div {
+    let text = if progress.total == 0 {
+        "Importing stickers\u{2026}".to_owned()
+    } else {
+        format!("Importing stickers\u{2026} {} of {}", progress.done, progress.total)
+    };
+    #[expect(clippy::cast_precision_loss, reason = "at most a thousand files")]
+    let share = if progress.total == 0 {
+        0.0
+    } else {
+        progress.done as f32 / progress.total as f32
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .debug_selector(|| "sticker-import-progress".to_owned())
+                .child(text),
+        )
+        .children(refused.then(|| {
+            div()
+                .debug_selector(|| "sticker-import-busy".to_owned())
+                .text_color(rgb(palette.muted_foreground))
+                .child("Wait until this pack is imported, then add the next one.")
+        }))
+        .child(
+            div().h(px(4.0)).w_full().rounded_full().bg(rgb(palette.border)).child(
+                div()
+                    .h_full()
+                    .w(gpui::relative(share))
+                    .rounded_full()
+                    .bg(rgb(palette.brand)),
+            ),
+        )
 }
 
 /// An import's outcome: `headline`, then the files skipped and why ([`SKIPPED_SHOWN`] named, "and N more").
@@ -1519,7 +1562,7 @@ impl Render for FunPicker {
             .debug_selector(|| "compose-emoji-picker".to_owned())
             .occlude()
             .w(px(WIDTH))
-            .p_2()
+            .p(px(PADDING))
             .flex()
             .flex_col()
             .gap_2()
@@ -1531,9 +1574,11 @@ impl Render for FunPicker {
             .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(FunPickerEvent::Dismissed)))
             .child(self.tab_strip(palette, cx))
             .child(
-                div()
-                    .debug_selector(|| "fun-search".to_owned())
-                    .child(Input::new(&self.search).with_size(Size::Small).cleanable(true)),
+                div().debug_selector(|| "fun-search".to_owned()).child(
+                    Input::new(&self.search)
+                        .with_size(Size::Small)
+                        .suffix(self.search_mark(palette, cx)),
+                ),
             )
             .child(content)
     }

@@ -47,6 +47,8 @@ pub struct Shelf {
     packs: Vec<Pack>,
     recent: Vec<StickerRef>,
     import: Option<ImportState>,
+    /// Another import was asked for while one ran, and was refused.
+    refused: bool,
     thumbs: HashMap<StickerRef, Thumb>,
     /// The thumbs asked for since the last batch was read.
     wanted: HashSet<StickerRef>,
@@ -63,6 +65,7 @@ impl Shelf {
             recent: dir.as_deref().map(store::recent).unwrap_or_default(),
             dir: dir.clone(),
             import: None,
+            refused: false,
             thumbs: HashMap::new(),
             wanted: HashSet::new(),
         });
@@ -141,6 +144,12 @@ impl Shelf {
         matches!(self.import, Some(ImportState::Running(_)))
     }
 
+    /// Whether another import was asked for while this one runs (and refused: one import at a time).
+    #[must_use]
+    pub fn refused(&self) -> bool {
+        self.refused && self.importing()
+    }
+
     /// Forgets how the last import went (its summary closed).
     pub fn dismiss_import(&mut self, cx: &mut Context<Self>) {
         if !self.importing() {
@@ -149,7 +158,8 @@ impl Shelf {
         }
     }
 
-    /// Imports the folder or archive at `source` as a new pack, on a background thread; one import at a time.
+    /// Imports the folder or archive at `source` as a new pack, on a background thread; one import at a time
+    /// (a second one is refused, [`Self::refused`]).
     pub fn import(&mut self, source: PathBuf, kind: ImportKind, cx: &mut Context<Self>) {
         let Some(dir) = self.dir.clone() else {
             self.import = Some(ImportState::Failed(ImportError::Storage));
@@ -157,8 +167,11 @@ impl Shelf {
             return;
         };
         if self.importing() {
+            self.refused = true;
+            cx.notify();
             return;
         }
+        self.refused = false;
         self.import = Some(ImportState::Running(Progress::default()));
         cx.notify();
         let (tell, told) = async_channel::unbounded();
@@ -185,6 +198,7 @@ impl Shelf {
     }
 
     fn imported(&mut self, outcome: Result<Imported, ImportError>, cx: &mut Context<Self>) {
+        self.refused = false;
         self.import = Some(match outcome {
             Ok(imported) => {
                 self.packs.retain(|pack| pack.id != imported.pack.id);

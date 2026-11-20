@@ -494,7 +494,7 @@ fn a_folder_imported_from_the_picker_shows_its_progress_and_summary_then_its_pac
     assert!(drawn(cx, "sticker-import-progress"), "the import's progress");
     let shelf = cx.update(|_, cx| Shelf::of(Some(place.stickers.clone()), cx));
     assert!(cx.update(|_, cx| shelf.read(cx).importing()));
-    draw(cx);
+    a_second_import_is_refused_while_one_runs(&picker, &shelf, &place, cx);
     assert!(drawn(cx, "sticker-import-summary"), "the import's summary");
     let state = cx.update(|_, cx| shelf.read(cx).import_state().cloned());
     let Some(teams_ui::stickers::ImportState::Done(imported)) = state else {
@@ -516,6 +516,31 @@ fn a_folder_imported_from_the_picker_shows_its_progress_and_summary_then_its_pac
     );
     assert!(place.stickers.join("lab-cats/pack.toml").is_file());
     the_pack_is_there_after_a_restart(&place);
+}
+
+/// A second import while one runs: refused, and the user told, until the first ends.
+fn a_second_import_is_refused_while_one_runs(
+    picker: &Entity<FunPicker>,
+    shelf: &Entity<Shelf>,
+    place: &Setup,
+    cx: &mut VisualTestContext,
+) {
+    assert!(!drawn(cx, "sticker-import-busy"));
+    let second = pack_folder(place.sources.path(), "Lab dogs");
+    cx.update(|_, cx| picker.update(cx, |picker, cx| picker.import_from(second, ImportKind::Folder, cx)));
+    cx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+    assert!(drawn(cx, "sticker-import-busy"), "the refusal is told");
+    assert!(cx.update(|_, cx| shelf.read(cx).refused()));
+    draw(cx);
+    assert!(!drawn(cx, "sticker-import-busy"), "the note goes with the import");
+    assert!(!cx.update(|_, cx| shelf.read(cx).refused()));
+    assert_eq!(
+        cx.update(|_, cx| shelf.read(cx).packs().len()),
+        1,
+        "the refused import made no pack"
+    );
 }
 
 /// The next run's app, a new one over the same directory, finds the pack on the disk.
@@ -609,4 +634,98 @@ fn a_picker_without_stickers_has_no_stickers_tab() {
     assert_eq!(rows.len(), 2, "emoji only: {rows:?}");
     cx.update(|_, cx| picker.update(cx, |picker, cx| picker.show(Tab::Stickers, cx)));
     assert_eq!(cx.update(|_, cx| picker.read(cx).tab()), Tab::All);
+}
+
+#[test]
+fn the_search_field_shows_a_magnifier_then_an_x_that_clears_it() {
+    let place = Setup::new().with_cats();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    assert!(drawn(cx, "fun-search-icon"), "the empty field's magnifier");
+    assert!(!drawn(cx, "fun-search-clear"));
+    let unsearched = cx.update(|_, cx| picker.read(cx).rows(cx));
+    cx.simulate_input("cat");
+    draw(cx);
+    assert!(drawn(cx, "fun-search-clear"), "the X, once something is typed");
+    assert!(!drawn(cx, "fun-search-icon"));
+    assert_ne!(cx.update(|_, cx| picker.read(cx).rows(cx)), unsearched);
+    click(cx, "fun-search-clear");
+    assert!(self::picker(&view, cx).is_some(), "the X does not close the picker");
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).rows(cx)),
+        unsearched,
+        "the search dropped"
+    );
+    assert!(drawn(cx, "fun-search-icon") && !drawn(cx, "fun-search-clear"));
+    assert_eq!(
+        cx.update(|window, cx| picker.read(cx).place(window, cx)),
+        Some(Place::Search),
+        "typing goes on in the field"
+    );
+    click(cx, "fun-tab-emoji");
+    cx.simulate_input("cat");
+    draw(cx);
+    click(cx, "fun-search-clear");
+    assert!(drawn(cx, "fun-search-icon"), "the Emoji tab's search dropped too");
+}
+
+/// A folder `name` of `count` made-up stickers in `root`.
+fn many_folder(root: &Path, name: &str, count: u8) -> std::path::PathBuf {
+    let dir = root.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    for index in 0..count {
+        let colour = [40 * index, 120, 200 - 20 * index];
+        std::fs::write(
+            dir.join(format!("dot_{index}.png")),
+            picture(120, colour, ImageFormat::Png),
+        )
+        .unwrap();
+    }
+    dir
+}
+
+/// Every item of the picker's rows lies inside its content's width.
+fn rows_fit(picker: &Entity<FunPicker>, cx: &mut VisualTestContext, what: &str) {
+    let content = cx.debug_bounds("fun-content").expect("the content is drawn");
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    let mut seen = 0;
+    for item in rows.iter().flatten() {
+        let selector = item.selector();
+        let Some(bounds) = cx.debug_bounds(selector.clone().leak()) else {
+            continue;
+        };
+        seen += 1;
+        assert!(
+            bounds.left() >= content.left() && bounds.right() <= content.right() + px(0.5),
+            "{what}: {selector} at {bounds:?} is cut at the content's edge {content:?}"
+        );
+    }
+    assert!(seen > 2, "{what}: the items are drawn: {rows:?}");
+}
+
+#[test]
+fn every_grid_fits_the_picker_at_each_font_size() {
+    let place = Setup::new().with_cats();
+    import::import(
+        &many_folder(place.sources.path(), "Lab dots", 6),
+        ImportKind::Folder,
+        &place.stickers,
+        &mut |_| {},
+    )
+    .unwrap();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    for font in [14.0, 20.0, 24.0] {
+        cx.update(|window, _| window.set_rem_size(px(font)));
+        keys(cx, "ctrl-.");
+        let picker = picker(&view, cx).unwrap();
+        rows_fit(&picker, cx, &format!("All at {font}"));
+        click(cx, "fun-tab-stickers");
+        rows_fit(&picker, cx, &format!("Stickers at {font}"));
+        click(cx, "sticker-pack-lab-dots");
+        rows_fit(&picker, cx, &format!("a pack at {font}"));
+        keys(cx, "escape");
+    }
 }

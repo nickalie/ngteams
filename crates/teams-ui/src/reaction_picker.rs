@@ -575,7 +575,8 @@ impl Render for ReactionPicker {
             .debug_selector(move || selector.to_owned())
             .occlude()
             .w(px(WIDTH))
-            .p_2()
+            // in px, not rems: a larger font must not narrow the row of cells
+            .p(px(8.0))
             .flex()
             .flex_col()
             .gap_1()
