@@ -64,12 +64,14 @@ fn file_drop_after_typing_reaches_the_element_under_the_pointer(cx: &mut TestApp
         assert!(!window.last_input_was_keyboard());
         assert!(!cx.has_active_drag());
 
-        window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
-        window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
-        assert!(!window.last_input_was_keyboard());
-
         // keyboard navigation and focus rings come back with the next key
         window.dispatch_event(key(), cx);
+        assert!(window.last_input_was_keyboard());
+
+        // the end of the drag is not pointer input: it keeps the mode
+        window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+        assert!(window.last_input_was_keyboard());
+        window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
         assert!(window.last_input_was_keyboard());
     });
     assert!(

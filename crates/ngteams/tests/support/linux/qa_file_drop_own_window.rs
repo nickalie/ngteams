@@ -249,8 +249,7 @@ fn drop_and_send(run: &mut AppRun, sandbox: &Sandbox, dir: &Path, chat: &str, be
     let at = box_centre(&state["box"])?;
     run.click(at)?;
     run.input.type_text(DRAFT)?;
-    // the hand takes the mouse again: a move over the box (a drop right after the keys is a known failure, task 697
-    // QA round 1, checked by qa_file_drop_window's typed_then_dropped)
+    // the hand takes the mouse again: the pointer moves over the box on its way to the file manager
     run.input.move_to(at.0 + 6, at.1)?;
     run.until("the draft", |state| {
         state["box"]["text"].as_str().is_some_and(|text| text.contains(DRAFT))

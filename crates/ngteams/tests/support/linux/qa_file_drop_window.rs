@@ -861,7 +861,7 @@ fn over_group_messages(user: &mut User<'_>) -> SandboxResult {
 }
 
 /// The account's own notes: their box takes nothing from this app ("Notes can't be written from this app yet").
-/// The drop over them must be answered; what the box does is said, as Teams would take the files there.
+/// The drop over them must be answered, and nothing is staged.
 fn own_notes(user: &mut User<'_>) -> SandboxResult {
     user.ask("theme-light")?;
     user.ask(&format!("open {NOTES}"))?;
@@ -882,11 +882,9 @@ fn own_notes(user: &mut User<'_>) -> SandboxResult {
         state["chat"]["read_only"],
         problem_of(&state["chat"])
     ));
-    // the notes take no write from this app yet (`READ_ONLY_NOTES`): the drag is answered, and nothing is staged
-    ensure(
-        staged(&state["chat"]).is_empty() || staged(&state["chat"]) == names_of(&paths),
-        || format!("the notes staged other files: {state}"),
-    )
+    ensure(staged(&state["chat"]).is_empty(), || {
+        format!("the read-only notes staged files: {state}")
+    })
 }
 
 /// The files let go the moment they reach the box: both in.

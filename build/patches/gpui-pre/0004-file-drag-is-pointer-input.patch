@@ -36,7 +36,7 @@ own `--lib` tests do not build from the crates.io package). An upstream candidat
          };
 --- /dev/null
 +++ b/tests/file_drop_input_mode.rs
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,82 @@
 +//! A file manager's drag is pointer input: typed keys before it must not hide the drop target.
 +
 +use std::{cell::RefCell, path::PathBuf, rc::Rc};
@@ -103,12 +103,14 @@ own `--lib` tests do not build from the crates.io package). An upstream candidat
 +        assert!(!window.last_input_was_keyboard());
 +        assert!(!cx.has_active_drag());
 +
-+        window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
-+        window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
-+        assert!(!window.last_input_was_keyboard());
-+
 +        // keyboard navigation and focus rings come back with the next key
 +        window.dispatch_event(key(), cx);
++        assert!(window.last_input_was_keyboard());
++
++        // the end of the drag is not pointer input: it keeps the mode
++        window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
++        assert!(window.last_input_was_keyboard());
++        window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
 +        assert!(window.last_input_was_keyboard());
 +    });
 +    assert!(
