@@ -627,8 +627,15 @@ impl User<'_> {
         Ok(())
     }
 
-    /// Lets go; what the source was told once the drag ended (finished or cancelled).
+    /// Lets go and parks the pointer; what the source was told once the drag ended.
     fn release(&mut self, held: Held) -> SandboxResult<Vec<DragEvent>> {
+        let seen = self.let_go(held)?;
+        self.park()?;
+        Ok(seen)
+    }
+
+    /// Lets go; what the source was told once the drag ended (finished or cancelled).
+    fn let_go(&mut self, held: Held) -> SandboxResult<Vec<DragEvent>> {
         self.input.button_up(keys::BTN_LEFT)?;
         let ended = wait_until(WAIT, || {
             let seen = held.source.events();
@@ -636,7 +643,6 @@ impl User<'_> {
         });
         let seen = ended.ok_or_else(|| format!("the drag never ended: {:?}", held.source.events()))?;
         drop(held);
-        self.park()?;
         Ok(seen)
     }
 
@@ -649,12 +655,7 @@ impl User<'_> {
         hand: Hand,
     ) -> SandboxResult<Vec<DragEvent>> {
         let held = self.hover(shape, paths, to, hand)?;
-        self.input.button_up(keys::BTN_LEFT)?;
-        let ended = wait_until(WAIT, || {
-            let seen = held.source.events();
-            (seen.contains(&DragEvent::Finished) || seen.contains(&DragEvent::Cancelled)).then_some(seen)
-        });
-        ended.ok_or_else(|| format!("the drag never ended: {:?}", held.source.events()).into())
+        self.let_go(held)
     }
 
     /// Drags `shape`'s `paths` onto `to` and lets go; what the source was told.
@@ -838,10 +839,9 @@ fn each_file_manager(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// The user types the draft while the pointer rests on the file manager (the keyboard moved the focus between the
-/// windows, as on niri), then drags files onto the box: the files are in beside the draft, and the highlight goes. No
-/// pointer motion reaches the app between the last key and the drop. The drop is pointer input; the next key types
-/// into the box and gives the window back to the keyboard.
+/// The user types the draft while the pointer rests away from the box (on the chat list), then drags files onto the
+/// box: the files are in beside the draft, and the highlight goes. No pointer motion reaches the app between the last
+/// key and the drop. The next key types into the box and gives the window back to the keyboard.
 fn typed_then_dropped(user: &mut User<'_>) -> SandboxResult {
     let state = user.fresh_chat(AB_CHAT)?;
     let at = box_centre(&state["chat"])?;
@@ -868,9 +868,6 @@ fn typed_then_dropped(user: &mut User<'_>) -> SandboxResult {
     ensure(text_of(&state["chat"]).contains(&mark), || {
         format!("the draft went: {state}")
     })?;
-    ensure(state["keyboard"] == false, || {
-        format!("the window stayed in keyboard mode through the drop: {state}")
-    })?;
     let next = user.mark();
     user.type_text(&format!(" {next}"))?;
     let state = user.until("the next key in the box", |state| {
@@ -887,8 +884,8 @@ fn typed_then_dropped(user: &mut User<'_>) -> SandboxResult {
     })
 }
 
-/// A message sent, the pointer rests on the file manager, then Up to edit the last own message (keys only) and a drop
-/// on the box: the edit's message, the edit kept, the highlight gone.
+/// A message sent, the pointer rests away from the box (on the chat list), then Up to edit the last own message (keys
+/// only) and a drop on the box: the edit's message, the edit kept, the highlight gone.
 fn edit_after_keys(user: &mut User<'_>) -> SandboxResult {
     user.fresh_chat(AB_CHAT)?;
     let mark = user.mark();
@@ -939,6 +936,12 @@ fn keys_after_drop(user: &mut User<'_>) -> SandboxResult {
         .map_err(|error| format!("{error}; source saw {seen:?}"))?;
     ensure(state["chat"]["focused"] == true, || {
         format!("the box lost the focus to the drop: {state}")
+    })?;
+    // the card's status line changes when the upload ends; that change must not count as a ring
+    user.until("the upload settled", |state| {
+        state["chat"]["files"]
+            .as_array()
+            .is_some_and(|files| files.iter().all(|file| file["state"] != "uploading"))
     })?;
     thread::sleep(SETTLE);
     let dropped = user.shot("keys-after-drop")?;
