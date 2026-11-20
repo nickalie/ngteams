@@ -2022,7 +2022,11 @@ async fn a_group_chat_name_reaches_every_member_as_the_threads_update_and_its_li
         assert!(events[2].resource["version"].as_u64() > Some(version), "{member}");
     }
 
-    // a 1:1 chat takes no name, and nobody is told anything
+    names_nothing_but_a_group_chat(&lab).await
+}
+
+/// A 1:1 chat and a meeting's chat take no name, and nobody is told anything.
+async fn names_nothing_but_a_group_chat(lab: &Lab) -> TestResult {
     let one_to_one = format!("threads/{}/properties?name=topic", segment(AB_CHAT));
     let refused = lab
         .send(LAB_A, Method::PUT, &one_to_one, Some(&json!({"topic": "Made-up pair"})))

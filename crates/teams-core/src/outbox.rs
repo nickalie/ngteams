@@ -383,6 +383,21 @@ pub fn create_chat(me: &Mri, others: &[String], topic: Option<&str>) -> Option<C
     })
 }
 
+/// The request an unread mark is: from the message it names, or the end of the mark when it names none; `None` when
+/// the message's id isn't an arrival number.
+fn unread_mark(
+    conversation: String,
+    message_id: Option<String>,
+    client_message_id: Option<String>,
+) -> Option<UnreadMark> {
+    match (message_id, client_message_id) {
+        (Some(message_id), Some(client_message_id)) => {
+            UnreadMark::from_message(conversation, &message_id, client_message_id)
+        }
+        _ => Some(UnreadMark::cleared(conversation)),
+    }
+}
+
 /// Why a [`ConversationSync`] couldn't sync.
 pub type SyncError = Box<dyn Error + Send + Sync>;
 
@@ -1161,18 +1176,10 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
                 conversation,
                 message_id,
                 client_message_id,
-            } => {
-                let request = match (message_id, client_message_id) {
-                    (Some(message_id), Some(client_message_id)) => {
-                        UnreadMark::from_message(conversation, &message_id, client_message_id)
-                    }
-                    _ => Some(UnreadMark::cleared(conversation)),
-                };
-                match request {
-                    Some(request) => self.deliver(request.at(at)).await,
-                    None => Tried::NotSent("the message's id isn't an arrival number".to_owned()),
-                }
-            }
+            } => match unread_mark(conversation, message_id, client_message_id) {
+                Some(request) => self.deliver(request.at(at)).await,
+                None => Tried::NotSent("the message's id isn't an arrival number".to_owned()),
+            },
             Command::ActivityTurnOffApp { app, activity_types } => self.turn_off_app(row, &app, &activity_types).await,
             Command::ActivityRestoreApp { app, preference } => {
                 let mut settings = match self.app_settings().await {
