@@ -263,12 +263,19 @@ carries `emotions` with neither (14 of 14: an edited message keeps its old `edit
 `appConsumptionHorizon` ([chat.md](chat.md#which-chats-are-unread)). A `ThreadUpdate` is a thread's change: Teams
 sends one before a blocked message's copy ([chat.md](chat.md#messages-a-policy-blocked), its resource the stream
 `48:generic` with the sender its only member and no `rosterVersion`), and the own server sends one with the thread
-read's shape (`id`, `rosterVersion`, `members`, `properties`) for a chat made or its people changed and for a team or
-channel made, changed or removed ([server.md](../server.md#chat-events)). The engine reads its `id` and
-`rosterVersion`: a team's or channel's thread reads the teams again once such updates pause (half a second without
+read's shape (`id`, `version`, `rosterVersion`, `members`, `properties`) for a chat made or its people changed, for a
+group chat named, renamed or unnamed, and for a team or channel made, changed or removed
+([server.md](../server.md#chat-events)). Teams sends one to every member when a group chat gets a new name
+([chat-service.md](chat-service.md#naming-a-group-chat)). The engine reads its `id`, `version`, `rosterVersion` and
+`properties.topic`: a team's or channel's thread reads the teams again once such updates pause (half a second without
 one, five seconds after the first at most, and not before the wait after a failed teams read is over), a stored group
 or meeting chat reads its people again unless the carried `rosterVersion` is no newer than the stored one, and any
-other thread (`48:generic`, a 1:1 chat, one not stored yet) reads nothing. Any other `resourceType` is kept as `Unknown` by its name. No delivery of another member's read receipt
+other thread (`48:generic`, a 1:1 chat, one not stored yet) reads nothing. A stored group chat also takes the name in
+`properties.topic` at once (no name when `topic` is not there; no change when the delivery has no `properties`),
+unless the stored name is of a thread `version` as new or newer: a late or replayed delivery does not bring back an
+old name. The thread `version` is the one a conversation list gives as `threadProperties.version` (the same numbers in
+a lab account's debug log), so the list's name is ordered against a pushed one in the same way. A rename does not
+change `rosterVersion`. Any other `resourceType` is kept as `Unknown` by its name. No delivery of another member's read receipt
 and none of a new chat were seen, so the mock doesn't deliver those (`teams_mock::TrouterMock`).
 
 ## Answering deliveries

@@ -251,8 +251,9 @@ alone; the renames were sent, and the chat's name was put back after:
 
 ngteams follows this: the header's pencil and popup, `Action::RenameChat` (one outbox row, `SetChatTopic`). Once the
 row went through, the account's own client calls the chat by the new name; another member's rename comes in with the
-thread's `ThreadUpdate`, whose `properties.topic` the engine takes at once, with no read. A name that is the same as
-before is not sent.
+thread's `ThreadUpdate`, whose `properties.topic` the engine takes at once, with no read, unless the stored name is of
+a thread `version` as new or newer (a late or replayed push; [trouter.md](trouter.md#deliveries)). A name that is
+the same as before is not sent.
 
 `proto-lab` records browser traffic without a browser fence. A scenario that needs a request's shape without its
 side effect installs an explicit capture hold before navigation or the matching action. Held marker messages,

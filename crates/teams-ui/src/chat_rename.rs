@@ -12,7 +12,9 @@
 //!   the name off, so the chat is called by its people again. The popup closes once the outbox sent it; the engine
 //!   then calls the chat by its new name everywhere (the list, the header, the search, a call's window). A name that is
 //!   the same as before closes it with nothing sent. A rename that fails keeps the popup and says so.
-//! - **Cancel**, Escape or a press outside closes it, with nothing sent. The read-only mode shows no pencil.
+//! - **Cancel**, Escape or a press outside closes it, with nothing sent, but not while a save is on its way. The pencil
+//!   again or another chat closes it then too: the save continues, and a failure shows as a toast
+//!   ([`ChatRenameEvent::NotSaved`]). The read-only mode shows no pencil.
 //!
 //! Traced: `chat-rename opened`, `saved` (the chat), never the name.
 
@@ -58,6 +60,8 @@ const WIDTH: f32 = 400.0;
 pub enum ChatRenameEvent {
     /// Saved, cancelled or dismissed.
     Close,
+    /// The save failed ([`NOT_SAVED`]): the popup says so, and the shell says so when it closed the popup before.
+    NotSaved,
 }
 
 /// The "Name group chat" popup of one group chat (see the module docs).
@@ -223,6 +227,7 @@ impl ChatRename {
             cx.emit(ChatRenameEvent::Close);
         } else {
             self.problem = Some(NOT_SAVED.into());
+            cx.emit(ChatRenameEvent::NotSaved);
         }
         cx.notify();
     }

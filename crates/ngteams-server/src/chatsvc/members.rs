@@ -96,7 +96,7 @@ pub(super) async fn remove(
     finish(&app, &caller, outcome).await
 }
 
-/// Answers a roster change and tells its people: the event to everyone who may read it, the thread as it is now to
+/// Answers a roster change or a rename and tells its people: the event to everyone who may read it, the thread as it is now to
 /// the people in it. Someone taken out hears the event of their going and nothing of the thread after it.
 pub(super) async fn finish(app: &App, caller: &Caller, outcome: Outcome) -> Result<StatusCode, Error> {
     let done: Box<Done> = match outcome {

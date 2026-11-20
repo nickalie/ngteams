@@ -1397,7 +1397,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             return Ok(Synced::default());
         }
         if stored.is_none() {
-            let added = store.upsert_conversation(&conversation_row(listed, 0))?;
+            let added = store.upsert_conversation_at(&conversation_row(listed, 0), thread_version(listed))?;
             self.conversation_changed(&listed.id, added);
         }
         let state = store.sync_state(&listed.id)?;
@@ -1438,7 +1438,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         // an unreadable version keeps the stored row: as new as itself, only a later last activity is taken
         let kept = stored.map_or(0, |stored| stored.version);
         let row = conversation_row(listed, version.unwrap_or(kept));
-        let applied = store.upsert_conversation(&row)?;
+        let applied = store.upsert_conversation_at(&row, thread_version(listed))?;
         self.conversation_changed(&listed.id, applied);
         // the store takes a later last activity whatever the version (`Ignored` then), and that is a change too
         if let Some(stored) = stored
@@ -1594,7 +1594,12 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             version: 0,
             last_activity: None,
         };
-        let added = store.upsert_conversation(&row)?;
+        let named_at = thread
+            .version
+            .clone()
+            .known()
+            .and_then(|version| i64::try_from(version).ok());
+        let added = store.upsert_conversation_at(&row, named_at)?;
         self.conversation_changed(id, added);
         if !thread.kind().is_read_only() {
             self.store_members(store, &thread)?;
@@ -1753,6 +1758,15 @@ fn not_found(error: &CatchUpError) -> bool {
 }
 
 /// A conversation of the list as the store keeps it, at `version`.
+/// The thread version of `listed`'s name (`threadProperties.version`), when it reads: what orders it against a name a
+/// push brought ([`Store::set_topic`]).
+fn thread_version(listed: &chat::Conversation) -> Option<i64> {
+    listed
+        .thread_version()
+        .known()
+        .and_then(|version| i64::try_from(version).ok())
+}
+
 fn conversation_row(listed: &chat::Conversation, version: i64) -> Conversation {
     Conversation {
         id: listed.id.clone(),

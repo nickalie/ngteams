@@ -3435,7 +3435,8 @@ where
             return;
         };
         let topic = Some(topic.as_str()).filter(|topic| !topic.is_empty());
-        match self.store.set_topic(&conversation, topic) {
+        // the answer gives no version: the push that follows brings it
+        match self.store.set_topic(&conversation, topic, None) {
             Ok(true) => self.emit(Event::ConversationChanged { conversation }),
             Ok(false) => {}
             Err(error) => self.missed("storing a chat's new name", error),
@@ -3669,10 +3670,11 @@ where
             }
             ChatEvent::ThreadUpdate {
                 thread,
+                version,
                 roster_version,
                 topic,
             } => {
-                self.on_thread(&thread, roster_version, topic).await;
+                self.on_thread(&thread, version, roster_version, topic).await;
                 self.brought(source);
             }
             // logged by its kind where it was read
@@ -3684,9 +3686,10 @@ where
     /// changes pause (a team or channel made, renamed or removed, people added or gone, [`Teams::note_pushed`]), and a
     /// stored group or meeting chat reads its people again
     /// unless the delivery's `rosterVersion` is no newer than the stored one. A stored group chat takes the name the
-    /// delivery carries, at once (a member renamed it). Any other thread (the service's stream
+    /// delivery carries, at once (a member renamed it), unless the stored name is of a thread `version` as new or newer
+    /// (a late or replayed push, [`Store::set_topic`]). Any other thread (the service's stream
     /// of blocked messages' copies, a 1:1 chat, a chat the store doesn't know yet) is left to what follows it.
-    async fn on_thread(&mut self, thread: &str, roster_version: Option<u64>, topic: ThreadTopic) {
+    async fn on_thread(&mut self, thread: &str, version: Option<u64>, roster_version: Option<u64>, topic: ThreadTopic) {
         if chat::is_generic_stream(thread) {
             return;
         }
@@ -3701,8 +3704,9 @@ where
                     ThreadTopic::Unnamed => Some(None),
                     ThreadTopic::Named(name) => Some(Some(name.as_str())),
                 };
+                let version = version.and_then(|version| i64::try_from(version).ok());
                 if let Some(topic) = topic {
-                    match self.store.set_topic(thread, topic) {
+                    match self.store.set_topic(thread, topic, version) {
                         Ok(true) => self.emit(Event::ConversationChanged {
                             conversation: thread.to_owned(),
                         }),

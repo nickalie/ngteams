@@ -196,6 +196,13 @@ impl Conversation {
         number_field(self.thread_properties.get("rosterVersion"))
     }
 
+    /// The thread's version (`threadProperties.version`, a string of digits): the `version` that a thread read and a
+    /// `ThreadUpdate` carry, so it orders the chat's name in the list against the name a push brought.
+    #[must_use]
+    pub fn thread_version(&self) -> Field<u64> {
+        number_field(self.thread_properties.get("version"))
+    }
+
     /// The last message, if the list gave one of a message's shape.
     #[must_use]
     pub fn last_message(&self) -> Option<Message> {

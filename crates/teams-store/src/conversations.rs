@@ -118,12 +118,29 @@ fn conversation_from_row(row: &Row<'_>) -> rusqlite::Result<Conversation> {
 impl Store {
     /// Writes a conversation unless the stored one is as new or newer (by `version`). `last_activity` keeps the newer
     /// of the two whatever the version: an as-new or older version that brings a later last activity is
-    /// [`Applied::Ignored`] for its versioned fields, and its last activity is still taken.
+    /// [`Applied::Ignored`] for its versioned fields, and its last activity is still taken. Its name is of no known
+    /// thread version ([`Store::upsert_conversation_at`]).
     ///
     /// # Errors
     ///
     /// [`StoreError::Sqlite`] when the write fails.
     pub fn upsert_conversation(&mut self, conversation: &Conversation) -> Result<Applied, StoreError> {
+        self.upsert_conversation_at(conversation, None)
+    }
+
+    /// [`Store::upsert_conversation`] for a conversation whose name is of the thread version `thread_version`, when it
+    /// is known (a listing's `threadProperties.version`, a thread read's `version`). A newer conversation version
+    /// replaces the name too, unless the stored name is of a newer thread version ([`Store::set_topic`]): a push
+    /// brought it after the listing was read.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Sqlite`] when the write fails.
+    pub fn upsert_conversation_at(
+        &mut self,
+        conversation: &Conversation,
+        thread_version: Option<i64>,
+    ) -> Result<Applied, StoreError> {
         let tx = self.conn.transaction()?;
         let stored: Option<i64> = tx
             .query_row(
@@ -137,20 +154,24 @@ impl Store {
                 // stored again: no longer forgotten
                 tx.execute("DELETE FROM forgotten_conversations WHERE id = ?1", [&conversation.id])?;
                 tx.execute(
-                    "INSERT INTO conversations (id, kind, topic, version, last_activity) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT INTO conversations (id, kind, topic, version, last_activity, topic_version)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                     params![
                         conversation.id,
                         conversation.kind.as_str(),
                         conversation.topic,
                         conversation.version,
-                        conversation.last_activity
+                        conversation.last_activity,
+                        thread_version
                     ],
                 )?;
                 Applied::Inserted
             }
             Some(version) if conversation.version > version => {
                 tx.execute(
-                    "UPDATE conversations SET kind = ?2, topic = ?3, version = ?4,
+                    "UPDATE conversations SET kind = ?2, version = ?4,
+                         topic = CASE WHEN ?6 < topic_version THEN topic ELSE ?3 END,
+                         topic_version = MAX(COALESCE(topic_version, ?6), COALESCE(?6, topic_version)),
                          last_activity = MAX(COALESCE(last_activity, ?5), COALESCE(?5, last_activity))
                      WHERE id = ?1",
                     params![
@@ -158,7 +179,8 @@ impl Store {
                         conversation.kind.as_str(),
                         conversation.topic,
                         conversation.version,
-                        conversation.last_activity
+                        conversation.last_activity,
+                        thread_version
                     ],
                 )?;
                 Applied::Updated
@@ -179,18 +201,38 @@ impl Store {
     }
 
     /// Names the stored conversation `id` `topic` (`None` takes the name off), whatever its version: a group chat the
-    /// account renamed, or one a push says was renamed. Its version stays, so the next listing of a newer version still
-    /// replaces the row. Whether the name changed: `false` for the same name, or a conversation the store doesn't know.
+    /// account renamed (no `version`: the answer gives none), or one a push says was renamed at the thread version
+    /// `version`. A name of a thread version that is not newer than that of the stored name is ignored, so a late or
+    /// replayed push does not bring back an old name. The conversation's version stays, so the next listing of a newer
+    /// version still replaces the row. Whether the name changed: `false` for the same name, an older one, or a
+    /// conversation the store doesn't know.
     ///
     /// # Errors
     ///
     /// [`StoreError::Sqlite`] when the write fails.
-    pub fn set_topic(&mut self, id: &str, topic: Option<&str>) -> Result<bool, StoreError> {
-        let changed = self.conn.execute(
-            "UPDATE conversations SET topic = ?2 WHERE id = ?1 AND topic IS NOT ?2",
-            params![id, topic],
+    pub fn set_topic(&mut self, id: &str, topic: Option<&str>, version: Option<i64>) -> Result<bool, StoreError> {
+        let tx = self.conn.transaction()?;
+        let stored: Option<(Option<String>, Option<i64>)> = tx
+            .query_row(
+                "SELECT topic, topic_version FROM conversations WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((stored_topic, stored_version)) = stored else {
+            return Ok(false);
+        };
+        if let (Some(version), Some(stored_version)) = (version, stored_version)
+            && version <= stored_version
+        {
+            return Ok(false);
+        }
+        tx.execute(
+            "UPDATE conversations SET topic = ?2, topic_version = COALESCE(?3, topic_version) WHERE id = ?1",
+            params![id, topic, version],
         )?;
-        Ok(changed > 0)
+        tx.commit()?;
+        Ok(stored_topic.as_deref() != topic)
     }
 
     /// Forgets `id` and all that is kept of it: its members, messages (their reactions, reply roots and search

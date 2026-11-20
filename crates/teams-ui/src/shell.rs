@@ -2647,7 +2647,7 @@ impl Shell {
         }
         self.trace.record(&TraceLine::new("chat", "opened").conversation(&id));
         self.people.open = None;
-        self.rename.close();
+        self.rename.close(cx);
         self.hide_calendar(window, cx);
         self.reset_meeting_tabs(&id, cx);
         // New message left for this chat gives its draft to it before the chat's view is chosen

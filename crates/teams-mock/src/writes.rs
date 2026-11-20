@@ -429,8 +429,9 @@ pub(crate) fn add_members(state: &mut State, call: &Call<'_>, id: &str) -> Respo
 
 /// `PUT v1/threads/<id>/properties?name=topic` (`docs/protocol/chat-service.md`, "Naming a group chat"):
 /// `{"topic": <name>}` from a member of the group chat `id`. The name is kept (an empty one takes it off), the chat's
-/// version moves on, the thread posts a `ThreadActivity/TopicUpdate` naming the caller and the name to every member,
-/// and it is answered 200. A 1:1 chat, a meeting's chat or a stream takes no name (400), as Teams offers none there.
+/// version and its thread version (`threadProperties.version`) move on, the thread posts a
+/// `ThreadActivity/TopicUpdate` naming the caller and the name to every member, and it is answered 200. A 1:1 chat,
+/// a meeting's chat or a stream takes no name (400), as Teams offers none there.
 pub(crate) fn topic(state: &mut State, call: &Call<'_>, id: &str) -> ResponseTemplate {
     let kind = match member_of(state, id, &call.caller) {
         Ok(conversation) => conversation.kind,
@@ -451,6 +452,8 @@ pub(crate) fn topic(state: &mut State, call: &Call<'_>, id: &str) -> ResponseTem
         return status(404);
     };
     let properties = object(&mut conversation.entry["threadProperties"]);
+    // the thread's version moves on with its name, as the listing then shows it
+    properties.insert("version".to_owned(), json!(arrival.to_string()));
     if topic.is_empty() {
         properties.remove("topic");
     } else {

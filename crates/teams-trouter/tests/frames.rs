@@ -259,24 +259,27 @@ fn the_accounts_own_properties_are_read_only_for_its_mark_all_read_horizon() {
 }
 
 #[test]
-fn a_thread_update_names_its_thread_and_its_roster_version_and_one_naming_no_thread_is_unknown() {
+fn a_thread_update_names_its_thread_its_versions_and_its_name_and_one_naming_no_thread_is_unknown() {
     let body = |resource: Value| json!({"type": "EventMessage", "resourceType": "ThreadUpdate", "resource": resource});
     let read = |resource: Value| ChatEvent::from_body(&body(resource).to_string());
-    // the update of the stream a policy-blocked message's copy goes to: no roster version
+    // the update of the stream a policy-blocked message's copy goes to: its version, no roster version
     assert_eq!(
         read(filled(POLICY_BLOCKED)["stream_thread"].clone()),
         ChatEvent::ThreadUpdate {
             thread: "48:generic".to_owned(),
+            version: Some(1_760_000_100_800),
             roster_version: None,
             topic: ThreadTopic::Unnamed
         }
     );
-    let thread = json!({"id": "19:made-up@thread.v2", "type": "Thread", "rosterVersion": 1_760_000_000_123_u64,
+    let thread = json!({"id": "19:made-up@thread.v2", "type": "Thread", "version": 1_760_000_000_456_u64,
+        "rosterVersion": 1_760_000_000_123_u64,
         "members": [{"id": "8:orgid:00000000-0000-0000-0000-00000000000a", "role": "Admin"}], "properties": {}});
     assert_eq!(
         read(thread),
         ChatEvent::ThreadUpdate {
             thread: "19:made-up@thread.v2".to_owned(),
+            version: Some(1_760_000_000_456),
             roster_version: Some(1_760_000_000_123),
             topic: ThreadTopic::Unnamed
         }

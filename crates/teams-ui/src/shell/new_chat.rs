@@ -176,7 +176,7 @@ impl Shell {
         self.put_chat_away(cx);
         self.keep_draft(cx);
         self.people.open = None;
-        self.rename.close();
+        self.rename.close(cx);
         self.set_new_chat_aside(cx);
         let held = if let Some(at) = pick(&self.kept_new, cx) {
             self.kept_new.remove(at)

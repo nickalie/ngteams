@@ -255,7 +255,7 @@ fn the_topics_migration_takes_the_chats_without_a_topic_again() -> Result<(), St
          ALTER TABLE teams DROP COLUMN picture_etag; ALTER TABLE teams DROP COLUMN site; ALTER TABLE team_channels DROP COLUMN shown; ALTER TABLE team_channels DROP COLUMN kind; ALTER TABLE team_channels DROP COLUMN description; ALTER TABLE team_channels DROP COLUMN archived; ALTER TABLE team_channels DROP COLUMN owner; ALTER TABLE team_channels DROP COLUMN can_edit; ALTER TABLE team_channels DROP COLUMN can_delete; ALTER TABLE team_channels DROP COLUMN channel_group;
          DROP TABLE app_read_horizon; DROP TABLE calendar_events; DROP TABLE forgotten_conversations;
          DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; DROP TABLE translation_glossary; DROP TABLE translated_messages; DROP TABLE blocked_copies; DROP TABLE horizon_bookmarks; DROP VIEW pending_conversation_previews; DROP TABLE conversation_previews;
-         PRAGMA user_version = 9;",
+         ALTER TABLE conversations DROP COLUMN topic_version; PRAGMA user_version = 9;",
     )
     .expect("back to schema 9");
     drop(raw);
@@ -409,13 +409,21 @@ fn a_group_chat_renamed_keeps_its_version_and_a_newer_listing_still_replaces_it(
     store.upsert_conversation(&chat).expect("insert");
     let topic = |store: &Store| store.conversation(GROUP).expect("read").expect("group").topic;
 
-    assert!(store.set_topic(GROUP, Some("Lab trio 40")).expect("renamed"));
+    assert!(store.set_topic(GROUP, Some("Lab trio 40"), None).expect("renamed"));
     assert_eq!(topic(&store).as_deref(), Some("Lab trio 40"));
-    assert!(!store.set_topic(GROUP, Some("Lab trio 40")).expect("the same name"));
-    assert!(store.set_topic(GROUP, None).expect("unnamed"));
+    assert!(
+        !store
+            .set_topic(GROUP, Some("Lab trio 40"), None)
+            .expect("the same name")
+    );
+    assert!(store.set_topic(GROUP, None, None).expect("unnamed"));
     assert_eq!(topic(&store), None);
-    assert!(!store.set_topic(GROUP, None).expect("still unnamed"));
-    assert!(!store.set_topic("19:not-stored@thread.v2", Some("x")).expect("unknown"));
+    assert!(!store.set_topic(GROUP, None, None).expect("still unnamed"));
+    assert!(
+        !store
+            .set_topic("19:not-stored@thread.v2", Some("x"), Some(1))
+            .expect("unknown")
+    );
     assert_eq!(store.conversation(GROUP).expect("read").expect("group").version, 10);
 
     let mut listed = chat.clone();
@@ -423,6 +431,70 @@ fn a_group_chat_renamed_keeps_its_version_and_a_newer_listing_still_replaces_it(
     listed.topic = Some("Lab trio 41".to_owned());
     assert_eq!(store.upsert_conversation(&listed).expect("listed"), Applied::Updated);
     assert_eq!(topic(&store).as_deref(), Some("Lab trio 41"));
+}
+
+#[test]
+fn a_group_chats_name_of_an_older_thread_version_never_replaces_a_newer_one() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut store = open(&dir).expect("open the store");
+    let mut chat = conversation(GROUP, ConversationKind::Group, 10);
+    chat.topic = Some("Lab trio 39".to_owned());
+    store.upsert_conversation_at(&chat, Some(100)).expect("insert");
+    let topic = |store: &Store| store.conversation(GROUP).expect("read").expect("group").topic;
+
+    // pushes: a newer one names it, an older or the same one (late, or replayed on connect) changes nothing
+    assert!(store.set_topic(GROUP, Some("Lab trio 41"), Some(300)).expect("renamed"));
+    assert!(!store.set_topic(GROUP, Some("Lab trio 40"), Some(200)).expect("older"));
+    assert!(!store.set_topic(GROUP, None, Some(300)).expect("the same version"));
+    assert_eq!(topic(&store).as_deref(), Some("Lab trio 41"));
+    // the account's own rename, confirmed with no version: taken, and the version of the last push stays
+    assert!(store.set_topic(GROUP, Some("Lab trio 42"), None).expect("own rename"));
+    assert!(
+        !store
+            .set_topic(GROUP, Some("Lab trio 40"), Some(250))
+            .expect("still older")
+    );
+    assert_eq!(topic(&store).as_deref(), Some("Lab trio 42"));
+}
+
+#[test]
+fn a_listing_names_a_group_chat_only_when_its_thread_version_is_not_older_than_the_stored_name() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut store = open(&dir).expect("open the store");
+    let mut chat = conversation(GROUP, ConversationKind::Group, 10);
+    chat.topic = Some("Lab trio 39".to_owned());
+    store.upsert_conversation_at(&chat, Some(100)).expect("insert");
+    let topic = |store: &Store| store.conversation(GROUP).expect("read").expect("group").topic;
+    assert!(store.set_topic(GROUP, Some("Lab trio 42"), Some(300)).expect("pushed"));
+
+    // a listing of a newer conversation version read before that push: its name is of an older thread version
+    let mut listed = chat.clone();
+    listed.version = 11;
+    listed.topic = Some("Lab trio 39".to_owned());
+    assert_eq!(
+        store.upsert_conversation_at(&listed, Some(250)).expect("listed"),
+        Applied::Updated
+    );
+    assert_eq!(topic(&store).as_deref(), Some("Lab trio 42"));
+    // one of a newer thread version names it, and a push older than that listing changes nothing
+    listed.version = 12;
+    listed.topic = Some("Lab trio 43".to_owned());
+    assert_eq!(
+        store.upsert_conversation_at(&listed, Some(400)).expect("listed"),
+        Applied::Updated
+    );
+    assert_eq!(topic(&store).as_deref(), Some("Lab trio 43"));
+    assert!(
+        !store
+            .set_topic(GROUP, Some("Lab trio 41"), Some(300))
+            .expect("older than the listing")
+    );
+    assert_eq!(topic(&store).as_deref(), Some("Lab trio 43"));
+    // a listing that gives no thread version names it as before
+    listed.version = 13;
+    listed.topic = None;
+    assert_eq!(store.upsert_conversation(&listed).expect("listed"), Applied::Updated);
+    assert_eq!(topic(&store), None);
 }
 
 #[test]
@@ -1455,13 +1527,13 @@ fn the_forgotten_threads_migration_keeps_the_conversations_and_forgets_none() ->
     drop(store);
     // the store as schema 18 left it
     let raw = rusqlite::Connection::open(store_path(&dir)).expect("open directly");
-    raw.execute_batch("DROP TABLE forgotten_conversations; DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; DROP TABLE translation_glossary; DROP TABLE translated_messages; DROP TABLE blocked_copies; DROP TABLE horizon_bookmarks; DROP VIEW pending_conversation_previews; DROP TABLE conversation_previews; PRAGMA user_version = 18;")
+    raw.execute_batch("DROP TABLE forgotten_conversations; DROP TABLE message_translations; DROP TABLE sent_originals; DROP TABLE call_transcript_lines; DROP TABLE call_transcripts; DROP TABLE translation_glossary; DROP TABLE translated_messages; DROP TABLE blocked_copies; DROP TABLE horizon_bookmarks; DROP VIEW pending_conversation_previews; DROP TABLE conversation_previews; ALTER TABLE conversations DROP COLUMN topic_version; PRAGMA user_version = 18;")
         .expect("back to schema 18");
     drop(raw);
 
     let mut store = open(&dir)?;
     assert_eq!(store.schema_version()?, SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 27);
+    assert_eq!(SCHEMA_VERSION, 28);
     assert_eq!(store.conversation(GROUP)?.map(|stored| stored.version), Some(3));
     assert_eq!(store.forgotten_thread(GROUP)?, None);
     store.forget_conversation(GROUP)?;
@@ -2442,7 +2514,7 @@ fn a_bookmark_stored_before_marks_existed_reads_as_no_mark() {
         store.set_horizon_bookmark(CHAT, 2000).expect("bookmark");
     }
     let raw = rusqlite::Connection::open(&path).expect("raw open");
-    raw.execute_batch("ALTER TABLE horizon_bookmarks DROP COLUMN arrival; PRAGMA user_version = 26;")
+    raw.execute_batch("ALTER TABLE horizon_bookmarks DROP COLUMN arrival; ALTER TABLE conversations DROP COLUMN topic_version; PRAGMA user_version = 26;")
         .expect("schema 26");
     drop(raw);
     let mut store = Store::open(&path).expect("migrated");

@@ -1,24 +1,42 @@
 //! The chat header's "Name group chat" ([`crate::chat_rename`]): a group chat's header shows a pencil after its name,
 //! and the pencil opens the popup under the name, or closes it. A 1:1 chat, a meeting's chat and the read-only mode
-//! show none. Another chat opened closes the popup.
+//! show none. Another chat opened closes the popup. A popup closed while its save is on its way is kept out of view
+//! until the save ends, and a failed save shows as a toast.
 
 use super::*;
 use crate::chat_list::RowKind;
 use crate::chat_people::Placed;
-use crate::chat_rename::{ChatRename, ChatRenameEvent, ChatRenameParts, NAME_TIP};
+use crate::chat_rename::{ChatRename, ChatRenameEvent, ChatRenameParts, NAME_TIP, NOT_SAVED};
 use gpui_component::Selectable as _;
 
-/// The popup while it is open, and where the header's pencil was last drawn.
+/// The popup while it is open, the popups closed while their save was on its way, and where the header's pencil was
+/// last drawn.
 #[derive(Default)]
 pub(super) struct State {
     open: Option<(Entity<ChatRename>, Subscription)>,
+    /// Not drawn: each is kept until its save ends, so that a failure is still told ([`ChatRenameEvent::NotSaved`]).
+    closed: Vec<(Entity<ChatRename>, Subscription)>,
     button: Placed,
 }
 
 impl State {
-    /// Closes the popup, if it is open.
-    pub(super) fn close(&mut self) {
-        self.open = None;
+    /// Closes the popup, if it is open. One whose save is on its way is kept out of view until the save ends.
+    pub(super) fn close(&mut self, cx: &App) {
+        if let Some(open) = self.open.take()
+            && open.0.read(cx).saving()
+        {
+            self.closed.push(open);
+        }
+    }
+
+    /// Takes `view` out: whether it was the open popup (not one closed before).
+    fn forget(&mut self, view: &Entity<ChatRename>) -> bool {
+        if self.open.as_ref().is_some_and(|(open, _)| open == view) {
+            self.open = None;
+            return true;
+        }
+        self.closed.retain(|(closed, _)| closed != view);
+        false
     }
 }
 
@@ -43,7 +61,8 @@ impl Shell {
 
     /// Opens the chat shown's "Name group chat", or closes it.
     pub fn toggle_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.rename.open.take().is_some() {
+        if self.rename.open.is_some() {
+            self.rename.close(cx);
             self.take_focus(window, cx);
             cx.notify();
             return;
@@ -69,11 +88,20 @@ impl Shell {
         let events = cx.subscribe_in(
             &view,
             window,
-            |this: &mut Self, _, event: &ChatRenameEvent, window, cx| {
+            |this: &mut Self, view, event: &ChatRenameEvent, window, cx| {
                 match event {
                     ChatRenameEvent::Close => {
-                        this.rename.open = None;
-                        this.take_focus(window, cx);
+                        if this.rename.forget(view) {
+                            this.take_focus(window, cx);
+                        }
+                    }
+                    // the open popup says so itself; one closed before is told as a toast
+                    ChatRenameEvent::NotSaved => {
+                        let open = this.rename.open.as_ref().is_some_and(|(open, _)| open == view);
+                        if !open {
+                            this.rename.forget(view);
+                            this.show_toast(NOT_SAVED, cx);
+                        }
                     }
                 }
                 cx.notify();

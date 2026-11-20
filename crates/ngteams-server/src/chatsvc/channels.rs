@@ -247,9 +247,9 @@ pub(crate) async fn farewell(app: &App, tenant: &str, thread: &str) -> Vec<(Stri
 
 type Params = HashMap<String, String>;
 
-/// `PUT v1/threads/<thread>/properties?name=…`: a group chat's name (`topic`, [`super::topic`]), a team's settings
-/// (`spaceAdminSettings`, on its general channel's thread) or a standard channel's moderation (`channelSettings`),
-/// each the whole JSON as text, from a team owner.
+/// `PUT v1/threads/<thread>/properties?name=…`: a group chat's name (`topic`, a plain string from any of its people,
+/// [`super::topic`]), or, from a team owner, a team's settings (`spaceAdminSettings`, on its general channel's thread)
+/// or a standard channel's moderation (`channelSettings`), each the whole JSON as text.
 pub(super) async fn set_property(
     State(app): State<Arc<App>>,
     caller: Caller,

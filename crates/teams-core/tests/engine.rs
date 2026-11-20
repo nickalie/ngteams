@@ -4310,16 +4310,20 @@ async fn topic_of(native: &Native, chat: &str) -> Option<String> {
         .and_then(|conversation| conversation.topic)
 }
 
-/// A group chat's `ThreadUpdate` as Teams pushes it after a rename (2026-11-20): the whole thread, its `properties`
-/// carrying the `topic`, or leaving it out once the name is taken off.
-fn renamed_update(thread: &str, topic: Option<&str>) -> Value {
+/// A group chat's `ThreadUpdate` as Teams pushes it after a rename (2026-11-20): the whole thread at its `version`, its
+/// `properties` carrying the `topic`, or leaving it out once the name is taken off.
+fn renamed_update(thread: &str, topic: Option<&str>, version: u64) -> Value {
     let mut properties = json!({"threadType": "chat", "historydisclosed": "false"});
     if let Some(topic) = topic {
         properties["topic"] = json!(topic);
     }
-    let resource = json!({"id": thread, "type": "Thread", "rosterVersion": 1, "properties": properties});
+    let resource =
+        json!({"id": thread, "type": "Thread", "version": version, "rosterVersion": 1, "properties": properties});
     json!({"type": "EventMessage", "resourceType": "ThreadUpdate", "resource": resource})
 }
+
+/// A thread version (ms) later than every version the mock gives: the pushes of a test's renames.
+const RENAMED_AT: u64 = 1_900_000_000_000;
 
 #[tokio::test]
 async fn a_group_chat_renamed_is_called_by_its_new_name_at_once_and_its_people_see_it_live() {
@@ -4367,13 +4371,18 @@ async fn a_group_chat_renamed_is_called_by_its_new_name_at_once_and_its_people_s
     );
     let reads = thread_reads_of(&lab, &chat).await;
     lab.trouter
-        .deliver_chat(LAB_B, &renamed_update(&chat, Some("Lab trio 40")));
+        .deliver_chat(LAB_B, &renamed_update(&chat, Some("Lab trio 40"), RENAMED_AT + 2));
     b.event(|event| {
         matches!(event, Event::ConversationChanged { conversation } if *conversation == chat).then_some(())
     })
     .await;
     assert_eq!(topic_of(&b, &chat).await.as_deref(), Some("Lab trio 40"));
     assert_eq!(thread_reads_of(&lab, &chat).await, reads);
+    // an older name's update that comes after it (late, or replayed on connect) does not bring the old name back
+    lab.trouter
+        .deliver_chat(LAB_B, &renamed_update(&chat, Some("Lab trio 38"), RENAMED_AT + 1));
+    after_what_came_before(&lab, &mut b, &chat).await;
+    assert_eq!(topic_of(&b, &chat).await.as_deref(), Some("Lab trio 40"));
 
     // an empty name takes it off: the chat is called by its people again, on both sides
     let unnamed = a
@@ -4385,7 +4394,8 @@ async fn a_group_chat_renamed_is_called_by_its_new_name_at_once_and_its_people_s
     assert_eq!(unnamed.state, OutboxState::Sent, "{unnamed:?}");
     a.drain().await;
     assert_eq!(topic_of(&a, &chat).await, None);
-    lab.trouter.deliver_chat(LAB_B, &renamed_update(&chat, None));
+    lab.trouter
+        .deliver_chat(LAB_B, &renamed_update(&chat, None, RENAMED_AT + 3));
     b.event(|event| {
         matches!(event, Event::ConversationChanged { conversation } if *conversation == chat).then_some(())
     })

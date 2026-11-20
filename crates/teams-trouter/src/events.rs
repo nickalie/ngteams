@@ -16,8 +16,8 @@
 //!   ([`ChatEvent::AppReadHorizon`], `docs/protocol/chat.md`), else [`ChatEvent::Unknown`].
 //! - `ThreadUpdate`: a thread changed (a chat's people, a team's or a channel's name, people or state, a thread made
 //!   or deleted), its `resource` the thread as a thread read gives it ([`ChatEvent::ThreadUpdate`]: its `id`, its
-//!   `rosterVersion` when it carries one, and its `properties.topic`, which a renamed group chat's carries and an
-//!   unnamed one's leaves out); one naming no thread is [`ChatEvent::Unknown`].
+//!   `version` and `rosterVersion` when it carries them, and its `properties.topic`, which a renamed group chat's
+//!   carries and an unnamed one's leaves out); one naming no thread is [`ChatEvent::Unknown`].
 //! - anything else is [`ChatEvent::Unknown`] with its `resourceType`, and logged by that kind only.
 //!
 //! A delivery is applied by conversation, message id and version: the service replays unanswered ones on connect
@@ -67,10 +67,12 @@ pub enum ChatEvent {
     AppReadHorizon(AppConsumptionHorizon),
     /// The chat changed (its last message, its thread properties, …).
     ConversationUpdate { conversation: Box<Conversation> },
-    /// A thread changed: its id, the `rosterVersion` the delivery carries, when it carries one, and its name as its
-    /// `properties` say it.
+    /// A thread changed: its id, the thread's `version` and `rosterVersion` the delivery carries, when it carries them,
+    /// and its name as its `properties` say it. The `version` (ms) is the one a conversation list gives as
+    /// `threadProperties.version`: it orders two names of the same thread.
     ThreadUpdate {
         thread: String,
+        version: Option<u64>,
         roster_version: Option<u64>,
         topic: ThreadTopic,
     },
@@ -204,6 +206,7 @@ fn thread_update(resource: &Value) -> Option<ChatEvent> {
     };
     Some(ChatEvent::ThreadUpdate {
         thread,
+        version: resource["version"].as_u64(),
         roster_version: resource["rosterVersion"].as_u64(),
         topic,
     })

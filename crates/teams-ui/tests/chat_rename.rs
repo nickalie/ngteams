@@ -1,6 +1,7 @@
 //! A group chat's name from its header (the chat header's "Name group chat"), on the fake core in a window of its own:
 //! the pencil and its popup, Save and Enter, the 250-character limit, an empty name, Cancel and Escape, a save that
-//! fails, the chats that show no pencil, and the new name in the header and the list once the engine tells it.
+//! fails (also after the popup closed), the chats that show no pencil, and the new name in the header and the list
+//! once the engine tells it.
 //! Synthetic accounts and chats only.
 
 // test code throughout (its helpers unwrap like the tests do)
@@ -323,6 +324,60 @@ fn a_save_that_did_not_go_out_says_so_and_keeps_the_name_typed() {
     assert!(cx.debug_bounds("chat-rename-problem").is_some());
     assert_eq!(value(&view, cx), "Lab trio 40");
     assert_eq!(row_name(&shell, cx, NAMED), "Lab trio 39");
+}
+
+#[test]
+fn a_popup_closed_while_its_save_is_on_its_way_tells_a_failure_as_a_toast() {
+    let rig = seeded();
+    // the first save waits in the outbox, then fails; the second waits, then goes out
+    let mut writes = rig.core.write_answers.lock().unwrap();
+    writes.push_back(common::outbox_row(7, OutboxKind::RenameChat, OutboxState::Pending));
+    writes.push_back(common::outbox_row(8, OutboxKind::RenameChat, OutboxState::Pending));
+    drop(writes);
+    let mut settled = rig.core.outbox_answers.lock().unwrap();
+    settled.push_back(common::outbox_row(7, OutboxKind::RenameChat, OutboxState::Failed));
+    settled.push_back(common::outbox_row(8, OutboxKind::RenameChat, OutboxState::Sent));
+    drop(settled);
+    let (shell, cx) = shell_window(&rig);
+    open(&shell, cx, NAMED);
+    let toast = |cx: &mut VisualTestContext| cx.update(|_, cx| shell.read(cx).toast().cloned());
+
+    // Cancel waits for the save, the pencil closes the popup, and the failure that comes after shows as a toast
+    click(cx, "chat-header-rename");
+    cx.simulate_input("Lab trio 40");
+    draw(cx);
+    click(cx, "chat-rename-save");
+    let view = popup(&shell, cx).expect("open while it saves");
+    assert!(cx.update(|_, cx| view.read(cx).saving()));
+    click(cx, "chat-rename-cancel");
+    assert!(popup(&shell, cx).is_some(), "Cancel waits for the save");
+    click(cx, "chat-header-rename");
+    assert!(popup(&shell, cx).is_none());
+    assert_eq!(toast(cx), None);
+    cx.executor().advance_clock(std::time::Duration::from_secs(1));
+    draw(cx);
+    assert_eq!(toast(cx), Some(NOT_SAVED.into()));
+    cx.executor().advance_clock(std::time::Duration::from_secs(5));
+    draw(cx);
+    assert_eq!(toast(cx), None);
+
+    // another chat opened closes it too, and a save that goes out after that says nothing
+    click(cx, "chat-header-rename");
+    cx.simulate_input("Lab trio 41");
+    draw(cx);
+    click(cx, "chat-rename-save");
+    open(&shell, cx, UNNAMED);
+    assert!(popup(&shell, cx).is_none());
+    cx.executor().advance_clock(std::time::Duration::from_secs(1));
+    draw(cx);
+    assert_eq!(toast(cx), None);
+    assert_eq!(
+        renames(&rig),
+        vec![
+            (NAMED.to_owned(), "Lab trio 40".to_owned()),
+            (NAMED.to_owned(), "Lab trio 41".to_owned())
+        ]
+    );
 }
 
 #[test]

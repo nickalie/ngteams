@@ -145,6 +145,23 @@ fn a_conversations_roster_version_is_absent_known_or_kept_as_it_came() -> TestRe
 }
 
 #[test]
+fn a_conversations_thread_version_is_its_thread_properties_version() -> TestResult {
+    let thread = |properties: Value| -> TestResult<Field<u64>> {
+        let listed: Conversation = serde_json::from_value(json!({"id": ABC_CHAT, "threadProperties": properties}))?;
+        Ok(listed.thread_version())
+    };
+    assert_eq!(thread(json!({}))?, Field::Absent);
+    // a string of digits, as the list gives it (a lab account's debug log, 2026-11): the `version` of the thread's
+    // `ThreadUpdate`
+    assert_eq!(
+        thread(json!({"version": "1793988484830", "rosterVersion": 1_793_955_884_788_u64}))?,
+        Field::Known(1_793_988_484_830)
+    );
+    assert_eq!(thread(json!({"version": "v1"}))?, Field::Unknown(json!("v1")));
+    Ok(())
+}
+
+#[test]
 fn a_conversation_is_empty_only_as_the_service_says_it_in_its_captured_form() -> TestResult {
     let empty = |properties: Value| -> TestResult<Option<bool>> {
         let listed: Conversation = serde_json::from_value(json!({"id": AB_CHAT, "properties": properties}))?;

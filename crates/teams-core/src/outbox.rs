@@ -23,10 +23,11 @@
 //!   again on its own, only by an explicit resend ([`OutboxEntry::may_have_arrived`] says so to its owner first). Our
 //!   message coming back readable after all still settles it.
 //! - **Writes on one thing go out in the order they were asked for** ([`Lane`]): a row waits, sending nothing, while
-//!   an older pending row of this run acts on the same message (an edit, a delete, a reaction or taking it back) or,
-//!   for a read receipt, on the same conversation's read horizon; so a take-back sent while its reaction waits out a
-//!   `Retry-After` can't be undone by the reaction going out after it, nor a newer edit by an older one. Rows on
-//!   anything else go out meanwhile; a message post and a new chat wait for nothing.
+//!   an older pending row of this run acts on the same message (an edit, a delete, a reaction or taking it back),
+//!   for a read receipt, on the same conversation's read horizon, or, for a group chat's rename, on the same chat's
+//!   name; so a take-back sent while its reaction waits out a `Retry-After` can't be undone by the reaction going out
+//!   after it, nor a newer edit or name by an older one. Rows on anything else go out meanwhile; a message post and a
+//!   new chat wait for nothing.
 //! - **Our own message coming back** ([`Outbox::receive`], for a Trouter delivery and a sync alike) is stored once
 //!   (by its id and version) and matched by its `clientmessageid` to its row, which becomes sent with the message's
 //!   id; it may come back before the post's answer does, and the answer then changes nothing. A row a message coming
