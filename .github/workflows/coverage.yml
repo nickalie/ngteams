@@ -98,6 +98,7 @@ jobs:
           fi
       - name: Compile all runtime test targets and inventory the shards
         run: |
+          df -h .
           mkdir -p target
           python3 -c 'import time; print(time.time())' > target/compile-start
           .github/ci/docker.sh build

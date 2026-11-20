@@ -108,11 +108,12 @@ and source maps stay valid.
 Docker Buildx uses a shared GHA image cache (`mode=min`); only the build job exports it.
 The build job deletes the local Buildx cache after the image export and load. It keeps the loaded image.
 It deletes bootstrap build files except `proto-lab` before it compiles the instrumented targets.
-It removes static symbol tables from the test executables and keeps the LLVM coverage sections.
-These executables lose symbol names in backtraces. Their tests and coverage counts stay the same.
+The linker writes the test executables without static symbol tables (`strip = "symbols"`) and keeps the LLVM coverage
+sections, so the compile step does not hold about 52 GB of symbol tables at its peak. Then the bundle script strips
+what is left. These executables lose symbol names in backtraces. Their tests and coverage counts stay the same.
 After each shard archive succeeds, the bundle script deletes that shard's source executables.
 The common files and dependency artifacts stay for the dependency cache. Each archive keeps the executable's coverage maps.
-The build job reports disk space before and after the bundle step, including when the bundle step fails.
+The build job reports disk space before the compile step, and before and after the bundle step, including when the bundle step fails.
 
 Cargo registry/Git sources
 and the pinned Linux x64 libwebrtc SDK have separate caches. A shard whose source cache is missing fetches the
