@@ -102,6 +102,7 @@ features = [
     "open_uri",
     "file_chooser",
     "settings",
+    "documents",
 ]
 optional = true
 default-features = false

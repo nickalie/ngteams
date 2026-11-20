@@ -22,6 +22,8 @@ use std::path::PathBuf;
 pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
     ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
 pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
+/// A sandboxed program's files: a key the document portal's FileTransfer interface turns into paths.
+pub(crate) const PORTAL_FILE_TRANSFER_MIME_TYPE: &str = "application/vnd.portal.filetransfer";
 
 /// Text mime types that we'll accept from other programs.
 pub(crate) const ALLOWED_TEXT_MIME_TYPES: [&str; 2] = ["text/plain;charset=utf-8", "UTF8_STRING"];
@@ -201,7 +203,7 @@ impl<T: ReceiveData> DataOffer<T> {
         self.mime_types.push(mime_type)
     }
 
-    fn has_mime_type(&self, mime_type: &str) -> bool {
+    pub(crate) fn has_mime_type(&self, mime_type: &str) -> bool {
         self.mime_types.iter().any(|t| t == mime_type)
     }
 

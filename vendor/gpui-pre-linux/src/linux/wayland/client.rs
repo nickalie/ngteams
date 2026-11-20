@@ -90,7 +90,9 @@ use crate::linux::{
     keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, new_xkb_context,
     open_uri_internal, read_fd_with_timeout, reveal_path_internal,
     wayland::{
-        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
+        clipboard::{
+            Clipboard, DataOffer, FILE_LIST_MIME_TYPE, PORTAL_FILE_TRANSFER_MIME_TYPE, TEXT_MIME_TYPES,
+        },
         cursor::Cursor,
         serial::{Serial, SerialKind, SerialTracker},
         to_shape,
@@ -421,20 +423,35 @@ struct DragState<DataOffer = wl_data_offer::WlDataOffer, Window = WaylandWindowS
     window: Option<Window>,
     position: Point<Pixels>,
     uri_read_generation: u64,
+    /// The current offer's files are still being read.
+    reading: bool,
+    /// The drop came before the files were read: it is delivered once they are.
+    dropped_while_reading: bool,
 }
 
 impl<DataOffer, Window> DragState<DataOffer, Window> {
-    fn begin_uri_read(&mut self) -> u64 {
+    fn begin_uri_read(&mut self, position: Point<Pixels>) -> u64 {
         self.invalidate_uri_read();
+        self.reading = true;
+        self.position = position;
         self.uri_read_generation
     }
 
     fn invalidate_uri_read(&mut self) {
         self.uri_read_generation = self.uri_read_generation.wrapping_add(1);
+        self.reading = false;
+        self.dropped_while_reading = false;
     }
 
     fn is_uri_read_current(&self, generation: u64) -> bool {
         self.uri_read_generation == generation
+    }
+
+    /// The read of `generation` gave no files: a drop that waited on it is let go.
+    fn abandon_uri_read(&mut self, generation: u64) {
+        if self.is_uri_read_current(generation) {
+            self.invalidate_uri_read();
+        }
     }
 }
 
@@ -458,24 +475,41 @@ where
     DataOffer: FileDragDataOffer + Clone,
     Window: Clone,
 {
-    fn handle_leave(&mut self) -> Option<(Window, PlatformInput)> {
+    /// An offer the window takes nothing from: kept only to be destroyed when the drag leaves.
+    fn refuse(&mut self, data_offer: DataOffer) {
         self.invalidate_uri_read();
-        let window = self.window.clone()?;
-        let data_offer = self.data_offer.clone()?;
-        data_offer.destroy();
-        self.data_offer = None;
+        if let Some(earlier) = self.data_offer.replace(data_offer) {
+            earlier.destroy();
+        }
         self.window = None;
+    }
+
+    fn handle_leave(&mut self) -> Option<(Window, PlatformInput)> {
+        // the compositor's leave right after a drop: the drop still waits on the files
+        if self.dropped_while_reading {
+            return None;
+        }
+        self.invalidate_uri_read();
+        if let Some(data_offer) = self.data_offer.take() {
+            data_offer.destroy();
+        }
+        let window = self.window.take()?;
         Some((window, PlatformInput::FileDrop(FileDropEvent::Exited {})))
     }
 
     fn handle_drop(&mut self) -> Option<(Window, PlatformInput)> {
+        if self.reading {
+            self.dropped_while_reading = true;
+            return None;
+        }
         self.invalidate_uri_read();
-        let window = self.window.clone()?;
-        let data_offer = self.data_offer.clone()?;
+        let data_offer = self.data_offer.take()?;
+        let Some(window) = self.window.take() else {
+            data_offer.destroy();
+            return None;
+        };
         data_offer.finish();
         data_offer.destroy();
-        self.data_offer = None;
-        self.window = None;
         Some((
             window,
             PlatformInput::FileDrop(FileDropEvent::Submit {
@@ -489,21 +523,74 @@ where
         generation: u64,
         data_offer: DataOffer,
         window: Window,
-        position: Point<Pixels>,
         paths: gpui::ExternalPaths,
-    ) -> Option<(Window, PlatformInput)> {
+    ) -> SmallVec<[(Window, PlatformInput); 2]> {
         if !self.is_uri_read_current(generation) {
             data_offer.destroy();
-            return None;
+            return SmallVec::new();
         }
-
-        self.data_offer = Some(data_offer);
-        self.window = Some(window.clone());
-        self.position = position;
-        Some((
-            window,
+        let position = self.position;
+        let entered = (
+            window.clone(),
             PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }),
-        ))
+        );
+        if self.dropped_while_reading {
+            self.invalidate_uri_read();
+            data_offer.finish();
+            data_offer.destroy();
+            let submit = (window, PlatformInput::FileDrop(FileDropEvent::Submit { position }));
+            return SmallVec::from_buf([entered, submit]);
+        }
+        self.reading = false;
+        if let Some(earlier) = self.data_offer.replace(data_offer) {
+            earlier.destroy();
+        }
+        self.window = Some(window);
+        SmallVec::from_iter([entered])
+    }
+}
+
+/// The offered type a file drop is read from: a list of file URIs, else a key of the document portal's file
+/// transfer (what a sandboxed program offers).
+fn file_drop_mime_type(offered: impl Fn(&str) -> bool) -> Option<&'static str> {
+    [FILE_LIST_MIME_TYPE, PORTAL_FILE_TRANSFER_MIME_TYPE]
+        .into_iter()
+        .find(|mime_type| offered(mime_type))
+}
+
+/// The local paths of a `text/uri-list` (RFC 2483): one URI a line, `#` lines are comments.
+fn file_uri_paths(uri_list: &str) -> SmallVec<[PathBuf; 2]> {
+    uri_list
+        .lines()
+        .map(|line| line.trim_matches(|c: char| c == '\0' || c.is_whitespace()))
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| Url::parse(line).log_err())
+        .filter_map(|url| match url.to_file_path() {
+            Ok(path) => Some(path),
+            Err(()) => {
+                log::error!("Failed turn {url:?} into a file path");
+                None
+            }
+        })
+        .collect()
+}
+
+/// The files a sandboxed program's drop names: its document portal transfer `key`, given to the FileTransfer portal.
+async fn portal_transfer_paths(key: &str) -> SmallVec<[PathBuf; 2]> {
+    use ashpd::documents::file_transfer::{FileTransfer, RetrieveFilesOptions};
+    let key = key.trim_matches(|c: char| c == '\0' || c.is_whitespace());
+    let retrieved = async {
+        FileTransfer::new()
+            .await?
+            .retrieve_files(key, RetrieveFilesOptions::default())
+            .await
+    };
+    match retrieved.await {
+        Ok(paths) => paths.into_iter().map(PathBuf::from).collect(),
+        Err(err) => {
+            log::error!("error retrieving dropped files from the file transfer portal: {err}");
+            SmallVec::new()
+        }
     }
 }
 
@@ -1096,6 +1183,8 @@ impl WaylandConnection {
                 window: None,
                 position: Point::default(),
                 uri_read_generation: 0,
+                reading: false,
+                dropped_while_reading: false,
             },
             external_drag: None,
             click: ClickState {
@@ -2906,15 +2995,35 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 state.serial_tracker.update(SerialKind::DataDevice, serial);
                 if let Some(data_offer) = data_offer {
                     let Some(drag_window) = get_window(&mut state, &surface.id()) else {
+                        data_offer.destroy();
                         return;
                     };
-                    let uri_read_generation = state.drag.begin_uri_read();
-
+                    let offered = state
+                        .data_offers
+                        .iter()
+                        .find(|wrapper| wrapper.inner.id() == data_offer.id())
+                        .cloned();
+                    let mime_type = file_drop_mime_type(|mime_type| {
+                        offered
+                            .as_ref()
+                            .is_some_and(|offer| offer.has_mime_type(mime_type))
+                    });
+                    // accepted (or refused) with this enter's serial, once the offer's types are known: a source
+                    // whose offer was never accepted for this enter cancels the drop
+                    let Some(mime_type) = mime_type else {
+                        data_offer.accept(serial, None);
+                        data_offer.set_actions(DndAction::empty(), DndAction::empty());
+                        state.drag.refuse(data_offer);
+                        return;
+                    };
                     const ACTIONS: DndAction = DndAction::Copy;
                     data_offer.set_actions(ACTIONS, ACTIONS);
+                    data_offer.accept(serial, Some(mime_type.to_owned()));
+                    let position = Point::new(x.into(), y.into());
+                    let uri_read_generation = state.drag.begin_uri_read(position);
 
                     let pipe = Pipe::new().unwrap();
-                    data_offer.receive(FILE_LIST_MIME_TYPE.to_string(), unsafe {
+                    data_offer.receive(mime_type.to_owned(), unsafe {
                         BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
                     });
                     let fd = pipe.read;
@@ -2933,47 +3042,34 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                         .foreground_executor
                         .clone()
                         .spawn(async move {
-                            let file_list = match read_task.await {
-                                Ok(list) => list,
+                            let paths = match read_task.await {
+                                Ok(text) if mime_type == FILE_LIST_MIME_TYPE => file_uri_paths(&text),
+                                Ok(key) => portal_transfer_paths(&key).await,
                                 Err(err) => {
                                     log::error!("error reading drag and drop pipe: {err:?}");
-                                    return;
+                                    SmallVec::new()
                                 }
                             };
-
-                            let paths: SmallVec<[_; 2]> = file_list
-                                .lines()
-                                .filter_map(|path| Url::parse(path).log_err())
-                                .filter_map(|url| match url.to_file_path() {
-                                    Ok(url) => Some(url),
-                                    Err(()) => {
-                                        log::error!("Failed turn {url:?} into a file path");
-                                        None
-                                    }
-                                })
-                                .collect();
-                            let position = Point::new(x.into(), y.into());
-
-                            // Prevent dropping text from other programs.
-                            if paths.is_empty() {
-                                data_offer.destroy();
-                                return;
-                            }
                             let Some(client) = this.0.upgrade() else {
                                 data_offer.destroy();
                                 return;
                             };
                             let mut state = client.borrow_mut();
-                            let input = state.drag.complete_uri_read(
+                            // Prevent dropping text from other programs.
+                            if paths.is_empty() {
+                                state.drag.abandon_uri_read(uri_read_generation);
+                                data_offer.destroy();
+                                return;
+                            }
+                            let inputs = state.drag.complete_uri_read(
                                 uri_read_generation,
                                 data_offer,
                                 drag_window,
-                                position,
                                 gpui::ExternalPaths(paths),
                             );
 
                             drop(state);
-                            if let Some((drag_window, input)) = input {
+                            for (drag_window, input) in inputs {
                                 drag_window.handle_input(input);
                             }
                         })
@@ -2981,11 +3077,12 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                 }
             }
             wl_data_device::Event::Motion { x, y, .. } => {
+                let position = Point::new(x.into(), y.into());
+                // also while the files are read: they enter where the pointer is then
+                state.drag.position = position;
                 let Some(drag_window) = state.drag.window.clone() else {
                     return;
                 };
-                let position = Point::new(x.into(), y.into());
-                state.drag.position = position;
 
                 let input = PlatformInput::FileDrop(FileDropEvent::Pending { position });
                 drop(state);
@@ -3027,14 +3124,7 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
         let mut state = client.borrow_mut();
 
         if let wl_data_offer::Event::Offer { mime_type } = event {
-            // Drag and drop
-            if mime_type == FILE_LIST_MIME_TYPE {
-                let serial = state.serial_tracker.get(SerialKind::DataDevice);
-                let mime_type = mime_type.clone();
-                data_offer.accept(serial.as_raw(), Some(mime_type));
-            }
-
-            // Clipboard
+            // a drag's offer is accepted on its enter, which comes after its types
             if let Some(offer) = state
                 .data_offers
                 .iter_mut()
@@ -3305,6 +3395,8 @@ mod tests {
             window: None,
             position: Point::default(),
             uri_read_generation: 0,
+            reading: false,
+            dropped_while_reading: false,
         }
     }
 
@@ -3313,22 +3405,23 @@ mod tests {
         generation: u64,
         data_offer: FakeDataOffer,
         window: &'static str,
-    ) -> Option<(&'static str, PlatformInput)> {
+    ) -> SmallVec<[(&'static str, PlatformInput); 2]> {
         drag.complete_uri_read(
             generation,
             data_offer,
             window,
-            Point::default(),
             gpui::ExternalPaths(SmallVec::from_vec(vec![PathBuf::from("/tmp/file")])),
         )
     }
 
     fn record_entered(
-        input: Option<(&'static str, PlatformInput)>,
+        inputs: impl IntoIterator<Item = (&'static str, PlatformInput)>,
         entered_windows: &mut Vec<&'static str>,
     ) {
-        if let Some((window, PlatformInput::FileDrop(FileDropEvent::Entered { .. }))) = input {
-            entered_windows.push(window);
+        for input in inputs {
+            if let (window, PlatformInput::FileDrop(FileDropEvent::Entered { .. })) = input {
+                entered_windows.push(window);
+            }
         }
     }
 
@@ -3336,7 +3429,7 @@ mod tests {
     fn leave_discards_pending_drag_uri_read() {
         let mut drag = drag_state();
         let data_offer = FakeDataOffer::new("A");
-        let generation = drag.begin_uri_read();
+        let generation = drag.begin_uri_read(Point::default());
         let mut entered_windows = Vec::new();
 
         record_entered(drag.handle_leave(), &mut entered_windows);
@@ -3352,37 +3445,77 @@ mod tests {
     }
 
     #[test]
-    fn drop_then_leave_discards_pending_drag_uri_read() {
+    fn drop_during_uri_read_is_delivered_once_the_files_are_read() {
         let mut drag = drag_state();
         let data_offer = FakeDataOffer::new("A");
-        let generation = drag.begin_uri_read();
-        let mut entered_windows = Vec::new();
+        let generation = drag.begin_uri_read(point(px(10.), px(20.)));
+        drag.position = point(px(30.), px(40.));
 
-        record_entered(drag.handle_drop(), &mut entered_windows);
-        assert_ne!(drag.uri_read_generation, generation);
-        record_entered(drag.handle_leave(), &mut entered_windows);
-        record_entered(
-            complete_drag_uri_read(&mut drag, generation, data_offer.clone(), "window A"),
-            &mut entered_windows,
+        // niri sends the leave right after the drop
+        assert!(drag.handle_drop().is_none());
+        assert!(drag.handle_leave().is_none());
+        let inputs = complete_drag_uri_read(&mut drag, generation, data_offer.clone(), "window A");
+
+        let kinds: Vec<_> = inputs
+            .into_iter()
+            .map(|(window, input)| match input {
+                PlatformInput::FileDrop(FileDropEvent::Entered { position, paths }) => {
+                    (window, "entered", position, paths.paths().len())
+                }
+                PlatformInput::FileDrop(FileDropEvent::Submit { position }) => {
+                    (window, "submit", position, 0)
+                }
+                _ => (window, "other", Point::default(), 0),
+            })
+            .collect();
+        let at = point(px(30.), px(40.));
+        assert_eq!(
+            kinds,
+            [("window A", "entered", at, 1), ("window A", "submit", at, 0)]
         );
-
-        assert!(entered_windows.is_empty());
-        assert!(!data_offer.finished.get());
+        assert!(data_offer.finished.get());
         assert!(data_offer.destroyed.get());
         assert!(drag.data_offer.is_none());
         assert!(drag.window.is_none());
+        assert!(!drag.reading);
+    }
+
+    #[test]
+    fn a_read_without_files_lets_a_waiting_drop_go() {
+        let mut drag = drag_state();
+        let generation = drag.begin_uri_read(Point::default());
+        assert!(drag.handle_drop().is_none());
+
+        drag.abandon_uri_read(generation);
+
+        assert!(!drag.reading);
+        assert!(!drag.dropped_while_reading);
+        assert!(drag.handle_leave().is_none());
+    }
+
+    #[test]
+    fn a_refused_offer_is_destroyed_when_the_drag_leaves() {
+        let mut drag = drag_state();
+        let data_offer = FakeDataOffer::new("text only");
+
+        drag.refuse(data_offer.clone());
+        assert!(!data_offer.destroyed.get());
+
+        assert!(drag.handle_leave().is_none());
+        assert!(data_offer.destroyed.get());
+        assert!(!data_offer.finished.get());
     }
 
     #[test]
     fn stale_completion_preserves_newer_drag_destination() {
         let mut drag = drag_state();
         let data_offer_a = FakeDataOffer::new("A");
-        let generation_a = drag.begin_uri_read();
+        let generation_a = drag.begin_uri_read(Point::default());
         let mut entered_windows = Vec::new();
         record_entered(drag.handle_leave(), &mut entered_windows);
 
         let data_offer_b = FakeDataOffer::new("B");
-        let generation_b = drag.begin_uri_read();
+        let generation_b = drag.begin_uri_read(Point::default());
         record_entered(
             complete_drag_uri_read(&mut drag, generation_b, data_offer_b.clone(), "window B"),
             &mut entered_windows,
@@ -3397,6 +3530,39 @@ mod tests {
         assert!(!data_offer_b.destroyed.get());
         assert_eq!(drag.data_offer.as_ref().map(|offer| offer.name), Some("B"));
         assert_eq!(drag.window, Some("window B"));
+    }
+
+    #[test]
+    fn a_drop_reads_files_from_a_uri_list_else_a_portal_key() {
+        let dolphin = ["text/uri-list", "application/x-kde4-urilist", "text/plain;charset=utf-8"];
+        let gtk4 = [
+            "application/vnd.portal.filetransfer",
+            "application/vnd.portal.files",
+            "text/uri-list",
+        ];
+        let flatpak = ["application/vnd.portal.filetransfer"];
+        let browser_text = ["text/plain;charset=utf-8", "UTF8_STRING", "text/html"];
+        let pick = |offered: &[&str]| file_drop_mime_type(|mime| offered.contains(&mime));
+
+        assert_eq!(pick(&dolphin), Some("text/uri-list"));
+        assert_eq!(pick(&gtk4), Some("text/uri-list"));
+        assert_eq!(pick(&flatpak), Some("application/vnd.portal.filetransfer"));
+        assert_eq!(pick(&browser_text), None);
+    }
+
+    #[test]
+    fn uri_list_paths_follow_rfc_2483() {
+        let list = "# dragged from a file manager\r\nfile:///tmp/made-up%20notes.txt\r\n\r\n\
+                    file://localhost/tmp/report.pdf\r\nhttps://example.test/page\r\nfile:///tmp/last\0";
+
+        assert_eq!(
+            file_uri_paths(list).into_vec(),
+            [
+                PathBuf::from("/tmp/made-up notes.txt"),
+                PathBuf::from("/tmp/report.pdf"),
+                PathBuf::from("/tmp/last"),
+            ]
+        );
     }
 
     #[derive(Default)]

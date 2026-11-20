@@ -14,7 +14,9 @@
 #                  writes, source generations, and validated private rich-copy recovery after a manager handoff (0002);
 #                  every form a clipboard offer holds read into one item: text, picture and uri-list files (0003);
 #                  cancel key repeat when its focused window closes or its key is released without focus (0004);
-#                  the path prompt's title and filters on the file chooser portal (0005)
+#                  the path prompt's title and filters on the file chooser portal (0005); a file drop accepted on
+#                  its enter with that enter's serial, read from a URI list or a sandboxed program's portal key, and
+#                  a drop that comes before the files were read delivered once they are (0006)
 #   gpui-pre-windows our own: test-support `contains` on the DirectX atlas so atlas-inspection tests query
 #                  the real atlas (0001); the path prompt's title and filters on the file open dialog (0002)
 #   libwebrtc      our own: `RtpTransceiver::set_direction`, which LiveKit's bindings leave out though `webrtc-sys`
