@@ -1953,6 +1953,86 @@ async fn deliveries_wait_for_the_registration_and_come_in_the_deliveries_fixture
 }
 
 #[tokio::test]
+async fn a_group_chat_name_reaches_every_member_as_the_threads_update_and_its_line() -> TestResult {
+    let lab = Lab::start().await?;
+    let trouter = lab.mock.start_trouter()?;
+    let token = lab.mock.token(LAB_B).ok_or("no b")?;
+    let (mut socket, connected) = connect_as(&trouter, &token).await?;
+    let push = connected["surl"].as_str().ok_or("no surl")?;
+    assert_eq!(
+        lab.register(Some(&token), &registration_body("TeamsCDLWebWorker", push))
+            .await?,
+        202
+    );
+    let topic = format!("threads/{}/properties?name=topic", segment(ABC_CHAT));
+    let named = lab
+        .send(LAB_A, Method::PUT, &topic, Some(&json!({"topic": "Made-up trio"})))
+        .await?;
+    assert_eq!(named.status, 200);
+
+    // b's endpoint gets the thread's update first, then the line, as Teams sends them
+    let mut delivered = Vec::new();
+    for _ in 0..2 {
+        let frame = read_frame(&mut socket).await?;
+        let delivery: Value = serde_json::from_str(frame.strip_prefix("3:::").ok_or("not a delivery")?)?;
+        delivered.push(serde_json::from_str::<Value>(
+            delivery["body"].as_str().ok_or("no body")?,
+        )?);
+    }
+    let [update, line] = delivered.as_slice() else {
+        return Err("two deliveries".into());
+    };
+    assert_eq!(update["resourceType"], "ThreadUpdate");
+    assert!(
+        update["resourceLink"]
+            .as_str()
+            .is_some_and(|link| link.ends_with(&format!("/threads/{ABC_CHAT}"))),
+        "{update}"
+    );
+    let thread = &update["resource"];
+    assert_eq!(thread["id"], ABC_CHAT);
+    assert_eq!(thread["properties"]["topic"], "Made-up trio");
+    assert_eq!(line["resourceType"], "NewMessage");
+    assert_eq!(line["resource"]["messagetype"], "ThreadActivity/TopicUpdate");
+    let version = thread["version"].as_u64().ok_or("no version")?;
+    assert_eq!(line["resource"]["id"], version.to_string());
+    let list = lab.list(LAB_B).await?;
+    let abc = entry(&list, ABC_CHAT).ok_or("no group chat")?;
+    assert_eq!(abc["threadProperties"]["version"], version.to_string());
+
+    // every member gets both, the one who named it too; a name taken off leaves `topic` out
+    let unnamed = lab
+        .send(LAB_C, Method::PUT, &topic, Some(&json!({"topic": ""})))
+        .await?;
+    assert_eq!(unnamed.status, 200);
+    for member in [LAB_A, LAB_C] {
+        let events = lab.mock.take_events(member);
+        assert_eq!(
+            kinds(&events),
+            [
+                EventKind::ThreadUpdate,
+                EventKind::Message,
+                EventKind::ThreadUpdate,
+                EventKind::Message
+            ],
+            "{member}"
+        );
+        assert_eq!(events[0].resource["properties"]["topic"], "Made-up trio");
+        assert!(events[2].resource["properties"].get("topic").is_none(), "{member}");
+        assert!(events[2].resource["version"].as_u64() > Some(version), "{member}");
+    }
+
+    // a 1:1 chat takes no name, and nobody is told anything
+    let one_to_one = format!("threads/{}/properties?name=topic", segment(AB_CHAT));
+    let refused = lab
+        .send(LAB_A, Method::PUT, &one_to_one, Some(&json!({"topic": "Made-up pair"})))
+        .await?;
+    assert_eq!(refused.status, 400);
+    assert!(lab.mock.take_events(LAB_A).is_empty());
+    Ok(())
+}
+
+#[tokio::test]
 async fn the_calling_service_takes_the_accounts_skypetoken_alone_and_answers_a_start_with_its_conversation()
 -> TestResult {
     let lab = Lab::start().await?;

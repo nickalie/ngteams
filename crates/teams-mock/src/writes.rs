@@ -429,8 +429,9 @@ pub(crate) fn add_members(state: &mut State, call: &Call<'_>, id: &str) -> Respo
 
 /// `PUT v1/threads/<id>/properties?name=topic` (`docs/protocol/chat-service.md`, "Naming a group chat"):
 /// `{"topic": <name>}` from a member of the group chat `id`. The name is kept (an empty one takes it off), the chat's
-/// version and its thread version (`threadProperties.version`) move on, the thread posts a
-/// `ThreadActivity/TopicUpdate` naming the caller and the name to every member, and it is answered 200. A 1:1 chat,
+/// version and its thread version (`threadProperties.version`) move on, the thread's `ThreadUpdate` at that version
+/// (its `properties.topic` the new name, none once it is off) and a `ThreadActivity/TopicUpdate` naming the caller and
+/// the name go to every member, the caller too, as Teams sends them, and it is answered 200. A 1:1 chat,
 /// a meeting's chat or a stream takes no name (400), as Teams offers none there.
 pub(crate) fn topic(state: &mut State, call: &Call<'_>, id: &str) -> ResponseTemplate {
     let kind = match member_of(state, id, &call.caller) {
@@ -447,7 +448,6 @@ pub(crate) fn topic(state: &mut State, call: &Call<'_>, id: &str) -> ResponseTem
         return status(400);
     }
     let arrival = state.tick();
-    let base = state.chat_base();
     let Some(conversation) = state.conversation_mut(id) else {
         return status(404);
     };
@@ -459,12 +459,29 @@ pub(crate) fn topic(state: &mut State, call: &Call<'_>, id: &str) -> ResponseTem
     } else {
         properties.insert("topic".to_owned(), json!(topic));
     }
+    if let Some(conversation) = state.conversation(id) {
+        let mut thread = thread_body(state, conversation);
+        object(&mut thread).insert("version".to_owned(), json!(arrival));
+        state.queue(id, id, EventKind::ThreadUpdate, &thread);
+    }
+    let Some(message) = topic_line(state, id, &call.caller, &topic, arrival) else {
+        return status(404);
+    };
+    store(state, id, id, None, message, arrival);
+    status(200)
+}
+
+/// The thread's `ThreadActivity/TopicUpdate` line in the chat `id`: `initiator` gave it the name `topic` (an empty one
+/// took the name off) at `arrival`.
+fn topic_line(state: &mut State, id: &str, initiator: &str, topic: &str, arrival: u64) -> Option<Value> {
+    let base = state.chat_base();
+    let conversation = state.conversation_mut(id)?;
     let value = if topic.is_empty() {
         "<value />".to_owned()
     } else {
-        format!("<value>{}</value>", escape_text(&topic))
+        format!("<value>{}</value>", escape_text(topic))
     };
-    let message = json!({
+    Some(json!({
         "sequenceId": conversation.next_sequence(),
         "conversationid": id,
         "conversationLink": format!("{base}/v1/users/ME/conversations/{id}"),
@@ -473,16 +490,13 @@ pub(crate) fn topic(state: &mut State, call: &Call<'_>, id: &str) -> ResponseTem
         "version": arrival.to_string(),
         "messagetype": "ThreadActivity/TopicUpdate",
         "content": format!(
-            "<topicupdate><eventtime>{arrival}</eventtime><initiator>{}</initiator>{value}</topicupdate>",
-            call.caller
+            "<topicupdate><eventtime>{arrival}</eventtime><initiator>{initiator}</initiator>{value}</topicupdate>"
         ),
         "from": format!("{base}/v1/users/ME/contacts/{id}"),
         "composetime": iso_time(arrival, 7),
         "originalarrivaltime": iso_time(arrival, 7),
         "properties": {},
-    });
-    store(state, id, id, None, message, arrival);
-    status(200)
+    }))
 }
 
 /// `text` as XML character data.

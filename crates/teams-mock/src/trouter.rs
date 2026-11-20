@@ -15,7 +15,7 @@
 //! - **Deliveries**: once a registration names the socket's endpoint, the chat service mock's queued events for the
 //!   account are taken and delivered as `3:::{…}` frames shaped like `deliveries.json`'s: a message as `NewMessage`,
 //!   typing as `NewMessage` of `Control/Typing` (not stored), an edit, a delete or a reaction as `MessageUpdate`, the
-//!   message as a read gives it. Read receipts and chat creation stay queued
+//!   message as a read gives it; a group chat's new name as the thread's `ThreadUpdate`. Read receipts and chat creation stay queued
 //!   ([`crate::ChatServiceMock::take_events`]): no capture showed what another member is told of them. Every delivered
 //!   event but typing is **stored**: each later connect of the account replays them (`"mstore":true`, the same `id`),
 //!   as the service replays unanswered deliveries; the client never answers, so they never leave the store.
@@ -982,6 +982,7 @@ fn resource_type(kind: EventKind) -> Option<&'static str> {
         EventKind::Message | EventKind::Typing => Some("NewMessage"),
         EventKind::Edit | EventKind::Delete | EventKind::Reaction => Some("MessageUpdate"),
         EventKind::ConversationUpdate => Some("ConversationUpdate"),
+        EventKind::ThreadUpdate => Some("ThreadUpdate"),
         EventKind::ReadReceipt | EventKind::ChatCreated => None,
     }
 }
@@ -992,12 +993,17 @@ fn event_message(event: &ChatEvent, id: u64, own_base: Option<&str>) -> Value {
     let base = own_base.unwrap_or(NOTIFICATIONS);
     let chat = &event.conversation;
     let conversation_link = format!("{base}/conversations/{chat}");
-    if event.kind == EventKind::ConversationUpdate {
+    let whole = match event.kind {
+        EventKind::ConversationUpdate => Some(conversation_link.clone()),
+        EventKind::ThreadUpdate => Some(format!("{base}/threads/{chat}")),
+        _ => None,
+    };
+    if let Some(link) = whole {
         return json!({
             "time": iso_time(now_ms(), 7),
             "type": "EventMessage",
-            "resourceLink": conversation_link,
-            "resourceType": "ConversationUpdate",
+            "resourceLink": link,
+            "resourceType": resource_type(event.kind).unwrap_or_default(),
             "resource": event.resource,
             "isactive": true,
         });

@@ -34,9 +34,10 @@
 //!   (`…/members`) and the filtered view (`…/filtered`, refused as the service refused it);
 //! - writes: message posts and typing (`POST …/messages`), edits (`PUT …/messages/<id>`), soft deletes, reactions
 //!   (`PUT`/`DELETE …/messages/<id>/properties?name=emotions`), read receipts (`PUT
-//!   …/conversations/<id>/properties?name=consumptionhorizon`) and chat creation (`POST v1/threads`). Each changes
-//!   the state every later read shows and queues a [`ChatEvent`] for each **other** member of the chat
-//!   ([`ChatServiceMock::take_events`]); the writer gets none.
+//!   …/conversations/<id>/properties?name=consumptionhorizon`), chat creation (`POST v1/threads`) and group chat
+//!   names (`PUT v1/threads/<id>/properties?name=topic`). Each changes the state every later read shows and queues a
+//!   [`ChatEvent`] for each **other** member of the chat ([`ChatServiceMock::take_events`]); the writer gets none, but
+//!   a name's `ThreadUpdate` and its line go to every member, the writer too, as Teams sends them.
 //!
 //! **CSA** (`csa.rs`, M2 Task 16): its one read the native client sends, the account's teams and their channels (`GET
 //! /api/csa/<region>/api/v3/teams/users/me` with the web client's query), from `tests/fixtures/csa/teams.json`, under
@@ -215,7 +216,8 @@ pub struct ChatEvent {
     /// The message as a read gives it after the write ([`EventKind::Message`], [`EventKind::Edit`],
     /// [`EventKind::Delete`], [`EventKind::Reaction`]); the thread read for [`EventKind::ChatCreated`];
     /// `{"consumptionhorizon": …}` for [`EventKind::ReadReceipt`]; `{"messagetype": …}` for [`EventKind::Typing`]; the
-    /// conversation as the service tells it for [`EventKind::ConversationUpdate`].
+    /// conversation as the service tells it for [`EventKind::ConversationUpdate`]; the thread as a read gives it, at its
+    /// new `version`, for [`EventKind::ThreadUpdate`].
     pub resource: Value,
 }
 
@@ -231,6 +233,8 @@ pub enum EventKind {
     ChatCreated,
     /// A conversation changed, delivered as its `ConversationUpdate` (only ever queued by a test).
     ConversationUpdate,
+    /// A thread changed, delivered as its `ThreadUpdate`: a group chat named, renamed or unnamed.
+    ThreadUpdate,
 }
 
 /// The running mock: a local HTTP server on loopback and the state its answers come from. Dropping it stops serving.

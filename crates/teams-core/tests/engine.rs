@@ -4311,19 +4311,24 @@ async fn topic_of(native: &Native, chat: &str) -> Option<String> {
 }
 
 /// A group chat's `ThreadUpdate` as Teams pushes it after a rename (2026-11-20): the whole thread at its `version`, its
-/// `properties` carrying the `topic`, or leaving it out once the name is taken off.
-fn renamed_update(thread: &str, topic: Option<&str>, version: u64) -> Value {
-    let mut properties = json!({"threadType": "chat", "historydisclosed": "false"});
-    if let Some(topic) = topic {
-        properties["topic"] = json!(topic);
-    }
+/// `properties` carrying the `topic`.
+fn renamed_update(thread: &str, topic: &str, version: u64) -> Value {
+    let properties = json!({"threadType": "chat", "historydisclosed": "false", "topic": topic});
     let resource =
         json!({"id": thread, "type": "Thread", "version": version, "rosterVersion": 1, "properties": properties});
     json!({"type": "EventMessage", "resourceType": "ThreadUpdate", "resource": resource})
 }
 
-/// A thread version (ms) later than every version the mock gives: the pushes of a test's renames.
-const RENAMED_AT: u64 = 1_900_000_000_000;
+/// Waits until `native`'s store calls `chat` by `topic` (`None`: by its people).
+async fn named(native: &mut Native, chat: &str, topic: Option<&str>) {
+    while topic_of(native, chat).await.as_deref() != topic {
+        native
+            .event(|event| {
+                matches!(event, Event::ConversationChanged { conversation } if conversation == chat).then_some(())
+            })
+            .await;
+    }
+}
 
 #[tokio::test]
 async fn a_group_chat_renamed_is_called_by_its_new_name_at_once_and_its_people_see_it_live() {
@@ -4334,6 +4339,7 @@ async fn a_group_chat_renamed_is_called_by_its_new_name_at_once_and_its_people_s
     let mut b = native(&lab, LAB_B, How::default());
     b.ready().await;
     assert_eq!(topic_of(&b, &chat).await.as_deref(), Some("Lab trio 39"));
+    let reads = thread_reads_of(&lab, &chat).await;
 
     // a renames it: once the write went through, a's own client calls it by the new name and holds the thread's
     // "changed the group name" event
@@ -4363,24 +4369,12 @@ async fn a_group_chat_renamed_is_called_by_its_new_name_at_once_and_its_people_s
     );
     assert!(event.content.contains(LAB_A), "{}", event.content);
 
-    // b's client, which only looks on, takes the name the thread's update carries, with no read of its own
-    assert_eq!(
-        topic_of(&b, &chat).await.as_deref(),
-        Some("Lab trio 39"),
-        "nothing told b yet"
-    );
-    let reads = thread_reads_of(&lab, &chat).await;
-    lab.trouter
-        .deliver_chat(LAB_B, &renamed_update(&chat, Some("Lab trio 40"), RENAMED_AT + 2));
-    b.event(|event| {
-        matches!(event, Event::ConversationChanged { conversation } if *conversation == chat).then_some(())
-    })
-    .await;
-    assert_eq!(topic_of(&b, &chat).await.as_deref(), Some("Lab trio 40"));
+    // b's client, which only looks on, takes the name the thread's pushed update carries, with no read of its own
+    named(&mut b, &chat, Some("Lab trio 40")).await;
     assert_eq!(thread_reads_of(&lab, &chat).await, reads);
     // an older name's update that comes after it (late, or replayed on connect) does not bring the old name back
     lab.trouter
-        .deliver_chat(LAB_B, &renamed_update(&chat, Some("Lab trio 38"), RENAMED_AT + 1));
+        .deliver_chat(LAB_B, &renamed_update(&chat, "Lab trio 38", 1));
     after_what_came_before(&lab, &mut b, &chat).await;
     assert_eq!(topic_of(&b, &chat).await.as_deref(), Some("Lab trio 40"));
 
@@ -4394,13 +4388,7 @@ async fn a_group_chat_renamed_is_called_by_its_new_name_at_once_and_its_people_s
     assert_eq!(unnamed.state, OutboxState::Sent, "{unnamed:?}");
     a.drain().await;
     assert_eq!(topic_of(&a, &chat).await, None);
-    lab.trouter
-        .deliver_chat(LAB_B, &renamed_update(&chat, None, RENAMED_AT + 3));
-    b.event(|event| {
-        matches!(event, Event::ConversationChanged { conversation } if *conversation == chat).then_some(())
-    })
-    .await;
-    assert_eq!(topic_of(&b, &chat).await, None);
+    named(&mut b, &chat, None).await;
     // an update that says nothing of the name (no properties) leaves it as it is
     lab.trouter.deliver_chat(LAB_B, &thread_update(&chat, Some(1)));
     after_what_came_before(&lab, &mut b, &chat).await;

@@ -11,9 +11,10 @@
 //!   characters and says Teams' words past them; an empty name takes the name off; a failed save says so, keeps the
 //!   old name and a retry works. The new name shows in the list, the header, Ctrl+K and the "changed the group name"
 //!   line, for b too, without a sync by hand. No pencil in a 1:1 chat or a meeting chat. Teams Light and Dark, a font
-//!   of 20 px. The name stays after a restart. The read-only mode shows no pencil. The mock posts a rename's line but
-//!   pushes no `ThreadUpdate`, so after each rename the test plays Teams' captured push to a and b.
-//! - `narrow`: a window 640 px wide: the popup and its buttons whole, in Light, Dark and a font of 20 px.
+//!   of 20 px. The name stays after a restart. The read-only mode shows no pencil. b and a see the other's name from
+//!   the thread's `ThreadUpdate` the mock pushes, as Teams does.
+//! - `narrow`: a window 640 px wide: the popup and its buttons whole, in Light, Dark and a font of 20 px; then the
+//!   window narrowed to 480 and 360 px under the open popup: the popup moves and narrows to stay whole in it.
 //! - `own`: the real `ngteams-server` binary; the app runs its made-up account a, b is a client in the parent. a
 //!   renames the group chat b made: b's store has the name. b renames and unnames it: a's window shows it at once.
 //!
@@ -166,8 +167,6 @@ struct Mock {
     runtime: tokio::runtime::Runtime,
     service: ChatServiceMock,
     trouter: teams_mock::TrouterMock,
-    /// How many renames [`Mock::push_last_rename`] pushed.
-    pushes: std::cell::Cell<u64>,
 }
 
 impl Mock {
@@ -192,7 +191,6 @@ impl Mock {
             runtime,
             service: mock,
             trouter,
-            pushes: std::cell::Cell::new(0),
         })
     }
 
@@ -224,25 +222,6 @@ impl Mock {
             .filter_map(|request| serde_json::from_slice::<Value>(&request.body).ok())
             .map(|body| body["topic"].as_str().unwrap_or("<no topic>").to_owned())
             .collect()
-    }
-
-    /// The chat service's push after the last rename, played to a and b: the mock posts the rename's line but pushes no
-    /// `ThreadUpdate`, which Teams pushes to every member (`docs/protocol/trouter.md`; the teams-core test of the rename
-    /// plays it the same way). The whole thread at a later version, its `properties.topic` left out once the name is off.
-    fn push_last_rename(&self) {
-        let pushes = self.pushes.get() + 1;
-        self.pushes.set(pushes);
-        let topic = self.renames().pop().unwrap_or_default();
-        let mut properties = serde_json::json!({"threadType": "chat", "historydisclosed": "false"});
-        if !topic.is_empty() {
-            properties["topic"] = serde_json::json!(topic);
-        }
-        let resource = serde_json::json!({"id": ABC_CHAT, "type": "Thread", "version": 1_900_000_000_000_u64 + pushes,
-            "rosterVersion": 1, "properties": properties});
-        let body = serde_json::json!({"type": "EventMessage", "resourceType": "ThreadUpdate", "resource": resource});
-        for account in [LAB_A, LAB_B] {
-            self.trouter.deliver_chat(account, &body);
-        }
     }
 
     /// The next rename fails as a lost gateway does (502): the world doesn't change.
@@ -391,6 +370,25 @@ impl<'a> User<'a> {
             fs::copy(&png, dir.join(&file))?;
         }
         Ok(kept)
+    }
+
+    /// niri sizes the app's window `width` px wide, as a user's drag does; the window keeps the screen's left edge.
+    fn resize(&mut self, width: u32) -> SandboxResult {
+        self.sandbox
+            .niri_msg(&["action", "set-column-width", &width.to_string()])?;
+        let started = Instant::now();
+        loop {
+            let windows: Value = serde_json::from_str(&self.sandbox.niri_msg(&["-j", "windows"])?)?;
+            let took = windows.as_array().into_iter().flatten().any(|window| {
+                window["is_focused"] == true && window["layout"]["window_size"][0].as_f64() == Some(f64::from(width))
+            });
+            if took {
+                thread::sleep(SETTLE);
+                return Ok(());
+            }
+            ensure(started.elapsed() < WAIT, || format!("the window never took {width} px"))?;
+            thread::sleep(STEP);
+        }
     }
 
     /// The screen now, the pointer parked.
@@ -583,7 +581,6 @@ fn save_and_enter(user: &mut User<'_>, mock: &Mock, current: &str) -> SandboxRes
     note(&format!("the popup's Save at {save:?}"));
     user.click(save.centre())?;
     user.until("Save closed the popup", |state| state["rename"].is_null())?;
-    mock.push_last_rename();
     let renames = mock.renames();
     ensure(renames == ["QA made-up group"], || {
         format!("Save sent {renames:?}; expected the trimmed name")
@@ -621,7 +618,6 @@ fn save_and_enter(user: &mut User<'_>, mock: &Mock, current: &str) -> SandboxRes
     user.type_text("Made-up second name")?;
     user.keys(&["enter"])?;
     user.until("Enter closed the popup", |state| state["rename"].is_null())?;
-    mock.push_last_rename();
     user.row_named(ABC_CHAT, "Made-up second name")?;
     note("Save and Enter rename it, trimmed; the same name sends nothing");
     Ok(())
@@ -655,7 +651,6 @@ fn b_sees_and_renames(user: &mut User<'_>, mock: &Mock) -> SandboxResult {
     let save = user.save_button()?;
     user.click(save.centre())?;
     user.until("b's Save closed the popup", |state| state["rename"].is_null())?;
-    mock.push_last_rename();
     user.row_named(ABC_CHAT, "Named by b")?;
     user.keys(&["ctrl+alt+up"])?;
     user.until("a shown", |state| state["shown"] == "a")?;
@@ -729,7 +724,6 @@ fn failure_and_retry(user: &mut User<'_>, mock: &Mock) -> SandboxResult {
     let save = user.save_button()?;
     user.click(save.centre())?;
     user.until("Save again closed the popup", |state| state["rename"].is_null())?;
-    mock.push_last_rename();
     user.row_named(ABC_CHAT, "Made-up after a failure")?;
     note("a failed save: the popup says so, the old name stays, Save again renames it");
     Ok(())
@@ -742,7 +736,6 @@ fn unname(user: &mut User<'_>, mock: &Mock) -> SandboxResult {
     user.until("the box empty", |state| state["rename"]["value"] == "")?;
     user.keys(&["enter"])?;
     user.until("closed", |state| state["rename"].is_null())?;
-    mock.push_last_rename();
     let state = user.until("the chat called by its people", |state| {
         User::row(state, ABC_CHAT).is_some_and(|row| row["name"] != "Made-up after a failure")
     })?;
@@ -759,7 +752,6 @@ fn unname(user: &mut User<'_>, mock: &Mock) -> SandboxResult {
     user.type_text("QA made-up group")?;
     user.keys(&["enter"])?;
     user.until("closed", |state| state["rename"].is_null())?;
-    mock.push_last_rename();
     user.row_named(ABC_CHAT, "QA made-up group")?;
     Ok(())
 }
@@ -802,12 +794,19 @@ fn looks(user: &mut User<'_>) -> SandboxResult {
 
 /// The popup's Save and Cancel whole on the screen (`name`'s shot).
 fn popup_whole(user: &mut User<'_>, name: &str) -> SandboxResult {
+    popup_whole_in(user, name, None)
+}
+
+/// The popup's Save and Cancel whole in the app's window, `window` px wide from the screen's left edge (the whole
+/// screen when `None`), in `name`'s shot.
+fn popup_whole_in(user: &mut User<'_>, name: &str, window: Option<u32>) -> SandboxResult {
     let shot = user.shot(name)?;
     let image = image::open(&shot)?.to_rgb8();
     let brand = user.colour("brand")?;
     // a part of a button counts too: one cut at the window's edge is still seen
     let save = pixels::filled_button(&image, brand, TITLE, 20).ok_or("no Save button at all")?;
-    let (width, height) = image.dimensions();
+    let (screen, height) = image.dimensions();
+    let width = window.unwrap_or(screen);
     ensure(save.x1 + 2 < width && save.y1 + 2 < height, || {
         format!("{name}: the popup runs past the window's edge: Save {save:?} is cut at {width}x{height}")
     })?;
@@ -845,7 +844,8 @@ fn read_only(user: &mut User<'_>, pencil: &RgbImage) -> SandboxResult {
     Ok(())
 }
 
-/// A window 640 px wide: the popup and its buttons whole in Light, Dark and a font of 20 px.
+/// A window 640 px wide: the popup and its buttons whole in Light, Dark and a font of 20 px; and in a window narrowed
+/// to 480 and 360 px.
 fn narrow() -> SandboxResult {
     let Some(sandbox) = sandbox(640)? else {
         return Ok(());
@@ -883,5 +883,23 @@ fn narrow_flows(user: &mut User<'_>) -> SandboxResult {
         user.keys(&["escape"])?;
         user.until("closed", |state| state["rename"].is_null())?;
     }
+    user.ask("font 14")?;
+    user.ask("theme light")?;
+    // narrower still: the user narrows the window under the open popup (the pane is too narrow for the pencil then)
+    user.open_popup(ABC_CHAT, "A made-up name long enough to fill the box of the popup")?;
+    for width in [480, 360] {
+        user.resize(width)?;
+        for theme in ["light", "dark"] {
+            user.ask(&format!("theme {theme}"))?;
+            thread::sleep(SETTLE);
+            if let Err(error) = popup_whole_in(user, &format!("23-narrower-popup-{width}-{theme}"), Some(width)) {
+                note(&format!("FINDING {error}"));
+                cut.push(error.to_string());
+            }
+        }
+        user.ask("theme light")?;
+    }
+    user.keys(&["escape"])?;
+    user.until("closed", |state| state["rename"].is_null())?;
     ensure(cut.is_empty(), || cut.join("; "))
 }
