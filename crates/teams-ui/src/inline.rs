@@ -41,7 +41,8 @@ use std::time::{Duration, Instant};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId, Hsla, InspectorElementId,
     InteractiveElement, IntoElement, LayoutId, ParentElement as _, Pixels, Point, RenderImage, RenderOnce,
-    SharedString, Size, StatefulInteractiveElement as _, Style, Styled as _, TextLayout, Window, div, img, px, size,
+    SharedString, Size, StatefulInteractiveElement as _, Style, Styled as _, TextLayout, Window, div, img, point, px,
+    size,
 };
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame, ImageDecoder as _, Limits, RgbaImage, imageops};
@@ -1052,12 +1053,15 @@ impl Element for InlineText {
             ) else {
                 continue;
             };
-            // the place's width on its line (a place the line wraps in takes the emoticon's side)
+            // the place's width on its line (a place the line wraps in takes the emoticon's side); in right-to-left
+            // text its end is left of its start
             let end = self
                 .layout
                 .position_for_index(place.end)
-                .filter(|end| end.y == start.y && end.x > start.x);
-            let width = end.map_or(side, |end| end.x - start.x);
+                .filter(|end| end.y == start.y && end.x != start.x);
+            let (start, width) = end.map_or((start, side), |end| {
+                (point(start.x.min(end.x), start.y), (end.x - start.x).abs())
+            });
             let laid = &line.unwrapped_layout;
             let metrics = LineMetrics {
                 height,

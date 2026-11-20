@@ -1,4 +1,6 @@
-use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
+use crate::{
+    FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, TextAlign, point, px,
+};
 use collections::FxHashMap;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
@@ -13,6 +15,7 @@ use std::{
 };
 
 use super::LineWrapper;
+use super::bidi::{self, BidiRows};
 
 /// A laid out and styled line of text
 #[derive(Default, Debug)]
@@ -286,6 +289,9 @@ pub struct WrappedLineLayout {
 
     /// The width of the line, if it was wrapped
     pub wrap_width: Option<Pixels>,
+
+    /// The visual order of each row, when the line holds right-to-left text.
+    pub(crate) bidi: Option<BidiRows>,
 }
 
 /// A boundary at which a line was wrapped
@@ -345,6 +351,42 @@ impl WrappedLineLayout {
         &self.unwrapped_layout.runs
     }
 
+    /// How far right the given alignment within `align_width` puts a row: as painting puts it.
+    pub fn row_offset(&self, row: usize, align: TextAlign, align_width: Pixels) -> Pixels {
+        if align == TextAlign::Left {
+            return Pixels::ZERO;
+        }
+        let row_width = match &self.bidi {
+            Some(rows) => rows.row_width(row),
+            None => {
+                let x_at = |boundary: Option<&WrapBoundary>| {
+                    boundary.map(|boundary| {
+                        self.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
+                            .position
+                            .x
+                    })
+                };
+                let start = if row == 0 {
+                    Some(Pixels::ZERO)
+                } else {
+                    x_at(self.wrap_boundaries.get(row - 1))
+                };
+                let end = x_at(self.wrap_boundaries.get(row)).or_else(|| {
+                    (row == self.wrap_boundaries.len()).then_some(self.unwrapped_layout.width)
+                });
+                match (start, end) {
+                    (Some(start), Some(end)) => end - start,
+                    _ => return Pixels::ZERO,
+                }
+            }
+        };
+        match align {
+            TextAlign::Left => Pixels::ZERO,
+            TextAlign::Center => (align_width - row_width) / 2.,
+            TextAlign::Right => align_width - row_width,
+        }
+    }
+
     /// The index corresponding to a given position in this layout for the given line height.
     ///
     /// See also [`Self::closest_index_for_position`].
@@ -371,11 +413,14 @@ impl WrappedLineLayout {
 
     fn _index_for_position(
         &self,
-        mut position: Point<Pixels>,
+        position: Point<Pixels>,
         line_height: Pixels,
         closest: bool,
     ) -> Result<usize, usize> {
         let wrapped_line_ix = (position.y / line_height) as usize;
+        if let Some(bidi) = &self.bidi {
+            return bidi.index_for_position(wrapped_line_ix, position.x, closest);
+        }
 
         let wrapped_line_start_index;
         let wrapped_line_start_x;
@@ -429,6 +474,11 @@ impl WrappedLineLayout {
 
     /// Returns the pixel position for the given byte index.
     pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
+        if let Some(bidi) = &self.bidi {
+            return bidi
+                .position_for_index(index)
+                .map(|(row, x)| point(x, line_height * row as f32));
+        }
         let mut line_start_ix = 0;
         let mut line_end_indices = self
             .wrap_boundaries
@@ -609,6 +659,7 @@ impl LineLayoutCache {
         runs: &[FontRun],
         wrap_width: Option<Pixels>,
         max_lines: Option<usize>,
+        rtl: bool,
     ) -> Arc<WrappedLineLayout>
     where
         Text: AsRef<str>,
@@ -621,6 +672,7 @@ impl LineLayoutCache {
             runs,
             wrap_width,
             force_width: None,
+            rtl,
         } as &dyn AsCacheKeyRef;
 
         let current_frame = self.current_frame.upgradable_read();
@@ -639,16 +691,31 @@ impl LineLayoutCache {
         } else {
             drop(current_frame);
             let text = SharedString::from(text);
-            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
+            let has_bidi = rtl || bidi::needs_bidi(&text);
+            let unwrapped_layout = if has_bidi {
+                let shaped = bidi::shape_in_direction(
+                    self.platform_text_system.as_ref(),
+                    &text,
+                    font_size,
+                    runs,
+                    rtl,
+                );
+                Arc::new(bidi::logical_layout(&shaped))
+            } else {
+                self.layout_line::<&SharedString>(&text, font_size, runs, None)
+            };
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
                 SmallVec::new()
             };
+            let bidi =
+                has_bidi.then(|| BidiRows::new(&text, &unwrapped_layout, &wrap_boundaries, rtl));
             let layout = Arc::new(WrappedLineLayout {
                 unwrapped_layout,
                 wrap_boundaries,
                 wrap_width,
+                bidi,
             });
             let key = Arc::new(CacheKey {
                 text,
@@ -656,6 +723,7 @@ impl LineLayoutCache {
                 runs: SmallVec::from(runs),
                 wrap_width,
                 force_width: None,
+                rtl,
             });
 
             let mut current_frame = self.current_frame.write();
@@ -686,6 +754,7 @@ impl LineLayoutCache {
             runs,
             wrap_width: None,
             force_width,
+            rtl: false,
         } as &dyn AsCacheKeyRef;
 
         let current_frame = self.current_frame.upgradable_read();
@@ -714,6 +783,7 @@ impl LineLayoutCache {
                 runs: SmallVec::from(runs),
                 wrap_width: None,
                 force_width,
+                rtl: false,
             });
             let layout = Arc::new(layout);
             current_frame.lines.insert(key.clone(), layout.clone());
@@ -943,6 +1013,7 @@ struct CacheKey {
     runs: SmallVec<[FontRun; 1]>,
     wrap_width: Option<Pixels>,
     force_width: Option<Pixels>,
+    rtl: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -952,6 +1023,7 @@ struct CacheKeyRef<'a> {
     runs: &'a [FontRun],
     wrap_width: Option<Pixels>,
     force_width: Option<Pixels>,
+    rtl: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1044,6 +1116,7 @@ impl AsCacheKeyRef for CacheKey {
             runs: self.runs.as_slice(),
             wrap_width: self.wrap_width,
             force_width: self.force_width,
+            rtl: self.rtl,
         }
     }
 }

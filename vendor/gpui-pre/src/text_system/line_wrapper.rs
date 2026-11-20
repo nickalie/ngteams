@@ -530,6 +530,16 @@ impl LineWrapper {
         // Bengali (https://en.wikipedia.org/wiki/Bengali_(Unicode_block))
         matches!(c, '\u{0980}'..='\u{09FF}') ||
 
+        // Greek, Cyrillic Supplement, Armenian, Hebrew, Arabic, Syriac, Thaana and their
+        // extensions and presentation forms: these scripts put spaces between words, so a
+        // line breaks at a space, not inside a word. The zero width (non-)joiner stays in it.
+        matches!(c, '\u{0370}'..='\u{03FF}') ||
+        matches!(c, '\u{0500}'..='\u{07BF}') ||
+        matches!(c, '\u{0860}'..='\u{08FF}') ||
+        matches!(c, '\u{FB1D}'..='\u{FDFF}') ||
+        matches!(c, '\u{FE70}'..='\u{FEFF}') ||
+        matches!(c, '\u{200C}' | '\u{200D}') ||
+
         // Some other known special characters that should be treated as word characters,
         // e.g. `a-b`, `var_name`, `I'm`/`won’t`, '@mention`, `#hashtag`, `100%`, `3.1415`,
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc. Trailing punctuation like `,`, `.`, `:`, `;`

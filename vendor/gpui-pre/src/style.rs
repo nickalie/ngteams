@@ -432,6 +432,18 @@ pub enum TextAlign {
     Right,
 }
 
+/// The direction of the paragraphs of a text: where its lines start and how its right-to-left and left-to-right
+/// runs follow each other (the paragraph level of the Unicode Bidirectional Algorithm, HTML's `dir`)
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum TextDirection {
+    /// Left to right, as HTML without a `dir`
+    #[default]
+    Ltr,
+
+    /// Right to left
+    Rtl,
+}
+
 /// The properties that can be used to style text in GPUI
 #[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -480,6 +492,9 @@ pub struct TextStyle {
 
     /// The number of lines to display before truncating the text
     pub line_clamp: Option<usize>,
+
+    /// The direction of the text's paragraphs
+    pub direction: TextDirection,
 }
 
 impl Default for TextStyle {
@@ -501,6 +516,7 @@ impl Default for TextStyle {
             text_overflow: None,
             text_align: TextAlign::default(),
             line_clamp: None,
+            direction: TextDirection::default(),
         }
     }
 }

@@ -1345,3 +1345,76 @@ fn a_code_block_is_drawn_as_teams_card_and_its_button_copies_the_code() {
         Some("{\n    \"kind\": \"made up\",\n    \"next\": null\n}")
     );
 }
+
+#[test]
+fn a_message_takes_the_direction_of_its_first_strong_letter_as_teams_dir_auto_does() {
+    let reply = format!(
+        "<blockquote itemscope=\"\" itemtype=\"http://schema.skype.com/Reply\" itemid=\"1\">\
+         <strong itemprop=\"mri\" itemid=\"{LAB_B}\">Made-up Name</strong><span itemprop=\"time\" itemid=\"1\"></span>\
+         <p itemprop=\"preview\">مرحبا</p></blockquote><p>Fine, thanks.</p>"
+    );
+    for (content, rtl) in [
+        ("<p>مرحبا بكم</p><p>Hello</p>", true),
+        ("<p>Hello</p><p>مرحبا بكم</p>", false),
+        ("<p>12 — \"!</p><p>שלום</p>", true),
+        ("<p>12, 13.</p>", false),
+        ("<ul><li>عربي</li></ul>", true),
+        ("<table><tr><td>עברית</td></tr></table>", true),
+        ("<blockquote><p>عربي</p></blockquote><p>English</p>", true),
+        (reply.as_str(), false),
+        ("<hr><p>عربي</p>", true),
+        (
+            "<blockquote itemtype=\"http://schema.skype.com/Forward\"><p>عربي</p></blockquote>",
+            true,
+        ),
+    ] {
+        assert_eq!(laid_out(content).right_to_left(), rtl, "{content}");
+    }
+    assert_eq!(rich_text::text_strong_rtl("(12) ابت"), Some(true));
+    assert_eq!(rich_text::text_strong_rtl("(12)"), None);
+}
+
+#[test]
+fn a_right_to_left_message_puts_its_list_markers_at_the_right() {
+    for (content, rtl) in [
+        ("<ul><li>البند الأول</li></ul>", true),
+        ("<ul><li>First item</li></ul>", false),
+    ] {
+        let (cx, _) = drawn(content);
+        let marker = cx.debug_bounds("rich-list-marker").expect("the marker is drawn");
+        let item = cx.debug_bounds("rich-text").expect("the item is drawn");
+        if rtl {
+            assert!(
+                marker.left() >= item.right(),
+                "{content}: marker {marker:?}, item {item:?}"
+            );
+        } else {
+            assert!(
+                marker.right() <= item.left(),
+                "{content}: marker {marker:?}, item {item:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_emoticon_inside_right_to_left_text_stands_on_its_place() {
+    // the stand-in shaper of the test platform gives each character 0.6 em
+    let inline = format!("<p>ابت{}ثج</p>", emoticon("smile", "\u{1f642}", 20));
+    let rendered = Arc::new(laid_out(&inline));
+    let app: &'static mut TestAppContext = Box::leak(Box::new(TestAppContext::single()));
+    let (_, cx) = app.add_window_view(|_, _| Holder { rendered });
+    cx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+    let advance = cx.update(|window, _| window.text_style().font_size.to_pixels(window.rem_size()) * 0.6);
+    let line = cx.debug_bounds("rich-text").expect("the line is drawn");
+    let drawn = cx.debug_bounds("rich-inline-emoticon").expect("the emoticon is drawn");
+    // right to left and aligned right: the first word's three letters at the right, then the place's two spaces
+    let place = (line.right() - advance * 5.0)..(line.right() - advance * 3.0);
+    let middle = drawn.center().x;
+    assert!(
+        middle >= place.start - px(1.0) && middle <= place.end + px(1.0),
+        "{drawn:?} on {place:?} of {line:?}"
+    );
+}

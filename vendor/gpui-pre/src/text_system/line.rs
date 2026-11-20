@@ -1,3 +1,4 @@
+use super::bidi::{self, BidiRows};
 use crate::{
     App, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point, RenderGlyphParams, Result,
     SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
@@ -471,6 +472,20 @@ impl WrappedLine {
             None => self.layout.wrap_width,
         };
 
+        if let Some(rows) = &self.layout.bidi {
+            return paint_bidi_line(
+                origin,
+                &self.layout.unwrapped_layout,
+                rows,
+                line_height,
+                align,
+                align_width,
+                &self.decoration_runs,
+                window,
+                cx,
+            );
+        }
+
         paint_line(
             origin,
             &self.layout.unwrapped_layout,
@@ -501,6 +516,19 @@ impl WrappedLine {
             Some(bounds) => Some(bounds.size.width),
             None => self.layout.wrap_width,
         };
+
+        if let Some(rows) = &self.layout.bidi {
+            return paint_bidi_background(
+                origin,
+                &self.layout.unwrapped_layout,
+                rows,
+                line_height,
+                align,
+                align_width,
+                &self.decoration_runs,
+                window,
+            );
+        }
 
         paint_line_background(
             origin,
@@ -784,6 +812,167 @@ fn paint_line(
             );
         }
 
+        Ok(())
+    })
+}
+
+/// The left edge of each row of a line that holds right-to-left text, and the bounds of all its rows.
+fn bidi_row_origins(
+    origin: Point<Pixels>,
+    layout: &LineLayout,
+    rows: &BidiRows,
+    line_height: Pixels,
+    align: TextAlign,
+    align_width: Option<Pixels>,
+) -> (Vec<Pixels>, Bounds<Pixels>) {
+    let align_width = align_width.unwrap_or(layout.width);
+    let mut bounds = Bounds::new(origin, size(px(0.), px(0.)));
+    let lefts = (0..rows.row_count())
+        .map(|row| {
+            let width = rows.row_width(row);
+            let left = match align {
+                TextAlign::Left => origin.x,
+                TextAlign::Center => origin.x + (align_width - width) / 2.,
+                TextAlign::Right => origin.x + align_width - width,
+            };
+            bounds = bounds.union(&Bounds::new(
+                point(left, origin.y + line_height * row as f32),
+                size(width, line_height),
+            ));
+            left
+        })
+        .collect();
+    (lefts, bounds)
+}
+
+fn decoration_run_ends(decoration_runs: &[DecorationRun]) -> Vec<usize> {
+    decoration_runs
+        .iter()
+        .scan(0, |end, run| {
+            *end += run.len as usize;
+            Some(*end)
+        })
+        .collect()
+}
+
+/// Paints a line that holds right-to-left text: each glyph where the visual order of its row puts it, and each
+/// underline and strikethrough under the clusters of its run, as one stretch for each group of neighbours.
+#[allow(clippy::too_many_arguments)]
+fn paint_bidi_line(
+    origin: Point<Pixels>,
+    layout: &LineLayout,
+    rows: &BidiRows,
+    line_height: Pixels,
+    align: TextAlign,
+    align_width: Option<Pixels>,
+    decoration_runs: &[DecorationRun],
+    window: &mut Window,
+    cx: &mut App,
+) -> Result<()> {
+    let (lefts, line_bounds) =
+        bidi_row_origins(origin, layout, rows, line_height, align, align_width);
+    window.paint_layer(line_bounds, |window| {
+        let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
+        let baseline_offset = point(px(0.), padding_top + layout.ascent);
+        let run_ends = decoration_run_ends(decoration_runs);
+        let text_system = cx.text_system().clone();
+        let mut flat_ix = 0;
+        for run in &layout.runs {
+            let max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
+            for glyph in &run.glyphs {
+                let (x, row) = rows.glyph(flat_ix);
+                flat_ix += 1;
+                let glyph_origin = point(
+                    lefts.get(row).copied().unwrap_or(origin.x) + x,
+                    origin.y + line_height * row as f32,
+                );
+                let color = decoration_runs
+                    .get(bidi::run_at(&run_ends, glyph.index))
+                    .map_or(black(), |decoration| decoration.color);
+                let max_glyph_bounds = Bounds {
+                    origin: glyph_origin,
+                    size: max_glyph_size,
+                };
+                if !max_glyph_bounds.intersects(&window.content_mask().bounds) {
+                    continue;
+                }
+                let at = glyph_origin + baseline_offset + point(px(0.), glyph.position.y);
+                if glyph.is_emoji {
+                    window.paint_emoji(at, run.font_id, glyph.id, layout.font_size)?;
+                } else {
+                    window.paint_glyph(at, run.font_id, glyph.id, layout.font_size, color)?;
+                }
+            }
+        }
+
+        let underline_offset = underline_y_offset(line_height, layout.ascent, layout.descent);
+        let strikethrough_offset = ((layout.ascent * 0.5) + baseline_offset.y) * 0.5;
+        for (row, left) in lefts.iter().enumerate() {
+            let top = origin.y + line_height * row as f32;
+            for segment in bidi::row_segments(rows.row(row), &run_ends) {
+                let Some(decoration) = decoration_runs.get(segment.run) else {
+                    continue;
+                };
+                if let Some(underline) = decoration.underline.as_ref() {
+                    window.paint_underline(
+                        point(*left + segment.x, top + underline_offset),
+                        segment.width,
+                        &UnderlineStyle {
+                            color: Some(underline.color.unwrap_or(decoration.color)),
+                            thickness: underline.thickness,
+                            wavy: underline.wavy,
+                        },
+                    );
+                }
+                if let Some(strikethrough) = decoration.strikethrough.as_ref() {
+                    window.paint_strikethrough(
+                        point(*left + segment.x, top + strikethrough_offset),
+                        segment.width,
+                        &StrikethroughStyle {
+                            color: Some(strikethrough.color.unwrap_or(decoration.color)),
+                            thickness: strikethrough.thickness,
+                        },
+                    );
+                }
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Paints the run backgrounds of a line that holds right-to-left text, under the clusters of each run.
+#[allow(clippy::too_many_arguments)]
+fn paint_bidi_background(
+    origin: Point<Pixels>,
+    layout: &LineLayout,
+    rows: &BidiRows,
+    line_height: Pixels,
+    align: TextAlign,
+    align_width: Option<Pixels>,
+    decoration_runs: &[DecorationRun],
+    window: &mut Window,
+) -> Result<()> {
+    let (lefts, line_bounds) =
+        bidi_row_origins(origin, layout, rows, line_height, align, align_width);
+    window.paint_layer(line_bounds, |window| {
+        let run_ends = decoration_run_ends(decoration_runs);
+        for (row, left) in lefts.iter().enumerate() {
+            let top = origin.y + line_height * row as f32;
+            for segment in bidi::row_segments(rows.row(row), &run_ends) {
+                if let Some(background) = decoration_runs
+                    .get(segment.run)
+                    .and_then(|decoration| decoration.background_color)
+                {
+                    window.paint_quad(fill(
+                        Bounds {
+                            origin: point(*left + segment.x, top),
+                            size: size(segment.width, line_height),
+                        },
+                        background,
+                    ));
+                }
+            }
+        }
         Ok(())
     })
 }

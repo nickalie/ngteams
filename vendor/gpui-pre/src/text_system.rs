@@ -1,3 +1,4 @@
+mod bidi;
 mod font_fallbacks;
 mod font_features;
 mod line;
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
-    StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
+    StrikethroughStyle, TextDirection, TextRenderingMode, UnderlineStyle, px,
 };
 use anyhow::{Context as _, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -755,6 +756,26 @@ impl WindowTextSystem {
         wrap_width: Option<Pixels>,
         line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
+        self.shape_text_in(
+            text,
+            font_size,
+            runs,
+            wrap_width,
+            line_clamp,
+            TextDirection::Ltr,
+        )
+    }
+
+    /// Like [`Self::shape_text`], with each line a paragraph of the given direction.
+    pub fn shape_text_in(
+        &self,
+        text: SharedString,
+        font_size: Pixels,
+        runs: &[TextRun],
+        wrap_width: Option<Pixels>,
+        line_clamp: Option<usize>,
+        direction: TextDirection,
+    ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
@@ -821,6 +842,7 @@ impl WindowTextSystem {
                 &font_runs,
                 wrap_width,
                 max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),
+                direction == TextDirection::Rtl,
             );
             wrapped_lines += layout.wrap_boundaries.len();
 

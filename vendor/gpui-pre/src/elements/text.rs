@@ -1,8 +1,8 @@
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
-    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextAlign,
+    TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
@@ -622,6 +622,7 @@ enum TextPaintPass {
 
 struct TextLayoutInner {
     len: usize,
+    text_align: TextAlign,
     lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
     wrap_width: Option<Pixels>,
@@ -715,7 +716,14 @@ impl TextLayout {
                         )
                     } else if let Some(unclipped) = window
                         .text_system()
-                        .shape_text(text.clone(), font_size, &runs, None, None)
+                        .shape_text_in(
+                            text.clone(),
+                            font_size,
+                            &runs,
+                            None,
+                            None,
+                            text_style.direction,
+                        )
                         .log_err()
                         && unclipped
                             .iter()
@@ -744,18 +752,20 @@ impl TextLayout {
 
                 let Some(lines) = window
                     .text_system()
-                    .shape_text(
+                    .shape_text_in(
                         text,
                         font_size,
                         &runs,
                         wrap_width,            // Wrap if we know the width.
                         text_style.line_clamp, // Limit the number of lines if line_clamp is set.
+                        text_style.direction,
                     )
                     .log_err()
                 else {
                     element_state.0.borrow_mut().replace(TextLayoutInner {
                         lines: Default::default(),
                         len: 0,
+                        text_align: text_style.text_align,
                         line_height,
                         wrap_width,
                         truncate_width,
@@ -775,6 +785,7 @@ impl TextLayout {
                 element_state.0.borrow_mut().replace(TextLayoutInner {
                     lines,
                     len,
+                    text_align: text_style.text_align,
                     line_height,
                     wrap_width,
                     truncate_width,
@@ -882,7 +893,12 @@ impl TextLayout {
                 line_origin.y = line_bottom;
                 line_start_ix += line.len() + 1;
             } else {
-                let position_within_line = position - line_origin;
+                let mut position_within_line = position - line_origin;
+                position_within_line.x -= line.row_offset(
+                    (position_within_line.y / line_height) as usize,
+                    element_state.text_align,
+                    bounds.size.width,
+                );
                 match line.index_for_position(position_within_line, line_height) {
                     Ok(index_within_line) => return Ok(line_start_ix + index_within_line),
                     Err(index_within_line) => return Err(line_start_ix + index_within_line),
@@ -917,7 +933,13 @@ impl TextLayout {
                 continue;
             } else {
                 let ix_within_line = index - line_start_ix;
-                return Some(line_origin + line.position_for_index(ix_within_line, line_height)?);
+                let mut position = line.position_for_index(ix_within_line, line_height)?;
+                position.x += line.row_offset(
+                    (position.y / line_height) as usize,
+                    element_state.text_align,
+                    bounds.size.width,
+                );
+                return Some(line_origin + position);
             }
         }
 

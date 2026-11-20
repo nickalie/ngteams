@@ -1,0 +1,1157 @@
+Right-to-left and mixed text, as a browser shows it (Unicode Bidirectional Algorithm, UAX #9). A platform shaper gives
+a line's glyphs in visual order: the right-to-left runs reversed, the glyph x positions out of text order, and, when
+the first strong letter is right-to-left, the whole line laid out as a right-to-left paragraph. Wrapping, painting and
+hit tests assume that x grows with the byte index, so a wrapped line lost its width: a fragment drew at the window's
+left edge and the rest of the paragraph was missing. Now `layout_wrapped_line` shapes a line that holds right-to-left
+text in its paragraph direction (a direction mark before it when its first strong letter has the other one), puts the
+glyphs into text order with each cluster's advance (`bidi::logical_layout`), wraps that, and lays out each row in
+visual order (`bidi::BidiRows`, with `unicode-bidi`). A wrapped line paints its glyphs, underlines, strikethroughs and
+backgrounds at those places, and finds an index from a point and a point from an index there. Text without
+right-to-left letters keeps its old layout. The paragraph direction is the new `TextStyle::direction`
+(`TextDirection`, `Styled::text_direction`, `WindowTextSystem::shape_text_in`), left-to-right unless set, as HTML
+without `dir`. A text element's hit tests also take its `text_align` into account (`WrappedLineLayout::row_offset`), as
+its painting does. Greek, Armenian, Hebrew, Arabic, Syriac and Thaana are word characters for wrapping, so a line
+breaks between their words, not inside them. Our own.
+
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -534,6 +534,10 @@
+ [dependencies.ttf-parser]
+ version = "0.25"
+ 
++[dependencies.unicode-bidi]
++version = "0.3.18"
++features = ["hardcoded-data"]
++
+ [dependencies.url]
+ version = "2.2"
+ 
+--- a/src/elements/text.rs
++++ b/src/elements/text.rs
+@@ -1,8 +1,8 @@
+ use crate::{
+     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
+     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
+-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
+-    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
++    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextAlign,
++    TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
+     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
+ };
+ use anyhow::Context as _;
+@@ -622,6 +622,7 @@
+ 
+ struct TextLayoutInner {
+     len: usize,
++    text_align: TextAlign,
+     lines: SmallVec<[WrappedLine; 1]>,
+     line_height: Pixels,
+     wrap_width: Option<Pixels>,
+@@ -715,7 +716,14 @@
+                         )
+                     } else if let Some(unclipped) = window
+                         .text_system()
+-                        .shape_text(text.clone(), font_size, &runs, None, None)
++                        .shape_text_in(
++                            text.clone(),
++                            font_size,
++                            &runs,
++                            None,
++                            None,
++                            text_style.direction,
++                        )
+                         .log_err()
+                         && unclipped
+                             .iter()
+@@ -744,18 +752,20 @@
+ 
+                 let Some(lines) = window
+                     .text_system()
+-                    .shape_text(
++                    .shape_text_in(
+                         text,
+                         font_size,
+                         &runs,
+                         wrap_width,            // Wrap if we know the width.
+                         text_style.line_clamp, // Limit the number of lines if line_clamp is set.
++                        text_style.direction,
+                     )
+                     .log_err()
+                 else {
+                     element_state.0.borrow_mut().replace(TextLayoutInner {
+                         lines: Default::default(),
+                         len: 0,
++                        text_align: text_style.text_align,
+                         line_height,
+                         wrap_width,
+                         truncate_width,
+@@ -775,6 +785,7 @@
+                 element_state.0.borrow_mut().replace(TextLayoutInner {
+                     lines,
+                     len,
++                    text_align: text_style.text_align,
+                     line_height,
+                     wrap_width,
+                     truncate_width,
+@@ -882,7 +893,12 @@
+                 line_origin.y = line_bottom;
+                 line_start_ix += line.len() + 1;
+             } else {
+-                let position_within_line = position - line_origin;
++                let mut position_within_line = position - line_origin;
++                position_within_line.x -= line.row_offset(
++                    (position_within_line.y / line_height) as usize,
++                    element_state.text_align,
++                    bounds.size.width,
++                );
+                 match line.index_for_position(position_within_line, line_height) {
+                     Ok(index_within_line) => return Ok(line_start_ix + index_within_line),
+                     Err(index_within_line) => return Err(line_start_ix + index_within_line),
+@@ -917,7 +933,13 @@
+                 continue;
+             } else {
+                 let ix_within_line = index - line_start_ix;
+-                return Some(line_origin + line.position_for_index(ix_within_line, line_height)?);
++                let mut position = line.position_for_index(ix_within_line, line_height)?;
++                position.x += line.row_offset(
++                    (position.y / line_height) as usize,
++                    element_state.text_align,
++                    bounds.size.width,
++                );
++                return Some(line_origin + position);
+             }
+         }
+ 
+--- a/src/styled.rs
++++ b/src/styled.rs
+@@ -2,7 +2,7 @@
+     self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
+     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
+     FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla, JustifyContent, Length,
+-    SharedString, StrikethroughStyle, StyleRefinement, TextAlign, TextOverflow,
++    SharedString, StrikethroughStyle, StyleRefinement, TextAlign, TextDirection, TextOverflow,
+     TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
+ };
+ pub use gpui_macros::{
+@@ -119,6 +119,12 @@
+         self
+     }
+ 
++    /// Sets the direction of the text's paragraphs (HTML's `dir`).
++    fn text_direction(mut self, direction: TextDirection) -> Self {
++        self.text_style().direction = Some(direction);
++        self
++    }
++
+     /// Sets the text alignment to left
+     fn text_left(mut self) -> Self {
+         self.text_align(TextAlign::Left)
+--- a/src/style.rs
++++ b/src/style.rs
+@@ -432,6 +432,18 @@
+     Right,
+ }
+ 
++/// The direction of the paragraphs of a text: where its lines start and how its right-to-left and left-to-right
++/// runs follow each other (the paragraph level of the Unicode Bidirectional Algorithm, HTML's `dir`)
++#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
++pub enum TextDirection {
++    /// Left to right, as HTML without a `dir`
++    #[default]
++    Ltr,
++
++    /// Right to left
++    Rtl,
++}
++
+ /// The properties that can be used to style text in GPUI
+ #[derive(Refineable, Clone, Debug, PartialEq)]
+ #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+@@ -480,6 +492,9 @@
+ 
+     /// The number of lines to display before truncating the text
+     pub line_clamp: Option<usize>,
++
++    /// The direction of the text's paragraphs
++    pub direction: TextDirection,
+ }
+ 
+ impl Default for TextStyle {
+@@ -501,6 +516,7 @@
+             text_overflow: None,
+             text_align: TextAlign::default(),
+             line_clamp: None,
++            direction: TextDirection::default(),
+         }
+     }
+ }
+--- a/src/text_system/bidi.rs
++++ b/src/text_system/bidi.rs
+@@ -0,0 +1,485 @@
++//! Bidirectional text (Unicode Standard Annex #9) for wrapped lines.
++//!
++//! A platform text system shapes a line in visual order: right-to-left runs come out reversed and the glyph x
++//! positions do not follow the text order. Wrapping, painting and hit tests of a wrapped line assume that x grows with
++//! the byte index, so a line that holds right-to-left text is put into logical order first ([`logical_layout`]): each
++//! cluster keeps its glyphs and its advance, and the clusters follow each other in text order. The line wraps on that
++//! layout. Then each row is put back into visual order on its own ([`BidiRows`]), as a browser does after it breaks
++//! the lines of a paragraph.
++//!
++//! The paragraph direction is the text style's ([`crate::TextDirection`]): left-to-right unless set, as in HTML
++//! without a `dir` attribute. Left-to-right text that holds no right-to-left character keeps the layout of the platform
++//! unchanged.
++
++use crate::{
++    FontRun, LineLayout, Pixels, PlatformTextSystem, ShapedGlyph, ShapedRun, WrapBoundary, px,
++};
++use collections::FxHashMap;
++use std::ops::Range;
++use unicode_bidi::{BidiClass, BidiInfo, Level, bidi_class};
++
++const LEFT_TO_RIGHT_MARK: &str = "\u{200E}";
++const RIGHT_TO_LEFT_MARK: &str = "\u{200F}";
++
++/// If the text holds a character that can show right to left: a right-to-left letter or an embedding, override or
++/// isolate that starts right-to-left text.
++pub(crate) fn needs_bidi(text: &str) -> bool {
++    text.chars().any(|character| {
++        character >= '\u{0590}'
++            && matches!(
++                bidi_class(character),
++                BidiClass::R | BidiClass::AL | BidiClass::RLE | BidiClass::RLO | BidiClass::RLI
++            )
++    })
++}
++
++fn starts_left_to_right(text: &str) -> bool {
++    text.chars()
++        .find_map(|character| match bidi_class(character) {
++            BidiClass::L => Some(true),
++            BidiClass::R | BidiClass::AL => Some(false),
++            _ => None,
++        })
++        .unwrap_or(true)
++}
++
++/// Shapes the line as a paragraph of the given direction. A platform shaper takes the direction of the paragraph from
++/// its first strong character, so a mark of the direction goes before a line whose first strong character has the
++/// other one. Without it, the shaper mirrors brackets and orders the neutral characters for the wrong direction.
++pub(crate) fn shape_in_direction(
++    platform: &dyn PlatformTextSystem,
++    text: &str,
++    font_size: Pixels,
++    runs: &[FontRun],
++    rtl: bool,
++) -> LineLayout {
++    if runs.is_empty() || starts_left_to_right(text) != rtl {
++        return platform.layout_line(text, font_size, runs);
++    }
++    let mark = if rtl {
++        RIGHT_TO_LEFT_MARK
++    } else {
++        LEFT_TO_RIGHT_MARK
++    };
++    let mark_len = mark.len();
++    let marked = format!("{mark}{text}");
++    let mut marked_runs = runs.to_vec();
++    marked_runs[0].len += mark_len;
++    let mut layout = platform.layout_line(&marked, font_size, &marked_runs);
++    for run in &mut layout.runs {
++        run.glyphs.retain(|glyph| glyph.index >= mark_len);
++        for glyph in &mut run.glyphs {
++            glyph.index -= mark_len;
++        }
++    }
++    layout.runs.retain(|run| !run.glyphs.is_empty());
++    layout.len = text.len();
++    layout
++}
++
++struct Placed<'a> {
++    run: usize,
++    order: usize,
++    glyph: &'a ShapedGlyph,
++}
++
++/// Puts the glyphs of a line into text order, each cluster with its own advance, and the clusters one after another
++/// from x = 0. A cluster is the glyphs that start at one byte index. Its visual left edge is its leftmost glyph, and
++/// its advance reaches to the left edge of the next cluster on the screen. Clusters at the same x keep the order of
++/// the platform, which is visual.
++pub(crate) fn logical_layout(layout: &LineLayout) -> LineLayout {
++    let mut placed: Vec<Placed<'_>> = layout
++        .runs
++        .iter()
++        .enumerate()
++        .flat_map(|(run, shaped)| shaped.glyphs.iter().map(move |glyph| (run, glyph)))
++        .enumerate()
++        .map(|(order, (run, glyph))| Placed { run, order, glyph })
++        .collect();
++    if placed.is_empty() {
++        return copy_layout(layout, Vec::new(), layout.width);
++    }
++
++    let mut by_index: FxHashMap<usize, (Pixels, usize)> = FxHashMap::default();
++    for item in &placed {
++        let (left, first) = by_index
++            .entry(item.glyph.index)
++            .or_insert((item.glyph.position.x, item.order));
++        if item.glyph.position.x < *left {
++            *left = item.glyph.position.x;
++        }
++        *first = (*first).min(item.order);
++    }
++    let mut clusters: Vec<(usize, Pixels, usize)> = by_index
++        .into_iter()
++        .map(|(index, (left, first))| (index, left, first))
++        .collect();
++    clusters.sort_by(|a, b| a.1.0.total_cmp(&b.1.0).then(a.2.cmp(&b.2)));
++    let right_edge = layout
++        .width
++        .max(clusters.last().map_or(px(0.), |cluster| cluster.1));
++    let mut advances: Vec<(usize, Pixels, Pixels)> = clusters
++        .iter()
++        .enumerate()
++        .map(|(ix, (index, left, _))| {
++            let next = clusters.get(ix + 1).map_or(right_edge, |cluster| cluster.1);
++            (*index, *left, next - *left)
++        })
++        .collect();
++    advances.sort_by_key(|(index, _, _)| *index);
++
++    placed.sort_by_key(|item| (item.glyph.index, item.order));
++    let mut runs: Vec<ShapedRun> = Vec::new();
++    let mut pen = px(0.);
++    let mut cluster_ix = 0;
++    let mut cluster_pen = px(0.);
++    for item in &placed {
++        while advances[cluster_ix].0 != item.glyph.index {
++            pen += advances[cluster_ix].2;
++            cluster_ix += 1;
++            cluster_pen = pen;
++        }
++        let (_, left, _) = advances[cluster_ix];
++        let mut glyph = item.glyph.clone();
++        glyph.position.x = cluster_pen + (item.glyph.position.x - left);
++        let font_id = layout.runs[item.run].font_id;
++        match runs.last_mut() {
++            Some(run) if run.font_id == font_id => run.glyphs.push(glyph),
++            _ => runs.push(ShapedRun {
++                font_id,
++                glyphs: vec![glyph],
++            }),
++        }
++    }
++    let width = advances.iter().map(|(_, _, advance)| *advance).sum();
++    copy_layout(layout, runs, width)
++}
++
++fn copy_layout(layout: &LineLayout, runs: Vec<ShapedRun>, width: Pixels) -> LineLayout {
++    LineLayout {
++        font_size: layout.font_size,
++        width,
++        ascent: layout.ascent,
++        descent: layout.descent,
++        runs,
++        len: layout.len,
++    }
++}
++
++/// A cluster as a row shows it.
++#[derive(Clone, Debug, PartialEq)]
++pub(crate) struct VisualCluster {
++    /// The bytes of the cluster.
++    pub range: Range<usize>,
++    /// The left edge, from the left edge of the row.
++    pub x: Pixels,
++    pub width: Pixels,
++    pub rtl: bool,
++}
++
++/// The visual order of each row of a wrapped line whose layout is in text order.
++#[derive(Debug, Default)]
++pub(crate) struct BidiRows {
++    /// The x of each glyph, from the left edge of its row, in the order of the layout's runs.
++    glyph_x: Vec<Pixels>,
++    /// The row of each glyph, in the same order.
++    glyph_row: Vec<usize>,
++    /// The clusters of all rows, row after row, each row from left to right.
++    clusters: Vec<VisualCluster>,
++    /// The first cluster of each row, and the end of `clusters`.
++    row_starts: Vec<usize>,
++    /// The bytes of each row.
++    row_ranges: Vec<Range<usize>>,
++    /// If the paragraph is right to left.
++    rtl: bool,
++}
++
++struct LogicalCluster {
++    range: Range<usize>,
++    x: Pixels,
++    width: Pixels,
++    glyphs: Range<usize>,
++}
++
++impl BidiRows {
++    /// Lays out the rows of `layout` (in text order) that `wrap_boundaries` cut, in visual order.
++    pub fn new(
++        text: &str,
++        layout: &LineLayout,
++        wrap_boundaries: &[WrapBoundary],
++        rtl: bool,
++    ) -> Self {
++        let glyphs: Vec<&ShapedGlyph> = layout.runs.iter().flat_map(|run| &run.glyphs).collect();
++        let clusters = logical_clusters(text, layout, &glyphs);
++        let row_glyph_starts = row_glyph_starts(layout, wrap_boundaries);
++        let level = if rtl { Level::rtl() } else { Level::ltr() };
++        let info = BidiInfo::new(text, Some(level));
++
++        let mut rows = BidiRows {
++            glyph_x: vec![px(0.); glyphs.len()],
++            glyph_row: vec![0; glyphs.len()],
++            rtl,
++            ..Default::default()
++        };
++        for cluster in &clusters {
++            for glyph in cluster.glyphs.clone() {
++                rows.glyph_x[glyph] = glyphs[glyph].position.x - cluster.x;
++            }
++        }
++        let mut cluster_ix = 0;
++        for (row, glyph_start) in row_glyph_starts.iter().enumerate() {
++            let glyph_end = row_glyph_starts
++                .get(row + 1)
++                .copied()
++                .unwrap_or(glyphs.len());
++            let first = cluster_ix;
++            while cluster_ix < clusters.len() && clusters[cluster_ix].glyphs.start < glyph_end {
++                cluster_ix += 1;
++            }
++            let row_clusters = &clusters[first..cluster_ix];
++            let row_range = match (row_clusters.first(), row_clusters.last()) {
++                (Some(first), Some(last)) => first.range.start..last.range.end,
++                _ => {
++                    let at = glyphs
++                        .get(*glyph_start)
++                        .map_or(text.len(), |glyph| glyph.index);
++                    at..at
++                }
++            };
++            rows.row_starts.push(rows.clusters.len());
++            rows.row_ranges.push(row_range.clone());
++            rows.place_row(&info, row, row_range, row_clusters);
++        }
++        rows.row_starts.push(rows.clusters.len());
++        rows
++    }
++
++    fn place_row(
++        &mut self,
++        info: &BidiInfo<'_>,
++        row: usize,
++        row_range: Range<usize>,
++        row_clusters: &[LogicalCluster],
++    ) {
++        for cluster in row_clusters {
++            for glyph in cluster.glyphs.clone() {
++                self.glyph_row[glyph] = row;
++            }
++        }
++        let mut x = px(0.);
++        for (run, rtl) in visual_runs(info, row_range) {
++            let in_run = row_clusters
++                .iter()
++                .filter(|cluster| run.contains(&cluster.range.start));
++            let ordered: Vec<&LogicalCluster> = if rtl {
++                in_run.rev().collect()
++            } else {
++                in_run.collect()
++            };
++            for cluster in ordered {
++                for glyph in cluster.glyphs.clone() {
++                    self.glyph_x[glyph] += x;
++                }
++                self.clusters.push(VisualCluster {
++                    range: cluster.range.clone(),
++                    x,
++                    width: cluster.width,
++                    rtl,
++                });
++                x += cluster.width;
++            }
++        }
++    }
++
++    /// The number of rows.
++    pub fn row_count(&self) -> usize {
++        self.row_ranges.len()
++    }
++
++    /// The clusters of a row, from left to right.
++    pub fn row(&self, row: usize) -> &[VisualCluster] {
++        match (self.row_starts.get(row), self.row_starts.get(row + 1)) {
++            (Some(start), Some(end)) => &self.clusters[*start..*end],
++            _ => &[],
++        }
++    }
++
++    /// The width of a row.
++    pub fn row_width(&self, row: usize) -> Pixels {
++        self.row(row).iter().map(|cluster| cluster.width).sum()
++    }
++
++    /// The x of a glyph (its position in the layout's runs, counted over all runs) from the left edge of its row, and
++    /// the row.
++    pub fn glyph(&self, flat_ix: usize) -> (Pixels, usize) {
++        (
++            self.glyph_x.get(flat_ix).copied().unwrap_or_default(),
++            self.glyph_row.get(flat_ix).copied().unwrap_or_default(),
++        )
++    }
++
++    /// The byte index for a point in a row, as [`crate::WrappedLineLayout::index_for_position`] gives it.
++    pub fn index_for_position(&self, row: usize, x: Pixels, closest: bool) -> Result<usize, usize> {
++        let Some(range) = self.row_ranges.get(row) else {
++            return Err(self.row_ranges.last().map_or(0, |range| range.end));
++        };
++        let (left_end, right_end) = if self.rtl {
++            (range.end, range.start)
++        } else {
++            (range.start, range.end)
++        };
++        if x < px(0.) {
++            return Err(left_end);
++        }
++        let Some(cluster) = self
++            .row(row)
++            .iter()
++            .find(|cluster| x < cluster.x + cluster.width)
++        else {
++            return Err(right_end);
++        };
++        if !closest {
++            return Ok(cluster.range.start);
++        }
++        let left_half = x < cluster.x + cluster.width / 2.;
++        Ok(if left_half == cluster.rtl {
++            cluster.range.end
++        } else {
++            cluster.range.start
++        })
++    }
++
++    /// The point of a byte index: the edge of its character where the caret goes before it, or the end edge of the
++    /// row's last character for the end of a row.
++    pub fn position_for_index(&self, index: usize) -> Option<(usize, Pixels)> {
++        let row = self
++            .row_ranges
++            .iter()
++            .position(|range| index <= range.end)?;
++        let clusters = self.row(row);
++        if let Some(cluster) = clusters
++            .iter()
++            .find(|cluster| cluster.range.contains(&index))
++        {
++            let at_start = index == cluster.range.start;
++            let x = if cluster.rtl == at_start {
++                cluster.x + cluster.width
++            } else {
++                cluster.x
++            };
++            return Some((row, x));
++        }
++        let x = clusters
++            .iter()
++            .max_by_key(|cluster| cluster.range.start)
++            .map_or(px(0.), |last| {
++                if last.rtl {
++                    last.x
++                } else {
++                    last.x + last.width
++                }
++            });
++        Some((row, x))
++    }
++}
++
++fn logical_clusters(
++    text: &str,
++    layout: &LineLayout,
++    glyphs: &[&ShapedGlyph],
++) -> Vec<LogicalCluster> {
++    let mut clusters: Vec<LogicalCluster> = Vec::new();
++    for (ix, glyph) in glyphs.iter().enumerate() {
++        match clusters.last_mut() {
++            Some(cluster) if cluster.range.start == glyph.index => {
++                cluster.glyphs.end = ix + 1;
++                cluster.x = cluster.x.min(glyph.position.x);
++            }
++            _ => clusters.push(LogicalCluster {
++                range: glyph.index..glyph.index,
++                x: glyph.position.x,
++                width: px(0.),
++                glyphs: ix..ix + 1,
++            }),
++        }
++    }
++    let ends: Vec<(usize, Pixels)> = clusters
++        .iter()
++        .skip(1)
++        .map(|cluster| (cluster.range.start, cluster.x))
++        .chain([(text.len(), layout.width)])
++        .collect();
++    for (cluster, (end, end_x)) in clusters.iter_mut().zip(ends) {
++        cluster.range.end = end;
++        cluster.width = (end_x - cluster.x).max(px(0.));
++    }
++    clusters
++}
++
++fn row_glyph_starts(layout: &LineLayout, wrap_boundaries: &[WrapBoundary]) -> Vec<usize> {
++    let mut run_offsets = Vec::with_capacity(layout.runs.len());
++    let mut offset = 0;
++    for run in &layout.runs {
++        run_offsets.push(offset);
++        offset += run.glyphs.len();
++    }
++    std::iter::once(0)
++        .chain(wrap_boundaries.iter().map(|boundary| {
++            run_offsets.get(boundary.run_ix).copied().unwrap_or(offset) + boundary.glyph_ix
++        }))
++        .collect()
++}
++
++/// The level runs of a row in visual order, each with its direction.
++fn visual_runs(info: &BidiInfo<'_>, row: Range<usize>) -> Vec<(Range<usize>, bool)> {
++    let mut runs = Vec::new();
++    for paragraph in &info.paragraphs {
++        let start = row.start.max(paragraph.range.start);
++        let end = row.end.min(paragraph.range.end);
++        if start >= end {
++            continue;
++        }
++        let (levels, level_runs) = info.visual_runs(paragraph, start..end);
++        runs.extend(level_runs.into_iter().map(|run| {
++            let rtl = levels[run.start].is_rtl();
++            (run, rtl)
++        }));
++    }
++    runs
++}
++
++/// A stretch of a row in one decoration run, from `x` and `width` wide.
++#[derive(Clone, Debug, PartialEq)]
++pub(crate) struct Segment {
++    pub run: usize,
++    pub x: Pixels,
++    pub width: Pixels,
++}
++
++/// The stretches of a row where each decoration run shows, left to right: neighbour clusters of one run make one
++/// stretch.
++pub(crate) fn row_segments(clusters: &[VisualCluster], run_ends: &[usize]) -> Vec<Segment> {
++    let mut segments: Vec<Segment> = Vec::new();
++    for cluster in clusters {
++        let run = run_ends.partition_point(|end| *end <= cluster.range.start);
++        match segments.last_mut() {
++            Some(segment)
++                if segment.run == run
++                    && (segment.x + segment.width - cluster.x).abs() < px(0.01) =>
++            {
++                segment.width += cluster.width;
++            }
++            _ => segments.push(Segment {
++                run,
++                x: cluster.x,
++                width: cluster.width,
++            }),
++        }
++    }
++    segments
++}
++
++/// The decoration run of a byte index, from the ends of the runs.
++pub(crate) fn run_at(run_ends: &[usize], index: usize) -> usize {
++    run_ends.partition_point(|end| *end <= index)
++}
+--- a/src/text_system/line_layout.rs
++++ b/src/text_system/line_layout.rs
+@@ -1,4 +1,6 @@
+-use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
++use crate::{
++    FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, TextAlign, point, px,
++};
+ use collections::FxHashMap;
+ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+ use smallvec::SmallVec;
+@@ -13,6 +15,7 @@
+ };
+ 
+ use super::LineWrapper;
++use super::bidi::{self, BidiRows};
+ 
+ /// A laid out and styled line of text
+ #[derive(Default, Debug)]
+@@ -286,6 +289,9 @@
+ 
+     /// The width of the line, if it was wrapped
+     pub wrap_width: Option<Pixels>,
++
++    /// The visual order of each row, when the line holds right-to-left text.
++    pub(crate) bidi: Option<BidiRows>,
+ }
+ 
+ /// A boundary at which a line was wrapped
+@@ -345,6 +351,42 @@
+         &self.unwrapped_layout.runs
+     }
+ 
++    /// How far right the given alignment within `align_width` puts a row: as painting puts it.
++    pub fn row_offset(&self, row: usize, align: TextAlign, align_width: Pixels) -> Pixels {
++        if align == TextAlign::Left {
++            return Pixels::ZERO;
++        }
++        let row_width = match &self.bidi {
++            Some(rows) => rows.row_width(row),
++            None => {
++                let x_at = |boundary: Option<&WrapBoundary>| {
++                    boundary.map(|boundary| {
++                        self.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
++                            .position
++                            .x
++                    })
++                };
++                let start = if row == 0 {
++                    Some(Pixels::ZERO)
++                } else {
++                    x_at(self.wrap_boundaries.get(row - 1))
++                };
++                let end = x_at(self.wrap_boundaries.get(row)).or_else(|| {
++                    (row == self.wrap_boundaries.len()).then_some(self.unwrapped_layout.width)
++                });
++                match (start, end) {
++                    (Some(start), Some(end)) => end - start,
++                    _ => return Pixels::ZERO,
++                }
++            }
++        };
++        match align {
++            TextAlign::Left => Pixels::ZERO,
++            TextAlign::Center => (align_width - row_width) / 2.,
++            TextAlign::Right => align_width - row_width,
++        }
++    }
++
+     /// The index corresponding to a given position in this layout for the given line height.
+     ///
+     /// See also [`Self::closest_index_for_position`].
+@@ -371,11 +413,14 @@
+ 
+     fn _index_for_position(
+         &self,
+-        mut position: Point<Pixels>,
++        position: Point<Pixels>,
+         line_height: Pixels,
+         closest: bool,
+     ) -> Result<usize, usize> {
+         let wrapped_line_ix = (position.y / line_height) as usize;
++        if let Some(bidi) = &self.bidi {
++            return bidi.index_for_position(wrapped_line_ix, position.x, closest);
++        }
+ 
+         let wrapped_line_start_index;
+         let wrapped_line_start_x;
+@@ -429,6 +474,11 @@
+ 
+     /// Returns the pixel position for the given byte index.
+     pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
++        if let Some(bidi) = &self.bidi {
++            return bidi
++                .position_for_index(index)
++                .map(|(row, x)| point(x, line_height * row as f32));
++        }
+         let mut line_start_ix = 0;
+         let mut line_end_indices = self
+             .wrap_boundaries
+@@ -609,6 +659,7 @@
+         runs: &[FontRun],
+         wrap_width: Option<Pixels>,
+         max_lines: Option<usize>,
++        rtl: bool,
+     ) -> Arc<WrappedLineLayout>
+     where
+         Text: AsRef<str>,
+@@ -621,6 +672,7 @@
+             runs,
+             wrap_width,
+             force_width: None,
++            rtl,
+         } as &dyn AsCacheKeyRef;
+ 
+         let current_frame = self.current_frame.upgradable_read();
+@@ -639,16 +691,31 @@
+         } else {
+             drop(current_frame);
+             let text = SharedString::from(text);
+-            let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
++            let has_bidi = rtl || bidi::needs_bidi(&text);
++            let unwrapped_layout = if has_bidi {
++                let shaped = bidi::shape_in_direction(
++                    self.platform_text_system.as_ref(),
++                    &text,
++                    font_size,
++                    runs,
++                    rtl,
++                );
++                Arc::new(bidi::logical_layout(&shaped))
++            } else {
++                self.layout_line::<&SharedString>(&text, font_size, runs, None)
++            };
+             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
+                 unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
+             } else {
+                 SmallVec::new()
+             };
++            let bidi =
++                has_bidi.then(|| BidiRows::new(&text, &unwrapped_layout, &wrap_boundaries, rtl));
+             let layout = Arc::new(WrappedLineLayout {
+                 unwrapped_layout,
+                 wrap_boundaries,
+                 wrap_width,
++                bidi,
+             });
+             let key = Arc::new(CacheKey {
+                 text,
+@@ -656,6 +723,7 @@
+                 runs: SmallVec::from(runs),
+                 wrap_width,
+                 force_width: None,
++                rtl,
+             });
+ 
+             let mut current_frame = self.current_frame.write();
+@@ -686,6 +754,7 @@
+             runs,
+             wrap_width: None,
+             force_width,
++            rtl: false,
+         } as &dyn AsCacheKeyRef;
+ 
+         let current_frame = self.current_frame.upgradable_read();
+@@ -714,6 +783,7 @@
+                 runs: SmallVec::from(runs),
+                 wrap_width: None,
+                 force_width,
++                rtl: false,
+             });
+             let layout = Arc::new(layout);
+             current_frame.lines.insert(key.clone(), layout.clone());
+@@ -943,6 +1013,7 @@
+     runs: SmallVec<[FontRun; 1]>,
+     wrap_width: Option<Pixels>,
+     force_width: Option<Pixels>,
++    rtl: bool,
+ }
+ 
+ #[derive(Copy, Clone, PartialEq, Eq, Hash)]
+@@ -952,6 +1023,7 @@
+     runs: &'a [FontRun],
+     wrap_width: Option<Pixels>,
+     force_width: Option<Pixels>,
++    rtl: bool,
+ }
+ 
+ #[derive(Clone, Debug)]
+@@ -1044,6 +1116,7 @@
+             runs: self.runs.as_slice(),
+             wrap_width: self.wrap_width,
+             force_width: self.force_width,
++            rtl: self.rtl,
+         }
+     }
+ }
+--- a/src/text_system/line.rs
++++ b/src/text_system/line.rs
+@@ -1,3 +1,4 @@
++use super::bidi::{self, BidiRows};
+ use crate::{
+     App, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point, RenderGlyphParams, Result,
+     SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
+@@ -471,6 +472,20 @@
+             None => self.layout.wrap_width,
+         };
+ 
++        if let Some(rows) = &self.layout.bidi {
++            return paint_bidi_line(
++                origin,
++                &self.layout.unwrapped_layout,
++                rows,
++                line_height,
++                align,
++                align_width,
++                &self.decoration_runs,
++                window,
++                cx,
++            );
++        }
++
+         paint_line(
+             origin,
+             &self.layout.unwrapped_layout,
+@@ -502,6 +517,19 @@
+             None => self.layout.wrap_width,
+         };
+ 
++        if let Some(rows) = &self.layout.bidi {
++            return paint_bidi_background(
++                origin,
++                &self.layout.unwrapped_layout,
++                rows,
++                line_height,
++                align,
++                align_width,
++                &self.decoration_runs,
++                window,
++            );
++        }
++
+         paint_line_background(
+             origin,
+             &self.layout.unwrapped_layout,
+@@ -787,6 +815,167 @@
+         Ok(())
+     })
+ }
++
++/// The left edge of each row of a line that holds right-to-left text, and the bounds of all its rows.
++fn bidi_row_origins(
++    origin: Point<Pixels>,
++    layout: &LineLayout,
++    rows: &BidiRows,
++    line_height: Pixels,
++    align: TextAlign,
++    align_width: Option<Pixels>,
++) -> (Vec<Pixels>, Bounds<Pixels>) {
++    let align_width = align_width.unwrap_or(layout.width);
++    let mut bounds = Bounds::new(origin, size(px(0.), px(0.)));
++    let lefts = (0..rows.row_count())
++        .map(|row| {
++            let width = rows.row_width(row);
++            let left = match align {
++                TextAlign::Left => origin.x,
++                TextAlign::Center => origin.x + (align_width - width) / 2.,
++                TextAlign::Right => origin.x + align_width - width,
++            };
++            bounds = bounds.union(&Bounds::new(
++                point(left, origin.y + line_height * row as f32),
++                size(width, line_height),
++            ));
++            left
++        })
++        .collect();
++    (lefts, bounds)
++}
++
++fn decoration_run_ends(decoration_runs: &[DecorationRun]) -> Vec<usize> {
++    decoration_runs
++        .iter()
++        .scan(0, |end, run| {
++            *end += run.len as usize;
++            Some(*end)
++        })
++        .collect()
++}
++
++/// Paints a line that holds right-to-left text: each glyph where the visual order of its row puts it, and each
++/// underline and strikethrough under the clusters of its run, as one stretch for each group of neighbours.
++#[allow(clippy::too_many_arguments)]
++fn paint_bidi_line(
++    origin: Point<Pixels>,
++    layout: &LineLayout,
++    rows: &BidiRows,
++    line_height: Pixels,
++    align: TextAlign,
++    align_width: Option<Pixels>,
++    decoration_runs: &[DecorationRun],
++    window: &mut Window,
++    cx: &mut App,
++) -> Result<()> {
++    let (lefts, line_bounds) =
++        bidi_row_origins(origin, layout, rows, line_height, align, align_width);
++    window.paint_layer(line_bounds, |window| {
++        let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
++        let baseline_offset = point(px(0.), padding_top + layout.ascent);
++        let run_ends = decoration_run_ends(decoration_runs);
++        let text_system = cx.text_system().clone();
++        let mut flat_ix = 0;
++        for run in &layout.runs {
++            let max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
++            for glyph in &run.glyphs {
++                let (x, row) = rows.glyph(flat_ix);
++                flat_ix += 1;
++                let glyph_origin = point(
++                    lefts.get(row).copied().unwrap_or(origin.x) + x,
++                    origin.y + line_height * row as f32,
++                );
++                let color = decoration_runs
++                    .get(bidi::run_at(&run_ends, glyph.index))
++                    .map_or(black(), |decoration| decoration.color);
++                let max_glyph_bounds = Bounds {
++                    origin: glyph_origin,
++                    size: max_glyph_size,
++                };
++                if !max_glyph_bounds.intersects(&window.content_mask().bounds) {
++                    continue;
++                }
++                let at = glyph_origin + baseline_offset + point(px(0.), glyph.position.y);
++                if glyph.is_emoji {
++                    window.paint_emoji(at, run.font_id, glyph.id, layout.font_size)?;
++                } else {
++                    window.paint_glyph(at, run.font_id, glyph.id, layout.font_size, color)?;
++                }
++            }
++        }
++
++        let underline_offset = underline_y_offset(line_height, layout.ascent, layout.descent);
++        let strikethrough_offset = ((layout.ascent * 0.5) + baseline_offset.y) * 0.5;
++        for (row, left) in lefts.iter().enumerate() {
++            let top = origin.y + line_height * row as f32;
++            for segment in bidi::row_segments(rows.row(row), &run_ends) {
++                let Some(decoration) = decoration_runs.get(segment.run) else {
++                    continue;
++                };
++                if let Some(underline) = decoration.underline.as_ref() {
++                    window.paint_underline(
++                        point(*left + segment.x, top + underline_offset),
++                        segment.width,
++                        &UnderlineStyle {
++                            color: Some(underline.color.unwrap_or(decoration.color)),
++                            thickness: underline.thickness,
++                            wavy: underline.wavy,
++                        },
++                    );
++                }
++                if let Some(strikethrough) = decoration.strikethrough.as_ref() {
++                    window.paint_strikethrough(
++                        point(*left + segment.x, top + strikethrough_offset),
++                        segment.width,
++                        &StrikethroughStyle {
++                            color: Some(strikethrough.color.unwrap_or(decoration.color)),
++                            thickness: strikethrough.thickness,
++                        },
++                    );
++                }
++            }
++        }
++        Ok(())
++    })
++}
++
++/// Paints the run backgrounds of a line that holds right-to-left text, under the clusters of each run.
++#[allow(clippy::too_many_arguments)]
++fn paint_bidi_background(
++    origin: Point<Pixels>,
++    layout: &LineLayout,
++    rows: &BidiRows,
++    line_height: Pixels,
++    align: TextAlign,
++    align_width: Option<Pixels>,
++    decoration_runs: &[DecorationRun],
++    window: &mut Window,
++) -> Result<()> {
++    let (lefts, line_bounds) =
++        bidi_row_origins(origin, layout, rows, line_height, align, align_width);
++    window.paint_layer(line_bounds, |window| {
++        let run_ends = decoration_run_ends(decoration_runs);
++        for (row, left) in lefts.iter().enumerate() {
++            let top = origin.y + line_height * row as f32;
++            for segment in bidi::row_segments(rows.row(row), &run_ends) {
++                if let Some(background) = decoration_runs
++                    .get(segment.run)
++                    .and_then(|decoration| decoration.background_color)
++                {
++                    window.paint_quad(fill(
++                        Bounds {
++                            origin: point(*left + segment.x, top),
++                            size: size(segment.width, line_height),
++                        },
++                        background,
++                    ));
++                }
++            }
++        }
++        Ok(())
++    })
++}
+ 
+ fn paint_line_background(
+     origin: Point<Pixels>,
+--- a/src/text_system/line_wrapper.rs
++++ b/src/text_system/line_wrapper.rs
+@@ -530,6 +530,16 @@
+         // Bengali (https://en.wikipedia.org/wiki/Bengali_(Unicode_block))
+         matches!(c, '\u{0980}'..='\u{09FF}') ||
+ 
++        // Greek, Cyrillic Supplement, Armenian, Hebrew, Arabic, Syriac, Thaana and their
++        // extensions and presentation forms: these scripts put spaces between words, so a
++        // line breaks at a space, not inside a word. The zero width (non-)joiner stays in it.
++        matches!(c, '\u{0370}'..='\u{03FF}') ||
++        matches!(c, '\u{0500}'..='\u{07BF}') ||
++        matches!(c, '\u{0860}'..='\u{08FF}') ||
++        matches!(c, '\u{FB1D}'..='\u{FDFF}') ||
++        matches!(c, '\u{FE70}'..='\u{FEFF}') ||
++        matches!(c, '\u{200C}' | '\u{200D}') ||
++
+         // Some other known special characters that should be treated as word characters,
+         // e.g. `a-b`, `var_name`, `I'm`/`won’t`, '@mention`, `#hashtag`, `100%`, `3.1415`,
+         // `2^3`, `a~b`, `a=1`, `Self::new`, etc. Trailing punctuation like `,`, `.`, `:`, `;`
+--- a/src/text_system.rs
++++ b/src/text_system.rs
+@@ -1,3 +1,4 @@
++mod bidi;
+ mod font_fallbacks;
+ mod font_features;
+ mod line;
+@@ -14,7 +15,7 @@
+ 
+ use crate::{
+     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
+-    StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
++    StrikethroughStyle, TextDirection, TextRenderingMode, UnderlineStyle, px,
+ };
+ use anyhow::{Context as _, anyhow};
+ use collections::{FxHashMap, FxHashSet};
+@@ -755,6 +756,26 @@
+         wrap_width: Option<Pixels>,
+         line_clamp: Option<usize>,
+     ) -> Result<SmallVec<[WrappedLine; 1]>> {
++        self.shape_text_in(
++            text,
++            font_size,
++            runs,
++            wrap_width,
++            line_clamp,
++            TextDirection::Ltr,
++        )
++    }
++
++    /// Like [`Self::shape_text`], with each line a paragraph of the given direction.
++    pub fn shape_text_in(
++        &self,
++        text: SharedString,
++        font_size: Pixels,
++        runs: &[TextRun],
++        wrap_width: Option<Pixels>,
++        line_clamp: Option<usize>,
++        direction: TextDirection,
++    ) -> Result<SmallVec<[WrappedLine; 1]>> {
+         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
+         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+ 
+@@ -821,6 +842,7 @@
+                 &font_runs,
+                 wrap_width,
+                 max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),
++                direction == TextDirection::Rtl,
+             );
+             wrapped_lines += layout.wrap_boundaries.len();
+ 

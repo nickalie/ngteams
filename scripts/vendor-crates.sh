@@ -6,7 +6,9 @@
 #                  `Window::paint_external_surface` (0001); and, our own, no line break right after opening
 #                  punctuation (UAX #14 LB14), so `[[account]]` wraps whole (0002); a path prompt's title and file
 #                  filters (0003), so the account picture's chooser shows the picture files; a file manager's drag
-#                  put in mouse input mode (0004), so a drop after typed keys reaches the element under the pointer
+#                  put in mouse input mode (0004), so a drop after typed keys reaches the element under the pointer;
+#                  right-to-left and mixed text by the Unicode Bidirectional Algorithm, wrapped in text order and drawn
+#                  and hit-tested in visual order per row, with a paragraph direction in the text style (0005)
 #   gpui-pre-wgpu  the renderer's side: dmabufs imported through wgpu-hal Vulkan and copied on the GPU, CPU pixels
 #                  uploaded into a texture kept per surface, by damaged rectangle (0001); and, our own, a weight or
 #                  style the family has no face of drawn anyway: a variable face at that weight, else synthesized (0002)
@@ -19,7 +21,8 @@
 #                  its enter with that enter's serial, read from a URI list or a sandboxed program's portal key, and
 #                  a drop that comes before the files were read delivered once they are (0006)
 #   gpui-pre-windows our own: test-support `contains` on the DirectX atlas so atlas-inspection tests query
-#                  the real atlas (0001); the path prompt's title and filters on the file open dialog (0002)
+#                  the real atlas (0001); the path prompt's title and filters on the file open dialog (0002); a
+#                  right-to-left glyph run placed where DirectWrite draws it (0003)
 #   libwebrtc      our own: `RtpTransceiver::set_direction`, which LiveKit's bindings leave out though `webrtc-sys`
 #                  binds it (0001): a group call's screen goes out on the mixer's sharing line, turned to send before
 #                  the answer (crates/teams-media/src/rtc.rs); preserve optional candidate-pair RTT (0002), so

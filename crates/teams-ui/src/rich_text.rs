@@ -48,8 +48,8 @@ use std::sync::Arc;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, FontStyle, FontWeight, HighlightStyle, InteractiveElement as _, IntoElement, ParentElement as _,
-    RenderOnce, SharedString, StatefulInteractiveElement as _, StrikethroughStyle, Styled as _, UnderlineStyle, Window,
-    div, px, rgb,
+    RenderOnce, SharedString, StatefulInteractiveElement as _, StrikethroughStyle, Styled as _, TextDirection,
+    UnderlineStyle, Window, div, px, rgb,
 };
 use serde_json::{Value, json};
 use teams_proto::InlinePicture;
@@ -578,6 +578,14 @@ pub struct Rendered {
 }
 
 impl Rendered {
+    /// Whether Teams draws it right to left: its body's `dir="auto"` takes the direction of the first strong letter of
+    /// its own text (a reply's quote card sets its own and doesn't count), and a right-to-left message is aligned
+    /// right.
+    #[must_use]
+    pub fn right_to_left(&self) -> bool {
+        first_strong_rtl(&self.blocks).unwrap_or(false)
+    }
+
     /// It, its pictures and emoticons asked of `source`'s engine.
     #[must_use]
     pub fn with_source(mut self, source: PictureSource) -> Self {
@@ -1217,6 +1225,40 @@ pub fn highlight(style: Style, palette: Palette) -> HighlightStyle {
     highlight
 }
 
+/// Whether the first strong letter of `blocks`' own text is right to left: `None` without a strong letter. Pictures and
+/// blocks of code don't count, nor a reply's quote, which Teams draws in a card of its own direction.
+fn first_strong_rtl(blocks: &[Block]) -> Option<bool> {
+    blocks.iter().find_map(|block| match block {
+        Block::Text(text) => text_strong_rtl(&text.text),
+        Block::List(list) => list.items.iter().find_map(|item| first_strong_rtl(item)),
+        Block::Table(table) => table
+            .rows
+            .iter()
+            .flatten()
+            .find_map(|cell| first_strong_rtl(&cell.blocks)),
+        Block::Forward(forward) => first_strong_rtl(&forward.blocks),
+        Block::Quote(quote) if quote.message_id.is_none() => first_strong_rtl(&quote.blocks),
+        Block::Quote(_) | Block::Picture(_) | Block::Code(_) | Block::Rule => None,
+    })
+}
+
+/// Whether the first strong letter of `text` is right to left.
+#[must_use]
+pub fn text_strong_rtl(text: &str) -> Option<bool> {
+    use unicode_bidi::BidiClass;
+    text.chars()
+        .find_map(|character| match unicode_bidi::bidi_class(character) {
+            BidiClass::L => Some(false),
+            BidiClass::R | BidiClass::AL => Some(true),
+            _ => None,
+        })
+}
+
+/// The text direction of `rtl` text.
+fn direction(rtl: bool) -> TextDirection {
+    if rtl { TextDirection::Rtl } else { TextDirection::Ltr }
+}
+
 /// Draws `rendered`; `id` keeps its links' and pictures' elements apart from another message's. A message of emoticons
 /// alone is drawn large and playing ([`Rendered::emoticons_only`]). A forward's card has no header: see
 /// [`render_with_header`].
@@ -1247,12 +1289,14 @@ pub fn render_selectable(
     header: Option<AnyElement>,
     scope: Option<&Scope>,
 ) -> AnyElement {
+    let rtl = rendered.right_to_left();
     let draw = Draw {
         id,
         palette,
         source: rendered.source.as_ref(),
         header: Cell::new(header),
         scope,
+        rtl,
     };
     if let Some(emoticons) = rendered.emoticons_only() {
         return div()
@@ -1276,6 +1320,7 @@ pub fn render_selectable(
         .debug_selector(|| "rich-all".to_owned())
         .flex()
         .flex_col()
+        .when(rtl, |all| all.text_direction(TextDirection::Rtl).text_right())
         .children(blocks(&draw, &mut path, &rendered.blocks))
         .into_any_element()
 }
@@ -1289,6 +1334,9 @@ struct Draw<'a> {
     header: Cell<Option<AnyElement>>,
     /// Where its text is selected, when it is selectable.
     scope: Option<&'a Scope>,
+    /// The message is right to left: a list's markers are on the right (a browser's list indent is logical; Teams'
+    /// paragraph indent is a `margin-left` and stays left).
+    rtl: bool,
 }
 
 /// The elements of `blocks`; `path` names the block's place, for its element id. Recursive over quotes, as deep as
@@ -1435,15 +1483,22 @@ fn list_block(draw: &Draw<'_>, path: &mut Vec<usize>, list: &ListBlock) -> AnyEl
             path.pop();
             div()
                 .flex()
+                .when(draw.rtl, gpui::Styled::flex_row_reverse)
                 .items_start()
                 .child(
                     div()
                         .w(px(LIST_INDENT))
                         .flex_none()
                         .flex()
-                        .justify_end()
-                        .pr(px(6.0))
+                        .map(|marker| {
+                            if draw.rtl {
+                                marker.justify_start().pl(px(6.0))
+                            } else {
+                                marker.justify_end().pr(px(6.0))
+                            }
+                        })
                         .whitespace_nowrap()
+                        .debug_selector(|| "rich-list-marker".to_owned())
                         .child(list.marker(index)),
                 )
                 .child(div().flex_1().min_w_0().flex().flex_col().children(content))
@@ -1496,6 +1551,11 @@ fn quote_block(draw: &Draw<'_>, path: &mut Vec<usize>, quote: &QuoteBlock) -> An
         .border_color(rgb(palette.border))
         // a shade off the bubble whatever its colour: the foreground's own, faint
         .bg(rgb(palette.foreground).opacity(0.07))
+        // a reply's card is left to right and aligned left; its quoted text takes the direction of its own first strong
+        // letter, as Teams' `dir="auto"` preview does
+        .when(quote.message_id.is_some(), |card| {
+            card.text_left().text_direction(TextDirection::Ltr)
+        })
         .flex()
         .flex_col()
         .gap_0p5()
@@ -1515,7 +1575,11 @@ fn quote_block(draw: &Draw<'_>, path: &mut Vec<usize>, quote: &QuoteBlock) -> An
         // in full, as it was written
         .child(
             div()
-                .when(quote.message_id.is_some(), |body| body.line_clamp(2).text_ellipsis())
+                .when(quote.message_id.is_some(), |body| {
+                    body.line_clamp(2)
+                        .text_ellipsis()
+                        .text_direction(direction(first_strong_rtl(&quote.blocks).unwrap_or(false)))
+                })
                 .children(blocks(draw, path, &quote.blocks)),
         );
     quote_link(draw, path, quote, card)
