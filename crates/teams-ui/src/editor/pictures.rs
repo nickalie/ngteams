@@ -11,6 +11,9 @@
 //!   (`crate::compose`: the media service, readable by the chat alone) and says how that went
 //!   ([`Editor::set_picture_state`]). The message names a sent picture ([`Editor::picture_node`]); a box whose pictures
 //!   aren't all sent waits ([`Editor::pictures_ready`]).
+//! - **A sticker** ([`Picture::sticker`], the compose box's picker's) is such a picture, shown at its sticker's size and
+//!   named by the message as Teams names a sticker: the `readonly` element of itemtype Sticker around its `<img>`,
+//!   labelled ([`teams_proto::chat::Sticker`]).
 //! - A picture's bytes stay in the editor while it lives, so undo brings a removed picture back as it was.
 
 use std::path::{Path, PathBuf};
@@ -53,6 +56,8 @@ pub struct Picture {
     /// picture (a dense screen's screenshot half its pixels' size).
     pub given: (u32, u32),
     pub state: PictureState,
+    /// The label of a sticker; `None` for a picture.
+    pub sticker: Option<SharedString>,
 }
 
 impl std::fmt::Debug for Picture {
@@ -62,6 +67,7 @@ impl std::fmt::Debug for Picture {
             .field("own", &self.own)
             .field("given", &self.given)
             .field("state", &self.state)
+            .field("sticker", &self.sticker)
             .finish_non_exhaustive()
     }
 }
@@ -91,7 +97,17 @@ impl Picture {
             own,
             given,
             state: PictureState::Sending,
+            sticker: None,
         })
+    }
+
+    /// A sticker: its picture `bytes` (a PNG or GIF), shown at `shown` CSS pixels, labelled `label`.
+    #[must_use]
+    pub fn sticker(bytes: teams_proto::PastedPicture, shown: (u32, u32), label: &str) -> Option<Self> {
+        let mut picture = Self::of(bytes.bytes, 1.0)?;
+        picture.given = (shown.0.max(1), shown.1.max(1));
+        picture.sticker = Some(SharedString::from(label.to_owned()));
+        Some(picture)
     }
 
     /// The picture a local file holds, read when it is a file of at most [`MAX_FILE`] bytes.
@@ -283,14 +299,24 @@ impl Editor {
         })
     }
 
-    /// The message's picture for picture `id`, once it is sent.
+    /// The message's picture for picture `id`, once it is sent: its `<img>`, or a sticker's element around it.
     #[must_use]
-    pub fn picture_node(&self, id: u64) -> Option<teams_proto::chat::Image> {
+    pub fn picture_node(&self, id: u64) -> Option<teams_proto::chat::Node> {
         let picture = self.pictures.get(&id)?;
-        match &picture.state {
-            PictureState::Sent(object) => teams_proto::sent_picture(object, picture.given),
-            _ => None,
-        }
+        let PictureState::Sent(object) = &picture.state else {
+            return None;
+        };
+        let image = teams_proto::sent_picture(object, picture.given)?;
+        Some(match &picture.sticker {
+            Some(label) => teams_proto::chat::Node::Sticker(teams_proto::chat::Sticker {
+                image: teams_proto::chat::Image {
+                    alt: Some(label.to_string()),
+                    ..image
+                },
+                label: Some(label.to_string()),
+            }),
+            None => teams_proto::chat::Node::Image(image),
+        })
     }
 
     /// Takes picture `id` out of the box (an edit: undo brings it back).
@@ -349,9 +375,14 @@ impl Editor {
     ) -> AnyElement {
         let shape = crate::inline::Shape::of(picture.given, picture.own, room);
         let outer = shape.outer();
+        let tip = if picture.sticker.is_some() {
+            "Remove sticker"
+        } else {
+            "Remove picture"
+        };
         let remove = selected_by(
             format!("editor-picture-remove-{id}"),
-            icon_button(("editor-picture-remove", id), Glyph::X, "Remove picture")
+            icon_button(("editor-picture-remove", id), Glyph::X, tip)
                 .xsmall()
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.remove_picture(id, cx);

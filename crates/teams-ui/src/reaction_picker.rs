@@ -11,7 +11,8 @@
 //! the pointer plays its animation, as Teams' picker does ([`reactions::animation`]). The list is laid out only as it
 //! comes into view. The picker only tells what was picked ([`ReactionPickerEvent`]); the chat view writes it. The
 //! compose box's emoji picker is the same picker ([`ReactionPicker::for_emoji`]), nothing marked: Teams offers the same
-//! emoji in both, and the box puts the one picked into its text.
+//! emoji in both, and the box puts the one picked into its text. The compose box's picker shows it as its Emoji tab
+//! ([`ReactionPicker::embedded`]): the list and its section tabs alone, searched from the tab's own field.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -158,6 +159,8 @@ struct Flavour {
     placeholder: &'static str,
     /// What a search that finds nothing says.
     nothing_found: &'static str,
+    /// Drawn inside another picker, which has the search field and the dismissal.
+    embedded: bool,
 }
 
 /// "More reactions" on a message.
@@ -165,6 +168,7 @@ const REACTIONS: Flavour = Flavour {
     selector: "reaction-picker-more",
     placeholder: "Find a reaction",
     nothing_found: "No reaction matches",
+    embedded: false,
 };
 
 /// The compose box's emoji.
@@ -172,6 +176,15 @@ const COMPOSE_EMOJI: Flavour = Flavour {
     selector: "compose-emoji-picker",
     placeholder: "Search emoji",
     nothing_found: "No emoji matches",
+    embedded: false,
+};
+
+/// The compose box's picker's Emoji tab.
+const EMOJI_TAB: Flavour = Flavour {
+    selector: "compose-emoji-tab",
+    placeholder: "",
+    nothing_found: "No emoji matches",
+    embedded: true,
 };
 
 impl ReactionPicker {
@@ -183,6 +196,33 @@ impl ReactionPicker {
     /// The compose box's emoji picker: the emoji Teams offers, none of them marked, its search field focused.
     pub fn for_emoji(core: Arc<dyn Core>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self::make(HashSet::new(), core, COMPOSE_EMOJI, window, cx)
+    }
+
+    /// The Emoji tab of the compose box's picker ([`crate::fun_picker`]): the emoji Teams offers, none marked, with no
+    /// search field of its own ([`Self::search_for`]) and no dismissal.
+    pub fn embedded(core: Arc<dyn Core>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::make(HashSet::new(), core, EMOJI_TAB, window, cx)
+    }
+
+    /// Searches for `query`, as typed in the search field (an embedded picker's comes from its owner's field).
+    pub fn search_for(&mut self, query: &str, cx: &mut Context<Self>) {
+        let found = (!query.trim().is_empty()).then(|| reactions::catalog().search(query));
+        if found.is_some() || self.found.is_some() {
+            self.found = found;
+            self.rebuild();
+        }
+        cx.notify();
+    }
+
+    /// The reactions found for the search, in order; `None` while nothing is searched.
+    #[must_use]
+    pub fn found(&self) -> Option<Vec<&'static str>> {
+        self.found.as_ref().map(|found| {
+            found
+                .iter()
+                .filter_map(|&index| reactions::catalog().at(index).map(|reaction| reaction.id))
+                .collect()
+        })
     }
 
     /// A picker of `flavour` with `mine` marked.
@@ -223,7 +263,9 @@ impl ReactionPicker {
                 cx.stop_propagation();
             }
         });
-        search.update(cx, |search, cx| search.focus(window, cx));
+        if !flavour.embedded {
+            search.update(cx, |search, cx| search.focus(window, cx));
+        }
         let list = ListState::new(0, ListAlignment::Top, px(OVERDRAW));
         let scrolled = cx.weak_entity();
         // the tab of the section at the top follows the list
@@ -324,16 +366,11 @@ impl ReactionPicker {
 
     fn searched(&mut self, cx: &mut Context<Self>) {
         let query = self.search.read(cx).value();
-        let found = (!query.trim().is_empty()).then(|| reactions::catalog().search(&query));
-        if found.is_some() || self.found.is_some() {
-            self.found = found;
-            self.rebuild();
-        }
-        cx.notify();
+        self.search_for(&query, cx);
     }
 
     /// Enter: the first reaction found, when something was searched.
-    fn pick_first(&mut self, cx: &mut Context<Self>) {
+    pub fn pick_first(&mut self, cx: &mut Context<Self>) {
         let first = self
             .found
             .as_ref()
@@ -522,6 +559,16 @@ impl Render for ReactionPicker {
         .w_full()
         .h(px(LIST_HEIGHT));
         let selector = self.flavour.selector;
+        if self.flavour.embedded {
+            return div()
+                .debug_selector(move || selector.to_owned())
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(rows)
+                .child(self.tabs(palette, cx));
+        }
         div()
             .debug_selector(move || selector.to_owned())
             .occlude()

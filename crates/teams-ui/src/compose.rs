@@ -46,9 +46,12 @@
 //!   "More options" ([`fit`]). Expanded, the format bar ([`crate::editor::toolbar::FormatBar`]) runs
 //!   along its top, the editor is taller, and the controls sit along its foot; Discard on the bar empties the box (and
 //!   ends a reply or an edit).
-//! - **Emoji** ([`Compose::toggle_emoji`], the button or Ctrl+.): every emoji Teams offers ([`ReactionPicker::for_emoji`],
-//!   searchable) over the box; the one picked goes in at the cursor, in place of the text selected, as if typed. It
-//!   is only text in the box: nothing is sent until the message is.
+//! - **Emoji and stickers** ([`Compose::toggle_emoji`], the button or Ctrl+.): Teams' picker over the box
+//!   ([`FunPicker`]: All, Emoji and Stickers, searchable). An emoji picked goes in at the cursor, in place of the text
+//!   selected, as if typed: it is only text in the box. A sticker picked (from the packs the user added,
+//!   [`crate::stickers`]) goes in as Teams' box takes one: a picture sent to the media service at once, then named by
+//!   the message as a sticker when it is sent ([`crate::editor::pictures::Picture::sticker`]). A box that takes no
+//!   picture offers no sticker.
 //!
 //! - **A channel's box** ([`Compose::in_channel`]): "Message in <channel>" posting to the channel, or a post's
 //!   thread's "Reply in thread" posting to the post's chain, with Teams' "Send to: thread only" over its text. It
@@ -116,9 +119,9 @@ use crate::editor::{self, EditorEvent, EnterMode};
 
 use crate::bridge::Core;
 use crate::chat_view::measured;
+use crate::fun_picker::{FunPicker, FunPickerEvent};
 use crate::icons::{Glyph, icon_button, icon_button_with_key, selected_by};
 use crate::presence::{self, Presences};
-use crate::reaction_picker::{ReactionPicker, ReactionPickerEvent};
 use crate::reactions;
 use crate::rich_text;
 use crate::settings::SettingsModel;
@@ -204,19 +207,23 @@ pub fn message_of(doc: &Doc, quotes: &[Node]) -> Result<Option<MessageText>, Com
 }
 
 /// [`message_of`], each picture in `doc` as `pictures` gives it by its id (the editor's, once sent:
-/// [`Editor::picture_node`]).
+/// [`Editor::picture_node`]). A sticker alone is sent as Teams' web client sends one, between two blank paragraphs
+/// ([`teams_proto::chat::sticker_message`]).
 ///
 /// # Errors
 /// As [`message_of`].
 pub fn message_of_with(
     doc: &Doc,
     quotes: &[Node],
-    pictures: &dyn Fn(u64) -> Option<teams_proto::chat::Image>,
+    pictures: &dyn Fn(u64) -> Option<Node>,
     bots: &BTreeMap<Mri, String>,
 ) -> Result<Option<MessageText>, ComposeError> {
-    let (nodes, mentioned) = convert::to_nodes_with(doc, pictures);
+    let (mut nodes, mentioned) = convert::to_nodes_with(doc, pictures);
     if nodes.is_empty() {
         return Ok(None);
+    }
+    if let [Node::Sticker(sticker)] = nodes.as_slice() {
+        nodes = teams_proto::chat::sticker_message(sticker.clone()).nodes;
     }
     let mut all = quotes.to_vec();
     all.extend(nodes);
@@ -718,7 +725,7 @@ pub struct Compose {
     /// The AI's translation of the draft, in place ([`draft_translation`]).
     draft_translation: draft_translation::DraftTranslation,
     /// The emoji picker, while it is open.
-    emoji: Option<(Entity<ReactionPicker>, Subscription)>,
+    emoji: Option<(Entity<FunPicker>, Subscription)>,
     /// Where the emoji button was last drawn, for the picker to open by.
     emoji_at: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Where the box was last drawn: a narrow one can stack ([`fit`]).
@@ -1806,7 +1813,7 @@ impl Compose {
 
     /// The emoji picker, while it is open.
     #[must_use]
-    pub fn emoji_picker(&self) -> Option<&Entity<ReactionPicker>> {
+    pub fn emoji_picker(&self) -> Option<&Entity<FunPicker>> {
         self.emoji.as_ref().map(|(picker, _)| picker)
     }
 
@@ -1822,10 +1829,13 @@ impl Compose {
             return;
         }
         self.picker = None;
-        let picker = cx.new(|cx| ReactionPicker::for_emoji(Arc::clone(&self.core), window, cx));
+        let packs = crate::stickers::Shelf::of(self.settings.read(cx).stickers_dir(), cx);
+        let stickers = self.editor.read(cx).takes_pictures();
+        let picker = cx.new(|cx| FunPicker::new(Arc::clone(&self.core), packs, stickers, window, cx));
         let events = cx.subscribe_in(&picker, window, |this, picker, event, window, cx| match event {
-            ReactionPickerEvent::Picked(key) => this.put_emoji(key, window, cx),
-            ReactionPickerEvent::Dismissed => {
+            FunPickerEvent::Emoji(key) => this.put_emoji(key, window, cx),
+            FunPickerEvent::Sticker(sticker) => this.put_sticker(sticker, window, cx),
+            FunPickerEvent::Dismissed => {
                 // Escape gives the box its focus back; a click elsewhere keeps the focus where it went
                 let held = picker.read(cx).holds_focus(window, cx);
                 this.emoji = None;
@@ -1858,6 +1868,32 @@ impl Compose {
         let emoji = reactions::glyph(key);
         self.editor.update(cx, |editor, cx| editor.insert(&emoji, cx));
         cx.notify();
+    }
+
+    /// Puts `sticker` in the box at the cursor, as Teams' box takes one: a picture sent at once, named by the message
+    /// as a sticker; it closes the picker and goes first in Recent.
+    fn put_sticker(&mut self, sticker: &crate::stickers::StickerRef, window: &mut Window, cx: &mut Context<Self>) {
+        let packs = crate::stickers::Shelf::of(self.settings.read(cx).stickers_dir(), cx);
+        self.emoji = None;
+        self.focus(window, cx);
+        cx.notify();
+        let picture = {
+            let kept = packs.read(cx);
+            kept.sticker(sticker).cloned().and_then(|held| {
+                editor::pictures::Picture::sticker(kept.picture_bytes(sticker)?, held.size, &held.label)
+            })
+        };
+        let Some(picture) = picture else {
+            return self.show_problem("That sticker can't be read. Import its pack again.", cx);
+        };
+        if self.read_only.is_some() || !self.editor.read(cx).takes_pictures() {
+            return;
+        }
+        packs.update(cx, |packs, cx| packs.record_recent(sticker, cx));
+        self.editor.update(cx, |editor, cx| {
+            editor.insert_picture(picture, cx);
+        });
+        self.fit_pictures(cx);
     }
 
     // --- keys ---

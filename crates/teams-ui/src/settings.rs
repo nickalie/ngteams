@@ -1656,6 +1656,14 @@ impl SettingsModel {
         Some(file.path().parent()?.join(SOUND_PACKS_DIR))
     }
 
+    /// Where the sticker packs the user imported are kept, for every account: [`crate::stickers::store::DIR`] beside
+    /// the settings file; `None` for settings kept in memory (nothing can be imported).
+    #[must_use]
+    pub fn stickers_dir(&self) -> Option<PathBuf> {
+        let file = self.file.as_ref()?;
+        Some(file.path().parent()?.join(crate::stickers::store::DIR))
+    }
+
     /// What plays the app's sounds, once attached ([`attach_sounds`]); `None` without (no speaker).
     #[must_use]
     pub fn sound_player(&self) -> Option<&Arc<dyn SoundPlayer>> {

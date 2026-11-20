@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::hash::BuildHasher;
 
 use teams_proto::Mri;
-use teams_proto::chat::{Code, CodeRun, Image, List, Marks, Node, Quote, Table, Token};
+use teams_proto::chat::{Code, CodeRun, List, Marks, Node, Quote, Table, Token};
 
 use super::doc::{Attrs, Block, Doc, Kind, MAX_INDENT, Run};
 
@@ -53,9 +53,9 @@ pub fn to_nodes(doc: &Doc) -> (Vec<Node>, Vec<(String, Mri)>) {
 }
 
 /// [`to_nodes`], each picture written as `pictures` gives it by its id (a message's `<img>` once it is sent, in a
-/// paragraph of its own as Teams writes one); one it gives nothing for is left out.
+/// paragraph of its own as Teams writes one; a sticker's element as it is); one it gives nothing for is left out.
 #[must_use]
-pub fn to_nodes_with(doc: &Doc, pictures: &dyn Fn(u64) -> Option<Image>) -> (Vec<Node>, Vec<(String, Mri)>) {
+pub fn to_nodes_with(doc: &Doc, pictures: &dyn Fn(u64) -> Option<Node>) -> (Vec<Node>, Vec<(String, Mri)>) {
     let first = doc.blocks.iter().position(|block| !block.is_blank());
     let last = doc.blocks.iter().rposition(|block| !block.is_blank());
     let (Some(first), Some(last)) = (first, last) else {
@@ -77,7 +77,7 @@ pub fn to_nodes_with(doc: &Doc, pictures: &dyn Fn(u64) -> Option<Image>) -> (Vec
 struct Writer<'a> {
     nodes: Vec<Node>,
     mentioned: Vec<(String, Mri)>,
-    pictures: &'a dyn Fn(u64) -> Option<Image>,
+    pictures: &'a dyn Fn(u64) -> Option<Node>,
 }
 
 impl Writer<'_> {
@@ -108,8 +108,10 @@ impl Writer<'_> {
                 index + 1
             }
             Kind::Picture(id) => {
-                if let Some(picture) = (self.pictures)(id) {
-                    self.nodes.push(Node::Paragraph(vec![Node::Image(picture)]));
+                match (self.pictures)(id) {
+                    Some(Node::Image(picture)) => self.nodes.push(Node::Paragraph(vec![Node::Image(picture)])),
+                    Some(node) => self.nodes.push(node),
+                    None => {}
                 }
                 index + 1
             }

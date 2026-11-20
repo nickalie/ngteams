@@ -22,7 +22,7 @@ use teams_auth::session::{AccessToken, Renewal};
 use teams_auth::token::TokenError;
 use teams_core::engine::{self, EngineHandle, EngineOptions, Event, MessageChange, Parts, Push};
 use teams_core::{Action, Outbox};
-use teams_mock::{AB_CHAT, CHAT_BASE, ChatServiceMock, LAB_A, LAB_B, TrouterMock};
+use teams_mock::{AB_CHAT, AMS_BASE, CHAT_BASE, ChatServiceMock, LAB_A, LAB_B, TrouterMock};
 use teams_proto::Mri;
 use teams_proto::chat::MessageText;
 use teams_proto::{Author, Client, Credentials, HttpTransport};
@@ -31,8 +31,8 @@ use teams_trouter::{Options, RegistrationReport, Trouter, TrouterCredentials};
 use teams_ui::chat_view::{ChatView, MessageAction, READ_DEBOUNCE};
 use teams_ui::compose::Compose;
 use teams_ui::sending::Again;
-use teams_ui::settings::{Settings, SettingsModel};
-use teams_ui::{Bridge, Core, Link, Models, ShellParts, ViewTrace};
+use teams_ui::settings::SettingsModel;
+use teams_ui::{Bridge, Core, Link, Models, SettingsFile, ShellParts, ViewTrace};
 use tokio::sync::broadcast;
 
 /// How long anything is waited for.
@@ -145,7 +145,12 @@ fn engine(lab: &Lab, me: &str) -> (EngineHandle, tempfile::TempDir) {
         renewals: broadcast::channel(4).0,
     });
     let origin = lab.mock.origin();
-    let http = || HttpTransport::with_mock_origin(Arc::clone(&tokens), CHAT_BASE, &origin).unwrap();
+    let http = || {
+        HttpTransport::with_mock_origin(Arc::clone(&tokens), CHAT_BASE, &origin)
+            .unwrap()
+            .with_ams(AMS_BASE)
+            .unwrap()
+    };
     let transport = Arc::new(http());
 
     let trouter = Trouter::with_mock_origin(Arc::clone(&transport), Arc::clone(&tokens), lab.trouter.origin())
@@ -253,6 +258,7 @@ fn settle(cx: &mut VisualTestContext, mut done: impl FnMut(&mut VisualTestContex
 /// box focused; the bridge (which owns a's engine) and the models.
 fn a_s_view(
     handle: EngineHandle,
+    settings: &std::path::Path,
     app: &mut TestAppContext,
 ) -> (Entity<ChatView>, &'static mut VisualTestContext, Entity<Bridge>, Models) {
     let models = app.update(Models::new);
@@ -263,7 +269,7 @@ fn a_s_view(
     let parts = ShellParts {
         core,
         models: models.clone(),
-        settings: app.update(|cx| cx.new(|_| SettingsModel::in_memory(Settings::default()))),
+        settings: app.update(|cx| cx.new(|_| SettingsModel::load(SettingsFile::new(settings.join("a.toml"))))),
         trace: Arc::new(ViewTrace::off()),
     };
     let app: &'static mut TestAppContext = Box::leak(Box::new(app.clone()));
@@ -306,6 +312,8 @@ struct Walk {
     cx: &'static mut VisualTestContext,
     models: Models,
     bridge: Entity<Bridge>,
+    /// a's settings, and its sticker packs beside them.
+    settings: tempfile::TempDir,
     _dirs: [tempfile::TempDir; 2],
 }
 
@@ -320,7 +328,8 @@ impl Walk {
             seen: Vec::new(),
         };
         let mut app = TestAppContext::single();
-        let (view, cx, bridge, models) = a_s_view(a_engine, &mut app);
+        let settings = tempfile::tempdir().unwrap();
+        let (view, cx, bridge, models) = a_s_view(a_engine, settings.path(), &mut app);
         b.ready(cx);
         settle(cx, |cx| {
             cx.update(|_, cx| {
@@ -335,8 +344,115 @@ impl Walk {
             cx,
             models,
             bridge,
+            settings,
             _dirs: [a_dir, b_dir],
         }
+    }
+
+    /// A sticker of a pack a imported, picked in the picker: sent to the mock's media service at once, then posted as
+    /// Teams' web client posts one when a presses Enter. b gets the sticker, and its picture is the bytes a kept.
+    fn a_sticker_from_the_picker(&mut self) {
+        use teams_ui::fun_picker::Item;
+        use teams_ui::stickers::StickerRef;
+        use teams_ui::stickers::import::{self, ImportKind};
+
+        let source = tempfile::tempdir().unwrap();
+        let folder = source.path().join("Lab cats");
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut picture = Vec::new();
+        image::RgbaImage::from_pixel(120, 80, image::Rgba([200, 40, 40, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut picture), image::ImageFormat::Png)
+            .unwrap();
+        std::fs::write(folder.join("happy_cat.png"), &picture).unwrap();
+        let object = "0-eus-d1-0000000000000000000000000000c47a";
+        self.lab
+            .runtime
+            .block_on(self.lab.mock.serve_picture_sends(object, picture.clone()));
+        let stickers = self.settings.path().join("stickers");
+        import::import(&folder, ImportKind::Folder, &stickers, &mut |_| {}).unwrap();
+
+        focus_compose(&self.view, self.cx);
+        let compose = compose(&self.view, self.cx);
+        self.cx
+            .update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_emoji(window, cx)));
+        let picker = self
+            .cx
+            .update(|_, cx| compose.read(cx).emoji_picker().cloned())
+            .expect("the picker is open");
+        let sticker = StickerRef {
+            pack: "lab-cats".to_owned(),
+            file: "001.png".to_owned(),
+        };
+        self.cx.update(|window, cx| {
+            picker.update(cx, |picker, cx| picker.activate(&Item::Sticker(sticker), window, cx));
+        });
+        self.until_the_sticker_is_sent(&compose);
+        self.b_gets_the_sticker(object, &stickers);
+    }
+
+    /// Until the one picture in a's box is sent to the media service.
+    fn until_the_sticker_is_sent(&mut self, compose: &Entity<Compose>) {
+        let start = Instant::now();
+        loop {
+            self.cx.run_until_parked();
+            let (shown, state) = self.cx.update(|_, cx| {
+                let editor = compose.read(cx).editor().read(cx);
+                let shown = editor.shown_pictures();
+                let state = shown
+                    .first()
+                    .and_then(|id| editor.picture(*id))
+                    .map(|picture| picture.state.clone());
+                (shown.len(), state)
+            });
+            if shown == 1 && matches!(state, Some(teams_ui::editor::pictures::PictureState::Sent(_))) {
+                break;
+            }
+            assert!(
+                start.elapsed() < WAIT,
+                "the sticker wasn't sent: {shown} shown, {state:?}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// a presses Enter: the post is Teams' sticker element around `object`, and b gets the sticker.
+    fn b_gets_the_sticker(&mut self, object: &str, stickers: &std::path::Path) {
+        self.cx.simulate_keystrokes("enter");
+        let (change, posted) = self.b.message(self.cx);
+        assert_eq!(change, MessageChange::New);
+        let text = teams_proto::chat::parse_html(&posted.content);
+        let sticker = text
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                teams_proto::chat::Node::Sticker(sticker) => Some(sticker.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("b got a sticker: {}", posted.content));
+        assert_eq!(sticker.label.as_deref(), Some("Happy cat"));
+        assert_eq!(sticker.image.size, Some((120, 80)));
+        assert_eq!(sticker.image.item_id.as_deref(), Some(object), "its media object");
+        let sent = self
+            .lab
+            .posted()
+            .into_iter()
+            .find(|body| body.contains(object))
+            .unwrap();
+        let sent: Value = serde_json::from_str(&sent).unwrap();
+        let content = sent["content"].as_str().unwrap();
+        assert!(
+            content.starts_with("<p>&nbsp;</p><readonly aria-label=\"Happy cat\" contenteditable=\"false\" itemtype=\"http://schema.skype.com/Sticker\""),
+            "{content}"
+        );
+        assert!(content.ends_with("</readonly><p>&nbsp;</p>"), "{content}");
+        let uploaded = self
+            .lab
+            .runtime
+            .block_on(self.lab.mock.received_requests())
+            .into_iter()
+            .find(|request| request.method.as_str() == "PUT" && request.url.path().contains(object))
+            .expect("its picture went to the media service");
+        assert_eq!(uploaded.body, std::fs::read(stickers.join("lab-cats/001.png")).unwrap());
     }
 
     /// b posts `text`, and a's view holds it. Its id.
@@ -638,5 +754,6 @@ fn each_write_from_a_s_view_reaches_b_through_the_mock() {
     let reply = walk.a_reply(&theirs);
     walk.an_edit_by_up(&reply);
     walk.a_reaction_and_a_delete(&theirs, &posted);
+    walk.a_sticker_from_the_picker();
     walk.stop();
 }

@@ -89,3 +89,54 @@ async fn a_picture_pasted_in_a_channel_is_read_by_the_channels_people_alone() {
     }
     server.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_engine_sends_a_sticker_of_its_own_and_the_other_member_reads_it_as_a_sticker() {
+    use teams_proto::chat::{Sticker, parse_html, sticker_message};
+
+    for backend in backends() {
+        let trio = Trio::start(backend).await;
+        let bytes = png(120, 90);
+        let picture = PastedPicture {
+            format: PastedFormat::Png,
+            bytes: bytes.clone(),
+        };
+        // as the compose box sends a sticker the user imported: its picture first, then the message naming it
+        let object = trio.a.upload_picture(trio.chat.clone(), picture).await.unwrap();
+        let sticker = Sticker::of_picture(&cloud(), &object, (120, 90), "Happy cat").unwrap();
+        let row = trio
+            .a
+            .write(Action::Send {
+                conversation: trio.chat.clone(),
+                text: MessageText::new_in(&cloud(), sticker_message(sticker), []).unwrap(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(row.state, OutboxState::Sent, "{row:?}");
+        assert!(trio.b.sync().await.unwrap().failed.is_empty());
+        let message = trio
+            .b
+            .message(&trio.chat, row.message_id.unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        let read = parse_html(&message.content)
+            .nodes
+            .into_iter()
+            .find_map(|node| match node {
+                Node::Sticker(sticker) => Some(sticker),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("a sticker: {}", message.content));
+        assert_eq!(read.label.as_deref(), Some("Happy cat"));
+        assert_eq!(read.image.size, Some((120, 90)));
+        assert_eq!(read.image.item_id.as_deref(), Some(object.as_str()));
+        let shown = trio.b.message_picture(read.image.src.clone()).await.unwrap().unwrap();
+        assert_eq!(
+            shown.bytes.as_slice(),
+            bytes.as_slice(),
+            "the sticker's picture, from the server's media store"
+        );
+        trio.stop().await;
+    }
+}

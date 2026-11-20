@@ -1,0 +1,570 @@
+//! The compose box's picker (`teams_ui::fun_picker`) on GPUI's test context, over the fake engine (`common`): the tabs
+//! All, Emoji and Stickers, a sticker put in the box and sent as Teams sends one, the import of a folder from the
+//! picker, a pack renamed and removed, the keyboard's reach, and a box that offers no sticker. The settings live in a
+//! directory of their own per test, beside the stickers. Every picture, name and id is made up.
+
+// test code throughout (its helpers unwrap like the tests do)
+#![cfg(test)]
+
+#[expect(dead_code, reason = "the shared stand-ins hold more than this test uses")]
+mod common;
+
+use std::path::Path;
+use std::sync::Arc;
+
+use common::{LAB_A, LAB_B, Rig, Written};
+use gpui::{AppContext as _, Entity, Modifiers, VisualTestContext, px, size};
+use image::{ImageFormat, Rgba, RgbaImage};
+use teams_core::Action;
+use teams_proto::chat::MessageText;
+use teams_store::Member;
+use teams_ui::chat_view::ChatView;
+use teams_ui::compose::Compose;
+use teams_ui::fun_picker::{FunPicker, Item, Place, StickerView, Tab};
+use teams_ui::settings::SettingsModel;
+use teams_ui::stickers::import::{self, ImportKind};
+use teams_ui::stickers::{Shelf, StickerRef};
+use teams_ui::{SettingsFile, ShellParts, ViewTrace};
+
+const AB: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-8000-00000000000b@unq.gbl.spaces";
+
+/// A made-up still picture, `side` square, in `format`.
+fn picture(side: u32, colour: [u8; 3], format: ImageFormat) -> Vec<u8> {
+    let picture = RgbaImage::from_pixel(side, side, Rgba([colour[0], colour[1], colour[2], 255]));
+    let mut bytes = Vec::new();
+    picture.write_to(&mut std::io::Cursor::new(&mut bytes), format).unwrap();
+    bytes
+}
+
+/// A folder `name` of made-up stickers in `root`: two pictures and a note.
+fn pack_folder(root: &Path, name: &str) -> std::path::PathBuf {
+    let dir = root.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("happy_cat.png"), picture(300, [200, 40, 40], ImageFormat::Png)).unwrap();
+    std::fs::write(dir.join("sleepy_cat.png"), picture(90, [40, 40, 200], ImageFormat::Png)).unwrap();
+    std::fs::write(dir.join("notes.txt"), b"made up").unwrap();
+    dir
+}
+
+/// The test's settings directory and what it keeps.
+struct Setup {
+    _dir: tempfile::TempDir,
+    settings: std::path::PathBuf,
+    stickers: std::path::PathBuf,
+    sources: tempfile::TempDir,
+}
+
+impl Setup {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        Self {
+            settings: dir.path().join("settings.toml"),
+            stickers: dir.path().join("stickers"),
+            _dir: dir,
+            sources: tempfile::tempdir().unwrap(),
+        }
+    }
+
+    /// A pack "Lab cats" imported before the app starts.
+    fn with_cats(self) -> Self {
+        let folder = pack_folder(self.sources.path(), "Lab cats");
+        import::import(&folder, ImportKind::Folder, &self.stickers, &mut |_| {}).unwrap();
+        self
+    }
+}
+
+fn new_rig() -> Rig {
+    let rig = Rig::start();
+    rig.core
+        .members
+        .lock()
+        .unwrap()
+        .insert(AB.to_owned(), vec![Member::new(LAB_A, None), Member::new(LAB_B, None)]);
+    rig.cx.update(teams_ui::window::init);
+    rig
+}
+
+fn draw(cx: &mut VisualTestContext) {
+    for _ in 0..3 {
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+    }
+    cx.run_until_parked();
+}
+
+/// The a–b chat's view with its settings in `place`, in a window of its own, the compose box focused.
+fn chat_window(rig: &Rig, place: &Setup) -> (Entity<ChatView>, &'static mut VisualTestContext) {
+    let settings_file = SettingsFile::new(place.settings.clone());
+    let parts = ShellParts {
+        core: rig.cx.read(|cx| rig.bridge.read(cx).core()),
+        models: rig.models.clone(),
+        settings: rig.cx.update(|cx| cx.new(|_| SettingsModel::load(settings_file))),
+        trace: Arc::new(ViewTrace::new(Written::default())),
+    };
+    let app: &'static mut gpui::TestAppContext = Box::leak(Box::new(rig.cx.clone()));
+    let (view, cx) = app.add_window_view(|window, cx| ChatView::new(parts, AB.to_owned(), window, cx));
+    cx.simulate_resize(size(px(800.0), px(700.0)));
+    cx.update(|window, _| window.activate_window());
+    draw(cx);
+    let compose = compose(&view, cx);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.focus(window, cx)));
+    draw(cx);
+    (view, cx)
+}
+
+fn compose(view: &Entity<ChatView>, cx: &mut VisualTestContext) -> Entity<Compose> {
+    cx.update(|_, cx| view.read(cx).compose().clone())
+}
+
+fn picker(view: &Entity<ChatView>, cx: &mut VisualTestContext) -> Option<Entity<FunPicker>> {
+    let compose = compose(view, cx);
+    cx.update(|_, cx| compose.read(cx).emoji_picker().cloned())
+}
+
+fn click(cx: &mut VisualTestContext, selector: &str) {
+    let bounds = cx
+        .debug_bounds(selector.to_owned().leak())
+        .unwrap_or_else(|| panic!("{selector} is drawn"));
+    cx.simulate_click(bounds.center(), Modifiers::none());
+    draw(cx);
+}
+
+fn keys(cx: &mut VisualTestContext, keystrokes: &str) {
+    cx.simulate_keystrokes(keystrokes);
+    draw(cx);
+}
+
+fn drawn(cx: &mut VisualTestContext, selector: &str) -> bool {
+    cx.debug_bounds(selector.to_owned().leak()).is_some()
+}
+
+fn sent(rig: &Rig) -> Vec<MessageText> {
+    std::mem::take(&mut *rig.core.actions.lock().unwrap())
+        .into_iter()
+        .filter_map(|action| match action {
+            Action::Send { text, .. } => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
+fn sticker(pack: &str, file: &str) -> StickerRef {
+    StickerRef {
+        pack: pack.to_owned(),
+        file: file.to_owned(),
+    }
+}
+
+/// All's tabs and rows: six emoji and the packs' first stickers, each section with "See all"; no GIFs tab.
+fn all_tab_holds_emoji_and_stickers(picker: &Entity<FunPicker>, cx: &mut VisualTestContext) {
+    for tab in ["fun-tab-all", "fun-tab-emoji", "fun-tab-stickers", "fun-search"] {
+        assert!(drawn(cx, tab), "{tab}");
+    }
+    assert!(!drawn(cx, "fun-tab-gifs"), "no GIFs tab");
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    assert_eq!(rows[0], [Item::SeeAllEmoji]);
+    assert_eq!(rows[1].len(), 6);
+    assert!(matches!(rows[1][0], Item::Emoji(_)));
+    assert_eq!(rows[2], [Item::SeeAllStickers]);
+    assert_eq!(
+        rows[3],
+        [
+            Item::Sticker(sticker("lab-cats", "001.png")),
+            Item::Sticker(sticker("lab-cats", "002.png"))
+        ]
+    );
+    assert!(drawn(cx, "sticker-lab-cats-001"));
+}
+
+#[test]
+fn the_picker_has_teams_tabs_and_see_all_opens_each() {
+    let place = Setup::new().with_cats();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    click(cx, "compose-emoji");
+    let picker = picker(&view, cx).expect("the button opens the picker");
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).tab()),
+        Tab::All,
+        "it opens on All, as Teams' does"
+    );
+    all_tab_holds_emoji_and_stickers(&picker, cx);
+
+    click(cx, "emoji-see-all");
+    assert_eq!(cx.update(|_, cx| picker.read(cx).tab()), Tab::Emoji);
+    assert!(drawn(cx, "compose-emoji-tab"), "the emoji picker's list");
+    click(cx, "fun-tab-all");
+    click(cx, "stickers-see-all");
+    assert_eq!(cx.update(|_, cx| picker.read(cx).tab()), Tab::Stickers);
+    assert!(drawn(cx, "sticker-pack-lab-cats"), "the pack's tile");
+    assert!(!drawn(cx, "sticker-packs-empty"));
+    click(cx, "sticker-packs-see-all");
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).sticker_view().clone()),
+        StickerView::Packs
+    );
+    click(cx, "sticker-pack-lab-cats");
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).sticker_view().clone()),
+        StickerView::Pack {
+            id: "lab-cats".to_owned(),
+            from_packs: true
+        }
+    );
+    click(cx, "sticker-back");
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).sticker_view().clone()),
+        StickerView::Packs
+    );
+    keys(cx, "escape");
+    assert!(self::picker(&view, cx).is_none(), "Escape closes it");
+    assert!(sent(&rig).is_empty());
+}
+
+#[test]
+fn a_sticker_picked_goes_in_the_box_is_sent_at_once_and_its_message_is_teams_sticker() {
+    let place = Setup::new().with_cats();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    click(cx, "compose-emoji");
+    click(cx, "fun-tab-stickers");
+    click(cx, "sticker-pack-lab-cats");
+    click(cx, "sticker-lab-cats-001");
+    assert!(picker(&view, cx).is_none(), "a pick closes the picker");
+    let uploads = rig.core.picture_uploads.lock().unwrap().clone();
+    assert_eq!(uploads.len(), 1, "sent to the media service at once");
+    assert_eq!(uploads[0].0, AB);
+    assert_eq!(uploads[0].1.format, teams_proto::PastedFormat::Png);
+    assert_eq!(
+        uploads[0].1.bytes,
+        std::fs::read(place.stickers.join("lab-cats/001.png")).unwrap(),
+        "the kept sticker's bytes"
+    );
+    assert!(drawn(cx, "editor-picture-1"), "it shows in the box");
+    assert!(sent(&rig).is_empty(), "nothing is posted until Send");
+    // Recent has it now, for every box
+    let shelf = cx.update(|_, cx| Shelf::of(Some(place.stickers.clone()), cx));
+    assert_eq!(
+        cx.update(|_, cx| shelf.read(cx).recent().to_vec()),
+        [sticker("lab-cats", "001.png")]
+    );
+
+    keys(cx, "enter");
+    let posted = sent(&rig);
+    assert_eq!(posted.len(), 1);
+    assert_eq!(posted[0].pictures(), ["0-made-up-d1-1"]);
+    assert_eq!(
+        posted[0].html(),
+        "<p>&nbsp;</p><readonly aria-label=\"Happy cat\" contenteditable=\"false\" \
+         itemtype=\"http://schema.skype.com/Sticker\" title=\"Happy cat\"><img \
+         src=\"https://us-api.asm.skype.com/v1/objects/0-made-up-d1-1/views/imgo\" \
+         itemtype=\"http://schema.skype.com/AMSImage\" width=\"180\" height=\"180\" alt=\"Happy cat\" \
+         id=\"x_0-made-up-d1-1\" itemid=\"0-made-up-d1-1\"></readonly><p>&nbsp;</p>"
+    );
+    // read back, it is a sticker
+    let parsed = teams_proto::chat::parse_html(posted[0].html());
+    assert!(
+        parsed
+            .nodes
+            .iter()
+            .any(|node| matches!(node, teams_proto::chat::Node::Sticker(_))),
+        "{parsed:?}"
+    );
+    assert!(!drawn(cx, "editor-picture-1"), "the box is emptied");
+
+    // All shows it first now
+    click(cx, "compose-emoji");
+    let picker = picker(&view, cx).unwrap();
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    assert_eq!(rows[3][0], Item::Sticker(sticker("lab-cats", "001.png")));
+}
+
+#[test]
+fn a_sticker_beside_text_is_sent_in_the_text() {
+    let place = Setup::new().with_cats();
+    let rig = new_rig();
+    let (_view, cx) = chat_window(&rig, &place);
+    cx.simulate_input("Look");
+    draw(cx);
+    click(cx, "compose-emoji");
+    click(cx, "fun-tab-stickers");
+    click(cx, "sticker-pack-lab-cats");
+    click(cx, "sticker-lab-cats-002");
+    keys(cx, "enter");
+    let posted = sent(&rig);
+    let html = posted[0].html();
+    assert!(
+        html.starts_with("<p>Look</p><readonly aria-label=\"Sleepy cat\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("width=\"90\" height=\"90\""),
+        "shown at its own size: {html}"
+    );
+}
+
+#[test]
+fn search_finds_emoji_and_stickers_and_enter_picks_the_first() {
+    let place = Setup::new().with_cats();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    cx.simulate_input("cat");
+    draw(cx);
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    assert!(
+        rows.iter().flatten().any(|item| matches!(item, Item::Emoji(_))),
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .flatten()
+            .any(|item| *item == Item::Sticker(sticker("lab-cats", "002.png")))
+    );
+    click(cx, "fun-tab-stickers");
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    assert_eq!(
+        rows,
+        [vec![
+            Item::Sticker(sticker("lab-cats", "001.png")),
+            Item::Sticker(sticker("lab-cats", "002.png"))
+        ]],
+        "the search kept"
+    );
+    keys(cx, "enter");
+    assert!(
+        self::picker(&view, cx).is_none(),
+        "the search field has the focus back after a tab's click"
+    );
+    assert!(drawn(cx, "editor-picture-1"), "the first sticker found");
+
+    keys(cx, "ctrl-.");
+    cx.simulate_input("lab cats happy");
+    draw(cx);
+    click(cx, "fun-tab-stickers");
+    let picker = self::picker(&view, cx).unwrap();
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).rows(cx)),
+        [vec![Item::Sticker(sticker("lab-cats", "001.png"))]],
+        "by its pack's name and its label"
+    );
+    keys(cx, "escape ctrl-.");
+    cx.simulate_input("qqqzz");
+    draw(cx);
+    let picker = self::picker(&view, cx).unwrap();
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).rows(cx)),
+        [vec![Item::SeeAllEmoji], vec![Item::SeeAllStickers]],
+        "nothing found"
+    );
+    keys(cx, "enter");
+    assert!(
+        self::picker(&view, cx).is_some(),
+        "Enter with nothing found picks nothing"
+    );
+}
+
+#[test]
+fn the_keyboard_reaches_the_tabs() {
+    let place = Setup::new().with_cats();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    let place_of = |cx: &mut VisualTestContext| cx.update(|window, cx| picker.read(cx).place(window, cx));
+    assert_eq!(place_of(cx), Some(Place::Search), "the search field has the focus");
+    keys(cx, "up");
+    assert_eq!(place_of(cx), Some(Place::Tabs));
+    keys(cx, "right");
+    assert_eq!(cx.update(|_, cx| picker.read(cx).tab()), Tab::Emoji);
+    keys(cx, "right");
+    assert_eq!(cx.update(|_, cx| picker.read(cx).tab()), Tab::Stickers);
+    keys(cx, "right");
+    assert_eq!(cx.update(|_, cx| picker.read(cx).tab()), Tab::All, "it wraps");
+    keys(cx, "end");
+    assert_eq!(cx.update(|_, cx| picker.read(cx).tab()), Tab::Stickers);
+    keys(cx, "down");
+    assert_eq!(place_of(cx), Some(Place::Search));
+    // Ctrl+Tab changes the tab from anywhere
+    keys(cx, "ctrl-tab");
+    assert_eq!(cx.update(|_, cx| picker.read(cx).tab()), Tab::All);
+    keys(cx, "ctrl-shift-tab ctrl-shift-tab");
+    assert_eq!(cx.update(|_, cx| picker.read(cx).tab()), Tab::Emoji);
+    keys(cx, "escape");
+    assert!(self::picker(&view, cx).is_none());
+}
+
+#[test]
+fn the_keyboard_reaches_the_packs_and_the_stickers() {
+    let place = Setup::new().with_cats();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    let place_of = |cx: &mut VisualTestContext| cx.update(|window, cx| picker.read(cx).place(window, cx));
+    keys(cx, "up end down down");
+    assert_eq!(place_of(cx), Some(Place::Items(0, 0)));
+    let current = |cx: &mut VisualTestContext| cx.update(|window, cx| picker.read(cx).current(window, cx));
+    assert_eq!(current(cx), Some(Item::AddPack));
+    keys(cx, "right");
+    assert_eq!(current(cx), Some(Item::SeeAllPacks));
+    keys(cx, "down");
+    assert_eq!(current(cx), Some(Item::Pack("lab-cats".to_owned())));
+    keys(cx, "enter");
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).sticker_view().clone()),
+        StickerView::Pack {
+            id: "lab-cats".to_owned(),
+            from_packs: false
+        }
+    );
+    // Back, the pack's menu, then its stickers
+    assert_eq!(current(cx), Some(Item::Back));
+    keys(cx, "down");
+    assert_eq!(current(cx), Some(Item::PackMenu));
+    keys(cx, "down");
+    assert_eq!(current(cx), Some(Item::Sticker(sticker("lab-cats", "001.png"))));
+    keys(cx, "right");
+    assert_eq!(current(cx), Some(Item::Sticker(sticker("lab-cats", "002.png"))));
+    keys(cx, "home");
+    assert_eq!(current(cx), Some(Item::Back));
+    keys(cx, "up");
+    assert_eq!(place_of(cx), Some(Place::Search), "Up from the first row");
+    keys(cx, "down end space");
+    assert!(self::picker(&view, cx).is_none(), "Space picks");
+    assert!(drawn(cx, "editor-picture-1"));
+}
+
+#[test]
+fn a_folder_imported_from_the_picker_shows_its_progress_and_summary_then_its_pack() {
+    let place = Setup::new();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    click(cx, "compose-emoji");
+    let picker = picker(&view, cx).unwrap();
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    assert_eq!(
+        rows.last(),
+        Some(&vec![Item::SeeAllStickers]),
+        "All has no sticker yet: {rows:?}"
+    );
+    click(cx, "fun-tab-stickers");
+    assert!(drawn(cx, "sticker-packs-empty"), "what to do with no pack");
+    assert!(drawn(cx, "sticker-import-folder") && drawn(cx, "sticker-import-zip"));
+
+    let folder = pack_folder(place.sources.path(), "Lab cats");
+    cx.update(|_, cx| picker.update(cx, |picker, cx| picker.import_from(folder, ImportKind::Folder, cx)));
+    // before the import's thread ran: its progress line
+    cx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+    assert!(drawn(cx, "sticker-import-progress"), "the import's progress");
+    let shelf = cx.update(|_, cx| Shelf::of(Some(place.stickers.clone()), cx));
+    assert!(cx.update(|_, cx| shelf.read(cx).importing()));
+    draw(cx);
+    assert!(drawn(cx, "sticker-import-summary"), "the import's summary");
+    let state = cx.update(|_, cx| shelf.read(cx).import_state().cloned());
+    let Some(teams_ui::stickers::ImportState::Done(imported)) = state else {
+        panic!("{state:?}");
+    };
+    assert_eq!(imported.pack.stickers.len(), 2);
+    assert_eq!(imported.skipped.len(), 1, "the note");
+    click(cx, "sticker-import-open");
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).sticker_view().clone()),
+        StickerView::Pack {
+            id: "lab-cats".to_owned(),
+            from_packs: false
+        }
+    );
+    assert!(
+        cx.update(|_, cx| shelf.read(cx).import_state().is_none()),
+        "the summary closed"
+    );
+    assert!(place.stickers.join("lab-cats/pack.toml").is_file());
+    the_pack_is_there_after_a_restart(&place);
+}
+
+/// The next run's app, a new one over the same directory, finds the pack on the disk.
+fn the_pack_is_there_after_a_restart(place: &Setup) {
+    let again = new_rig();
+    let (_view, cx) = chat_window(&again, place);
+    click(cx, "compose-emoji");
+    click(cx, "fun-tab-stickers");
+    assert!(drawn(cx, "sticker-pack-lab-cats"));
+}
+
+#[test]
+fn a_pack_is_renamed_and_removed_from_its_menu() {
+    let place = Setup::new().with_cats();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    click(cx, "compose-emoji");
+    click(cx, "fun-tab-stickers");
+    click(cx, "sticker-pack-lab-cats");
+    click(cx, "sticker-pack-menu");
+    assert!(drawn(cx, "sticker-pack-rename") && drawn(cx, "sticker-pack-remove"));
+    click(cx, "sticker-pack-rename");
+    assert!(drawn(cx, "sticker-rename-field"));
+    keys(cx, "ctrl-a");
+    cx.simulate_input("Office cats");
+    keys(cx, "enter");
+    let shelf = cx.update(|_, cx| Shelf::of(Some(place.stickers.clone()), cx));
+    assert_eq!(cx.update(|_, cx| shelf.read(cx).packs()[0].name.clone()), "Office cats");
+    assert_eq!(
+        teams_ui::stickers::store::list(&place.stickers)[0].name,
+        "Office cats",
+        "kept"
+    );
+    assert!(
+        picker(&view, cx).is_some(),
+        "Enter in the name field saves, and the picker stays"
+    );
+
+    // a name left blank is refused, and Escape leaves the name as it was
+    click(cx, "sticker-pack-menu");
+    click(cx, "sticker-pack-rename");
+    keys(cx, "ctrl-a backspace enter");
+    assert!(drawn(cx, "sticker-rename-field"), "still editing");
+    keys(cx, "escape");
+    assert!(!drawn(cx, "sticker-rename-field"));
+    assert!(picker(&view, cx).is_some(), "Escape ends the rename only");
+
+    click(cx, "sticker-pack-menu");
+    click(cx, "sticker-pack-remove");
+    click(cx, "sticker-pack-remove-cancel");
+    assert!(place.stickers.join("lab-cats").is_dir());
+    click(cx, "sticker-pack-menu");
+    click(cx, "sticker-pack-remove");
+    click(cx, "sticker-pack-remove-confirm");
+    assert!(!place.stickers.join("lab-cats").exists());
+    let picker = picker(&view, cx).unwrap();
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).sticker_view().clone()),
+        StickerView::Home
+    );
+    assert!(drawn(cx, "sticker-packs-empty"));
+}
+
+#[test]
+fn a_picker_without_stickers_has_no_stickers_tab() {
+    let place = Setup::new().with_cats();
+    let rig = new_rig();
+    let core = rig.cx.read(|cx| rig.bridge.read(cx).core());
+    let stickers = place.stickers.clone();
+    let app: &'static mut gpui::TestAppContext = Box::leak(Box::new(rig.cx.clone()));
+    let (picker, cx) = app.add_window_view(|window, cx| {
+        let shelf = Shelf::of(Some(stickers), cx);
+        FunPicker::new(core, shelf, false, window, cx)
+    });
+    draw(cx);
+    assert!(drawn(cx, "fun-tab-all") && drawn(cx, "fun-tab-emoji"));
+    assert!(!drawn(cx, "fun-tab-stickers"));
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    assert_eq!(rows.len(), 2, "emoji only: {rows:?}");
+    cx.update(|_, cx| picker.update(cx, |picker, cx| picker.show(Tab::Stickers, cx)));
+    assert_eq!(cx.update(|_, cx| picker.read(cx).tab()), Tab::All);
+}
