@@ -1,7 +1,7 @@
 //! A group chat's name from its header (the chat header's "Name group chat"), on the fake core in a window of its own:
 //! the pencil and its popup, Save and Enter, the 250-character limit, an empty name, Cancel and Escape, a save that
-//! fails (also after the popup closed, or once the engine stopped), the chats that show no pencil, and the new name in
-//! the header and the list once the engine tells it.
+//! fails (also after the popup closed, once the engine stopped, or while its account shows signed out), the chats
+//! that show no pencil, and the new name in the header and the list once the engine tells it.
 //! Synthetic accounts and chats only.
 
 // test code throughout (its helpers unwrap like the tests do)
@@ -14,7 +14,7 @@ mod parts;
 use std::sync::Arc;
 
 use common::{LAB_A, LAB_B, Rig};
-use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, px, size};
+use gpui::{AppContext as _, Entity, Modifiers, TestAppContext, VisualTestContext, px, size};
 use teams_core::Action;
 use teams_store::{Conversation, ConversationKind, Member, Message, OutboxKind, OutboxState};
 use teams_ui::ViewTrace;
@@ -28,6 +28,8 @@ const AB: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-800
 const NAMED: &str = "19:000000000000000000000000000named@thread.v2";
 /// An a–b–c chat with no name: called by its people.
 const UNNAMED: &str = "19:0000000000000000000000000unnamed@thread.v2";
+/// A team's channel, not a chat.
+const CHANNEL: &str = "19:0000000000000000000000000channel@thread.tacv2";
 /// A meeting's chat of a and b.
 const MEETING: &str = "19:meeting_synthetic-rename@thread.v2";
 /// 2026-01-01T12:00:00Z, ms.
@@ -411,11 +413,11 @@ fn the_calendar_closes_a_saving_popup_and_a_stopped_engine_ends_its_save_as_not_
 type PageOpener = fn(&mut Shell, &mut gpui::Window, &mut gpui::Context<Shell>);
 
 #[test]
-fn workflows_and_apps_close_a_saving_popup_and_its_failure_shows_as_a_toast() {
+fn a_channel_workflows_and_apps_close_a_saving_popup_and_its_failure_shows_as_a_toast() {
     let rig = seeded();
     rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
     // each save waits in the outbox, then fails
-    for id in [7, 8] {
+    for id in [7, 8, 9] {
         rig.core.write_answers.lock().unwrap().push_back(common::outbox_row(
             id,
             OutboxKind::RenameChat,
@@ -429,7 +431,15 @@ fn workflows_and_apps_close_a_saving_popup_and_its_failure_shows_as_a_toast() {
     }
     let (shell, cx) = shell_window(&rig);
     let toast = |cx: &mut VisualTestContext| cx.update(|_, cx| shell.read(cx).toast().cloned());
-    let pages: [(&str, PageOpener); 2] = [
+    let pages: [(&str, PageOpener); 3] = [
+        ("A channel", |shell, window, cx| {
+            let chosen = teams_ui::teams_list::ChannelChosen {
+                id: CHANNEL.to_owned(),
+                name: "General".into(),
+                team: "Lab team".into(),
+            };
+            shell.open_channel(chosen, window, cx);
+        }),
         ("Workflows", |shell, window, cx| shell.open_workflows(false, window, cx)),
         ("Apps", Shell::open_apps),
     ];
@@ -456,6 +466,49 @@ fn workflows_and_apps_close_a_saving_popup_and_its_failure_shows_as_a_toast() {
         draw(cx);
         assert_eq!(toast(cx), None);
     }
+}
+
+#[test]
+fn an_account_signed_out_while_its_rename_saves_hides_the_popup_and_its_failure_shows_as_a_toast() {
+    let rig = seeded();
+    // the save waits in the outbox, then fails
+    rig.core.write_answers.lock().unwrap().push_back(common::outbox_row(
+        7,
+        OutboxKind::RenameChat,
+        OutboxState::Pending,
+    ));
+    rig.core.outbox_answers.lock().unwrap().push_back(common::outbox_row(
+        7,
+        OutboxKind::RenameChat,
+        OutboxState::Failed,
+    ));
+    let (shell, cx) = shell_window(&rig);
+    // the app's accounts: a signed-out account's shell shows the signed-out pane in place of its chats
+    shell.update_in(cx, |shell, _, cx| {
+        let accounts = cx.new(|_| teams_ui::accounts::Accounts::new(false, Arc::new(ViewTrace::off())));
+        shell.set_accounts(accounts, cx);
+    });
+    open(&shell, cx, NAMED);
+    let toast = |cx: &mut VisualTestContext| cx.update(|_, cx| shell.read(cx).toast().cloned());
+
+    click(cx, "chat-header-rename");
+    cx.simulate_input("Lab trio 40");
+    draw(cx);
+    click(cx, "chat-rename-save");
+    let view = popup(&shell, cx).expect("open while it saves");
+    cx.update(|_, cx| rig.models.signed_out("sign in again".into(), cx));
+    draw(cx);
+    assert!(cx.debug_bounds("account-signed-out").is_some());
+    assert_eq!(
+        cx.update(|_, cx| shell.read(cx).main().clone()),
+        Main::Chat(NAMED.to_owned()),
+        "the chat stays the shell's page under the signed-out pane"
+    );
+    cx.executor().advance_clock(std::time::Duration::from_secs(1));
+    draw(cx);
+    assert_eq!(toast(cx), Some(NOT_SAVED.into()));
+    assert!(popup(&shell, cx).is_none(), "the hidden popup is dropped");
+    assert!(!cx.update(|_, cx| view.read(cx).saving()), "the watch ended");
 }
 
 #[test]

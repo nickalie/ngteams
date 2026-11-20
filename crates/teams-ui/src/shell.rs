@@ -2474,7 +2474,6 @@ impl Shell {
     pub fn open_channel(&mut self, chosen: ChannelChosen, window: &mut Window, cx: &mut Context<Self>) {
         self.trace
             .record(&TraceLine::new("channel", "opened").conversation(&chosen.id));
-        self.rename.close(cx);
         let shown = self
             .channel
             .as_ref()
