@@ -20,6 +20,9 @@
 //! Each session is an object of its own at its path, as the real portal's: its `Close` ends it (the real portal ends
 //! the cast then, and the desktop says the share stopped), so a remote is refused on it afterwards.
 //! Every call is recorded as the camera portal's are.
+//! A fake document portal's file transfer (`org.freedesktop.portal.Documents`'s
+//! `org.freedesktop.portal.FileTransfer`, [`PrivateBus::start_file_transfer`]): `RetrieveFiles` answers a key the test
+//! registered with its paths, as the real portal does for the program a sandboxed drag source handed the key to.
 
 use std::{
     collections::HashMap,
@@ -57,6 +60,9 @@ pub const WATCHER_PATH: &str = "/StatusNotifierWatcher";
 pub const PORTAL_NAME: &str = "org.freedesktop.portal.Desktop";
 pub const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const REQUEST_INTERFACE: &str = "org.freedesktop.portal.Request";
+/// The document portal's bus name and object path.
+pub const DOCUMENTS_NAME: &str = "org.freedesktop.portal.Documents";
+pub const DOCUMENTS_PATH: &str = "/org/freedesktop/portal/documents";
 
 /// One call the fake camera portal got.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,6 +120,10 @@ struct Records {
     camera_granted: Vec<String>,
     /// The screen-cast sessions started, by caller and session path.
     screen_cast_started: Vec<(String, String)>,
+    /// The file transfer portal's keys and the paths each names.
+    transfers: HashMap<String, Vec<String>>,
+    /// The keys `RetrieveFiles` was asked for, in order.
+    retrieved: Vec<String>,
 }
 
 type Shared = Arc<Mutex<Records>>;
@@ -577,6 +587,32 @@ impl PortalSession {
     }
 }
 
+/// The fake file transfer portal.
+struct FileTransfer {
+    records: Shared,
+}
+
+#[interface(name = "org.freedesktop.portal.FileTransfer")]
+impl FileTransfer {
+    fn retrieve_files(&self, key: &str, options: HashMap<&str, Value<'_>>) -> zbus::fdo::Result<Vec<String>> {
+        // the portal names no option a receiver passes
+        drop(options);
+        let mut records = records(&self.records);
+        records.retrieved.push(key.to_owned());
+        records
+            .transfers
+            .get(key)
+            .cloned()
+            .ok_or_else(|| zbus::fdo::Error::InvalidArgs(format!("no transfer {key}")))
+    }
+
+    #[zbus(property, name = "version")]
+    #[expect(clippy::unused_self, reason = "a D-Bus property zbus reads on the object")]
+    fn version(&self) -> u32 {
+        1
+    }
+}
+
 /// `text` as a D-Bus address value: bytes outside `[-0-9A-Za-z_/.\*]` percent-escaped.
 #[must_use]
 pub fn escape_address_value(text: &str) -> String {
@@ -621,6 +657,8 @@ pub struct PrivateBus {
     watcher: Mutex<Option<Connection>>,
     /// The camera portal's connection, once it runs.
     portal: Mutex<Option<Connection>>,
+    /// The file transfer portal's connection, once it runs.
+    documents: Mutex<Option<Connection>>,
 }
 
 impl Drop for PrivateBus {
@@ -655,6 +693,7 @@ impl PrivateBus {
             connections: Vec::new(),
             watcher: Mutex::new(None),
             portal: Mutex::new(None),
+            documents: Mutex::new(None),
         };
         if wait_until(SOCKET_WAIT, || socket.exists().then_some(())).is_none() {
             let log = fs::read_to_string(dir.join(LOG)).unwrap_or_default();
@@ -737,6 +776,33 @@ impl PrivateBus {
             *running = Some(connection);
         }
         Ok(())
+    }
+
+    /// Starts the fake file transfer portal, unless it runs, and registers `key` as a transfer of `paths`.
+    ///
+    /// # Errors
+    /// The connection or the name can't be had.
+    pub fn start_file_transfer(&self, key: &str, paths: &[&Path]) -> SandboxResult {
+        let paths = paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+        records(&self.records).transfers.insert(key.to_owned(), paths);
+        let mut running = self.documents.lock().unwrap_or_else(PoisonError::into_inner);
+        if running.is_none() {
+            let transfer = FileTransfer {
+                records: Arc::clone(&self.records),
+            };
+            let connection = Builder::address(self.address.as_str())?
+                .name(DOCUMENTS_NAME)?
+                .serve_at(DOCUMENTS_PATH, transfer)?
+                .build()?;
+            *running = Some(connection);
+        }
+        Ok(())
+    }
+
+    /// The keys the fake file transfer portal was asked for, in order.
+    #[must_use]
+    pub fn retrieved_transfers(&self) -> Vec<String> {
+        records(&self.records).retrieved.clone()
     }
 
     /// The user's answer the fake camera portal gives from now on (allowed until said otherwise).

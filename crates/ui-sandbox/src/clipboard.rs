@@ -298,7 +298,7 @@ fn serve(connection: &Connection, queue: &mut EventQueue<State>, state: &mut Sta
 }
 
 /// Whether `fd` has something to read (or hung up) within `wait`.
-fn readable(fd: BorrowedFd<'_>, wait: Duration) -> bool {
+pub(crate) fn readable(fd: BorrowedFd<'_>, wait: Duration) -> bool {
     let mut poll = libc::pollfd {
         fd: fd.as_raw_fd(),
         events: libc::POLLIN,

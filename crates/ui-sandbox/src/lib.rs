@@ -12,6 +12,8 @@
 //!   `zwp_virtual_keyboard_manager_v1` and `zwlr_virtual_pointer_manager_v1`.
 //! - **A clipboard of its own** ([`clipboard`]): content put on the nested niri's selection through its data-control
 //!   protocol for the app to paste, and what the selection holds read back; the desktop's clipboard is never touched.
+//! - **A file manager's drag** ([`drag`]): a surface on the nested niri's overlay layer that a press of the virtual
+//!   pointer starts a real compositor drag from, offering the MIME types a file manager offers.
 //! - **A no-op URI opener** ([`opener`]): `xdg-open` (and the other launchers GPUI tries) first on the client's
 //!   `PATH`, recording what it was asked to open and opening nothing.
 //! - **A private PipeWire** ([`pipewire`], when [`SandboxOptions::pipewire`] asks): its own server and session
@@ -30,6 +32,7 @@
 
 pub mod bus;
 pub mod clipboard;
+pub mod drag;
 pub mod input;
 pub mod opener;
 pub mod pipewire;
@@ -445,6 +448,14 @@ impl Sandbox {
     /// Its log can't be read.
     pub fn opened(&self) -> SandboxResult<Vec<Opened>> {
         opener::read_log(&self.path(opener::LOG))
+    }
+
+    /// A file manager's drag source on the screen ([`drag`]): a press of the virtual pointer on it starts the drag.
+    ///
+    /// # Errors
+    /// The offers are malformed, or the compositor can't show the source.
+    pub fn drag_source(&self, options: drag::DragOptions) -> SandboxResult<drag::DragSource> {
+        drag::DragSource::show(&self.wayland, options)
     }
 
     /// A virtual keyboard and pointer in the nested niri, the pointer's absolute coordinates over the output.
