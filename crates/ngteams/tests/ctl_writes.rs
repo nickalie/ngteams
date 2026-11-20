@@ -1,9 +1,9 @@
 //! The control socket's message writes (`ctl::writes`), through the real protocol and server, over lab account a's
 //! engine on the mock chat service (`teams-mock`, loopback only, through the `test-support` mock origins): each write
-//! goes out through a's outbox, its row answered, and the mock tells b what it did. The read-only mode refuses them
-//! all and sends nothing. `status set` goes out as the status menu's choice does, through a's and b's engines with
-//! their push channels on the mock's Trouter, to the mock's UPS; `sync` is a's catch-up. Every id and text is made up
-//! or the mock's own.
+//! goes out through a's outbox, its row answered, and the mock tells b what it did; a's own notes (`48:notes`) take
+//! the same writes as a chat, and nobody else is told. The read-only mode refuses them all and sends nothing. `status
+//! set` goes out as the status menu's choice does, through a's and b's engines with their push channels on the mock's
+//! Trouter, to the mock's UPS; `sync` is a's catch-up. Every id and text is made up or the mock's own.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -37,8 +37,8 @@ use teams_ctl::protocol::{
     WRITE_ANSWER, WRITE_WAIT,
 };
 use teams_mock::{
-    AB_CHAT, AvailabilityChange, CHANNEL, CHAT_BASE, ChatServiceMock, EventKind, LAB_A, LAB_B, LAB_C, NOTIFICATIONS,
-    PRESENCE_BASE, TENANT, TrouterMock,
+    AB_CHAT, AvailabilityChange, CHANNEL, CHAT_BASE, ChatServiceMock, EventKind, LAB_A, LAB_B, LAB_C, NOTES,
+    NOTIFICATIONS, PRESENCE_BASE, TENANT, TrouterMock,
 };
 use teams_proto::{Author, Client, Credentials, HttpTransport, Mri};
 use teams_store::{OutboxEntry, OutboxKind, Store};
@@ -270,6 +270,65 @@ fn send_edit_react_unreact_and_delete_go_out_through_the_outbox() {
     });
     assert_eq!(sent(&row, "delete"), id);
     assert!(matches!(&lab.told_b()[..], [(EventKind::Delete, _)]));
+}
+
+#[test]
+fn the_account_s_own_notes_take_a_send_an_edit_a_reaction_and_a_delete_as_a_chat_does() {
+    let lab = Lab::start(false);
+    // the notes are in no conversation list: stored as the chat view stores them when it opens them
+    lab.requests.sync_conversation(NOTES).blocking_wait().unwrap();
+    let wrote = |row: &OutboxRow, write: &str| {
+        assert_eq!(
+            (row.write.as_str(), row.state, row.chat.as_deref()),
+            (write, OutboxState::Sent, Some(NOTES)),
+            "{row:?}"
+        );
+        row.message.clone().expect("the note it wrote")
+    };
+    let id = wrote(
+        &lab.row(Request::Send {
+            chat: NOTES.to_owned(),
+            text: "a note to self".to_owned(),
+            wait: false,
+        }),
+        "send",
+    );
+    let note = |lab: &Lab| {
+        let notes = lab.mock.notes(LAB_A);
+        notes
+            .into_iter()
+            .find(|note| note["id"] == id.as_str())
+            .expect("the note")
+    };
+    assert!(note(&lab)["content"].as_str().unwrap().contains("a note to self"));
+
+    let row = lab.row(Request::Edit {
+        chat: NOTES.to_owned(),
+        message: id.clone(),
+        text: "a better note".to_owned(),
+        wait: true,
+    });
+    assert_eq!(wrote(&row, "edit"), id);
+    assert!(note(&lab)["content"].as_str().unwrap().contains("a better note"));
+
+    let row = lab.row(Request::React {
+        chat: NOTES.to_owned(),
+        message: id.clone(),
+        reaction: "like".to_owned(),
+        wait: false,
+    });
+    assert_eq!(wrote(&row, "add_reaction"), id);
+    assert!(note(&lab)["properties"]["emotions"].to_string().contains("like"));
+
+    let row = lab.row(Request::Delete {
+        chat: NOTES.to_owned(),
+        message: id.clone(),
+        wait: false,
+    });
+    assert_eq!(wrote(&row, "delete"), id);
+    assert_eq!(note(&lab)["content"], "");
+    assert!(lab.mock.notes(LAB_B).is_empty(), "the notes are a's alone");
+    assert!(lab.mock.take_events(LAB_B).is_empty(), "nobody else is told");
 }
 
 #[test]

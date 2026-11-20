@@ -70,10 +70,10 @@
 //!   the shell hides it behind the settings), the window is active and the list is at the newest message, the
 //!   account's read horizon moves to the newest message from someone else that is after it, [`READ_DEBOUNCE`] after
 //!   the view settles, one at a time.
-//! - **The account's own notes** ([`NOTES`], "<name> (You)" under "Favorites"): read-only here. No conversation
-//!   list brings them, so the view asks the engine to sync them from the service each time it opens
-//!   ([`Core::sync_conversation`]); their messages offer no action and send no read receipt, and the compose box says
-//!   they can't be written ([`compose::READ_ONLY_NOTES`]).
+//! - **The account's own notes** ([`teams_core::NOTES`], "<name> (You)" under "Favorites"): a chat as any other, written,
+//!   edited, reacted to and replied to through the same box and actions. No conversation list brings them, so the
+//!   view asks the engine to sync them from the service each time it opens ([`Core::sync_conversation`]). While
+//!   they hold nothing, the view shows Teams' "This is your space" ([`NOTES_INTRO_TITLE`]).
 //! - **Opened at a message** ([`ChatView::reveal`], a search's hit, M2 Task 15): the view reads the store back to the
 //!   message, scrolls to it and selects it; the list stops following the newest. A message older than the store holds
 //!   (the service's search finds what was never synced) is read for through the service's older pages, up to
@@ -119,7 +119,7 @@ use gpui_component::kbd::Kbd;
 use gpui_component::shimmer::ShimmerText;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{Sizable as _, Size};
-use teams_core::{Action, Command, EngineError, NOTES};
+use teams_core::{Action, Command, EngineError};
 use teams_proto::chat::{
     LinkPreview, MessageType, RichText, SharedFile, Unshown, parse_html, shared_files_any, unshown_parts_any,
     web_chat_link,
@@ -160,6 +160,7 @@ pub mod channel;
 mod email;
 mod events;
 mod menu_keys;
+mod notes;
 pub mod reactors;
 mod saved;
 mod translate;
@@ -169,6 +170,7 @@ pub use channel::{MeetingCall, MeetingCard, Place, Replies};
 pub use email::{EmailPost, REPLY_IN_THREAD, VIA_EMAIL, VIEW_ORIGINAL_EMAIL, open_original};
 use events::Expiry;
 pub use events::UNVERIFIED;
+pub use notes::{NOTES_INTRO_TEXT, NOTES_INTRO_TITLE};
 
 actions!(
     teams_ui,
@@ -671,7 +673,7 @@ pub struct MessageItem {
     /// showed, a card. With any, it shows [`UNSHOWN_CONTENT`] and a way to open the chat in Teams on the web, never a
     /// guess at the part.
     pub unshown: UnshownParts,
-    /// Whether its chat takes writes: not the account's own notes ([`NOTES`]), where it offers no action.
+    /// Whether its chat takes writes: not in the app's read-only mode, where it offers only Copy.
     pub writes: ChatWrites,
     /// Where it was forwarded from, when it is a forwarded message ([`crate::forwarded`]): its forward card's header.
     pub forwarded: Option<Box<ForwardOrigin>>,
@@ -702,8 +704,6 @@ pub enum Threaded {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ChatWrites {
     Taken,
-    /// The account's own notes ([`NOTES`]): read-only here.
-    ReadOnly,
     /// The app's read-only mode ([`crate::Core::read_only`]): no chat takes a write; a message's text can still be
     /// copied.
     AppReadOnly,
@@ -817,13 +817,11 @@ impl Naming for ViewNames<'_> {
 }
 
 impl MessageItem {
-    /// The actions it offers: none on an event, a deleted message, one this build doesn't show or one in a chat that
-    /// takes no write; edit and delete only on the account's own.
+    /// The actions it offers: none on an event, a deleted message or one this build doesn't show; only Copy in the
+    /// app's read-only mode; edit and delete only on the account's own.
     #[must_use]
     pub fn actions(&self) -> Vec<MessageAction> {
-        if self.writes == ChatWrites::ReadOnly
-            || !matches!(self.body, Body::Text(_) | Body::Cards(_) | Body::Meeting(_))
-        {
+        if !matches!(self.body, Body::Text(_) | Body::Cards(_) | Body::Meeting(_)) {
             return Vec::new();
         }
         if self.writes == ChatWrites::AppReadOnly {
@@ -3300,8 +3298,6 @@ impl ChatView {
     fn writes(&self) -> ChatWrites {
         if self.core.read_only() {
             ChatWrites::AppReadOnly
-        } else if self.conversation == NOTES {
-            ChatWrites::ReadOnly
         } else {
             ChatWrites::Taken
         }
@@ -3625,7 +3621,6 @@ impl ChatView {
             && self.seeking.is_none()
             && self.quote.going_to.is_none()
             && self.list.is_following_tail()
-            && self.conversation != NOTES
             // a channel's horizon isn't moved from here: no capture showed a channel's receipt
             && !self.place.in_channel()
             && !self.core.read_only()
@@ -3853,6 +3848,8 @@ impl ChatView {
         }
         let palette = theme::current(cx);
         match self.items.get(index) {
+            // the empty notes' intro takes the place of "This is the beginning of the chat"
+            Some(Item::Top(_)) if self.notes_intro_shown() => div().into_any_element(),
             Some(Item::Top(history)) => top_row(*history, &self.place, palette, cx),
             Some(Item::Day(day)) => day_row(*day, palette),
             Some(Item::NewMessages) => new_messages_row(&self.place, palette),
@@ -5091,7 +5088,15 @@ async fn older(
     } else {
         if core.load_older(conversation.to_owned()).await?.is_none() {
             // nothing to read: the beginning only once the store says the whole history is stored
-            let history = match core.history_complete(conversation.to_owned()).await? {
+            let mut complete = core.history_complete(conversation.to_owned()).await?;
+            // never synced (its sync on open failed): a sync first, then the newest page it stored
+            if complete.is_none() && core.sync_conversation(conversation.to_owned()).await.is_ok() {
+                complete = core.history_complete(conversation.to_owned()).await?;
+                if complete.is_some() {
+                    return window(core, conversation, None, false, held, &[]).await;
+                }
+            }
+            let history = match complete {
                 Some(true) => History::Complete,
                 Some(false) | None => History::Unsynced,
             };
@@ -6101,6 +6106,7 @@ impl Render for ChatView {
             .child(area_probe)
             .child(rows)
             .children(self.bot_intro(palette))
+            .children(self.notes_intro(palette))
             .children(pill);
         Self::file_drop_target(cx)
             // Escape with a more-options menu open closes the menu first, as in Teams, wherever the focus is

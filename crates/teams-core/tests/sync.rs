@@ -2717,10 +2717,16 @@ async fn notes_never_written_are_none_not_a_failure() {
     let report = a.catch_up.catch_up(&mut a.store).await.unwrap();
     assert!(report.failed.is_empty(), "{report:?}");
     assert!(a.messages(NOTES).is_empty());
+    let state = a.store.sync_state(NOTES).unwrap().unwrap();
     assert!(
-        a.store.sync_state(NOTES).unwrap().is_none(),
-        "read again from the newest page next time"
+        state.history_complete,
+        "the notes' chat shows its beginning, not a history to sync"
     );
+    assert_eq!(state.sync_link, None, "read again from the newest page next time");
+
+    // a second 404 changes nothing
+    a.catch_up.sync_messages(&mut a.store, NOTES).await.unwrap();
+    assert_eq!(a.store.sync_state(NOTES).unwrap().unwrap(), state);
 }
 
 /// Answers the plain service's conversation list a page at a time: the first read (no `syncState` of

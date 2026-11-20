@@ -238,18 +238,35 @@ in a lab team's General channel. Each write is the account's own property: nobod
 
 `48:notes` (`threadType` `streamofnotes`), the account's chat with itself, which Teams lists first under Favorites
 (above), is in no conversation list: neither the lab's captures nor a personal build's store of 2026-10-27 held it
-there, while the other `48:` streams (`48:notifications`, `48:mentions`, `48:calllogs`) were listed and synced. The web
-bundle builds every conversation's messages path the same way (`v1/users/ME/conversations/<id>/messages`) and names
-the notes by their fixed id and thread type, so the native client reads them as any chat's messages, by `GET`
-(newest page, then its sync link), from the catch-up when the notes are a favourite or already stored, and when the
-chat view opens them. Not captured: no lab account and no personal run opened its notes, so the messages read on
-`48:notes` is unverified live. What was captured: the conversation's properties read (`GET
-v1/users/ME/conversations/48:notes?view=msnp24Equivalent`, made by the web client on load) answered 404 with
-`errorCode` 404, "Conversation was not found" (`RequestHandlerException`) for lab accounts that never wrote a note, so
-an account's notes exist only once something was written there; the native client takes a 404 on them as no notes.
-Notes aren't a thread: no thread or member read is made for them. Each note's sender is the account itself. Whether
-Trouter delivers a note written on another device wasn't seen; a delivery naming `48:notes` would be stored like any
-chat's. Writing is off: no write type is mapped to a `48:` stream, and the chat view shows the notes read-only.
+there, while the other `48:` streams (`48:notifications`, `48:mentions`, `48:calllogs`) were listed and synced. The
+native client reads the notes as any chat's messages, by `GET` (newest page, then its sync link), from the catch-up
+when the notes are a favourite or already stored, and when the chat view opens them. Notes are not a thread: no
+thread or member read is made for them. Each note's sender is the account itself.
+
+Captured on 2026-11-20 (`team-manage`, lab account a in its own notes, which reach nobody else):
+
+- **Reads.** Before the first note, the conversation's properties read (`GET
+  v1/users/ME/conversations/48:notes?view=msnp24Equivalent`) and the messages read answer 404, `errorCode` 404,
+  "Conversation was not found" (`RequestHandlerException`). So the notes exist only after the first note. The native
+  client keeps a 404 as a whole history with nothing in it and no sync link, so the chat shows its beginning and the
+  next sync reads the newest page again. After a note, the web client read `…/48:notes/messages?view=…&pageSize=200&
+  startTime=1`, then its sync link: one page, `_metadata` `lastCompleteSegmentStartTime` 1, no `backwardLink`, the
+  sync link on the same chat base.
+- **Writes.** Every write is a chat's write with the same body: the post (`POST …/48:notes/messages`, `id` `-1`,
+  `conversationid` `48:notes`, `conversationLink` `blah/48:notes`, the account's own `from`, `clientmessageid`, 201),
+  typing (`Control/Typing`, 201), a quote reply (the `blockquote` and `qtdMsgs` of [a reply](#a-message-as-read)),
+  the edit (`PUT …/messages/<id>`, the whole message, `properties.edittime`), a reaction (`PUT
+  …/messages/<id>/properties?name=emotions`), the soft delete (`DELETE …/messages/<id>?behavior=softDelete`) and the
+  read horizon (`PUT …/48:notes/properties?name=consumptionhorizon`, after the account's own post), each 200.
+- **The view.** The header shows "<name> (You)", the Chat, Shared and Storyline tabs, and no call buttons. The
+  message box is the full box of a chat (format, emoji with GIFs and stickers, attach, Loop, apps, send). A note's
+  hover bar and menu are those of the account's own message in a chat. While the notes hold nothing, the chat shows
+  "This is your space" and "This chat is just for you...with you. Use it for drafts, send files to yourself, or get
+  to know chat features a little better."
+
+The native client writes the notes through the same outbox as any chat. A file sent there is shared with nobody,
+because the notes have no other member. Whether Trouter delivers a note written on another device was not seen: a
+delivery naming `48:notes` is stored as any chat's.
 
 ## Message pages (ab-chat-full, b)
 

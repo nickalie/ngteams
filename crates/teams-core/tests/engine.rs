@@ -31,7 +31,7 @@ use teams_core::engine::{
     self, Action, Cause, EngineError, EngineHandle, EngineOptions, Event, MessageChange, Parts, Push, Source,
 };
 use teams_core::search::{Backfill, Step};
-use teams_core::{ChatHistory, Clock, MAX_FAILED_CHECKS, Outbox, Transient, TransientSent};
+use teams_core::{ChatHistory, Clock, MAX_FAILED_CHECKS, NOTES, Outbox, Transient, TransientSent};
 use teams_mock::{
     AB_CHAT, ABC_CHAT, CHAT_BASE, ChatServiceMock, EventKind, LAB_A, LAB_B, LAB_C, OUTSIDER, TrouterMock,
 };
@@ -826,6 +826,69 @@ async fn an_edit_a_reaction_its_take_back_and_a_delete_arrive_on_b() {
 
     a.shutdown();
     b.shutdown();
+}
+
+#[tokio::test]
+async fn the_account_s_own_notes_take_a_post_an_edit_a_reaction_and_a_delete_as_any_chat() {
+    let lab = Lab::start().await;
+    let mut a = native(&lab, LAB_A, How::default());
+    a.ready().await;
+    // no note yet: the service answers 404, which is notes read to their (empty) beginning
+    a.handle.sync_conversation(NOTES).await.unwrap();
+    assert_eq!(a.handle.history_complete(NOTES).await.unwrap(), Some(true));
+
+    let id = id_of(&a.send(NOTES, "a note to self").await);
+    a.handle.sync_conversation(NOTES).await.unwrap();
+    assert!(a.stored(NOTES, &id).await.content.contains("a note to self"));
+    let note = |lab: &Lab| lab.mock.notes(LAB_A).into_iter().find(|note| note["id"] == id.as_str());
+    assert!(
+        note(&lab).unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .contains("a note to self")
+    );
+    assert!(lab.mock.notes(LAB_B).is_empty(), "the notes are a's alone");
+
+    let edit = a
+        .write(Action::Edit {
+            conversation: NOTES.to_owned(),
+            message_id: id.clone(),
+            text: MessageText::plain("a better note").unwrap(),
+        })
+        .await;
+    assert_eq!(
+        (edit.kind, edit.state),
+        (OutboxKind::Edit, OutboxState::Sent),
+        "{edit:?}"
+    );
+    assert!(
+        note(&lab).unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .contains("a better note")
+    );
+
+    let react = Action::React {
+        conversation: NOTES.to_owned(),
+        message_id: id.clone(),
+        key: "like".to_owned(),
+    };
+    assert_eq!(a.write(react).await.state, OutboxState::Sent);
+    assert!(
+        note(&lab).unwrap()["properties"]["emotions"]
+            .to_string()
+            .contains("like")
+    );
+
+    let delete = Action::Delete {
+        conversation: NOTES.to_owned(),
+        message_id: id.clone(),
+    };
+    assert_eq!(a.write(delete).await.state, OutboxState::Sent);
+    assert_eq!(note(&lab).unwrap()["content"], "");
+    a.handle.sync_conversation(NOTES).await.unwrap();
+    assert!(a.stored(NOTES, &id).await.delete_time.is_some());
+    a.shutdown();
 }
 
 #[tokio::test]

@@ -8,7 +8,7 @@ use serde_json::Value;
 use wiremock::{Request, Respond, ResponseTemplate};
 
 use crate::world::State;
-use crate::{REGION, reads, writes};
+use crate::{NOTES, REGION, reads, writes};
 
 /// The responder the mock's server answers every request with.
 pub(crate) struct ChatService {
@@ -90,6 +90,21 @@ enum Route {
 }
 
 impl Route {
+    /// The conversation of a route under `v1/users/ME/conversations/<chat>`.
+    fn chat(&self) -> Option<&str> {
+        match self {
+            Self::Messages { chat }
+            | Self::Around { chat }
+            | Self::Post { chat }
+            | Self::Edit { chat, .. }
+            | Self::Delete { chat, .. }
+            | Self::Reaction { chat, .. }
+            | Self::ConversationProperty { chat }
+            | Self::OwnConversation { chat } => Some(chat),
+            _ => None,
+        }
+    }
+
     /// The route of `method` on `path` (the segments after `v1`), if the mock models it.
     fn of(method: &str, path: &[String]) -> Option<Self> {
         let path: Vec<&str> = path.iter().map(String::as_str).collect();
@@ -210,7 +225,16 @@ fn handle(state: &mut State, request: &Request) -> ResponseTemplate {
     dispatch(state, route, &call)
 }
 
+/// Answers `route`; one on [`NOTES`] reaches the caller's own notes, which a post makes when there are none yet.
 fn dispatch(state: &mut State, route: Route, call: &Call<'_>) -> ResponseTemplate {
+    if route.chat() == Some(NOTES) {
+        let make = matches!(route, Route::Post { .. });
+        return state.with_notes(&call.caller, make, |state| answer(state, route, call));
+    }
+    answer(state, route, call)
+}
+
+fn answer(state: &mut State, route: Route, call: &Call<'_>) -> ResponseTemplate {
     match route {
         Route::Conversations { owner } => reads::conversations(state, call, &owner),
         Route::Messages { chat } => reads::messages(state, call, &chat),

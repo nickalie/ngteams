@@ -60,10 +60,9 @@
 //! - **New message's box** ([`Compose::for_new_chat`]): a chat's box for a chat not made yet. It sends no typing and
 //!   takes no pasted picture; its first message is handed to New message ([`ComposeEvent::Start`]), which makes the
 //!   chat and sends it there, and comes back to the box if that fails ([`Compose::started`]).
-//! - **Read-only** ([`Compose::is_read_only`]): in the app's read-only mode every box ([`READ_ONLY_APP`]), else the
-//!   account's own notes ([`teams_core::NOTES`]), which take no write from
-//!   this app (no write type is mapped to a `48:` stream), so their box shows [`READ_ONLY_NOTES`] in place of the text
-//!   area and its send: nothing can be typed, sent, replied to or edited there, and no typing goes out.
+//! - **Read-only** ([`Compose::is_read_only`]): in the app's read-only mode every box shows [`READ_ONLY_APP`] in place
+//!   of the text area and its send: nothing can be typed, sent, replied to or edited there, and no typing goes out.
+//!   The account's own notes ([`teams_core::NOTES`]) take a full box, as any chat does.
 //!
 //! - **Correct** ([`correction`], the AI button's row or Ctrl+Shift+G): the draft's spelling, grammar and style checked by the AI
 //!   tool the settings name, the proposal shown over the box word by word; nothing changes or goes out until the user
@@ -101,7 +100,7 @@ use gpui::{
 use gpui_component::Disableable as _;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{Selectable as _, Sizable as _, Size};
-use teams_core::{Action, Availability, NOTES, Transient};
+use teams_core::{Action, Availability, Transient};
 use teams_proto::chat::{
     ComposeError, Marks, MessageText, MessageType, Node, Quote, RichText, parse_html, with_everyone_shown,
 };
@@ -582,9 +581,6 @@ pub struct Picker {
     pub loading: bool,
 }
 
-/// What a read-only box says in place of its text area: the account's own notes take no write from this app.
-pub const READ_ONLY_NOTES: &str = "Notes can't be written from this app yet";
-
 /// What Loop says: Loop components aren't in this app.
 pub const NO_LOOP: &str = "Loop components aren't available in this app";
 
@@ -723,8 +719,7 @@ pub struct Compose {
     problem: Option<SharedString>,
     /// A translated chat's sends ([`translated`]).
     translated: translated::Translated,
-    /// The account's own notes: nothing is written there ([`READ_ONLY_NOTES`]).
-    /// What a read-only box says in place of its text area; `None` for a box that writes.
+    /// What a read-only box says in place of its text area ([`READ_ONLY_APP`]); `None` for a box that writes.
     read_only: Option<&'static str>,
     /// Where it writes ([`Compose::in_channel`]): a channel's box sends no typing and takes no file.
     writes: Writes,
@@ -856,11 +851,7 @@ impl Compose {
                 cx.notify();
             }
         });
-        let note = if parts.core.read_only() {
-            Some(READ_ONLY_APP)
-        } else {
-            (conversation == NOTES).then_some(READ_ONLY_NOTES)
-        };
+        let note = parts.core.read_only().then_some(READ_ONLY_APP);
         // a picture pasted goes to the media service for this conversation, so a box that sends takes them
         editor.update(cx, |editor, _| editor.set_takes_pictures(note.is_none()));
         let correction = correction::Correction::new(cx);
@@ -1213,7 +1204,7 @@ impl Compose {
         self.editor.read(cx).text().into()
     }
 
-    /// Whether the box takes no text: the account's own notes ([`READ_ONLY_NOTES`]).
+    /// Whether the box takes no text: the app's read-only mode ([`READ_ONLY_APP`]).
     #[must_use]
     pub fn is_read_only(&self) -> bool {
         self.read_only.is_some()
@@ -2423,7 +2414,7 @@ impl Chosen for gpui::Stateful<gpui::Div> {
     }
 }
 
-/// A read-only box: `note` ([`READ_ONLY_NOTES`], [`READ_ONLY_APP`]) where the text area would be, greyed, with nothing
+/// A read-only box: `note` ([`READ_ONLY_APP`]) where the text area would be, greyed, with nothing
 /// to type in or send.
 fn read_only_view(palette: Palette, note: &'static str) -> AnyElement {
     div()

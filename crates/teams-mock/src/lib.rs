@@ -26,6 +26,9 @@
 //! `channel-messages.json` (M2 Task 16). A channel takes its members' writes as a chat does, and a reply in a post's
 //! thread posted to the post's chain (`…/conversations/<channel>;messageid=<post>/messages`) is stored with the
 //! channel's messages, its `conversationLink` naming the post. The ids are the constants below, made up (never a real tenant's).
+//! Each account also has its own notes ([`NOTES`], its chat with itself): none until its first post there (a read
+//! answers 404, as the service does), then read and written as a chat of its own, in no conversation list
+//! ([`ChatServiceMock::add_note`], [`ChatServiceMock::notes`]).
 //!
 //! **What it serves** (paths under [`CHAT_BASE`]):
 //! - reads: the conversation list (`GET v1/users/ME/conversations`, and the sync link it hands out, which names the
@@ -202,6 +205,9 @@ pub const CHANNEL: &str = "19:channel0001@thread.tacv2";
 pub const TEAM_CHANNEL: &str = "19:channel0002@thread.tacv2";
 /// a's notifications stream: read-only.
 pub const NOTIFICATIONS: &str = "48:notifications";
+
+/// Each account's own notes, its chat with itself: every request naming it reaches the caller's own (`world.rs`).
+pub const NOTES: &str = "48:notes";
 
 /// What a write did, queued for each other member of its chat (a group chat's name for every member, the writer too),
 /// until the mock's Trouter ([`TrouterMock`]) delivers it to one of the member's registered endpoints (a message,
@@ -404,6 +410,32 @@ impl ChatServiceMock {
     ) -> Option<String> {
         self.lock()
             .add_message(conversation, (from, name), message_type, content)
+    }
+
+    /// `owner` writes `html` (a rich-text message) in their own notes ([`NOTES`]), as one of their clients would: the
+    /// notes are made with the first note. Its id, or `None` when `owner` isn't one of the mock's accounts.
+    #[must_use = "None says no note was written"]
+    pub fn add_note(&self, owner: &str, html: &str) -> Option<String> {
+        self.lock()
+            .with_notes(owner, true, |world| writes::post_text(world, owner, NOTES, html))
+    }
+
+    /// `owner`'s own notes ([`NOTES`]) as a read gives them back, oldest first: none before the first note.
+    #[must_use]
+    pub fn notes(&self, owner: &str) -> Vec<Value> {
+        self.lock()
+            .notes
+            .get(owner)
+            .map(|notes| notes.messages.clone())
+            .unwrap_or_default()
+    }
+
+    /// Lists `owner`'s own notes ([`NOTES`]) first in their Favorites in CSA's answer, as Teams lists them.
+    pub fn list_notes_in_favorites(&self, owner: &str) {
+        let mut world = self.lock();
+        if !world.notes_in_favorites.iter().any(|listed| listed == owner) {
+            world.notes_in_favorites.push(owner.to_owned());
+        }
     }
 
     /// An item in `owner`'s activity feed ([`NOTIFICATIONS`]): its `activity` as the service's feed carries it (made up

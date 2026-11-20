@@ -71,7 +71,8 @@ where
     }
 
     pub(crate) async fn share(&self, chat: &str, files: &[UploadedFile]) -> Result<(), EngineError> {
-        if files.is_empty() {
+        // the account's own notes have nobody but the account, who owns the file already
+        if files.is_empty() || chat == crate::NOTES {
             return Ok(());
         }
         let (recipients, people) = recipients(&self.client, chat, self.outbox.me().mri()).await?;

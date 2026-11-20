@@ -199,7 +199,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 340 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 344 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -1402,6 +1402,30 @@ const STEPS: [Step; 5 + 340 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     }),
     // the same in Teams Light: the header's face with its initials
     ("picture-viewer-zoomed", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+    }),
+    // the account's own notes ("Lab A (You)"), with nothing in them yet: Teams' "This is your space" over the full box
+    ("notes-empty", |shell, window, cx| {
+        picture_viewer::close(cx);
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        shell.update(cx, |shell, cx| {
+            shell.open_chat(teams_core::NOTES.to_owned(), window, cx);
+        });
+    }),
+    ("notes-empty-dark", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    // a note written in the box and sent, as in any chat
+    ("notes-sent-dark", |shell, window, cx| {
+        with_compose(shell, cx, |compose, cx| {
+            compose.focus(window, cx);
+            compose.editor().update(cx, |editor, cx| {
+                editor.insert("Book the made-up lab room for Friday", cx);
+            });
+            compose.send(window, cx);
+        });
+    }),
+    ("notes-sent", |shell, _, cx| {
         fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
     }),
     // c's messages with files (`seed_files`), the newest at the bottom: a grid of five cards, two in a row, the videos'
@@ -5230,6 +5254,8 @@ impl MockLab {
         seed_stickers(&mock, &runtime)?;
         seed_blocked(&mock)?;
         seed_profile_cards(&mock, &runtime);
+        // Teams lists the account's own notes first under "Favorites"
+        mock.list_notes_in_favorites(LAB_A);
         let dir = tempfile::tempdir()?;
         let tokens = Arc::new(Tokens {
             token: mock.token(LAB_A).ok_or("the mock's token for a")?,

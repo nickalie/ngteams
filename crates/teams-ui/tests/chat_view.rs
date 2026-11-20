@@ -68,13 +68,14 @@ use gpui::{
     AppContext as _, Entity, ListOffset, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase,
     VisualTestContext, point, px, size,
 };
-use teams_core::{Event, MessageChange, Source};
+use teams_core::{Event, MessageChange, NOTES, Source};
 use teams_proto::chat::web_chat_link;
 use teams_store::{Applied, Message, Reaction, ReadHorizon};
 use teams_ui::ViewTrace;
 use teams_ui::chat_view::{
     Body, ChatView, ChatViewEvent, ChatWrites, GROUP_MS, History, Item, MAX_FRUITLESS, MessageAction, MessageItem,
-    PAGE, ReactionCount, RenderedText, UnshownParts, arrange, count_reactions, day_label, reaction_label,
+    NOTES_INTRO_TEXT, NOTES_INTRO_TITLE, PAGE, ReactionCount, RenderedText, UnshownParts, arrange, count_reactions,
+    day_label, reaction_label,
 };
 use teams_ui::clock::{self, HourCycle};
 use teams_ui::models::TYPING_TIMEOUT;
@@ -970,6 +971,60 @@ fn a_chat_never_synced_isn_t_its_beginning_and_loads_older_once_it_is_synced() {
     let expected: Vec<String> = (1..=70).map(|n| n.to_string()).collect();
     assert_eq!(ids(&view, cx), expected);
     assert_eq!(history(cx), History::Complete);
+}
+
+#[test]
+fn load_older_in_a_chat_whose_sync_failed_syncs_it_and_shows_what_it_stored() {
+    let rig = rig_with(Vec::new());
+    rig.core.unsynced.lock().unwrap().insert(AB.to_owned());
+    let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    let history = |cx: &mut VisualTestContext| cx.update(|_, cx| view.read(cx).history());
+    assert_eq!(history(cx), History::Unsynced);
+    let syncs = rig.core.synced.lock().unwrap().len();
+
+    // the service answers now: the button syncs the chat, then shows its newest page and where its history stands
+    rig.core.settled_by_sync.lock().unwrap().insert(AB.to_owned());
+    rig.core.messages.lock().unwrap().insert(AB.to_owned(), many(3));
+    let again = cx.debug_bounds("load-older").expect("the top offers to load again");
+    cx.simulate_click(again.center(), Modifiers::none());
+    for _ in 0..3 {
+        draw(cx);
+    }
+    assert!(rig.core.synced.lock().unwrap().len() > syncs, "synced again");
+    assert_eq!(ids(&view, cx), ["1", "2", "3"]);
+    assert_eq!(history(cx), History::Complete);
+}
+
+#[test]
+fn the_notes_with_nothing_in_them_show_teams_this_is_your_space() {
+    let rig = rig_with(Vec::new());
+    let parts = parts::parts(&rig, Settings::default(), Arc::new(ViewTrace::off()));
+    let app: &'static mut TestAppContext = Box::leak(Box::new(rig.cx.clone()));
+    let (view, cx) = app.add_window_view(|window, cx| ChatView::new(parts, NOTES.to_owned(), window, cx));
+    cx.simulate_resize(size(px(800.0), px(600.0)));
+    draw(cx);
+    assert_eq!(cx.update(|_, cx| view.read(cx).history()), History::Complete);
+    assert!(cx.debug_bounds("chat-notes-intro").is_some(), "{NOTES_INTRO_TITLE}");
+    assert!(
+        cx.debug_bounds("history-top").is_none(),
+        "no \"beginning of the chat\" under it"
+    );
+    assert!(!NOTES_INTRO_TEXT.is_empty());
+
+    // a note in them: the intro gives way to it
+    let mut note = message("1", LAB_A, "<p>a made-up note</p>", NOON);
+    note.conversation_id = NOTES.to_owned();
+    rig.core.messages.lock().unwrap().insert(NOTES.to_owned(), vec![note]);
+    rig.send(Event::ConversationChanged {
+        conversation: NOTES.to_owned(),
+    });
+    draw(cx);
+    assert_eq!(ids(&view, cx), ["1"]);
+    assert!(cx.debug_bounds("chat-notes-intro").is_none());
+
+    // a chat with nobody's message in it shows no such intro
+    let (_, cx) = chat_window(&rig_with(Vec::new()), Arc::new(ViewTrace::off()));
+    assert!(cx.debug_bounds("chat-notes-intro").is_none());
 }
 
 #[test]

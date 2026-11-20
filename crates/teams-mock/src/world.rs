@@ -8,8 +8,8 @@ use tokio::sync::watch;
 
 use crate::fixtures::{FixtureError, Fixtures, object};
 use crate::{
-    AB_CHAT, ABC_CHAT, AC_CHAT, AX_CHAT, CHANNEL, CHAT_BASE, ChatEvent, EventKind, LAB_A, LAB_B, LAB_C, NOTIFICATIONS,
-    OUTSIDER, TEAM_CHANNEL,
+    AB_CHAT, ABC_CHAT, AC_CHAT, AX_CHAT, CHANNEL, CHAT_BASE, ChatEvent, EventKind, LAB_A, LAB_B, LAB_C, NOTES,
+    NOTIFICATIONS, OUTSIDER, TEAM_CHANNEL,
 };
 
 /// The mock's clock starts after every time in the fixtures, and moves one millisecond per change.
@@ -124,6 +124,10 @@ pub(crate) struct State {
     pub(crate) bots: crate::bots::Bots,
     /// The apps added for the account, to chats and to teams (`apps.rs`).
     pub(crate) apps: crate::apps::Installs,
+    /// Each account's own notes ([`NOTES`]), by owner MRI: none until the first note ([`State::with_notes`]).
+    pub(crate) notes: BTreeMap<String, Conversation>,
+    /// The accounts whose Favorites list their notes first in CSA's answer, as Teams lists them.
+    pub(crate) notes_in_favorites: Vec<String>,
     clock: u64,
     groups_made: u64,
 }
@@ -261,6 +265,8 @@ impl State {
             holds: Vec::new(),
             bots: crate::bots::Bots::default(),
             apps: crate::apps::Installs::default(),
+            notes: BTreeMap::new(),
+            notes_in_favorites: Vec::new(),
             clock: CLOCK_START,
             groups_made: 0,
         })
@@ -306,6 +312,26 @@ impl State {
     pub(crate) fn new_group_id(&mut self) -> String {
         self.groups_made += 1;
         format!("19:{:032x}@thread.v2", 0x1_0000 + self.groups_made)
+    }
+
+    /// Runs `apply` with `owner`'s own notes as the world's [`NOTES`], made empty first when `make` (a write there),
+    /// then keeps them as the owner's again. Notes that hold nothing after it are dropped: the service answers 404
+    /// until the first note, and every request names `48:notes` for the caller's own.
+    pub(crate) fn with_notes<T>(&mut self, owner: &str, make: bool, apply: impl FnOnce(&mut Self) -> T) -> T {
+        let notes = self
+            .notes
+            .remove(owner)
+            .or_else(|| make.then(|| own_notes(owner, self.now())));
+        let held = notes.is_some();
+        self.conversations.extend(notes);
+        let answer = apply(self);
+        if held && let Some(at) = self.conversations.iter().position(|found| found.id == NOTES) {
+            let notes = self.conversations.remove(at);
+            if !notes.messages.is_empty() {
+                self.notes.insert(owner.to_owned(), notes);
+            }
+        }
+        answer
     }
 
     /// Queues `kind` with `resource` for every member of `conversation` but `from`.
@@ -420,6 +446,23 @@ fn unlisted_channel(messages: Vec<Value>) -> Conversation {
         messages,
         horizons: BTreeMap::new(),
         entry: json!({"threadProperties": {"threadType": "topic"}}),
+        listed: false,
+    }
+}
+
+/// `owner`'s own notes, made at `created` with nothing in them: a stream of theirs alone, in no conversation list.
+fn own_notes(owner: &str, created: u64) -> Conversation {
+    Conversation {
+        id: NOTES.to_owned(),
+        kind: Kind::Group,
+        members: vec![owner.to_owned()],
+        creator: owner.to_owned(),
+        created,
+        roster: created,
+        version: created,
+        messages: Vec::new(),
+        horizons: BTreeMap::new(),
+        entry: json!({"id": NOTES, "threadProperties": {"threadType": "streamofnotes"}}),
         listed: false,
     }
 }

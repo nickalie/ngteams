@@ -47,7 +47,8 @@
 //!   listed or the store already has it (a failure there doesn't hold the list's sync link back). Its messages are
 //!   read as any conversation's (`GET …/conversations/48:notes/messages`); it is no thread, so it is never read as one:
 //!   the store keeps it as `thread_type:streamofnotes`, with no members, and a delivery naming it adds it so too. An
-//!   account that never wrote a note has none: the service answers 404, which is no notes, not a failure.
+//!   account that never wrote a note has none: the service answers 404, which is no notes, not a failure, so their
+//!   history is kept as complete and empty (`CatchUp::no_notes`) until a read finds a note.
 //! - **One path for what comes in** ([`CatchUp::receive_message`]): a message as read (a sync page, or the resource of
 //!   a Trouter delivery) becomes a store row and goes through [`Outbox::receive`], which stores it by its id and
 //!   version and matches our own to its outbox row by `clientmessageid`. So a delivery and a sync that bring the same
@@ -121,7 +122,7 @@ pub const MAX_PAGES: usize = 50;
 pub const CLOCK_SKEW_MS: i64 = 5 * 60 * 1000;
 
 /// The account's own notes: its chat with itself, a `48:` stream (`threadType` `streamofnotes`) that Teams lists under
-/// "Favorites" as "<name> (You)". Read like any conversation's messages; nothing is written there.
+/// "Favorites" as "<name> (You)". Read and written like any chat's messages.
 pub const NOTES: &str = "48:notes";
 
 /// The account's drafts: a `48:` stream the conversation list brings, whose messages the chat service won't give
@@ -875,7 +876,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
     /// does; the sync state then stays as it was (a kept gap may have been read on). [`CatchUpError::GapPending`]
     /// when the answer is cut at [`MAX_PAGES`] while an earlier gap is still unread: the sync link stays. The account's
     /// own notes ([`NOTES`]) answered 404 ("Conversation was not found": nothing was ever written there) are none yet,
-    /// not an error.
+    /// not an error: their history is kept as whole and empty (`CatchUp::no_notes`).
     pub async fn sync_messages(&self, store: &mut Store, conversation: &str) -> Result<Synced, CatchUpError> {
         if conversation == DRAFTS {
             return Ok(Synced::default());
@@ -893,7 +894,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         let result = match self.sync_stored(store, conversation).await {
             Err(error) if conversation == NOTES && not_found(&error) => {
                 log::debug!("sync: the account's notes aren't there yet (404)");
-                Ok(Synced::default())
+                self.no_notes(store).map(|()| Synced::default())
             }
             synced => synced,
         };
@@ -909,6 +910,32 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             meanwhile.synced(store, conversation, *synced);
         }
         result
+    }
+
+    /// Keeps the account's own notes ([`NOTES`]) as a whole history with nothing in it, when the service has none:
+    /// their chat shows its beginning, not a history still to sync. No sync link is kept, so the next sync reads
+    /// their newest page again.
+    fn no_notes(&self, store: &mut Store) -> Result<(), CatchUpError> {
+        let kept = store.sync_state(NOTES)?;
+        if kept
+            .as_ref()
+            .is_some_and(|kept| kept.history_complete && kept.sync_link.is_none())
+        {
+            return Ok(());
+        }
+        store.set_sync_state(&SyncState {
+            conversation_id: NOTES.to_owned(),
+            sync_link: None,
+            backward_link: None,
+            backward_oldest: None,
+            sync_until: None,
+            gap_link: None,
+            gap_until: None,
+            history_complete: true,
+            updated: (self.clock)(),
+        })?;
+        self.changed(|changes| changes.conversation(NOTES));
+        Ok(())
     }
 
     /// [`CatchUp::sync_messages`], whatever the service answers.

@@ -136,6 +136,8 @@ pub struct FakeCore {
     /// Conversations never synced: `history_complete` answers `None` for them; for any other, whether `older` has
     /// no page left.
     pub unsynced: Mutex<HashSet<String>>,
+    /// Conversations a `sync_conversation` takes out of `unsynced`: its sync stores where their history stands.
+    pub settled_by_sync: Mutex<HashSet<String>>,
     /// Per conversation, a catch-up that lands just before `history_complete` answers (between it and a `load_older`
     /// that found nothing): its messages go into `messages` and the conversation is synced, once.
     pub catch_up_before_history_complete: Mutex<HashMap<String, Vec<Message>>>,
@@ -1475,6 +1477,9 @@ impl Core for FakeCore {
     }
 
     fn sync_conversation(&self, conversation: String) -> Reply<Synced> {
+        if locked(&self.settled_by_sync).contains(&conversation) {
+            locked(&self.unsynced).remove(&conversation);
+        }
         locked(&self.synced).push(conversation);
         self.answer("sync_conversation", Synced::default)
     }

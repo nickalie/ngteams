@@ -37,8 +37,8 @@ use teams_ui::chat_view::{
     ChatView, DEFAULT_QUICK_REACTIONS, MessageAction, PAGE, QUICK_COUNT, READ_DEBOUNCE, quick_reactions,
 };
 use teams_ui::compose::{
-    Candidate, Compose, EVERYONE_MAX_MEMBERS, Mode, PREVIEW_MAX, Quoted, READ_ONLY_APP, READ_ONLY_NOTES, TYPING_EVERY,
-    TypingThrottle, load, matching, mention_query, message_of, offered, plain_doc, quotes_of,
+    Candidate, Compose, EVERYONE_MAX_MEMBERS, Mode, PREVIEW_MAX, Quoted, READ_ONLY_APP, TYPING_EVERY, TypingThrottle,
+    load, matching, mention_query, message_of, offered, plain_doc, quotes_of,
 };
 use teams_ui::editor::CantLoad;
 use teams_ui::editor::doc::{Attrs, Block, Doc, Kind, Run};
@@ -2260,13 +2260,13 @@ fn moving_the_selection_closes_the_delete_s_confirmation_and_the_quick_reactions
     );
 }
 
-// --- the account's own notes: read-only ---
+// --- the account's own notes: a chat as any other ---
 
 const NOTES: &str = "48:notes";
 
-#[test]
-fn the_notes_show_their_messages_synced_on_opening_and_take_no_write() {
-    let rig = rig_with(Vec::new());
+/// The account's own notes holding one note of its own, opened in a window with typing on: the view, its window and
+/// the note.
+fn notes_window(rig: &Rig) -> (Entity<ChatView>, &'static mut VisualTestContext, Message) {
     let mut note = message(NOON, LAB_A, "<p>buy milk</p>");
     note.conversation_id = NOTES.to_owned();
     rig.core
@@ -2274,39 +2274,111 @@ fn the_notes_show_their_messages_synced_on_opening_and_take_no_write() {
         .lock()
         .unwrap()
         .insert(NOTES.to_owned(), vec![note.clone()]);
-    let parts = parts::parts(&rig, Settings::default(), Arc::new(ViewTrace::off()));
+    let settings = Settings {
+        send_typing: true,
+        ..Settings::default()
+    };
+    let parts = parts::parts(rig, settings, Arc::new(ViewTrace::off()));
     let app: &'static mut TestAppContext = Box::leak(Box::new(rig.cx.clone()));
     let (view, cx) = app.add_window_view(|window, cx| ChatView::new(parts, NOTES.to_owned(), window, cx));
     cx.simulate_resize(size(px(800.0), px(600.0)));
     cx.update(|window, _| window.activate_window());
     draw(cx);
+    (view, cx, note)
+}
+
+#[test]
+fn the_notes_are_synced_on_opening_and_offer_a_chat_s_full_box_and_actions() {
+    let rig = rig_with(Vec::new());
+    let (view, cx, note) = notes_window(&rig);
 
     // read from the service as it opens, as no conversation list brings them
     assert_eq!(*rig.core.synced.lock().unwrap(), [NOTES]);
     let shown: Vec<String> = cx.update(|_, cx| view.read(cx).message_items().map(|item| item.id.clone()).collect());
-    assert_eq!(shown, [note.id.clone()]);
+    assert_eq!(shown, std::slice::from_ref(&note.id));
     let offered = cx.update(|_, cx| {
         view.read(cx)
             .message_items()
             .map(teams_ui::chat_view::MessageItem::actions)
             .collect::<Vec<_>>()
     });
-    assert_eq!(offered, [Vec::<MessageAction>::new()], "a note offers no action");
-
-    // the box takes no text and sends nothing: no reply, no edit, no reaction, no typing
+    for action in [
+        MessageAction::Reply,
+        MessageAction::Edit,
+        MessageAction::Delete,
+        MessageAction::Copy,
+    ] {
+        assert!(offered[0].contains(&action), "a note offers {action:?}: {offered:?}");
+    }
     let compose = compose(&view, cx);
-    assert!(cx.update(|_, cx| compose.read(cx).is_read_only()));
-    assert!(cx.debug_bounds("compose-read-only").is_some(), "{READ_ONLY_NOTES}");
+    assert!(!cx.update(|_, cx| compose.read(cx).is_read_only()));
+    assert!(cx.debug_bounds("compose-read-only").is_none());
+    assert!(cx.debug_bounds("compose-emoji").is_some(), "emoji, GIFs and stickers");
+}
+
+#[test]
+fn the_notes_take_a_post_a_reply_an_edit_a_reaction_and_a_delete() {
+    let rig = rig_with(Vec::new());
+    let (view, cx, note) = notes_window(&rig);
     focus_compose(&view, cx);
-    type_text(cx, "x");
+    type_text(cx, "eggs too");
     keys(cx, "enter");
+    let sent = actions(&rig);
+    assert!(
+        matches!(&sent[..], [Action::Send { conversation, text }] if conversation == NOTES && text.html().contains("eggs too")),
+        "{sent:?}"
+    );
+    assert!(
+        !rig.core.transients.lock().unwrap().is_empty(),
+        "typing, as Teams sends it in the notes"
+    );
+
     act(&view, cx, MessageAction::Reply, &note.id);
+    type_text(cx, "and bread");
+    keys(cx, "enter");
+    let sent = actions(&rig);
+    assert!(
+        matches!(&sent[..], [Action::Send { conversation, text }] if conversation == NOTES && text.html().contains("blockquote")),
+        "a quote of the note: {sent:?}"
+    );
+
     act(&view, cx, MessageAction::Edit, &note.id);
-    cx.update(|_, cx| view.update(cx, |view, cx| view.toggle_reaction(&note.id, "like", cx)));
+    assert!(matches!(mode(&view, cx), Mode::Edit { ref message_id, .. } if *message_id == note.id));
+    type_text(cx, " today");
+    keys(cx, "enter");
+    let sent = actions(&rig);
+    assert!(
+        matches!(&sent[..], [Action::Edit { conversation, message_id, .. }] if conversation == NOTES && *message_id == note.id),
+        "{sent:?}"
+    );
+
+    react_and_delete_note(&rig, &view, cx, &note.id);
+}
+
+/// Reacts to `note` in the notes' view and deletes it: both go to the notes.
+fn react_and_delete_note(rig: &Rig, view: &Entity<ChatView>, cx: &mut VisualTestContext, note: &str) {
+    cx.update(|_, cx| view.update(cx, |view, cx| view.toggle_reaction(note, "like", cx)));
     draw(cx);
-    assert!(actions(&rig).is_empty());
-    assert_eq!(mode(&view, cx), Mode::New);
-    assert!(rig.core.transients.lock().unwrap().is_empty());
+    let (conversation, message_id, key) = (NOTES.to_owned(), note.to_owned(), "like".to_owned());
+    assert_eq!(
+        actions(rig),
+        [Action::React {
+            conversation,
+            message_id,
+            key
+        }]
+    );
+
+    act(view, cx, MessageAction::Delete, note);
+    keys(cx, "enter");
+    let (conversation, message_id) = (NOTES.to_owned(), note.to_owned());
+    assert_eq!(
+        actions(rig),
+        [Action::Delete {
+            conversation,
+            message_id
+        }]
+    );
 }
 
 // --- the app's read-only mode ---
