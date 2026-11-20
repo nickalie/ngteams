@@ -129,7 +129,10 @@ fn a_withheld_message_reads_as_its_notice_in_the_list_a_notification_and_a_quote
     let withheld = message("", FILE_TYPE);
     let line = "This message was blocked because it contains a file type that is not permitted.";
     assert_eq!(chat_list::message_line(&withheld), line);
-    assert_eq!(Quoted::of(&withheld, "Synthetic").unwrap().preview, line);
+    let quoted = Quoted::of(&withheld, "Synthetic").unwrap();
+    assert_eq!(quoted.preview, line);
+    assert_eq!(quoted.shown, None);
+    assert_eq!(quoted.shown_preview(), line);
     // a sender's own, its text put back, reads as its text
     let kept = message("<p>synthetic text</p>", FILE_TYPE);
     assert_eq!(chat_list::message_line(&kept), "synthetic text");

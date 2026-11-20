@@ -295,17 +295,19 @@ impl Quoted {
         } else {
             message.arrival_time.to_string()
         };
+        let text = rich_text_of(message);
+        let preview = line_of(message, text.clone());
         Some(Self {
             message_id: message.id.clone(),
             sender,
             sender_name: sender_name.to_owned(),
             time,
-            preview: preview(message),
-            shown: Some(one_line_of(with_everyone_shown(
-                rich_text_of(message),
-                message.properties.as_deref(),
-            )))
-            .filter(|shown| *shown != preview(message)),
+            shown: Some(line_of(
+                message,
+                with_everyone_shown(text, message.properties.as_deref()),
+            ))
+            .filter(|shown| *shown != preview),
+            preview,
         })
     }
 
@@ -374,10 +376,9 @@ pub fn rich_text_of(message: &Message) -> RichText {
     }
 }
 
-/// A message's text on one line (what it quotes left out; a forward's content is the message's own, kept), at most
-/// [`PREVIEW_MAX`] characters.
-fn preview(message: &Message) -> String {
-    let line = one_line_of(rich_text_of(message));
+/// `text`, `message`'s text, on one line ([`one_line_of`]), or the notice of a policy that withheld it.
+fn line_of(message: &Message, text: RichText) -> String {
+    let line = one_line_of(text);
     // a message whose text a policy withheld is quoted by its notice, as anyone but its sender reads it
     match crate::policy_notice::of(message.properties.as_deref(), false) {
         Some(notice) if line.is_empty() => crate::policy_notice::words(notice, false).to_owned(),
