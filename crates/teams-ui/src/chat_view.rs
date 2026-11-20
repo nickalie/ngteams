@@ -1097,6 +1097,8 @@ struct Loading {
     window: Option<Task<()>>,
     older: Option<Task<()>>,
     generation: u64,
+    /// The next older load was asked for by the user ([`ChatView::load_older`]): a chat never synced is synced first.
+    older_asked: bool,
 }
 
 /// The chat view (see the module docs).
@@ -2543,6 +2545,7 @@ impl ChatView {
     /// failed, or one that found the chat never synced.
     pub fn load_older(&mut self, cx: &mut Context<Self>) {
         self.fruitless = 0;
+        self.loading.older_asked = true;
         if self.history != History::Complete && self.history != History::More {
             self.history = History::More;
             self.rebuild(cx);
@@ -2603,13 +2606,14 @@ impl ChatView {
             .collect();
         let (place, writes_to) = (self.place.clone(), self.writes_to.clone());
         let generation = self.loading.generation;
+        let asked = load == Load::Older && std::mem::take(&mut self.loading.older_asked);
         let task = cx.spawn(async move |this, cx: &mut AsyncApp| {
             let read = match load {
                 Load::Window => {
                     let oldest = thread_oldest(&*core, &conversation, &place, oldest).await;
                     window(&*core, &conversation, oldest, first, &held, &find).await
                 }
-                Load::Older => older(&*core, &conversation, oldest, next, &held).await,
+                Load::Older => older(&*core, &conversation, (oldest, next), asked, &held).await,
             };
             let read = match read {
                 Ok(read) if place.in_channel() => Ok(in_channel(&*core, &conversation, &writes_to, read).await),
@@ -5056,6 +5060,18 @@ async fn thread_oldest(
     Some(oldest.map_or(at.clone(), |held| held.min(at)))
 }
 
+/// Whether a conversation never synced (its sync on open failed) is synced now: then its store holds the pages it
+/// read, to be read as any older page.
+async fn synced_now(core: &dyn Core, conversation: &str) -> Result<bool, EngineError> {
+    if core.history_complete(conversation.to_owned()).await?.is_some() {
+        return Ok(false);
+    }
+    if core.sync_conversation(conversation.to_owned()).await.is_err() {
+        return Ok(false);
+    }
+    Ok(core.history_complete(conversation.to_owned()).await?.is_some())
+}
+
 /// What a channel's load reads besides a chat's: its messages' posts, and a thread's message posts not sent yet (rows
 /// of the post's chain, `writes_to`).
 async fn in_channel(core: &dyn Core, conversation: &str, writes_to: &str, mut read: Read) -> Read {
@@ -5075,28 +5091,22 @@ async fn in_channel(core: &dyn Core, conversation: &str, writes_to: &str, mut re
 }
 
 /// The older load: the store's next page; once the store has none, the service's next older page read into the store
-/// first.
+/// first. A load the user `asked` for in a chat never synced syncs it first, then reads the pages it stored.
 async fn older(
     core: &dyn Core,
     conversation: &str,
-    oldest: Option<(i64, String)>,
-    next: Option<PageCursor>,
+    (oldest, next): (Option<(i64, String)>, Option<PageCursor>),
+    asked: bool,
     held: &HashMap<String, i64>,
 ) -> Result<Read, EngineError> {
     let before = if let Some(next) = next {
         next
     } else {
-        if core.load_older(conversation.to_owned()).await?.is_none() {
+        if core.load_older(conversation.to_owned()).await?.is_none()
+            && !(asked && synced_now(core, conversation).await?)
+        {
             // nothing to read: the beginning only once the store says the whole history is stored
-            let mut complete = core.history_complete(conversation.to_owned()).await?;
-            // never synced (its sync on open failed): a sync first, then the newest page it stored
-            if complete.is_none() && core.sync_conversation(conversation.to_owned()).await.is_ok() {
-                complete = core.history_complete(conversation.to_owned()).await?;
-                if complete.is_some() {
-                    return window(core, conversation, None, false, held, &[]).await;
-                }
-            }
-            let history = match complete {
+            let history = match core.history_complete(conversation.to_owned()).await? {
                 Some(true) => History::Complete,
                 Some(false) | None => History::Unsynced,
             };
