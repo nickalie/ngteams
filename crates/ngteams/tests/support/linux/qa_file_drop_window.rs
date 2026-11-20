@@ -1,4 +1,4 @@
-//! QA of task 697 (round 1), in the UI sandbox: files dragged from a file manager into the app's window, as a user
+//! QA of task 697 (rounds 1 and 2), in the UI sandbox: files dragged from a file manager into the app's window, as a user
 //! drops them (`harness = false`: GPUI runs on the process's main thread).
 //!
 //! The real app runs as a child in the sandbox, as lab account a on `teams-mock`. The parent is the user: the
@@ -8,6 +8,9 @@
 //!
 //! - **Each file manager** (Dolphin's URI lists, Nautilus's portal key before its list, Thunar's GTK 3 types, a
 //!   Flatpak program's portal key alone) onto the 1:1 chat's message box: both files in the box beside the draft.
+//! - **Typed, then dropped**: keys typed, then a drop with no pointer motion over the app between them: the files
+//!   beside the draft, the highlight gone, the next key in the box. The same on a box in edit: its message. After a
+//!   drop, Tab moves the keyboard's ring from the box to the next stops.
 //! - **Each chat**: over the messages of a group chat; the account's own notes.
 //! - **A fast drop** (no pause over the chat) and **a late source** (the drop comes before the files are read).
 //! - **The highlight**: "Share in this chat" while the files are over the chat, gone when they leave, nothing
@@ -141,9 +144,11 @@ fn wanted(name: &str) -> bool {
 
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
-const CHECKS: [Check; 16] = [
+const CHECKS: [Check; 18] = [
     ("each_file_manager", each_file_manager),
     ("typed_then_dropped", typed_then_dropped),
+    ("edit_after_keys", edit_after_keys),
+    ("keys_after_drop", keys_after_drop),
     ("over_group_messages", over_group_messages),
     ("own_notes", own_notes),
     ("fast_drop", fast_drop),
@@ -635,6 +640,23 @@ impl User<'_> {
         Ok(seen)
     }
 
+    /// As [`Self::drop_files`], and the pointer stays where the files were let go.
+    fn drop_files_resting(
+        &mut self,
+        shape: Shape,
+        paths: &[PathBuf],
+        to: (u32, u32),
+        hand: Hand,
+    ) -> SandboxResult<Vec<DragEvent>> {
+        let held = self.hover(shape, paths, to, hand)?;
+        self.input.button_up(keys::BTN_LEFT)?;
+        let ended = wait_until(WAIT, || {
+            let seen = held.source.events();
+            (seen.contains(&DragEvent::Finished) || seen.contains(&DragEvent::Cancelled)).then_some(seen)
+        });
+        ended.ok_or_else(|| format!("the drag never ended: {:?}", held.source.events()).into())
+    }
+
     /// Drags `shape`'s `paths` onto `to` and lets go; what the source was told.
     fn drop_files(
         &mut self,
@@ -817,8 +839,9 @@ fn each_file_manager(user: &mut User<'_>) -> SandboxResult {
 }
 
 /// The user types the draft while the pointer rests on the file manager (the keyboard moved the focus between the
-/// windows, as on niri), then drags files onto the box: the files are in, and the highlight goes. No pointer motion
-/// reaches the app between the last key and the drop.
+/// windows, as on niri), then drags files onto the box: the files are in beside the draft, and the highlight goes. No
+/// pointer motion reaches the app between the last key and the drop. The drop is pointer input; the next key types
+/// into the box and gives the window back to the keyboard.
 fn typed_then_dropped(user: &mut User<'_>) -> SandboxResult {
     let state = user.fresh_chat(AB_CHAT)?;
     let at = box_centre(&state["chat"])?;
@@ -826,9 +849,11 @@ fn typed_then_dropped(user: &mut User<'_>) -> SandboxResult {
     thread::sleep(STEP);
     let mark = user.mark();
     user.type_text(&format!("Typed then dropped {mark}"))?;
-    user.until("the typed draft", |state| text_of(&state["chat"]).contains(&mark))?;
+    user.until("the typed draft", |state| {
+        text_of(&state["chat"]).contains(&mark) && state["keyboard"] == true
+    })?;
     let paths = user.made_up(&["made-up after typing.txt", "made-up-after-typing.pdf"])?;
-    let seen = user.drop_files(DOLPHIN, &paths, at, CALM)?;
+    let seen = user.drop_files_resting(DOLPHIN, &paths, at, CALM)?;
     thread::sleep(QUIET);
     let state = user.state()?;
     thread::sleep(SETTLE);
@@ -836,8 +861,124 @@ fn typed_then_dropped(user: &mut User<'_>) -> SandboxResult {
     ensure(staged(&state["chat"]) == names_of(&paths), || {
         format!("files dropped after typing are not in the box: {state}; source saw {seen:?}")
     })?;
+    taken(&seen, "text/uri-list")?;
     ensure(state["chat"]["drop_active"] == false, || {
         format!("\"Share in this chat\" stayed over the chat after the drop: {state}")
+    })?;
+    ensure(text_of(&state["chat"]).contains(&mark), || {
+        format!("the draft went: {state}")
+    })?;
+    ensure(state["keyboard"] == false, || {
+        format!("the window stayed in keyboard mode through the drop: {state}")
+    })?;
+    let next = user.mark();
+    user.type_text(&format!(" {next}"))?;
+    let state = user.until("the next key in the box", |state| {
+        text_of(&state["chat"]).contains(&next)
+    })?;
+    thread::sleep(SETTLE);
+    user.shot("typed-then-dropped-next-key")?;
+    ensure(
+        text_of(&state["chat"]).contains(&mark) && state["chat"]["focused"] == true && state["keyboard"] == true,
+        || format!("the keys after the drop: {state}"),
+    )?;
+    ensure(staged(&state["chat"]) == names_of(&paths), || {
+        format!("the files went after the next key: {state}")
+    })
+}
+
+/// A message sent, the pointer rests on the file manager, then Up to edit the last own message (keys only) and a drop
+/// on the box: the edit's message, the edit kept, the highlight gone.
+fn edit_after_keys(user: &mut User<'_>) -> SandboxResult {
+    user.fresh_chat(AB_CHAT)?;
+    let mark = user.mark();
+    user.draft(&format!("Edit me by keys {mark}"))?;
+    user.press("enter")?;
+    wait_until(WAIT, || (!user.posted_with(&mark).is_empty()).then_some(()))
+        .ok_or("the mock got no post of the message")?;
+    user.until("the box empty", |state| text_of(&state["chat"]).is_empty())?;
+    user.input.move_to(PRESS.0, PRESS.1)?;
+    thread::sleep(SETTLE);
+    user.press("up")?;
+    let state = user.until("the edit", |state| {
+        state["chat"]["mode"] == "edit" && state["keyboard"] == true
+    })?;
+    let editing = text_of(&state["chat"]);
+    let at = box_centre(&state["chat"])?;
+    let paths = user.made_up(&["made-up for the keyed edit.txt"])?;
+    let seen = user.drop_files_resting(DOLPHIN, &paths, at, CALM)?;
+    let state = user
+        .until("the edit's message", |state| problem_of(&state["chat"]) == EDIT_PROBLEM)
+        .map_err(|error| format!("{error}; source saw {seen:?}"))?;
+    ensure(
+        state["chat"]["mode"] == "edit" && text_of(&state["chat"]) == editing,
+        || format!("the edit went: {state}; source saw {seen:?}"),
+    )?;
+    ensure(staged(&state["chat"]).is_empty(), || {
+        format!("the edit took files: {state}")
+    })?;
+    ensure(state["chat"]["drop_active"] == false, || {
+        format!("\"Share in this chat\" stayed over the edit after the drop: {state}")
+    })?;
+    thread::sleep(SETTLE);
+    user.shot("edit-after-keys")?;
+    user.press("escape")?;
+    Ok(())
+}
+
+/// After a drop, the keyboard still moves through the window: Tab takes the focus from the box to the staged file's
+/// stop and draws its ring, and the next Tab moves the ring on.
+fn keys_after_drop(user: &mut User<'_>) -> SandboxResult {
+    user.fresh_chat(AB_CHAT)?;
+    let mark = user.mark();
+    let state = user.draft(&format!("Keys after the drop {mark}"))?;
+    let paths = user.made_up(&["made-up before tab.txt"])?;
+    let seen = user.drop_files_resting(DOLPHIN, &paths, box_centre(&state["chat"])?, CALM)?;
+    let state = user
+        .staged_now(&names_of(&paths))
+        .map_err(|error| format!("{error}; source saw {seen:?}"))?;
+    ensure(state["chat"]["focused"] == true, || {
+        format!("the box lost the focus to the drop: {state}")
+    })?;
+    thread::sleep(SETTLE);
+    let dropped = user.shot("keys-after-drop")?;
+    user.press("tab")?;
+    let state = user.until("the focus off the box", |state| {
+        state["chat"]["focused"] == false && state["keyboard"] == true
+    })?;
+    thread::sleep(SETTLE);
+    let first = user.shot("keys-after-drop-tab")?;
+    ring_drawn(&dropped, &first, &state["chat"])?;
+    user.press("tab")?;
+    thread::sleep(SETTLE);
+    let second = user.shot("keys-after-drop-tab-2")?;
+    ring_drawn(&first, &second, &state["chat"])?;
+    let state = user.state()?;
+    ensure(
+        text_of(&state["chat"]).contains(&mark) && staged(&state["chat"]) == names_of(&paths),
+        || format!("the draft or the file went: {state}"),
+    )
+}
+
+/// Tab drew a ring in the box under its text line (the staged file's or the tools' stop): the caret and the box's
+/// focus line at its bottom edge are not counted.
+fn ring_drawn(before: &Path, after: &Path, chat: &Value) -> SandboxResult {
+    let load = |path: &Path| image::open(path).map(|image| image.to_rgb8());
+    let (before, after) = (load(before)?, load(after)?);
+    let bounds = &chat["bounds"];
+    let (left, top) = (px(&bounds[0]), px(&bounds[1]));
+    let (right, bottom) = (left + px(&bounds[2]), top + px(&bounds[3]));
+    let mut changed = 0_u32;
+    for y in top + 32..bottom.saturating_sub(10).min(before.height()) {
+        for x in left + 4..right.saturating_sub(4).min(before.width()) {
+            if before.get_pixel(x, y) != after.get_pixel(x, y) {
+                changed += 1;
+            }
+        }
+    }
+    say(&format!("  focus: {changed} pixels changed in the box after Tab"));
+    ensure(changed > 40, || {
+        format!("Tab drew no ring in the box ({changed} pixels)")
     })
 }
 
@@ -1510,6 +1651,7 @@ fn state_of(shell: &Entity<Shell>, window: &Window, cx: &App) -> Value {
     json!({
         "main": main,
         "width": f32::from(window.viewport_size().width),
+        "keyboard": window.last_input_was_keyboard(),
         "chat": chat,
         "post": post,
         "thread": thread,
