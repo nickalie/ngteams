@@ -119,6 +119,16 @@ const SEE_ALL_EMOJI: (i32, i32) = (1040, 445);
 const SEE_ALL_STICKERS: (i32, i32) = (1040, 538);
 /// A pack's "More options".
 const PACK_MORE: (i32, i32) = (1065, 471);
+/// The end of the search field: its magnifier or its X; and a point of the field's own background.
+const SEARCH_MARK: Rect = Rect {
+    x: 1046,
+    y: 399,
+    w: 26,
+    h: 17,
+};
+const SEARCH_FIELD: (i32, i32) = (1000, 407);
+/// The pixels of a 16 px glyph's strokes, at the least.
+const MARK_INK: usize = 12;
 /// The picker, and the chat's messages, on the screen.
 const PICKER: Rect = Rect {
     x: 746,
@@ -186,7 +196,7 @@ fn wanted(name: &str) -> bool {
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
 /// The first run of the app.
-const FIRST: [Check; 13] = [
+const FIRST: [Check; 14] = [
     ("opens_by_button_and_keys", opens_by_button_and_keys),
     ("import_folder", import_folder),
     ("import_zip", import_zip),
@@ -195,6 +205,7 @@ const FIRST: [Check; 13] = [
     ("beside_text", beside_text),
     ("b_sees_stickers", b_sees_stickers),
     ("search_label_and_pack", search_label_and_pack),
+    ("search_mark_and_clear", search_mark_and_clear),
     ("keyboard_whole_picker", keyboard_whole_picker),
     ("rename_and_remove", rename_and_remove),
     ("new_chat_no_stickers", new_chat_no_stickers),
@@ -1027,7 +1038,14 @@ impl User<'_> {
     /// The user imports `source` (a folder or a `.zip` file) from the Stickers tab: the empty state's button, or "Add
     /// a sticker pack" and its menu. It returns the states seen while the import ran, and the state at its end.
     fn import(&mut self, source: &Path, archive: bool, name: &str) -> SandboxResult<(Vec<Value>, Value)> {
+        self.start_import(source, archive)?;
+        self.finish_import(name)
+    }
+
+    /// The user picks `source` to import from the Stickers tab.
+    fn start_import(&mut self, source: &Path, archive: bool) -> SandboxResult {
         let state = self.open_stickers_by_keys()?;
+        self.world.chooser.clear();
         if !has_item(&state, "sticker-import-folder") {
             self.key_pick("sticker-pack-add")?;
         }
@@ -1036,7 +1054,11 @@ impl User<'_> {
             "sticker-import-zip"
         } else {
             "sticker-import-folder"
-        })?;
+        })
+    }
+
+    /// The states seen while the import ran, and the state at its end.
+    fn finish_import(&mut self, name: &str) -> SandboxResult<(Vec<Value>, Value)> {
         let start = Instant::now();
         let mut running = Vec::new();
         loop {
@@ -1056,6 +1078,40 @@ impl User<'_> {
             thread::sleep(Duration::from_millis(20));
         }
     }
+
+    /// While an import runs, the user asks for a second one (the spare folder): the faults in how the app refuses it.
+    fn second_import(&mut self) -> SandboxResult<Vec<String>> {
+        self.until("the import runs", |state| state["shelf"]["import"]["running"] == true)?;
+        self.world.chooser.queue(Answer::Pick(self.world.sources.spare.clone()));
+        self.key_pick("sticker-import-folder")?;
+        let state = self.until_in("the second import refused, or the first ended", IMPORT_WAIT, |state| {
+            let import = &state["shelf"]["import"];
+            import["refused"] == true || import["running"] != true
+        })?;
+        if state["shelf"]["import"]["refused"] != true {
+            return Ok(vec![format!(
+                "the second import was not refused while the first ran: {}",
+                state["shelf"]
+            )]);
+        }
+        self.image("import-busy")?;
+        Ok(Vec::new())
+    }
+}
+
+/// After the refused import: the note gone with the first import, and no pack from the spare folder.
+fn spare_faults(state: &Value) -> Vec<String> {
+    let mut faults = Vec::new();
+    if state["shelf"]["import"]["refused"] == true {
+        faults.push("the refusal stays after the import ended".to_owned());
+    }
+    let named = state["shelf"]["packs"]
+        .as_array()
+        .is_some_and(|packs| packs.iter().any(|pack| pack["name"] == files::SPARE));
+    if pack(state, files::SPARE_ID).is_some() || named {
+        faults.push(format!("the refused import made a pack: {}", state["shelf"]["packs"]));
+    }
+    faults
 }
 
 /// The skipped files a summary names, and the faults in them.
@@ -1079,14 +1135,17 @@ fn summary_faults(state: &Value) -> Vec<String> {
     faults
 }
 
-/// The folder: a progress line, a summary with each skipped file and its reason, the pack with its stickers (the
-/// animated ones as such), and Close.
+/// The folder: a progress line, a second import refused while it runs, a summary with each skipped file and its
+/// reason, the pack with its stickers (the animated ones as such), and Close.
 fn import_folder(user: &mut User<'_>) -> SandboxResult {
     user.open(AB_CHAT)?;
     let source = user.world.sources.zorblets.clone();
-    let (running, state) = user.import(&source, false, "import-folder")?;
+    user.start_import(&source, false)?;
+    let mut faults = user.second_import()?;
+    let (running, state) = user.finish_import("import-folder")?;
     user.image("import-folder-summary")?;
-    let mut faults = summary_faults(&state);
+    faults.extend(spare_faults(&state));
+    faults.extend(summary_faults(&state));
     say(&format!(
         "  progress seen {} times: {:?}",
         running.len(),
@@ -1108,6 +1167,8 @@ fn import_folder(user: &mut User<'_>) -> SandboxResult {
         faults.push(format!("the Stickers tab does not show the pack: {:?}", rows(&state)));
     }
     user.image("import-folder-pack-shows")?;
+    thread::sleep(SETTLE);
+    faults.extend(spare_faults(&user.state()?));
     faults_to_result(&faults)
 }
 
@@ -1603,6 +1664,72 @@ fn search_label_and_pack(user: &mut User<'_>) -> SandboxResult {
     faults_to_result(&faults)
 }
 
+/// The pixels in `area` that stand out from the colour at `background`.
+fn ink(image: &RgbImage, area: Rect, background: (i32, i32)) -> BTreeSet<(i32, i32)> {
+    let Some(field) = pixel(image, background.0, background.1) else {
+        return BTreeSet::new();
+    };
+    (area.y..area.bottom())
+        .flat_map(|y| (area.x..area.right()).map(move |x| (x, y)))
+        .filter(|&(x, y)| pixel(image, x, y).is_some_and(|colour| !near(colour, field, 60)))
+        .collect()
+}
+
+impl User<'_> {
+    /// The glyph at the end of the search field, as a screenshot `name` shows it.
+    fn search_mark(&mut self, name: &str) -> SandboxResult<BTreeSet<(i32, i32)>> {
+        let image = self.image(name)?;
+        let mark = ink(&image, SEARCH_MARK, SEARCH_FIELD);
+        say(&format!("  {name}: {} pixels of the mark", mark.len()));
+        Ok(mark)
+    }
+}
+
+/// The search field's end, as in Teams: a magnifier while it is empty, an X once it has text. The X clears the
+/// search and keeps the focus in the field; Escape still closes the picker.
+fn search_mark_and_clear(user: &mut User<'_>) -> SandboxResult {
+    user.open(AB_CHAT)?;
+    let state = user.open_picker_by_keys()?;
+    let cyan = sticker_selector(&state, files::QUIBBLES_ID, "Quib cyan")?;
+    let unsearched = rows(&state);
+    let mut faults = Vec::new();
+    let magnifier = user.search_mark("search-empty")?;
+    if magnifier.len() < MARK_INK {
+        faults.push("the empty field shows no magnifier".to_owned());
+    }
+    user.type_text("rosy")?;
+    user.until("the search changed the items", |state| rows(state) != unsearched)?;
+    let cross = user.search_mark("search-typed")?;
+    if cross.len() < MARK_INK {
+        faults.push("the field with text shows no X".to_owned());
+    }
+    if magnifier.symmetric_difference(&cross).count() < MARK_INK {
+        faults.push("the field with text still shows the magnifier, not an X".to_owned());
+    }
+    user.click(SEARCH_MARK.centre())?;
+    match user.until("the X cleared the search", |state| rows(state) == unsearched) {
+        Ok(state) if picker(&state)["place"] != "search" => {
+            faults.push(format!("the X took the focus from the field: {}", picker(&state)));
+        }
+        Ok(_) => {}
+        Err(error) => faults.push(error.to_string()),
+    }
+    let again = user.search_mark("search-cleared")?;
+    if magnifier.symmetric_difference(&again).count() >= MARK_INK {
+        faults.push("the cleared field does not show the magnifier again".to_owned());
+    }
+    user.type_text("quib")?;
+    if let Err(error) = user.until("typing after the X searches", |state| has_item(state, &cyan)) {
+        faults.push(error.to_string());
+    }
+    user.image("search-after-clear")?;
+    user.press("escape")?;
+    if let Err(error) = user.until("Escape closed the picker", |state| !picker_open(state)) {
+        faults.push(error.to_string());
+    }
+    faults_to_result(&faults)
+}
+
 /// One key and the state it must lead to, in the picker.
 fn key_leads(user: &mut User<'_>, key: &str, what: &str, wanted: impl Fn(&Value) -> bool) -> Option<String> {
     if let Err(error) = user.press(key) {
@@ -1835,7 +1962,10 @@ fn size_faults(image: &RgbImage, width: i32, least: usize, what: &str) -> Vec<St
 fn themes_fonts_narrow(user: &mut User<'_>) -> SandboxResult {
     let chat = user.world.chats.sizes.clone();
     let mut faults = Vec::new();
-    for (width, font) in [(1280, 14), (1280, 24), (800, 20), (520, 14), (520, 24)] {
+    for (width, font) in [1280, 800, 520]
+        .into_iter()
+        .flat_map(|width| [14, 20, 24].map(|font| (width, font)))
+    {
         user.resize(width)?;
         user.ask(&format!("font {font}"))?;
         for theme in ["light", "dark"] {
@@ -2333,7 +2463,12 @@ fn shelf_state(shelf: &Entity<Shelf>, cx: &App) -> Value {
         })
         .collect();
     let import = shelf.import_state().map(|state| match state {
-        ImportState::Running(progress) => json!({"running": true, "done": progress.done, "total": progress.total}),
+        ImportState::Running(progress) => json!({
+            "running": true,
+            "done": progress.done,
+            "total": progress.total,
+            "refused": shelf.refused(),
+        }),
         ImportState::Done(imported) => json!({
             "done": imported.pack.id,
             "skipped": imported.skipped.iter().map(ToString::to_string).collect::<Vec<_>>(),

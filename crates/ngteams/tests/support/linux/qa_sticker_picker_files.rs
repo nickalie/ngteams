@@ -50,6 +50,9 @@ pub const QUIBBLES: &str = "Qa quibbles";
 pub const QUIBBLES_ID: &str = "qa-quibbles";
 pub const DOOMED: &str = "Qa doomed";
 pub const DOOMED_ID: &str = "qa-doomed";
+/// The folder the user asks to import while another import runs: the app refuses it.
+pub const SPARE: &str = "Qa spare";
+pub const SPARE_ID: &str = "qa-spare";
 
 /// The files the folder import must skip, with a word of the reason the summary must give.
 pub const SKIPPED: [(&str, &str); 5] = [
@@ -290,12 +293,13 @@ fn bad_files() -> SandboxResult<Vec<(String, Vec<u8>)>> {
     ])
 }
 
-/// What the user imports: two folders and a `.zip` file, in a directory of their own.
+/// What the user imports: three folders and a `.zip` file, in a directory of their own.
 pub struct Sources {
     _dir: tempfile::TempDir,
     pub zorblets: PathBuf,
     pub quibbles: PathBuf,
     pub doomed: PathBuf,
+    pub spare: PathBuf,
 }
 
 impl Sources {
@@ -310,6 +314,11 @@ impl Sources {
             &doomed,
             vec![("doomed_tan.png".to_owned(), encoded(&face(TAN, 4), ImageFormat::Png)?)],
         )?;
+        let spare = dir.path().join(SPARE);
+        write_all(
+            &spare,
+            vec![("spare_tan.png".to_owned(), encoded(&face(TAN, 4), ImageFormat::Png)?)],
+        )?;
         let quibbles = dir.path().join(format!("{QUIBBLES}.zip"));
         write_zip(&quibbles)?;
         Ok(Self {
@@ -317,6 +326,7 @@ impl Sources {
             zorblets,
             quibbles,
             doomed,
+            spare,
         })
     }
 }
