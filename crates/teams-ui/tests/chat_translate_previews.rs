@@ -511,7 +511,7 @@ fn a_reply_s_quote_shows_translated_and_is_sent_as_written() {
     let quoted = message(CHAT, "1", 1, LAB_B, "Hello there");
     let plain = Quoted::of(&quoted, "Lab B").unwrap();
     assert_eq!(plain.shown_preview(), "Hello there");
-    let shown = plain.clone().shown_as(&RichText::plain("DE Hello there"));
+    let shown = plain.clone().shown_as(&RichText::plain("DE Hello there"), None);
     assert_eq!(shown.shown_preview(), "DE Hello there");
     assert_eq!(shown.preview, "Hello there", "the quote sent is as written");
     // the account's reply as written keeps the quote as the chat showed it

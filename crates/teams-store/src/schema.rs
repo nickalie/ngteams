@@ -9,7 +9,7 @@ use rusqlite::{Connection, TransactionBehavior};
 use crate::StoreError;
 
 /// The schema version this build writes: the number of migrations.
-pub const SCHEMA_VERSION: u32 = 28;
+pub const SCHEMA_VERSION: u32 = 29;
 
 /// The migrations, in order.
 const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
@@ -41,6 +41,7 @@ const MIGRATIONS: [&str; SCHEMA_VERSION as usize] = [
     include_str!("migrations/0026_translated_messages.sql"),
     include_str!("migrations/0027_unread_marks.sql"),
     include_str!("migrations/0028_topic_versions.sql"),
+    include_str!("migrations/0029_reindex_everyone_mentions.sql"),
 ];
 
 pub(crate) fn version(conn: &Connection) -> Result<u32, StoreError> {

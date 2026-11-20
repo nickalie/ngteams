@@ -103,7 +103,7 @@ fn the_migration_creates_the_index_and_fills_nothing() -> Result<(), StoreError>
 
     let store = Store::open(&store_path(&dir))?;
     assert_eq!(store.schema_version()?, SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 28);
+    assert_eq!(SCHEMA_VERSION, 29);
     let raw = rusqlite::Connection::open(store_path(&dir)).expect("open directly");
     let tables: Vec<String> = raw
         .prepare("SELECT name FROM sqlite_master WHERE name IN ('message_search', 'search_entries') ORDER BY name")
@@ -496,5 +496,36 @@ fn a_snippet_marker_in_a_text_is_never_taken_for_a_match() -> Result<(), StoreEr
     store_indexed(&mut store, &message(CHAT, "1001", 1, &text, 1_000))?;
     let hits = store.search("odd", 10)?;
     assert_eq!(hits[0].snippet, format!("{MATCH_START}odd{MATCH_END} marker text"));
+    Ok(())
+}
+
+#[test]
+fn the_everyone_migration_indexes_a_message_that_mentions_everyone_again() -> Result<(), StoreError> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut store = with_chats(&dir)?;
+    let mut everyone = message(GROUP, "1001", 1, "Все Setup is ready", 1_000);
+    everyone.message_type = "RichText/Html".to_owned();
+    everyone.properties = Some(r#"{"mentions":"[{\"mentionType\":\"everyone\"}]"}"#.to_owned());
+    let mut person = message(GROUP, "1002", 1, "Synthetic Peer Setup is ready", 2_000);
+    person.message_type = "RichText/Html".to_owned();
+    person.properties = Some(r#"{"mentions":"[{\"mentionType\":\"person\"}]"}"#.to_owned());
+    store_indexed(&mut store, &everyone)?;
+    store_indexed(&mut store, &person)?;
+    store_indexed(&mut store, &message(GROUP, "1003", 1, "everyone Setup is ready", 3_000))?;
+    drop(store);
+    // the store as schema 28 left it, its index made before the reader's label
+    let raw = rusqlite::Connection::open(store_path(&dir)).expect("open directly");
+    raw.execute_batch("PRAGMA user_version = 28;")
+        .expect("back to schema 28");
+    drop(raw);
+
+    let store = Store::open(&store_path(&dir))?;
+    assert_eq!(store.schema_version()?, SCHEMA_VERSION);
+    assert_eq!(found(&store, "setup"), ["1003", "1002"]);
+    let pending = store.messages_to_index(None, 10)?;
+    assert_eq!(
+        pending.iter().map(|message| message.id.as_str()).collect::<Vec<_>>(),
+        ["1001"]
+    );
     Ok(())
 }

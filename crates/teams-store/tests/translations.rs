@@ -200,7 +200,7 @@ fn the_translations_migration_starts_with_none() -> Result<(), StoreError> {
     drop(raw);
     let store = Store::open(&store_path(&dir))?;
     assert_eq!(store.schema_version()?, SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 28);
+    assert_eq!(SCHEMA_VERSION, 29);
     assert!(store.translations(CHAT, "de", &["1".to_owned()])?.is_empty());
     assert!(store.sent_originals(CHAT, &["client-1".to_owned()])?.is_empty());
     Ok(())

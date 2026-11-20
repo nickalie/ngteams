@@ -275,10 +275,12 @@ pub struct Quoted {
     pub sender_name: String,
     /// The quoted message's time, ms: its id, as the captured reply named it.
     pub time: String,
-    /// Its text on one line, at most [`PREVIEW_MAX`] characters.
+    /// Its text on one line as its content holds it, at most [`PREVIEW_MAX`] characters: the quote sent.
     pub preview: String,
-    /// In a translated chat, its text as the chat shows it (its translation), on one line: what the box shows over
-    /// it, and the account's own reply keeps as written. The quote sent keeps `preview`, as the others read it.
+    /// Its text as the chat shows it, on one line, when that is not `preview`: its translation in a translated chat,
+    /// a mention of everyone in the reader's words ([`with_everyone_shown`]). The box shows it over the quote, and the
+    /// account's own reply in a translated chat keeps it as written. The quote sent keeps `preview`, as the others read
+    /// it.
     pub shown: Option<String>,
 }
 
@@ -299,15 +301,20 @@ impl Quoted {
             sender_name: sender_name.to_owned(),
             time,
             preview: preview(message),
-            shown: None,
+            shown: Some(one_line_of(with_everyone_shown(
+                rich_text_of(message),
+                message.properties.as_deref(),
+            )))
+            .filter(|shown| *shown != preview(message)),
         })
     }
 
-    /// The quote, shown in a translated chat as `text` (the quoted message's translation).
+    /// The quote, shown in a translated chat as `text` (the quoted message's translation), with the mentions of
+    /// everyone that the quoted message's `properties` list in the reader's words.
     #[must_use]
-    pub fn shown_as(self, text: &RichText) -> Self {
+    pub fn shown_as(self, text: &RichText, properties: Option<&str>) -> Self {
         Self {
-            shown: Some(one_line_of(text.clone())),
+            shown: Some(one_line_of(with_everyone_shown(text.clone(), properties))),
             ..self
         }
     }
@@ -370,10 +377,7 @@ pub fn rich_text_of(message: &Message) -> RichText {
 /// A message's text on one line (what it quotes left out; a forward's content is the message's own, kept), at most
 /// [`PREVIEW_MAX`] characters.
 fn preview(message: &Message) -> String {
-    let line = one_line_of(with_everyone_shown(
-        rich_text_of(message),
-        message.properties.as_deref(),
-    ));
+    let line = one_line_of(rich_text_of(message));
     // a message whose text a policy withheld is quoted by its notice, as anyone but its sender reads it
     match crate::policy_notice::of(message.properties.as_deref(), false) {
         Some(notice) if line.is_empty() => crate::policy_notice::words(notice, false).to_owned(),

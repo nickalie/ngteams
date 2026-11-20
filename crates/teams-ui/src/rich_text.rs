@@ -661,8 +661,8 @@ pub struct Mentions {
 }
 
 /// What a mention of everyone shows, whatever name its sender's client wrote in it
-/// ([`teams_proto::chat::EVERYONE_LABEL`]).
-pub const EVERYONE: &str = teams_proto::chat::EVERYONE_LABEL;
+/// ([`teams_proto::chat::EVERYONE_MENTION_NAME`]).
+pub const EVERYONE: &str = teams_proto::chat::EVERYONE_MENTION_NAME;
 
 impl Mentions {
     /// The mentions `properties` (a stored message's `properties`, JSON text) lists, read as `teams-proto` reads

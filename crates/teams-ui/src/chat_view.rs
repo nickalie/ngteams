@@ -2199,7 +2199,7 @@ impl ChatView {
         let Some(quoted) = Quoted::of(held, &name) else { return };
         // in a translated chat the box shows the quote as the chat shows the message; the quote sent is as written
         let quoted = match self.translated.0.text_of(held) {
-            Some(text) => quoted.shown_as(&text),
+            Some(text) => quoted.shown_as(&text, held.properties.as_deref()),
             None => quoted,
         };
         self.compose

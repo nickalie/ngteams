@@ -1204,8 +1204,11 @@ has `mentionType` `everyone`. The bundle's chat list preview (its last message's
 `div`, `img` and `video`, so a paragraph's text joins the next and a `<br>` becomes a space: the whole message on one
 line, cut at 85 characters, the mention's text as the sender wrote it. Its message view shows its own label instead.
 The native client shows the reader's `Everyone` in every summary of the message (the chat list's row, a desktop
-notification, the call window's chat bubble, a reply's quote, the local search's text), as its message view does,
-and puts the message on one line with a space at each paragraph and line break. The Activity feed's
+notification, the call window's chat bubble, a reply's quote in the compose box, translated too, the local search's
+text and a translated search hit), as its message view does, and puts the message on one line with a space at each
+paragraph and line break. The quote that a reply sends (`<p itemprop="preview">`) keeps the content's own text, as
+the other members' clients read it. Store schema 29 removes the search rows of the messages that mention everyone,
+so the search indexes them again with the reader's label. The Activity feed's
 `messagePreview` is the service's own text and is shown as it comes.
 
 ## The native client's writes (M1 Task 12)

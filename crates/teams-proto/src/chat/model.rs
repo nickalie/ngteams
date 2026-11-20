@@ -763,10 +763,10 @@ pub struct Mention {
 /// What a reader shows for a mention of everyone in a chat (`mentionType` `everyone`), whatever label its sender's
 /// client wrote in the content (in the sender's language): the web client's English label
 /// (`compose_mention_everyone_tag`), as the web client shows its own.
-pub const EVERYONE_LABEL: &str = "Everyone";
+pub const EVERYONE_MENTION_NAME: &str = "Everyone";
 
 /// `text`, a stored message's content, with each mention of everyone that its `properties` (JSON text) list showing
-/// [`EVERYONE_LABEL`]. An entry in a form no capture showed changes nothing.
+/// [`EVERYONE_MENTION_NAME`]. An entry in a form no capture showed changes nothing.
 #[must_use]
 pub fn with_everyone_shown(text: RichText, properties: Option<&str>) -> RichText {
     let Some(Value::Object(properties)) = properties.and_then(|text| serde_json::from_str(text).ok()) else {
@@ -783,7 +783,7 @@ pub fn with_everyone_shown(text: RichText, properties: Option<&str>) -> RichText
     if everyone.is_empty() {
         return text;
     }
-    text.with_mentions_named(&everyone, EVERYONE_LABEL)
+    text.with_mentions_named(&everyone, EVERYONE_MENTION_NAME)
 }
 
 /// A mention's `mentionType`, as the web bundle names them.

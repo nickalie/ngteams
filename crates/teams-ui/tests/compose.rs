@@ -518,9 +518,32 @@ fn a_reply_quotes_a_mention_of_everyone_in_the_reader_s_words() {
     quoted.properties = Some(r#"{"mentions":"[{\"@type\":\"http://schema.skype.com/Mention\",\"itemid\":\"0\",\"mri\":\"19:00000000000000000000000000000group@thread.v2\",\"mentionType\":\"everyone\",\"displayName\":\"Все\"}]"}"#.to_owned());
     let quote = Quoted::of(&quoted, "Lab Bee").unwrap();
     assert_eq!(
-        quote.preview,
+        quote.shown_preview(),
         "Everyone The made-up build is ready, the made-up bug is fixed."
     );
+    // the quote sent keeps the content's own text
+    assert_eq!(
+        quote.preview,
+        "Все The made-up build is ready, the made-up bug is fixed."
+    );
+    let Node::Quote(sent) = quote.node() else {
+        panic!("a quote")
+    };
+    assert_eq!(
+        RichText {
+            nodes: sent.body,
+            truncated: false
+        }
+        .plain_text(),
+        quote.preview
+    );
+    // in a translated chat, the translation keeps the mention as the sender's client wrote it
+    let translation = teams_proto::chat::parse_html(
+        "<p><span itemtype=\"http://schema.skype.com/Mention\" itemscope itemid=\"0\">Все</span></p><p>DE made-up \
+         build.</p>",
+    );
+    let translated = quote.shown_as(&translation, quoted.properties.as_deref());
+    assert_eq!(translated.shown_preview(), "Everyone DE made-up build.");
 }
 
 #[test]

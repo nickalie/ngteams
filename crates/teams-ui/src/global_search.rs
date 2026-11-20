@@ -39,6 +39,7 @@ use gpui_component::input::{Escape, Input, InputEvent, InputState, MoveDown, Mov
 use gpui_component::kbd::Kbd;
 use teams_core::{Action, SearchAnswer, SearchScope};
 use teams_proto::Mri;
+use teams_proto::chat::{RichText, with_everyone_shown};
 use teams_proto::{FoundFile, FoundMessage, FoundPerson, SearchKind};
 use teams_store::{Message, OutboxState};
 
@@ -420,7 +421,8 @@ impl GlobalSearch {
         let Lookup::Text(text) = previews.read(cx).lookup(message, cx) else {
             return hit;
         };
-        let snippet = search::snippet_line(&text.plain_text());
+        let shown = with_everyone_shown(RichText::clone(&text), message.properties.as_deref());
+        let snippet = search::snippet_line(&shown.plain_text());
         let matched = search::marked_terms(&snippet, query);
         Hit {
             snippet: snippet.into(),
