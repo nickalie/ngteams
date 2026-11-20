@@ -63,6 +63,7 @@ async fn calendar_views_full_events_and_series_masters_describe_the_same_synthet
         .unwrap();
     assert_eq!(full.event.id, event.id);
     assert_eq!(full.body_html.as_deref(), Some("<div>Made-up notes</div>"));
+    assert_eq!(full.event.reminder, teams_proto::EventReminder::Off);
     let series = events.iter().find_map(|event| event.series_master_id.as_ref()).unwrap();
     let response = request(
         &mock,

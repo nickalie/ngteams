@@ -205,7 +205,8 @@ fn writes(request: &Request, rest: &[String]) -> Option<ResponseTemplate> {
                 Some(mut event) => {
                     event["bodyContentType"] = json!("html");
                     event["bodyContent"] = json!("<div>Made-up notes</div>");
-                    event["isReminderSet"] = json!(true);
+                    // at fixed UTC times of the real week, a reminder's card would cover a window test run then
+                    event["isReminderSet"] = json!(false);
                     event["reminderMinutesBeforeStart"] = json!(15);
                     // read whole, an event names each attendee's answer, as the service gives its organizer
                     event["attendees"] = json!([
