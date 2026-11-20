@@ -14,7 +14,8 @@
 //!   of 20 px. The name stays after a restart. The read-only mode shows no pencil. b and a see the other's name from
 //!   the thread's `ThreadUpdate` the mock pushes, as Teams does.
 //! - `narrow`: a window 640 px wide: the popup and its buttons whole, in Light, Dark and a font of 20 px; then the
-//!   window narrowed to 480 and 360 px under the open popup: the popup moves and narrows to stay whole in it.
+//!   window narrowed to 480 and 360 px under the open popup, in Light, Dark and 20 px: the popup moves and narrows
+//!   to stay whole.
 //! - `own`: the real `ngteams-server` binary; the app runs its made-up account a, b is a client in the parent. a
 //!   renames the group chat b made: b's store has the name. b renames and unnames it: a's window shows it at once.
 //!
@@ -855,7 +856,7 @@ fn read_only(user: &mut User<'_>, pencil: &RgbImage, place: (u32, u32)) -> Sandb
 }
 
 /// A window 640 px wide: the popup and its buttons whole in Light, Dark and a font of 20 px; and in a window narrowed
-/// to 480 and 360 px.
+/// to 480 and 360 px, in the same looks.
 fn narrow() -> SandboxResult {
     let Some(sandbox) = sandbox(640)? else {
         return Ok(());
@@ -899,15 +900,17 @@ fn narrow_flows(user: &mut User<'_>) -> SandboxResult {
     user.open_popup(ABC_CHAT, "A made-up name long enough to fill the box of the popup")?;
     for width in [480, 360] {
         user.resize(width)?;
-        for theme in ["light", "dark"] {
+        for (theme, font) in [("light", 14), ("dark", 14), ("light", 20)] {
             user.ask(&format!("theme {theme}"))?;
+            user.ask(&format!("font {font}"))?;
             thread::sleep(SETTLE);
-            if let Err(error) = popup_whole_in(user, &format!("23-narrower-popup-{width}-{theme}"), Some(width)) {
+            let shot = format!("23-narrower-popup-{width}-{theme}-{font}");
+            if let Err(error) = popup_whole_in(user, &shot, Some(width)) {
                 note(&format!("FINDING {error}"));
                 cut.push(error.to_string());
             }
         }
-        user.ask("theme light")?;
+        user.ask("font 14")?;
     }
     user.keys(&["escape"])?;
     user.until("closed", |state| state["rename"].is_null())?;
