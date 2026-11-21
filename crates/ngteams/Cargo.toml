@@ -371,6 +371,12 @@ harness = false
 name = "qa_everyone_preview_window"
 harness = false
 
+[[test]]
+# QA of task 699: Arabic, Hebrew and mixed right-to-left text in messages, the compose box, a copy, the chat list
+# and search, in the app's window over the mock
+name = "qa_rtl_text_window"
+harness = false
+
 [build-dependencies]
 embed-resource.workspace = true
 
