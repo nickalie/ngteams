@@ -50,6 +50,7 @@
     "ngteams/test/large_call_window/qa-reactions": 410,
     "ngteams/test/large_call_window/qa-chat": 260,
     "ngteams/test/large_call_window/qa-chat-calls": 120,
+    "ngteams/test/large_call_window/qa-everyone": 90,
     "ngteams/test/large_call_window/sizes": 307,
     "ngteams/test/large_call_window/small": 38,
     "ngteams/test/large_call_window/strips": 134,
