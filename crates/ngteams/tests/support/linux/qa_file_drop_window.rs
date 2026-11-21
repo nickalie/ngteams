@@ -11,7 +11,7 @@
 //! - **Typed, then dropped**: keys typed, then a drop with no pointer motion over the app between them: the files
 //!   beside the draft, the highlight gone, the next key in the box. The same on a box in edit: its message. After a
 //!   drop, Tab moves the keyboard's ring from the box to the next stops.
-//! - **Each chat**: over the messages of a group chat; the account's own notes.
+//! - **Each chat**: over the messages of a group chat; the account's own notes, whose box takes files too.
 //! - **A fast drop** (no pause over the chat) and **a late source** (the drop comes before the files are read).
 //! - **The highlight**: "Share in this chat" while the files are over the chat, gone when they leave, nothing
 //!   attached. **Several files** at once. **The chat under the pointer** gets the files, no other chat, and a drop on
@@ -90,7 +90,7 @@ const NOTES: &str = "48:notes";
 const SOURCE_AT: (u32, u32) = (20, 600);
 const SOURCE_SIZE: (u32, u32) = (200, 160);
 const PRESS: (u32, u32) = (120, 680);
-/// A place over the messages of the account's own notes, whose read-only box tells no bounds.
+/// A place over the messages of the account's own notes.
 const NOTES_MIDDLE: (u32, u32) = (860, 450);
 /// A place on the chat list, away from the chat.
 const ON_THE_LIST: (u32, u32) = (200, 250);
@@ -1004,31 +1004,33 @@ fn over_group_messages(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// The account's own notes: their box takes nothing from this app ("Notes can't be written from this app yet").
-/// The drop over them must be answered, and nothing is staged.
+/// The account's own notes: their box takes files as any chat's box does. The drop over them is answered as a copy,
+/// and the file is in the box.
 fn own_notes(user: &mut User<'_>) -> SandboxResult {
     user.ask("theme-light")?;
     user.ask(&format!("open {NOTES}"))?;
-    user.until("the notes", |state| state["main"] == format!("chat:{NOTES}"))?;
+    user.ask("clear")?;
+    user.until("the notes", |state| {
+        state["main"] == format!("chat:{NOTES}") && state["chat"]["bounds"].is_array()
+    })?;
     thread::sleep(SETTLE);
     let paths = user.made_up(&["made-up note to self.txt"])?;
     let held = user.hover(DOLPHIN, &paths, NOTES_MIDDLE, CALM)?;
-    let hover = user.state()?;
+    let hovering = user.until("the notes' highlight", |state| state["chat"]["drop_active"] == true);
     user.shot("notes-hover")?;
     let seen = user.release(held)?;
-    thread::sleep(QUIET);
-    let state = user.state()?;
+    hovering?;
+    let state = user.staged_now(&names_of(&paths))?;
     user.shot("notes-dropped")?;
     say(&format!(
-        "  notes: highlight {}, staged {:?}, read-only {}, problem {:?}, source {seen:?}",
-        hover["chat"]["drop_active"],
+        "  notes: staged {:?}, read-only {}, problem {:?}, source {seen:?}",
         staged(&state["chat"]),
         state["chat"]["read_only"],
         problem_of(&state["chat"])
     ));
-    ensure(staged(&state["chat"]).is_empty(), || {
-        format!("the read-only notes staged files: {state}")
-    })
+    taken(&seen, "text/uri-list")?;
+    user.ask("clear")?;
+    Ok(())
 }
 
 /// The files let go the moment they reach the box: both in.
