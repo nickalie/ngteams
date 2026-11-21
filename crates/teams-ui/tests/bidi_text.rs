@@ -8,17 +8,19 @@
 // test code throughout (its helpers panic like the tests do)
 #![cfg(test)]
 
-use std::borrow::Cow;
+#[path = "common/stand_in_shaper.rs"]
+mod stand_in_shaper;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    Context, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, IntoElement, LineLayout, NoopTextSystem,
-    ParentElement as _, Pixels, PlatformTextSystem, Render, RenderGlyphParams, ShapedGlyph, ShapedRun, SharedString,
-    Size, Styled as _, StyledText, TestAppContext, TextAlign, TextDirection, TextLayout, TextRenderingMode, TextRun,
-    TextSystem, Window, WindowTextSystem, WrappedLine, div, point, px,
+    Context, FontId, IntoElement, LineLayout, ParentElement as _, Pixels, Render, ShapedGlyph, ShapedRun, SharedString,
+    Styled as _, StyledText, TestAppContext, TextAlign, TextDirection, TextLayout, TextRun, TextSystem, Window,
+    WindowTextSystem, WrappedLine, div, point, px,
 };
+use stand_in_shaper::StandInShaper;
 use unicode_bidi::BidiInfo;
 
 /// The advance of each character of the stand-in shaper at [`FONT_SIZE`]: 600 of 1000 units.
@@ -31,61 +33,9 @@ const LINE_HEIGHT: f32 = 20.0;
 const ARABIC: &str = "أوافق على تلقي العروض والأخبار من النادي";
 const ENGLISH: &str = ". I agree to get news and offers from the club.";
 
-struct VisualShaper(NoopTextSystem);
-
-impl PlatformTextSystem for VisualShaper {
-    fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> gpui::Result<()> {
-        self.0.add_fonts(fonts)
-    }
-
-    fn all_font_names(&self) -> Vec<String> {
-        self.0.all_font_names()
-    }
-
-    fn font_id(&self, descriptor: &Font) -> gpui::Result<FontId> {
-        self.0.font_id(descriptor)
-    }
-
-    fn font_metrics(&self, font_id: FontId) -> FontMetrics {
-        self.0.font_metrics(font_id)
-    }
-
-    fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> gpui::Result<gpui::Bounds<f32>> {
-        self.0.typographic_bounds(font_id, glyph_id)
-    }
-
-    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> gpui::Result<Size<f32>> {
-        self.0.advance(font_id, glyph_id)
-    }
-
-    fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        self.0.glyph_for_char(font_id, ch)
-    }
-
-    fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> gpui::Result<gpui::Bounds<DevicePixels>> {
-        self.0.glyph_raster_bounds(params)
-    }
-
-    fn rasterize_glyph(
-        &self,
-        params: &RenderGlyphParams,
-        raster_bounds: gpui::Bounds<DevicePixels>,
-    ) -> gpui::Result<(Size<DevicePixels>, Vec<u8>)> {
-        self.0.rasterize_glyph(params, raster_bounds)
-    }
-
-    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
-        visual(&self.0.layout_line(text, font_size, runs), text)
-    }
-
-    fn recommended_rendering_mode(&self, font_id: FontId, font_size: Pixels) -> TextRenderingMode {
-        self.0.recommended_rendering_mode(font_id, font_size)
-    }
-}
-
 /// The glyphs of a layout in text order put in visual order, each with its advance, the paragraph's direction from
 /// its first strong character.
-fn visual(layout: &LineLayout, text: &str) -> LineLayout {
+fn visual(layout: &mut LineLayout, text: &str) {
     let glyphs: Vec<&ShapedGlyph> = layout.runs.iter().flat_map(|run| &run.glyphs).collect();
     let advances: Vec<Pixels> = glyphs
         .iter()
@@ -116,21 +66,14 @@ fn visual(layout: &LineLayout, text: &str) -> LineLayout {
             }
         }
     }
-    LineLayout {
-        font_size: layout.font_size,
-        width: layout.width,
-        ascent: layout.ascent,
-        descent: layout.descent,
-        runs: vec![ShapedRun {
-            font_id: FontId(1),
-            glyphs: placed,
-        }],
-        len: layout.len,
-    }
+    layout.runs = vec![ShapedRun {
+        font_id: FontId(1),
+        glyphs: placed,
+    }];
 }
 
 fn text_system() -> WindowTextSystem {
-    WindowTextSystem::new(Arc::new(TextSystem::new(Arc::new(VisualShaper(NoopTextSystem)))))
+    WindowTextSystem::new(Arc::new(TextSystem::new(Arc::new(StandInShaper(visual)))))
 }
 
 fn shape_runs_in(text: &str, runs: &[TextRun], width: Option<f32>, direction: TextDirection) -> WrappedLine {

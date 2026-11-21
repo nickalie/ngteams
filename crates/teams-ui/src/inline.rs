@@ -40,7 +40,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId, Hsla, InspectorElementId,
-    InteractiveElement, IntoElement, LayoutId, ParentElement as _, Pixels, Point, RenderImage, RenderOnce,
+    InteractiveElement, IntoElement, LayoutId, LineLayout, ParentElement as _, Pixels, Point, RenderImage, RenderOnce,
     SharedString, Size, StatefulInteractiveElement as _, Style, Styled as _, TextLayout, Window, div, img, point, px,
     size,
 };
@@ -974,9 +974,15 @@ impl RenderOnce for Emoticon {
 }
 
 /// Where `layout` draws the place of an emoticon: its left edge and its width. A place the line wraps in takes the
-/// emoticon's side. Its characters all read one way, from the edge of its first one: the width comes from the line's
-/// layout in text order, as the edge of the next character can be far off when it reads the other way.
-fn place_span(layout: &TextLayout, text: &str, place: &Range<usize>, side: Pixels) -> Option<(Point<Pixels>, Pixels)> {
+/// emoticon's side. Its characters all read one way, from the edge of its first one: the width comes from `laid`, the
+/// layout of its line in text order, as the edge of the next character can be far off when it reads the other way.
+fn place_span(
+    layout: &TextLayout,
+    laid: &LineLayout,
+    text: &str,
+    place: &Range<usize>,
+    side: Pixels,
+) -> Option<(Point<Pixels>, Pixels)> {
     let edges = text
         .get(place.clone())?
         .char_indices()
@@ -987,7 +993,6 @@ fn place_span(layout: &TextLayout, text: &str, place: &Range<usize>, side: Pixel
         return Some((first, side));
     }
     let line_start = text.get(..place.start)?.rfind('\n').map_or(0, |at| at + 1);
-    let laid = &layout.line_layout_for_index(place.start)?.unwrapped_layout;
     let width = laid.x_for_index(place.end - line_start) - laid.x_for_index(place.start - line_start);
     let leftward = match edges.get(1) {
         Some(second) => second.x < first.x,
@@ -1074,13 +1079,13 @@ impl Element for InlineText {
         let text = self.layout.text();
         let mut placed = vec![false; self.emoticons.len()];
         for ((place, emoticon), placed) in self.emoticons.iter_mut().zip(&mut placed) {
-            let (Some((start, width)), Some(line)) = (
-                place_span(&self.layout, &text, place, side),
-                self.layout.line_layout_for_index(place.start),
-            ) else {
+            let Some(line) = self.layout.line_layout_for_index(place.start) else {
                 continue;
             };
             let laid = &line.unwrapped_layout;
+            let Some((start, width)) = place_span(&self.layout, laid, &text, place, side) else {
+                continue;
+            };
             let metrics = LineMetrics {
                 height,
                 ascent: laid.ascent,

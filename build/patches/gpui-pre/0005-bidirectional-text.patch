@@ -13,9 +13,10 @@ layout. The paragraph direction is the new `TextStyle::direction` (`TextDirectio
 take its `text_align` into account (`WrappedLineLayout::row_offset`, which the bidi rows are also painted at), as its
 painting does, and `TextLayout::closest_index_for_position` gives the nearest character boundary as a selection takes
 it. `first_strong_direction` gives a text's direction as HTML's `dir="auto"` takes it, and
-`WrappedLineLayout::bidi_glyph_origins` where a line in the bidi path paints each glyph (`BidiRows::glyphs`, which
-painting reads). A point on the bottom edge of a line is on the next line. Greek, Armenian, Hebrew, Arabic, Syriac and
-Thaana are word characters for wrapping, so a line breaks between their words, not inside them. Our own.
+`WrappedLineLayout::bidi_glyph_origins` (test-support) where a line in the bidi path paints each glyph
+(`BidiRows::glyphs`, which painting reads). A point on the bottom edge of a line is on the next line. Greek, Armenian,
+Hebrew, Arabic, Syriac and Thaana are word characters for wrapping, so a line breaks between their words, not inside
+them. Our own.
 
 --- a/Cargo.toml
 +++ b/Cargo.toml
@@ -754,13 +755,14 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
  }
  
  /// A boundary at which a line was wrapped
-@@ -345,6 +351,54 @@
+@@ -345,6 +351,55 @@
          &self.unwrapped_layout.runs
      }
  
 +    /// Where painting puts each glyph of a line in the bidi path (one that holds right-to-left text or whose
 +    /// paragraph is right to left): its byte index and its origin, from the line's origin before alignment, in the
 +    /// order of the layout's runs. `None` for a line that keeps the layout of the platform.
++    #[cfg(any(test, feature = "test-support"))]
 +    pub fn bidi_glyph_origins(&self, line_height: Pixels) -> Option<Vec<(usize, Point<Pixels>)>> {
 +        let rows = self.bidi.as_ref()?;
 +        Some(
@@ -809,7 +811,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
      /// The index corresponding to a given position in this layout for the given line height.
      ///
      /// See also [`Self::closest_index_for_position`].
-@@ -371,11 +425,14 @@
+@@ -371,11 +426,14 @@
  
      fn _index_for_position(
          &self,
@@ -825,7 +827,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
  
          let wrapped_line_start_index;
          let wrapped_line_start_x;
-@@ -429,6 +486,11 @@
+@@ -429,6 +487,11 @@
  
      /// Returns the pixel position for the given byte index.
      pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
@@ -837,7 +839,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
          let mut line_start_ix = 0;
          let mut line_end_indices = self
              .wrap_boundaries
-@@ -609,6 +671,7 @@
+@@ -609,6 +672,7 @@
          runs: &[FontRun],
          wrap_width: Option<Pixels>,
          max_lines: Option<usize>,
@@ -845,7 +847,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
      ) -> Arc<WrappedLineLayout>
      where
          Text: AsRef<str>,
-@@ -621,6 +684,7 @@
+@@ -621,6 +685,7 @@
              runs,
              wrap_width,
              force_width: None,
@@ -853,7 +855,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
          } as &dyn AsCacheKeyRef;
  
          let current_frame = self.current_frame.upgradable_read();
-@@ -639,16 +703,31 @@
+@@ -639,16 +704,31 @@
          } else {
              drop(current_frame);
              let text = SharedString::from(text);
@@ -886,7 +888,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
              });
              let key = Arc::new(CacheKey {
                  text,
-@@ -656,6 +735,7 @@
+@@ -656,6 +736,7 @@
                  runs: SmallVec::from(runs),
                  wrap_width,
                  force_width: None,
@@ -894,7 +896,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
              });
  
              let mut current_frame = self.current_frame.write();
-@@ -686,6 +766,7 @@
+@@ -686,6 +767,7 @@
              runs,
              wrap_width: None,
              force_width,
@@ -902,7 +904,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
          } as &dyn AsCacheKeyRef;
  
          let current_frame = self.current_frame.upgradable_read();
-@@ -714,6 +795,7 @@
+@@ -714,6 +796,7 @@
                  runs: SmallVec::from(runs),
                  wrap_width: None,
                  force_width,
@@ -910,7 +912,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
              });
              let layout = Arc::new(layout);
              current_frame.lines.insert(key.clone(), layout.clone());
-@@ -943,6 +1025,7 @@
+@@ -943,6 +1026,7 @@
      runs: SmallVec<[FontRun; 1]>,
      wrap_width: Option<Pixels>,
      force_width: Option<Pixels>,
@@ -918,7 +920,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
  }
  
  #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-@@ -952,6 +1035,7 @@
+@@ -952,6 +1036,7 @@
      runs: &'a [FontRun],
      wrap_width: Option<Pixels>,
      force_width: Option<Pixels>,
@@ -926,7 +928,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
  }
  
  #[derive(Clone, Debug)]
-@@ -1044,6 +1128,7 @@
+@@ -1044,6 +1129,7 @@
              runs: self.runs.as_slice(),
              wrap_width: self.wrap_width,
              force_width: self.force_width,
@@ -936,12 +938,12 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
  }
 --- a/src/text_system/line.rs
 +++ b/src/text_system/line.rs
-@@ -1,3 +1,4 @@
+@@ -1,3 +2,4 @@
 +use super::bidi::{self, BidiRows};
  use crate::{
      App, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point, RenderGlyphParams, Result,
      SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
-@@ -471,6 +472,20 @@
+@@ -471,6 +473,20 @@
              None => self.layout.wrap_width,
          };
  
@@ -962,7 +964,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
          paint_line(
              origin,
              &self.layout.unwrapped_layout,
-@@ -502,6 +517,19 @@
+@@ -502,6 +518,19 @@
              None => self.layout.wrap_width,
          };
  
@@ -982,7 +984,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
          paint_line_background(
              origin,
              &self.layout.unwrapped_layout,
-@@ -787,6 +815,165 @@
+@@ -787,6 +816,165 @@
          Ok(())
      })
  }
@@ -1150,7 +1152,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
      origin: Point<Pixels>,
 --- a/src/text_system/line_wrapper.rs
 +++ b/src/text_system/line_wrapper.rs
-@@ -530,6 +530,16 @@
+@@ -530,6 +531,16 @@
          // Bengali (https://en.wikipedia.org/wiki/Bengali_(Unicode_block))
          matches!(c, '\u{0980}'..='\u{09FF}') ||
  
@@ -1169,7 +1171,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
          // `2^3`, `a~b`, `a=1`, `Self::new`, etc. Trailing punctuation like `,`, `.`, `:`, `;`
 --- a/src/text_system.rs
 +++ b/src/text_system.rs
-@@ -1,9 +1,11 @@
+@@ -1,9 +2,11 @@
 +mod bidi;
  mod font_fallbacks;
  mod font_features;
@@ -1181,7 +1183,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
  pub use font_fallbacks::*;
  pub use font_features::*;
  pub use line::*;
-@@ -14,7 +16,7 @@
+@@ -14,7 +17,7 @@
  
  use crate::{
      Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
@@ -1190,7 +1192,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
  };
  use anyhow::{Context as _, anyhow};
  use collections::{FxHashMap, FxHashSet};
-@@ -755,6 +757,26 @@
+@@ -755,6 +758,26 @@
          wrap_width: Option<Pixels>,
          line_clamp: Option<usize>,
      ) -> Result<SmallVec<[WrappedLine; 1]>> {
@@ -1217,7 +1219,7 @@ Thaana are word characters for wrapping, so a line breaks between their words, n
          let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
          let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
  
-@@ -821,6 +843,7 @@
+@@ -821,6 +844,7 @@
                  &font_runs,
                  wrap_width,
                  max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),

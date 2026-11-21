@@ -354,6 +354,7 @@ impl WrappedLineLayout {
     /// Where painting puts each glyph of a line in the bidi path (one that holds right-to-left text or whose
     /// paragraph is right to left): its byte index and its origin, from the line's origin before alignment, in the
     /// order of the layout's runs. `None` for a line that keeps the layout of the platform.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn bidi_glyph_origins(&self, line_height: Pixels) -> Option<Vec<(usize, Point<Pixels>)>> {
         let rows = self.bidi.as_ref()?;
         Some(
