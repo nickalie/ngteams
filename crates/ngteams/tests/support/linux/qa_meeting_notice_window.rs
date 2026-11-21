@@ -1371,10 +1371,16 @@ fn one_minute_back(qa: &mut Qa<'_>) -> SandboxResult {
     back_within(after, 55, 100)
 }
 
+/// The notice back from the one-minute snooze, waited for: the app traces "shown" before the bus has its notice.
+fn one_minute_notice(qa: &Qa<'_>) -> SandboxResult<Notification> {
+    wait_until(BANNER_WAIT, || qa.notices_of(0, ONE_SUBJECT).get(1).cloned())
+        .ok_or_else(|| format!("no desktop reminder of {ONE_SUBJECT:?} after its snooze").into())
+}
+
 /// The desktop notice of the reminder back from its snooze: "Starts in N minutes", its times, Join, Snooze and
 /// Dismiss, and it never expires.
 fn notice_shape(qa: &mut Qa<'_>) -> SandboxResult {
-    let notice = reminder_after(qa, 0, ONE_SUBJECT, BANNER_WAIT)?;
+    let notice = one_minute_notice(qa)?;
     say(&format!(
         "qa: desktop reminder: {:?} {:?} expire {} hints {:?}",
         notice.body, notice.actions, notice.expire_timeout, notice.hints
@@ -1398,11 +1404,7 @@ fn notice_shape(qa: &mut Qa<'_>) -> SandboxResult {
 }
 
 fn notice_snooze(qa: &mut Qa<'_>) -> SandboxResult {
-    let notice = qa
-        .notices_of(0, ONE_SUBJECT)
-        .last()
-        .cloned()
-        .ok_or("no desktop reminder")?;
+    let notice = one_minute_notice(qa)?;
     qa.sandbox.bus().invoke_action(notice.id, "snooze")?;
     qa.snoozed.push((ONE_SUBJECT, Instant::now()));
     qa.closed(notice.id, "after the notice's Snooze")?;
