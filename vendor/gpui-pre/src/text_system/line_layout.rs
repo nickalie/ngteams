@@ -356,18 +356,9 @@ impl WrappedLineLayout {
     /// order of the layout's runs. `None` for a line that keeps the layout of the platform.
     pub fn bidi_glyph_origins(&self, line_height: Pixels) -> Option<Vec<(usize, Point<Pixels>)>> {
         let rows = self.bidi.as_ref()?;
-        let glyphs = self
-            .unwrapped_layout
-            .runs
-            .iter()
-            .flat_map(|run| &run.glyphs);
         Some(
-            glyphs
-                .enumerate()
-                .map(|(flat_ix, glyph)| {
-                    let (x, row) = rows.glyph(flat_ix);
-                    (glyph.index, point(x, line_height * row as f32))
-                })
+            rows.glyphs(&self.unwrapped_layout, line_height)
+                .map(|(_, glyph, _, origin)| (glyph.index, origin))
                 .collect(),
         )
     }

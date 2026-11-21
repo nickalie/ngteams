@@ -899,7 +899,7 @@ impl TextLayout {
         let mut line_start_ix = 0;
         for line in &element_state.lines {
             let line_bottom = line_origin.y + line.size(line_height).height;
-            if position.y > line_bottom {
+            if position.y >= line_bottom {
                 line_origin.y = line_bottom;
                 line_start_ix += line.len() + 1;
             } else {

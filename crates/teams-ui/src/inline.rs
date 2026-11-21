@@ -974,9 +974,8 @@ impl RenderOnce for Emoticon {
 }
 
 /// Where `layout` draws the place of an emoticon: its left edge and its width. A place the line wraps in takes the
-/// emoticon's side. The place is measured from its own characters, which all read one way: the edge of the character
-/// after it counts only when it continues the place that way, as wide as its widest character at most, as a character
-/// that reads the other way is drawn elsewhere.
+/// emoticon's side. Its characters all read one way, from the edge of its first one: the width comes from the line's
+/// layout in text order, as the edge of the next character can be far off when it reads the other way.
 fn place_span(layout: &TextLayout, text: &str, place: &Range<usize>, side: Pixels) -> Option<(Point<Pixels>, Pixels)> {
     let edges = text
         .get(place.clone())?
@@ -987,25 +986,17 @@ fn place_span(layout: &TextLayout, text: &str, place: &Range<usize>, side: Pixel
     if edges.iter().any(|edge| edge.y != first.y) {
         return Some((first, side));
     }
-    let steps: Vec<Pixels> = edges.windows(2).map(|pair| pair[1].x - pair[0].x).collect();
-    let widest = steps.iter().map(Pixels::abs).reduce(Pixels::max);
-    let end = layout
-        .position_for_index(place.end)
-        .filter(|end| end.y == first.y && end.x != last.x)
-        .map(|end| end.x - last.x);
-    let leftward = steps.first().or(end.as_ref()).is_some_and(|step| *step < Pixels::ZERO);
-    let last_width = match (end, widest) {
-        (Some(step), Some(widest)) if (step < Pixels::ZERO) == leftward && step.abs() <= widest + px(0.5) => step.abs(),
-        (_, Some(widest)) => widest,
-        (Some(step), None) => step.abs(),
-        (None, None) => return Some((first, side)),
+    let line_start = text.get(..place.start)?.rfind('\n').map_or(0, |at| at + 1);
+    let laid = &layout.line_layout_for_index(place.start)?.unwrapped_layout;
+    let width = laid.x_for_index(place.end - line_start) - laid.x_for_index(place.start - line_start);
+    let leftward = match edges.get(1) {
+        Some(second) => second.x < first.x,
+        None => layout
+            .position_for_index(place.end)
+            .is_some_and(|end| end.y == first.y && end.x < last.x),
     };
-    let far = if leftward {
-        last.x - last_width
-    } else {
-        last.x + last_width
-    };
-    Some((point(first.x.min(far), first.y), (far - first.x).abs()))
+    let left = if leftward { first.x - width } else { first.x };
+    Some((point(left, first.y), width))
 }
 
 /// A paragraph's text with emoticons drawn over the places it keeps for them (see the module docs): `text` is the

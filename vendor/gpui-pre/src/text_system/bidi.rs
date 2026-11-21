@@ -12,8 +12,8 @@
 //! unchanged.
 
 use crate::{
-    FontRun, LineLayout, Pixels, PlatformTextSystem, ShapedGlyph, ShapedRun, TextDirection,
-    WrapBoundary, px,
+    FontRun, LineLayout, Pixels, PlatformTextSystem, Point, ShapedGlyph, ShapedRun, TextDirection,
+    WrapBoundary, point, px,
 };
 use collections::FxHashMap;
 use std::ops::Range;
@@ -317,13 +317,23 @@ impl BidiRows {
         self.row(row).iter().map(|cluster| cluster.width).sum()
     }
 
-    /// The x of a glyph (its position in the layout's runs, counted over all runs) from the left edge of its row, and
-    /// the row.
-    pub fn glyph(&self, flat_ix: usize) -> (Pixels, usize) {
-        (
-            self.glyph_x.get(flat_ix).copied().unwrap_or_default(),
-            self.glyph_row.get(flat_ix).copied().unwrap_or_default(),
-        )
+    /// Each glyph of `layout`, the line these rows were made from, in the order of its runs: its run, the glyph, its
+    /// row, and where painting puts it from the left edge of its row and the top of the line.
+    pub fn glyphs<'a>(
+        &'a self,
+        layout: &'a LineLayout,
+        line_height: Pixels,
+    ) -> impl Iterator<Item = (&'a ShapedRun, &'a ShapedGlyph, usize, Point<Pixels>)> + 'a {
+        layout
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(move |glyph| (run, glyph)))
+            .enumerate()
+            .map(move |(flat_ix, (run, glyph))| {
+                let x = self.glyph_x.get(flat_ix).copied().unwrap_or_default();
+                let row = self.glyph_row.get(flat_ix).copied().unwrap_or_default();
+                (run, glyph, row, point(x, line_height * row as f32))
+            })
     }
 
     /// The byte index for a point in a row, as [`crate::WrappedLineLayout::index_for_position`] gives it.

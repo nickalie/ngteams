@@ -873,32 +873,33 @@ fn paint_bidi_line(
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let run_ends = decoration_run_ends(decoration_runs);
         let text_system = cx.text_system().clone();
-        let mut flat_ix = 0;
-        for run in &layout.runs {
-            let max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
-            for glyph in &run.glyphs {
-                let (x, row) = rows.glyph(flat_ix);
-                flat_ix += 1;
-                let glyph_origin = point(
-                    lefts.get(row).copied().unwrap_or(origin.x) + x,
-                    origin.y + line_height * row as f32,
-                );
-                let color = decoration_runs
-                    .get(bidi::run_at(&run_ends, glyph.index))
-                    .map_or(black(), |decoration| decoration.color);
-                let max_glyph_bounds = Bounds {
-                    origin: glyph_origin,
-                    size: max_glyph_size,
-                };
-                if !max_glyph_bounds.intersects(&window.content_mask().bounds) {
-                    continue;
+        let mut max_glyph_size = None;
+        for (run, glyph, row, offset) in rows.glyphs(layout, line_height) {
+            let max_glyph_size = match max_glyph_size {
+                Some((font_id, size)) if font_id == run.font_id => size,
+                _ => {
+                    let size = text_system.bounding_box(run.font_id, layout.font_size).size;
+                    max_glyph_size = Some((run.font_id, size));
+                    size
                 }
-                let at = glyph_origin + baseline_offset + point(px(0.), glyph.position.y);
-                if glyph.is_emoji {
-                    window.paint_emoji(at, run.font_id, glyph.id, layout.font_size)?;
-                } else {
-                    window.paint_glyph(at, run.font_id, glyph.id, layout.font_size, color)?;
-                }
+            };
+            let glyph_origin =
+                point(lefts.get(row).copied().unwrap_or(origin.x), origin.y) + offset;
+            let color = decoration_runs
+                .get(bidi::run_at(&run_ends, glyph.index))
+                .map_or(black(), |decoration| decoration.color);
+            let max_glyph_bounds = Bounds {
+                origin: glyph_origin,
+                size: max_glyph_size,
+            };
+            if !max_glyph_bounds.intersects(&window.content_mask().bounds) {
+                continue;
+            }
+            let at = glyph_origin + baseline_offset + point(px(0.), glyph.position.y);
+            if glyph.is_emoji {
+                window.paint_emoji(at, run.font_id, glyph.id, layout.font_size)?;
+            } else {
+                window.paint_glyph(at, run.font_id, glyph.id, layout.font_size, color)?;
             }
         }
 

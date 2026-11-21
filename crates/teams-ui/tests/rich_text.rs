@@ -10,11 +10,14 @@
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
 
+use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
 use gpui::{
-    Context, FontStyle, FontWeight, HighlightStyle, IntoElement, Modifiers, ParentElement as _, Render, SharedString,
-    Styled as _, TestAppContext, Window, div, point, px,
+    Context, DevicePixels, Font, FontId, FontMetrics, FontRun, FontStyle, FontWeight, GlyphId, HighlightStyle,
+    IntoElement, LineLayout, Modifiers, NoopTextSystem, ParentElement as _, Pixels, PlatformTextSystem, Render,
+    RenderGlyphParams, SharedString, Size, Styled as _, TestAppContext, TestDispatcher, TextRenderingMode, Window, div,
+    point, px,
 };
 use teams_proto::chat::Token;
 use teams_proto::chat::{Marks, parse_html};
@@ -1432,6 +1435,103 @@ fn an_emoticon_before_a_word_that_reads_the_other_way_stands_on_its_own_place() 
         middle >= place.start - px(1.0) && middle <= place.end + px(1.0),
         "{drawn:?} on {place:?} of {line:?}"
     );
+}
+
+/// The test platform's shaper with an en space half as wide as the other characters, as a real font has it.
+struct NarrowEnSpace(NoopTextSystem);
+
+impl PlatformTextSystem for NarrowEnSpace {
+    fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> gpui::Result<()> {
+        self.0.add_fonts(fonts)
+    }
+
+    fn all_font_names(&self) -> Vec<String> {
+        self.0.all_font_names()
+    }
+
+    fn font_id(&self, descriptor: &Font) -> gpui::Result<FontId> {
+        self.0.font_id(descriptor)
+    }
+
+    fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+        self.0.font_metrics(font_id)
+    }
+
+    fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> gpui::Result<gpui::Bounds<f32>> {
+        self.0.typographic_bounds(font_id, glyph_id)
+    }
+
+    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> gpui::Result<Size<f32>> {
+        self.0.advance(font_id, glyph_id)
+    }
+
+    fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+        self.0.glyph_for_char(font_id, ch)
+    }
+
+    fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> gpui::Result<gpui::Bounds<DevicePixels>> {
+        self.0.glyph_raster_bounds(params)
+    }
+
+    fn rasterize_glyph(
+        &self,
+        params: &RenderGlyphParams,
+        raster_bounds: gpui::Bounds<DevicePixels>,
+    ) -> gpui::Result<(Size<DevicePixels>, Vec<u8>)> {
+        self.0.rasterize_glyph(params, raster_bounds)
+    }
+
+    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+        let mut layout = self.0.layout_line(text, font_size, runs);
+        let narrowed = font_size * 0.3;
+        let mut shift = px(0.);
+        for glyph in layout.runs.iter_mut().flat_map(|run| &mut run.glyphs) {
+            glyph.position.x -= shift;
+            if text[glyph.index..].starts_with('\u{2002}') {
+                shift += narrowed;
+            }
+        }
+        layout.width -= shift;
+        layout
+    }
+    fn recommended_rendering_mode(&self, font_id: FontId, font_size: Pixels) -> TextRenderingMode {
+        self.0.recommended_rendering_mode(font_id, font_size)
+    }
+}
+
+#[test]
+fn an_emoticon_before_a_word_that_reads_the_other_way_is_centred_on_its_two_spaces() {
+    let smile = emoticon("smile", "\u{1f642}", 20);
+    for (inline, centre_from_edge) in [
+        // "hello", the em space and the en space, then the Hebrew word
+        (format!("<p>hello{smile}שלום</p>"), 5.75),
+        // right to left: the Hebrew word at the right, the em space, the en space, then "hello"
+        (format!("<p>שלום{smile}hello</p>"), -4.75),
+    ] {
+        let rendered = Arc::new(laid_out(&inline));
+        let app: &'static mut TestAppContext = Box::leak(Box::new(TestAppContext::build_with_text_system(
+            TestDispatcher::new(0),
+            None,
+            Arc::new(NarrowEnSpace(NoopTextSystem)),
+        )));
+        let (_, cx) = app.add_window_view(|_, _| Holder { rendered });
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        let advance = cx.update(|window, _| window.text_style().font_size.to_pixels(window.rem_size()) * 0.6);
+        let line = cx.debug_bounds("rich-text").expect("the line is drawn");
+        let drawn = cx.debug_bounds("rich-inline-emoticon").expect("the emoticon is drawn");
+        let edge = if centre_from_edge > 0.0 {
+            line.left()
+        } else {
+            line.right()
+        };
+        let centre = edge + advance * centre_from_edge;
+        assert!(
+            (drawn.center().x - centre).abs() <= px(0.5),
+            "{drawn:?} centred at {centre:?} of {line:?} for {inline:?}"
+        );
+    }
 }
 
 #[test]

@@ -3,18 +3,19 @@ a line's glyphs in visual order: the right-to-left runs reversed, the glyph x po
 the first strong letter is right-to-left, the whole line laid out as a right-to-left paragraph. Wrapping, painting and
 hit tests assume that x grows with the byte index, so a wrapped line lost its width: a fragment drew at the window's
 left edge and the rest of the paragraph was missing. Now `layout_wrapped_line` shapes a line that holds right-to-left
-text in its paragraph direction (a direction mark before it when its first strong letter has the other one), puts the
-glyphs into text order with each cluster's advance (`bidi::logical_layout`), wraps that, and lays out each row in
-visual order (`bidi::BidiRows`, with `unicode-bidi`). A wrapped line paints its glyphs, underlines, strikethroughs and
-backgrounds at those places, and finds an index from a point and a point from an index there. Text without
-right-to-left letters keeps its old layout. The paragraph direction is the new `TextStyle::direction`
-(`TextDirection`, `Styled::text_direction`, `WindowTextSystem::shape_text_in`), left-to-right unless set, as HTML
-without `dir`. A text element's hit tests also take its `text_align` into account (`WrappedLineLayout::row_offset`, which
-the bidi rows are also painted at), as its painting does, and `TextLayout::closest_index_for_position` gives the
-nearest character boundary as a selection takes it. `first_strong_direction` gives a text's direction as HTML's
-`dir="auto"` takes it, and `WrappedLineLayout::bidi_glyph_origins` where a line in the bidi path paints each glyph.
-Greek, Armenian, Hebrew, Arabic, Syriac and Thaana are word characters for wrapping, so a line breaks between their
-words, not inside them. Our own.
+text, or whose paragraph is right to left, in its paragraph direction (a direction mark before it when its first
+strong letter has the other one), puts the glyphs into text order with each cluster's advance
+(`bidi::logical_layout`), wraps that, and lays out each row in visual order (`bidi::BidiRows`, with `unicode-bidi`). A
+wrapped line paints its glyphs, underlines, strikethroughs and backgrounds at those places, and finds an index from a
+point and a point from an index there. Text without right-to-left letters in a left-to-right paragraph keeps its old
+layout. The paragraph direction is the new `TextStyle::direction` (`TextDirection`, `Styled::text_direction`,
+`WindowTextSystem::shape_text_in`), left-to-right unless set, as HTML without `dir`. A text element's hit tests also
+take its `text_align` into account (`WrappedLineLayout::row_offset`, which the bidi rows are also painted at), as its
+painting does, and `TextLayout::closest_index_for_position` gives the nearest character boundary as a selection takes
+it. `first_strong_direction` gives a text's direction as HTML's `dir="auto"` takes it, and
+`WrappedLineLayout::bidi_glyph_origins` where a line in the bidi path paints each glyph (`BidiRows::glyphs`, which
+painting reads). A point on the bottom edge of a line is on the next line. Greek, Armenian, Hebrew, Arabic, Syriac and
+Thaana are word characters for wrapping, so a line breaks between their words, not inside them. Our own.
 
 --- a/Cargo.toml
 +++ b/Cargo.toml
@@ -115,7 +116,12 @@ words, not inside them. Our own.
          let element_state = self.0.borrow();
          let element_state = element_state
              .as_ref()
-@@ -882,8 +903,18 @@
+@@ -878,12 +899,22 @@
+         let mut line_start_ix = 0;
+         for line in &element_state.lines {
+             let line_bottom = line_origin.y + line.size(line_height).height;
+-            if position.y > line_bottom {
++            if position.y >= line_bottom {
                  line_origin.y = line_bottom;
                  line_start_ix += line.len() + 1;
              } else {
@@ -216,7 +222,7 @@ words, not inside them. Our own.
  }
 --- a/src/text_system/bidi.rs
 +++ b/src/text_system/bidi.rs
-@@ -0,0 +1,493 @@
+@@ -0,0 +1,503 @@
 +//! Bidirectional text (Unicode Standard Annex #9) for wrapped lines.
 +//!
 +//! A platform text system shapes a line in visual order: right-to-left runs come out reversed and the glyph x
@@ -231,8 +237,8 @@ words, not inside them. Our own.
 +//! unchanged.
 +
 +use crate::{
-+    FontRun, LineLayout, Pixels, PlatformTextSystem, ShapedGlyph, ShapedRun, TextDirection,
-+    WrapBoundary, px,
++    FontRun, LineLayout, Pixels, PlatformTextSystem, Point, ShapedGlyph, ShapedRun, TextDirection,
++    WrapBoundary, point, px,
 +};
 +use collections::FxHashMap;
 +use std::ops::Range;
@@ -536,13 +542,23 @@ words, not inside them. Our own.
 +        self.row(row).iter().map(|cluster| cluster.width).sum()
 +    }
 +
-+    /// The x of a glyph (its position in the layout's runs, counted over all runs) from the left edge of its row, and
-+    /// the row.
-+    pub fn glyph(&self, flat_ix: usize) -> (Pixels, usize) {
-+        (
-+            self.glyph_x.get(flat_ix).copied().unwrap_or_default(),
-+            self.glyph_row.get(flat_ix).copied().unwrap_or_default(),
-+        )
++    /// Each glyph of `layout`, the line these rows were made from, in the order of its runs: its run, the glyph, its
++    /// row, and where painting puts it from the left edge of its row and the top of the line.
++    pub fn glyphs<'a>(
++        &'a self,
++        layout: &'a LineLayout,
++        line_height: Pixels,
++    ) -> impl Iterator<Item = (&'a ShapedRun, &'a ShapedGlyph, usize, Point<Pixels>)> + 'a {
++        layout
++            .runs
++            .iter()
++            .flat_map(|run| run.glyphs.iter().map(move |glyph| (run, glyph)))
++            .enumerate()
++            .map(move |(flat_ix, (run, glyph))| {
++                let x = self.glyph_x.get(flat_ix).copied().unwrap_or_default();
++                let row = self.glyph_row.get(flat_ix).copied().unwrap_or_default();
++                (run, glyph, row, point(x, line_height * row as f32))
++            })
 +    }
 +
 +    /// The byte index for a point in a row, as [`crate::WrappedLineLayout::index_for_position`] gives it.
@@ -738,7 +754,7 @@ words, not inside them. Our own.
  }
  
  /// A boundary at which a line was wrapped
-@@ -345,6 +351,63 @@
+@@ -345,6 +351,54 @@
          &self.unwrapped_layout.runs
      }
  
@@ -747,18 +763,9 @@ words, not inside them. Our own.
 +    /// order of the layout's runs. `None` for a line that keeps the layout of the platform.
 +    pub fn bidi_glyph_origins(&self, line_height: Pixels) -> Option<Vec<(usize, Point<Pixels>)>> {
 +        let rows = self.bidi.as_ref()?;
-+        let glyphs = self
-+            .unwrapped_layout
-+            .runs
-+            .iter()
-+            .flat_map(|run| &run.glyphs);
 +        Some(
-+            glyphs
-+                .enumerate()
-+                .map(|(flat_ix, glyph)| {
-+                    let (x, row) = rows.glyph(flat_ix);
-+                    (glyph.index, point(x, line_height * row as f32))
-+                })
++            rows.glyphs(&self.unwrapped_layout, line_height)
++                .map(|(_, glyph, _, origin)| (glyph.index, origin))
 +                .collect(),
 +        )
 +    }
@@ -802,7 +809,7 @@ words, not inside them. Our own.
      /// The index corresponding to a given position in this layout for the given line height.
      ///
      /// See also [`Self::closest_index_for_position`].
-@@ -371,11 +434,14 @@
+@@ -371,11 +425,14 @@
  
      fn _index_for_position(
          &self,
@@ -818,7 +825,7 @@ words, not inside them. Our own.
  
          let wrapped_line_start_index;
          let wrapped_line_start_x;
-@@ -429,6 +495,11 @@
+@@ -429,6 +486,11 @@
  
      /// Returns the pixel position for the given byte index.
      pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
@@ -830,7 +837,7 @@ words, not inside them. Our own.
          let mut line_start_ix = 0;
          let mut line_end_indices = self
              .wrap_boundaries
-@@ -609,6 +680,7 @@
+@@ -609,6 +671,7 @@
          runs: &[FontRun],
          wrap_width: Option<Pixels>,
          max_lines: Option<usize>,
@@ -838,7 +845,7 @@ words, not inside them. Our own.
      ) -> Arc<WrappedLineLayout>
      where
          Text: AsRef<str>,
-@@ -621,6 +693,7 @@
+@@ -621,6 +684,7 @@
              runs,
              wrap_width,
              force_width: None,
@@ -846,7 +853,7 @@ words, not inside them. Our own.
          } as &dyn AsCacheKeyRef;
  
          let current_frame = self.current_frame.upgradable_read();
-@@ -639,16 +712,31 @@
+@@ -639,16 +703,31 @@
          } else {
              drop(current_frame);
              let text = SharedString::from(text);
@@ -879,7 +886,7 @@ words, not inside them. Our own.
              });
              let key = Arc::new(CacheKey {
                  text,
-@@ -656,6 +744,7 @@
+@@ -656,6 +735,7 @@
                  runs: SmallVec::from(runs),
                  wrap_width,
                  force_width: None,
@@ -887,7 +894,7 @@ words, not inside them. Our own.
              });
  
              let mut current_frame = self.current_frame.write();
-@@ -686,6 +775,7 @@
+@@ -686,6 +766,7 @@
              runs,
              wrap_width: None,
              force_width,
@@ -895,7 +902,7 @@ words, not inside them. Our own.
          } as &dyn AsCacheKeyRef;
  
          let current_frame = self.current_frame.upgradable_read();
-@@ -714,6 +804,7 @@
+@@ -714,6 +795,7 @@
                  runs: SmallVec::from(runs),
                  wrap_width: None,
                  force_width,
@@ -903,7 +910,7 @@ words, not inside them. Our own.
              });
              let layout = Arc::new(layout);
              current_frame.lines.insert(key.clone(), layout.clone());
-@@ -943,6 +1034,7 @@
+@@ -943,6 +1025,7 @@
      runs: SmallVec<[FontRun; 1]>,
      wrap_width: Option<Pixels>,
      force_width: Option<Pixels>,
@@ -911,7 +918,7 @@ words, not inside them. Our own.
  }
  
  #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-@@ -952,6 +1044,7 @@
+@@ -952,6 +1035,7 @@
      runs: &'a [FontRun],
      wrap_width: Option<Pixels>,
      force_width: Option<Pixels>,
@@ -919,7 +926,7 @@ words, not inside them. Our own.
  }
  
  #[derive(Clone, Debug)]
-@@ -1044,6 +1137,7 @@
+@@ -1044,6 +1128,7 @@
              runs: self.runs.as_slice(),
              wrap_width: self.wrap_width,
              force_width: self.force_width,
@@ -975,7 +982,7 @@ words, not inside them. Our own.
          paint_line_background(
              origin,
              &self.layout.unwrapped_layout,
-@@ -787,6 +815,164 @@
+@@ -787,6 +815,165 @@
          Ok(())
      })
  }
@@ -1037,32 +1044,33 @@ words, not inside them. Our own.
 +        let baseline_offset = point(px(0.), padding_top + layout.ascent);
 +        let run_ends = decoration_run_ends(decoration_runs);
 +        let text_system = cx.text_system().clone();
-+        let mut flat_ix = 0;
-+        for run in &layout.runs {
-+            let max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
-+            for glyph in &run.glyphs {
-+                let (x, row) = rows.glyph(flat_ix);
-+                flat_ix += 1;
-+                let glyph_origin = point(
-+                    lefts.get(row).copied().unwrap_or(origin.x) + x,
-+                    origin.y + line_height * row as f32,
-+                );
-+                let color = decoration_runs
-+                    .get(bidi::run_at(&run_ends, glyph.index))
-+                    .map_or(black(), |decoration| decoration.color);
-+                let max_glyph_bounds = Bounds {
-+                    origin: glyph_origin,
-+                    size: max_glyph_size,
-+                };
-+                if !max_glyph_bounds.intersects(&window.content_mask().bounds) {
-+                    continue;
++        let mut max_glyph_size = None;
++        for (run, glyph, row, offset) in rows.glyphs(layout, line_height) {
++            let max_glyph_size = match max_glyph_size {
++                Some((font_id, size)) if font_id == run.font_id => size,
++                _ => {
++                    let size = text_system.bounding_box(run.font_id, layout.font_size).size;
++                    max_glyph_size = Some((run.font_id, size));
++                    size
 +                }
-+                let at = glyph_origin + baseline_offset + point(px(0.), glyph.position.y);
-+                if glyph.is_emoji {
-+                    window.paint_emoji(at, run.font_id, glyph.id, layout.font_size)?;
-+                } else {
-+                    window.paint_glyph(at, run.font_id, glyph.id, layout.font_size, color)?;
-+                }
++            };
++            let glyph_origin =
++                point(lefts.get(row).copied().unwrap_or(origin.x), origin.y) + offset;
++            let color = decoration_runs
++                .get(bidi::run_at(&run_ends, glyph.index))
++                .map_or(black(), |decoration| decoration.color);
++            let max_glyph_bounds = Bounds {
++                origin: glyph_origin,
++                size: max_glyph_size,
++            };
++            if !max_glyph_bounds.intersects(&window.content_mask().bounds) {
++                continue;
++            }
++            let at = glyph_origin + baseline_offset + point(px(0.), glyph.position.y);
++            if glyph.is_emoji {
++                window.paint_emoji(at, run.font_id, glyph.id, layout.font_size)?;
++            } else {
++                window.paint_glyph(at, run.font_id, glyph.id, layout.font_size, color)?;
 +            }
 +        }
 +

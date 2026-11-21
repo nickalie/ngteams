@@ -522,3 +522,14 @@ fn a_hit_test_finds_each_character_where_its_alignment_draws_it() {
         }
     }
 }
+
+#[test]
+fn a_point_on_the_bottom_edge_of_a_line_is_on_the_next_line() {
+    let text = "First line\nSecond line";
+    let second = text.find('S').unwrap_or_default();
+    let (layout, advance) = drawn_aligned(text, TextAlign::Left, TextDirection::Ltr);
+    let bounds = layout.bounds();
+    let edge = point(bounds.left() + advance / 4., bounds.top() + layout.line_height());
+    assert_eq!(layout.closest_index_for_position(edge), Ok(second));
+    assert_eq!(layout.index_for_position(edge), Ok(second));
+}
