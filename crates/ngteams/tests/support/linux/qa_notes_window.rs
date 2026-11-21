@@ -310,7 +310,10 @@ fn post_elsewhere(mock: &ChatServiceMock, runtime: &tokio::runtime::Runtime, mri
         "properties": {"mentions": "[]", "files": "[]", "formatVariant": "TEAMS"},
     });
     let status = runtime.block_on(async {
-        reqwest::Client::new()
+        reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
             .post(url)
             .bearer_auth(token)
             .header("X-MS-Migration", "True")
@@ -413,7 +416,7 @@ impl World<'_> {
             "id": LAB_A, "roles": ["owner"], "grantedToV2": {"user": {"id": owner}}
         }]});
         let uploaded = json!({
-            "id": item, "name": name, "size": 46,
+            "id": item, "name": name, "size": attachment_bytes(name).len(),
             "webUrl": format!("{SITE}Documents/Microsoft%20Teams%20Chat%20Files/{}", name.replace(' ', "%20")),
             "parentReference": {"driveId": "made-up-drive"},
             "sharepointIds": {"listItemUniqueId": format!("00000000-0000-4000-8000-{item:0>12}")},
@@ -696,7 +699,7 @@ impl<'a> User<'a> {
             .iter()
             .map(|name| {
                 let path = dir.join(name);
-                fs::write(&path, b"A synthetic attachment, not a real document.\n")?;
+                fs::write(&path, attachment_bytes(name))?;
                 Ok(path)
             })
             .collect()
@@ -961,6 +964,11 @@ fn made_up_sticker(path: &Path, colour: [u8; 3]) -> SandboxResult {
     });
     image.save(path)?;
     Ok(())
+}
+
+/// The made-up content of the file `name`: each file's own, so a check can tell the uploads apart.
+fn attachment_bytes(name: &str) -> Vec<u8> {
+    format!("A synthetic attachment, not a real document: {name}.\n").into_bytes()
 }
 
 /// The share writes the mock got: grants or invitations of a file, the only way someone else gets it.
@@ -1429,7 +1437,44 @@ fn send_files(user: &mut User<'_>, b_notes: usize) -> SandboxResult {
         ensure(listed.contains(name), || format!("{name} is not in the note: {listed}"))?;
     }
     thread::sleep(QUIET);
-    let shared = shares(&user.world.requests());
+    let requests = user.world.requests();
+    let token = user.world.mock.token(LAB_A).unwrap_or_default();
+    let sent: Vec<String> = requests
+        .iter()
+        .filter(|seen| seen.method == "POST" && seen.path.ends_with("/messages") && seen.body.contains(&mark))
+        .map(|seen| {
+            format!(
+                "{} {}",
+                seen.path,
+                if seen.token == token { "as a" } else { "as another" }
+            )
+        })
+        .collect();
+    ensure(
+        sent.len() == 1 && sent[0].ends_with(&format!("{NOTES}/messages as a")),
+        || format!("the files note went to: {sent:?}"),
+    )?;
+    for name in [
+        "made-up attached note.txt",
+        "made-up pasted note.txt",
+        "made-up dropped note.txt",
+    ] {
+        let expected = String::from_utf8_lossy(&attachment_bytes(name)).into_owned();
+        let puts: Vec<&Seen> = requests
+            .iter()
+            .filter(|seen| {
+                seen.method == "PUT"
+                    && seen
+                        .raw_path
+                        .ends_with(&format!("/{}:/content", name.replace(' ', "%20")))
+            })
+            .collect();
+        ensure(puts.len() == 1 && puts[0].body == expected, || {
+            let bodies: Vec<&str> = puts.iter().map(|seen| seen.body.as_str()).collect();
+            format!("the uploads of {name}: {bodies:?}")
+        })?;
+    }
+    let shared = shares(&requests);
     ensure(shared.is_empty(), || {
         format!("the notes' files were shared: {shared:?}")
     })?;
