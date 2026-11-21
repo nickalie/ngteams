@@ -1564,6 +1564,7 @@ mod tests {
                             glyph_ix: 2,
                         }]),
                         wrap_width: Some(px(16.)),
+                        bidi: None,
                     }),
                     text: line.text,
                     decoration_runs: line.decoration_runs.into_vec(),

@@ -1150,6 +1150,14 @@ them. Our own.
  
  fn paint_line_background(
      origin: Point<Pixels>,
+@@ -1377,6 +1564,7 @@
+                             glyph_ix: 2,
+                         }]),
+                         wrap_width: Some(px(16.)),
++                        bidi: None,
+                     }),
+                     text: line.text,
+                     decoration_runs: line.decoration_runs.into_vec(),
 --- a/src/text_system/line_wrapper.rs
 +++ b/src/text_system/line_wrapper.rs
 @@ -530,6 +531,16 @@
