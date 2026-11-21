@@ -9,9 +9,12 @@ visual order (`bidi::BidiRows`, with `unicode-bidi`). A wrapped line paints its 
 backgrounds at those places, and finds an index from a point and a point from an index there. Text without
 right-to-left letters keeps its old layout. The paragraph direction is the new `TextStyle::direction`
 (`TextDirection`, `Styled::text_direction`, `WindowTextSystem::shape_text_in`), left-to-right unless set, as HTML
-without `dir`. A text element's hit tests also take its `text_align` into account (`WrappedLineLayout::row_offset`), as
-its painting does. Greek, Armenian, Hebrew, Arabic, Syriac and Thaana are word characters for wrapping, so a line
-breaks between their words, not inside them. Our own.
+without `dir`. A text element's hit tests also take its `text_align` into account (`WrappedLineLayout::row_offset`, which
+the bidi rows are also painted at), as its painting does, and `TextLayout::closest_index_for_position` gives the
+nearest character boundary as a selection takes it. `first_strong_direction` gives a text's direction as HTML's
+`dir="auto"` takes it, and `WrappedLineLayout::bidi_glyph_origins` where a line in the bidi path paints each glyph.
+Greek, Armenian, Hebrew, Arabic, Syriac and Thaana are word characters for wrapping, so a line breaks between their
+words, not inside them. Our own.
 
 --- a/Cargo.toml
 +++ b/Cargo.toml
@@ -93,21 +96,47 @@ breaks between their words, not inside them. Our own.
                      line_height,
                      wrap_width,
                      truncate_width,
-@@ -882,7 +893,12 @@
+@@ -860,7 +871,17 @@
+     }
+ 
+     /// Get the byte index into the input of the pixel position.
+-    pub fn index_for_position(&self, mut position: Point<Pixels>) -> Result<usize, usize> {
++    pub fn index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
++        self.hit_test(position, false)
++    }
++
++    /// Get the byte index of the character boundary nearest the pixel position, as a selection takes it: a point on
++    /// a character gives the boundary on the nearer side of it.
++    pub fn closest_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
++        self.hit_test(position, true)
++    }
++
++    fn hit_test(&self, position: Point<Pixels>, closest: bool) -> Result<usize, usize> {
+         let element_state = self.0.borrow();
+         let element_state = element_state
+             .as_ref()
+@@ -882,8 +903,18 @@
                  line_origin.y = line_bottom;
                  line_start_ix += line.len() + 1;
              } else {
 -                let position_within_line = position - line_origin;
+-                match line.index_for_position(position_within_line, line_height) {
 +                let mut position_within_line = position - line_origin;
 +                position_within_line.x -= line.row_offset(
 +                    (position_within_line.y / line_height) as usize,
 +                    element_state.text_align,
 +                    bounds.size.width,
 +                );
-                 match line.index_for_position(position_within_line, line_height) {
++                let index = if closest {
++                    line.closest_index_for_position(position_within_line, line_height)
++                } else {
++                    line.index_for_position(position_within_line, line_height)
++                };
++                match index {
                      Ok(index_within_line) => return Ok(line_start_ix + index_within_line),
                      Err(index_within_line) => return Err(line_start_ix + index_within_line),
-@@ -917,7 +933,13 @@
+                 }
+@@ -917,7 +948,13 @@
                  continue;
              } else {
                  let ix_within_line = index - line_start_ix;
@@ -187,22 +216,23 @@ breaks between their words, not inside them. Our own.
  }
 --- a/src/text_system/bidi.rs
 +++ b/src/text_system/bidi.rs
-@@ -0,0 +1,485 @@
+@@ -0,0 +1,493 @@
 +//! Bidirectional text (Unicode Standard Annex #9) for wrapped lines.
 +//!
 +//! A platform text system shapes a line in visual order: right-to-left runs come out reversed and the glyph x
 +//! positions do not follow the text order. Wrapping, painting and hit tests of a wrapped line assume that x grows with
-+//! the byte index, so a line that holds right-to-left text is put into logical order first ([`logical_layout`]): each
-+//! cluster keeps its glyphs and its advance, and the clusters follow each other in text order. The line wraps on that
-+//! layout. Then each row is put back into visual order on its own ([`BidiRows`]), as a browser does after it breaks
-+//! the lines of a paragraph.
++//! the byte index, so a line that holds right-to-left text, or whose paragraph is right to left, is put into logical
++//! order first ([`logical_layout`]): each cluster keeps its glyphs and its advance, and the clusters follow each other
++//! in text order. The line wraps on that layout. Then each row is put back into visual order on its own
++//! ([`BidiRows`]), as a browser does after it breaks the lines of a paragraph.
 +//!
 +//! The paragraph direction is the text style's ([`crate::TextDirection`]): left-to-right unless set, as in HTML
 +//! without a `dir` attribute. Left-to-right text that holds no right-to-left character keeps the layout of the platform
 +//! unchanged.
 +
 +use crate::{
-+    FontRun, LineLayout, Pixels, PlatformTextSystem, ShapedGlyph, ShapedRun, WrapBoundary, px,
++    FontRun, LineLayout, Pixels, PlatformTextSystem, ShapedGlyph, ShapedRun, TextDirection,
++    WrapBoundary, px,
 +};
 +use collections::FxHashMap;
 +use std::ops::Range;
@@ -223,19 +253,26 @@ breaks between their words, not inside them. Our own.
 +    })
 +}
 +
-+fn starts_left_to_right(text: &str) -> bool {
++/// The direction of the first strong letter of the text, as HTML's `dir="auto"` takes it (rules P2 and P3 of the
++/// Unicode Bidirectional Algorithm, isolates not skipped): `None` when the text has no strong letter.
++pub fn first_strong_direction(text: &str) -> Option<TextDirection> {
 +    text.chars()
 +        .find_map(|character| match bidi_class(character) {
-+            BidiClass::L => Some(true),
-+            BidiClass::R | BidiClass::AL => Some(false),
++            BidiClass::L => Some(TextDirection::Ltr),
++            BidiClass::R | BidiClass::AL => Some(TextDirection::Rtl),
 +            _ => None,
 +        })
-+        .unwrap_or(true)
 +}
 +
-+/// Shapes the line as a paragraph of the given direction. A platform shaper takes the direction of the paragraph from
-+/// its first strong character, so a mark of the direction goes before a line whose first strong character has the
-+/// other one. Without it, the shaper mirrors brackets and orders the neutral characters for the wrong direction.
++fn starts_left_to_right(text: &str) -> bool {
++    first_strong_direction(text) != Some(TextDirection::Rtl)
++}
++
++/// Shapes the line as a paragraph of the given direction. Each platform shaper takes the direction of the paragraph
++/// from its first strong character (cosmic-text and CoreText by themselves, DirectWrite through the reading direction
++/// that `gpui-pre-windows` sets from [`first_strong_direction`]), so a mark of the direction goes before a line whose
++/// first strong character has the other one. Without it, the shaper mirrors brackets and orders the neutral
++/// characters for the wrong direction.
 +pub(crate) fn shape_in_direction(
 +    platform: &dyn PlatformTextSystem,
 +    text: &str,
@@ -696,15 +733,36 @@ breaks between their words, not inside them. Our own.
      /// The width of the line, if it was wrapped
      pub wrap_width: Option<Pixels>,
 +
-+    /// The visual order of each row, when the line holds right-to-left text.
++    /// The visual order of each row, when the line holds right-to-left text or its paragraph is right to left.
 +    pub(crate) bidi: Option<BidiRows>,
  }
  
  /// A boundary at which a line was wrapped
-@@ -345,6 +351,42 @@
+@@ -345,6 +351,63 @@
          &self.unwrapped_layout.runs
      }
  
++    /// Where painting puts each glyph of a line in the bidi path (one that holds right-to-left text or whose
++    /// paragraph is right to left): its byte index and its origin, from the line's origin before alignment, in the
++    /// order of the layout's runs. `None` for a line that keeps the layout of the platform.
++    pub fn bidi_glyph_origins(&self, line_height: Pixels) -> Option<Vec<(usize, Point<Pixels>)>> {
++        let rows = self.bidi.as_ref()?;
++        let glyphs = self
++            .unwrapped_layout
++            .runs
++            .iter()
++            .flat_map(|run| &run.glyphs);
++        Some(
++            glyphs
++                .enumerate()
++                .map(|(flat_ix, glyph)| {
++                    let (x, row) = rows.glyph(flat_ix);
++                    (glyph.index, point(x, line_height * row as f32))
++                })
++                .collect(),
++        )
++    }
++
 +    /// How far right the given alignment within `align_width` puts a row: as painting puts it.
 +    pub fn row_offset(&self, row: usize, align: TextAlign, align_width: Pixels) -> Pixels {
 +        if align == TextAlign::Left {
@@ -744,7 +802,7 @@ breaks between their words, not inside them. Our own.
      /// The index corresponding to a given position in this layout for the given line height.
      ///
      /// See also [`Self::closest_index_for_position`].
-@@ -371,11 +413,14 @@
+@@ -371,11 +434,14 @@
  
      fn _index_for_position(
          &self,
@@ -760,7 +818,7 @@ breaks between their words, not inside them. Our own.
  
          let wrapped_line_start_index;
          let wrapped_line_start_x;
-@@ -429,6 +474,11 @@
+@@ -429,6 +495,11 @@
  
      /// Returns the pixel position for the given byte index.
      pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
@@ -772,7 +830,7 @@ breaks between their words, not inside them. Our own.
          let mut line_start_ix = 0;
          let mut line_end_indices = self
              .wrap_boundaries
-@@ -609,6 +659,7 @@
+@@ -609,6 +680,7 @@
          runs: &[FontRun],
          wrap_width: Option<Pixels>,
          max_lines: Option<usize>,
@@ -780,7 +838,7 @@ breaks between their words, not inside them. Our own.
      ) -> Arc<WrappedLineLayout>
      where
          Text: AsRef<str>,
-@@ -621,6 +672,7 @@
+@@ -621,6 +693,7 @@
              runs,
              wrap_width,
              force_width: None,
@@ -788,7 +846,7 @@ breaks between their words, not inside them. Our own.
          } as &dyn AsCacheKeyRef;
  
          let current_frame = self.current_frame.upgradable_read();
-@@ -639,16 +691,31 @@
+@@ -639,16 +712,31 @@
          } else {
              drop(current_frame);
              let text = SharedString::from(text);
@@ -821,7 +879,7 @@ breaks between their words, not inside them. Our own.
              });
              let key = Arc::new(CacheKey {
                  text,
-@@ -656,6 +723,7 @@
+@@ -656,6 +744,7 @@
                  runs: SmallVec::from(runs),
                  wrap_width,
                  force_width: None,
@@ -829,7 +887,7 @@ breaks between their words, not inside them. Our own.
              });
  
              let mut current_frame = self.current_frame.write();
-@@ -686,6 +754,7 @@
+@@ -686,6 +775,7 @@
              runs,
              wrap_width: None,
              force_width,
@@ -837,7 +895,7 @@ breaks between their words, not inside them. Our own.
          } as &dyn AsCacheKeyRef;
  
          let current_frame = self.current_frame.upgradable_read();
-@@ -714,6 +783,7 @@
+@@ -714,6 +804,7 @@
                  runs: SmallVec::from(runs),
                  wrap_width: None,
                  force_width,
@@ -845,7 +903,7 @@ breaks between their words, not inside them. Our own.
              });
              let layout = Arc::new(layout);
              current_frame.lines.insert(key.clone(), layout.clone());
-@@ -943,6 +1013,7 @@
+@@ -943,6 +1034,7 @@
      runs: SmallVec<[FontRun; 1]>,
      wrap_width: Option<Pixels>,
      force_width: Option<Pixels>,
@@ -853,7 +911,7 @@ breaks between their words, not inside them. Our own.
  }
  
  #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-@@ -952,6 +1023,7 @@
+@@ -952,6 +1044,7 @@
      runs: &'a [FontRun],
      wrap_width: Option<Pixels>,
      force_width: Option<Pixels>,
@@ -861,7 +919,7 @@ breaks between their words, not inside them. Our own.
  }
  
  #[derive(Clone, Debug)]
-@@ -1044,6 +1116,7 @@
+@@ -1044,6 +1137,7 @@
              runs: self.runs.as_slice(),
              wrap_width: self.wrap_width,
              force_width: self.force_width,
@@ -883,7 +941,7 @@ breaks between their words, not inside them. Our own.
 +        if let Some(rows) = &self.layout.bidi {
 +            return paint_bidi_line(
 +                origin,
-+                &self.layout.unwrapped_layout,
++                &self.layout,
 +                rows,
 +                line_height,
 +                align,
@@ -904,7 +962,7 @@ breaks between their words, not inside them. Our own.
 +        if let Some(rows) = &self.layout.bidi {
 +            return paint_bidi_background(
 +                origin,
-+                &self.layout.unwrapped_layout,
++                &self.layout,
 +                rows,
 +                line_height,
 +                align,
@@ -917,33 +975,29 @@ breaks between their words, not inside them. Our own.
          paint_line_background(
              origin,
              &self.layout.unwrapped_layout,
-@@ -787,6 +815,167 @@
+@@ -787,6 +815,164 @@
          Ok(())
      })
  }
 +
-+/// The left edge of each row of a line that holds right-to-left text, and the bounds of all its rows.
++/// The left edge of each row of a line in the bidi path, as [`WrappedLineLayout::row_offset`] aligns it, and the
++/// bounds of all its rows.
 +fn bidi_row_origins(
 +    origin: Point<Pixels>,
-+    layout: &LineLayout,
++    layout: &WrappedLineLayout,
 +    rows: &BidiRows,
 +    line_height: Pixels,
 +    align: TextAlign,
 +    align_width: Option<Pixels>,
 +) -> (Vec<Pixels>, Bounds<Pixels>) {
-+    let align_width = align_width.unwrap_or(layout.width);
++    let align_width = align_width.unwrap_or(layout.unwrapped_layout.width);
 +    let mut bounds = Bounds::new(origin, size(px(0.), px(0.)));
 +    let lefts = (0..rows.row_count())
 +        .map(|row| {
-+            let width = rows.row_width(row);
-+            let left = match align {
-+                TextAlign::Left => origin.x,
-+                TextAlign::Center => origin.x + (align_width - width) / 2.,
-+                TextAlign::Right => origin.x + align_width - width,
-+            };
++            let left = origin.x + layout.row_offset(row, align, align_width);
 +            bounds = bounds.union(&Bounds::new(
 +                point(left, origin.y + line_height * row as f32),
-+                size(width, line_height),
++                size(rows.row_width(row), line_height),
 +            ));
 +            left
 +        })
@@ -961,12 +1015,12 @@ breaks between their words, not inside them. Our own.
 +        .collect()
 +}
 +
-+/// Paints a line that holds right-to-left text: each glyph where the visual order of its row puts it, and each
++/// Paints a line in the bidi path: each glyph where the visual order of its row puts it, and each
 +/// underline and strikethrough under the clusters of its run, as one stretch for each group of neighbours.
 +#[allow(clippy::too_many_arguments)]
 +fn paint_bidi_line(
 +    origin: Point<Pixels>,
-+    layout: &LineLayout,
++    wrapped: &WrappedLineLayout,
 +    rows: &BidiRows,
 +    line_height: Pixels,
 +    align: TextAlign,
@@ -975,8 +1029,9 @@ breaks between their words, not inside them. Our own.
 +    window: &mut Window,
 +    cx: &mut App,
 +) -> Result<()> {
++    let layout = &wrapped.unwrapped_layout;
 +    let (lefts, line_bounds) =
-+        bidi_row_origins(origin, layout, rows, line_height, align, align_width);
++        bidi_row_origins(origin, wrapped, rows, line_height, align, align_width);
 +    window.paint_layer(line_bounds, |window| {
 +        let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
 +        let baseline_offset = point(px(0.), padding_top + layout.ascent);
@@ -1046,11 +1101,11 @@ breaks between their words, not inside them. Our own.
 +    })
 +}
 +
-+/// Paints the run backgrounds of a line that holds right-to-left text, under the clusters of each run.
++/// Paints the run backgrounds of a line in the bidi path, under the clusters of each run.
 +#[allow(clippy::too_many_arguments)]
 +fn paint_bidi_background(
 +    origin: Point<Pixels>,
-+    layout: &LineLayout,
++    wrapped: &WrappedLineLayout,
 +    rows: &BidiRows,
 +    line_height: Pixels,
 +    align: TextAlign,
@@ -1059,7 +1114,7 @@ breaks between their words, not inside them. Our own.
 +    window: &mut Window,
 +) -> Result<()> {
 +    let (lefts, line_bounds) =
-+        bidi_row_origins(origin, layout, rows, line_height, align, align_width);
++        bidi_row_origins(origin, wrapped, rows, line_height, align, align_width);
 +    window.paint_layer(line_bounds, |window| {
 +        let run_ends = decoration_run_ends(decoration_runs);
 +        for (row, left) in lefts.iter().enumerate() {
@@ -1106,12 +1161,19 @@ breaks between their words, not inside them. Our own.
          // `2^3`, `a~b`, `a=1`, `Self::new`, etc. Trailing punctuation like `,`, `.`, `:`, `;`
 --- a/src/text_system.rs
 +++ b/src/text_system.rs
-@@ -1,3 +1,4 @@
+@@ -1,9 +1,11 @@
 +mod bidi;
  mod font_fallbacks;
  mod font_features;
  mod line;
-@@ -14,7 +15,7 @@
+ mod line_layout;
+ mod line_wrapper;
+ 
++pub use bidi::first_strong_direction;
+ pub use font_fallbacks::*;
+ pub use font_features::*;
+ pub use line::*;
+@@ -14,7 +16,7 @@
  
  use crate::{
      Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
@@ -1120,7 +1182,7 @@ breaks between their words, not inside them. Our own.
  };
  use anyhow::{Context as _, anyhow};
  use collections::{FxHashMap, FxHashSet};
-@@ -755,6 +756,26 @@
+@@ -755,6 +757,26 @@
          wrap_width: Option<Pixels>,
          line_clamp: Option<usize>,
      ) -> Result<SmallVec<[WrappedLine; 1]>> {
@@ -1147,7 +1209,7 @@ breaks between their words, not inside them. Our own.
          let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
          let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
  
-@@ -821,6 +842,7 @@
+@@ -821,6 +843,7 @@
                  &font_runs,
                  wrap_width,
                  max_wrap_lines.map(|max| max.saturating_sub(wrapped_lines)),

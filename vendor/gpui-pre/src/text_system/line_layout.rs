@@ -290,7 +290,7 @@ pub struct WrappedLineLayout {
     /// The width of the line, if it was wrapped
     pub wrap_width: Option<Pixels>,
 
-    /// The visual order of each row, when the line holds right-to-left text.
+    /// The visual order of each row, when the line holds right-to-left text or its paragraph is right to left.
     pub(crate) bidi: Option<BidiRows>,
 }
 
@@ -349,6 +349,27 @@ impl WrappedLineLayout {
     /// The runs in this layout, sans wrapping
     pub fn runs(&self) -> &[ShapedRun] {
         &self.unwrapped_layout.runs
+    }
+
+    /// Where painting puts each glyph of a line in the bidi path (one that holds right-to-left text or whose
+    /// paragraph is right to left): its byte index and its origin, from the line's origin before alignment, in the
+    /// order of the layout's runs. `None` for a line that keeps the layout of the platform.
+    pub fn bidi_glyph_origins(&self, line_height: Pixels) -> Option<Vec<(usize, Point<Pixels>)>> {
+        let rows = self.bidi.as_ref()?;
+        let glyphs = self
+            .unwrapped_layout
+            .runs
+            .iter()
+            .flat_map(|run| &run.glyphs);
+        Some(
+            glyphs
+                .enumerate()
+                .map(|(flat_ix, glyph)| {
+                    let (x, row) = rows.glyph(flat_ix);
+                    (glyph.index, point(x, line_height * row as f32))
+                })
+                .collect(),
+        )
     }
 
     /// How far right the given alignment within `align_width` puts a row: as painting puts it.

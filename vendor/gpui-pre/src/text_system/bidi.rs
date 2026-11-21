@@ -2,17 +2,18 @@
 //!
 //! A platform text system shapes a line in visual order: right-to-left runs come out reversed and the glyph x
 //! positions do not follow the text order. Wrapping, painting and hit tests of a wrapped line assume that x grows with
-//! the byte index, so a line that holds right-to-left text is put into logical order first ([`logical_layout`]): each
-//! cluster keeps its glyphs and its advance, and the clusters follow each other in text order. The line wraps on that
-//! layout. Then each row is put back into visual order on its own ([`BidiRows`]), as a browser does after it breaks
-//! the lines of a paragraph.
+//! the byte index, so a line that holds right-to-left text, or whose paragraph is right to left, is put into logical
+//! order first ([`logical_layout`]): each cluster keeps its glyphs and its advance, and the clusters follow each other
+//! in text order. The line wraps on that layout. Then each row is put back into visual order on its own
+//! ([`BidiRows`]), as a browser does after it breaks the lines of a paragraph.
 //!
 //! The paragraph direction is the text style's ([`crate::TextDirection`]): left-to-right unless set, as in HTML
 //! without a `dir` attribute. Left-to-right text that holds no right-to-left character keeps the layout of the platform
 //! unchanged.
 
 use crate::{
-    FontRun, LineLayout, Pixels, PlatformTextSystem, ShapedGlyph, ShapedRun, WrapBoundary, px,
+    FontRun, LineLayout, Pixels, PlatformTextSystem, ShapedGlyph, ShapedRun, TextDirection,
+    WrapBoundary, px,
 };
 use collections::FxHashMap;
 use std::ops::Range;
@@ -33,19 +34,26 @@ pub(crate) fn needs_bidi(text: &str) -> bool {
     })
 }
 
-fn starts_left_to_right(text: &str) -> bool {
+/// The direction of the first strong letter of the text, as HTML's `dir="auto"` takes it (rules P2 and P3 of the
+/// Unicode Bidirectional Algorithm, isolates not skipped): `None` when the text has no strong letter.
+pub fn first_strong_direction(text: &str) -> Option<TextDirection> {
     text.chars()
         .find_map(|character| match bidi_class(character) {
-            BidiClass::L => Some(true),
-            BidiClass::R | BidiClass::AL => Some(false),
+            BidiClass::L => Some(TextDirection::Ltr),
+            BidiClass::R | BidiClass::AL => Some(TextDirection::Rtl),
             _ => None,
         })
-        .unwrap_or(true)
 }
 
-/// Shapes the line as a paragraph of the given direction. A platform shaper takes the direction of the paragraph from
-/// its first strong character, so a mark of the direction goes before a line whose first strong character has the
-/// other one. Without it, the shaper mirrors brackets and orders the neutral characters for the wrong direction.
+fn starts_left_to_right(text: &str) -> bool {
+    first_strong_direction(text) != Some(TextDirection::Rtl)
+}
+
+/// Shapes the line as a paragraph of the given direction. Each platform shaper takes the direction of the paragraph
+/// from its first strong character (cosmic-text and CoreText by themselves, DirectWrite through the reading direction
+/// that `gpui-pre-windows` sets from [`first_strong_direction`]), so a mark of the direction goes before a line whose
+/// first strong character has the other one. Without it, the shaper mirrors brackets and orders the neutral
+/// characters for the wrong direction.
 pub(crate) fn shape_in_direction(
     platform: &dyn PlatformTextSystem,
     text: &str,

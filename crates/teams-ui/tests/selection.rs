@@ -68,12 +68,25 @@ fn drawn() -> (
     Vec<(MessageKey, Arc<Rendered>)>,
     &'static mut VisualTestContext,
 ) {
+    drawn_of(&[FIRST, SECOND])
+}
+
+/// The messages of `contents`, drawn as [`Messages`] draws them; the first message's id is "1".
+fn drawn_of(
+    contents: &[&str],
+) -> (
+    TextSelection,
+    Vec<(MessageKey, Arc<Rendered>)>,
+    &'static mut VisualTestContext,
+) {
     let selection = TextSelection::default();
-    let messages = vec![
-        (MessageKey::new((1, 0), "1"), laid_out(FIRST)),
-        (MessageKey::new((2, 0), "2"), laid_out(SECOND)),
-    ];
+    let messages = (1_u32..)
+        .zip(contents)
+        .map(|(id, content)| (MessageKey::new((i64::from(id), 0), id.to_string()), laid_out(content)))
+        .collect::<Vec<_>>();
     let app: &'static mut TestAppContext = Box::leak(Box::new(TestAppContext::single()));
+    // the kit's theme, which a code card's copy button reads
+    app.update(teams_ui::theme::init);
     let (view_selection, view_messages) = (selection.clone(), messages.clone());
     let (_, cx) = app.add_window_view(move |_, _| Messages {
         selection: view_selection,
@@ -136,6 +149,54 @@ fn a_drag_selects_across_runs_paragraphs_and_messages() {
     // a click elsewhere lets it go
     cx.simulate_click(next, Modifiers::none());
     assert!(selection.is_empty());
+}
+
+fn double_click(cx: &mut VisualTestContext, at: Point<Pixels>) {
+    for click_count in 1..=2 {
+        cx.simulate_event(MouseDownEvent {
+            position: at,
+            modifiers: Modifiers::none(),
+            button: MouseButton::Left,
+            click_count,
+            first_mouse: false,
+        });
+        cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
+    }
+}
+
+/// The advance of each character of the test platform: 0.6 em.
+fn advance(cx: &mut VisualTestContext) -> Pixels {
+    cx.update(|window, _| window.text_style().font_size.to_pixels(window.rem_size()) * 0.6)
+}
+
+#[test]
+fn a_press_and_a_drag_in_a_right_aligned_message_take_the_letters_where_they_are_drawn() {
+    // right to left and aligned right: the first word's three letters at the right, a space, then the second word
+    let (selection, messages, cx) = drawn_of(&["<p>ابت ثج</p>"]);
+    let advance = advance(cx);
+    let line = cx.debug_bounds("rich-text").expect("the line is drawn");
+    let y = line.top() + px(4.0);
+    double_click(cx, point(line.right() - advance * 5.0, y));
+    assert_eq!(copied(&selection, &messages).as_deref(), Some("ثج"));
+    let (start, end) = (
+        point(line.right() - advance * 0.2, y),
+        point(line.right() - advance * 2.8, y),
+    );
+    cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(end, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
+    assert_eq!(copied(&selection, &messages).as_deref(), Some("ابت"));
+}
+
+#[test]
+fn code_in_a_right_to_left_message_reads_left_to_right_from_the_left() {
+    let (selection, messages, cx) = drawn_of(&["<p>مرحبا</p><pre>let x = 1;</pre>"]);
+    let lines = cx.debug_bounds("rich-code-lines").expect("the code is drawn");
+    let rem = cx.update(|window, _| window.rem_size());
+    // the lines' padding (1.5 rem), a one-digit number column (0.65 rem) and the gap (1 rem)
+    let text_left = lines.left() + rem * 3.15;
+    double_click(cx, point(text_left + px(2.0), lines.top() + rem + px(4.0)));
+    assert_eq!(copied(&selection, &messages).as_deref(), Some("let"));
 }
 
 #[test]

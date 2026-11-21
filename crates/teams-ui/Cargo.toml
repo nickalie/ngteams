@@ -45,9 +45,6 @@ image = { workspace = true, features = ["png", "jpeg", "gif", "webp"] }
 image-webp.workspace = true
 # a proposed correction's changes to a draft, word by word
 similar.workspace = true
-# a message's direction from its first strong letter, as Teams' `dir="auto"` decides it; a stand-in shaper in
-# `tests/bidi_text.rs`
-unicode-bidi.workspace = true
 # a bot card's text input checked against its pattern (`regex`)
 regex.workspace = true
 # an own server's account management, which the Manage users page asks (its types and refusals)
@@ -91,6 +88,8 @@ gpui-component = { workspace = true, features = ["test-support"] }
 gpui-pre-platform = { workspace = true, features = ["test-support"] }
 # the settings file, in a directory of its own per test
 tempfile.workspace = true
+# a stand-in shaper that orders glyphs visually, as the platform shapers do (`tests/bidi_text.rs`)
+unicode-bidi.workspace = true
 # compose on two accounts' engines on the mock (`tests/compose_mock.rs`): their tokens (teams-auth, above), the mock
 # chat service and its Trouter reached through the test-support mock origins
 teams-mock.workspace = true

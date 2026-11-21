@@ -370,27 +370,11 @@ pub fn with_selection(
     out
 }
 
-/// The character boundary in `layout` nearest `position` (the start of the text above it, the end below it).
+/// The character boundary in `layout` nearest `position` (the start of the text above it, the end below it), on the
+/// rows where its alignment draws them.
 pub(crate) fn closest_index(layout: &TextLayout, position: Point<Pixels>) -> usize {
-    let bounds = layout.bounds();
-    let line_height = layout.line_height();
-    if position.y < bounds.top() {
-        return 0;
-    }
-    let mut top = bounds.top();
-    let mut start = 0;
-    for line in layout.line_layouts() {
-        let height = line.size(line_height).height;
-        if position.y >= top + height {
-            top += height;
-            start += line.len() + 1;
-            continue;
-        }
-        let within = point(position.x - bounds.left(), position.y - top);
-        let (Ok(index) | Err(index)) = line.closest_index_for_position(within, line_height);
-        return start + index;
-    }
-    layout.len()
+    let (Ok(index) | Err(index)) = layout.closest_index_for_position(position);
+    index
 }
 
 /// Where a selectable unit is: its selection, its message and its path among the message's blocks.

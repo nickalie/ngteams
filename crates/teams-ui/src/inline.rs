@@ -973,6 +973,41 @@ impl RenderOnce for Emoticon {
     }
 }
 
+/// Where `layout` draws the place of an emoticon: its left edge and its width. A place the line wraps in takes the
+/// emoticon's side. The place is measured from its own characters, which all read one way: the edge of the character
+/// after it counts only when it continues the place that way, as wide as its widest character at most, as a character
+/// that reads the other way is drawn elsewhere.
+fn place_span(layout: &TextLayout, text: &str, place: &Range<usize>, side: Pixels) -> Option<(Point<Pixels>, Pixels)> {
+    let edges = text
+        .get(place.clone())?
+        .char_indices()
+        .map(|(at, _)| layout.position_for_index(place.start + at))
+        .collect::<Option<Vec<_>>>()?;
+    let (first, last) = (*edges.first()?, *edges.last()?);
+    if edges.iter().any(|edge| edge.y != first.y) {
+        return Some((first, side));
+    }
+    let steps: Vec<Pixels> = edges.windows(2).map(|pair| pair[1].x - pair[0].x).collect();
+    let widest = steps.iter().map(Pixels::abs).reduce(Pixels::max);
+    let end = layout
+        .position_for_index(place.end)
+        .filter(|end| end.y == first.y && end.x != last.x)
+        .map(|end| end.x - last.x);
+    let leftward = steps.first().or(end.as_ref()).is_some_and(|step| *step < Pixels::ZERO);
+    let last_width = match (end, widest) {
+        (Some(step), Some(widest)) if (step < Pixels::ZERO) == leftward && step.abs() <= widest + px(0.5) => step.abs(),
+        (_, Some(widest)) => widest,
+        (Some(step), None) => step.abs(),
+        (None, None) => return Some((first, side)),
+    };
+    let far = if leftward {
+        last.x - last_width
+    } else {
+        last.x + last_width
+    };
+    Some((point(first.x.min(far), first.y), (far - first.x).abs()))
+}
+
 /// A paragraph's text with emoticons drawn over the places it keeps for them (see the module docs): `text` is the
 /// paragraph's element, `layout` its text's layout, and each emoticon the byte range of its place in the text.
 pub struct InlineText {
@@ -1045,23 +1080,15 @@ impl Element for InlineText {
         let height = self.layout.line_height();
         let side = inline_emoticon_side(window);
         let font = window.text_system().resolve_font(&window.text_style().font());
+        let text = self.layout.text();
         let mut placed = vec![false; self.emoticons.len()];
         for ((place, emoticon), placed) in self.emoticons.iter_mut().zip(&mut placed) {
-            let (Some(start), Some(line)) = (
-                self.layout.position_for_index(place.start),
+            let (Some((start, width)), Some(line)) = (
+                place_span(&self.layout, &text, place, side),
                 self.layout.line_layout_for_index(place.start),
             ) else {
                 continue;
             };
-            // the place's width on its line (a place the line wraps in takes the emoticon's side); in right-to-left
-            // text its end is left of its start
-            let end = self
-                .layout
-                .position_for_index(place.end)
-                .filter(|end| end.y == start.y && end.x != start.x);
-            let (start, width) = end.map_or((start, side), |end| {
-                (point(start.x.min(end.x), start.y), (end.x - start.x).abs())
-            });
             let laid = &line.unwrapped_layout;
             let metrics = LineMetrics {
                 height,

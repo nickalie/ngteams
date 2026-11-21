@@ -475,7 +475,7 @@ impl WrappedLine {
         if let Some(rows) = &self.layout.bidi {
             return paint_bidi_line(
                 origin,
-                &self.layout.unwrapped_layout,
+                &self.layout,
                 rows,
                 line_height,
                 align,
@@ -520,7 +520,7 @@ impl WrappedLine {
         if let Some(rows) = &self.layout.bidi {
             return paint_bidi_background(
                 origin,
-                &self.layout.unwrapped_layout,
+                &self.layout,
                 rows,
                 line_height,
                 align,
@@ -816,28 +816,24 @@ fn paint_line(
     })
 }
 
-/// The left edge of each row of a line that holds right-to-left text, and the bounds of all its rows.
+/// The left edge of each row of a line in the bidi path, as [`WrappedLineLayout::row_offset`] aligns it, and the
+/// bounds of all its rows.
 fn bidi_row_origins(
     origin: Point<Pixels>,
-    layout: &LineLayout,
+    layout: &WrappedLineLayout,
     rows: &BidiRows,
     line_height: Pixels,
     align: TextAlign,
     align_width: Option<Pixels>,
 ) -> (Vec<Pixels>, Bounds<Pixels>) {
-    let align_width = align_width.unwrap_or(layout.width);
+    let align_width = align_width.unwrap_or(layout.unwrapped_layout.width);
     let mut bounds = Bounds::new(origin, size(px(0.), px(0.)));
     let lefts = (0..rows.row_count())
         .map(|row| {
-            let width = rows.row_width(row);
-            let left = match align {
-                TextAlign::Left => origin.x,
-                TextAlign::Center => origin.x + (align_width - width) / 2.,
-                TextAlign::Right => origin.x + align_width - width,
-            };
+            let left = origin.x + layout.row_offset(row, align, align_width);
             bounds = bounds.union(&Bounds::new(
                 point(left, origin.y + line_height * row as f32),
-                size(width, line_height),
+                size(rows.row_width(row), line_height),
             ));
             left
         })
@@ -855,12 +851,12 @@ fn decoration_run_ends(decoration_runs: &[DecorationRun]) -> Vec<usize> {
         .collect()
 }
 
-/// Paints a line that holds right-to-left text: each glyph where the visual order of its row puts it, and each
+/// Paints a line in the bidi path: each glyph where the visual order of its row puts it, and each
 /// underline and strikethrough under the clusters of its run, as one stretch for each group of neighbours.
 #[allow(clippy::too_many_arguments)]
 fn paint_bidi_line(
     origin: Point<Pixels>,
-    layout: &LineLayout,
+    wrapped: &WrappedLineLayout,
     rows: &BidiRows,
     line_height: Pixels,
     align: TextAlign,
@@ -869,8 +865,9 @@ fn paint_bidi_line(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
+    let layout = &wrapped.unwrapped_layout;
     let (lefts, line_bounds) =
-        bidi_row_origins(origin, layout, rows, line_height, align, align_width);
+        bidi_row_origins(origin, wrapped, rows, line_height, align, align_width);
     window.paint_layer(line_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
@@ -940,11 +937,11 @@ fn paint_bidi_line(
     })
 }
 
-/// Paints the run backgrounds of a line that holds right-to-left text, under the clusters of each run.
+/// Paints the run backgrounds of a line in the bidi path, under the clusters of each run.
 #[allow(clippy::too_many_arguments)]
 fn paint_bidi_background(
     origin: Point<Pixels>,
-    layout: &LineLayout,
+    wrapped: &WrappedLineLayout,
     rows: &BidiRows,
     line_height: Pixels,
     align: TextAlign,
@@ -953,7 +950,7 @@ fn paint_bidi_background(
     window: &mut Window,
 ) -> Result<()> {
     let (lefts, line_bounds) =
-        bidi_row_origins(origin, layout, rows, line_height, align, align_width);
+        bidi_row_origins(origin, wrapped, rows, line_height, align, align_width);
     window.paint_layer(line_bounds, |window| {
         let run_ends = decoration_run_ends(decoration_runs);
         for (row, left) in lefts.iter().enumerate() {

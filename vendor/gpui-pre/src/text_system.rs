@@ -5,6 +5,7 @@ mod line;
 mod line_layout;
 mod line_wrapper;
 
+pub use bidi::first_strong_direction;
 pub use font_fallbacks::*;
 pub use font_features::*;
 pub use line::*;

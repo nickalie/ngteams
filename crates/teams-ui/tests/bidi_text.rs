@@ -2,15 +2,22 @@
 //! `build/patches/gpui-pre/0005`: the shaper's visual glyph order is put into text order, the line wraps, and each row
 //! is put back into visual order (Unicode Bidirectional Algorithm), as a browser shows a message. A stand-in shaper
 //! gives each character the same advance and orders the glyphs visually with the first strong character's direction,
-//! as the platform shapers do. All text is made up.
+//! as the platform shapers do. Where painting puts each glyph, and a text element's hit tests in each alignment, are
+//! checked against the same hit tests. All text is made up.
+
+// test code throughout (its helpers panic like the tests do)
+#![cfg(test)]
 
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout, NoopTextSystem, Pixels, PlatformTextSystem,
-    RenderGlyphParams, ShapedGlyph, ShapedRun, SharedString, Size, TextDirection, TextRenderingMode, TextRun,
-    TextSystem, WindowTextSystem, WrappedLine, point, px,
+    Context, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, IntoElement, LineLayout, NoopTextSystem,
+    ParentElement as _, Pixels, PlatformTextSystem, Render, RenderGlyphParams, ShapedGlyph, ShapedRun, SharedString,
+    Size, Styled as _, StyledText, TestAppContext, TextAlign, TextDirection, TextLayout, TextRenderingMode, TextRun,
+    TextSystem, Window, WindowTextSystem, WrappedLine, div, point, px,
 };
 use unicode_bidi::BidiInfo;
 
@@ -365,4 +372,153 @@ fn a_right_to_left_paragraph_wraps_with_its_first_words_on_the_first_row() {
     let row_end = line.position_for_index(ARABIC.len(), px(LINE_HEIGHT));
     let last_row = f32::from(rows(&line) - 1);
     assert_eq!(row_end.map(|at| at.y), Some(px(LINE_HEIGHT * last_row)));
+}
+
+#[test]
+fn each_glyph_is_painted_on_the_cluster_that_the_hit_test_finds_there() {
+    for (text, direction, width) in [
+        (format!("\"{ARABIC}{ENGLISH}\""), TextDirection::Ltr, 200.),
+        (ARABIC.to_owned(), TextDirection::Rtl, 100.),
+        ("Order 42: ابت 123 ثج (2)".to_owned(), TextDirection::Ltr, 90.),
+    ] {
+        let line = shape_in(&text, Some(width), direction);
+        assert!(rows(&line) > 1, "{text:?} wraps");
+        let origins = line
+            .bidi_glyph_origins(px(LINE_HEIGHT))
+            .unwrap_or_else(|| panic!("{text:?} takes the bidi path"));
+        assert_eq!(origins.len(), text.chars().count(), "{text:?}");
+        for (index, origin) in origins {
+            let middle = origin + point(px(ADVANCE / 2.), px(LINE_HEIGHT / 2.));
+            assert_eq!(
+                line.index_for_position(middle, px(LINE_HEIGHT)),
+                Ok(index),
+                "the glyph of byte {index} of {text:?} is painted at {origin:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn only_a_line_that_can_read_right_to_left_takes_the_bidi_path() {
+    for text in ["Order 42: one, two (three).", "Καλημέρα κόσμε", "Բարեւ ձեզ"] {
+        assert!(
+            shape(text, Some(60.)).bidi_glyph_origins(px(LINE_HEIGHT)).is_none(),
+            "{text:?} keeps the layout of the platform"
+        );
+    }
+    for line in [
+        shape("ابت", None),
+        shape("abc שלום", None),
+        shape_in("Thanks.", None, TextDirection::Rtl),
+    ] {
+        assert!(line.bidi_glyph_origins(px(LINE_HEIGHT)).is_some(), "{:?}", line.text);
+    }
+}
+
+/// The width a text is drawn in by [`Aligned`].
+const ALIGN_WIDTH: f32 = 300.;
+
+/// A text drawn [`ALIGN_WIDTH`] wide in an alignment and a direction, with its layout kept for the hit tests.
+struct Aligned {
+    text: SharedString,
+    align: TextAlign,
+    direction: TextDirection,
+    layout: Rc<RefCell<Option<TextLayout>>>,
+}
+
+impl Render for Aligned {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let text = StyledText::new(self.text.clone());
+        self.layout.replace(Some(text.layout().clone()));
+        div()
+            .w(px(ALIGN_WIDTH))
+            .text_align(self.align)
+            .text_direction(self.direction)
+            .child(text)
+    }
+}
+
+/// The layout of `text` drawn by [`Aligned`], and the advance of each character of the test platform (0.6 em).
+fn drawn_aligned(text: &str, align: TextAlign, direction: TextDirection) -> (TextLayout, Pixels) {
+    let layout = Rc::new(RefCell::new(None));
+    let app: &'static mut TestAppContext = Box::leak(Box::new(TestAppContext::single()));
+    let (view_layout, shown) = (Rc::clone(&layout), SharedString::from(text.to_owned()));
+    let (_, cx) = app.add_window_view(move |_, _| Aligned {
+        text: shown,
+        align,
+        direction,
+        layout: view_layout,
+    });
+    cx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+    let advance = cx.update(|window, _| window.text_style().font_size.to_pixels(window.rem_size()) * 0.6);
+    let layout = layout.borrow().clone();
+    (layout.unwrap_or_else(|| panic!("{text:?} is drawn")), advance)
+}
+
+#[test]
+fn a_hit_test_finds_each_character_where_its_alignment_draws_it() {
+    for (text, align, direction) in [
+        (ARABIC.to_owned(), TextAlign::Right, TextDirection::Rtl),
+        (format!("\"{ARABIC}{ENGLISH}\""), TextAlign::Center, TextDirection::Ltr),
+        (
+            "Order 42: one, two (three), four, five and six.".to_owned(),
+            TextAlign::Center,
+            TextDirection::Ltr,
+        ),
+    ] {
+        let (layout, advance) = drawn_aligned(&text, align, direction);
+        let bounds = layout.bounds();
+        let half_row = layout.line_height() / 2.;
+        let boundaries: Vec<usize> = text.char_indices().map(|(at, _)| at).chain([text.len()]).collect();
+        let carets: Vec<_> = boundaries
+            .iter()
+            .map(|at| {
+                layout
+                    .position_for_index(*at)
+                    .unwrap_or_else(|| panic!("byte {at} of {text:?}"))
+            })
+            .collect();
+        let mut checked = 0;
+        for (pair, edges) in boundaries.windows(2).zip(carets.windows(2)) {
+            let (start, end) = (edges[0], edges[1]);
+            if start.y != end.y || ((end.x - start.x).abs() - advance).abs() > px(0.01) {
+                continue;
+            }
+            let middle = point((start.x + end.x) / 2., start.y + half_row);
+            assert_eq!(
+                layout.index_for_position(middle),
+                Ok(pair[0]),
+                "byte {} of {text:?}, drawn at {middle:?}",
+                pair[0]
+            );
+            let closest = layout.closest_index_for_position(middle);
+            assert!(
+                matches!(closest, Ok(at) if at == pair[0] || at == pair[1]),
+                "the nearer side of byte {} of {text:?}: {closest:?}",
+                pair[0]
+            );
+            checked += 1;
+        }
+        assert!(checked * 2 > text.chars().count(), "{checked} characters of {text:?}");
+        let mut row_ys: Vec<Pixels> = carets.iter().map(|at| at.y).collect();
+        row_ys.dedup();
+        assert!(row_ys.len() > 1, "{text:?} wraps");
+        for y in row_ys {
+            let on_row = carets.iter().filter(|at| at.y == y).map(|at| at.x);
+            let (left, right) = on_row.fold((bounds.right(), bounds.left()), |(left, right), x| {
+                (left.min(x), right.max(x))
+            });
+            let (space_left, space_right) = (left - bounds.left(), bounds.right() - right);
+            let aligned = match align {
+                TextAlign::Right => space_right.abs() <= advance + px(0.01),
+                _ => (space_left - space_right).abs() <= advance + px(0.01),
+            };
+            assert!(
+                aligned,
+                "{align:?} row at {y:?} of {text:?}: {left:?}..{right:?} in {bounds:?}"
+            );
+        }
+    }
 }

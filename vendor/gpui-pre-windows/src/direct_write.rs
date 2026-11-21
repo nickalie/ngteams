@@ -534,6 +534,7 @@ impl DirectWriteState {
                 ..Default::default()
             });
         }
+        let right_to_left = first_strong_direction(text) == Some(TextDirection::Rtl);
         unsafe {
             self.layout_line_scratch.clear();
             self.layout_line_scratch.extend(text.encode_utf16());
@@ -615,6 +616,16 @@ impl DirectWriteState {
                 text_layout.SetTypography(&font_info.features, text_range)?;
 
                 break_ligatures = !break_ligatures;
+            }
+            if right_to_left {
+                // DirectWrite does not take the paragraph direction from the text, as the other shapers do. A
+                // right-to-left line starts at the right edge of its box, which must not be infinite: a box as wide
+                // as the line puts its left edge at x = 0, as for a left-to-right line.
+                let mut metrics = DWRITE_TEXT_METRICS::default();
+                text_layout.GetMetrics(&mut metrics)?;
+                text_layout.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+                text_layout.SetMaxWidth(metrics.widthIncludingTrailingWhitespace)?;
+                text_layout.SetReadingDirection(DWRITE_READING_DIRECTION_RIGHT_TO_LEFT)?;
             }
 
             let mut runs = Vec::new();
@@ -1983,7 +1994,8 @@ mod tests {
     use crate::directx_devices::DirectXDevices;
     use anyhow::Result;
     use gpui::{
-        DevicePixels, Font, PlatformTextSystem, RenderGlyphParams, Rgba, bounds, point, px, size,
+        DevicePixels, Font, FontRun, LineLayout, PlatformTextSystem, RenderGlyphParams, Rgba,
+        bounds, point, px, size,
     };
     use std::ffi::c_void;
     use windows::Win32::Graphics::Direct3D11::{
@@ -2181,6 +2193,58 @@ mod tests {
             &[0, 0, 0, 0],
             "uncovered texel retained the poison from the uninitialized render target"
         );
+        Ok(())
+    }
+    #[test]
+    fn a_right_to_left_line_is_a_right_to_left_paragraph_from_x_zero() -> Result<()> {
+        let devices = DirectXDevices::new()?;
+        let text_system = DirectWriteTextSystem::new(Some(&devices))?;
+        let font_id = text_system.font_id(&Font {
+            family: "Segoe UI".into(),
+            ..Default::default()
+        })?;
+        let layout = |text: &str| {
+            text_system.layout_line(
+                text,
+                px(16.),
+                &[FontRun {
+                    len: text.len(),
+                    font_id,
+                }],
+            )
+        };
+        let glyph_at = |layout: &LineLayout, index: usize| {
+            layout
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .find(|glyph| glyph.index == index)
+                .map(|glyph| glyph.id)
+        };
+        let brackets = layout("()");
+        let closing = glyph_at(&brackets, 1);
+        assert!(closing.is_some() && closing != glyph_at(&brackets, 0));
+        // in a right-to-left paragraph, the bracket between the Hebrew word and the English one is mirrored
+        let text = "\u{5e9}\u{5dc}\u{5d5}\u{5dd} (hello)";
+        let mixed = layout(text);
+        assert_eq!(
+            glyph_at(&mixed, text.find('(').unwrap_or_default()),
+            closing,
+            "{mixed:?}"
+        );
+        assert_eq!(
+            glyph_at(&mixed, text.find(')').unwrap_or_default()),
+            glyph_at(&brackets, 0),
+            "{mixed:?}"
+        );
+        for glyph in mixed.runs.iter().flat_map(|run| &run.glyphs) {
+            let x = glyph.position.x;
+            assert!(
+                x >= px(-0.5) && x < mixed.width,
+                "{glyph:?} of {:?}",
+                mixed.width
+            );
+        }
         Ok(())
     }
 }

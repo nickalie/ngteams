@@ -7,7 +7,7 @@ use std::ops::Range;
 
 use gpui::{
     AnyElement, App, ClipboardItem, FontStyle, HighlightStyle, InteractiveElement as _, IntoElement,
-    ParentElement as _, RenderOnce, SharedString, Styled as _, Window, div, rgb,
+    ParentElement as _, RenderOnce, SharedString, Styled as _, TextDirection, Window, div, rgb,
 };
 use gpui_component::Sizable as _;
 use teams_proto::chat::{Code, Token};
@@ -298,6 +298,9 @@ impl RenderOnce for CodeCard {
             .map(|theme| theme.mono_font_family.clone());
         div()
             .debug_selector(|| "rich-code".to_owned())
+            // code reads left to right, also in a right-to-left message
+            .text_left()
+            .text_direction(TextDirection::Ltr)
             .my_2()
             .w_full()
             .flex()

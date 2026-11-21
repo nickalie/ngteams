@@ -1243,15 +1243,8 @@ fn first_strong_rtl(blocks: &[Block]) -> Option<bool> {
 }
 
 /// Whether the first strong letter of `text` is right to left.
-#[must_use]
-pub fn text_strong_rtl(text: &str) -> Option<bool> {
-    use unicode_bidi::BidiClass;
-    text.chars()
-        .find_map(|character| match unicode_bidi::bidi_class(character) {
-            BidiClass::L => Some(false),
-            BidiClass::R | BidiClass::AL => Some(true),
-            _ => None,
-        })
+fn text_strong_rtl(text: &str) -> Option<bool> {
+    gpui::first_strong_direction(text).map(|direction| direction == TextDirection::Rtl)
 }
 
 /// The text direction of `rtl` text.
@@ -1468,10 +1461,12 @@ fn table_block(draw: &Draw<'_>, path: &mut Vec<usize>, table: &TableBlock) -> An
         .into_any_element()
 }
 
-/// The width of a list item's marker column, as a browser indents a list (its marker right-aligned before the item).
+/// The width of a list item's marker column, as a browser indents a list (its marker against the item, in the indent
+/// on the message's start side).
 const LIST_INDENT: f32 = 40.0;
 
-/// A list, as a browser draws one: each item a row of its marker, right-aligned in the list's indent, and its blocks.
+/// A list, as a browser draws one: each item a row of its marker, against the item in the list's indent, and its
+/// blocks. The indent is on the left of a left-to-right message and on the right of a right-to-left one.
 fn list_block(draw: &Draw<'_>, path: &mut Vec<usize>, list: &ListBlock) -> AnyElement {
     let rows: Vec<AnyElement> = list
         .items

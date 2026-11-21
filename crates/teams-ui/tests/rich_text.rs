@@ -1367,11 +1367,13 @@ fn a_message_takes_the_direction_of_its_first_strong_letter_as_teams_dir_auto_do
             "<blockquote itemtype=\"http://schema.skype.com/Forward\"><p>عربي</p></blockquote>",
             true,
         ),
+        ("<p>(12) ابت</p>", true),
+        ("<p>(12)</p><p>ابت</p>", true),
+        ("<p>(12)</p>", false),
+        ("<pre>let x = 1;</pre><p>ابت</p>", true),
     ] {
         assert_eq!(laid_out(content).right_to_left(), rtl, "{content}");
     }
-    assert_eq!(rich_text::text_strong_rtl("(12) ابت"), Some(true));
-    assert_eq!(rich_text::text_strong_rtl("(12)"), None);
 }
 
 #[test]
@@ -1395,6 +1397,41 @@ fn a_right_to_left_message_puts_its_list_markers_at_the_right() {
             );
         }
     }
+}
+
+/// The emoticon of `inline` drawn, its line, and the advance of each character of the test platform (0.6 em).
+fn drawn_emoticon(inline: &str) -> (gpui::Bounds<gpui::Pixels>, gpui::Bounds<gpui::Pixels>, gpui::Pixels) {
+    let rendered = Arc::new(laid_out(inline));
+    let app: &'static mut TestAppContext = Box::leak(Box::new(TestAppContext::single()));
+    let (_, cx) = app.add_window_view(|_, _| Holder { rendered });
+    cx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+    let advance = cx.update(|window, _| window.text_style().font_size.to_pixels(window.rem_size()) * 0.6);
+    let line = cx.debug_bounds("rich-text").expect("the line is drawn");
+    let drawn = cx.debug_bounds("rich-inline-emoticon").expect("the emoticon is drawn");
+    (drawn, line, advance)
+}
+
+#[test]
+fn an_emoticon_before_a_word_that_reads_the_other_way_stands_on_its_own_place() {
+    let smile = emoticon("smile", "\u{1f642}", 20);
+    // left to right: "hello" at the left, then the place's two spaces, then the Hebrew word
+    let (drawn, line, advance) = drawn_emoticon(&format!("<p>hello{smile}שלום</p>"));
+    let place = (line.left() + advance * 5.0)..(line.left() + advance * 7.0);
+    let middle = drawn.center().x;
+    assert!(
+        middle >= place.start - px(1.0) && middle <= place.end + px(1.0),
+        "{drawn:?} on {place:?} of {line:?}"
+    );
+    // right to left and aligned right: the Hebrew word at the right, then the place, then "hello" at its left
+    let (drawn, line, advance) = drawn_emoticon(&format!("<p>שלום{smile}hello</p>"));
+    let place = (line.right() - advance * 6.0)..(line.right() - advance * 4.0);
+    let middle = drawn.center().x;
+    assert!(
+        middle >= place.start - px(1.0) && middle <= place.end + px(1.0),
+        "{drawn:?} on {place:?} of {line:?}"
+    );
 }
 
 #[test]

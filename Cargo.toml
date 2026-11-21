@@ -272,8 +272,9 @@ cubecl = { version = "0.11.3", default-features = false, features = ["wgpu"] }
 # already links
 tracing = { version = "0.1.44", default-features = false }
 trybuild = "1.0.122"
-# the own server's search folds accents (NFKD), the version the workspace already links
+# teams-ui's stand-in bidi shaper (tests), the version GPUI's bidi patch and cosmic-text link
 unicode-bidi = "0.3.18"
+# the own server's search folds accents (NFKD), the version the workspace already links
 unicode-normalization = "0.1.26"
 url = "2.5.8"
 # The UI sandbox's virtual keyboard and pointer: a Wayland client of the nested niri, on the versions GPUI already
