@@ -72,8 +72,13 @@ impl User<'_> {
         self.ask("clear")?;
         if !thread {
             self.ask("close-thread")?;
+            // the post box widens a frame after the thread goes: Attach is found by its bounds
             return self.until("the thread closed", |state| {
-                state["thread"].is_null() && staged(&state["post"]).is_empty()
+                state["thread"].is_null()
+                    && staged(&state["post"]).is_empty()
+                    && state["post"]["bounds"][2]
+                        .as_f64()
+                        .is_some_and(|width| width >= f64::from(TOOLS_BESIDE_TEXT))
             });
         }
         self.until("both boxes empty", |state| {
