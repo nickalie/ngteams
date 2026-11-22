@@ -1,3 +1,5 @@
 # Preserve upstream source whitespace and unified patch context for reproducible vendoring.
 vendor/image-webp/** -whitespace
 build/patches/image-webp/*.patch -whitespace
+# The coverage audit hashes the bytes of Rust sources; keep them LF on every checkout.
+*.rs text eol=lf
