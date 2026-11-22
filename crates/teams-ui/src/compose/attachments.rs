@@ -268,6 +268,18 @@ impl Compose {
         .detach();
     }
 
+    /// Sends the channel files that the box still holds to the site's recycle bin when the box goes (its window
+    /// closed): no later box can remove them. The engine does the recycle when no box waits for its answer.
+    pub(super) fn recycle_left_channel_files(&mut self) {
+        for file in std::mem::take(&mut self.attachments) {
+            if let AttachmentState::Ready(uploaded) = file.state
+                && uploaded.channel().is_some()
+            {
+                drop(self.core.discard_channel_file(*uploaded));
+            }
+        }
+    }
+
     /// A recycle ended: a failure shows over the box, with the failures it already shows, and the box stays while it
     /// shows ([`Self::keeps_box`]).
     fn recycle_ended(&mut self, name: &str, recycled: bool, cx: &mut Context<Self>) {

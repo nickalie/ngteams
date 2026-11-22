@@ -23,7 +23,8 @@
 //!   When all sends succeed, the dialog closes and the shell says "You've shared <name>".
 //!   A recipient that the send cannot reach stays picked. The dialog removes successful recipients and shows an error.
 //! - **Access**: Microsoft links must have the `anonymous` scope. Other scopes and unknown permissions show an
-//!   access error. An own server grants access with the message.
+//!   access error. An own server grants access to a personal file with the message, and never to a channel's file
+//!   (`/sp/sites/`): such a file shows an access error.
 //! - **Retries** read each recipient's current outbox row and use [`Core::resend`]. An unknown outcome shows a warning first.
 //!   The message stays read-only while a share runs or a recipient keeps a Send row for retry.
 //!   Close, Escape and Copy link cannot stop an active share.
@@ -647,15 +648,8 @@ impl ShareFileDialog {
         if !self.can_share() || self.core.read_only() {
             return;
         }
-        if self.file.open_link().is_some_and(teams_proto::chat::is_file_link)
-            && self
-                .permission
-                .as_ref()
-                .is_none_or(|permission| permission.scope != "anonymous")
-        {
-            self.step = Step::Failed(
-                "These recipients may not have access. Use Share outside Teams to give them access first.".into(),
-            );
+        if let Some(problem) = self.access_problem() {
+            self.step = Step::Failed(problem.into());
             cx.notify();
             return;
         }
@@ -703,6 +697,22 @@ impl ShareFileDialog {
                 let _ = this.update(cx, |this, cx| this.shared(missed, retries, cx));
             }));
         cx.notify();
+    }
+
+    /// Why the recipients may not open the file, when they may not.
+    fn access_problem(&self) -> Option<&'static str> {
+        let link = self.file.open_link()?;
+        if teams_proto::chat::is_file_link(link) {
+            return self
+                .permission
+                .as_ref()
+                .is_none_or(|permission| permission.scope != "anonymous")
+                .then_some("These recipients may not have access. Use Share outside Teams to give them access first.");
+        }
+        // An own server grants nothing on a post that names a channel's file (docs/server.md).
+        url::Url::parse(link)
+            .is_ok_and(|url| url.path().starts_with("/sp/sites/"))
+            .then_some("These recipients may not have access. Only the people in the file's channel can open it.")
     }
 
     fn ready_to_retry(&mut self, refreshed: bool, confirmed: bool, cx: &mut Context<Self>) -> bool {

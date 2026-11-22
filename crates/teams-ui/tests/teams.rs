@@ -1861,6 +1861,42 @@ fn a_closed_threads_box_stays_and_holds_a_restart_while_its_recycles_run_and_nam
 }
 
 #[test]
+fn a_closed_windows_channel_boxes_send_their_uploaded_files_to_the_recycle_bin() {
+    let rig = rig();
+    let (shell, cx) = opened(&rig, Arc::new(ViewTrace::off()));
+    let dir = tempfile::tempdir().unwrap();
+    let file = |name: &str| {
+        let file = dir.path().join(name);
+        std::fs::write(&file, "synthetic").unwrap();
+        file
+    };
+    let posts = posts(&shell, cx);
+    let post_box = cx.update(|_, cx| posts.read(cx).compose().clone());
+    let posted = [file("made-up post.txt")];
+    cx.update(|window, cx| post_box.update(cx, |compose, cx| compose.attach_files(&posted, window, cx)));
+    click(cx, &format!("replies-{POST}"));
+    let (_, view) = thread(&shell, cx).expect("the thread opens");
+    let reply_box = cx.update(|_, cx| view.read(cx).compose().clone());
+    let replied = [file("made-up reply.txt")];
+    cx.update(|window, cx| reply_box.update(cx, |compose, cx| compose.attach_files(&replied, window, cx)));
+    cx.run_until_parked();
+    assert!(rig.core.discarded_files.lock().unwrap().is_empty());
+    drop((shell, posts, view, post_box, reply_box));
+    cx.update(|window, _| window.remove_window());
+    cx.run_until_parked();
+    let mut names: Vec<_> = rig
+        .core
+        .discarded_files
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|file| file.name().to_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["made-up post.txt", "made-up reply.txt"]);
+}
+
+#[test]
 fn a_closed_threads_box_stays_to_tell_a_failed_recycle_of_a_file_removed_while_it_uploaded() {
     let rig = rig();
     *rig.core.hold_uploads.lock().unwrap() = true;

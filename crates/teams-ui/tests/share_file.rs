@@ -858,6 +858,26 @@ fn an_own_servers_file_has_no_share_outside_teams() {
 }
 
 #[test]
+fn an_own_servers_channel_file_shows_an_access_error_and_sends_nothing() {
+    let rig = seeded();
+    let (shell, cx) = shell_window(&rig);
+    let link = "https://chat.example:8443/sp/sites/00000000-0000-4000-8000-00000000000a/Shared%20Documents/Made-up%20Releases/plan.pdf";
+    let entry = serde_json::json!({"@type": "http://schema.skype.com/File", "fileName": "plan.pdf", "fileType": "pdf",
+        "objectUrl": link, "fileInfo": {"shareUrl": link, "fileUrl": link}});
+    let file = teams_proto::chat::shared_files_any(Some(&serde_json::json!([entry])))
+        .files
+        .remove(0);
+    cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_share_file(file, window, cx)));
+    draw(cx);
+    pick(cx, "Bee");
+    click(cx, "share-file-share");
+    let dialog = shown_dialog(&shell, cx).unwrap();
+    assert!(cx.update(|_, cx| dialog.read(cx).problem().is_some()));
+    assert!(sends(&rig).is_empty());
+    assert!(cx.update(|_, cx| shell.read(cx).toast().is_none()));
+}
+
+#[test]
 fn the_message_is_formatted_as_the_compose_box_formats_it_and_sent_as_its_rich_text() {
     let (rig, _shell, dialog, cx) = opened();
     pick(cx, "Bee");

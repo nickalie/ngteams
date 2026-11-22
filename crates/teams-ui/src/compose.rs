@@ -871,6 +871,8 @@ impl Compose {
         // a picture pasted goes to the media service for this conversation, so a box that sends takes them
         editor.update(cx, |editor, _| editor.set_takes_pictures(note.is_none()));
         let correction = correction::Correction::new(cx);
+        cx.on_release(|this: &mut Self, _| this.recycle_left_channel_files())
+            .detach();
         Self {
             // a tracked handle is a stop of the keyboard only by its own flag, not by the div's
             send_focus: cx.focus_handle().tab_stop(true),
