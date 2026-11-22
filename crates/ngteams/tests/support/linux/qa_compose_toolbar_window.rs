@@ -184,7 +184,7 @@ fn wanted(name: &str) -> bool {
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
 /// The first run of the app: a new settings file, the AI features on.
-const FIRST: [Check; 25] = [
+const FIRST: [Check; 31] = [
     ("bar_and_ai_in_plus", bar_and_ai_in_plus),
     ("ai_rows_act", ai_rows_act),
     ("ai_keys_and_language", ai_keys_and_language),
@@ -209,6 +209,12 @@ const FIRST: [Check; 25] = [
     qa700::FIRST[6],
     qa721::FIRST[0],
     qa721::FIRST[1],
+    qa721::FIRST[2],
+    qa721::FIRST[3],
+    qa721::FIRST[4],
+    qa721::FIRST[5],
+    qa721::FIRST[6],
+    qa721::FIRST[7],
     ("hide_for_restart", hide_for_restart),
 ];
 
@@ -2327,6 +2333,10 @@ fn state_of(shell: &Entity<Shell>, window: &Window, cx: &App) -> Value {
             .map(|tool| tool.key())
             .collect::<Vec<_>>(),
         "ai": shell_ref.settings().read(cx).uses_ai(),
+        "keys_on": window.focused(cx).map(|handle| format!("{handle:?}")),
+        "list_focused": shell_ref
+            .chat()
+            .is_some_and(|chat| chat.read(cx).focus_handle().contains_focused(window, cx)),
     })
 }
 
