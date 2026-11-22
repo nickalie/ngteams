@@ -525,6 +525,8 @@ const DANGER_ACTIVE: u32 = 0x008e_192e;
 /// Teams' highlight of the match a search in a transcript shows now (its other matches take the palette's selection),
 /// the same in every theme as Teams draws it, with dark text on it.
 pub const SEARCH_MATCH: u32 = 0x00ff_b74d;
+/// Teams' yellow of a warning line over the message box (a file sent as a copy), mixed into each theme's background.
+pub const WARNING: u32 = 0x00f8_d22a;
 /// Teams' green: answering a call.
 pub const SUCCESS: u32 = 0x0023_7b4b;
 pub const SUCCESS_HOVER: u32 = 0x001e_6b41;

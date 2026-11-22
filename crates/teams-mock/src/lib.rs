@@ -100,6 +100,7 @@ mod apps;
 mod bots;
 mod calendar;
 mod calling;
+mod channel_files;
 mod channels;
 mod chatsvc;
 mod csa;
@@ -131,6 +132,7 @@ use wiremock::{Match, Mock, MockServer, Request, Respond, ResponseTemplate};
 pub use apps::{AppPlace, PRE_CONSENTED};
 pub use bots::{BotInvokeRecord, BotReply, bot_answer, extension_apps, extension_apps_answer};
 pub use calling::{ANSWERED_ELSEWHERE, CallPhase, Leg, MockCall, TIMED_OUT};
+pub use channel_files::{ChannelFile, SITE as CHANNEL_FILES_SITE};
 pub use channels::{ChannelWrite, NOT_ADDED};
 pub use fixtures::FixtureError;
 pub use front::Front;
@@ -1039,6 +1041,12 @@ impl ChatServiceMock {
         let conversation = world::created(&empty, &id, world::Kind::OneToOne, &[LAB_A, bot], time);
         state.conversations.push(conversation);
         Some(id)
+    }
+
+    /// The files uploaded into the mock's channels' folders, in the order made (`channel_files.rs`).
+    #[must_use]
+    pub fn channel_files(&self) -> Vec<ChannelFile> {
+        self.lock().channel_files.files.values().cloned().collect()
     }
 
     /// The channel writes the mock took, in order (`channels.rs`).

@@ -258,16 +258,8 @@ impl Compose {
                 .py_1()
                 .rounded_md()
                 .border_1()
-                .border_color(rgb(crate::theme::mix(
-                    palette.background,
-                    crate::theme::SEARCH_MATCH,
-                    0.5,
-                )))
-                .bg(rgb(crate::theme::mix(
-                    palette.background,
-                    crate::theme::SEARCH_MATCH,
-                    0.18,
-                )))
+                .border_color(rgb(crate::theme::mix(palette.background, crate::theme::WARNING, 0.55)))
+                .bg(rgb(crate::theme::mix(palette.background, crate::theme::WARNING, 0.2)))
                 .text_sm()
                 .text_color(rgb(palette.foreground))
                 .child(div().flex_1().min_w_0().child(COPY_NOTICE))

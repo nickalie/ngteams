@@ -404,6 +404,46 @@ async fn a_post_goes_to_the_channel_and_a_reply_to_its_posts_chain_both_stored_w
     assert_eq!(reacted.state, OutboxState::Sent, "{reacted:?}");
 }
 
+#[tokio::test]
+async fn a_file_goes_into_the_channels_folder_on_the_mocks_team_site_and_in_a_post() {
+    let rig = rig(false, Duration::from_mins(5)).await;
+    let requests = rig.handle.requests();
+    requests.sync_conversation(TEAM_CHANNEL).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("notes.txt");
+    std::fs::write(&path, b"made-up notes").unwrap();
+
+    let file = requests
+        .upload_channel_file(TEAM_CHANNEL.to_owned(), path.clone())
+        .await
+        .unwrap();
+    assert_eq!(file.name(), "notes.txt");
+    assert_eq!(file.size(), 13);
+    let posted = requests
+        .write(Action::Send {
+            conversation: TEAM_CHANNEL.to_owned(),
+            text: MessageText::plain("the notes").unwrap().with_files(vec![file]),
+        })
+        .await
+        .unwrap();
+    assert_eq!(posted.state, OutboxState::Sent, "{posted:?}");
+    // the name is taken now: the next goes as a numbered copy, and Remove recycles it
+    let copy = requests
+        .upload_channel_file(TEAM_CHANNEL.to_owned(), path)
+        .await
+        .unwrap();
+    assert_eq!(copy.name(), "notes 1.txt");
+    requests.discard_channel_file(copy).await.unwrap();
+
+    let files = rig.mock.channel_files();
+    assert_eq!(files.len(), 2, "{files:?}");
+    assert_eq!(files[0].path, "/sites/mockteam/Shared Documents/Channel/notes.txt");
+    assert_eq!(files[0].bytes, b"made-up notes");
+    assert!(!files[0].recycled);
+    assert_eq!(files[1].path, "/sites/mockteam/Shared Documents/Channel/notes 1.txt");
+    assert!(files[1].recycled);
+}
+
 /// A synthetic file named `name` in the made-up folder of `channel`.
 fn channel_file(channel: &str, name: &str) -> teams_proto::UploadedFile {
     let thread = serde_json::json!({"id": channel, "properties": {

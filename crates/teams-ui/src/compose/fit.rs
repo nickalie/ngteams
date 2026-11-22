@@ -162,13 +162,9 @@ pub(crate) fn fit(width: Option<Pixels>, rem: Pixels, tools: &[Tool]) -> Fit {
 }
 
 impl Compose {
-    /// The tools this box has, shown or hidden: the AI tools only while the AI features are on.
+    /// The tools this box has, shown or hidden, a channel's as a chat's: the AI tools only while the AI features are on.
     fn tools(&self, cx: &App) -> Vec<Tool> {
-        let mut tools = vec![Tool::Format, Tool::Emoji];
-        if self.writes_a_chat() {
-            tools.extend([Tool::Attach, Tool::Loop]);
-        }
-        tools.push(Tool::Apps);
+        let mut tools = vec![Tool::Format, Tool::Emoji, Tool::Attach, Tool::Loop, Tool::Apps];
         if crate::local_ai::enabled(cx) {
             tools.extend([Tool::Correct, Tool::Translate]);
         }

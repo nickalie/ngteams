@@ -230,8 +230,10 @@ fn a_channel_box_moves_only_the_tools_it_has() {
         assert!(shown(cx, row(tool)), "{tool} is in the menu of a channel's box");
     }
     for tool in ["compose-attach", "compose-loop"] {
-        assert!(!shown(cx, row(tool)), "{tool} is not in a channel's box");
-        assert!(!shown(cx, tool), "{tool} is not in a channel's box");
+        assert!(
+            shown(cx, row(tool)) || shown(cx, tool),
+            "{tool} is in a channel's box, as in Teams"
+        );
     }
     assert!(
         shown(cx, "compose-apps"),

@@ -279,6 +279,15 @@ pub(crate) fn thread_body(state: &State, conversation: &Conversation) -> Value {
         properties.insert("threadType".to_owned(), thread_type.clone());
         // what Manage team's settings read of a team's thread
         properties.insert("spaceAdminSettings".to_owned(), crate::team_pages::settings());
+        // its files' folder: a team's general channel's is General, another's its name
+        let folder = match (thread_type.as_str(), topic.as_str()) {
+            (Some("topic"), Some(name)) if !name.is_empty() && !name.contains(['/', '#', '%']) => name.to_owned(),
+            (Some("topic"), _) => "Channel".to_owned(),
+            _ => "General".to_owned(),
+        };
+        for (key, value) in crate::channel_files::thread_properties(&folder) {
+            properties.insert(key.to_owned(), value);
+        }
     }
     state.chat_value(&mut thread);
     thread

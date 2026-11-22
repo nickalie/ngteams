@@ -103,6 +103,8 @@ pub(crate) struct State {
     pub(crate) availability: Vec<crate::ups::OwnAvailability>,
     /// The channels made and the writes taken (`channels.rs`).
     pub(crate) channels: crate::channels::Channels,
+    /// The files of the channels' folders (`channel_files.rs`).
+    pub(crate) channel_files: crate::channel_files::ChannelFiles,
     /// The calling service's calls and the deliveries waiting for calling endpoints (`calling.rs`).
     pub(crate) calling: crate::calling::Calling,
     /// The calling service's media, once a test turned it on (`peers.rs`).
@@ -255,6 +257,7 @@ impl State {
             registrations: Vec::new(),
             availability: Vec::new(),
             channels: crate::channels::Channels::default(),
+            channel_files: crate::channel_files::ChannelFiles::default(),
             calling: crate::calling::Calling::default(),
             #[cfg(feature = "media")]
             peers: crate::peers::Peers::default(),

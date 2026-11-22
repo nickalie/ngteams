@@ -18,11 +18,13 @@
 //!   the chat list attaches nothing.
 //! - **A folder** and **a file over the limit**: their message, the other file still in. **A text drag** and a web
 //!   link are refused.
-//! - **A channel**: a drop on the post box and on the reply box says why, on that box alone. **An edit**: its message.
+//! - **A channel**: a drop on the reply box and on the post box uploads into the channel's folder on the mock's team
+//!   site, the highlight over that box alone; the same name again goes as a numbered copy, and the post names the
+//!   file. **An edit**: its message.
 //! - **Looks**: Teams Dark, a font of 20, a narrow window.
 //!
-//! The mock serves no OneDrive upload, so each staged file shows its upload error; the files' names are what is
-//! checked. `QA697_ONLY` (a comma list of check names) runs only those. `QA697_EVIDENCE` names a directory that gets
+//! The mock serves no OneDrive upload, so each file staged in a chat shows its upload error; the files' names are what
+//! is checked there. `QA697_ONLY` (a comma list of check names) runs only those. `QA697_EVIDENCE` names a directory that gets
 //! the screenshots and the results. Screenshots also go to `target/ui-shots/qa697-*.png`. Every name, id, file and
 //! text is made up. Without weston 15, niri or `dbus-daemon` it says so and passes, unless `GPUI_SMOKE_REQUIRE=1`.
 
@@ -98,7 +100,6 @@ const ON_THE_LIST: (u32, u32) = (200, 250);
 const TRANSFER_KEY: &str = "made-up-transfer-key";
 const FOLDER_PROBLEM: &str = "Folders can't be attached. Choose the files inside the folder.";
 const LIMIT_PROBLEM: &str = "Choose a file smaller than 250 MB.";
-const CHANNEL_PROBLEM: &str = "Files can't be shared in a channel from this app.";
 const EDIT_PROBLEM: &str = "Files can't be added to a message you edit. Send them in a new message.";
 
 pub(super) fn main() -> ExitCode {
@@ -1244,43 +1245,80 @@ fn text_refused(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// A channel's post box and a thread's reply box take no files and say why, each on the box the files were dropped
-/// on.
+/// Whether `boxed` holds exactly `names`, each uploaded.
+fn ready(boxed: &Value, names: &[&str]) -> bool {
+    staged(boxed) == names
+        && boxed["files"]
+            .as_array()
+            .is_some_and(|files| files.iter().all(|file| file["state"] == "ready"))
+}
+
+/// A channel's reply box and post box take files into the channel's folder on the team's site, each on the box the
+/// files were dropped on, the highlight over that box; the same name again goes as a numbered copy; the post names the
+/// file.
 fn channel_boxes(user: &mut User<'_>) -> SandboxResult {
+    const NAME: &str = "made-up for the channel.txt";
+    const COPY: &str = "made-up for the channel 1.txt";
     user.ask("theme-light")?;
     user.ask("open-channel")?;
     user.until("the channel", |state| state["post"]["bounds"].is_array())?;
     user.ask("clear")?;
     user.ask("open-thread")?;
     let state = user.until("the thread", |state| state["thread"]["bounds"].is_array())?;
-    let paths = user.made_up(&["made-up for the channel.txt"])?;
+    let paths = user.made_up(&[NAME])?;
     let held = user.hover(DOLPHIN, &paths, box_centre(&state["thread"])?, CALM)?;
-    let hover = user.state()?;
+    let hover = user.until("the reply box's highlight", |state| {
+        state["thread"]["drop_active"] == true
+    })?;
+    ensure(hover["post"]["drop_active"] != true, || {
+        format!("the post box lit up for the reply box: {hover}")
+    })?;
+    user.shot("channel-reply-hover")?;
     let seen = user.release(held)?;
-    let state = user.until("the reply box's message", |state| {
-        problem_of(&state["thread"]) == CHANNEL_PROBLEM
+    let state = user.until("the reply box's file", |state| ready(&state["thread"], &[NAME]))?;
+    say(&format!("  reply box: source {seen:?}"));
+    ensure(problem_of(&state["thread"]).is_empty(), || {
+        format!("the reply box said: {state}")
     })?;
-    say(&format!(
-        "  reply box: highlight {}, source {seen:?}",
-        hover["thread"]["drop_active"]
-    ));
-    ensure(problem_of(&state["post"]).is_empty(), || {
-        format!("the post box spoke for the reply box: {state}")
-    })?;
-    ensure(staged(&state["thread"]).is_empty(), || {
-        format!("the reply box took files: {state}")
+    ensure(staged(&state["post"]).is_empty(), || {
+        format!("the post box took the reply box's file: {state}")
     })?;
     thread::sleep(SETTLE);
     user.shot("channel-reply")?;
     let seen = user.drop_files(DOLPHIN, &paths, box_centre(&state["post"])?, CALM)?;
-    let state = user.until("the post box's message", |state| {
-        problem_of(&state["post"]) == CHANNEL_PROBLEM
-    })?;
-    ensure(staged(&state["post"]).is_empty(), || {
-        format!("the post box took files: {state}; source saw {seen:?}")
+    let state = user.until("the post box's copy", |state| ready(&state["post"], &[COPY]))?;
+    ensure(problem_of(&state["post"]).is_empty(), || {
+        format!("the post box said: {state}; source saw {seen:?}")
     })?;
     thread::sleep(SETTLE);
     user.shot("channel-post")?;
+    user.ask("theme-dark")?;
+    thread::sleep(SETTLE);
+    user.shot("channel-post-dark")?;
+    user.ask("theme-light")?;
+    let files: Vec<String> = user.mock.channel_files().into_iter().map(|file| file.path).collect();
+    ensure(
+        files
+            == [
+                format!("/sites/mockteam/Shared Documents/Channel/{NAME}"),
+                format!("/sites/mockteam/Shared Documents/Channel/{COPY}"),
+            ],
+        || format!("the channel's folder holds {files:?}"),
+    )?;
+    let mark = user.mark();
+    let at = user.on_screen(text_line(&state["post"])?);
+    user.click(at)?;
+    user.type_text(&format!("A made-up post {mark}"))?;
+    user.press("enter")?;
+    let posted = wait_until(WAIT, || {
+        let posts = user.posted_with(&mark);
+        (!posts.is_empty()).then_some(posts)
+    })
+    .ok_or("the mock got no post with the file")?;
+    ensure(
+        posted[0].contains(r#"\"serviceName\":\"teams\""#) && posted[0].contains(COPY),
+        || format!("the post doesn't name the channel file: {}", posted[0]),
+    )?;
     user.ask("close-thread")?;
     Ok(())
 }
