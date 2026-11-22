@@ -623,6 +623,16 @@ fn rooted_chat(rig: &Rig, width: f32) -> (Entity<Compose>, &'static mut VisualTe
 
 /// As [`rooted_chat`], with `settings`.
 fn rooted_chat_with(rig: &Rig, settings: Settings, width: f32) -> (Entity<Compose>, &'static mut VisualTestContext) {
+    let (_, compose, cx) = rooted_view(rig, settings, width);
+    (compose, cx)
+}
+
+/// As [`rooted_chat_with`], with the chat view.
+fn rooted_view(
+    rig: &Rig,
+    settings: Settings,
+    width: f32,
+) -> (Entity<ChatView>, Entity<Compose>, &'static mut VisualTestContext) {
     rig.cx.update(teams_ui::window::init);
     rig.cx.update(teams_ui::chat_view::init);
     let parts = parts::parts(rig, settings, Arc::new(ViewTrace::off()));
@@ -636,7 +646,7 @@ fn rooted_chat_with(rig: &Rig, settings: Settings, width: f32) -> (Entity<Compos
     draw(cx);
     let compose = view.read_with(cx, |view, _| view.compose().clone());
     focus_box(&compose, cx);
-    (compose, cx)
+    (view, compose, cx)
 }
 
 fn focus_box(compose: &Entity<Compose>, cx: &mut VisualTestContext) {
@@ -646,6 +656,19 @@ fn focus_box(compose: &Entity<Compose>, cx: &mut VisualTestContext) {
 
 fn box_focused(compose: &Entity<Compose>, cx: &mut VisualTestContext) -> bool {
     cx.update(|window, cx| compose.read(cx).focused(window, cx))
+}
+
+/// Enter on the control the keys are on: it clicks as the key goes up.
+fn key_click(cx: &mut VisualTestContext) {
+    cx.simulate_keystrokes("enter");
+    cx.simulate_event(gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse("enter").unwrap(),
+    });
+    draw(cx);
+}
+
+fn list_focused(view: &Entity<ChatView>, cx: &mut VisualTestContext) -> bool {
+    cx.update(|window, cx| view.read(cx).focus_handle().is_focused(window))
 }
 
 fn tools_focused(compose: &Entity<Compose>, cx: &mut VisualTestContext) -> bool {
@@ -677,6 +700,11 @@ fn round_by(key: &str, compose: &Entity<Compose>, cx: &mut VisualTestContext, li
 
 /// Each box the app draws: a chat's, a channel's post, a thread's reply, and a stacked one in a narrow window.
 fn each_box(test: impl Fn(&Entity<Compose>, &mut VisualTestContext, &str)) {
+    each_box_in(|_, compose, cx, which| test(compose, cx, which));
+}
+
+/// As [`each_box`], with the chat view the box is in.
+fn each_box_in(test: impl Fn(&Entity<ChatView>, &Entity<Compose>, &mut VisualTestContext, &str)) {
     for (width, writes) in [
         (900.0, None),
         (900.0, Some(Writes::Channel)),
@@ -684,7 +712,7 @@ fn each_box(test: impl Fn(&Entity<Compose>, &mut VisualTestContext, &str)) {
         (360.0, None),
     ] {
         let rig = Rig::start();
-        let (compose, cx) = rooted_chat(&rig, width);
+        let (view, compose, cx) = rooted_view(&rig, Settings::default(), width);
         if let Some(writes) = writes {
             compose.update(cx, |compose, cx| {
                 compose.in_channel(writes, "Message in A made-up channel", cx);
@@ -694,7 +722,7 @@ fn each_box(test: impl Fn(&Entity<Compose>, &mut VisualTestContext, &str)) {
         }
         let stacked = compose.read_with(cx, Compose::is_stacked);
         assert_eq!(stacked, width < 900.0, "{width} px");
-        test(&compose, cx, &format!("{writes:?} at {width} px"));
+        test(&view, &compose, cx, &format!("{writes:?} at {width} px"));
     }
 }
 
@@ -925,4 +953,86 @@ fn a_staged_file_s_buttons_come_between_the_text_and_the_tools() {
     assert!(!tools_focused(&compose, cx), "Tab from the tools, Send");
     press(cx, "shift-tab");
     assert_eq!(focused(cx), first, "Shift+Tab from Send, the tool the keys were on");
+}
+
+#[test]
+fn shift_tab_from_the_text_goes_to_the_message_list_and_tab_comes_back() {
+    each_box_in(|view, compose, cx, which| {
+        type_in(compose, cx, "a draft");
+        press(cx, "shift-tab");
+        assert!(
+            list_focused(view, cx),
+            "{which}: Shift+Tab from the text, the message list"
+        );
+        assert!(
+            cx.debug_bounds("chat-messages-ring").is_some(),
+            "{which}: the list ringed"
+        );
+        cx.simulate_mouse_move(gpui::point(px(3.0), px(3.0)), None, Modifiers::none());
+        draw(cx);
+        assert!(
+            cx.debug_bounds("chat-messages-ring").is_some(),
+            "{which}: the ring stays when the pointer moves"
+        );
+        press(cx, "tab");
+        assert!(cx.debug_bounds("chat-messages-ring").is_none(), "{which}: no ring");
+        assert!(box_focused(compose, cx), "{which}: Tab from the list, the text");
+        press(cx, "shift-tab");
+        press(cx, "shift-tab");
+        assert!(
+            !list_focused(view, cx) && !box_focused(compose, cx),
+            "{which}: Shift+Tab from the list leaves it"
+        );
+    });
+}
+
+#[test]
+fn shift_tab_from_an_open_format_bar_goes_to_the_message_list() {
+    let rig = Rig::start();
+    let (view, compose, cx) = rooted_view(&rig, Settings::default(), 900.0);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_expanded(window, cx)));
+    draw(cx);
+    focus_box(&compose, cx);
+    press(cx, "shift-tab");
+    press(cx, "shift-tab");
+    assert!(!list_focused(&view, cx), "Discard, then the format bar");
+    press(cx, "shift-tab");
+    assert!(list_focused(&view, cx), "then the message list");
+    assert!(cx.debug_bounds("chat-messages-ring").is_some());
+    click(cx, "chat-messages");
+    assert!(
+        list_focused(&view, cx) && cx.debug_bounds("chat-messages-ring").is_none(),
+        "a press in the list takes its ring off"
+    );
+    press(cx, "tab");
+    press(cx, "tab");
+    press(cx, "tab");
+    assert!(box_focused(&compose, cx), "the bar, Discard, then the text");
+}
+
+#[test]
+fn escape_in_the_emoji_picker_gives_the_keys_back_to_emoji() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    type_in(&compose, cx, "a draft");
+    press(cx, "tab");
+    press(cx, "right");
+    let emoji = focused(cx);
+    key_click(cx);
+    let picker = compose.read_with(cx, |compose, _| compose.emoji_picker().cloned());
+    assert!(picker.is_some(), "Enter on Emoji opens the picker");
+    press(cx, "escape");
+    assert!(compose.read_with(cx, |compose, _| compose.emoji_picker().is_none()));
+    assert_eq!(focused(cx), emoji, "Escape gives the keys back to Emoji");
+    // a pick puts the emoji in the text, the keys with it
+    key_click(cx);
+    let picker = compose
+        .read_with(cx, |compose, _| compose.emoji_picker().cloned())
+        .expect("the picker opens again");
+    let first = cx.update(|_, cx| picker.read(cx).rows(cx)[1][0].selector());
+    click(cx, first.leak());
+    assert!(compose.read_with(cx, |compose, _| compose.emoji_picker().is_none()));
+    assert!(box_focused(&compose, cx), "a pick gives the text the keys");
+    let text = compose.read_with(cx, |compose, cx| compose.value(cx).to_string());
+    assert!(text.starts_with("a draft") && text.len() > "a draft".len(), "{text}");
 }

@@ -24,7 +24,7 @@
 //!   account's last message ([`ComposeEvent::EditLast`], which the chat view carries out). Tab goes as in Teams: the
 //!   text, a staged file's buttons, the tools as one stop (Left, Right, Home and End move between them, and the keys
 //!   come back to the tool they were last on, [`keyboard::Row`]), then Send; expanded, the format bar (one stop too)
-//!   and Discard come before the text. Shift+Tab goes the same way back.
+//!   and Discard come before the text. Shift+Tab goes the same way back, and from the box to the chat's message list.
 //! - **Reply** ([`Compose::reply_to`]): the quoted message's id, sender, sender's name, time and a one-line preview of
 //!   its text, sent as the captured reply's quote (`reply.json`). **Edit** ([`Compose::edit`]): the message's rich
 //!   text loaded back into the editor ([`load`]) with its formats, its mentions as atoms again by their MRI, its quote
@@ -55,7 +55,8 @@
 //!   [`crate::stickers`]) goes in as Teams' box takes one: a picture sent to the media service at once, then named by
 //!   the message as a sticker when it is sent ([`crate::editor::pictures::Picture::sticker`]). One of Teams' own packs
 //!   ([`crate::stickers::teams`]) goes in once its picture is read, named by its address on Teams' sticker CDN and
-//!   never sent to the media service. A box that takes no picture offers no sticker.
+//!   never sent to the media service. A box that takes no picture offers no sticker. Escape closes the picker and
+//!   gives the keys back to the tool that opened it, else to the text; a pick gives them to the text.
 //!
 //! - **A channel's box** ([`Compose::in_channel`]): "Message in <channel>" posting to the channel, or a post's
 //!   thread's "Reply in thread" posting to the post's chain, with Teams' "Send to: thread only" over its text. It
@@ -1970,15 +1971,19 @@ impl Compose {
         let packs = crate::stickers::Shelf::of(self.settings.read(cx).stickers_dir(), cx);
         let stickers = self.editor.read(cx).takes_pictures();
         let picker = cx.new(|cx| FunPicker::new(Arc::clone(&self.core), packs, stickers, window, cx));
-        let events = cx.subscribe_in(&picker, window, |this, picker, event, window, cx| match event {
+        // the tool that opened the picker gets the keys back on Escape, as from a menu of the tools
+        let back_to = self.tools.drawn_on();
+        let events = cx.subscribe_in(&picker, window, move |this, picker, event, window, cx| match event {
             FunPickerEvent::Emoji(key) => this.put_emoji(key, window, cx),
             FunPickerEvent::Sticker(sticker) => this.put_sticker(sticker, window, cx),
             FunPickerEvent::Dismissed => {
-                // Escape gives the box its focus back; a click elsewhere keeps the focus where it went
+                // a click elsewhere keeps the focus where it went
                 let held = picker.read(cx).holds_focus(window, cx);
                 this.emoji = None;
-                if held {
-                    this.focus(window, cx);
+                match &back_to {
+                    Some(tool) if held => tool.focus(window, cx),
+                    _ if held => this.focus(window, cx),
+                    _ => {}
                 }
                 cx.notify();
             }

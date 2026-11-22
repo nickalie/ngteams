@@ -378,6 +378,9 @@ fn shift_tab_to_list(user: &mut User<'_>) -> SandboxResult {
     for key in ["chat", "narrow"] {
         user.open_box(key)?;
         let out = user.step("shift+tab")?;
+        if out["list_focused"] == true {
+            user.ring_shots(&format!("qa721-{key}-list-ring"))?;
+        }
         let back = user.step("tab")?;
         let refocused = main_box(&back)["focused"] == true;
         if !refocused {

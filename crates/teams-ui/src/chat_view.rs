@@ -45,7 +45,8 @@
 //!   typing, their message, or [`crate::models::TYPING_TIMEOUT`] after their last signal.
 //! - **Actions** on a message, under the pointer or selected with the keyboard (Up and Down, once the list has the
 //!   focus: Escape in the compose box with nothing to cancel there (no reply, edit or open picker) moves it there,
-//!   whatever the box holds, and Escape in the list with nothing open or selected moves it back): reply, react and
+//!   whatever the box holds, and Escape in the list with nothing open or selected moves it back; the list is also the
+//!   stop of Tab before the box, ringed while the keyboard is on it, as in Teams): reply, react and
 //!   copy text, and for the account's own message edit (not a forward's) and delete. They are on Teams' hover bar over
 //!   the bubble's top right ([`ChatView::hover_bar`]): the quick reactions (the account's most used,
 //!   [`Core::frequent_reactions`], then Teams' own: [`quick_reactions`]), react, edit, reply, and "More options" (copy
@@ -194,13 +195,17 @@ actions!(
         CopySelected,
         TranslateSelected,
         OpenSelectedMenu,
-        MarkUnreadSelected
+        MarkUnreadSelected,
+        BackFromBox
     ]
 );
 
 /// The message list's key context: its keys apply only while the list itself has the focus (never while compose's
 /// text area has it).
 pub const CONTEXT: &str = "ChatMessages";
+
+/// The key context of the compose box under the list: Shift+Tab from it that would go into the list stops on the list.
+const BOX_CONTEXT: &str = "ChatBox";
 /// A reaction drawn in the hover bar's quick reactions, px.
 const QUICK_EMOJI: f32 = 20.0;
 /// A button of the hover bar, px: a quick reaction's or an action's square.
@@ -344,6 +349,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("right", reactors::NextReaction, context),
         KeyBinding::new("left", reactors::PreviousReaction, context),
         KeyBinding::new("space", reactors::PressReaction, context),
+        KeyBinding::new("shift-tab", BackFromBox, Some(BOX_CONTEXT)),
     ]);
     // a bot card's input in the list takes its keys as text: the list's own keys are off there
     let input = Some(crate::card_view::INPUT_CONTEXT);
@@ -1177,7 +1183,7 @@ pub struct ChatView {
     bar_hovered: Option<String>,
     placed: Placed,
     selected: Option<String>,
-    focus: FocusHandle,
+    focus: ListFocus,
     traced: Option<Vec<Traced>>,
     typing_traced: bool,
     settings: Entity<SettingsModel>,
@@ -1245,6 +1251,42 @@ pub struct ChatView {
     quote: QuoteJump,
     /// The models' changes, the compose box's events, the window's activation and the presence model's changes.
     _subscriptions: [Subscription; 4],
+}
+
+/// The list's focus: a stop of Tab's order, as Teams' list is, so Shift+Tab from the box comes to it.
+struct ListFocus {
+    handle: FocusHandle,
+    /// How the list last took the keys, which its ring follows.
+    keys: ListKeys,
+}
+
+/// Whether the list has the keys, and from what: its ring shows from the keyboard until a press, as a browser's
+/// focus ring does (GPUI's own focus-visible goes off at any move of the pointer).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ListKeys {
+    Off,
+    Keyboard,
+    Pointer,
+}
+
+impl ListFocus {
+    fn new(cx: &mut App) -> Self {
+        Self {
+            handle: cx.focus_handle().tab_stop(true),
+            keys: ListKeys::Off,
+        }
+    }
+
+    /// As the list draws: whether it shows its ring.
+    fn ringed(&mut self, window: &Window) -> bool {
+        self.keys = match (self.handle.is_focused(window), self.keys) {
+            (false, _) => ListKeys::Off,
+            (true, ListKeys::Off) if window.last_input_was_keyboard() => ListKeys::Keyboard,
+            (true, ListKeys::Off) => ListKeys::Pointer,
+            (true, kept) => kept,
+        };
+        self.keys == ListKeys::Keyboard
+    }
 }
 
 /// A click on a reply's quote on its way to the quoted message, and the message it went to.
@@ -1375,7 +1417,7 @@ impl ChatView {
             bar_hovered: None,
             placed: Placed::default(),
             selected: None,
-            focus: cx.focus_handle(),
+            focus: ListFocus::new(cx),
             traced: None,
             typing_traced: false,
             settings: parts.settings,
@@ -1941,7 +1983,7 @@ impl ChatView {
     /// The message list's focus.
     #[must_use]
     pub fn focus_handle(&self) -> &FocusHandle {
-        &self.focus
+        &self.focus.handle
     }
 
     /// Who is typing now (not the account), by name where the store has one.
@@ -2197,13 +2239,13 @@ impl ChatView {
                 // the message the keys 1–4 act on is the one selected
                 self.select(Some(message.to_owned()), cx);
                 self.reacting = Some(message.to_owned());
-                self.focus.focus(window, cx);
+                self.focus.handle.focus(window, cx);
             }
             MessageAction::Delete => {
                 // the message Enter deletes is the one selected
                 self.select(Some(message.to_owned()), cx);
                 self.deleting = Some(message.to_owned());
-                self.focus.focus(window, cx);
+                self.focus.handle.focus(window, cx);
             }
             MessageAction::Copy => self.copy_text(message, cx),
             MessageAction::MarkUnread => self.mark_unread(message, cx),
@@ -2481,7 +2523,7 @@ impl ChatView {
                 ReactionPickerEvent::Picked(key) => this.toggle_reaction(&message, key, cx),
                 ReactionPickerEvent::Dismissed => {
                     this.more = None;
-                    if !held && !this.focus.contains_focused(window, cx) {
+                    if !held && !this.focus.handle.contains_focused(window, cx) {
                         this.reacting = None;
                     }
                 }
@@ -2562,8 +2604,63 @@ impl ChatView {
     /// Escape in the compose box with nothing to cancel there (no reply, edit or open picker; the box hands it on,
     /// whatever it holds): the message list takes the focus, so Up and Down select a message and its keys act on it.
     fn focus_messages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus.focus(window, cx);
+        self.focus.handle.focus(window, cx);
         cx.notify();
+    }
+
+    /// Teams' ring over the list while the keyboard is on it, drawn over the rows so it moves none of them.
+    fn list_ring(&mut self, palette: Palette, window: &Window) -> Option<gpui::Div> {
+        self.focus.ringed(window).then(|| {
+            div()
+                .debug_selector(|| "chat-messages-ring".to_owned())
+                .absolute()
+                .inset_0()
+                .rounded_md()
+                .border_2()
+                .border_color(rgb(palette.brand))
+        })
+    }
+
+    /// The message list: its rows, what shows over them, and its keys.
+    fn messages(&mut self, palette: Palette, window: &Window, cx: &mut Context<Self>) -> gpui::Div {
+        let rows = list(
+            self.list.clone(),
+            cx.processor(|this: &mut Self, index: usize, _window, cx| this.render_item(index, cx)),
+        )
+        .size_full()
+        .pb_3();
+        self.centre(cx);
+        let pill = self.jump_pill(cx);
+        let area = Rc::clone(&self.placed.messages);
+        let area_probe = canvas(move |bounds, _, _| area.set(Some(bounds)), |_, (), _, _| {})
+            .absolute()
+            .size_full();
+        let messages = reactors::reaction_keys(hover_bar_keys(div(), cx), cx)
+            .key_context(CONTEXT)
+            .track_focus(&self.focus.handle)
+            // a click in the messages leaves the focus where it is (the compose box, as in Teams): the list takes it
+            // only from the keyboard (Escape in the box) and from the actions that need its keys
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default());
+        Self::selection_actions(messages, cx)
+            .debug_selector(|| "chat-messages".to_owned())
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .child(area_probe)
+            .child(rows)
+            .children(self.bot_intro(palette))
+            .children(self.notes_intro(palette))
+            .children(pill)
+            .children(self.list_ring(palette, window))
+    }
+
+    /// Shift+Tab in the box goes to the stop before; one in the list gives the keys to the list itself, the one stop
+    /// before the box in Teams.
+    fn back_from_box(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_prev(cx);
+        if self.focus.handle.contains_focused(window, cx) {
+            self.focus_messages(window, cx);
+        }
     }
 
     /// Asks for the next older page (once the running load ends), even after loads that brought nothing, one that
@@ -6307,35 +6404,8 @@ impl Render for ChatView {
         let options = self.menus(palette, window, cx);
         let selection_menu = self.selection_menu(palette, window, cx);
         let reactors = self.reactors_card(palette, window, cx);
-        let rows = list(
-            self.list.clone(),
-            cx.processor(|this: &mut Self, index: usize, _window, cx| this.render_item(index, cx)),
-        )
-        .size_full()
-        .pb_3();
-        self.centre(cx);
-        let pill = self.jump_pill(cx);
-        let area = Rc::clone(&self.placed.messages);
-        let area_probe = canvas(move |bounds, _, _| area.set(Some(bounds)), |_, (), _, _| {})
-            .absolute()
-            .size_full();
+        let messages = self.messages(palette, window, cx);
         let typing = self.typing_line(palette, cx);
-        let messages = reactors::reaction_keys(hover_bar_keys(div(), cx), cx)
-            .key_context(CONTEXT)
-            .track_focus(&self.focus)
-            // a click in the messages leaves the focus where it is (the compose box, as in Teams): the list takes it
-            // only from the keyboard (Escape in the box) and from the actions that need its keys
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default());
-        let messages = Self::selection_actions(messages, cx)
-            .debug_selector(|| "chat-messages".to_owned())
-            .relative()
-            .flex_1()
-            .min_h_0()
-            .child(area_probe)
-            .child(rows)
-            .children(self.bot_intro(palette))
-            .children(self.notes_intro(palette))
-            .children(pill);
         Self::file_drop_target(cx)
             // Escape with a more-options menu open closes the menu first, as in Teams, wherever the focus is
             .capture_action(cx.listener(|this, _: &ComposeEscape, _, cx| {
@@ -6353,8 +6423,9 @@ impl Render for ChatView {
                 if event.button != MouseButton::Left {
                     return;
                 }
-                if !this.focus.is_focused(window) && !this.compose.read(cx).focused(window, cx) {
-                    this.focus.focus(window, cx);
+                this.focus.keys = ListKeys::Pointer;
+                if !this.focus.handle.is_focused(window) && !this.compose.read(cx).focused(window, cx) {
+                    this.focus.handle.focus(window, cx);
                 }
                 if !event.modifiers.shift && this.text_selection.clear() {
                     cx.notify();
@@ -6381,7 +6452,11 @@ impl Render for ChatView {
             .children(ChatTranslation::notice(&self.translation, palette, cx))
             .children(self.confirmation(palette, cx))
             .children(self.suggested_actions(palette, cx))
-            .child(compose)
+            .child(
+                compose
+                    .key_context(BOX_CONTEXT)
+                    .on_action(cx.listener(|this, _: &BackFromBox, window, cx| this.back_from_box(window, cx))),
+            )
             .children(more)
             .children(reactors)
             .children(options)
