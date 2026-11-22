@@ -711,6 +711,10 @@ pub struct Compose {
     sending_files: usize,
     /// Where the answers on their way go ([`Routes`]).
     routes: Routes,
+    /// Channel files on their way to the recycle bin.
+    recycling: usize,
+    /// What a failed recycle shows over the box, while it shows.
+    recycle_failed: Option<SharedString>,
     picker: Option<Picker>,
     /// The chat's members the picker offers, once read, and the bots people can mention there.
     candidates: Option<Vec<Candidate>>,
@@ -881,6 +885,8 @@ impl Compose {
             next_attachment: 0,
             sending_files: 0,
             routes: Routes::default(),
+            recycling: 0,
+            recycle_failed: None,
             picker: None,
             candidates: None,
             bots: BTreeMap::new(),
@@ -1107,13 +1113,17 @@ impl Compose {
             || matches!(self.mode, Mode::Reply(_))
     }
 
-    /// A chat keeps its editor alive while a local draft or upload remains, including across chat navigation.
+    /// A chat keeps its editor alive while a local draft or upload remains, including across chat navigation. A box
+    /// also stays while a channel file it let go is on its way to the recycle bin, and while it says that failed.
     pub(crate) fn has_draft(&self, cx: &App) -> bool {
         !self.editor.read(cx).is_empty()
             || self.mode != Mode::New
             || !self.attachments.is_empty()
             || !self.apps.cards.is_empty()
             || self.sending_files > 0
+            || !self.routes.files.is_empty()
+            || self.recycling > 0
+            || self.recycle_failed.is_some() && self.problem == self.recycle_failed
     }
 
     /// The rich-text editor the box writes with.
@@ -1170,8 +1180,9 @@ impl Compose {
 
     /// Discard: empties the box and ends a reply or an edit.
     pub fn discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // a send held for its translation would post the files recycled here
-        self.drop_translation_of(&self.mode.clone(), cx);
+        // a send held for its translation would post the files recycled here, also one made before a draft handoff
+        // changed the mode
+        self.drop_translation(cx);
         for file in std::mem::take(&mut self.attachments) {
             self.recycle_channel_file(file, cx);
         }

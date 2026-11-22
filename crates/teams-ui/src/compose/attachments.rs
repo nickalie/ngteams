@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, Context, InteractiveElement as _, IntoElement as _, ParentElement as _,
+    AnyElement, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, SharedString,
     StatefulInteractiveElement as _, Styled as _, div, px, rgb,
 };
 use gpui_component::Sizable as _;
@@ -212,18 +212,17 @@ impl Compose {
                     this.copy_notice |= file.is_copy_of(&chosen);
                     cx.notify();
                 }
+                if matches!(&answer, Some(Ok(uploaded)) if uploaded.channel().is_some()) {
+                    this.recycling += 1;
+                }
             });
             // removed while it uploaded: the team would see a file nobody posted
-            let late = match answer {
-                Some(Ok(uploaded)) if uploaded.channel().is_some() => {
-                    Some((uploaded.name().to_owned(), core.discard_channel_file(uploaded)))
-                }
-                _ => None,
-            };
-            if let Some((name, discarded)) = late
-                && discarded.await.is_err()
+            if let Some(Ok(uploaded)) = answer
+                && uploaded.channel().is_some()
             {
-                let _ = to.update(cx, |this, cx| this.show_problem(not_recycled(&name), cx));
+                let name = uploaded.name().to_owned();
+                let recycled = core.discard_channel_file(uploaded).await.is_ok();
+                let _ = to.update(cx, |this, cx| this.recycle_ended(&name, recycled, cx));
             }
         })
         .detach();
@@ -253,7 +252,7 @@ impl Compose {
 
     /// Sends a channel file the draft let go to its site's recycle bin, and says so when that fails. A file still
     /// uploading goes there when its upload ends ([`Self::upload_attachment`]).
-    pub(super) fn recycle_channel_file(&self, file: Attachment, cx: &mut Context<Self>) {
+    pub(super) fn recycle_channel_file(&mut self, file: Attachment, cx: &mut Context<Self>) {
         let AttachmentState::Ready(uploaded) = file.state else {
             return;
         };
@@ -261,14 +260,23 @@ impl Compose {
             return;
         }
         let discarded = self.core.discard_channel_file(*uploaded);
+        self.recycling += 1;
         cx.spawn(async move |this, cx| {
-            if discarded.await.is_err() {
-                let _ = this.update(cx, |this, cx| {
-                    this.show_problem(not_recycled(&file.name), cx);
-                });
-            }
+            let recycled = discarded.await.is_ok();
+            let _ = this.update(cx, |this, cx| this.recycle_ended(&file.name, recycled, cx));
         })
         .detach();
+    }
+
+    /// A recycle ended: a failure shows over the box, which stays while it shows ([`Self::has_draft`]).
+    fn recycle_ended(&mut self, name: &str, recycled: bool, cx: &mut Context<Self>) {
+        self.recycling = self.recycling.saturating_sub(1);
+        if !recycled {
+            let problem = SharedString::from(not_recycled(name));
+            self.recycle_failed = Some(problem.clone());
+            self.show_problem(problem, cx);
+        }
+        cx.notify();
     }
 
     /// Teams' notice over a channel's box once a file went to the channel's folder as a numbered copy.

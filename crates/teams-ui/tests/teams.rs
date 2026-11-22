@@ -1793,3 +1793,42 @@ fn a_workflows_card_post_is_drawn_as_its_card() {
     );
     assert_nothing_written(&rig);
 }
+
+#[test]
+fn a_closed_threads_box_stays_to_tell_a_failed_recycle_of_a_file_removed_while_it_uploaded() {
+    let rig = rig();
+    *rig.core.hold_uploads.lock().unwrap() = true;
+    *rig.core.discard_fails.lock().unwrap() = true;
+    let (shell, cx) = opened(&rig, Arc::new(ViewTrace::off()));
+    click(cx, &format!("replies-{POST}"));
+    let (_, view) = thread(&shell, cx).expect("the thread opens");
+    let compose = cx.update(|_, cx| view.read(cx).compose().clone());
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("made-up notes.txt");
+    std::fs::write(&file, "synthetic").unwrap();
+    cx.update(|window, cx| {
+        compose.update(cx, |compose, cx| {
+            compose.attach_files(std::slice::from_ref(&file), window, cx);
+        });
+    });
+    cx.run_until_parked();
+    let id = cx.update(|_, cx| compose.read(cx).attachments()[0].id);
+    cx.update(|_, cx| compose.update(cx, |compose, cx| compose.remove_attachment(id, cx)));
+    click(cx, "channel-thread-close");
+
+    rig.core
+        .held_uploads
+        .lock()
+        .unwrap()
+        .remove(0)
+        .send(Ok(common::channel_file(CHANNEL, "made-up notes.txt")));
+    cx.run_until_parked();
+    assert_eq!(rig.core.discarded_files.lock().unwrap().len(), 1);
+    click(cx, &format!("replies-{POST}"));
+    let (_, view) = thread(&shell, cx).expect("the thread opens again");
+    let reopened = cx.update(|_, cx| view.read(cx).compose().clone());
+    assert_eq!(
+        cx.update(|_, cx| reopened.read(cx).problem().cloned()).as_deref(),
+        Some("made-up notes.txt couldn't be removed from the channel's files.")
+    );
+}

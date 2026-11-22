@@ -139,6 +139,13 @@ impl Compose {
         }
     }
 
+    /// Calls off the translation of the send held, whatever it was made as (the box discarded): nothing of it is sent.
+    pub(super) fn drop_translation(&mut self, cx: &mut Context<Self>) {
+        if self.translated.running.take().is_some() {
+            cx.notify();
+        }
+    }
+
     /// The box emptied: what its last send said goes with it.
     pub(super) fn forget_untranslated(&mut self) {
         self.translated.failed = None;

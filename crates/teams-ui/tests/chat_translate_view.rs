@@ -383,7 +383,7 @@ fn held_channel_post(rig: &Rig, dir: &Path) -> (Entity<teams_ui::compose::Compos
     fs::write(&file, "synthetic").unwrap();
     cx.update(|window, cx| {
         compose.update(cx, |compose, cx| {
-            compose.attach_files(std::slice::from_ref(&file), window, cx)
+            compose.attach_files(std::slice::from_ref(&file), window, cx);
         });
     });
     draw(cx);
@@ -397,6 +397,37 @@ fn discard_during_a_held_channel_post_sends_nothing_and_recycles_its_file() {
     let rig = Rig::start();
     let dir = tempfile::tempdir().unwrap();
     let (compose, cx) = held_channel_post(&rig, dir.path());
+
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.discard(window, cx)));
+    cx.update(|_, cx| assert!(!compose.read(cx).translating()));
+    std::thread::sleep(Duration::from_millis(1_500));
+    draw(cx);
+    assert!(message_writes(&rig).is_empty(), "{:?}", message_writes(&rig));
+    assert_eq!(rig.core.discarded_files.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn discard_drops_a_held_post_after_a_handoff_made_the_box_a_reply() {
+    let rig = Rig::start();
+    let dir = tempfile::tempdir().unwrap();
+    let (compose, cx) = held_channel_post(&rig, dir.path());
+    let parts = parts::parts(&rig, Settings::default(), Arc::new(ViewTrace::off()));
+    let other = cx.update(|window, cx| {
+        compose.update(cx, |_, cx| {
+            ChatView::channel_box(&parts, CHANNEL, &Place::Channel, "Post in channel".into(), window, cx)
+        })
+    });
+    let quoted = teams_ui::compose::Quoted {
+        message_id: "1001".into(),
+        sender: LAB_B.into(),
+        sender_name: "Lab Bee".into(),
+        time: "1000".into(),
+        preview: "Hello".into(),
+        shown: None,
+    };
+    cx.update(|window, cx| other.update(cx, |other, cx| other.reply_to(quoted, window, cx)));
+    cx.update(|_, cx| other.update(cx, |other, cx| other.hand_draft_to(&compose, cx)));
+    cx.update(|_, cx| assert!(compose.read(cx).translating(), "the held post stays held"));
 
     cx.update(|window, cx| compose.update(cx, |compose, cx| compose.discard(window, cx)));
     cx.update(|_, cx| assert!(!compose.read(cx).translating()));
