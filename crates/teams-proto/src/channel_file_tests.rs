@@ -95,10 +95,6 @@ fn the_folder_is_the_channels_own_from_its_thread() {
         "channelDocsFolderRelativeUrl": "/sites/labteam/Shared Documents/General"}});
     assert!(ChannelFolder::from_thread_in(&cloud, CHANNEL, &other).is_none());
     assert!(ChannelFolder::from_thread_in(&cloud, "19:chat@thread.v2", &thread(&json!({}))).is_none());
-    assert!(ChannelThread::of("19:chat@thread.v2").is_none());
-    let read = ChannelThread::of(CHANNEL).unwrap();
-    assert_eq!(read.service(), Service::ChatService);
-    assert_eq!(read.endpoint().segments(), ["v1", "threads", CHANNEL]);
 }
 
 #[test]

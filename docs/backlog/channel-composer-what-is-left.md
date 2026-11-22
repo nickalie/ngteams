@@ -17,11 +17,10 @@ or a read nobody has made yet:
   `team-manage` run on such a team should post, reply in a thread and react in the web client, looking for anything it
   adds to a channel post (`subject`, `properties.announceViaEmail`, the chain's `conversationid`) that the chat's
   `SendMessage` leaves out.
-- **Files in a channel.** Teams puts a channel's files in its team's SharePoint folder (`sharepointChannelDocsFolder`
-  on the channel's thread), not the account's OneDrive, and shares them with the team. The box offers no Attach in a
-  channel and the engine refuses a channel message with files until that upload and its permissions are captured.
-  Files dropped on a channel's box get no "Share in this channel" highlight; the box says "Files can't be shared in a
-  channel from this app."
+- **Files in a channel: what is left.** Attach, drop and paste upload into the channel's folder on the team's site,
+  as Teams does ([channels.md](../protocol/channels.md#files-in-a-channel)). Teams' copy notice also offers "Reshare
+  older file instead", and its Attach menu "Attach cloud files" and "Browse Teams and Channels"; none of these was
+  captured. The toast "You've shared <file>" after the post isn't shown.
 - **Mentions in a channel.** The box's picker offers a chat's stored members; a channel stores none, so it offers
   nobody. Teams offers the team's people and the channel and the team themselves (`@channel`, `@team`).
 - **"Send to: thread and channel".** Teams' thread box can also post the reply to the channel; the app says "Send to:

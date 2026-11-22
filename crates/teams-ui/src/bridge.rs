@@ -54,6 +54,17 @@ pub trait Core: Send + Sync + 'static {
         let _ = path;
         Reply::ready(Err(teams_core::EngineError::FileUnavailable))
     }
+    /// A local file uploaded into the folder of `conversation`'s channel on its team's site, which the team reaches
+    /// without a share; the reply is the file the post names.
+    fn upload_channel_file(&self, conversation: String, path: std::path::PathBuf) -> Reply<teams_proto::UploadedFile> {
+        let _ = (conversation, path);
+        Reply::ready(Err(teams_core::EngineError::FileUnavailable))
+    }
+    /// A channel file that a draft let go (Remove), sent to its site's recycle bin as Teams does.
+    fn discard_channel_file(&self, file: teams_proto::UploadedFile) -> Reply<()> {
+        let _ = file;
+        Reply::ready(Err(teams_core::EngineError::FileUnavailable))
+    }
     /// A picture pasted into a message in `conversation`, sent to the media service readable by that conversation
     /// alone; the reply is its object's id, which the message's `<img>` names.
     fn upload_picture(&self, conversation: String, picture: teams_proto::PastedPicture) -> Reply<String> {
@@ -623,6 +634,14 @@ impl Core for EngineRequests {
 
     fn upload_file(&self, path: std::path::PathBuf) -> Reply<teams_proto::UploadedFile> {
         EngineRequests::upload_file(self, path)
+    }
+
+    fn upload_channel_file(&self, conversation: String, path: std::path::PathBuf) -> Reply<teams_proto::UploadedFile> {
+        EngineRequests::upload_channel_file(self, conversation, path)
+    }
+
+    fn discard_channel_file(&self, file: teams_proto::UploadedFile) -> Reply<()> {
+        EngineRequests::discard_channel_file(self, file)
     }
 
     fn upload_picture(&self, conversation: String, picture: teams_proto::PastedPicture) -> Reply<String> {

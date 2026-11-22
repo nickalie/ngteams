@@ -63,7 +63,7 @@ pub use attachment::{DriveSite, DriveWrite, MAX_ATTACHMENT_SIZE, OwnDrive, Uploa
 pub use bot::{
     BotInvoke, CardInvoke, CommandContext, ComposeCommand, DialogSize, InvokeAnswer, InvokeKind, TaskDialog,
 };
-pub use channel_file::{ChannelFileStep, ChannelFileWrite, ChannelFolder, ChannelThread, TeamSite};
+pub use channel_file::{ChannelFileStep, ChannelFileWrite, ChannelFolder, TeamSite};
 mod extensions;
 pub use extensions::{CommandParameter, ExtensionApp, ExtensionCommand, TaskInfo, extension_apps};
 mod urlp;

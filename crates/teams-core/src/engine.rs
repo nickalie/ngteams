@@ -777,6 +777,10 @@ impl<T> Answer<T> {
 /// A request to the engine's thread, with where its answer goes.
 enum Request {
     UploadFile(PathBuf, Responder<teams_proto::UploadedFile>),
+    /// A file uploaded into the folder of a conversation's channel (a post's chain is its channel's).
+    UploadChannelFile(String, PathBuf, Responder<teams_proto::UploadedFile>),
+    /// A channel file a draft let go, sent to its site's recycle bin.
+    DiscardChannelFile(teams_proto::UploadedFile, Responder<()>),
     /// A picture pasted into a message in a conversation, sent into an object only it may read: the object's id.
     UploadPicture(String, teams_proto::PastedPicture, Responder<String>),
     /// A person's profile card, by their MRI ([`crate::profile_card`]).
@@ -1085,6 +1089,18 @@ impl EngineRequests {
     /// Uploads a local file privately. Sharing waits for the message's Send action.
     pub fn upload_file(&self, path: PathBuf) -> Reply<teams_proto::UploadedFile> {
         self.ask(|reply| Request::UploadFile(path, reply))
+    }
+
+    /// Uploads the file at `path` into the folder of `conversation`'s channel on its team's site, as Teams' web client
+    /// does (`teams_proto::channel_file`), for a post or a reply there. A name the folder has already gets a number.
+    /// Nothing is posted; the team reaches the file through its site, so it is never shared.
+    pub fn upload_channel_file(&self, conversation: String, path: PathBuf) -> Reply<teams_proto::UploadedFile> {
+        self.ask(|reply| Request::UploadChannelFile(conversation, path, reply))
+    }
+
+    /// Sends a channel file that a draft let go (Remove) to its site's recycle bin, as Teams' web client does.
+    pub fn discard_channel_file(&self, file: teams_proto::UploadedFile) -> Reply<()> {
+        self.ask(|reply| Request::DiscardChannelFile(file, reply))
     }
 
     /// Sends a picture pasted into a message in `conversation` to the media service, readable by that conversation
@@ -2540,6 +2556,10 @@ where
     async fn on_request(&mut self, request: Request) {
         match request {
             Request::UploadFile(path, reply) => self.uploads.upload(path, reply),
+            Request::UploadChannelFile(conversation, path, reply) => {
+                self.uploads.upload_to_channel(conversation, path, reply);
+            }
+            Request::DiscardChannelFile(file, reply) => self.uploads.discard(file, reply),
             Request::UploadPicture(conversation, picture, reply) => self.uploads.picture(conversation, picture, reply),
             Request::MeetingContents(thread, reply) => self.recaps.contents(thread, reply),
             Request::MeetingTranscript(location, reply) => self.recaps.transcript(&location, reply),
@@ -3026,12 +3046,19 @@ where
                 if let Some((channel, post)) = teams_proto::reply_chain(&conversation) {
                     self.standing(channel, post)?;
                 }
-                // a channel's files go to its team's site, which this client doesn't upload to
-                if teams_proto::is_team_thread_id(teams_proto::stored_conversation(&conversation))
-                    && !text.files().is_empty()
-                {
+                // a channel's files are in its own folder, which its team reaches; a chat's are shared with its people
+                let channel = teams_proto::stored_conversation(&conversation);
+                let in_channel = teams_proto::is_team_thread_id(channel);
+                if text.files().iter().any(|file| {
+                    if in_channel {
+                        file.channel() != Some(channel)
+                    } else {
+                        file.channel().is_some()
+                    }
+                }) {
                     return Err(EngineError::Attachment {
-                        why: "Files can't be shared in a channel from this app.".to_owned(),
+                        why: "These files were attached somewhere else. Remove them and attach them again here."
+                            .to_owned(),
                     });
                 }
                 Command::Send { conversation, text }

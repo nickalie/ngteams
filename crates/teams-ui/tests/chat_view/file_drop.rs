@@ -156,13 +156,14 @@ fn a_folder_is_told_on_the_drop_while_the_files_with_it_go_in() {
 }
 
 #[test]
-fn a_channel_s_box_takes_no_files_and_says_why_on_the_drop() {
+fn a_channel_s_box_takes_files_into_the_channel_s_folder() {
     const CHANNEL: &str = "19:made-up-channel@thread.tacv2";
     let rig = rig_with(Vec::new());
     let parts = parts::parts(&rig, Settings::default(), Arc::new(ViewTrace::off()));
     let app: &'static mut gpui::TestAppContext = Box::leak(Box::new(rig.cx.clone()));
     let (view, cx) = app.add_window_view(|window, cx| {
         let compose = ChatView::channel_box(&parts, CHANNEL, &Place::Channel, "Post in channel".into(), window, cx);
+        compose.update(cx, |compose, cx| compose.name_channel("General", cx));
         ChatView::in_place(parts, CHANNEL.to_owned(), Place::Channel, compose, window, cx)
     });
     cx.simulate_resize(size(gpui::px(800.0), gpui::px(600.0)));
@@ -170,19 +171,61 @@ fn a_channel_s_box_takes_no_files_and_says_why_on_the_drop() {
     let compose = compose(&view, cx);
     type_draft(&compose, cx, "A made-up post");
     let dir = tempfile::tempdir().unwrap();
-    let files = made_up_files(dir.path(), &["made-up notes.txt"]);
-    let chat = cx.debug_bounds("chat-view").unwrap();
-
-    entered(cx, chat.center(), &files);
-    assert!(cx.debug_bounds("chat-file-drop-highlight").is_none());
-    dropped(cx, chat.center());
-
-    assert!(staged(&compose, cx).is_empty());
+    let files = made_up_files(dir.path(), &["made-up notes.txt", "made-up plan.docx"]);
+    let the_box = cx.debug_bounds("compose-box").unwrap();
+    let whole = cx.debug_bounds("compose").unwrap();
     assert_eq!(
-        problem(&compose, cx).as_deref(),
-        Some("Files can't be shared in a channel from this app.")
+        cx.update(|_, cx| compose.read(cx).drop_label()).as_ref(),
+        "Share in General"
     );
+
+    entered(cx, the_box.center(), &files);
+    let highlight = cx
+        .debug_bounds("chat-file-drop-highlight")
+        .expect("the box is highlighted");
+    assert!(
+        highlight.origin.y >= whole.origin.y - gpui::px(1.0),
+        "in a channel Teams covers only the box: {highlight:?} against {whole:?}"
+    );
+    rig.core
+        .channel_upload_names
+        .lock()
+        .unwrap()
+        .extend([String::new(), "made-up plan 1.docx".to_owned()]);
+    dropped(cx, the_box.center());
+    draw(cx);
+
+    assert_eq!(staged(&compose, cx), ["made-up notes.txt", "made-up plan 1.docx"]);
+    assert_eq!(problem(&compose, cx), None);
     assert_eq!(draft(&compose, cx), "A made-up post");
+    let uploads = rig.core.channel_uploads.lock().unwrap().clone();
+    assert_eq!(uploads.len(), 2);
+    assert!(uploads.iter().all(|(conversation, _)| conversation == CHANNEL));
+    assert!(
+        rig.core.uploads.lock().unwrap().is_empty(),
+        "nothing went to the account's own drive"
+    );
+    assert!(
+        cx.debug_bounds("compose-copy-notice").is_some(),
+        "the numbered copy is told as Teams tells it"
+    );
+
+    let remove = cx.debug_bounds("compose-attachment-remove-1").unwrap();
+    cx.simulate_click(remove.center(), gpui::Modifiers::none());
+    draw(cx);
+    assert_eq!(staged(&compose, cx), ["made-up notes.txt"]);
+    let discarded = rig.core.discarded_files.lock().unwrap().clone();
+    assert_eq!(discarded.len(), 1);
+    assert_eq!(discarded[0].name(), "made-up plan 1.docx");
+    assert_eq!(discarded[0].channel(), Some(CHANNEL));
+    assert!(
+        cx.debug_bounds("compose-copy-notice").is_some(),
+        "another channel file is still staged"
+    );
+    let close = cx.debug_bounds("compose-copy-notice-close").unwrap();
+    cx.simulate_click(close.center(), gpui::Modifiers::none());
+    draw(cx);
+    assert!(cx.debug_bounds("compose-copy-notice").is_none());
 }
 
 #[test]

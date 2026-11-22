@@ -67,10 +67,7 @@ impl Compose {
         if self.accepts_files() {
             self.attach_files(paths, window, cx);
         } else {
-            self.show_problem(
-                "Files can't be attached here. Paste a picture, or send the file in a chat.",
-                cx,
-            );
+            self.refuse_files(cx);
         }
     }
 }

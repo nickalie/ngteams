@@ -721,6 +721,10 @@ pub struct Compose {
     reading: Option<Task<()>>,
     /// What the last send couldn't do, shown over the box.
     problem: Option<SharedString>,
+    /// The channel's name a channel's box shares files in ([`Compose::name_channel`]).
+    channel_name: Option<SharedString>,
+    /// Whether a file went to the channel's folder as a numbered copy, its name being taken: Teams' notice over the box.
+    copy_notice: bool,
     /// A translated chat's sends ([`translated`]).
     translated: translated::Translated,
     /// What a read-only box says in place of its text area ([`READ_ONLY_APP`]); `None` for a box that writes.
@@ -883,6 +887,8 @@ impl Compose {
             asked_bots: BTreeSet::new(),
             reading: None,
             problem: None,
+            channel_name: None,
+            copy_notice: false,
             translated: translated::Translated::default(),
             writes: Writes::Chat,
             starting: None,
@@ -904,14 +910,35 @@ impl Compose {
     }
 
     /// The box made a channel's (`writes`: [`Writes::Channel`], its posts) or a post's thread's ([`Writes::Thread`],
-    /// its replies), saying `placeholder` while it is empty. It sends no typing (no capture showed a channel's) and
-    /// offers no file: a channel's files go to its team's site, which this app doesn't upload to.
+    /// its replies), saying `placeholder` while it is empty. It sends no typing (no capture showed a channel's); its
+    /// files go to the channel's folder on its team's site.
     pub fn in_channel(&mut self, writes: Writes, placeholder: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.writes = writes;
         let placeholder = placeholder.into();
         self.editor
             .update(cx, |editor, cx| editor.set_placeholder(placeholder, cx));
         cx.notify();
+    }
+
+    /// The channel the box's files are shared in, by its name: the drop highlight says "Share in <name>".
+    pub fn name_channel(&mut self, name: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.channel_name = Some(name.into()).filter(|name| !name.is_empty());
+        cx.notify();
+    }
+
+    /// What the drop highlight over the box says: "Share in this chat", or in a channel "Share in <channel>".
+    #[must_use]
+    pub fn drop_label(&self) -> SharedString {
+        match (&self.channel_name, self.writes_a_chat()) {
+            (Some(name), false) => format!("Share in {name}").into(),
+            _ => "Share in this chat".into(),
+        }
+    }
+
+    /// Whether the box writes to a channel's posts or a post's thread, whose files go to the channel's folder.
+    #[must_use]
+    pub fn writes_a_channel(&self) -> bool {
+        matches!(self.writes, Writes::Channel | Writes::Thread)
     }
 
     /// The box made New message's ([`Writes::NewChat`]): it offers what a chat's box offers, but sends no typing (there
@@ -1144,6 +1171,7 @@ impl Compose {
     /// Discard: empties the box and ends a reply or an edit.
     pub fn discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.attachments.clear();
+        self.copy_notice = false;
         self.editor.update(cx, super::editor::Editor::clear);
         if self.mode != Mode::New {
             self.cancel(window, cx);
@@ -1598,6 +1626,7 @@ impl Compose {
         self.forget_untranslated();
         self.mode = Mode::New;
         self.attachments.clear();
+        self.copy_notice = false;
         self.apps.cards.clear();
         self.picker = None;
         self.problem = None;
@@ -2483,6 +2512,7 @@ impl Render for Compose {
             .children(self.mode_bar(palette, cx))
             .children(self.translation_view(palette, cx))
             .children(self.problem_view(palette))
+            .children(self.copy_notice_view(palette, cx))
             .children(self.correction_view(palette, cx))
             .children(self.draft_translation_view(palette, cx))
             .child(self.input_box(palette, focused, cx));

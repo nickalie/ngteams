@@ -367,6 +367,31 @@ async fn a_post_goes_to_the_channel_and_a_reply_to_its_posts_chain_both_stored_w
             .await;
         assert!(matches!(refused, Err(EngineError::Attachment { .. })), "{refused:?}");
     }
+    // a file in the channel's own folder goes in a post and in a reply; one of another place is refused
+    let in_channel = channel_file(TEAM_CHANNEL, "notes.txt");
+    for conversation in [TEAM_CHANNEL.to_owned(), chain.clone()] {
+        let sent = requests
+            .write(Action::Send {
+                conversation,
+                text: text("a channel file").with_files(vec![in_channel.clone()]),
+            })
+            .await
+            .unwrap();
+        assert_eq!(sent.state, OutboxState::Sent, "{sent:?}");
+    }
+    let elsewhere = channel_file("19:another-made-up-channel@thread.tacv2", "notes.txt");
+    for (conversation, file) in [
+        (TEAM_CHANNEL.to_owned(), elsewhere),
+        ("19:made-up-group@thread.v2".to_owned(), in_channel),
+    ] {
+        let refused = requests
+            .write(Action::Send {
+                conversation,
+                text: text("a file of another place").with_files(vec![file]),
+            })
+            .await;
+        assert!(matches!(refused, Err(EngineError::Attachment { .. })), "{refused:?}");
+    }
     // a reaction on the reply goes to the channel, as a chat's
     let reacted = requests
         .write(Action::React {
@@ -377,4 +402,15 @@ async fn a_post_goes_to_the_channel_and_a_reply_to_its_posts_chain_both_stored_w
         .await
         .unwrap();
     assert_eq!(reacted.state, OutboxState::Sent, "{reacted:?}");
+}
+
+/// A synthetic file named `name` in the made-up folder of `channel`.
+fn channel_file(channel: &str, name: &str) -> teams_proto::UploadedFile {
+    let thread = serde_json::json!({"id": channel, "properties": {
+        "sharepointSiteUrl": "https://madeup.sharepoint.com/sites/madeupteam",
+        "channelDocsFolderRelativeUrl": "/sites/madeupteam/Shared Documents/General"}});
+    let folder = teams_proto::ChannelFolder::from_thread_in(&teams_proto::Cloud::Microsoft, channel, &thread).unwrap();
+    let body = serde_json::json!({"UniqueId": "00000000-0000-4000-8000-0000000000c1", "Name": name, "Length": "3",
+        "ServerRelativeUrl": format!("/sites/madeupteam/Shared Documents/General/{name}")});
+    teams_proto::channel_file::uploaded_file(&folder, body.to_string().as_bytes()).unwrap()
 }

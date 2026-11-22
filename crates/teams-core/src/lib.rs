@@ -48,6 +48,7 @@ pub use capabilities::Capabilities;
 pub mod calendar;
 pub mod calling;
 mod channel_admin;
+mod channel_files;
 pub mod channels;
 pub mod emoticons;
 pub mod engine;

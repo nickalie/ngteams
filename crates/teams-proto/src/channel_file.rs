@@ -10,8 +10,8 @@ use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::Value;
 use url::Url;
 
+use crate::Method;
 use crate::write::RawBody;
-use crate::{Endpoint, Method, Read, Service};
 
 /// What an `OData` string in a query is encoded with: all but the unreserved characters, as the web client sends it.
 const QUERY: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'.').remove(b'_').remove(b'~');
@@ -195,30 +195,6 @@ impl ChannelFolder {
         let mut url = self.file_by_id(file)?;
         url.set_query(Some("$select=ServerRelativeUrl,UniqueId"));
         Some(url)
-    }
-}
-
-/// The channel's thread on the chat service, read for its folder ([`ChannelFolder::from_thread_in`]).
-pub struct ChannelThread {
-    channel: String,
-}
-
-impl ChannelThread {
-    /// The read of `channel`'s thread; `None` for an id that isn't a team thread's.
-    #[must_use]
-    pub fn of(channel: &str) -> Option<Self> {
-        crate::is_team_thread_id(channel).then(|| Self {
-            channel: channel.to_owned(),
-        })
-    }
-}
-
-impl Read for ChannelThread {
-    fn service(&self) -> Service {
-        Service::ChatService
-    }
-    fn endpoint(&self) -> Endpoint {
-        Endpoint::new(["v1", "threads", self.channel.as_str()]).with_query("view", "msnp24Equivalent")
     }
 }
 

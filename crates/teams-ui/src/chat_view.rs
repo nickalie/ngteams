@@ -6086,6 +6086,13 @@ impl Render for ChatView {
         #[cfg(feature = "test-support")]
         self.placed.faces.borrow_mut().clear();
         let file_drop = self.file_drop_shown(cx);
+        // in a channel Teams covers only the box the files go to, and names the channel
+        let in_channel = self.compose.read(cx).writes_a_channel();
+        let label = self.compose.read(cx).drop_label();
+        let compose = div()
+            .relative()
+            .child(self.compose.clone())
+            .children((file_drop && in_channel).then(|| file_drop_overlay(palette, label.clone())));
         let more = self.more_overlay();
         let options = self.options_overlay(palette, window, cx);
         let selection_menu = self.selection_menu(palette, window, cx);
@@ -6164,18 +6171,18 @@ impl Render for ChatView {
             .children(ChatTranslation::notice(&self.translation, palette, cx))
             .children(self.confirmation(palette, cx))
             .children(self.suggested_actions(palette, cx))
-            .child(self.compose.clone())
+            .child(compose)
             .children(more)
             .children(reactors)
             .children(options)
             .children(selection_menu)
-            .children(file_drop.then(|| file_drop_overlay(palette)))
+            .children((file_drop && !in_channel).then(|| file_drop_overlay(palette, label)))
     }
 }
 
-/// Teams covers the conversation while a local file hovers it, leaving a clear drop target: its picture and "Share in
-/// this chat" in a frame of the brand's light stroke.
-fn file_drop_overlay(palette: Palette) -> impl IntoElement {
+/// Teams covers the conversation (in a channel, the box) while a local file hovers it, leaving a clear drop target: its
+/// picture and `label` ("Share in this chat", "Share in <channel>") in a frame of the brand's light stroke.
+fn file_drop_overlay(palette: Palette, label: SharedString) -> impl IntoElement {
     static PICTURE: std::sync::OnceLock<std::sync::Arc<gpui::Image>> = std::sync::OnceLock::new();
     let picture = std::sync::Arc::clone(PICTURE.get_or_init(|| {
         std::sync::Arc::new(gpui::Image::from_bytes(
@@ -6197,10 +6204,5 @@ fn file_drop_overlay(palette: Palette) -> impl IntoElement {
         .gap_2()
         .text_color(rgb(palette.foreground))
         .child(gpui::img(picture).size(px(52.0)))
-        .child(
-            div()
-                .text_xl()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child("Share in this chat"),
-        )
+        .child(div().text_xl().font_weight(gpui::FontWeight::SEMIBOLD).child(label))
 }

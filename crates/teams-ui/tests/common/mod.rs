@@ -54,6 +54,12 @@ pub struct FakeCore {
     pub hold_uploads: Mutex<bool>,
     pub held_uploads: Mutex<Vec<Answer<teams_proto::UploadedFile>>>,
     pub upload_answers: Mutex<VecDeque<Result<teams_proto::UploadedFile, EngineError>>>,
+    /// Every file uploaded to a channel's folder, with its conversation; answered by a file of that name in the
+    /// channel, renamed to `channel_upload_names`' next name when one is queued (an empty one keeps the file's own).
+    pub channel_uploads: Mutex<Vec<(String, std::path::PathBuf)>>,
+    pub channel_upload_names: Mutex<VecDeque<String>>,
+    /// Every channel file a draft let go, in order.
+    pub discarded_files: Mutex<Vec<teams_proto::UploadedFile>>,
     /// Every picture sent, with its conversation, in order; each answered from `picture_answers`, else an object of
     /// its own (`0-made-up-d1-<n>`).
     pub picture_uploads: Mutex<Vec<(String, teams_proto::PastedPicture)>>,
@@ -568,6 +574,24 @@ impl Core for FakeCore {
                 .pop_front()
                 .unwrap_or_else(|| Ok(uploaded_file(name))),
         )
+    }
+    fn upload_channel_file(&self, conversation: String, path: std::path::PathBuf) -> Reply<teams_proto::UploadedFile> {
+        locked(&self.channel_uploads).push((conversation.clone(), path.clone()));
+        // an empty queued name keeps the file's own
+        let queued = locked(&self.channel_upload_names)
+            .pop_front()
+            .filter(|name| !name.is_empty());
+        let name = queued.unwrap_or_else(|| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("made-up.txt")
+                .to_owned()
+        });
+        Reply::ready(Ok(channel_file(teams_proto::stored_conversation(&conversation), &name)))
+    }
+    fn discard_channel_file(&self, file: teams_proto::UploadedFile) -> Reply<()> {
+        locked(&self.discarded_files).push(file);
+        Reply::ready(Ok(()))
     }
     fn upload_picture(&self, conversation: String, picture: teams_proto::PastedPicture) -> Reply<String> {
         let mut uploads = locked(&self.picture_uploads);
@@ -1561,6 +1585,18 @@ pub fn uploaded_file(name: &str) -> teams_proto::UploadedFile {
         "parentReference":{"driveId":"made-up-drive"},
         "sharepointIds":{"listItemUniqueId":"00000000-0000-4000-8000-00000000000f"}});
     teams_proto::UploadedFile::from_upload(&site, body.to_string().as_bytes()).expect("synthetic upload")
+}
+
+/// A synthetic file named `name` in the made-up folder of `channel` (a team thread's id).
+pub fn channel_file(channel: &str, name: &str) -> teams_proto::UploadedFile {
+    let thread = serde_json::json!({"id": channel, "properties": {
+        "sharepointSiteUrl": "https://madeup.sharepoint.com/sites/madeupteam",
+        "channelDocsFolderRelativeUrl": "/sites/madeupteam/Shared Documents/General"}});
+    let folder = teams_proto::ChannelFolder::from_thread_in(&teams_proto::Cloud::Microsoft, channel, &thread)
+        .expect("synthetic folder");
+    let body = serde_json::json!({"UniqueId": "00000000-0000-4000-8000-0000000000c1", "Name": name, "Length": "54",
+        "ServerRelativeUrl": format!("/sites/madeupteam/Shared Documents/General/{name}")});
+    teams_proto::channel_file::uploaded_file(&folder, body.to_string().as_bytes()).expect("synthetic channel file")
 }
 
 /// Whether `count` was above zero, taking one off it.

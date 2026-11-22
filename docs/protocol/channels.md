@@ -254,10 +254,11 @@ compose boxes (`teams-ui`'s `chat_view` in its channel places, `channel_view`):
   outcome and syncs after the write in the channel (`teams_proto::stored_conversation`), never the chain.
 - **Edits, deletes and reactions** go to the message in the channel (`…/conversations/<channel>/messages/<id>…`), a
   post's and a reply's alike, as a chat's.
-- **Not written**: typing (no capture showed a channel's), the read horizon (a channel's view sends no read receipt), a
-  file (Teams puts a channel's files in its team's SharePoint folder, which this client doesn't upload to; the engine
-  refuses a channel message with files) and Teams' "Send to: thread and channel" (a reply also posted to the channel,
-  a write no capture showed: the thread's box says "Send to: thread only").
+- **Files**: uploaded into the channel's folder on its team's site, then named in the post or the reply
+  ([Files in a channel](#files-in-a-channel)).
+- **Not written**: typing (no capture showed a channel's), the read horizon (a channel's view sends no read receipt)
+  and Teams' "Send to: thread and channel" (a reply also posted to the channel, a write no capture showed: the
+  thread's box says "Send to: thread only").
 
 The native writes ran live on a lab team with one person (the lab account itself): the post answered 201 and read back
 naming itself as its chain's post; the reply posted to `<channel>;messageid=<post>/messages` answered 201 and read
@@ -265,6 +266,75 @@ back in the channel's messages under its post; a reaction on each and the reply'
 paths, answered 200. The web client's own shapes for these writes weren't captured yet (extra keys it may send are in
 the backlog); the mock (`teams-mock`) takes a channel's posts and stores a reply posted to a post's chain with the
 channel's messages, as the service did.
+
+## Files in a channel
+
+Seen 2026-11-22 in Teams on the web (`proto-lab run team-manage`, lab account a, a lab team whose only member is a,
+its General channel in the classic Posts layout). Lab account a attached a made-up text file to a new post and to a
+reply, dropped and pasted made-up files, attached a file whose name the folder had already, and removed one.
+
+**The folder.** A channel's files go into the channel's own folder in the document library of its team's SharePoint
+site, not into the account's OneDrive. The channel's thread on the chat service names the folder (`GET
+v1/threads/<channel>?view=msnp24Equivalent`, and the same keys in `childThreads`): `properties.sharepointSiteUrl`
+(`https://<tenant>.sharepoint.com/sites/<site>`), `sharepointRootLibrary` (`Shared Documents`),
+`sharepointChannelDocsFolder` (`General`, the folder's name) and `channelDocsFolderRelativeUrl` (the folder's
+server-relative path, `/sites/<site>/Shared Documents/General`). The provisioning service's channel list also gives
+the folder's address (`sharepointUrl`).
+
+**The upload.** Three `POST`s on the team's site, with a token for the site's origin (`https://<tenant>.sharepoint.com`)
+and the headers `accept: application/json`, `application: Teams_Web`, `scenario: ShareUploadFile`, `scenariotype: AUO`:
+
+1. `<site>/_api/web/GetFolderByServerRelativeUrl(@v)/Files/addStub(@fn)?@v='<folder path>'&@fn='<name>'` (no body):
+   an empty file of the name. 200 with the file (`SP.File`: `UniqueId`, `Name`, `ServerRelativeUrl`, `Length` `"0"`,
+   `TimeCreated`, …). When the folder has the name, 400 with `odata.error.code` `-2130575257,
+   Microsoft.SharePoint.SPException` ("A file with the name … already exists"); the web client then tries
+   `<name> 1.<extension>`, so a file never replaces another. The `OData` strings are in quotes and the query values are
+   percent-encoded (`%27%2Fsites%2F…%20Documents%2FGeneral%27`).
+2. `<site>/_api/web/GetFileById('<UniqueId>')/StartUpload(uploadId=guid'<a fresh GUID>')?@folder='<folder
+   path>'&@file='<name>'`, `content-type: application/octet-stream`, the file's bytes: 200, `{"value":"<bytes
+   taken>"}`.
+3. `<site>/_api/web/GetFileById('<UniqueId>')/FinishUpload(uploadId=guid'<the same GUID>',fileOffset=<length>)`, the
+   same `@folder` and `@file`, no body: 200 with the file, its `Length` now the file's.
+
+Then the web client reads the file's thumbnail from the site (`_api/v2.1/shares/u!<the file's address>/thumbnails/…`).
+Nothing is shared and no grant is written: the team reaches the file through its site.
+
+**The post.** The ordinary `POST v1/users/ME/conversations/<channel>/messages` (a reply: `<channel>;messageid=<post>`,
+the body with `replyChainId`), 201. `properties.files` is a JSON string of a list with one entry for each file:
+`itemid` and `id` the file's `UniqueId`; `fileName`, `title`, `fileType`, `type`; `fileInfo` with `itemId` `null`,
+`fileUrl` (the site's origin and the server-relative path, the spaces not encoded), `siteUrl` (the site, no `/` at
+the end), an empty `serverRelativeUrl`, `shareUrl` and `shareId` `null`; `fileChicletState` `serviceName` `teams`,
+`state` `active`; `baseUrl` (the site) and `objectUrl` (as `fileUrl`); `permissionScope`, `sharepointIds`,
+`publication`, `site`, `altText`, `isUploadError`, `progressComplete` `null`; `version` `2`; an empty `filePreview`.
+A new post also had `postType` `Standard`, `subject` `""` and `crossPostChannels` `[]`. The push frames of the post
+added `properties.atp` (the file's address, encoded).
+
+**What the web client shows.**
+
+- "Attach files" (a paper clip, in a new post's box and in the reply box) opens a menu: "Attach cloud files", "Browse
+  Teams and Channels", "Upload from this device".
+- The box shows a card for each file: the type's icon, the name in bold and a remove mark (X) in its header, then a
+  preview (a text file's first lines). While the file uploads, a thin line under the header shows the progress.
+- After the post, a toast at the bottom left says "You've shared <file name>". The post shows the card with Share and
+  "More options".
+- A file dragged over a channel's box highlights the box alone (not the whole channel): the drop picture and "Share
+  in <channel name>" ("Share in General").
+- A file dropped with no file data (a made-up drop) gave the red line "Some files couldn't be uploaded because they're
+  missing necessary data" over the box, with a close mark.
+- A pasted file that isn't a picture attaches nothing, as in a chat.
+- A file whose name the folder had got the yellow line "Uploading a copy because a file with the same name is shared
+  in this channel." with "Reshare older file instead" and a close mark; the card had the numbered name.
+- Remove (X) on a card sends the uploaded file to the site's recycle bin: `DELETE
+  <site>/_api/web/GetFileById('<UniqueId>')/recycle`, 200.
+
+**The native client** (`teams_proto::channel_file`, `teams-core`'s `channel_files`) uploads the same way: it reads the
+folder from the channel's thread, takes only a tenant site (`/sites/` or `/teams/`, never a personal site) and a folder
+inside it, and sends `addStub` (numbered as the web client numbers it while the name is taken), `StartUpload` with all
+the bytes and `FinishUpload`, each once through the outbox. Before each write the transport reads the channel's thread
+again and refuses a write whose folder isn't the channel's now; before a write that names a file, it reads the file by
+its id and refuses one that isn't right in that folder. A failed step after `addStub` recycles the empty file. Remove
+recycles the file. The engine takes a channel file only in a post or a reply of its own channel, and an own-drive file
+only in a chat. It shows Teams' copy notice without "Reshare older file instead" (that action wasn't captured).
 
 ## Managing an existing channel
 

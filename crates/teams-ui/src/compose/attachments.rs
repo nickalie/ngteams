@@ -16,6 +16,9 @@ use crate::files::{kind_colour, kind_glyph};
 use crate::icons::{Glyph, icon_button, selected_by};
 use crate::theme::Palette;
 
+/// What Teams says over a channel's box when a file went to the channel's folder as a numbered copy.
+pub const COPY_NOTICE: &str = "Uploading a copy because a file with the same name is shared in this channel.";
+
 /// A local file waiting for Send, kept apart from the editor's rich text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attachment {
@@ -115,20 +118,19 @@ impl Compose {
     /// Says why files dropped on a box that takes none stay out ([`Compose::accepts_files`]); the read-only box says
     /// so already.
     pub fn refuse_files(&mut self, cx: &mut Context<Self>) {
-        let why = if self.read_only.is_some() {
+        if self.read_only.is_some() {
             return;
-        } else if matches!(self.mode, super::Mode::Edit { .. }) {
-            "Files can't be added to a message you edit. Send them in a new message."
-        } else {
-            "Files can't be shared in a channel from this app."
-        };
-        self.show_problem(why, cx);
+        }
+        self.show_problem(
+            "Files can't be added to a message you edit. Send them in a new message.",
+            cx,
+        );
     }
 
-    /// Files belong to new messages and replies; an existing message's files aren't edited here.
+    /// Files belong to new messages, posts and replies; an existing message's files aren't edited here.
     #[must_use]
     pub fn accepts_files(&self) -> bool {
-        self.read_only.is_none() && self.writes_a_chat() && !matches!(self.mode, super::Mode::Edit { .. })
+        self.read_only.is_none() && !matches!(self.mode, super::Mode::Edit { .. })
     }
 
     #[must_use]
@@ -170,11 +172,18 @@ impl Compose {
     }
 
     fn upload_attachment(&mut self, id: u64, cx: &mut Context<Self>) {
+        let in_channel = self.writes_a_channel();
         let Some(file) = self.attachments.iter_mut().find(|file| file.id == id) else {
             return;
         };
         file.state = AttachmentState::Uploading;
-        let reply = self.core.upload_file(file.path.clone());
+        let chosen = file.name.clone();
+        let reply = if in_channel {
+            self.core
+                .upload_channel_file(self.conversation.clone(), file.path.clone())
+        } else {
+            self.core.upload_file(file.path.clone())
+        };
         let route: super::Route<u64> = Rc::new(RefCell::new((cx.weak_entity(), id)));
         self.routes.files.insert(id, Rc::clone(&route));
         cx.spawn(async move |_, cx| {
@@ -187,12 +196,84 @@ impl Compose {
                 }
                 if let Some(file) = this.attachments.iter_mut().find(|file| file.id == id) {
                     file.complete(answer);
+                    // the folder had the name: Teams says the file went as a copy
+                    if matches!(&file.state, AttachmentState::Ready(uploaded) if uploaded.channel().is_some() && uploaded.name() != chosen) {
+                        this.copy_notice = true;
+                    }
                     cx.notify();
                 }
             });
         })
         .detach();
         cx.notify();
+    }
+
+    /// Takes a file out of the draft. A channel file already in the channel's folder goes to its site's recycle bin,
+    /// as Teams' Remove sends it: otherwise the team would see a file nobody posted.
+    pub fn remove_attachment(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(index) = self.attachments.iter().position(|file| file.id == id) else {
+            return;
+        };
+        let file = self.attachments.remove(index);
+        if let AttachmentState::Ready(uploaded) = file.state
+            && uploaded.channel().is_some()
+        {
+            let discarded = self.core.discard_channel_file(uploaded);
+            cx.spawn(async move |_, _| {
+                let _ = discarded.await;
+            })
+            .detach();
+        }
+        if !self
+            .attachments
+            .iter()
+            .any(|file| matches!(&file.state, AttachmentState::Ready(uploaded) if uploaded.channel().is_some()))
+        {
+            self.copy_notice = false;
+        }
+        cx.notify();
+    }
+
+    /// Teams' notice over a channel's box once a file went to the channel's folder as a numbered copy.
+    pub(super) fn copy_notice_view(&self, palette: Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.copy_notice {
+            return None;
+        }
+        let close = selected_by(
+            "compose-copy-notice-close",
+            icon_button("compose-copy-notice-close", Glyph::X, "Close")
+                .xsmall()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.copy_notice = false;
+                    cx.notify();
+                })),
+        );
+        Some(
+            div()
+                .debug_selector(|| "compose-copy-notice".to_owned())
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(crate::theme::mix(
+                    palette.background,
+                    crate::theme::SEARCH_MATCH,
+                    0.5,
+                )))
+                .bg(rgb(crate::theme::mix(
+                    palette.background,
+                    crate::theme::SEARCH_MATCH,
+                    0.18,
+                )))
+                .text_sm()
+                .text_color(rgb(palette.foreground))
+                .child(div().flex_1().min_w_0().child(COPY_NOTICE))
+                .child(close)
+                .into_any_element(),
+        )
     }
 
     pub(super) fn files_ready(&self) -> bool {
@@ -273,9 +354,8 @@ impl Compose {
             icon_button(("attachment-remove", index), Glyph::X, "Remove attachment")
                 .xsmall()
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    this.attachments.retain(|file| file.id != id);
+                    this.remove_attachment(id, cx);
                     this.focus(window, cx);
-                    cx.notify();
                 })),
         );
         let retry = matches!(file.state, AttachmentState::Failed(_)).then(|| {

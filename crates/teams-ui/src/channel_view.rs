@@ -123,6 +123,7 @@ impl ChannelView {
             let placeholder = compose::channel_placeholder(&name).into();
             ChatView::channel_box(&parts, &channel, &Place::Channel, placeholder, window, cx)
         });
+        compose.update(cx, |compose, cx| compose.name_channel(name.clone(), cx));
         let posts = {
             let (parts, channel) = (parts.clone(), channel.clone());
             cx.new(|cx| ChatView::in_place(parts, channel, Place::Channel, compose, window, cx))
@@ -189,6 +190,10 @@ impl ChannelView {
                 compose.update(cx, |compose, cx| {
                     compose.in_channel(compose::Writes::Channel, placeholder, cx);
                 });
+                for view in self.views() {
+                    let compose = view.read(cx).compose().clone();
+                    compose.update(cx, |compose, cx| compose.name_channel(channel.clone(), cx));
+                }
             }
             for view in self.views() {
                 let (team, channel) = (team.clone(), channel.clone());
@@ -273,6 +278,7 @@ impl ChannelView {
             view.update(cx, |view, cx| view.set_channel_place(team, channel, cx));
         }
         let compose = view.read(cx).compose().clone();
+        compose.update(cx, |compose, cx| compose.name_channel(self.name.clone(), cx));
         compose.update(cx, |compose, cx| compose.focus(window, cx));
         let events = Self::follow(&view, window, cx);
         self.thread = Some(Thread {

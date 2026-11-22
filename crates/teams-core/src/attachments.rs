@@ -47,6 +47,31 @@ where
         });
     }
 
+    /// A file uploaded into the folder of `conversation`'s channel ([`crate::channel_files`]).
+    pub(crate) fn upload_to_channel(&self, conversation: String, path: PathBuf, reply: Responder<UploadedFile>) {
+        let client = Arc::clone(&self.client);
+        let outbox = Arc::clone(&self.outbox);
+        let slots = Arc::clone(&self.slots);
+        tokio::task::spawn_local(async move {
+            let Ok(_slot) = slots.acquire_owned().await else {
+                let _ = reply.send(Err(EngineError::Stopped));
+                return;
+            };
+            let answer = crate::channel_files::upload(&client, &outbox, &conversation, path).await;
+            let _ = reply.send(answer);
+        });
+    }
+
+    /// A channel file a draft let go, sent to its site's recycle bin ([`crate::channel_files`]).
+    pub(crate) fn discard(&self, file: UploadedFile, reply: Responder<()>) {
+        let client = Arc::clone(&self.client);
+        let outbox = Arc::clone(&self.outbox);
+        tokio::task::spawn_local(async move {
+            let answer = crate::channel_files::discard(&client, &outbox, &file).await;
+            let _ = reply.send(answer);
+        });
+    }
+
     /// A picture pasted into a message in `conversation`, sent as Teams' web client sends one: an object only that
     /// conversation may read, then the picture's bytes into it. The answer is the object's id, which the message's
     /// `<img>` names. Each write goes through the outbox once, again only as [`CallRetries`] allows (a `401`, a short
@@ -71,8 +96,12 @@ where
     }
 
     pub(crate) async fn share(&self, chat: &str, files: &[UploadedFile]) -> Result<(), EngineError> {
-        // the account's own notes have nobody but the account, who owns the file already
-        if files.is_empty() || chat == crate::NOTES {
+        // the account's own notes have nobody but the account, who owns the file already; a channel's files are in
+        // its team's folder, which the team reaches already
+        if files.is_empty()
+            || chat == crate::NOTES
+            || teams_proto::is_team_thread_id(teams_proto::stored_conversation(chat))
+        {
             return Ok(());
         }
         let (recipients, people) = recipients(&self.client, chat, self.outbox.me().mri()).await?;
@@ -207,7 +236,7 @@ async fn verify_owner<C: Credentials>(
     Ok(())
 }
 
-fn read_file(path: &std::path::Path) -> Result<(String, Vec<u8>), EngineError> {
+pub(crate) fn read_file(path: &std::path::Path) -> Result<(String, Vec<u8>), EngineError> {
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
