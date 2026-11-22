@@ -25,6 +25,8 @@ pub const CUSTOMIZE: &str = "Customize";
 /// The list while it is open: on which message's bar, and where the focus goes back to.
 pub(super) struct BarCustomize {
     list: CustomizeList,
+    /// The rows as the list opened: a click or a key resolves its row against what the list shows.
+    rows: Vec<Option<BarItem>>,
     /// The message whose bar stays shown while the list is open.
     pub(super) message: String,
     back: keyboard::Return,
@@ -137,6 +139,7 @@ impl ChatView {
         self.side_list = None;
         self.bar_customize = Some(BarCustomize {
             list: CustomizeList::open(at, anchor, window, cx),
+            rows: rows(&self.quick),
             message: message.to_owned(),
             back,
         });
@@ -167,11 +170,13 @@ impl ChatView {
     }
 
     /// The list over the window, where it opened (`message-customize-menu`): a row with a check for each button that
-    /// can hide (the quick reactions in their order now), then "More options", checked and off.
+    /// can hide (the quick reactions in their order when it opened), then "More options", checked and off.
     pub(super) fn bar_customize_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let open = self.bar_customize.as_ref()?;
-        let lines = rows(&self.quick)
-            .into_iter()
+        let lines = open
+            .rows
+            .iter()
+            .copied()
             .map(|item| {
                 let (key, icon, label): (SharedString, AnyElement, SharedString) = match item {
                     Some(item) => {
@@ -263,11 +268,18 @@ impl Customizable for ChatView {
     }
 
     fn customize_takes(&self, _: &App) -> Vec<bool> {
-        rows(&self.quick).into_iter().map(|item| item.is_some()).collect()
+        self.bar_customize
+            .as_ref()
+            .map(|open| open.rows.iter().map(Option::is_some).collect())
+            .unwrap_or_default()
     }
 
     fn customize_toggle(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(item) = rows(&self.quick).into_iter().nth(ix).flatten() else {
+        let Some(item) = self
+            .bar_customize
+            .as_ref()
+            .and_then(|open| open.rows.get(ix).copied().flatten())
+        else {
             return;
         };
         let shown = self.bar_shows(item, cx);

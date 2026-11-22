@@ -1177,7 +1177,8 @@ impl Walk<'_> {
             &ids.english,
             &["slot:1", "slot:1", "react", "copy", "mark-unread"],
         )?;
-        self.hidden_stays_hidden("chat", &ids.english, "after reactions from the bar")?;
+        let before = quick(&state);
+        self.hidden_stays_hidden("chat", &ids.english, "after reactions from the bar", Some(&before))?;
         let state = self.run.state("chat")?;
         let own = with_quick(&state, Some(HIDDEN), &["react", "edit", "copy", "mark-unread", "more"]);
         self.check_bar("chat", &ids.own, &own, "the chosen bar on a's own message")?;
@@ -1191,11 +1192,17 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// Heart stays hidden in any order of the quick reactions, and the bar of `id` shows each other one.
-    fn hidden_stays_hidden(&mut self, view: &str, id: &str, what: &str) -> SandboxResult {
+    /// Heart stays hidden in any order of the quick reactions, and the bar of `id` shows each other one. With `before`,
+    /// the order is not that order any more.
+    fn hidden_stays_hidden(&mut self, view: &str, id: &str, what: &str, before: Option<&[String]>) -> SandboxResult {
         let state = self.run.state(view)?;
         let order = quick(&state);
         step(&format!("{what}: the quick reactions are {order:?}"));
+        if let Some(before) = before {
+            expect(order != before, || {
+                format!("{what}: the quick reactions keep their order {order:?}")
+            });
+        }
         expect(state["bar"][format!("reaction-{HIDDEN}")] == false, || {
             format!("{what}: {HIDDEN} shows again in the choice {}", state["bar"])
         });
@@ -1225,7 +1232,7 @@ impl Walk<'_> {
         self.act_in_menu("chat", &english, &groups, (0, 0), &heart)?;
         self.act_in_menu("chat", &english, &groups, (0, 0), &heart)?;
         self.act_in_menu("chat", &english, &groups, (1, 0), "reply")?;
-        self.hidden_stays_hidden("chat", &english, "after reactions from the menu")?;
+        self.hidden_stays_hidden("chat", &english, "after reactions from the menu", None)?;
         let menu = self.open_menu("chat", &english)?;
         step(&format!("the chosen menu on b's message: {menu:?}, {groups:?}"));
         self.shots("menu-chosen")?;

@@ -203,20 +203,7 @@ fn a_hidden_quick_reaction_stays_hidden_when_the_quick_reactions_change_their_or
     click(cx, "message-customize-reaction-heart");
     cx.simulate_keystrokes("escape");
     draw(cx);
-    // the account reacts with laugh: its most used comes first on the bar
-    *rig.core.frequent.lock().unwrap() = vec!["laugh".to_owned()];
-    rig.core
-        .reactions
-        .lock()
-        .unwrap()
-        .insert("1".to_owned(), vec![reaction("laugh", LAB_A, NOON + 10_000)]);
-    if let Some(stored) = rig.core.messages.lock().unwrap().get_mut(AB) {
-        stored[0].version += 1;
-    }
-    rig.send(teams_core::Event::ConversationChanged {
-        conversation: AB.to_owned(),
-    });
-    draw(cx);
+    laugh_comes_first(&rig, cx);
     hover(cx, "message-1");
     let laugh = cx.debug_bounds("pick-laugh").unwrap();
     let like = cx.debug_bounds("pick-like").unwrap();
@@ -232,6 +219,42 @@ fn a_hidden_quick_reaction_stays_hidden_when_the_quick_reactions_change_their_or
         let check = Box::leak(format!("message-customize-reaction-{key}-check").into_boxed_str());
         assert_eq!(shown(cx, check), checked, "{key}");
     }
+    let kept = cx.update(|_, cx| model.read(cx).settings().message_bar.get(LAB_A).cloned());
+    assert_eq!(kept.map(|choice| choice.hidden), Some(vec![quick("heart")]));
+}
+
+/// The account reacts with laugh, and the change comes in: laugh is first of the quick reactions.
+fn laugh_comes_first(rig: &Rig, cx: &mut VisualTestContext) {
+    *rig.core.frequent.lock().unwrap() = vec!["laugh".to_owned()];
+    rig.core
+        .reactions
+        .lock()
+        .unwrap()
+        .insert("1".to_owned(), vec![reaction("laugh", LAB_A, NOON + 10_000)]);
+    if let Some(stored) = rig.core.messages.lock().unwrap().get_mut(AB) {
+        stored[0].version += 1;
+    }
+    rig.send(teams_core::Event::ConversationChanged {
+        conversation: AB.to_owned(),
+    });
+    draw(cx);
+}
+
+#[test]
+fn a_click_on_a_row_hides_that_row_when_the_quick_reactions_change_their_order_under_it() {
+    let rig = two();
+    let (_, model, cx) = window_with(&rig, Settings::default());
+    right_click_bar(cx, "message-1");
+    let heart = cx.debug_bounds("message-customize-reaction-heart").unwrap().center();
+    cx.simulate_mouse_down(heart, gpui::MouseButton::Left, Modifiers::none());
+    laugh_comes_first(&rig, cx);
+    assert_eq!(
+        cx.debug_bounds("message-customize-reaction-heart")
+            .map(|row| row.center()),
+        Some(heart)
+    );
+    cx.simulate_mouse_up(heart, gpui::MouseButton::Left, Modifiers::none());
+    draw(cx);
     let kept = cx.update(|_, cx| model.read(cx).settings().message_bar.get(LAB_A).cloned());
     assert_eq!(kept.map(|choice| choice.hidden), Some(vec![quick("heart")]));
 }
