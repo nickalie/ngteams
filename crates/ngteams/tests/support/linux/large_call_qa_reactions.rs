@@ -90,15 +90,15 @@ pub(super) struct Look {
     /// When its shot started and ended, from the reaction's sending.
     pub(super) at: Duration,
     pub(super) until: Duration,
-    from_start: i64,
+    pub(super) from_start: i64,
     from_last: i64,
     /// Where it differs from the shot before the reaction.
-    changed: Option<Rect>,
+    pub(super) changed: Option<Rect>,
     pub(super) shot: RgbImage,
 }
 
 /// Shots of `area` for `time` after `act` (the shot before it is the start): each look.
-fn watch(
+pub(super) fn watch(
     rig: &mut Rig<'_>,
     area: Rect,
     time: Duration,
@@ -151,7 +151,7 @@ fn quick_shot(rig: &mut Rig<'_>) -> SandboxResult<RgbImage> {
 }
 
 /// Turns [`quick_shot`]'s window shots on when one matches a shot of the whole screen within the call window.
-fn check_window_shots(rig: &mut Rig<'_>) -> SandboxResult {
+pub(super) fn check_window_shots(rig: &mut Rig<'_>) -> SandboxResult {
     rig.park()?;
     let window = rig.window()?;
     let full = rig.shot()?;

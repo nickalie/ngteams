@@ -2131,6 +2131,21 @@ async fn made_up_people_join_share_and_leave_only_a_group_call() -> TestResult {
     Ok(())
 }
 
+/// A static file served slow: its bytes come, but only after the delay.
+#[tokio::test]
+async fn a_slow_static_file_answers_its_bytes_after_the_delay() -> TestResult {
+    let mock = ChatServiceMock::start().await?;
+    let delay = std::time::Duration::from_millis(300);
+    mock.serve_bytes_after("/slow/file.png", "image/png", vec![1, 2, 3], delay)
+        .await;
+    let start = std::time::Instant::now();
+    let answer = reqwest::get(format!("{}/slow/file.png", mock.origin())).await?;
+    assert_eq!(answer.status(), 200);
+    assert_eq!(answer.bytes().await?.as_ref(), [1, 2, 3]);
+    assert!(start.elapsed() >= delay, "answered after {:?}", start.elapsed());
+    Ok(())
+}
+
 #[path = "support/helpers.rs"]
 mod helpers;
 

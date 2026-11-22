@@ -590,6 +590,20 @@ impl ChatServiceMock {
             .await;
     }
 
+    /// [`Self::serve_bytes`], each answer held back for `delay`: a slow CDN.
+    pub async fn serve_bytes_after(&self, path: &str, content_type: &str, body: Vec<u8>, delay: std::time::Duration) {
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path(path))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(body, content_type)
+                    .set_delay(delay),
+            )
+            .with_priority(1)
+            .mount(&self.server)
+            .await;
+    }
+
     /// Answers a pasted picture's send as the async gateway did (`docs/protocol/chat.md`, "Pictures sent"): every
     /// object's creation (`POST /v1/objects/`) `201` with `{"id": object}`, and its bytes put into it
     /// (`PUT /v1/objects/<object>/content/imgpsh`) `201`; then a `GET` of its `imgo` view answers `png`.

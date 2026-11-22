@@ -49,6 +49,7 @@
     "ngteams/test/large_call_window/qa-order": 270,
     "ngteams/test/large_call_window/qa-reactions": 410,
     "ngteams/test/large_call_window/reaction-3d": 60,
+    "ngteams/test/large_call_window/qa-reaction-3d": 240,
     "ngteams/test/large_call_window/qa-chat": 260,
     "ngteams/test/large_call_window/qa-chat-calls": 120,
     "ngteams/test/large_call_window/qa-everyone": 90,
