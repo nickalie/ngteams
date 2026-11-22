@@ -747,6 +747,8 @@ conversation while it runs, and how the others learn it:
   `receiveMessage` that its start, join or `attach` handed out: `{"from": {"id", "displayName", …}, "type":
   "Reaction", "payload": {"values": [{"name", "count", "attributes"}]}, "operationId"}`. The web client hands that
   callback out with every conversation request; the native client now does too.
+- **Live reactions on the stage** (lab capture 2026-11-22, `abc-call --call steps`, b sent Love and then Laugh, seen
+  on a's page): see [Live reactions](#live-reactions).
 - **End meeting** (the Leave menu of the meeting's organizer, its roster entry's `meetingRole` `organizer`; a
   confirmation first): `DELETE` at the conversation's own URL (`conversationController`) with `{"participants":
   {"from"}, "conversationTransactionEnd": {"reason": "noError", "code": 0, "phrase": "ConversationEndForAllInitiated"},
@@ -756,6 +758,29 @@ conversation while it runs, and how the others learn it:
 The conversation's answer lists these links among its others (`publishState`, `removeState`, `sendMessage`, `mute`,
 `unmute`, `admitAll`, `searchParticipants`, `setMeetingLayout`, `updateMeetingStates`, …). Muting someone else
 (`mute`), a spotlight and the meeting's layout weren't captured: the native client offers none of them.
+
+### Live reactions
+
+What the web client draws when a reaction comes, while the sender's tile is on the stage:
+
+- **The picture**: Teams' 3D emoji, one PNG of 102 square frames stacked top to bottom, from its public CDN with no
+  token: `GET https://statics.teams.cdn.office.net/evergreen-assets/skype/v2/<id>V4-3D/<side>a.png`. The CDN has
+  `<side>` 56, 112 and 140 (56×5712, 112×11424 and 140×14280 px; the 140 px PNGs are about 260 KB). The `<id>` is
+  the reaction's name, but Like is `yes` and Applause is `clap` (`heart`, `laugh`, `surprised` as sent). A tile of
+  the 3-person gallery (about 660×370) loaded the 112 px one. An earlier capture also loaded the 56 px one. No
+  capture loaded the 140 px one: no lab tile was large enough.
+- **The play**: an `<img>` of the whole strip, `<side>` px wide, in a box of one frame
+  (`data-tid="participant-reaction"`, `emoticon-renderer` inside it). A CSS animation moves it from `translateY(0)` to
+  `translateY(-<strip height>)` in `steps(102)` over 4.25 s (24 frames a second). The element goes away after 4.25 s,
+  so the emoji plays once.
+- **The fade**: the box's opacity animation, 4.25 s, `forwards`: 0 until 15.7 %, up to 1 at 31.4 %, 1 until 81.4 %,
+  0 at 100 %, each step eased. The emoji's top is at the avatar's centre, and the avatar dims while it shows.
+- **The React menu**: its five buttons show the `V2-3D/32a.png` pictures at 24 px (51 frames). The page also loaded
+  `V3-3D/64a.png`.
+
+The native client reads the 3D emoji as `teams_proto::ReactionAnimation::emoji_3d`, the smallest side that is not
+smaller than the emoji it draws. It plays the frames once on the reaction's own clock. Until the PNG arrives, or when
+the CDN has none, the picker's 50 px strip (`chat.md`, "Reaction pictures") loops in its place.
 
 ### Hold and resume
 

@@ -28,6 +28,7 @@
 //!   the speaker staying large; a call of 2-9 shows everyone on one page, no pager; in a 1:1 call the account's own
 //!   tile floats at the stage's bottom right.
 //! - QA of task 447: each tile shows its raised hand with its place in the line of hands (`large_call_qa_hands.rs`).
+//! - Task 696: a live reaction plays Teams' 3D emoji once on the sender's tile (`large_call_reaction_3d.rs`).
 //! - QA of task 715: the call's chat bubble shows a mention of everyone in the reader's words
 //!   (`large_call_qa_everyone.rs`).
 //! - Each ring's banner on the sandbox's bus carries the caller's (b's) picture, round, as the mock's Graph gives it
@@ -93,6 +94,8 @@ mod qa_hands;
 mod qa_order;
 #[path = "large_call_qa_reactions.rs"]
 mod qa_reactions;
+#[path = "large_call_reaction_3d.rs"]
+mod reaction_3d;
 use pixels::{Rect, Stage};
 
 const CHILD_ENV: &str = "NGTEAMS_LARGE_CALL_TEST";
@@ -232,7 +235,7 @@ fn b_picture() -> SandboxResult<Vec<u8>> {
 /// Everything the user does, in order.
 fn scenarios(rig: &mut Rig<'_>) -> SandboxResult {
     type Step = fn(&mut Rig<'_>) -> SandboxResult;
-    let steps: [(&str, Step); 18] = [
+    let steps: [(&str, Step); 19] = [
         ("small", small_calls),
         ("mic-10", |rig| every_size(rig, 10)),
         ("mic-25", |rig| every_size(rig, 25)),
@@ -248,6 +251,7 @@ fn scenarios(rig: &mut Rig<'_>) -> SandboxResult {
         ("qa-hands", qa_hands::qa_hands),
         ("qa-order", qa_order::qa_order),
         ("qa-reactions", qa_reactions::qa_reactions),
+        ("reaction-3d", reaction_3d::reaction_3d),
         ("qa-chat", qa_chat::qa_chat),
         ("qa-chat-calls", qa_chat::other_calls),
         ("qa-everyone", qa_everyone::qa_everyone),

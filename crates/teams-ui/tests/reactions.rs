@@ -8,7 +8,7 @@
 use std::io::Cursor;
 
 use image::{ImageFormat, Rgba, RgbaImage};
-use teams_ui::reactions::{MOST_FOUND, catalog, description, frames, glyph};
+use teams_ui::reactions::{MOST_FOUND, catalog, description, frame_at, frames, glyph};
 
 #[test]
 fn every_category_teams_offers_is_there_in_its_order() {
@@ -114,6 +114,21 @@ fn strip(side: u32, frames: u32) -> Vec<u8> {
     let mut png = Vec::new();
     image.write_to(&mut Cursor::new(&mut png), ImageFormat::Png).unwrap();
     png
+}
+
+#[test]
+fn a_3d_emoji_plays_its_102_frames_once_over_4_25_s_and_holds_the_last() {
+    use std::time::Duration;
+    let at = |ms: u64| frame_at(Duration::from_millis(ms), 102);
+    assert_eq!(at(0), 0);
+    assert_eq!(at(41), 0);
+    assert_eq!(at(42), 1, "24 frames a second");
+    assert_eq!(at(1_000), 24);
+    assert_eq!(at(2_125), 51, "half way");
+    assert_eq!(at(4_208), 100);
+    assert_eq!(at(4_250), 101, "the last frame at its end");
+    assert_eq!(at(60_000), 101, "never again from the first");
+    assert_eq!(frame_at(Duration::from_secs(1), 0), 0, "no frames");
 }
 
 #[test]

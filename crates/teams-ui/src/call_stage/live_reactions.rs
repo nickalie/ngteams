@@ -1,9 +1,11 @@
 //! The live reactions of a call, as Teams shows them in every layout (the gallery, the speaker view, a share with its
 //! strip), the account's own too:
 //!
-//! - **On the sender's tile** while it is on the stage: the reaction's animated Fluent emoji, large (its size follows
-//!   the tile's), centred on the tile with its top at the tile's middle, fading in and out over Teams' 4.25 s while its
-//!   picture plays; the tile's picture dims meanwhile. A newer reaction of the same person takes its place.
+//! - **On the sender's tile** while it is on the stage: the reaction's 3D emoji from Teams' CDN, large (56, 112 or 140
+//!   px, as the tile's size), centred on the tile with its top at the tile's middle. Its 102 frames play once over
+//!   Teams' 4.25 s while it fades in and out, and the tile's picture dims meanwhile. Until the 3D emoji is read, or
+//!   when the CDN has none, the picker's small animation loops in its place. A newer reaction of the same person takes
+//!   its place.
 //! - **Floating** while the sender's tile is not on the stage (on another page, Focus on content): a small animated
 //!   emoji rises a little from the stage's bottom middle, fading in and out within [`FLOAT_FOR`]; several at once rise
 //!   side by side in lanes.
@@ -149,10 +151,22 @@ impl CallStage {
             1.0
         };
         let key = key_of(&reaction);
-        let animated = moving
+        let side = emoji_3d_side(emoji);
+        let emoji_3d = moving
+            .then(|| crate::reactions::call_emoji_3d(&reaction.reaction, side, &self.core, cx))
+            .flatten();
+        let animated = (moving && emoji_3d.is_none())
             .then(|| crate::reactions::animation(key, &self.core, cx))
             .flatten();
         let selector = format!("{selector}-reaction");
+        let picture = match emoji_3d {
+            Some(frames) => {
+                let frame =
+                    crate::reactions::frame_at(now.saturating_duration_since(reaction.at), frames.frame_count());
+                played_once(frames, frame, emoji, &selector)
+            }
+            None => playing(key, emoji, animated, &selector),
+        };
         let emoji = div()
             .id(SharedString::from(format!("call-reaction-on-tile-{}", reaction.seq)))
             .absolute()
@@ -162,7 +176,7 @@ impl CallStage {
             .flex()
             .justify_center()
             .opacity(opacity)
-            .child(playing(key, emoji, animated, &selector));
+            .child(picture);
         div()
             .relative()
             .size_full()
@@ -265,6 +279,43 @@ impl CallStage {
     }
 }
 
+/// The side of the 3D emoji read for an emoji drawn `size` px: the smallest Teams' CDN has that is not smaller, else its
+/// largest.
+#[must_use]
+pub(super) fn emoji_3d_side(size: f32) -> u16 {
+    let sides = teams_proto::EMOJI_3D_SIDES;
+    sides
+        .iter()
+        .copied()
+        .find(|side| f32::from(*side) >= size)
+        .unwrap_or(sides[sides.len() - 1])
+}
+
+/// Frame `frame` of the 3D emoji `frames`, `size` px square (test selectors `selector` and `<selector>-3d`).
+fn played_once(frames: std::sync::Arc<gpui::RenderImage>, frame: usize, size: f32, selector: &str) -> AnyElement {
+    let shown = selector.to_owned();
+    let three_d = format!("{selector}-3d");
+    div()
+        .debug_selector(move || shown.clone())
+        .child(
+            div()
+                .debug_selector(move || three_d.clone())
+                .size(px(size))
+                .flex_none()
+                .child(
+                    gpui::canvas(
+                        |_, _, _| (),
+                        move |bounds, (), window, _| {
+                            // a frame it cannot draw leaves the tile as it is
+                            let _ = window.paint_image(bounds, bounds, gpui::Corners::default(), frames, frame, false);
+                        },
+                    )
+                    .size_full(),
+                ),
+        )
+        .into_any_element()
+}
+
 /// The emoji key `reaction` is drawn by.
 fn key_of(reaction: &calls::LiveReaction) -> &str {
     toolbar::REACTIONS
@@ -304,6 +355,16 @@ mod tests {
         assert!((tile_opacity(0.5) - 1.0).abs() < 1e-6);
         assert!(tile_opacity(0.9) > 0.0 && tile_opacity(0.9) < 1.0);
         assert!(tile_opacity(1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_3d_emoji_read_is_the_smallest_that_is_not_smaller_than_the_emoji() {
+        assert_eq!(emoji_3d_side(140.0), 140);
+        assert_eq!(emoji_3d_side(112.0), 112);
+        assert_eq!(emoji_3d_side(56.0), 56);
+        assert_eq!(emoji_3d_side(30.0), 56);
+        assert_eq!(emoji_3d_side(120.0), 140);
+        assert_eq!(emoji_3d_side(300.0), 140);
     }
 
     #[test]

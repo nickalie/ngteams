@@ -95,6 +95,8 @@ pub struct FakeCore {
     pub animations: Mutex<HashMap<String, Strip>>,
     /// Reactions whose animation's read fails on the way (answered [`EngineError::AnimationUnread`]).
     pub unread_animations: Mutex<HashSet<String>>,
+    /// Call reactions' 3D emoji by reaction and side; any other is answered `None`.
+    pub animations_3d: Mutex<HashMap<(String, u16), Strip>>,
     /// Messages' pictures by their `src`; any other is answered `None`.
     pub pictures: Mutex<HashMap<String, PictureBytes>>,
     /// The app definitions `app_definition` answers, by `teamsAppId`; any other has none.
@@ -1145,6 +1147,12 @@ impl Core for FakeCore {
     fn frequent_reactions(&self, limit: usize) -> Reply<Vec<String>> {
         self.answer("frequent_reactions", || {
             locked(&self.frequent).iter().take(limit).cloned().collect()
+        })
+    }
+
+    fn call_reaction_animation(&self, id: String, side: u16) -> Reply<Option<Strip>> {
+        self.answer("call_reaction_animation", || {
+            locked(&self.animations_3d).get(&(id, side)).cloned()
         })
     }
 

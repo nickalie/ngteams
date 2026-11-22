@@ -149,6 +149,12 @@ pub trait Core: Send + Sync + 'static {
     fn presence(&self, mri: String) -> Reply<Availability>;
     /// A reaction's animation as Teams' CDN has it (its strip of frames), read once a run; `None` when there is none.
     fn reaction_animation(&self, id: String) -> Reply<Option<Strip>>;
+    /// The 3D emoji Teams plays once on a call reaction's tile (frames of `side` px), read once a run; `None` when
+    /// there is none. A fake core has none.
+    fn call_reaction_animation(&self, id: String, side: u16) -> Reply<Option<Strip>> {
+        let _ = (id, side);
+        Reply::ready(Ok(None))
+    }
     /// The picture a message's `<img>` names by its `src` (a view of an AMS object, or a GIF on Giphy's media host),
     /// read by the engine once a run; `None` when there is none, or `src` names neither.
     fn message_picture(&self, src: String) -> Reply<Option<PictureBytes>>;
@@ -1009,6 +1015,10 @@ impl Core for EngineRequests {
 
     fn reaction_animation(&self, id: String) -> Reply<Option<Strip>> {
         EngineRequests::reaction_animation(self, id)
+    }
+
+    fn call_reaction_animation(&self, id: String, side: u16) -> Reply<Option<Strip>> {
+        EngineRequests::call_reaction_animation(self, id, side)
     }
 
     fn message_picture(&self, src: String) -> Reply<Option<PictureBytes>> {

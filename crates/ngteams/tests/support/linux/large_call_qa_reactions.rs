@@ -63,7 +63,7 @@ const CDN_PATH: &str = "/evergreen-assets/personal-expressions/v2/assets/emotico
 
 /// The made-up animation strip: its [`FRAMES`] stacked top to bottom, each a disk of [`frame_colour`] on a clear
 /// ground, 50×50.
-fn strip_png() -> SandboxResult<Vec<u8>> {
+pub(super) fn strip_png() -> SandboxResult<Vec<u8>> {
     let side = 50_u32;
     let mut picture = image::RgbaImage::new(side, side * FRAMES);
     for index in 0..FRAMES {
@@ -86,15 +86,15 @@ fn strip_png() -> SandboxResult<Vec<u8>> {
 
 /// One look at the watched area: when, how much differs from the shot before the reaction, and from the look before.
 #[derive(Clone, Debug)]
-struct Look {
+pub(super) struct Look {
     /// When its shot started and ended, from the reaction's sending.
-    at: Duration,
-    until: Duration,
+    pub(super) at: Duration,
+    pub(super) until: Duration,
     from_start: i64,
     from_last: i64,
     /// Where it differs from the shot before the reaction.
     changed: Option<Rect>,
-    shot: RgbImage,
+    pub(super) shot: RgbImage,
 }
 
 /// Shots of `area` for `time` after `act` (the shot before it is the start): each look.
@@ -177,7 +177,7 @@ fn summary(looks: &[Look]) -> String {
 /// A made-up person's reaction `reaction` on their tile `tile`, watched for 6.8 s; sent again, at most three times
 /// in all, while fewer than three looks catch it or no two looks one after the other catch it at its full opacity (a
 /// busy machine's shots are slow).
-fn watch_tile(rig: &mut Rig<'_>, tile: Rect, person: usize, reaction: &str) -> SandboxResult<Vec<Look>> {
+pub(super) fn watch_tile(rig: &mut Rig<'_>, tile: Rect, person: usize, reaction: &str) -> SandboxResult<Vec<Look>> {
     let mut looks = Vec::new();
     for _ in 0..3 {
         (_, looks) = watch(rig, tile, Duration::from_millis(6_800), |rig| {
@@ -197,7 +197,7 @@ fn watch_tile(rig: &mut Rig<'_>, tile: Rect, person: usize, reaction: &str) -> S
 }
 
 /// What a reaction on a tile did: shown, played while fully shown, and gone on time.
-fn on_tile(looks: &[Look], playing: bool, case: &str) -> SandboxResult {
+pub(super) fn on_tile(looks: &[Look], playing: bool, case: &str) -> SandboxResult {
     say(&format!("qa666 {case}: {}", summary(looks)));
     let shown = looks
         .iter()
@@ -398,7 +398,7 @@ fn float_area(stage: Rect) -> Rect {
     }
 }
 
-fn react(rig: &Rig<'_>, person: usize, reaction: &str) -> SandboxResult {
+pub(super) fn react(rig: &Rig<'_>, person: usize, reaction: &str) -> SandboxResult {
     if rig.mock.react_made_up(&rig.call, &qa_mri(person), reaction) {
         Ok(())
     } else {
@@ -563,7 +563,7 @@ fn several(rig: &mut Rig<'_>, stage: Rect, away: &[usize]) -> SandboxResult {
 }
 
 /// The first of the QA's people on a page, and their tile.
-fn first_person(page: &Page) -> SandboxResult<(usize, Rect)> {
+pub(super) fn first_person(page: &Page) -> SandboxResult<(usize, Rect)> {
     page.tiles
         .iter()
         .find_map(|(tile, seen)| match seen {

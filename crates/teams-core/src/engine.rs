@@ -835,7 +835,7 @@ enum Request {
     Transcript(TranscriptWrite, Responder<i64>),
     Person(String, Responder<Person>),
     Presence(String, Responder<Availability>),
-    ReactionAnimation(String, Responder<Option<Strip>>),
+    ReactionAnimation(Option<teams_proto::ReactionAnimation>, Responder<Option<Strip>>),
     MessagePicture(String, Responder<Option<PictureBytes>>),
     AppPicture(String, Responder<Option<PictureBytes>>),
     CachedAppPicture(String, Responder<Option<PictureBytes>>),
@@ -1349,8 +1349,16 @@ impl EngineRequests {
     /// The animation of the reaction `id` (its key without a skin tone), as Teams' CDN has it ([`crate::emoticons`]):
     /// its strip of frames, or `None` when there is none.
     pub fn reaction_animation(&self, id: impl Into<String>) -> Reply<Option<Strip>> {
-        let id = id.into();
-        self.ask(|reply| Request::ReactionAnimation(id, reply))
+        let read = teams_proto::ReactionAnimation::of(&id.into());
+        self.ask(|reply| Request::ReactionAnimation(read, reply))
+    }
+
+    /// The 3D emoji Teams plays once on a call reaction's tile, for the reaction `id` (`like`, `heart`, …) with frames
+    /// of `side` px (one of [`teams_proto::EMOJI_3D_SIDES`]), as Teams' CDN has it ([`crate::emoticons`]): its strip of
+    /// frames, or `None` when there is none.
+    pub fn call_reaction_animation(&self, id: impl Into<String>, side: u16) -> Reply<Option<Strip>> {
+        let read = teams_proto::ReactionAnimation::emoji_3d(&id.into(), side);
+        self.ask(|reply| Request::ReactionAnimation(read, reply))
     }
 
     /// The picture a message's `<img>` names by its `src` (a view of an AMS object, as the account's AMS base has it, or
@@ -2671,7 +2679,7 @@ where
     /// person): handed to that part (`on_request` takes the rest).
     fn on_lookup(&mut self, request: Request) {
         match request {
-            Request::ReactionAnimation(id, reply) => self.animations.animation(id, reply),
+            Request::ReactionAnimation(read, reply) => self.animations.animation(read, reply),
             Request::MessagePicture(src, reply) => self.pictures.picture(&src, reply),
             Request::AppPicture(url, reply) => self.pictures.app_picture(&url, reply),
             Request::CachedAppPicture(url, reply) => self.pictures.cached_app_picture(&url, reply),

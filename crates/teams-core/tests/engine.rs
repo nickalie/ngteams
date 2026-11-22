@@ -2870,6 +2870,38 @@ async fn reaction_history_and_animation_queries_are_answered_without_exposing_wr
     a.shutdown();
 }
 
+#[tokio::test]
+async fn a_call_reaction_s_3d_emoji_is_read_once_apart_from_its_strip_and_other_sides() {
+    let lab = Lab::start().await;
+    let a = native(&lab, LAB_A, QUIET);
+    a.handle.sync().await.unwrap();
+    let sprite = "/evergreen-assets/skype/v2/yesV4-3D/112a.png";
+    lab.mock
+        .serve_bytes(sprite, "image/png", b"synthetic 3D sprite".to_vec())
+        .await;
+    let (one, two) = tokio::join!(
+        a.handle.call_reaction_animation("like", 112),
+        a.handle.call_reaction_animation("like", 112)
+    );
+    assert_eq!(one.unwrap().unwrap().as_ref(), b"synthetic 3D sprite");
+    assert_eq!(two.unwrap().unwrap().as_ref(), b"synthetic 3D sprite");
+    assert!(a.handle.call_reaction_animation("like", 140).await.unwrap().is_none());
+    assert!(
+        a.handle.call_reaction_animation("like", 64).await.unwrap().is_none(),
+        "no such side"
+    );
+    assert!(
+        a.handle.reaction_animation("yes").await.unwrap().is_none(),
+        "the strip is another read"
+    );
+    let requests = lab.mock.received_requests().await;
+    let count = |wanted: &str| requests.iter().filter(|request| request.url.path() == wanted).count();
+    assert_eq!(count(sprite), 1);
+    assert_eq!(count("/evergreen-assets/skype/v2/yesV4-3D/140a.png"), 1);
+    assert_eq!(count("/evergreen-assets/skype/v2/yesV4-3D/64a.png"), 0);
+    a.shutdown();
+}
+
 fn conversation_delivery(id: &str, horizon: Option<&str>) -> Value {
     let mut resource = json!({"id": id});
     if let Some(horizon) = horizon {

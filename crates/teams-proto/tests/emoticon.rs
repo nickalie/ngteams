@@ -1,7 +1,7 @@
-//! A reaction's animation strip on Teams' CDN ([`ReactionAnimation`], `docs/protocol/chat.md`, "Reaction pictures") on
-//! wiremock, through the `test-support` mock origin: a `GET` of `<id>/default/50_anim_f.png` under the emoticons'
-//! base with no token, its answer kept only when it is a PNG of at most `MAX_ANIMATION` bytes; an id that isn't one
-//! path segment of Teams' form makes no read.
+//! A reaction's animation on Teams' CDN ([`ReactionAnimation`], `docs/protocol/chat.md`, "Reaction pictures") on
+//! wiremock, through the `test-support` mock origin: a `GET` of the picker's `<id>/default/50_anim_f.png` or a call
+//! reaction's `skype/v2/<id>V4-3D/<side>a.png` with no token, its answer kept only when it is a PNG of at most
+//! `MAX_ANIMATION` bytes; an id that isn't one path segment of Teams' form, or a side the CDN has not, makes no read.
 //!
 //! The strip's bytes are made up.
 
@@ -53,11 +53,73 @@ async fn setup() -> (MockServer, Arc<FakeTokens>, Client<HttpTransport<FakeToken
 fn only_an_id_of_teams_form_makes_a_read() {
     let read = ReactionAnimation::of("1f440_eyes").unwrap();
     assert_eq!(read.service(), Service::Emoticons);
-    assert_eq!(read.endpoint().segments(), ["1f440_eyes", "default", "50_anim_f.png"]);
+    assert_eq!(
+        read.endpoint().segments(),
+        [
+            "personal-expressions",
+            "v2",
+            "assets",
+            "emoticons",
+            "1f440_eyes",
+            "default",
+            "50_anim_f.png"
+        ]
+    );
     assert!(read.endpoint().query().is_empty());
     for id in ["", "../x", "a/b", "yes-tone2", "Eyes", "a.b", &"a".repeat(65)] {
         assert!(ReactionAnimation::of(id).is_none(), "{id:?}");
     }
+}
+
+#[test]
+fn a_call_reaction_s_3d_emoji_is_read_by_the_cdn_s_name_and_a_side_it_has() {
+    let segments = |id: &str, side: u16| {
+        ReactionAnimation::emoji_3d(id, side)
+            .unwrap()
+            .endpoint()
+            .segments()
+            .to_vec()
+    };
+    assert_eq!(segments("heart", 112), ["skype", "v2", "heartV4-3D", "112a.png"]);
+    assert_eq!(segments("like", 140), ["skype", "v2", "yesV4-3D", "140a.png"]);
+    assert_eq!(segments("applause", 56), ["skype", "v2", "clapV4-3D", "56a.png"]);
+    assert_eq!(segments("clap", 56), ["skype", "v2", "clapV4-3D", "56a.png"]);
+    assert_eq!(segments("surprised", 56), ["skype", "v2", "surprisedV4-3D", "56a.png"]);
+    let read = ReactionAnimation::emoji_3d("laugh", 56).unwrap();
+    assert_eq!(read.service(), Service::Emoticons);
+    assert!(read.endpoint().query().is_empty());
+    for side in [0, 50, 64, 100, 141] {
+        assert!(ReactionAnimation::emoji_3d("heart", side).is_none(), "{side}");
+    }
+    for id in ["", "../x", "Heart", "a/b"] {
+        assert!(ReactionAnimation::emoji_3d(id, 112).is_none(), "{id:?}");
+    }
+    assert_eq!(read.key(), "laughV4-3D/56");
+    assert_eq!(ReactionAnimation::of("laugh").unwrap().key(), "laugh");
+    assert!(format!("{read:?}").contains("Emoji3d(56)"));
+}
+
+#[tokio::test]
+async fn a_call_reaction_s_3d_emoji_is_a_get_with_no_token() {
+    let (server, tokens, client) = setup().await;
+    let sprite = b"\x89PNG made-up sprite".to_vec();
+    Mock::given(method("GET"))
+        .and(path("/evergreen-assets/skype/v2/yesV4-3D/112a.png"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sprite.clone(), "image/png"))
+        .mount(&server)
+        .await;
+    let read = ReactionAnimation::emoji_3d("like", 112).unwrap();
+    assert_eq!(read.read_answer(&client.read(&read).await.unwrap()), Some(sprite));
+    let request = server.received_requests().await.unwrap().pop().unwrap();
+    assert!(request.headers.get("authorization").is_none());
+    assert!(
+        tokens
+            .audiences
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty(),
+        "no token asked for"
+    );
 }
 
 #[tokio::test]

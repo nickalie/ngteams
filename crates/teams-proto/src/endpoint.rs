@@ -69,9 +69,9 @@ pub enum Service {
     /// `x-ms-migration: True` and `api-version: 2`, as the web client's Entra form of the read
     /// (`docs/protocol/auth.md`): [`crate::RelayTokens`].
     Relay,
-    /// Teams' reaction pictures on its public CDN,
-    /// `https://statics.teams.cdn.office.net/evergreen-assets/personal-expressions/v2/assets/emoticons/`, with no token
-    /// (static files any browser reads): a reaction's or a message's emoticon's animation ([`crate::ReactionAnimation`]).
+    /// Teams' reaction pictures on its public CDN, `https://statics.teams.cdn.office.net/evergreen-assets/`, with no
+    /// token (static files any browser reads): a reaction's or a message's emoticon's animation, and a call reaction's
+    /// 3D emoji ([`crate::ReactionAnimation`]).
     Emoticons,
     /// The media service (AMS) through the async gateway at the account's AMS base, the region's GTM `amsV2`
     /// (`https://<name>.asyncgw.teams.microsoft.com`), which a transport reaches only once it was given one

@@ -1673,9 +1673,10 @@ const WEB_USER_AGENT: &str =
 /// The `Accept` a picture's view is read with, as a browser's `<img>` sends it.
 const PICTURE_ACCEPT: &str = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8";
 
-/// Teams' reaction pictures' host and path ([`Service::Emoticons`]).
+/// Teams' reaction pictures' host and path ([`Service::Emoticons`]): the picker's strips and the call's 3D emoji are
+/// both under it.
 pub const EMOTICONS_HOST: &str = "statics.teams.cdn.office.net";
-const EMOTICONS_PATH: &str = "evergreen-assets/personal-expressions/v2/assets/emoticons";
+const EMOTICONS_PATH: &str = "evergreen-assets";
 
 /// Giphy's media host ([`Service::Giphy`]).
 pub const GIPHY_HOST: &str = "media.giphy.com";

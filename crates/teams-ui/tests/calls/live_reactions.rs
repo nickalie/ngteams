@@ -1,6 +1,6 @@
 //! Live reactions as Teams shows them in every layout (the gallery, the speaker view, a share with its strip): on the
-//! sender's tile while it is on the stage (the account's own on its own tile), its animated emoji playing, gone after
-//! its time; floating up from the stage's bottom while the sender's tile is not on it (another page, Focus on
+//! sender's tile while it is on the stage (the account's own on its own tile), its 3D emoji played once (the picker's
+//! strip in its place while there is none), gone after its time; floating up from the stage's bottom while the sender's tile is not on it (another page, Focus on
 //! content); the window draws no more frames for them once the last is gone. Every id and name is made up.
 
 use std::sync::Arc;
@@ -213,4 +213,68 @@ fn a_live_reaction_plays_its_animated_emoji() {
         drawn(stage, "call-participant-1-reaction-playing"),
         "its animation plays"
     );
+}
+
+/// A made-up 3D emoji of `frames` frames, `side` px.
+fn sprite(side: u32, frames: u32) -> Arc<[u8]> {
+    let mut picture = image::RgbaImage::new(side, side * frames);
+    picture.put_pixel(0, 0, image::Rgba([1, 2, 3, 255]));
+    let mut png = Vec::new();
+    picture
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    Arc::from(png)
+}
+
+#[test]
+fn a_live_reaction_plays_teams_3d_emoji_on_the_tile_in_place_of_the_strip() {
+    let rig = super::calling();
+    rig.core
+        .animations
+        .lock()
+        .unwrap()
+        .insert("heart".to_owned(), sprite(4, 3));
+    let (trace, _) = trace();
+    let (_windows, stage) = in_group_call(&rig, &trace);
+    let tile = bounds(stage, "call-participant-1").unwrap();
+    let side = if tile.size.height.as_f32() >= 480.0 {
+        140
+    } else if tile.size.height.as_f32() >= 240.0 {
+        112
+    } else {
+        56
+    };
+    rig.core
+        .animations_3d
+        .lock()
+        .unwrap()
+        .insert(("heart".to_owned(), side), sprite(8, 102));
+    react(&rig, LAB_C, "heart");
+    // the 3D emoji read and decoded
+    later(&rig, stage, Duration::from_millis(1));
+    assert!(drawn(stage, "call-participant-1-reaction-3d"), "the 3D emoji plays");
+    assert!(!drawn(stage, "call-participant-1-reaction-playing"), "not the strip");
+    later(&rig, stage, REACTION_SHOWN / 2);
+    assert!(
+        drawn(stage, "call-participant-1-reaction-3d"),
+        "still on the tile half way"
+    );
+    later(&rig, stage, REACTION_SHOWN);
+    assert!(!drawn(stage, "call-participant-1-reaction"), "gone after its time");
+}
+
+#[test]
+fn a_live_reaction_without_a_3d_emoji_plays_the_picker_s_strip() {
+    let rig = super::calling();
+    rig.core
+        .animations
+        .lock()
+        .unwrap()
+        .insert("surprised".to_owned(), sprite(4, 3));
+    let (trace, _) = trace();
+    let (_windows, stage) = in_group_call(&rig, &trace);
+    react(&rig, LAB_C, "surprised");
+    later(&rig, stage, Duration::from_millis(1));
+    assert!(drawn(stage, "call-participant-1-reaction-playing"), "the strip plays");
+    assert!(!drawn(stage, "call-participant-1-reaction-3d"));
 }

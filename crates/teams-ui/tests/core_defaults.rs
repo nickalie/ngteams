@@ -276,6 +276,10 @@ fn kept_things_are_none_and_keeping_them_keeps_nothing() {
             "call_ended",
             now(core.call_ended(CHAT.into(), "1".into())).ok() == Some(false),
         ),
+        (
+            "call_reaction_animation",
+            none(core.call_reaction_animation("heart".into(), 112)),
+        ),
         ("call_health", none(core.call_health(call))),
         ("call_meeting_options", none(core.call_meeting_options(call))),
     ]);

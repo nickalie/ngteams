@@ -276,6 +276,7 @@ fn ask_chat(core: &dyn Core) {
     stopped(core.person(LAB_B.into()));
     stopped(core.presence(LAB_B.into()));
     stopped(core.reaction_animation("like".into()));
+    stopped(core.call_reaction_animation("like".into(), 112));
     stopped(core.recent_reactions(5));
     stopped(core.frequent_reactions(5));
     stopped(core.read_horizon(chat()));

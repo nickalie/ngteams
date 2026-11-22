@@ -87,7 +87,7 @@ pub use calendar::{
 pub use channel_meeting::{CANCELLED_MEETING_TYPE, SCHEDULED_MEETING_TYPE, ScheduledMeeting};
 pub use channel_read::{ChannelCreationStatus, TeamPeopleSearch, TeamPerson};
 pub use client::{Client, Response, Transport};
-pub use emoticon::{MAX_ANIMATION, ReactionAnimation};
+pub use emoticon::{EMOJI_3D_SIDES, MAX_ANIMATION, ReactionAnimation};
 pub use endpoint::{Endpoint, Method, Service};
 pub use file_content::{
     FileContent, FileContentLink, FileDownload, FileRange, MAX_RANGE, MAX_STREAM, StreamStart, is_content_link,

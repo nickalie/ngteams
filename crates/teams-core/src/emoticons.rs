@@ -1,5 +1,6 @@
-//! Reactions' animations, read when a view asks for one (the picker, under the pointer): Teams' CDN's strip of the
-//! reaction's frames ([`ReactionAnimation`], a `GET` with no token), the way the web client reads it.
+//! Reactions' animations, read when a view asks for one (the picker, under the pointer; a call reaction on a tile):
+//! Teams' CDN's strip of the reaction's frames, or a call reaction's 3D emoji ([`ReactionAnimation`], a `GET` with no
+//! token), the way the web client reads them.
 //!
 //! - **Kept for the run**: a strip read is kept in memory and answered from there after; a reaction the CDN has none for
 //!   (an answer that isn't a success, or isn't a PNG) is kept as missing. A read that failed on the way isn't kept
@@ -40,13 +41,14 @@ impl<C: Credentials + 'static> Animations<C> {
         }
     }
 
-    /// Answers `reply` with the animation of the reaction `id`: at once when it is known, else once its read is over
-    /// (the read started now unless one runs). An id no read can name is answered `None`.
-    pub(crate) fn animation(&self, id: String, reply: Responder<Option<Strip>>) {
-        let Some(read) = ReactionAnimation::of(&id) else {
+    /// Answers `reply` with the animation `read` reads: at once when it is known, else once its read is over (the read
+    /// started now unless one runs). No read (an id no read can name) is answered `None`.
+    pub(crate) fn animation(&self, read: Option<ReactionAnimation>, reply: Responder<Option<Strip>>) {
+        let Some(read) = read else {
             let _ = reply.send(Ok(None));
             return;
         };
+        let id = read.key();
         let mut known = self.known.borrow_mut();
         match known.get_mut(&id) {
             Some(Known::Read(strip)) => {

@@ -11,7 +11,8 @@
 //!   the catalog doesn't hold draws as itself.
 //! - **Animations**: under the pointer the picker plays a reaction's animation as Teams does, its strip of frames read
 //!   from Teams' CDN by the engine ([`Core::reaction_animation`], once a run) and cut into frames here ([`animation`]);
-//!   until it arrives, or when there is none, the picture stands still.
+//!   until it arrives, or when there is none, the picture stands still. A call reaction on a tile plays its 3D emoji
+//!   once, as Teams does ([`call_emoji_3d`], [`Core::call_reaction_animation`], [`frame_at`]).
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -289,13 +290,41 @@ pub fn animation_of(key: &str, core: &dyn crate::inline::PictureEngine, cx: &mut
     let id = catalog()
         .get(key)
         .map_or_else(|| key.to_owned(), |(reaction, _)| reaction.id.to_owned());
+    decoded(id.clone(), || core.reaction_animation(id), cx)
+}
+
+/// The 3D emoji Teams plays once on the tile of a call reaction (`reaction`: `like`, `heart`, `applause`, `laugh`,
+/// `surprised`), with frames of `side` px (one of [`teams_proto::EMOJI_3D_SIDES`]), as [`animation`] keeps it: `None`
+/// until it was read, or when Teams' CDN has none.
+pub fn call_emoji_3d(reaction: &str, side: u16, core: &Arc<dyn Core>, cx: &mut App) -> Option<Arc<RenderImage>> {
+    let known = format!("{reaction}@3d/{side}");
+    decoded(known, || core.call_reaction_animation(reaction.to_owned(), side), cx)
+}
+
+/// Which frame of an animation of `frames` frames played once shows `elapsed` after it started: one a
+/// [`ANIMATION_FPS`]th of a second, the last one held after its end.
+#[must_use]
+pub fn frame_at(elapsed: std::time::Duration, frames: usize) -> usize {
+    let index = elapsed.as_millis() * u128::from(ANIMATION_FPS) / 1_000;
+    usize::try_from(index)
+        .unwrap_or(usize::MAX)
+        .min(frames.saturating_sub(1))
+}
+
+/// The animation kept as `id` when it was read; otherwise asks for it once with `ask` (the windows drawn again once it
+/// arrives; a read that failed on the way is asked again when next drawn) and answers `None` meanwhile.
+fn decoded(
+    id: String,
+    ask: impl FnOnce() -> teams_core::Reply<Option<teams_core::Strip>>,
+    cx: &mut App,
+) -> Option<Arc<RenderImage>> {
     let animations = cx.default_global::<Animations>();
     if let Some(known) = animations.known.get(&id) {
         return known.clone();
     }
     // asked: an answer of `None` until it comes
     animations.known.insert(id.clone(), None);
-    let reply = core.reaction_animation(id.clone());
+    let reply = ask();
     cx.spawn(async move |cx| {
         let strip = match reply.await {
             Ok(Some(strip)) => strip,
