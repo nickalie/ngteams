@@ -79,6 +79,17 @@ impl MenuKeys {
         }
     }
 
+    /// Where the focus goes back to from a popup that a row of the menu opens: where the menu's keys go back to when
+    /// the keys opened it, else where the focus is now.
+    pub(super) fn focus_return(&self, window: &Window, cx: &App) -> keyboard::Return {
+        if self.keyed {
+            return self.back.clone();
+        }
+        let back = keyboard::Return::default();
+        back.keep(window, cx);
+        back
+    }
+
     fn opened_by(&self, window: &Window) -> Option<SideList> {
         [SideList::Translation, SideList::MoreActions]
             .into_iter()

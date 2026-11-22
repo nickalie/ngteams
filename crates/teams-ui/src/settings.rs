@@ -60,8 +60,10 @@ use crate::sounds::{self, PackInfo, SoundPlayer, SoundSettings, SoundSource};
 use crate::theme::{self, Appearance};
 use crate::translate;
 
+mod message_bar;
 mod toolbar;
 
+pub use message_bar::{BarChoice, BarItem};
 pub use toolbar::ComposeTool;
 
 /// The idle times the settings take, in minutes.
@@ -413,6 +415,9 @@ pub struct Settings {
     pub compose_hidden: Vec<ComposeTool>,
     /// The AI tools that the user shows on the message box's toolbar, in the toolbar's order ([`toolbar`]).
     pub compose_shown: Vec<ComposeTool>,
+    /// The buttons each account chose for a message's hover bar, by the account's MRI ([`message_bar`]); an account
+    /// with none shows the bar of Teams.
+    pub message_bar: BTreeMap<String, BarChoice>,
     /// Which sound plays for each event, how loud, and the pack they come from ([`crate::sounds`]).
     pub sounds: SoundSettings,
 }
@@ -468,6 +473,23 @@ impl Settings {
         if kept {
             list.push(tool);
             toolbar::tidy(list);
+        }
+    }
+
+    /// Whether `account`'s message hover bar shows `item`.
+    #[must_use]
+    pub fn shows_bar_item(&self, account: &str, item: BarItem) -> bool {
+        self.message_bar
+            .get(account)
+            .map_or_else(|| item.shown_by_default(), |choice| choice.shows(item))
+    }
+
+    /// Shows `item` on `account`'s message hover bar, or hides it in "More options".
+    pub fn show_bar_item(&mut self, account: &str, item: BarItem, shown: bool) {
+        let choice = self.message_bar.entry(account.to_owned()).or_default();
+        choice.show(item, shown);
+        if *choice == BarChoice::default() {
+            self.message_bar.remove(account);
         }
     }
 
@@ -666,6 +688,7 @@ impl Default for Settings {
             ai_features: None,
             compose_hidden: Vec::new(),
             compose_shown: Vec::new(),
+            message_bar: BTreeMap::new(),
             sounds: SoundSettings::default(),
         }
     }
@@ -728,6 +751,9 @@ pub mod keys {
     pub const COMPOSE_HIDDEN: &str = "compose_hidden_tools";
     /// The AI tools shown on the message box's toolbar: an array of their names.
     pub const COMPOSE_SHOWN: &str = "compose_shown_tools";
+    /// The buttons each account hid from, and showed on, a message's hover bar: a table of tables, by the account's
+    /// MRI, each with `hidden` and `shown` arrays of names.
+    pub const MESSAGE_BAR: &str = "message_bar";
     /// The sound pack chosen as a whole (`builtin/<key>` or `added/<id>`), "Play sounds when I'm busy", every sound's
     /// volume, and each event's sound: a table of tables, by the event's name.
     pub const SOUND_PACK: &str = "sound_pack";
@@ -843,6 +869,7 @@ fn take(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem
         key if TRANSLATIONS.contains(&key) => take_translation(settings, key, value)?,
         keys::COMPOSE_HIDDEN => settings.compose_hidden = toolbar::take(keys::COMPOSE_HIDDEN, false, value)?,
         keys::COMPOSE_SHOWN => settings.compose_shown = toolbar::take(keys::COMPOSE_SHOWN, true, value)?,
+        keys::MESSAGE_BAR => settings.message_bar = message_bar::take(value)?,
         keys::FIRST_ACCOUNT => {
             settings.first_account = Some(chat_id(value).ok_or(bad(keys::FIRST_ACCOUNT, "not an account's MRI"))?);
         }
@@ -1283,6 +1310,7 @@ pub fn render(settings: &Settings) -> String {
     render_people(settings, &mut table);
     render_chat_translation(settings, &mut table);
     toolbar::render(&settings.compose_hidden, &settings.compose_shown, &mut table);
+    message_bar::render(&settings.message_bar, &mut table);
     sounds::render(&settings.sounds, &mut table);
     table.to_string()
 }

@@ -16,8 +16,9 @@ use teams_media::video::effects::{Backdrop, Background};
 use teams_ui::local_ai::ToolChoice as TranslatorChoice;
 use teams_ui::local_ai::{AiChoice, Model};
 use teams_ui::settings::{
-    AccountSettings, ComposeTool, DEFAULT_IDLE_MINUTES, FirstRunState, LogLevel, ManualStatus, Notifications, Problem,
-    Settings, SettingsFile, SettingsModel, TimeFormat, VideoEffect, attach_devices, parse, render,
+    AccountSettings, BarChoice, BarItem, ComposeTool, DEFAULT_IDLE_MINUTES, FirstRunState, LogLevel, ManualStatus,
+    Notifications, Problem, Settings, SettingsFile, SettingsModel, TimeFormat, VideoEffect, attach_devices, parse,
+    render,
 };
 use teams_ui::theme::{self, Appearance, THEMES};
 use teams_ui::translate::Backend;
@@ -127,7 +128,16 @@ fn changed() -> Settings {
         ai_providers: vec![teams_ui::local_ai::Provider::new_api(Backend::Anthropic, &[])],
         compose_hidden: vec![ComposeTool::Emoji],
         compose_shown: vec![ComposeTool::Translate],
+        message_bar: changed_bar(),
     }
+}
+
+fn changed_bar() -> std::collections::BTreeMap<String, BarChoice> {
+    let choice = BarChoice {
+        hidden: vec![BarItem::Reaction(1), BarItem::Reply],
+        shown: vec![BarItem::Copy],
+    };
+    [("8:orgid:00000000-0000-4000-8000-00000000000a".to_owned(), choice)].into()
 }
 
 #[test]
@@ -1399,6 +1409,77 @@ fn teams_toolbar_buttons_show_by_default_and_the_hidden_ones_go_through_the_file
             problems
                 .iter()
                 .any(|problem| problem.to_string().contains("compose_hidden_tools")),
+            "{bad}: {problems:?}"
+        );
+    }
+}
+
+#[test]
+fn each_account_keeps_its_own_hover_bar_and_the_choice_goes_through_the_file() {
+    const A: &str = "8:orgid:00000000-0000-4000-8000-00000000000a";
+    const B: &str = "8:orgid:00000000-0000-4000-8000-00000000000b";
+    let defaults = Settings::default();
+    for item in BarItem::ALL {
+        let teams = matches!(
+            item,
+            BarItem::Reaction(_) | BarItem::React | BarItem::Edit | BarItem::Reply
+        );
+        assert_eq!(defaults.shows_bar_item(A, item), teams, "{item:?}: the bar of Teams");
+    }
+    assert!(!render(&defaults).contains("message_bar"));
+    let mut settings = Settings::default();
+    settings.show_bar_item(A, BarItem::Reply, false);
+    settings.show_bar_item(A, BarItem::Reaction(2), false);
+    settings.show_bar_item(A, BarItem::Reaction(2), false);
+    settings.show_bar_item(A, BarItem::Translate, true);
+    assert_eq!(
+        settings.message_bar[A],
+        BarChoice {
+            hidden: vec![BarItem::Reaction(2), BarItem::Reply],
+            shown: vec![BarItem::Translate],
+        },
+        "each once, in the bar's order"
+    );
+    assert!(!settings.shows_bar_item(A, BarItem::Reply) && settings.shows_bar_item(B, BarItem::Reply));
+    assert!(settings.shows_bar_item(A, BarItem::Translate) && !settings.shows_bar_item(B, BarItem::Translate));
+    let text = render(&settings);
+    assert!(text.contains(r#"hidden = ["reaction-3", "reply"]"#), "{text}");
+    assert!(text.contains(r#"shown = ["translate"]"#), "{text}");
+    let (read, problems) = parse(&text).expect("TOML");
+    assert_eq!(read, settings);
+    assert!(problems.is_empty(), "{problems:?}");
+    // back to the bar of Teams: the account has nothing kept
+    settings.show_bar_item(A, BarItem::Reply, true);
+    settings.show_bar_item(A, BarItem::Reaction(2), true);
+    settings.show_bar_item(A, BarItem::Translate, false);
+    assert!(settings.message_bar.is_empty());
+}
+
+#[test]
+fn a_hover_bar_name_of_a_newer_build_is_passed_over_and_a_bad_table_reported() {
+    const A: &str = "8:orgid:00000000-0000-4000-8000-00000000000a";
+    const B: &str = "8:orgid:00000000-0000-4000-8000-00000000000b";
+    // a name of a newer build, or of the other list, is passed over; a bad table is reported, the others kept
+    let (read, problems) = parse(&format!(
+        "[message_bar.\"{A}\"]\nhidden = [\"reply\", \"pin\", \"copy\"]\n[message_bar.\"{B}\"]\nshown = [\"react\"]"
+    ))
+    .expect("TOML");
+    assert_eq!(read.message_bar[A].hidden, [BarItem::Reply]);
+    assert!(!read.message_bar.contains_key(B), "nothing kept for {B}");
+    assert!(problems.is_empty(), "{problems:?}");
+    for bad in [
+        "message_bar = [\"reply\"]".to_owned(),
+        format!("[message_bar.\"{A}\"]\nhidden = \"reply\""),
+        format!("[message_bar.\"{A}\"]\nhidden = [3]"),
+        format!("[message_bar.\"{A}\"]\nkept = []"),
+        "[message_bar.\"not an id\"]\nhidden = [\"reply\"]".to_owned(),
+    ] {
+        let (read, problems) = parse(&bad).expect("TOML");
+        assert!(read.message_bar.is_empty(), "{bad}");
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.to_string().contains("message_bar")),
             "{bad}: {problems:?}"
         );
     }

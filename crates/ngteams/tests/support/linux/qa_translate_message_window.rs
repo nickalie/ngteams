@@ -484,16 +484,18 @@ impl Walk<'_> {
         Ok((bar.x1.saturating_sub(17), button.y0 + 17))
     }
 
-    /// Opens the More options menu of `id` with a click on its hover bar's button; the button's centre.
-    fn open_menu(&mut self, view: &str, id: &str) -> SandboxResult<(u32, u32)> {
+    /// Opens the More options menu of `id` with a click on its hover bar's button; the button's centre, and the screen
+    /// with the bar before the click.
+    fn open_menu(&mut self, view: &str, id: &str) -> SandboxResult<((u32, u32), PathBuf)> {
         let (x, y) = self.more_button(view, id)?;
+        let before = self.sandbox.screenshot("qa575-before-menu.png", false)?;
         for (dx, dy) in [(0_i32, 0_i32), (-6, -4), (-10, 4)] {
             let at = (x.saturating_add_signed(dx), y.saturating_add_signed(dy));
             self.run.click(at.0, at.1)?;
             thread::sleep(SETTLE);
             let state = self.run.state(view)?;
             if state["options"] == id {
-                return Ok(at);
+                return Ok((at, before));
             }
             if !state["options"].is_null() {
                 self.close_menu(view)?;
@@ -505,12 +507,20 @@ impl Walk<'_> {
     /// Opens the menu of `id` and its "Translation" list; where the list's rows are. `own`: the menu also offers
     /// Delete, before Mark as unread and Translation. A thread's reply offers no Mark as unread.
     fn open_list(&mut self, view: &str, id: &str, own: bool) -> SandboxResult<ListAt> {
-        let (x, y) = self.open_menu(view, id)?;
+        let ((x, y), before) = self.open_menu(view, id)?;
         let menu = load(&self.run.shot(self.sandbox, "qa575-menu.png")?)?;
         let column = x.saturating_sub(100);
-        // a menu with no room under its button opens over it: its own hairlines are not its top
+        // a menu with no room under its button opens over it: its own hairlines are not its top. Over the bar, the
+        // bar's surface is the menu's too: there the top is the first row the menu changed.
+        let over = Rect {
+            x0: column.saturating_sub(4),
+            y0: y.saturating_sub(320).max(60),
+            x1: column + 4,
+            y1: menu.height(),
+        };
         let top = panel_top(&menu, column, y + 12..menu.height())
             .or_else(|| panel_top(&menu, column, y.saturating_sub(320).max(60)..y))
+            .or_else(|| changed_box(&load(&before).ok()?, &menu, over).map(|changed| changed.y0))
             .ok_or("no menu's top edge under its button")?;
         // the rows of Copy, Delete (the account's own), a hairline (1 px with 4 px over and under it), Mark as unread,
         // then Translation: 32 px with 2 px between, under 1 + 4 px

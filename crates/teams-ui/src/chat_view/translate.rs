@@ -6,13 +6,15 @@
 //! the settings' page that holds the "Translate to" language. The selected message's key is T.
 
 use gpui::{
-    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, Window, div, px,
+    AnyElement, Context, ElementId, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, Window, div,
+    px,
 };
 use gpui_component::kbd::Kbd;
+use gpui_component::{Sizable as _, Size};
 
-use super::{CONTEXT, ChatView, ChatViewEvent, SideList, TranslateSelected, measured};
+use super::{BAR_BUTTON, CONTEXT, ChatView, ChatViewEvent, MessageItem, SideList, TranslateSelected, measured};
 use crate::chat_translate;
-use crate::icons::Glyph;
+use crate::icons::{Glyph, icon_button_with_key, selected_by};
 use crate::theme::Palette;
 use crate::workflow_run::menu;
 
@@ -44,6 +46,21 @@ impl ChatView {
                 });
             },
         ))
+    }
+
+    /// Translate on the hover bar, when the user shows it there and the message offers it: does what the message
+    /// offers ("Translate", or "See original message"), as that row of "Translation" does.
+    pub(super) fn translate_button(item: &MessageItem, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        let offer = item.translate?;
+        let message = item.id.clone();
+        let id = ElementId::Name(format!("action-translate-{message}").into());
+        let button = icon_button_with_key(id, Glyph::LANGUAGES, offer.label().to_string(), &TranslateSelected)
+            .with_size(Size::Size(px(BAR_BUTTON)))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.translate(&message, cx);
+            }));
+        Some(selected_by("action-translate", button))
     }
 
     /// The "Translation" list beside the menu, while it is open: what the message offers, with its key, then

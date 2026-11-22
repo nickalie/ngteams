@@ -49,7 +49,8 @@
 //!   copy text, and for the account's own message edit (not a forward's) and delete. They are on Teams' hover bar over
 //!   the bubble's top right ([`ChatView::hover_bar`]): the quick reactions (the account's most used,
 //!   [`Core::frequent_reactions`], then Teams' own: [`quick_reactions`]), react, edit, reply, and "More options" (copy
-//!   text, delete). Each is told as
+//!   text, delete). The user chooses which buttons show on the bar and which are rows of "More options"
+//!   ([`bar_customize`]). Each is told as
 //!   [`ChatViewEvent::Action`] and carried out (M2 Task 13): a reply and an edit go to the [`Compose`] box under the
 //!   messages; react's key numbers the bar's quick reactions (keys 1–4) and "more reactions" (key 5, or react's
 //!   button: [`ReactionPicker`], every reaction Teams offers, over the view), and a quick reaction or a reaction chip
@@ -146,7 +147,7 @@ use crate::reactions;
 use crate::rich_text::{self, Mentions, Rendered};
 use crate::selection::{self, MessageKey, Scope, TextSelection};
 use crate::sending::{self, Again, Note, RowState};
-use crate::settings::SettingsModel;
+use crate::settings::{BarItem, SettingsModel};
 use crate::shell::ShellParts;
 use crate::system_message::{self, EventIcon, EventLine, Naming, Shown as SystemShown};
 use crate::theme::{self, Palette};
@@ -154,6 +155,7 @@ use crate::trace::{TraceLine, ViewTrace};
 use crate::{presence, presence_badge};
 
 mod app_actions;
+mod bar_customize;
 mod bot_chat;
 mod bots;
 pub mod channel;
@@ -165,6 +167,7 @@ pub mod reactors;
 mod saved;
 mod translate;
 
+pub use bar_customize::{CUSTOMIZE, SHOW_IN_BAR};
 use channel::{ChannelLooks, THREAD_EVENT};
 pub use channel::{MeetingCall, MeetingCard, Place, Replies};
 pub use email::{EmailPost, REPLY_IN_THREAD, VIA_EMAIL, VIEW_ORIGINAL_EMAIL, open_original};
@@ -1200,6 +1203,8 @@ pub struct ChatView {
     side_list: Option<(SideList, String)>,
     /// The more-options menu's keyboard, and where its list was last drawn ([`menu_keys`]).
     menu_keys: menu_keys::MenuKeys,
+    /// The list of the hover bar's buttons, while it is open ([`bar_customize`]).
+    bar_customize: Option<bar_customize::BarCustomize>,
     /// The account's workflows that run from a message, read each time a message's menu opens.
     workflows: Option<Entity<crate::workflow_run::menu::MessageWorkflows>>,
     /// The message whose delete waits for its confirmation.
@@ -1313,6 +1318,10 @@ impl ChatView {
         Self::build(parts, conversation, Place::Chat, compose, window, cx).start(cx)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "each part is made by a helper of its own; what is left is the struct literal that lists them"
+    )]
     fn build(
         parts: ShellParts,
         conversation: String,
@@ -1379,6 +1388,7 @@ impl ChatView {
             text_selection: TextSelection::default(),
             options: None,
             options_at: Rc::default(),
+            bar_customize: None,
             side_list: None,
             menu_keys: menu_keys::MenuKeys::new(cx),
             workflows: None,
@@ -4361,8 +4371,29 @@ impl ChatView {
     /// reactions or its more-options menu is): over its bubble's top, flush with the bubble's right edge and never past
     /// its left, floating over the header line or the message above. In it, Teams' order: the quick reactions (the
     /// account's most used first, each setting or taking back the account's own), "React" (every reaction), then
-    /// edit on the account's own, reply (Teams' quote), and "More options" holding the rest. None on a message
-    /// that offers no action.
+    /// edit on the account's own, reply (Teams' quote), and "More options" holding the rest. The user chooses which
+    /// of them show, and may show more of the rest ([`bar_customize`]); a button that does not apply to the message
+    /// does not show. A right click on the bar opens that choice. None on a message that offers no action.
+    /// The quick reactions the account shows on the bar; each keeps its place's key.
+    fn quick_shown(&self, item: &MessageItem, reacting: bool, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
+        let places: Vec<bool> = (0..self.quick.len())
+            .map(|index| u8::try_from(index).is_ok_and(|place| self.bar_shows(BarItem::Reaction(place), cx)))
+            .collect();
+        let quick = self
+            .quick
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| places[*index])
+            .map(|(index, key)| quick_button(item, key, reacting.then_some(index + 1), palette, cx))
+            .collect::<Vec<_>>();
+        div()
+            .debug_selector(|| "reaction-picker".to_owned())
+            .flex()
+            .items_center()
+            .gap(px(BAR_GAP))
+            .children(quick)
+    }
+
     fn hover_bar(
         &self,
         item: &MessageItem,
@@ -4376,28 +4407,20 @@ impl ChatView {
             || reacting
             || self.hovered.as_deref() == Some(id)
             || self.bar_hovered.as_deref() == Some(id)
-            || self.options.as_deref() == Some(id);
+            || self.options.as_deref() == Some(id)
+            || self.bar_customize.as_ref().is_some_and(|open| open.message == id);
         let actions = item.actions();
         if !shown || actions.is_empty() {
             return None;
         }
-        let quick = self
-            .quick
-            .iter()
-            .enumerate()
-            .map(|(index, key)| quick_button(item, key, reacting.then_some(index + 1), palette, cx))
-            .collect::<Vec<_>>();
-        let quick = div()
-            .debug_selector(|| "reaction-picker".to_owned())
-            .flex()
-            .items_center()
-            .gap(px(BAR_GAP))
-            .children(quick);
-        let edit = actions
-            .contains(&MessageAction::Edit)
-            .then(|| bar_button(item, MessageAction::Edit, cx));
+        let quick = self.quick_shown(item, reacting, palette, cx);
+        let react = self
+            .bar_shows(BarItem::React, cx)
+            .then(|| react_button(item, reacting, palette, cx));
+        let buttons = self.bar_buttons(item, &actions, cx);
         let measure = reacting.then(|| measured(&self.quick_bar));
         let hovered_id = item.id.clone();
+        let customized = item.id.clone();
         let bar = div()
             .id(ElementId::Name(format!("message-actions-{id}").into()))
             .debug_selector(|| "message-actions".to_owned())
@@ -4413,6 +4436,13 @@ impl ChatView {
             .shadow_md()
             // the message under it (the one above this one) is neither hovered nor clicked through the bar
             .block_mouse_except_scroll()
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.open_bar_customize(&customized, event.position, window, cx);
+                }),
+            )
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                 if *hovered {
                     this.bar_hovered = Some(hovered_id.clone());
@@ -4424,15 +4454,8 @@ impl ChatView {
             }))
             .children(measure)
             .child(quick)
-            .child(react_button(item, reacting, palette, cx))
-            .children(edit)
-            // a chat's quote, a channel post's thread; none in a thread, where what is written is a reply
-            .children(
-                [MessageAction::Reply, MessageAction::ReplyInThread]
-                    .into_iter()
-                    .find(|action| actions.contains(action))
-                    .map(|action| bar_button(item, action, cx)),
-            )
+            .children(react)
+            .children(buttons)
             .child(self.options_button(item, cx));
         // over the bubble: its right edge the bubble's, its left never left of the bubble's
         let place = div()
@@ -4450,6 +4473,37 @@ impl ChatView {
             place.left(inset)
         };
         Some(place.child(bar).into_any_element())
+    }
+
+    /// The bar's buttons after "React" that the user shows and that apply to the message, in the bar's order: edit,
+    /// reply (a chat's quote, a channel post's thread; none in a thread, where what is written is a reply), then the
+    /// actions of "More options" that the user shows.
+    fn bar_buttons(&self, item: &MessageItem, actions: &[MessageAction], cx: &mut Context<Self>) -> Vec<gpui::Div> {
+        let mut buttons = Vec::new();
+        for shown in [
+            BarItem::Edit,
+            BarItem::Reply,
+            BarItem::Copy,
+            BarItem::Delete,
+            BarItem::MarkUnread,
+            BarItem::Translate,
+        ] {
+            if !self.bar_shows(shown, cx) {
+                continue;
+            }
+            let action = match shown {
+                BarItem::Reply => [MessageAction::Reply, MessageAction::ReplyInThread]
+                    .into_iter()
+                    .find(|action| actions.contains(action)),
+                BarItem::Translate => {
+                    buttons.extend(Self::translate_button(item, cx));
+                    continue;
+                }
+                other => bar_customize::action_of(other).filter(|action| actions.contains(action)),
+            };
+            buttons.extend(action.map(|action| bar_button(item, action, cx)));
+        }
+        buttons
     }
 
     /// "More options" on the hover bar: opens or closes the menu of the message's other actions, under it.
@@ -4482,17 +4536,7 @@ impl ChatView {
         };
         let at = self.options_at.get()?;
         let actions = self.message_items().find(|item| item.id == message)?.actions();
-        let mut entries = [MessageAction::Copy, MessageAction::Delete]
-            .into_iter()
-            .filter(|action| actions.contains(action))
-            .map(|action| menu_entry(&message, action, palette, window, cx))
-            .collect::<Vec<_>>();
-        // Teams' own group after a hairline: Mark as unread, then the translation
-        if actions.contains(&MessageAction::MarkUnread) {
-            entries.push(crate::workflow_run::menu::separator(palette));
-            entries.push(menu_entry(&message, MessageAction::MarkUnread, palette, window, cx));
-        }
-        entries.extend(self.translation_entry(&message, palette, cx));
+        let mut entries = self.hidden_entries(&message, &actions, palette, window, cx);
         let translation_menu = self.translation_menu(&message, palette, window, cx);
         entries.extend(self.refresh_entry(&message, palette, cx));
         // Teams' workflows run on any message of a chat that takes the account's writes
@@ -4515,6 +4559,12 @@ impl ChatView {
         } else if offers_apps {
             entries.push(crate::workflow_run::menu::separator(palette));
             entries.push(self.more_actions_entry(&message, palette, cx));
+        }
+        if let Some(customize) = self.customize_entry(&message, palette, cx) {
+            if !entries.is_empty() {
+                entries.push(crate::workflow_run::menu::separator(palette));
+            }
+            entries.push(customize);
         }
         let menu = div()
             .id("message-menu")
@@ -4563,6 +4613,56 @@ impl ChatView {
 }
 
 impl ChatView {
+    /// The first rows of `message`'s more-options menu: the buttons that the bar does not show and that apply to the
+    /// message. The quick reactions come first, then a hairline, then React, Reply, Edit, Copy text and Delete, then
+    /// after a hairline Mark as unread and "Translation".
+    fn hidden_entries(
+        &self,
+        message: &str,
+        actions: &[MessageAction],
+        palette: Palette,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let mut entries = if actions.contains(&MessageAction::React) {
+            self.hidden_reaction_entries(message, palette, cx)
+        } else {
+            Vec::new()
+        };
+        let reply = [MessageAction::Reply, MessageAction::ReplyInThread]
+            .into_iter()
+            .find(|action| actions.contains(action));
+        let hidden: Vec<MessageAction> = [
+            (BarItem::React, Some(MessageAction::React)),
+            (BarItem::Reply, reply),
+            (BarItem::Edit, Some(MessageAction::Edit)),
+            (BarItem::Copy, Some(MessageAction::Copy)),
+            (BarItem::Delete, Some(MessageAction::Delete)),
+        ]
+        .into_iter()
+        .filter_map(|(item, action)| action.filter(|action| actions.contains(action) && !self.bar_shows(item, cx)))
+        .collect();
+        if !entries.is_empty() && !hidden.is_empty() {
+            entries.push(crate::workflow_run::menu::separator(palette));
+        }
+        entries.extend(
+            hidden
+                .into_iter()
+                .map(|action| menu_entry(message, action, palette, window, cx)),
+        );
+        // Teams' own group after a hairline: Mark as unread, then the translation
+        if actions.contains(&MessageAction::MarkUnread) && !self.bar_shows(BarItem::MarkUnread, cx) {
+            if !entries.is_empty() {
+                entries.push(crate::workflow_run::menu::separator(palette));
+            }
+            entries.push(menu_entry(message, MessageAction::MarkUnread, palette, window, cx));
+        }
+        if !self.bar_shows(BarItem::Translate, cx) {
+            entries.extend(self.translation_entry(message, palette, cx));
+        }
+        entries
+    }
+
     /// A click outside the more-options menu, whose button is at `button`, closes it; a click on its own button toggles
     /// it there, and one in the list beside it is the menu's own.
     fn click_out_of_menu(&mut self, button: Bounds<Pixels>, event: &gpui::MouseDownEvent, cx: &mut Context<Self>) {
@@ -4703,6 +4803,12 @@ fn bar_button(item: &MessageItem, action: MessageAction, cx: &mut Context<ChatVi
             cx.stop_propagation();
             this.act(action, &message, window, cx);
         }));
+    // a quiet destructive button: Teams' red on the ghost button
+    let button = if action == MessageAction::Delete {
+        button.text_color(rgb(theme::DANGER))
+    } else {
+        button
+    };
     selected_by(format!("action-{name}"), button)
 }
 
@@ -4776,7 +4882,8 @@ fn key_number(number: usize, palette: Palette) -> gpui::Div {
         .child(number.to_string())
 }
 
-/// An entry of the more-options menu: the action's icon, its name and its key; delete in Teams' red.
+/// An entry of the more-options menu: the action's icon, its name and its key; delete in Teams' red. React also opens
+/// every reaction, as its button on the bar does.
 fn menu_entry(
     message: &str,
     action: MessageAction,
@@ -4792,9 +4899,63 @@ fn menu_entry(
         palette.foreground
     };
     let selector = format!("action-{}", action.name());
+    let face = (
+        action.glyph().icon().size(px(14.0)).into_any_element(),
+        SharedString::from(action.label()),
+    );
+    let entry = Entry {
+        id: selector.into(),
+        face,
+        key,
+        colour,
+    };
+    menu_entry_parts(entry, palette, cx, move |this, window, cx| {
+        this.options = None;
+        this.act(action, &message, window, cx);
+        if action == MessageAction::React {
+            this.open_more(window, cx);
+        }
+    })
+}
+
+/// A row of the more-options menu.
+struct Entry {
+    /// Its id, and its test selector too.
+    id: SharedString,
+    /// Its icon and name.
+    face: (AnyElement, SharedString),
+    key: Option<Kbd>,
+    colour: u32,
+}
+
+impl Entry {
+    /// A row with no key, in the palette's text colour.
+    fn plain(id: SharedString, face: (AnyElement, SharedString), palette: Palette) -> Self {
+        Self {
+            id,
+            face,
+            key: None,
+            colour: palette.foreground,
+        }
+    }
+}
+
+fn menu_entry_parts(
+    entry: Entry,
+    palette: Palette,
+    cx: &mut Context<ChatView>,
+    on_click: impl Fn(&mut ChatView, &mut Window, &mut Context<ChatView>) + 'static,
+) -> AnyElement {
+    let Entry {
+        id,
+        face: (icon, label),
+        key,
+        colour,
+    } = entry;
+    let selector = id.clone();
     let row = div()
-        .id(ElementId::Name(selector.clone().into()))
-        .debug_selector(move || selector.clone())
+        .id(id.clone())
+        .debug_selector(move || selector.to_string())
         .w_full()
         .h(px(32.0))
         .px_2()
@@ -4806,14 +4967,19 @@ fn menu_entry(
         .text_sm()
         .text_color(rgb(colour))
         .hover(move |row| row.bg(rgb(palette.hover)))
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.options = None;
-            this.act(action, &message, window, cx);
-        }))
-        .child(action.glyph().icon().size(px(14.0)))
-        .child(div().flex_1().child(action.label()))
+        .on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx)))
+        .child(
+            div()
+                .flex_none()
+                .size(px(14.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(icon),
+        )
+        .child(div().flex_1().child(label))
         .children(key);
-    crate::keyboard::stop(format!("action-{}", action.name()), row, palette).into_any_element()
+    crate::keyboard::stop(id, row, palette).into_any_element()
 }
 
 /// An outbox row's state under the message it concerns, with "send again" when it is offered.
@@ -6094,6 +6260,14 @@ fn typing_dots(palette: Palette, cx: &App) -> gpui::Div {
     div().h(px(12.0)).flex().items_end().gap(px(3.0)).children(dots)
 }
 
+impl ChatView {
+    /// The open "More options" menu and the open customize list of the bar.
+    fn menus(&mut self, palette: Palette, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let options = self.options_overlay(palette, window, cx);
+        options.into_iter().chain(self.bar_customize_overlay(cx)).collect()
+    }
+}
+
 impl Render for ChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = theme::current(cx);
@@ -6102,7 +6276,7 @@ impl Render for ChatView {
         self.placed.faces.borrow_mut().clear();
         let (compose, over_all) = self.compose_with_drop(palette, cx);
         let more = self.more_overlay();
-        let options = self.options_overlay(palette, window, cx);
+        let options = self.menus(palette, window, cx);
         let selection_menu = self.selection_menu(palette, window, cx);
         let reactors = self.reactors_card(palette, window, cx);
         let rows = list(

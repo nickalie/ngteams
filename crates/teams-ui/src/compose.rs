@@ -187,7 +187,7 @@ pub fn init(cx: &mut App) {
     }));
     cx.bind_keys([KeyBinding::new("secondary-shift-u", AttachFiles, Some(CONTEXT))]);
     correction::bind_keys(cx);
-    customize::bind_keys(cx);
+    crate::customize_list::bind_keys(cx);
     draft_translation::bind_keys(cx);
 }
 
@@ -756,7 +756,7 @@ pub struct Compose {
     /// The menu of tools that is open: More options or "+" ([`menus`]).
     menu: Option<menus::ToolMenu>,
     /// The customize list, while it is open ([`customize`]).
-    customize: Option<customize::Customize>,
+    customize: Option<crate::customize_list::CustomizeList>,
     /// Where the button that holds "Customize toolbar" was last drawn, for the list to open by.
     customize_at: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Whether the picker was open as the emoji button was pressed: its click then closes it.

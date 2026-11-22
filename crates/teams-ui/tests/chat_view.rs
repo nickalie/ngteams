@@ -17,6 +17,9 @@ mod parts;
 // a link's app card (a YouTube link's), under the text
 #[path = "chat_view/app_cards.rs"]
 mod app_cards;
+// the buttons of the hover bar, as the user chooses them
+#[path = "chat_view/bar_customize.rs"]
+mod bar_customize;
 // a 1:1 call's recording and transcript, as their recap cards
 #[path = "chat_view/call_recap.rs"]
 mod call_recap;

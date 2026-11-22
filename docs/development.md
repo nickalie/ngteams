@@ -581,6 +581,15 @@ same list is in Settings → Appearance → Message box toolbar. "+" and Send ca
 stays in "+", with its icon and key: Teams' own actions first, then the AI tools. The choice is one setting for every box, kept across restarts
 (`crates/teams-ui/src/compose/menus.rs`).
 
+#### The message hover bar
+
+A message's hover bar shows the quick reactions, "React", Edit, Reply and "More options", as in Teams. To show or
+hide a button, right-click the bar or select "Customize" at the end of "More options", and set or remove its check.
+The list also offers Copy text, Delete, Mark as unread and Translate, which are in "More options" until the user
+shows them. "More options" cannot hide. A hidden button's action is a row of "More options", and its key still acts.
+A button that does not apply to a message (Edit on someone else's message) does not show on it. Each account keeps
+its own choice across restarts (`crates/teams-ui/src/chat_view/bar_customize.rs`).
+
 ## Captures and fixtures
 
 A recorded run writes `captures/<scenario>/<ts>/events.jsonl` under the lab's data dir, never into the repo. Captures

@@ -199,7 +199,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 345 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 354 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -553,6 +553,66 @@ const STEPS: [Step; 5 + 345 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
         translate_another_chat(shell, None, cx);
         cx.set_global(teams_ui::local_ai::Tools::default());
         clear_compose(shell, window, cx);
+    }),
+    // a message's More options as Teams has it, with "Customize" at its foot
+    ("bar-more-options", |shell, window, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        shell.update(cx, |shell, cx| {
+            shell.show_chats(window, cx);
+            shell.open_chat(AB_CHAT.to_owned(), window, cx);
+        });
+        if let Some((chat, id)) = last_markable(shell, cx) {
+            chat.update(cx, |chat, cx| {
+                chat.select(Some(id.clone()), cx);
+                chat.toggle_options(&id, cx);
+            });
+        }
+    }),
+    ("bar-more-options-dark", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    // "Customize": the list of the bar's buttons, each with its check, "More options" always shown
+    ("bar-customize", |shell, window, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        if let Some((chat, id)) = last_markable(shell, cx) {
+            chat.update(cx, |chat, cx| chat.customize_bar(&id, window, cx));
+        }
+    }),
+    ("bar-customize-dark", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    // the second reaction and Reply hidden, Copy text and Mark as unread shown: the bar after the change
+    ("bar-customized", |shell, window, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        if let Some((chat, _)) = last_markable(shell, cx) {
+            chat.update(cx, |chat, cx| {
+                chat.close_bar_customize(window, cx);
+                customize_tour_bar(chat, false, cx);
+            });
+        }
+    }),
+    ("bar-customized-dark", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    // its More options: the hidden reaction, a hairline, Reply
+    ("bar-customized-menu", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        if let Some((chat, id)) = last_markable(shell, cx) {
+            chat.update(cx, |chat, cx| chat.toggle_options(&id, cx));
+        }
+    }),
+    ("bar-customized-menu-dark", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    // the bar of Teams again, the menu closed
+    ("bar-default", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        if let Some((chat, id)) = last_markable(shell, cx) {
+            chat.update(cx, |chat, cx| {
+                chat.toggle_options(&id, cx);
+                customize_tour_bar(chat, true, cx);
+            });
+        }
     }),
     // a message's More options: "Mark as unread" after a hairline under copy, before the translation
     ("message-mark-unread-menu", |shell, window, cx| {
@@ -4838,6 +4898,24 @@ fn last_markable(shell: &Entity<Shell>, cx: &App) -> Option<(Entity<teams_ui::ch
         _ => None,
     })?;
     Some((chat, message))
+}
+
+/// The tour's choice of the bar's buttons (the second reaction and Reply hidden, Copy text and Mark as unread
+/// shown), or the bar of Teams (`back`).
+fn customize_tour_bar(
+    chat: &mut teams_ui::chat_view::ChatView,
+    back: bool,
+    cx: &mut Context<teams_ui::chat_view::ChatView>,
+) {
+    use teams_ui::settings::BarItem;
+    for (item, shown) in [
+        (BarItem::Reaction(1), false),
+        (BarItem::Reply, false),
+        (BarItem::Copy, true),
+        (BarItem::MarkUnread, true),
+    ] {
+        chat.show_bar_item(item, shown != back, cx);
+    }
 }
 
 /// That message selected (its hover bar shows), its More options open on Translation's list.

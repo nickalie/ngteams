@@ -100,6 +100,9 @@ const OFF_FILL: [u8; 3] = [243, 243, 243];
 const RING: [u8; 3] = [91, 95, 199];
 /// Where the chat's pane starts on the 1280-wide screen: the rail and the chat list are left of it.
 const PANE_X: u32 = 380;
+/// From the centre of the menu's "Customize" row to the centre of the row over it, px: half a row, a 2 px gap, the
+/// hairline (1 px with 4 px over and under), a 2 px gap and half a row.
+const CUSTOMIZE_FOOT: u32 = 16 + 2 + 9 + 2 + 16;
 /// The chat's messages, between its header and its compose box.
 const PANE: Rect = Rect {
     x0: PANE_X,
@@ -803,7 +806,7 @@ impl Walk<'_> {
         self.more_options(card)?;
         let menu = self.shot("qa-bot-cards-refresh-menu-light.png")?;
         self.dark("refresh-menu")?;
-        let Some(row) = self.run.menu_bottom_row(&menu)? else {
+        let Some(row) = self.run.menu_last_action_row(&menu)? else {
             note(format!(
                 "no More options menu on the card's message ({})",
                 menu.display()
@@ -1750,8 +1753,9 @@ impl AppRun {
             .ok_or_else(|| format!("no key for {letter}").into())
     }
 
-    /// The bottom row of the menu that opened since [`Self::last_menu_base`], in `shot`: where to click it.
-    fn menu_bottom_row(&mut self, shot: &Path) -> SandboxResult<Option<(u32, u32)>> {
+    /// The last row of the menu that opened since [`Self::last_menu_base`], in `shot`, over its "Customize" (a hairline
+    /// and a row at the menu's foot): where to click it.
+    fn menu_last_action_row(&mut self, shot: &Path) -> SandboxResult<Option<(u32, u32)>> {
         let Some(base) = self.last_menu_base.take() else {
             return Ok(None);
         };
@@ -1764,7 +1768,7 @@ impl AppRun {
         };
         Ok(changed_box(&base, &now, whole)
             .filter(|menu| menu.height() > 40)
-            .map(|menu| (menu.x0 + 60, menu.y1.saturating_sub(18))))
+            .map(|menu| (menu.x0 + 60, menu.y1.saturating_sub(18 + CUSTOMIZE_FOOT))))
     }
 
     /// Clicks (`x`, `y`) as a user does; the link the app asked the opener for.

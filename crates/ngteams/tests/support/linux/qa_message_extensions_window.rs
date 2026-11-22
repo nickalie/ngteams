@@ -77,6 +77,9 @@ use ui_sandbox::input::{Modifier, VirtualInput, keys};
 use ui_sandbox::{NIRI_FULL_WINDOW, Running, Sandbox, SandboxOptions, SandboxResult, sandbox_or_skip, wait_until};
 
 const CHILD_ENV: &str = "NGTEAMS_QA_ME_TEST";
+/// From the centre of the menu's "Customize" row to the centre of the row over it, px: half a row, a 2 px gap, the
+/// hairline (1 px with 4 px over and under), a 2 px gap and half a row.
+const CUSTOMIZE_FOOT: u32 = 16 + 2 + 9 + 2 + 16;
 const TRACE_FD_ENV: &str = "NGTEAMS_QA_ME_TRACE_FD";
 const ORIGIN_ENV: &str = "NGTEAMS_QA_ME_ORIGIN";
 const TROUTER_ENV: &str = "NGTEAMS_QA_ME_TROUTER";
@@ -1178,8 +1181,9 @@ impl Walk<'_> {
             return Ok(None);
         };
         let before = load(&self.shot(&format!("{name}-menu-again"))?)?;
-        // More actions is the menu's last row, as in Teams
-        self.run.click(menu.x0 + 60, menu.y1.saturating_sub(18))?;
+        // More actions is the menu's last action, as in Teams, over its "Customize"
+        self.run
+            .click(menu.x0 + 60, menu.y1.saturating_sub(18 + CUSTOMIZE_FOOT))?;
         thread::sleep(SETTLE);
         let after = load(&self.shot(&format!("{name}-list"))?)?;
         let whole = Rect {
@@ -1467,7 +1471,8 @@ impl Walk<'_> {
             return Ok(None);
         };
         self.shot(&format!("{name}-menu-open"))?;
-        self.run.click(menu.x0 + 60, menu.y1.saturating_sub(18))?;
+        self.run
+            .click(menu.x0 + 60, menu.y1.saturating_sub(18 + CUSTOMIZE_FOOT))?;
         thread::sleep(SETTLE);
         self.shot(&format!("{name}-list"))?;
         Ok(Some(menu))
