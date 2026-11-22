@@ -278,7 +278,13 @@ impl Compose {
     /// Does what a row's tool does.
     pub(super) fn take(&mut self, item: Item, window: &mut Window, cx: &mut Context<Self>) {
         match item {
-            Item::Format => self.toggle_expanded(window, cx),
+            Item::Format => {
+                // the format bar opens for the text: its keys stay there when the menu closes
+                if let Some(menu) = &mut self.menu {
+                    menu.back_to = None;
+                }
+                self.toggle_expanded(window, cx);
+            }
             Item::Emoji => self.toggle_emoji(window, cx),
             Item::Attach => self.choose_files(window, cx),
             Item::Apps => self.toggle_apps(window, cx),
@@ -389,9 +395,9 @@ impl Compose {
     }
 
     /// The open menu closed: by its button (`to_text`: Escape, a press outside it) or by the menu itself (a row
-    /// taken, Escape). The keyboard goes back to the tool it opened from while the keyboard is still in the menu, or in
-    /// the text where the menu itself puts it. Else it goes to the text if `to_text`: a press or a row that sent the
-    /// keyboard elsewhere keeps it there.
+    /// taken, Escape). The keyboard goes back to the tool it was on when the menu opened while the keyboard is still in
+    /// the menu, or in the text where the menu itself puts it (except after a row that sends it to the text). Else it
+    /// goes to the text if `to_text`: a press or a row that sent the keyboard elsewhere keeps it there.
     fn menu_closed(&mut self, to_text: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.menu.take() else { return };
         let keys_near = menu.menu.focus_handle(cx).contains_focused(window, cx)
@@ -425,8 +431,8 @@ impl Compose {
     }
 
     /// The button of the menu `kind` on the box's row: a menu of its rows, each with its icon, its key and its state.
-    /// Escape closes it and gives the keyboard back to the button, or to the text when the keyboard was not on the
-    /// button. What a row of it opens (the language menu, the emoji picker, apps) opens by this button.
+    /// Escape closes it and gives the keyboard back to the tool it was on when the menu opened, or to the text when
+    /// it was on no tool. What a row of it opens (the language menu, the emoji picker, apps) opens by this button.
     pub(super) fn menu_button(&self, kind: MenuKind, fit: &Fit, cx: &mut Context<Self>) -> AnyElement {
         let open = self.menu_open() == Some(kind);
         let menu = self

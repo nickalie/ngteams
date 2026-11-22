@@ -13,7 +13,8 @@
 //!
 //! - [`row`]: a row of controls that Tab passes as one stop, as Teams' toolbars are; arrows move inside it.
 //!
-//! Tab and Shift+Tab are the kit's root's ([`gpui_component::Root`]): a dialog traps them with the kit's `focus_trap`.
+//! Tab and Shift+Tab are the kit's root's ([`gpui_component::Root`]), except in a [`row`] and the places around it: a
+//! dialog traps them with the kit's `focus_trap`.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

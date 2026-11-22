@@ -1321,7 +1321,7 @@ impl Compose {
         window.focus(&focus, cx);
     }
 
-    /// Whether one of the box's tools has the keys.
+    /// Whether the keys are in the box's tools: on one of them, or in a menu one of them opened.
     pub fn tools_focused(&self, window: &Window, cx: &App) -> bool {
         self.tools.has_focus(window, cx)
     }
@@ -2465,7 +2465,12 @@ impl Compose {
                 .children(send_to)
                 .children(self.expanded.then(|| self.format_bar.clone()))
                 .child(self.around_text(div().px_1().pt_1(), cx))
-                .children(self.box_cards(palette, cx))
+                // Tab from a card's last button enters the tools as Tab from the text does
+                .children(
+                    self.box_cards(palette, cx)
+                        .into_iter()
+                        .map(|card| self.tools.before(div().child(card))),
+                )
                 .child(div().flex().justify_end().child(self.toolbar(palette, &fit, cx)))
                 .child(measured(&self.box_at))
                 .children(accent)
@@ -2499,7 +2504,8 @@ impl Compose {
     fn around_text(&self, place: gpui::Div, cx: &App) -> gpui::Div {
         let place = self.tools.before(place).child(self.editor.clone());
         if self.expanded {
-            self.format_bar.read(cx).row().after(place)
+            // one element has one key context: the bar's goes on a wrapper
+            self.format_bar.read(cx).row().after(div().child(place))
         } else {
             place
         }

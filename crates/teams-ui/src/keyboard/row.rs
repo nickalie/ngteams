@@ -4,11 +4,13 @@
 //! ([`Row::before`]) and Shift+Tab from the place after it ([`Row::after`]) land there, not on the row's first or last.
 //!
 //! Every control in the row stays a stop of the window's Tab order, so the row moves the focus with the window's own
-//! steps and finds its ends by its focus handle, which holds every control in the row and is no stop itself. The row's
-//! keys act only while a control of the row itself has the keys: in a menu that a control of it opened, the menu's own
-//! keys stay.
+//! steps and finds its ends by its focus handle, which holds every control in the row and is no stop itself. The row
+//! keeps the control itself, not its place in the row: the keys can come to a control in other ways (the window's own
+//! Tab from a place that is not [`Row::before`], a menu that gives them back), and each draw notes where they are. The
+//! row's keys act only while a control of the row itself has the keys: in a menu that a control of it opened, the
+//! menu's own keys stay.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::{App, Div, FocusHandle, InteractiveElement as _, KeyBinding, MouseButton, Window, actions};
@@ -54,8 +56,8 @@ pub struct Row(Rc<State>);
 
 struct State {
     handle: FocusHandle,
-    /// The control the keys were last on, counted from the row's first.
-    at: Cell<usize>,
+    /// The control the keys were last on.
+    last: RefCell<Option<FocusHandle>>,
     /// The control that had the keys when the window last drew.
     drawn_on: RefCell<Option<FocusHandle>>,
 }
@@ -65,15 +67,9 @@ impl Row {
     pub fn new(cx: &mut App) -> Self {
         Self(Rc::new(State {
             handle: cx.focus_handle().tab_stop(false),
-            at: Cell::new(0),
+            last: RefCell::new(None),
             drawn_on: RefCell::new(None),
         }))
-    }
-
-    /// The control the keys were last on, counted from the row's first.
-    #[must_use]
-    pub fn at(&self) -> usize {
-        self.0.at.get()
     }
 
     /// As the window draws: notes the control of the row that has the keys, if one has them.
@@ -82,6 +78,9 @@ impl Row {
             .keys_are_on_a_control(window, cx)
             .then(|| window.focused(cx))
             .flatten();
+        if on.is_some() {
+            self.0.last.replace(on.clone());
+        }
         self.0.drawn_on.replace(on);
     }
 
@@ -91,7 +90,7 @@ impl Row {
         self.0.drawn_on.borrow().clone()
     }
 
-    /// Whether a control of the row has the keys.
+    /// Whether the keys are in the row: on one of its controls, or in something of its own, such as a menu it opened.
     #[must_use]
     pub fn has_focus(&self, window: &Window, cx: &App) -> bool {
         self.0.handle.contains_focused(window, cx)
@@ -177,28 +176,27 @@ impl Row {
         Self::step(forward, window, cx);
         if !self.has_focus(window, cx) {
             Self::step(!forward, window, cx);
-            return;
         }
-        let at = self.at();
-        self.0.at.set(if forward {
-            at.saturating_add(1)
-        } else {
-            at.saturating_sub(1)
-        });
+        self.keep(window, cx);
     }
 
     /// Home or End: the first or the last control of the row.
     fn to_end(&self, last: bool, window: &mut Window, cx: &mut App) {
-        let mut steps = 0;
-        while steps < MOST_STEPS {
+        for _ in 0..MOST_STEPS {
             Self::step(last, window, cx);
             if !self.has_focus(window, cx) {
                 break;
             }
-            steps += 1;
         }
         Self::step(!last, window, cx);
-        self.0.at.set(if last { self.at() + steps } else { 0 });
+        self.keep(window, cx);
+    }
+
+    /// Keeps the control that has the keys as the one they were last on.
+    fn keep(&self, window: &Window, cx: &App) {
+        if self.has_focus(window, cx) {
+            self.0.last.replace(window.focused(cx));
+        }
     }
 
     /// Tab or Shift+Tab: the first stop past the row's end.
@@ -212,31 +210,18 @@ impl Row {
     }
 
     /// Tab from before the row or Shift+Tab from after it: one step, and inside the row, on to the control the keys
-    /// were last on. The row may have fewer controls than then: it stops at its last.
+    /// were last on, or on its first when that control is no longer in the row.
     fn enter(&self, forward: bool, window: &mut Window, cx: &mut App) {
         Self::step(forward, window, cx);
         if !self.has_focus(window, cx) {
             return;
         }
-        if !forward {
-            // from its last control back to its first
-            for _ in 0..MOST_STEPS {
-                Self::step(false, window, cx);
-                if !self.has_focus(window, cx) {
-                    break;
-                }
-            }
-            Self::step(true, window, cx);
+        let last = self.0.last.borrow().clone();
+        match last.filter(|last| self.0.handle.contains(last, window)) {
+            Some(last) => last.focus(window, cx),
+            None if !forward => self.to_end(false, window, cx),
+            None => {}
         }
-        let mut at = 0;
-        while at < self.at() {
-            Self::step(true, window, cx);
-            if !self.has_focus(window, cx) {
-                Self::step(false, window, cx);
-                break;
-            }
-            at += 1;
-        }
-        self.0.at.set(at);
+        self.keep(window, cx);
     }
 }

@@ -947,6 +947,7 @@ pub fn link_address(typed: &str) -> Option<String> {
 impl Render for FormatBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = theme::current(cx);
+        self.row.note(window, cx);
         self.kept = kept(
             self.drawn_at.get().map(|bounds| bounds.size.width),
             window.rem_size(),

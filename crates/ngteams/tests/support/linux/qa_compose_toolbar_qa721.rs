@@ -42,15 +42,24 @@ fn every_box(user: &mut User<'_>) -> SandboxResult {
             state[state_key]["focused"] == true && text_of(&state[state_key]) == "a tab draft"
         })?;
         user.press("tab")?;
+        let before = user.until(&format!("Tab to the tools of the {key} box again"), |state| {
+            state[state_key]["tools_focused"] == true
+        })?[state_key]["keys_on"]
+            .clone();
         user.press("right")?;
+        let second = user.until(&format!("Right to the next tool of the {key} box"), |state| {
+            state[state_key]["tools_focused"] == true && state[state_key]["keys_on"] != before
+        })?[state_key]["keys_on"]
+            .clone();
         user.press("tab")?;
         user.until(&format!("Tab from the tools to Send in the {key} box"), |state| {
             state[state_key]["focused"] == false && state[state_key]["tools_focused"] == false
         })?;
         user.press("shift+tab")?;
-        user.until(&format!("Shift+Tab from Send to the tools of the {key} box"), |state| {
-            state[state_key]["tools_focused"] == true
-        })?;
+        user.until(
+            &format!("Shift+Tab from Send to the same tool of the {key} box"),
+            |state| state[state_key]["tools_focused"] == true && state[state_key]["keys_on"] == second,
+        )?;
         user.press("shift+tab")?;
         user.until(
             &format!("Shift+Tab from the tools to the text of the {key} box"),

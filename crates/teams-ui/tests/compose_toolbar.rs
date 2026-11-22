@@ -618,9 +618,14 @@ fn a_very_narrow_box_puts_the_hidden_actions_in_more_options() {
 /// The a–b chat in a window `width` px wide under the kit's root, which moves the focus on Tab and Shift+Tab; its box
 /// focused.
 fn rooted_chat(rig: &Rig, width: f32) -> (Entity<Compose>, &'static mut VisualTestContext) {
+    rooted_chat_with(rig, Settings::default(), width)
+}
+
+/// As [`rooted_chat`], with `settings`.
+fn rooted_chat_with(rig: &Rig, settings: Settings, width: f32) -> (Entity<Compose>, &'static mut VisualTestContext) {
     rig.cx.update(teams_ui::window::init);
     rig.cx.update(teams_ui::chat_view::init);
-    let parts = parts::parts(rig, Settings::default(), Arc::new(ViewTrace::off()));
+    let parts = parts::parts(rig, settings, Arc::new(ViewTrace::off()));
     let app: &'static mut TestAppContext = Box::leak(Box::new(rig.cx.clone()));
     let (root, cx) = app.add_window_view(|window, cx| {
         let view = cx.new(|cx| ChatView::new(parts, AB.to_owned(), window, cx));
@@ -818,6 +823,25 @@ fn a_tool_s_menu_keeps_its_own_arrows_and_gives_the_keys_back_to_its_button() {
 }
 
 #[test]
+fn formatting_taken_in_plus_leaves_the_keys_in_the_text() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat_with(&rig, hiding(&[ComposeTool::Format]), 900.0);
+    press(cx, "tab");
+    press(cx, "end");
+    press(cx, "enter");
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        Some(MenuKind::Plus)
+    );
+    click(cx, "compose-format-row");
+    assert!(compose.read_with(cx, |compose, _| compose.menu_open().is_none()));
+    assert!(
+        box_focused(&compose, cx),
+        "the format bar opens for the text, which keeps the keys"
+    );
+}
+
+#[test]
 fn the_format_bar_and_discard_come_before_the_text() {
     let rig = Rig::start();
     let (compose, cx) = rooted_chat(&rig, 900.0);
@@ -842,6 +866,17 @@ fn the_format_bar_and_discard_come_before_the_text() {
     assert!(box_focused(&compose, cx), "Discard, then the text");
     press(cx, "tab");
     assert!(tools_focused(&compose, cx), "then the box's tools");
+    press(cx, "right");
+    press(cx, "right");
+    let third = focused(cx);
+    press(cx, "shift-tab");
+    assert!(box_focused(&compose, cx), "Shift+Tab from the tools, the text");
+    press(cx, "tab");
+    assert_eq!(
+        focused(cx),
+        third,
+        "Tab from the text of an open bar, the tool the keys were on"
+    );
 }
 
 #[test]
@@ -875,4 +910,19 @@ fn a_staged_file_s_buttons_come_between_the_text_and_the_tools() {
         press(cx, "shift-tab");
     }
     assert!(box_focused(&compose, cx), "and back the same way");
+    for _ in 0..stops {
+        press(cx, "tab");
+    }
+    press(cx, "right");
+    let second = focused(cx);
+    press(cx, "shift-tab");
+    assert!(!tools_focused(&compose, cx), "Shift+Tab leaves the tools for the file");
+    press(cx, "tab");
+    assert_eq!(focused(cx), second, "Tab from the file, the tool the keys were on");
+    press(cx, "left");
+    let first = focused(cx);
+    press(cx, "tab");
+    assert!(!tools_focused(&compose, cx), "Tab from the tools, Send");
+    press(cx, "shift-tab");
+    assert_eq!(focused(cx), first, "Shift+Tab from Send, the tool the keys were on");
 }
