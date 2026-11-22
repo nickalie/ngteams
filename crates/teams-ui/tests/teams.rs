@@ -737,11 +737,19 @@ fn a_threads_draft_is_kept_while_another_thread_is_open_or_it_is_closed() {
     let (shell, cx) = opened(&rig, Arc::new(ViewTrace::off()));
     click(cx, &format!("replies-{POST}"));
     cx.simulate_input("Half a reply");
+    assert!(
+        cx.update(|_, cx| shell.read(cx).has_unsent(cx)),
+        "an open thread's reply"
+    );
     // another post's thread takes the pane, then none
     hover(cx, "1760000400000");
     click(cx, "action-reply-in-thread");
     assert_eq!(thread(&shell, cx).expect("a thread").0, "1760000400000");
     click(cx, "channel-thread-close");
+    assert!(
+        cx.update(|_, cx| shell.read(cx).has_unsent(cx)),
+        "a closed thread's kept reply"
+    );
     click(cx, &format!("replies-{POST}"));
     let (_, view) = thread(&shell, cx).expect("the thread opens again");
     send_box(&view, cx);
@@ -761,10 +769,15 @@ fn a_channels_and_its_threads_drafts_are_kept_while_another_channel_is_shown() {
     let compose = cx.update(|_, cx| view.read(cx).compose().clone());
     cx.update(|window, cx| compose.update(cx, |compose, cx| compose.focus(window, cx)));
     cx.simulate_input("Half a post");
+    assert!(cx.update(|_, cx| shell.read(cx).has_unsent(cx)), "the channel's post");
     click(cx, &format!("replies-{POST}"));
     cx.simulate_input("Half a reply");
     // the team's general channel takes the pane, then this one again, with its thread opened again
     click(cx, "channel-row-0");
+    assert!(
+        cx.update(|_, cx| shell.read(cx).has_unsent(cx)),
+        "another channel's kept drafts"
+    );
     let general = channel_view(&shell, cx);
     assert_eq!(cx.update(|_, cx| general.read(cx).channel().to_owned()), TEAM);
     click(cx, "channel-row-1");
@@ -1795,7 +1808,7 @@ fn a_workflows_card_post_is_drawn_as_its_card() {
 }
 
 #[test]
-fn a_closed_threads_box_stays_while_its_recycles_run_and_names_each_failed_one_without_blocking_a_restart() {
+fn a_closed_threads_box_stays_and_holds_a_restart_while_its_recycles_run_and_names_each_failed_one() {
     let rig = rig();
     *rig.core.hold_discards.lock().unwrap() = true;
     let (shell, cx) = opened(&rig, Arc::new(ViewTrace::off()));
@@ -1810,12 +1823,17 @@ fn a_closed_threads_box_stays_while_its_recycles_run_and_names_each_failed_one_w
     });
     cx.update(|window, cx| compose.update(cx, |compose, cx| compose.attach_files(&files, window, cx)));
     cx.run_until_parked();
+    assert!(cx.update(|_, cx| shell.read(cx).has_unsent(cx)), "the held files");
     cx.update(|window, cx| compose.update(cx, |compose, cx| compose.discard(window, cx)));
     assert!(
-        !cx.update(|_, cx| shell.read(cx).has_unsent(cx)),
-        "a recycle is no unsent message"
+        cx.update(|_, cx| shell.read(cx).has_unsent(cx)),
+        "a quit would leave a file still on its way to the recycle bin"
     );
     click(cx, "channel-thread-close");
+    assert!(
+        cx.update(|_, cx| shell.read(cx).has_unsent(cx)),
+        "a closed thread's running recycles"
+    );
 
     let held: Vec<_> = rig.core.held_discards.lock().unwrap().drain(..).collect();
     assert_eq!(held.len(), 2);

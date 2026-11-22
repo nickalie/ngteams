@@ -289,10 +289,11 @@ impl Shell {
     }
 
     /// Whether a box of this account holds a message not sent yet (a chat's, a channel's or a thread's, New
-    /// message's): an update's restart waits for it ([`crate::update::Waiting::Unsent`]).
+    /// message's), or a channel file it let go that is not in the recycle bin yet: an update's restart waits for it
+    /// ([`crate::update::Waiting::Unsent`]).
     #[must_use]
     pub fn has_unsent(&self, cx: &App) -> bool {
-        let kept = self.drafts.values().any(|compose| compose.read(cx).has_draft(cx));
+        let kept = self.drafts.values().any(|compose| compose.read(cx).holds_restart(cx));
         let chat = self
             .chat
             .as_ref()
@@ -301,7 +302,7 @@ impl Shell {
             view.read(cx)
                 .drafts(cx)
                 .iter()
-                .any(|(_, compose)| compose.read(cx).has_draft(cx))
+                .any(|(_, compose)| compose.read(cx).holds_restart(cx))
         });
         let new_chat = self.new_chat.iter().chain(&self.kept_new).any(|(view, _)| {
             let view = view.read(cx);
