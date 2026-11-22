@@ -4908,13 +4908,16 @@ fn customize_tour_bar(
     cx: &mut Context<teams_ui::chat_view::ChatView>,
 ) {
     use teams_ui::settings::BarItem;
+    let second = chat.quick().get(1).and_then(|key| BarItem::reaction(key));
     for (item, shown) in [
-        (BarItem::Reaction(1), false),
-        (BarItem::Reply, false),
-        (BarItem::Copy, true),
-        (BarItem::MarkUnread, true),
+        (second, false),
+        (Some(BarItem::Reply), false),
+        (Some(BarItem::Copy), true),
+        (Some(BarItem::MarkUnread), true),
     ] {
-        chat.show_bar_item(item, shown != back, cx);
+        if let Some(item) = item {
+            chat.show_bar_item(item, shown != back, cx);
+        }
     }
 }
 

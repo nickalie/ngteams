@@ -8,8 +8,9 @@
 //!
 //! - **The list**: a right click on the bar opens "Show in the message bar" at the pointer; "Customize" at the foot of
 //!   "More options" opens it too, by the pointer and by the keys. Up, Down, Enter, Escape, and a click on a row.
-//! - **The bar**: the second quick reaction and Reply hidden, Copy text and Mark as unread shown, later Delete and
-//!   Translate too. Each button on b's and on a's own message works, and Edit is not on b's message.
+//! - **The bar**: the second quick reaction (Heart) and Reply hidden, Copy text and Mark as unread shown, later Delete
+//!   and Translate too. Each button on b's and on a's own message works, and Edit is not on b's message. When the
+//!   quick reactions change their order (the most used first), Heart stays hidden and no other reaction hides.
 //! - **The menu**: the hidden buttons that apply first, a hairline, the rest, then "Customize"; each row works.
 //! - **Other places**: a channel's post and a reply in its thread use the same choice.
 //! - **A restart** keeps the choice; **another account** (b, on the same settings file) keeps Teams' bar; the rows
@@ -89,11 +90,12 @@ const BAR_INSET: u32 = 3;
 /// The list's rows: under its 1 px border, 4 px padding and its 26 px title with a 2 px gap, 26 px apart by 2 px.
 const LIST_FIRST: u32 = 1 + 4 + 26 + 2 + 13;
 const LIST_PITCH: u32 = 28;
-/// The list's rows in their order: the four quick reaction places, React, Edit, Reply, Copy text, Delete, Mark as
-/// unread, Translate, then "More options".
-const ROW_REACTION_2: u32 = 1;
+/// The list's rows in their order: the four quick reactions in their order now, React, Edit, Reply, Copy text,
+/// Delete, Mark as unread, Translate, then "More options".
 const ROW_DELETE: u32 = 8;
 const ROW_TRANSLATE: u32 = 10;
+/// The quick reaction that a hides: the second of Teams' own, at the second place when a hides it.
+const HIDDEN: &str = "heart";
 /// The mock's team channel's post with replies under it.
 const CHANNEL_POST: &str = "1760000300000";
 
@@ -839,9 +841,8 @@ fn bar_of(state: &Value, id: &str) -> Vec<String> {
     };
     let mut names: Vec<String> = quick(state)
         .iter()
-        .enumerate()
-        .filter(|(place, _)| shows(&format!("reaction-{}", place + 1)))
-        .map(|(_, key)| format!("pick-{key}"))
+        .filter(|key| shows(&format!("reaction-{key}")))
+        .map(|key| format!("pick-{key}"))
         .collect();
     if shows("react") {
         names.push("react".to_owned());
@@ -876,7 +877,10 @@ fn menu_of(state: &Value, id: &str) -> Vec<u32> {
     };
     let mut groups = Vec::new();
     let reactions = if applies("react") {
-        (1..=4).filter(|place| !shows(&format!("reaction-{place}"))).count()
+        quick(state)
+            .iter()
+            .filter(|key| !shows(&format!("reaction-{key}")))
+            .count()
     } else {
         0
     };
@@ -911,14 +915,19 @@ fn quick(state: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// `names` with the quick reactions at the places `places` (0 is the first) in front.
-fn with_quick(state: &Value, places: &[usize], names: &[&str]) -> Vec<String> {
-    let keys = quick(state);
-    places
+/// `names` with the quick reactions in front, in their order now, except `hidden`.
+fn with_quick(state: &Value, hidden: Option<&str>, names: &[&str]) -> Vec<String> {
+    quick(state)
         .iter()
-        .filter_map(|place| keys.get(*place).map(|key| format!("pick-{key}")))
+        .filter(|key| Some(key.as_str()) != hidden)
+        .map(|key| format!("pick-{key}"))
         .chain(names.iter().map(|name| (*name).to_owned()))
         .collect()
+}
+
+/// The name of the quick reaction at the place `place` (0 is the first) in the choice, as the list's row has it.
+fn place_name(state: &Value, place: usize) -> String {
+    format!("reaction-{}", quick(state).get(place).cloned().unwrap_or_default())
 }
 
 impl Walk<'_> {
@@ -972,15 +981,6 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// The quick reaction at the place `place` now, as a menu row's name.
-    fn quick_at(&mut self, view: &str, place: usize) -> SandboxResult<String> {
-        let state = self.run.state(view)?;
-        Ok(format!(
-            "pick-{}",
-            quick(&state).get(place).cloned().unwrap_or_default()
-        ))
-    }
-
     /// The accounts whose choice the settings file keeps.
     fn kept_accounts(&self) -> SandboxResult<Vec<String>> {
         let text = fs::read_to_string(self.dir.join("ui").join("a.toml")).unwrap_or_default();
@@ -1026,12 +1026,12 @@ impl Walk<'_> {
         expect(self.kept_accounts()?.is_empty(), || {
             "the settings file keeps a choice at the start".to_owned()
         });
-        let others = with_quick(&state, &[0, 1, 2, 3], &["react", "reply", "more"]);
+        let others = with_quick(&state, None, &["react", "reply", "more"]);
         self.check_bar("chat", &ids.english, &others, "Teams' bar on b's message")?;
         // a quick reaction set, then taken back
         self.act_each("chat", &ids.english, &["slot:0", "slot:0", "react", "reply"])?;
         let state = self.run.state("chat")?;
-        let own = with_quick(&state, &[0, 1, 2, 3], &["react", "edit", "reply", "more"]);
+        let own = with_quick(&state, None, &["react", "edit", "reply", "more"]);
         self.check_bar("chat", &ids.own, &own, "Teams' bar on a's own message")?;
         self.act_each("chat", &ids.own, &["edit"])?;
         self.bar_shots("chat", &ids.english, "bar-default")?;
@@ -1095,12 +1095,17 @@ impl Walk<'_> {
         let focus = self.run.question("focus chat")?;
         let corner = self.open_list_by_right_click(&english, "the right click")?;
         self.shots("list-right-click")?;
+        let state = self.run.state("chat")?;
+        let (first, second) = (place_name(&state, 0), place_name(&state, 1));
+        expect(second == format!("reaction-{HIDDEN}"), || {
+            format!("the list's second row is {second}, not {HIDDEN}")
+        });
         // Down to the first quick reaction, Enter hides it, Enter shows it again
-        self.toggle_by_key("chat", keys::DOWN, "reaction-1", true)?;
-        self.toggle_by_key("chat", keys::ENTER, "reaction-1", false)?;
-        self.toggle_by_key("chat", keys::ENTER, "reaction-1", true)?;
+        self.toggle_by_key("chat", keys::DOWN, &first, true)?;
+        self.toggle_by_key("chat", keys::ENTER, &first, false)?;
+        self.toggle_by_key("chat", keys::ENTER, &first, true)?;
         self.run.input.key(keys::DOWN)?;
-        self.toggle_by_key("chat", keys::ENTER, "reaction-2", false)?;
+        self.toggle_by_key("chat", keys::ENTER, &second, false)?;
         for _ in 0..5 {
             self.run.input.key(keys::DOWN)?;
         }
@@ -1113,12 +1118,12 @@ impl Walk<'_> {
         // past Translate the keys go round to the first row, over "More options", which cannot hide; Up goes back
         self.run.input.key(keys::DOWN)?;
         self.run.input.key(keys::DOWN)?;
-        self.toggle_by_key("chat", keys::ENTER, "reaction-1", false)?;
+        self.toggle_by_key("chat", keys::ENTER, &first, false)?;
         self.run.input.key(keys::UP)?;
         self.toggle_by_key("chat", keys::ENTER, "translate", true)?;
         self.toggle_by_key("chat", keys::ENTER, "translate", false)?;
         self.run.input.key(keys::DOWN)?;
-        self.toggle_by_key("chat", keys::ENTER, "reaction-1", true)?;
+        self.toggle_by_key("chat", keys::ENTER, &first, true)?;
         // a click on a row
         self.toggle_by_click("chat", corner, ROW_TRANSLATE, "translate", true)?;
         self.toggle_by_click("chat", corner, ROW_TRANSLATE, "translate", false)?;
@@ -1165,15 +1170,16 @@ impl Walk<'_> {
     fn customized_bar(&mut self) -> SandboxResult {
         let ids = self.ids().clone();
         let state = self.run.state("chat")?;
-        let others = with_quick(&state, &[0, 2, 3], &["react", "copy", "mark-unread", "more"]);
+        let others = with_quick(&state, Some(HIDDEN), &["react", "copy", "mark-unread", "more"]);
         self.check_bar("chat", &ids.english, &others, "the chosen bar on b's message")?;
         self.act_each(
             "chat",
             &ids.english,
             &["slot:1", "slot:1", "react", "copy", "mark-unread"],
         )?;
+        self.hidden_stays_hidden("chat", &ids.english, "after reactions from the bar")?;
         let state = self.run.state("chat")?;
-        let own = with_quick(&state, &[0, 2, 3], &["react", "edit", "copy", "mark-unread", "more"]);
+        let own = with_quick(&state, Some(HIDDEN), &["react", "edit", "copy", "mark-unread", "more"]);
         self.check_bar("chat", &ids.own, &own, "the chosen bar on a's own message")?;
         self.act_each("chat", &ids.own, &["edit", "copy"])?;
         self.bar_shots("chat", &ids.english, "bar-chosen")?;
@@ -1185,15 +1191,41 @@ impl Walk<'_> {
         Ok(())
     }
 
+    /// Heart stays hidden in any order of the quick reactions, and the bar of `id` shows each other one.
+    fn hidden_stays_hidden(&mut self, view: &str, id: &str, what: &str) -> SandboxResult {
+        let state = self.run.state(view)?;
+        let order = quick(&state);
+        step(&format!("{what}: the quick reactions are {order:?}"));
+        expect(state["bar"][format!("reaction-{HIDDEN}")] == false, || {
+            format!("{what}: {HIDDEN} shows again in the choice {}", state["bar"])
+        });
+        let others = order.iter().filter(|key| *key != HIDDEN).count();
+        let bar = self.bar(view, id)?;
+        let shown = bar_of(&state, id);
+        let picks = shown.iter().filter(|name| name.starts_with("pick-")).count();
+        expect(!shown.contains(&format!("pick-{HIDDEN}")) && picks == others, || {
+            format!("{what}: the bar of {id} is {shown:?} with the quick reactions {order:?}")
+        });
+        let count = usize::try_from(bar.buttons())?;
+        expect(count == shown.len(), || {
+            format!(
+                "{what}: the bar of {id} shows {count} buttons, not {} ({shown:?})",
+                shown.len()
+            )
+        });
+        Ok(())
+    }
+
     /// The chosen menu: the hidden quick reaction, a hairline, Reply (with Translation), then "Customize".
     fn customized_menu(&mut self) -> SandboxResult {
         let english = self.ids().english.clone();
         let groups = self.groups("chat", &english)?;
-        let second = self.quick_at("chat", 1)?;
-        self.act_in_menu("chat", &english, &groups, (0, 0), &second)?;
-        let second = self.quick_at("chat", 1)?;
-        self.act_in_menu("chat", &english, &groups, (0, 0), &second)?;
+        // the hidden Heart, set and taken back: the row stays Heart while the quick reactions change their order
+        let heart = format!("pick-{HIDDEN}");
+        self.act_in_menu("chat", &english, &groups, (0, 0), &heart)?;
+        self.act_in_menu("chat", &english, &groups, (0, 0), &heart)?;
         self.act_in_menu("chat", &english, &groups, (1, 0), "reply")?;
+        self.hidden_stays_hidden("chat", &english, "after reactions from the menu")?;
         let menu = self.open_menu("chat", &english)?;
         step(&format!("the chosen menu on b's message: {menu:?}, {groups:?}"));
         self.shots("menu-chosen")?;
@@ -1262,9 +1294,10 @@ impl Walk<'_> {
         expect(opened, || "End and Enter in the menu do not open the list".to_owned());
         if opened {
             self.shots("list-by-keys")?;
-            self.toggle_by_key("chat", keys::DOWN, "reaction-1", true)?;
-            self.toggle_by_key("chat", keys::ENTER, "reaction-1", false)?;
-            self.toggle_by_key("chat", keys::ENTER, "reaction-1", true)?;
+            let first = place_name(&self.run.state("chat")?, 0);
+            self.toggle_by_key("chat", keys::DOWN, &first, true)?;
+            self.toggle_by_key("chat", keys::ENTER, &first, false)?;
+            self.toggle_by_key("chat", keys::ENTER, &first, true)?;
             self.run.input.key(keys::ESC)?;
             expect(!self.list_open("chat", false)?, || {
                 "Escape leaves the list by the keys open".to_owned()
@@ -1283,7 +1316,11 @@ impl Walk<'_> {
     fn delete_and_translate_on_the_bar(&mut self) -> SandboxResult {
         let ids = self.ids().clone();
         let state = self.run.state("chat")?;
-        let mut own = with_quick(&state, &[0, 2, 3], &["react", "edit", "copy", "delete", "mark-unread"]);
+        let mut own = with_quick(
+            &state,
+            Some(HIDDEN),
+            &["react", "edit", "copy", "delete", "mark-unread"],
+        );
         if item(&state, &ids.own_bar_gone).is_some_and(|row| !row["offer"].is_null()) {
             own.push("translate".to_owned());
         }
@@ -1293,7 +1330,7 @@ impl Walk<'_> {
         self.act_each("chat", &ids.own_bar_gone, &["delete"])?;
         let others = with_quick(
             &state,
-            &[0, 2, 3],
+            Some(HIDDEN),
             &["react", "copy", "mark-unread", "translate", "more"],
         );
         self.check_bar("chat", &ids.four, &others, "Translate on the bar")?;
@@ -1349,12 +1386,9 @@ impl Walk<'_> {
     }
 }
 
-/// a's choice at the end of the walk.
-const CHOSEN: [(&str, bool); 11] = [
-    ("reaction-1", true),
-    ("reaction-2", false),
-    ("reaction-3", true),
-    ("reaction-4", true),
+/// a's choice at the end of the walk; every other quick reaction shows.
+const CHOSEN: [(&str, bool); 8] = [
+    ("reaction-heart", false),
     ("react", true),
     ("edit", true),
     ("reply", false),
@@ -1364,15 +1398,25 @@ const CHOSEN: [(&str, bool); 11] = [
     ("translate", true),
 ];
 
-/// Whether `choice` (the child's names and whether each shows) is `wanted`, else Teams' bar (`None`).
+/// Whether `choice` (the child's names and whether each shows) is `wanted`, else Teams' bar (`None`). A quick
+/// reaction that `wanted` does not name shows.
 fn choice_is(choice: &Value, wanted: Option<&[(&str, bool)]>) -> bool {
-    BarItem::ALL.iter().all(|item| {
-        let shown = wanted.map_or_else(
-            || item.shown_by_default(),
-            |wanted| wanted.iter().any(|(key, shown)| *key == item.key() && *shown),
-        );
-        choice[item.key()] == shown
-    })
+    let wanted = wanted.unwrap_or_default();
+    let named = wanted.iter().all(|(key, shown)| choice[*key] == *shown);
+    let others = choice.as_object().is_some_and(|choice| {
+        choice.iter().all(|(key, shown)| {
+            let by_default = key.starts_with("reaction-")
+                || BarItem::ACTIONS
+                    .iter()
+                    .any(|item| item.key() == key.as_str() && item.shown_by_default());
+            let wanted = wanted
+                .iter()
+                .find(|(name, _)| name == key)
+                .map_or(by_default, |(_, shown)| *shown);
+            *shown == wanted
+        })
+    });
+    named && others
 }
 
 impl Walk<'_> {
@@ -1385,7 +1429,7 @@ impl Walk<'_> {
             format!("after a restart a's choice is {choice}, not the one made before it")
         });
         let state = self.run.state("chat")?;
-        let mut others = with_quick(&state, &[0, 2, 3], &["react", "copy", "mark-unread"]);
+        let mut others = with_quick(&state, Some(HIDDEN), &["react", "copy", "mark-unread"]);
         if item(&state, &ids.english).is_some_and(|row| !row["offer"].is_null()) {
             others.push("translate".to_owned());
         }
@@ -1409,10 +1453,10 @@ impl Walk<'_> {
             format!("b's choice is {}, not Teams' bar", state["bar"])
         });
         // a's message is someone else's for b, b's own is b's
-        let others = with_quick(&state, &[0, 1, 2, 3], &["react", "reply", "more"]);
+        let others = with_quick(&state, None, &["react", "reply", "more"]);
         self.check_bar("chat", &ids.own, &others, "b's bar on a's message")?;
         self.act_each("chat", &ids.own, &["reply"])?;
-        let own = with_quick(&state, &[0, 1, 2, 3], &["react", "edit", "reply", "more"]);
+        let own = with_quick(&state, None, &["react", "edit", "reply", "more"]);
         self.check_bar("chat", &ids.english, &own, "b's bar on b's own message")?;
         self.bar_shots("chat", &ids.own, "bar-other-account")?;
         let kept = self.kept_accounts()?;
@@ -1428,8 +1472,15 @@ impl Walk<'_> {
         let ids = self.ids().clone();
         self.open_chat(AB_CHAT, &ids.english)?;
         let corner = self.open_list_by_right_click(&ids.english, "the right click after the restarts")?;
+        let quick = quick(&self.run.state("chat")?);
+        let heart = quick.iter().position(|key| key == HIDDEN);
+        expect(heart.is_some(), || {
+            format!("{HIDDEN} is not a quick reaction now: {quick:?}")
+        });
+        let heart_row = u32::try_from(heart.unwrap_or(1))?;
+        let heart_name = format!("reaction-{HIDDEN}");
         for (row, key, shown) in [
-            (ROW_REACTION_2, "reaction-2", true),
+            (heart_row, heart_name.as_str(), true),
             (6, "reply", true),
             (7, "copy", false),
             (ROW_DELETE, "delete", false),
@@ -1449,7 +1500,7 @@ impl Walk<'_> {
                 state["bar"]
             )
         });
-        let others = with_quick(&state, &[0, 1, 2, 3], &["react", "reply", "more"]);
+        let others = with_quick(&state, None, &["react", "reply", "more"]);
         self.check_bar("chat", &ids.english, &others, "Teams' bar again")?;
         self.act_each("chat", &ids.english, &["reply"])?;
         let groups = self.groups("chat", &ids.english)?;
@@ -2193,9 +2244,19 @@ fn state_of(shell: &Entity<Shell>, view: &str, cx: &App) -> Value {
     };
     let chat = chat.read(cx);
     let settings = chat.compose().read(cx).settings().read(cx).settings();
-    let bar: serde_json::Map<String, Value> = BarItem::ALL
+    // the quick reactions now, each other reaction the account hid, and the other buttons
+    let hidden = settings
+        .message_bar
+        .get(&account)
+        .map(|choice| choice.hidden.clone())
+        .unwrap_or_default();
+    let bar: serde_json::Map<String, Value> = chat
+        .quick()
         .iter()
-        .map(|item| (item.key().to_owned(), json!(settings.shows_bar_item(&account, *item))))
+        .filter_map(|key| BarItem::reaction(key))
+        .chain(hidden)
+        .chain(BarItem::ACTIONS)
+        .map(|item| (item.key().into_owned(), json!(settings.shows_bar_item(&account, item))))
         .collect();
     let list = chat.list_state();
     let viewport = list.viewport_bounds();

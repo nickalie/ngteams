@@ -1,21 +1,33 @@
 //! The buttons that each account shows on a message's hover bar. A button that does not show has its action in the
 //! message's "More options", with its key. "More options" itself never hides.
 //!
-//! The quick reactions, "React", Edit and Reply show until the user hides them. Copy text, Delete, Mark as unread
-//! and Translate are in "More options" until the user shows them. The file keeps each account's choice as the message
+//! The quick reactions, "React", Edit and Reply show until the user hides them. Copy text, Delete, Mark as unread and
+//! Translate are in "More options" until the user shows them. The file keeps each account's choice as the message
 //! box's toolbar choice is kept: the names hidden and the names shown, in a table under the account's MRI.
+//!
+//! A quick reaction is hidden by the reaction itself (`reaction-<key>`), not by its place: the quick reactions change
+//! their order as the account uses them, and a hidden one stays hidden in any order.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use toml::{Table, Value};
 
 use super::{Problem, chat_id, keys};
+use crate::chat_view::DEFAULT_QUICK_REACTIONS;
+use crate::reactions;
+
+/// The prefix of a quick reaction's name in the file: `reaction-<id>`.
+const REACTION: &str = "reaction-";
+/// The names of earlier builds, which kept a quick reaction by its place (1 is the first).
+const PLACES: [&str; 4] = ["reaction-1", "reaction-2", "reaction-3", "reaction-4"];
 
 /// A button of the message hover bar that the user can show or hide.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BarItem {
-    /// The quick reaction at this place of the bar (0 is the first), whichever reaction is there.
-    Reaction(u8),
+    /// A quick reaction, by its id in Teams' reactions and its skin tone (0 for none), at whichever place of the bar
+    /// it is.
+    Reaction(&'static str, u8),
     /// "React": every reaction.
     React,
     Edit,
@@ -28,12 +40,8 @@ pub enum BarItem {
 }
 
 impl BarItem {
-    /// Every button that can show or hide, in the bar's order.
-    pub const ALL: [Self; 11] = [
-        Self::Reaction(0),
-        Self::Reaction(1),
-        Self::Reaction(2),
-        Self::Reaction(3),
+    /// Every button that can show or hide except the quick reactions, in the bar's order.
+    pub const ACTIONS: [Self; 7] = [
         Self::React,
         Self::Edit,
         Self::Reply,
@@ -43,14 +51,29 @@ impl BarItem {
         Self::Translate,
     ];
 
+    /// The quick reaction `key`, when Teams offers it.
+    #[must_use]
+    pub fn reaction(key: &str) -> Option<Self> {
+        reactions::catalog()
+            .get(key)
+            .map(|(reaction, tone)| Self::Reaction(reaction.id, tone))
+    }
+
+    /// A quick reaction's key, as the account sets it.
+    #[must_use]
+    pub fn reaction_key(self) -> Option<Cow<'static, str>> {
+        match self {
+            Self::Reaction(id, 0) => Some(Cow::Borrowed(id)),
+            Self::Reaction(id, tone) => Some(Cow::Owned(format!("{id}-tone{tone}"))),
+            _ => None,
+        }
+    }
+
     /// Its name in the file.
     #[must_use]
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::Reaction(0) => "reaction-1",
-            Self::Reaction(1) => "reaction-2",
-            Self::Reaction(2) => "reaction-3",
-            Self::Reaction(_) => "reaction-4",
+    pub fn key(self) -> Cow<'static, str> {
+        Cow::Borrowed(match self {
+            Self::Reaction(..) => return Cow::Owned(format!("{REACTION}{}", self.reaction_key().unwrap_or_default())),
             Self::React => "react",
             Self::Edit => "edit",
             Self::Reply => "reply",
@@ -58,17 +81,25 @@ impl BarItem {
             Self::Delete => "delete",
             Self::MarkUnread => "mark-unread",
             Self::Translate => "translate",
-        }
+        })
     }
 
+    /// The button `key` names. A place name of an earlier build names the reaction of Teams' own at that place, which
+    /// was there unless the account had used other reactions more.
     fn from_key(key: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|item| item.key() == key)
+        if let Some(place) = PLACES.iter().position(|name| *name == key) {
+            return DEFAULT_QUICK_REACTIONS.get(place).and_then(|id| Self::reaction(id));
+        }
+        if let Some(id) = key.strip_prefix(REACTION) {
+            return Self::reaction(id);
+        }
+        Self::ACTIONS.into_iter().find(|item| item.key() == key)
     }
 
     /// Whether the bar shows it until the user hides it: the bar of Teams.
     #[must_use]
     pub fn shown_by_default(self) -> bool {
-        matches!(self, Self::Reaction(_) | Self::React | Self::Edit | Self::Reply)
+        matches!(self, Self::Reaction(..) | Self::React | Self::Edit | Self::Reply)
     }
 }
 
@@ -167,7 +198,10 @@ pub(super) fn render(choices: &BTreeMap<String, BarChoice>, table: &mut Table) {
             let mut kept = Table::new();
             for (key, items) in [("hidden", &choice.hidden), ("shown", &choice.shown)] {
                 if !items.is_empty() {
-                    let names = items.iter().map(|item| Value::String(item.key().to_owned())).collect();
+                    let names = items
+                        .iter()
+                        .map(|item| Value::String(item.key().into_owned()))
+                        .collect();
                     kept.insert(key.to_owned(), Value::Array(names));
                 }
             }

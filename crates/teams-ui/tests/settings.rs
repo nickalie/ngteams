@@ -134,10 +134,14 @@ fn changed() -> Settings {
 
 fn changed_bar() -> std::collections::BTreeMap<String, BarChoice> {
     let choice = BarChoice {
-        hidden: vec![BarItem::Reaction(1), BarItem::Reply],
+        hidden: vec![quick("heart"), BarItem::Reply],
         shown: vec![BarItem::Copy],
     };
     [("8:orgid:00000000-0000-4000-8000-00000000000a".to_owned(), choice)].into()
+}
+
+fn quick(key: &str) -> BarItem {
+    BarItem::reaction(key).unwrap_or_else(|| panic!("{key} is a reaction"))
 }
 
 #[test]
@@ -1419,23 +1423,26 @@ fn each_account_keeps_its_own_hover_bar_and_the_choice_goes_through_the_file() {
     const A: &str = "8:orgid:00000000-0000-4000-8000-00000000000a";
     const B: &str = "8:orgid:00000000-0000-4000-8000-00000000000b";
     let defaults = Settings::default();
-    for item in BarItem::ALL {
+    for item in [quick("like"), quick("1f44b_wavinghand-tone2")]
+        .into_iter()
+        .chain(BarItem::ACTIONS)
+    {
         let teams = matches!(
             item,
-            BarItem::Reaction(_) | BarItem::React | BarItem::Edit | BarItem::Reply
+            BarItem::Reaction(..) | BarItem::React | BarItem::Edit | BarItem::Reply
         );
         assert_eq!(defaults.shows_bar_item(A, item), teams, "{item:?}: the bar of Teams");
     }
     assert!(!render(&defaults).contains("message_bar"));
     let mut settings = Settings::default();
     settings.show_bar_item(A, BarItem::Reply, false);
-    settings.show_bar_item(A, BarItem::Reaction(2), false);
-    settings.show_bar_item(A, BarItem::Reaction(2), false);
+    settings.show_bar_item(A, quick("laugh"), false);
+    settings.show_bar_item(A, quick("laugh"), false);
     settings.show_bar_item(A, BarItem::Translate, true);
     assert_eq!(
         settings.message_bar[A],
         BarChoice {
-            hidden: vec![BarItem::Reaction(2), BarItem::Reply],
+            hidden: vec![quick("laugh"), BarItem::Reply],
             shown: vec![BarItem::Translate],
         },
         "each once, in the bar's order"
@@ -1443,16 +1450,40 @@ fn each_account_keeps_its_own_hover_bar_and_the_choice_goes_through_the_file() {
     assert!(!settings.shows_bar_item(A, BarItem::Reply) && settings.shows_bar_item(B, BarItem::Reply));
     assert!(settings.shows_bar_item(A, BarItem::Translate) && !settings.shows_bar_item(B, BarItem::Translate));
     let text = render(&settings);
-    assert!(text.contains(r#"hidden = ["reaction-3", "reply"]"#), "{text}");
+    assert!(text.contains(r#"hidden = ["reaction-laugh", "reply"]"#), "{text}");
     assert!(text.contains(r#"shown = ["translate"]"#), "{text}");
     let (read, problems) = parse(&text).expect("TOML");
     assert_eq!(read, settings);
     assert!(problems.is_empty(), "{problems:?}");
     // back to the bar of Teams: the account has nothing kept
     settings.show_bar_item(A, BarItem::Reply, true);
-    settings.show_bar_item(A, BarItem::Reaction(2), true);
+    settings.show_bar_item(A, quick("laugh"), true);
     settings.show_bar_item(A, BarItem::Translate, false);
     assert!(settings.message_bar.is_empty());
+}
+
+#[test]
+fn a_quick_reaction_is_kept_by_the_reaction_and_a_place_name_of_an_earlier_build_by_teams_own() {
+    const A: &str = "8:orgid:00000000-0000-4000-8000-00000000000a";
+    let mut settings = Settings::default();
+    settings.show_bar_item(A, quick("1f44b_wavinghand-tone3"), false);
+    let text = render(&settings);
+    assert!(
+        text.contains(r#"hidden = ["reaction-1f44b_wavinghand-tone3"]"#),
+        "{text}"
+    );
+    assert!(
+        settings.shows_bar_item(A, quick("1f44b_wavinghand")),
+        "another skin tone is another reaction"
+    );
+    assert_eq!(parse(&text).expect("TOML").0, settings);
+    // an earlier build kept a place: it names the reaction of Teams' own there; a reaction Teams lacks is passed over
+    let (read, problems) = parse(&format!(
+        "[message_bar.\"{A}\"]\nhidden = [\"reaction-2\", \"reaction-4\", \"reaction-nonesuch\", \"reaction-9\"]"
+    ))
+    .expect("TOML");
+    assert_eq!(read.message_bar[A].hidden, [quick("heart"), quick("surprised")]);
+    assert!(problems.is_empty(), "{problems:?}");
 }
 
 #[test]

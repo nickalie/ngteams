@@ -4370,10 +4370,12 @@ fn plain_text(rendered: &Rendered) -> String {
 }
 
 impl ChatView {
-    /// The quick reactions the account shows on the bar; each keeps its place's key.
+    /// The quick reactions the account shows on the bar, each that it did not hide; each keeps its place's key.
     fn quick_shown(&self, item: &MessageItem, reacting: bool, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
-        let places: Vec<bool> = (0..self.quick.len())
-            .map(|index| u8::try_from(index).is_ok_and(|place| self.bar_shows(BarItem::Reaction(place), cx)))
+        let places: Vec<bool> = self
+            .quick
+            .iter()
+            .map(|key| BarItem::reaction(key).is_some_and(|item| self.bar_shows(item, cx)))
             .collect();
         let quick = self
             .quick

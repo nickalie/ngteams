@@ -15,7 +15,14 @@ use teams_ui::chat_view::{CUSTOMIZE, ChatView, ChatViewEvent, MessageAction, SHO
 use teams_ui::settings::{BarItem, Settings, SettingsModel};
 
 use super::common::{LAB_A, LAB_B, Rig};
-use super::{AB, MINUTE, NOON, draw, message, parts, rig_with};
+use super::{AB, MINUTE, NOON, draw, message, parts, reaction, rig_with};
+
+/// Teams' own quick reactions, the bar's until the account uses others more.
+const TEAMS_QUICK: [&str; 4] = ["like", "heart", "laugh", "surprised"];
+
+fn quick(key: &str) -> BarItem {
+    BarItem::reaction(key).unwrap_or_else(|| panic!("{key} is a reaction"))
+}
 
 /// A chat of someone else's message ("1") and the account's own ("2").
 fn two() -> Rig {
@@ -126,7 +133,7 @@ fn the_bar_of_teams_shows_until_the_user_changes_it_and_the_list_says_so() {
         cx.debug_bounds(Box::leak(format!("message-customize-{key}-check").into_boxed_str()))
             .is_some()
     };
-    for item in BarItem::ALL {
+    for item in TEAMS_QUICK.map(quick).into_iter().chain(BarItem::ACTIONS) {
         assert!(
             shown(
                 cx,
@@ -134,7 +141,7 @@ fn the_bar_of_teams_shows_until_the_user_changes_it_and_the_list_says_so() {
             ),
             "{item:?} listed"
         );
-        assert_eq!(checked(cx, item.key()), item.shown_by_default(), "{item:?}");
+        assert_eq!(checked(cx, &item.key()), item.shown_by_default(), "{item:?}");
     }
     assert!(checked(cx, "more"), "More options always shows");
     // the bar stays shown while the list is open, also with the pointer away
@@ -155,7 +162,7 @@ fn a_hidden_reaction_and_reply_are_rows_of_more_options_that_still_act() {
     let (view, model, cx) = window_with(&rig, Settings::default());
     let told = told(&view, cx);
     right_click_bar(cx, "message-1");
-    click(cx, "message-customize-reaction-2");
+    click(cx, "message-customize-reaction-heart");
     click(cx, "message-customize-reply");
     // the list stays open, the bar shows the change at once
     assert!(shown(cx, "message-customize-menu"));
@@ -168,7 +175,7 @@ fn a_hidden_reaction_and_reply_are_rows_of_more_options_that_still_act() {
     let kept = cx.update(|_, cx| model.read(cx).settings().message_bar.get(LAB_A).cloned());
     assert_eq!(
         kept.map(|choice| choice.hidden),
-        Some(vec![BarItem::Reaction(1), BarItem::Reply])
+        Some(vec![quick("heart"), BarItem::Reply])
     );
     // in "More options": the reaction, a hairline, then reply
     hover(cx, "message-1");
@@ -189,10 +196,51 @@ fn a_hidden_reaction_and_reply_are_rows_of_more_options_that_still_act() {
 }
 
 #[test]
+fn a_hidden_quick_reaction_stays_hidden_when_the_quick_reactions_change_their_order() {
+    let rig = two();
+    let (_, model, cx) = window_with(&rig, Settings::default());
+    right_click_bar(cx, "message-1");
+    click(cx, "message-customize-reaction-heart");
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    // the account reacts with laugh: its most used comes first on the bar
+    *rig.core.frequent.lock().unwrap() = vec!["laugh".to_owned()];
+    rig.core
+        .reactions
+        .lock()
+        .unwrap()
+        .insert("1".to_owned(), vec![reaction("laugh", LAB_A, NOON + 10_000)]);
+    if let Some(stored) = rig.core.messages.lock().unwrap().get_mut(AB) {
+        stored[0].version += 1;
+    }
+    rig.send(teams_core::Event::ConversationChanged {
+        conversation: AB.to_owned(),
+    });
+    draw(cx);
+    hover(cx, "message-1");
+    let laugh = cx.debug_bounds("pick-laugh").unwrap();
+    let like = cx.debug_bounds("pick-like").unwrap();
+    assert!(laugh.right() <= like.left(), "laugh comes first: {laugh:?} {like:?}");
+    assert!(!shown(cx, "pick-heart"), "the hidden heart stays hidden");
+    assert!(shown(cx, "pick-surprised"), "no other reaction hides");
+    // the list names the reactions on the bar now, with their checks
+    right_click_bar(cx, "message-1");
+    let first = cx.debug_bounds("message-customize-reaction-laugh").unwrap();
+    let second = cx.debug_bounds("message-customize-reaction-like").unwrap();
+    assert!(first.bottom() <= second.top(), "the list keeps the bar's order");
+    for (key, checked) in [("laugh", true), ("like", true), ("heart", false), ("surprised", true)] {
+        let check = Box::leak(format!("message-customize-reaction-{key}-check").into_boxed_str());
+        assert_eq!(shown(cx, check), checked, "{key}");
+    }
+    let kept = cx.update(|_, cx| model.read(cx).settings().message_bar.get(LAB_A).cloned());
+    assert_eq!(kept.map(|choice| choice.hidden), Some(vec![quick("heart")]));
+}
+
+#[test]
 fn the_keys_reach_a_hidden_reaction_and_a_hidden_reply() {
     let rig = two();
     let mut settings = Settings::default();
-    settings.show_bar_item(LAB_A, BarItem::Reaction(0), false);
+    settings.show_bar_item(LAB_A, quick("like"), false);
     settings.show_bar_item(LAB_A, BarItem::Reply, false);
     settings.show_bar_item(LAB_A, BarItem::React, false);
     let (view, _, cx) = window_with(&rig, settings);
@@ -227,7 +275,7 @@ fn the_keys_reach_a_hidden_reaction_and_a_hidden_reply() {
 fn the_menu_keys_reach_the_hidden_rows_and_customize() {
     let rig = two();
     let mut settings = Settings::default();
-    settings.show_bar_item(LAB_A, BarItem::Reaction(0), false);
+    settings.show_bar_item(LAB_A, quick("like"), false);
     let (view, model, cx) = window_with(&rig, settings);
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
@@ -248,7 +296,7 @@ fn the_menu_keys_reach_the_hidden_rows_and_customize() {
     assert!(!shown(cx, "message-menu"), "the menu closes for the list");
     cx.simulate_keystrokes("down enter");
     draw(cx);
-    assert!(cx.update(|_, cx| model.read(cx).settings().shows_bar_item(LAB_A, BarItem::Reaction(0))));
+    assert!(cx.update(|_, cx| model.read(cx).settings().shows_bar_item(LAB_A, quick("like"))));
     // Up from the first row goes round to the last that takes a key: Translate
     cx.simulate_keystrokes("up enter escape");
     draw(cx);
@@ -319,7 +367,7 @@ fn a_button_shown_that_does_not_apply_to_a_message_does_not_show_on_it() {
 fn a_new_view_of_the_account_shows_its_choice() {
     let rig = two();
     let mut settings = Settings::default();
-    settings.show_bar_item(LAB_A, BarItem::Reaction(3), false);
+    settings.show_bar_item(LAB_A, quick("surprised"), false);
     settings.show_bar_item(LAB_A, BarItem::Copy, true);
     // another account's choice is not this account's
     settings.show_bar_item(LAB_B, BarItem::Reply, false);
@@ -376,15 +424,11 @@ fn a_right_click_on_the_open_more_options_closes_it_for_the_list() {
 fn more_options_taller_than_the_window_scrolls_to_the_row_of_the_keys() {
     let rig = two();
     let mut settings = Settings::default();
-    for item in [
-        BarItem::Reaction(0),
-        BarItem::Reaction(1),
-        BarItem::Reaction(2),
-        BarItem::Reaction(3),
-        BarItem::React,
-        BarItem::Edit,
-        BarItem::Reply,
-    ] {
+    for item in TEAMS_QUICK
+        .map(quick)
+        .into_iter()
+        .chain([BarItem::React, BarItem::Edit, BarItem::Reply])
+    {
         settings.show_bar_item(LAB_A, item, false);
     }
     let (view, _, cx) = window_with(&rig, settings);
@@ -438,15 +482,11 @@ fn more_options_taller_than_the_window_scrolls_to_the_row_of_the_keys() {
 fn the_keys_on_a_more_options_the_wheel_scrolled_start_on_its_first_row_in_view() {
     let rig = two();
     let mut settings = Settings::default();
-    for item in [
-        BarItem::Reaction(0),
-        BarItem::Reaction(1),
-        BarItem::Reaction(2),
-        BarItem::Reaction(3),
-        BarItem::React,
-        BarItem::Edit,
-        BarItem::Reply,
-    ] {
+    for item in TEAMS_QUICK
+        .map(quick)
+        .into_iter()
+        .chain([BarItem::React, BarItem::Edit, BarItem::Reply])
+    {
         settings.show_bar_item(LAB_A, item, false);
     }
     let (view, _, cx) = window_with(&rig, settings);

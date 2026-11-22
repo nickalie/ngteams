@@ -1,7 +1,8 @@
 //! The buttons of a message's hover bar, as the user chooses them ([`BarItem`], kept for each account in the settings).
 //! A right click on the bar, or "Customize" at the foot of "More options", opens the list of the buttons that can
-//! show or hide: the quick reactions by their place, "React", Edit, Reply, Copy text, Delete, Mark as unread and
-//! Translate. "More options" is listed, and cannot hide. It is the message box's list ([`crate::customize_list`]).
+//! show or hide: the quick reactions on the bar now, each by the reaction itself, "React", Edit, Reply, Copy text,
+//! Delete, Mark as unread and Translate. "More options" is listed, and cannot hide. It is the message box's list
+//! ([`crate::customize_list`]).
 //!
 //! A button that does not show has its row in "More options", and its key still acts. A button that shows but does not
 //! apply to a message (Edit on someone else's message, Reply in a thread) is not on that message's bar.
@@ -29,9 +30,16 @@ pub(super) struct BarCustomize {
     back: keyboard::Return,
 }
 
-/// A row of the list: a button that can hide, or "More options" (`None`).
-fn rows() -> impl Iterator<Item = Option<BarItem>> {
-    BarItem::ALL.into_iter().map(Some).chain([None])
+/// The rows of the list: the quick reactions in their order now, the other buttons that can hide, and "More options"
+/// (`None`).
+fn rows(quick: &[String]) -> Vec<Option<BarItem>> {
+    quick
+        .iter()
+        .filter_map(|key| BarItem::reaction(key))
+        .chain(BarItem::ACTIONS)
+        .map(Some)
+        .chain([None])
+        .collect()
 }
 
 /// The action a button does, for its icon, its name and its key; `None`: a quick reaction or Translate.
@@ -43,7 +51,7 @@ fn action_of(item: BarItem) -> Option<MessageAction> {
         BarItem::Copy => Some(MessageAction::Copy),
         BarItem::Delete => Some(MessageAction::Delete),
         BarItem::MarkUnread => Some(MessageAction::MarkUnread),
-        BarItem::Reaction(_) | BarItem::Translate => None,
+        BarItem::Reaction(..) | BarItem::Translate => None,
     }
 }
 
@@ -57,6 +65,30 @@ pub(super) fn bar_action(item: BarItem, actions: &[MessageAction]) -> Option<Mes
         other => action_of(other),
     };
     action.filter(|action| actions.contains(action))
+}
+
+/// A button's icon and name, as its row in the list and in "More options" shows it.
+fn bar_item_face(item: BarItem) -> (AnyElement, SharedString) {
+    match item {
+        BarItem::Reaction(..) => {
+            let key = item.reaction_key().unwrap_or_default();
+            (
+                reactions::emoji(&key, px(14.0)),
+                reactions::description(&key).to_owned().into(),
+            )
+        }
+        BarItem::Translate => (
+            Glyph::LANGUAGES.icon().size(px(14.0)).into_any_element(),
+            "Translate".into(),
+        ),
+        item => {
+            let action = action_of(item).unwrap_or(MessageAction::React);
+            (
+                action.glyph().icon().size(px(14.0)).into_any_element(),
+                action.label().into(),
+            )
+        }
+    }
 }
 
 impl ChatView {
@@ -135,15 +167,16 @@ impl ChatView {
     }
 
     /// The list over the window, where it opened (`message-customize-menu`): a row with a check for each button that
-    /// can hide (a quick reaction by the reaction at its place now), then "More options", checked and off.
+    /// can hide (the quick reactions in their order now), then "More options", checked and off.
     pub(super) fn bar_customize_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let open = self.bar_customize.as_ref()?;
-        let lines = rows()
+        let lines = rows(&self.quick)
+            .into_iter()
             .map(|item| {
                 let (key, icon, label): (SharedString, AnyElement, SharedString) = match item {
                     Some(item) => {
-                        let (icon, label) = self.bar_item_face(item);
-                        (item.key().into(), icon, label)
+                        let (icon, label) = bar_item_face(item);
+                        (item.key().into_owned().into(), icon, label)
                     }
                     None => (
                         "more".into(),
@@ -168,30 +201,6 @@ impl ChatView {
         Some(customize_list::overlay(&open.list, shown, cx))
     }
 
-    /// A button's icon and name, as its row in the list and in "More options" shows it.
-    pub(super) fn bar_item_face(&self, item: BarItem) -> (AnyElement, SharedString) {
-        match item {
-            BarItem::Reaction(place) => {
-                let key = self.quick.get(usize::from(place)).map_or("like", String::as_str);
-                (
-                    reactions::emoji(key, px(14.0)),
-                    reactions::description(key).to_owned().into(),
-                )
-            }
-            BarItem::Translate => (
-                Glyph::LANGUAGES.icon().size(px(14.0)).into_any_element(),
-                "Translate".into(),
-            ),
-            item => {
-                let action = action_of(item).unwrap_or(MessageAction::React);
-                (
-                    action.glyph().icon().size(px(14.0)).into_any_element(),
-                    action.label().into(),
-                )
-            }
-        }
-    }
-
     /// The rows of `message`'s "More options" for its quick reactions that the bar does not show: each sets the
     /// account's own, or takes it back.
     pub(super) fn hidden_reaction_entries(
@@ -200,14 +209,15 @@ impl ChatView {
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        (0..self.quick.len())
-            .filter_map(|place| {
-                let item = BarItem::Reaction(u8::try_from(place).ok()?);
+        self.quick
+            .iter()
+            .filter_map(|key| {
+                let item = BarItem::reaction(key)?;
                 if self.bar_shows(item, cx) {
                     return None;
                 }
-                let key = self.quick[place].clone();
-                let (icon, label) = self.bar_item_face(item);
+                let key = key.clone();
+                let (icon, label) = bar_item_face(item);
                 let message = message.to_owned();
                 let id = SharedString::from(format!("menu-pick-{key}"));
                 Some(menu_entry_parts(
@@ -253,11 +263,13 @@ impl Customizable for ChatView {
     }
 
     fn customize_takes(&self, _: &App) -> Vec<bool> {
-        rows().map(|item| item.is_some()).collect()
+        rows(&self.quick).into_iter().map(|item| item.is_some()).collect()
     }
 
     fn customize_toggle(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(item) = rows().nth(ix).flatten() else { return };
+        let Some(item) = rows(&self.quick).into_iter().nth(ix).flatten() else {
+            return;
+        };
         let shown = self.bar_shows(item, cx);
         self.show_bar_item(item, !shown, cx);
     }
