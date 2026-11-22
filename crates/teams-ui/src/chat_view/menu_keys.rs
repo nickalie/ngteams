@@ -252,7 +252,11 @@ impl ChatView {
         }
         let root = match keys.due {
             Some(Due::Menu) => keys.menu.clone(),
-            Some(Due::Side) if self.side_list.is_some() => keys.side.clone(),
+            Some(Due::Side) if self.side_list.is_some() => {
+                // the keys start on the first row: a list the wheel scrolled goes back to its top
+                keys.side_scroll.set_offset(gpui::Point::default());
+                keys.side.clone()
+            }
             _ => return,
         };
         keys.due = None;

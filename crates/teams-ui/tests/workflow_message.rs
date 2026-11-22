@@ -677,6 +677,40 @@ fn the_wheel_brings_a_clipped_more_actions_row_into_view_and_a_click_on_it_runs_
 }
 
 #[test]
+fn right_on_a_wheel_scrolled_more_actions_list_shows_the_row_it_focuses() {
+    let rig = common::Rig::start();
+    let (view, _events, cx) = chat(&rig);
+    *rig.core.workflow_handler.lock().unwrap() = Some(many_answer);
+    cx.simulate_resize(size(px(900.0), px(260.0)));
+    cx.update(|window, _| window.set_client_inset(px(20.0)));
+    cx.update(|window, cx| {
+        let compose = view.read(cx).compose().clone();
+        compose.update(cx, |compose, cx| compose.focus(window, cx));
+    });
+    draw(cx);
+    // the keys go to More actions, a click opens its list, the wheel scrolls it, then Right takes the keys into it
+    for key in ["escape", "up", "shift-f10", "end", "up"] {
+        cx.simulate_keystrokes(key);
+        draw(cx);
+    }
+    click(cx, "message-more-actions");
+    let list = bounds(cx, "message-more-actions-menu").expect("the list");
+    wheel(cx, list.center(), 3000.0);
+    let first = bounds(cx, "message-workflow-synthetic-many-3").expect("the list's first workflow");
+    assert!(
+        !snapped(first),
+        "the wheel scrolls the first row out of view: {first:?}"
+    );
+    cx.simulate_keystrokes("right");
+    draw(cx);
+    let first = bounds(cx, "message-workflow-synthetic-many-3").expect("the list's first workflow");
+    assert!(
+        snapped(first),
+        "Right puts the keys on the first row, in view: {first:?}"
+    );
+}
+
+#[test]
 fn the_keys_scroll_the_more_actions_list_to_their_row() {
     let rig = common::Rig::start();
     let (view, _events, cx) = chat(&rig);
