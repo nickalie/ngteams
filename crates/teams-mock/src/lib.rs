@@ -261,6 +261,17 @@ impl Match for PathEnds {
     }
 }
 
+/// Matches a request whose path holds the text (percent-decoded as the client sent it).
+struct PathHas(String);
+
+impl Match for PathHas {
+    fn matches(&self, request: &Request) -> bool {
+        percent_encoding::percent_decode_str(request.url.path())
+            .decode_utf8_lossy()
+            .contains(&self.0)
+    }
+}
+
 impl std::fmt::Debug for ChatServiceMock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChatServiceMock")
@@ -530,6 +541,18 @@ impl ChatServiceMock {
     pub async fn answer_next(&self, http_method: &str, path_end: &str, status: u16, body: &Value) {
         Mock::given(method(http_method))
             .and(PathEnds(path_end.to_owned()))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&self.server)
+            .await;
+    }
+
+    /// [`Self::answer_next`] for the next request whose path holds `path_part`: a step whose path ends with ids the
+    /// test can't know (a team site's `StartUpload(uploadId=…)`).
+    pub async fn answer_next_containing(&self, http_method: &str, path_part: &str, status: u16, body: &Value) {
+        Mock::given(method(http_method))
+            .and(PathHas(path_part.to_owned()))
             .respond_with(ResponseTemplate::new(status).set_body_json(body))
             .up_to_n_times(1)
             .with_priority(1)

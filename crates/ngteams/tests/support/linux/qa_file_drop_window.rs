@@ -22,6 +22,8 @@
 //!   site, the highlight over that box alone; the same name again goes as a numbered copy, and the post names the
 //!   file. **An edit**: its message.
 //! - **Looks**: Teams Dark, a font of 20, a narrow window.
+//! - **QA of task 706**: the `qa706_*` checks ([`qa706`]): Attach, a drop, a paste, a reply, a copy, Remove and a
+//!   failed upload in a channel's boxes.
 //!
 //! The mock serves no OneDrive upload, so each file staged in a chat shows its upload error; the files' names are what
 //! is checked there. `QA697_ONLY` (a comma list of check names) runs only those. `QA697_EVIDENCE` names a directory that gets
@@ -63,6 +65,17 @@ use ui_sandbox::{Running, Sandbox, SandboxOptions, SandboxResult, sandbox_or_ski
 #[path = "../window.rs"]
 mod support;
 use support::{Alias, display_name};
+
+#[expect(
+    dead_code,
+    reason = "the account picture QA's portal module also holds that QA's own pictures"
+)]
+#[path = "qa_account_picture_portal.rs"]
+mod portal;
+use portal::Chooser;
+
+#[path = "qa_file_drop_qa706.rs"]
+mod qa706;
 
 const CHILD_ENV: &str = "QA697_CHILD";
 const ONLY_ENV: &str = "QA697_ONLY";
@@ -188,11 +201,12 @@ fn parent() -> SandboxResult {
             .ok_or("a hello refused")?;
     }
     let dir = tempfile::tempdir()?;
+    let chooser = Chooser::start(sandbox.bus().address())?;
     let running = launch(&sandbox, &mock, trouter.origin(), dir.path())?;
-    let mut user = User::new(&sandbox, &mock, &runtime, running)?;
+    let mut user = User::new(&sandbox, &mock, &runtime, &chooser, running)?;
     let mut passed = Vec::new();
     let mut failed = Vec::new();
-    for (name, check) in CHECKS {
+    for (name, check) in CHECKS.into_iter().chain(qa706::CHECKS) {
         if wanted(name) {
             user.run_check(name, check, &mut passed, &mut failed);
         }
@@ -375,6 +389,8 @@ struct User<'a> {
     sandbox: &'a Sandbox,
     mock: &'a ChatServiceMock,
     runtime: &'a tokio::runtime::Runtime,
+    /// The fake file chooser Attach opens.
+    chooser: &'a Chooser,
     running: Option<Running>,
     input: VirtualInput,
     asked: u32,
@@ -389,12 +405,14 @@ impl<'a> User<'a> {
         sandbox: &'a Sandbox,
         mock: &'a ChatServiceMock,
         runtime: &'a tokio::runtime::Runtime,
+        chooser: &'a Chooser,
         running: Running,
     ) -> SandboxResult<Self> {
         let mut user = Self {
             sandbox,
             mock,
             runtime,
+            chooser,
             running: Some(running),
             input: sandbox.input()?,
             asked: 0,
