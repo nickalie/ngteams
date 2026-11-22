@@ -11,7 +11,7 @@
 //! - Several in a row: a newer reaction of the same person takes the place of the older and plays from its own start;
 //!   two people's reactions play at the same time, each on its own tile.
 //! - A 3D emoji the CDN has not (404): the picker's strip plays. A slow one: the strip plays until it comes, then the
-//!   3D emoji at the frame due.
+//!   3D emoji at the frame due (Applause, and Surprised at 112 px as a second chance when too few looks land).
 //! - "Play animations" off: the still picture, no 3D frame.
 //! - A sender not on the stage: the small float, as before; the app reads no 3D emoji for it.
 
@@ -38,8 +38,10 @@ const ROWS: u32 = 12;
 const MAGENTA: [u8; 3] = [255, 0, 255];
 const GREEN: [u8; 3] = [0, 255, 0];
 const CDN: &str = "/evergreen-assets";
-/// How long the slow CDN holds back its answer: long enough for three slow shots of the strip.
-const SLOW: Duration = Duration::from_millis(2_800);
+/// How long the slow CDN holds back its answer: two slow shots of the strip before it, one of the 3D emoji after.
+const SLOW: Duration = Duration::from_millis(2_200);
+/// A look this long after a reaction's end shows the tile as before.
+const AFTER_END: Duration = Duration::from_millis(800);
 /// The reactions as the mock sends them, their ids on the CDN, and their code in the made-up emoji.
 const REACTIONS: [(&str, &str, u32); 5] = [
     ("like", "yes", 1),
@@ -293,6 +295,15 @@ impl From<&Look> for Glance {
 }
 
 impl Watched {
+    /// A look of any try started after the reaction's end, `ends` after the sending.
+    fn ended_seen(&self, ends: Duration) -> bool {
+        self.looks
+            .iter()
+            .map(Glance::from)
+            .chain(self.earlier.iter().copied())
+            .any(|glance| glance.at > ends + AFTER_END)
+    }
+
     /// The emoji's box measured in a look that shows it at its full opacity.
     fn measured(&self) -> Option<Rect> {
         // frames 32 to 83 show at full opacity
@@ -305,11 +316,12 @@ impl Watched {
 }
 
 /// `act` sent and the tile watched for `length`; sent again, at most five times in all, while `enough` does not hold
-/// (a busy machine's shots are slow). Each try starts its looks 0.3 s later than the one before, so that slow shots
-/// of the tries see different frames (the fade's frames show for less time than one slow shot takes).
+/// or no try has a look after the reaction's end, `ends` after the sending (a busy machine's shots are slow). Each try
+/// starts its looks 0.3 s later than the one before, so that slow shots of the tries see different frames (the fade's
+/// frames show for less time than one slow shot takes).
 fn watch_3d(
     rig: &mut Rig<'_>,
-    (tile, length): (Rect, Duration),
+    (tile, length, ends): (Rect, Duration, Duration),
     case: &str,
     act: impl Fn(&mut Rig<'_>) -> SandboxResult,
     enough: impl Fn(&Watched) -> bool,
@@ -345,7 +357,7 @@ fn watch_3d(
             plays,
             earlier,
         };
-        if enough(&watched) {
+        if enough(&watched) && watched.ended_seen(ends) {
             break;
         }
     }
@@ -417,11 +429,11 @@ fn on_time(seen: &[Seen3d], sent: Duration, case: &str) -> SandboxResult {
 
 /// The tile is as before the reaction once it ended, and no code reads there.
 fn gone(watched: &Watched, after: Duration, case: &str) -> SandboxResult {
-    let last: Vec<Glance> = watched.looks.iter().map(Glance::from).collect();
-    let late = |glance: &&Glance| glance.at > after + Duration::from_millis(800);
-    if !last.iter().any(|glance| late(&glance)) {
+    if !watched.ended_seen(after) {
         return Err(format!("{case}: no look after the reaction's end").into());
     }
+    let last: Vec<Glance> = watched.looks.iter().map(Glance::from).collect();
+    let late = |glance: &&Glance| glance.at > after + AFTER_END;
     let every = || last.iter().chain(&watched.earlier);
     if every().filter(late).any(|glance| glance.from_start > 40) {
         return Err(format!("{case}: the tile is not as before after the reaction ended").into());
@@ -517,7 +529,7 @@ fn one_play(rig: &mut Rig<'_>, (person, tile): (usize, Rect), reaction: &str, sh
     let side = emoji_side(tile.h);
     let watched = watch_3d(
         rig,
-        (tile, WATCH),
+        (tile, WATCH, ON_TILE),
         case,
         |rig| react(rig, person, reaction),
         |watched| start_middle_end(&watched.plays.concat()) && watched.measured().is_some(),
@@ -552,7 +564,8 @@ fn first_two(page: &Page) -> SandboxResult<[(usize, Rect); 2]> {
     }
 }
 
-/// Serves the made-up 3D emoji: every reaction at every side, but Surprised at none (404) and Applause at 112 slow.
+/// Serves the made-up 3D emoji: every reaction at every side, but Surprised at 56 and 140 none (404), and Applause
+/// and Surprised at 112 slow (no step before reads those two files).
 fn serve(rig: &Rig<'_>) -> SandboxResult {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     for (name, id, code) in REACTIONS {
@@ -561,13 +574,13 @@ fn serve(rig: &Rig<'_>) -> SandboxResult {
             "image/png",
             strip_png()?,
         ));
-        if name == "surprised" {
-            continue;
-        }
         for side in teams_proto::EMOJI_3D_SIDES {
+            if name == "surprised" && side != 112 {
+                continue;
+            }
             let path = format!("{CDN}/skype/v2/{id}V4-3D/{side}a.png");
             let png = sprite_png(code, u32::from(side))?;
-            if name == "clap" && side == 112 {
+            if SLOW_REACTIONS.contains(&name) && side == 112 {
                 runtime.block_on(rig.mock.serve_bytes_after(&path, "image/png", png, SLOW));
             } else {
                 runtime.block_on(rig.mock.serve_bytes(&path, "image/png", png));
@@ -584,6 +597,9 @@ fn serve(rig: &Rig<'_>) -> SandboxResult {
     }
     Ok(())
 }
+
+/// The reactions the CDN gives late on the 4-gallery's tiles: each slow case's chance, in order.
+const SLOW_REACTIONS: [&str; 2] = ["clap", "surprised"];
 
 /// The step (see the module docs).
 pub(super) fn qa_reaction_3d(rig: &mut Rig<'_>) -> SandboxResult {
@@ -710,7 +726,7 @@ fn missing(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
     let case = "a reaction the CDN has no 3D emoji for (404)";
     let watched = watch_3d(
         rig,
-        (tile, WATCH),
+        (tile, WATCH, ON_TILE),
         case,
         |rig| react(rig, person, "surprised"),
         shown_twice,
@@ -737,7 +753,13 @@ fn missing(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
 fn still(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
     let case = "a reaction with Play animations off";
     rig.theme(super::ANIMATIONS_OFF)?;
-    let watched = watch_3d(rig, (tile, WATCH), case, |rig| react(rig, person, "like"), shown_twice);
+    let watched = watch_3d(
+        rig,
+        (tile, WATCH, ON_TILE),
+        case,
+        |rig| react(rig, person, "like"),
+        shown_twice,
+    );
     rig.theme(super::ANIMATIONS_ON)?;
     let watched = watched?;
     if let Some(middle) = watched.looks.iter().find(|look| look.at > Duration::from_millis(2_000)) {
@@ -750,19 +772,29 @@ fn still(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
 }
 
 /// A slow CDN: the strip plays until the 3D emoji comes, then the 3D emoji at the frame due, never from its start.
-fn slow(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
-    let case = "a 3D emoji the CDN gives 2.8 s late";
-    let area = expected_area(tile);
-    // one try only: the app keeps the emoji once read, so a second try is not slow
-    let (before, looks) = watch(rig, tile, Duration::from_millis(6_800), |rig| {
-        react(rig, person, "clap")
-    })?;
-    let seen = codes(&looks, area);
-    say(&format!("qa696 {case}: {}", listed(&seen)));
-    let first_3d = looks
-        .iter()
-        .position(|look| read_code(&look.shot, area).is_some())
-        .unwrap_or(looks.len());
+/// The app keeps an emoji once read, so a second try is not slow: when too few looks land, the second try sends the
+/// other reaction the CDN gives late, its looks 0.6 s later so that slow shots land at other moments.
+fn slow(rig: &mut Rig<'_>, person: (usize, Rect)) -> SandboxResult {
+    let case = "a 3D emoji the CDN gives 2.2 s late";
+    let mut few = Vec::new();
+    for (chance, reaction) in (0..).zip(SLOW_REACTIONS) {
+        if chance > 0 {
+            thread::sleep(SETTLE);
+        }
+        let later = Duration::from_millis(600) * chance;
+        match slow_try(rig, person, (reaction, later), case)? {
+            None => return Ok(()),
+            Some(why) => {
+                say(&format!("qa696 {case}: {reaction}: too few looks: {why}"));
+                few.push(format!("{reaction}: {why}"));
+            }
+        }
+    }
+    Err(format!("{case}: {}", few.join("; ")).into())
+}
+
+/// Logs each look's time, its change on the tile and the code it read.
+fn say_looks(looks: &[Look], area: Rect, case: &str) {
     say(&format!(
         "qa696 {case}: looks {:?}",
         looks
@@ -776,6 +808,28 @@ fn slow(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
             ))
             .collect::<Vec<_>>()
     ));
+}
+
+/// One try of [`slow`] with `reaction`, its looks from `later` after the sending: `Some` with the reason when too few looks landed to tell.
+fn slow_try(
+    rig: &mut Rig<'_>,
+    (person, tile): (usize, Rect),
+    (reaction, later): (&str, Duration),
+    case: &str,
+) -> SandboxResult<Option<String>> {
+    let area = expected_area(tile);
+    let (before, looks) = watch(rig, tile, Duration::from_millis(6_800), |rig| {
+        react(rig, person, reaction)?;
+        thread::sleep(later);
+        Ok(())
+    })?;
+    let seen = codes(&looks, area);
+    say(&format!("qa696 {case}: {}", listed(&seen)));
+    let first_3d = looks
+        .iter()
+        .position(|look| read_code(&look.shot, area).is_some())
+        .unwrap_or(looks.len());
+    say_looks(&looks, area, case);
     let strip = looks[..first_3d]
         .iter()
         .find(|look| look.at > Duration::from_millis(900) && look.from_start >= 400);
@@ -785,7 +839,11 @@ fn slow(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
     if let Some(late) = looks.get(first_3d) {
         save_shot(rig, &late.shot, "qa696-r1-slow-3d")?;
     }
-    let strip = strip.ok_or_else(|| format!("{case}: no look before the 3D emoji came shows the strip on the tile"))?;
+    let Some(strip) = strip else {
+        return Ok(Some(
+            "no look before the 3D emoji came shows the strip on the tile".to_owned(),
+        ));
+    };
     no_top_line(&strip.shot, tile, case)?;
     let strip_frames: Vec<u32> = looks[..first_3d]
         .iter()
@@ -795,13 +853,13 @@ fn slow(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
     // 3 frames or more apart: a faint look of one frame can read a frame next to it
     let apart = |a: u32, b: u32| a.abs_diff(b).min(STRIP_FRAMES - a.abs_diff(b)) >= 3;
     if !strip_frames.iter().any(|a| strip_frames.iter().any(|b| apart(*a, *b))) {
-        return Err(
-            format!("{case}: the strip does not play before the 3D emoji came: frames {strip_frames:?}").into(),
-        );
+        return Ok(Some(format!(
+            "the strip does not play before the 3D emoji came: frames {strip_frames:?}"
+        )));
     }
-    let first = seen
-        .first()
-        .ok_or_else(|| format!("{case}: the 3D emoji never shows after it came"))?;
+    let Some(first) = seen.first() else {
+        return Ok(Some("the 3D emoji never shows after it came".to_owned()));
+    };
     if first.frame < 45 {
         return Err(format!(
             "{case}: the 3D emoji started at frame {}, not at the frame due",
@@ -809,7 +867,7 @@ fn slow(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
         )
         .into());
     }
-    if seen.iter().any(|seen| seen.code != code_of("clap")) {
+    if seen.iter().any(|seen| seen.code != code_of(reaction)) {
         return Err(format!("{case}: another reaction shows: {}", listed(&seen)).into());
     }
     if seen.windows(2).any(|pair| pair[1].frame < pair[0].frame) {
@@ -817,17 +875,18 @@ fn slow(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
     }
     on_time(&seen, Duration::ZERO, case)?;
     let plays = vec![seen.clone()];
-    gone(
-        &Watched {
-            tile,
-            looks,
-            seen,
-            plays,
-            earlier: Vec::new(),
-        },
-        ON_TILE,
-        case,
-    )
+    let watched = Watched {
+        tile,
+        looks,
+        seen,
+        plays,
+        earlier: Vec::new(),
+    };
+    if !watched.ended_seen(ON_TILE) {
+        return Ok(Some("no look after the reaction's end".to_owned()));
+    }
+    gone(&watched, ON_TILE, case)?;
+    Ok(None)
 }
 
 /// Heart, then Laugh 1.6 s later from the same person: Laugh takes Heart's place, plays from its own start, and goes
@@ -837,7 +896,7 @@ fn in_a_row(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
     let second_after = Duration::from_millis(1_600);
     let watched = watch_3d(
         rig,
-        (tile, WATCH + Duration::from_millis(1_800)),
+        (tile, WATCH + Duration::from_millis(1_800), second_after + ON_TILE),
         case,
         |rig| {
             react(rig, person, "heart")?;
