@@ -95,7 +95,10 @@ impl User<'_> {
         };
         let attach = (x, px(&bounds[1]) + px(&bounds[3]) - ROW_FROM_BOTTOM);
         let asked = self.chooser.asked().len();
-        self.click(self.on_screen(attach))?;
+        let (x, y) = self.on_screen(attach);
+        self.input.move_to(x, y)?;
+        thread::sleep(super::STEP);
+        self.click((x, y))?;
         wait_until(WAIT, || (self.chooser.asked().len() > asked).then_some(()))
             .ok_or_else(|| format!("Attach on the {key} box opened no file chooser"))?;
         Ok(())
