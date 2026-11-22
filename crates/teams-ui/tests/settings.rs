@@ -1498,6 +1498,25 @@ fn a_hover_bar_name_of_a_newer_build_is_passed_over_and_a_bad_table_reported() {
     );
 }
 
+#[gpui::test]
+fn a_save_after_one_bad_hover_bar_table_keeps_the_other_account_s_choice(cx: &mut TestAppContext) {
+    const A: &str = "8:orgid:00000000-0000-4000-8000-00000000000a";
+    const B: &str = "8:orgid:00000000-0000-4000-8000-00000000000b";
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (file, path) = file_in(&dir);
+    fs::create_dir_all(path.parent().expect("dir")).expect("dir");
+    fs::write(
+        &path,
+        format!("[message_bar.\"{A}\"]\nhidden = [\"reply\"]\n[message_bar.\"{B}\"]\nhidden = \"reply\"\n"),
+    )
+    .expect("written");
+    let model = cx.new(|_| SettingsModel::load(file));
+    cx.update(|cx| model.update(cx, |model, cx| model.change(|settings| settings.idle_minutes = 30, cx)));
+    let saved = SettingsFile::new(&path).load().settings;
+    assert_eq!(saved.idle_minutes, 30, "the change is saved");
+    assert!(!saved.shows_bar_item(A, BarItem::Reply), "{A} keeps its choice");
+}
+
 #[test]
 fn the_ai_tools_are_in_plus_by_default_and_the_shown_ones_go_through_the_file() {
     let defaults = Settings::default();

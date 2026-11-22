@@ -576,6 +576,52 @@ fn more_actions_holds_create_workflows() {
     assert_eq!(*events.borrow(), [ChatViewEvent::CreateWorkflows(chat_message())]);
 }
 
+/// Twelve workflows run from a message.
+fn many_answer(request: &WorkflowRequest) -> WorkflowResponse {
+    match request {
+        WorkflowRequest::List { .. } => {
+            let flows: Vec<Value> = (0..12)
+                .map(|at| {
+                    json!({"name": format!("synthetic-many-{at}"), "properties":{
+                        "displayName": format!("Synthetic many {at}"), "state":"Started",
+                        "definitionSummary":{"triggers":[{"type":"Request","kind":"ApiConnection",
+                            "swaggerOperationId":"ForASelectedMessageV2"}]}}})
+                })
+                .collect();
+            Ok(json!({ "value": flows }))
+        }
+        other => message_answer(other),
+    }
+}
+
+#[test]
+fn a_tall_more_actions_list_fits_the_window_and_leaves_the_menu_in_it() {
+    let rig = common::Rig::start();
+    let (_view, _events, cx) = chat(&rig);
+    *rig.core.workflow_handler.lock().unwrap() = Some(many_answer);
+    cx.simulate_resize(size(px(900.0), px(260.0)));
+    draw(cx);
+    open_menu(cx);
+    let menu = bounds(cx, "message-menu").expect("the menu");
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: menu.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-3000.0))),
+        touch_phase: gpui::TouchPhase::Moved,
+        ..gpui::ScrollWheelEvent::default()
+    });
+    draw(cx);
+    click(cx, "message-more-actions");
+    draw(cx);
+    let window = gpui::Bounds::new(gpui::point(px(0.0), px(0.0)), size(px(900.0), px(260.0)));
+    let list = bounds(cx, "message-more-actions-menu").expect("the list");
+    let menu = bounds(cx, "message-menu").expect("the menu");
+    assert!(list.size.height <= px(260.0), "the list fits the window: {list:?}");
+    assert!(
+        menu.bottom() <= window.bottom() && menu.top() >= window.top(),
+        "the menu stays in the window: {menu:?}"
+    );
+}
+
 #[test]
 fn a_read_only_app_offers_no_workflow_on_a_message() {
     let rig = common::Rig::start();

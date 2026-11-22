@@ -4536,21 +4536,14 @@ impl ChatView {
         let mut entries = self.hidden_entries(&message, &actions, palette, window, cx);
         let translation_menu = self.translation_menu(&message, palette, window, cx);
         entries.extend(self.refresh_entry(&message, palette, cx));
-        // Teams' workflows run on any message of a chat that takes the account's writes
-        let offers_workflows = self.core.capabilities().workflows
-            && self
-                .message_items()
-                .find(|item| item.id == message)
-                .is_some_and(MessageItem::offers_workflows);
-        let workflows = if offers_workflows {
-            self.message_workflows(cx)
-        } else {
-            Vec::new()
-        };
+        let (offers_workflows, workflows) = self.menu_workflows(&message, cx);
         // apps' actions on a message that takes the account's writes, beside the workflows or alone
         let offers_apps = !actions.is_empty() && !self.message_app_actions().is_empty();
+        // the list and the menu share their holder: a taller list would push the menu out
         let more = (offers_workflows || offers_apps)
-            .then(|| self.more_actions_list(&message, &workflows, offers_workflows, palette, cx));
+            .then(|| self.more_actions_list(&message, &workflows, offers_workflows, palette, cx))
+            .flatten()
+            .map(|list| list.max_h(menu_height_cap(window)).overflow_y_scroll());
         if offers_workflows {
             entries.extend(self.workflow_entries(&message, &workflows, palette, cx));
         } else if offers_apps {
@@ -4568,8 +4561,7 @@ impl ChatView {
             .id("message-menu")
             .debug_selector(|| "message-menu".to_owned())
             .track_focus(&self.menu_keys.menu)
-            // no taller than the window, inside its margin and the holder's top padding: the rest scrolls
-            .max_h(window.viewport_size().height - px(MENU_MARGIN * 2.0 + 4.0))
+            .max_h(menu_height_cap(window))
             .overflow_y_scroll()
             .track_scroll(&self.menu_keys.scroll)
             // a click in the menu leaves the focus where it is (the compose box, as in Teams)
@@ -4603,7 +4595,7 @@ impl ChatView {
                     .snap_to_window_with_margin(px(MENU_MARGIN))
                     .child(
                         Self::menu_keys_on(div().pt_1().flex().items_end().gap_1(), cx)
-                            .children(more.flatten())
+                            .children(more)
                             .children(translation_menu)
                             .child(menu),
                     ),
@@ -4721,6 +4713,18 @@ impl ChatView {
         })
     }
 
+    /// Whether `message`'s menu offers workflows, and the workflows it offers.
+    fn menu_workflows(&self, message: &str, cx: &App) -> (bool, Vec<crate::workflow_dialog::FlowRef>) {
+        // Teams' workflows run on any message of a chat that takes the account's writes
+        let offers = self.core.capabilities().workflows
+            && self
+                .message_items()
+                .find(|item| item.id == message)
+                .is_some_and(MessageItem::offers_workflows);
+        let workflows = if offers { self.message_workflows(cx) } else { Vec::new() };
+        (offers, workflows)
+    }
+
     /// "More actions"' list beside the menu, while it is open: the other workflows, the apps' actions, then "Create
     /// workflows" (where the account's cloud serves `workflows`).
     fn more_actions_list(
@@ -4730,7 +4734,7 @@ impl ChatView {
         offers_workflows: bool,
         palette: Palette,
         cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    ) -> Option<gpui::Stateful<gpui::Div>> {
         use crate::workflow_run::menu;
         if !self.side_open(SideList::MoreActions, message) {
             return None;
@@ -4751,7 +4755,7 @@ impl ChatView {
         let listed = !rest.is_empty() || !apps.is_empty();
         list = list.children(apps);
         if !offers_workflows {
-            return Some(list.into_any_element());
+            return Some(list);
         }
         if listed {
             list = list.child(menu::separator(palette));
@@ -4760,7 +4764,7 @@ impl ChatView {
         list = list.child(menu::create_row(palette, move |_, _, cx| {
             let _ = view.update(cx, |this, cx| this.create_workflows(&message, cx));
         }));
-        Some(list.into_any_element())
+        Some(list)
     }
 
     /// The right-click menu over the text selected with the mouse, while it is open: "Copy", with its key.
@@ -4771,6 +4775,13 @@ impl ChatView {
             let _ = view.update(cx, |this, cx| this.copy_selection(cx));
         })
     }
+}
+
+/// The tallest a panel of the more-options menu may be: the window inside the snap margin (which the client-side
+/// decorations' inset widens) and the holder's top padding. The rest scrolls.
+fn menu_height_cap(window: &Window) -> Pixels {
+    let inset = window.client_inset().unwrap_or_default();
+    window.viewport_size().height - (px(MENU_MARGIN) + inset) * 2.0 - px(4.0)
 }
 
 /// An empty element over its parent that keeps where the parent was last drawn in `drawn_at`, for a popup to open by.

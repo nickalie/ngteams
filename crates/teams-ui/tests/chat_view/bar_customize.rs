@@ -413,4 +413,72 @@ fn more_options_taller_than_the_window_scrolls_to_the_row_of_the_keys() {
         menu.contains(&customize.center()),
         "End scrolls to Customize: {menu:?} {customize:?}"
     );
+    // Down from the last row wraps to the first, Up from the first back to the last: each scrolls to its row
+    cx.simulate_keystrokes("down");
+    draw(cx);
+    draw(cx);
+    let menu = cx.debug_bounds("message-menu").unwrap();
+    let first = cx.debug_bounds("menu-pick-like").unwrap();
+    assert!(
+        menu.contains(&first.center()),
+        "Down scrolls to the first row: {menu:?} {first:?}"
+    );
+    cx.simulate_keystrokes("up");
+    draw(cx);
+    draw(cx);
+    let menu = cx.debug_bounds("message-menu").unwrap();
+    let customize = cx.debug_bounds("action-customize").unwrap();
+    assert!(
+        menu.contains(&customize.center()),
+        "Up scrolls to Customize: {menu:?} {customize:?}"
+    );
+}
+
+#[test]
+fn the_keys_on_a_more_options_the_wheel_scrolled_start_on_its_first_row_in_view() {
+    let rig = two();
+    let mut settings = Settings::default();
+    for item in [
+        BarItem::Reaction(0),
+        BarItem::Reaction(1),
+        BarItem::Reaction(2),
+        BarItem::Reaction(3),
+        BarItem::React,
+        BarItem::Edit,
+        BarItem::Reply,
+    ] {
+        settings.show_bar_item(LAB_A, item, false);
+    }
+    let (view, _, cx) = window_with(&rig, settings);
+    cx.simulate_resize(size(px(800.0), px(260.0)));
+    draw(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.select(Some("2".to_owned()), cx);
+            view.focus_handle().clone().focus(window, cx);
+        });
+    });
+    draw(cx);
+    hover(cx, "message-2");
+    click(cx, "message-more");
+    let menu = cx.debug_bounds("message-menu").unwrap();
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: menu.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-3000.0))),
+        touch_phase: gpui::TouchPhase::Moved,
+        ..gpui::ScrollWheelEvent::default()
+    });
+    draw(cx);
+    let menu = cx.debug_bounds("message-menu").unwrap();
+    let first = cx.debug_bounds("menu-pick-like").unwrap();
+    assert!(!menu.contains(&first.center()), "the wheel scrolls the first row out");
+    cx.simulate_keystrokes("shift-f10");
+    draw(cx);
+    draw(cx);
+    let menu = cx.debug_bounds("message-menu").unwrap();
+    let first = cx.debug_bounds("menu-pick-like").unwrap();
+    assert!(
+        menu.contains(&first.center()),
+        "the keys start in view: {menu:?} {first:?}"
+    );
 }

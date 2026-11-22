@@ -11,7 +11,7 @@
 //! A menu taller than the window scrolls. The focus moving by the keys does not scroll it, so each of its rows sits in
 //! a slot with its own focus handle: the slot that holds the focus is the row the menu scrolls to.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
@@ -58,7 +58,7 @@ pub(super) struct MenuKeys {
     /// The menu's scroll, when it is taller than the window.
     pub(super) scroll: ScrollHandle,
     /// The slots of the menu's rows, in their order.
-    slots: RefCell<Vec<FocusHandle>>,
+    slots: Vec<FocusHandle>,
     back: keyboard::Return,
     due: Option<Due>,
     /// The keys opened the menu: it gives the focus back when it closes.
@@ -74,7 +74,7 @@ impl MenuKeys {
             translation: cx.focus_handle(),
             more_actions: cx.focus_handle(),
             scroll: ScrollHandle::new(),
-            slots: RefCell::default(),
+            slots: Vec::new(),
             back: keyboard::Return::default(),
             due: None,
             keyed: false,
@@ -101,14 +101,13 @@ impl MenuKeys {
     }
 
     /// `entries` each in its slot, as the menu holds them.
-    pub(super) fn slotted(&self, entries: Vec<AnyElement>, cx: &App) -> Vec<AnyElement> {
-        let mut slots = self.slots.borrow_mut();
-        while slots.len() < entries.len() {
-            slots.push(cx.focus_handle());
+    pub(super) fn slotted(&mut self, entries: Vec<AnyElement>, cx: &App) -> Vec<AnyElement> {
+        while self.slots.len() < entries.len() {
+            self.slots.push(cx.focus_handle());
         }
         entries
             .into_iter()
-            .zip(slots.iter())
+            .zip(self.slots.iter())
             .map(|(entry, slot)| {
                 div()
                     .flex_none()
@@ -123,8 +122,7 @@ impl MenuKeys {
 
     /// Scrolls the menu to the row that holds the focus.
     fn reveal_focused(&self, window: &Window, cx: &App) {
-        let slots = self.slots.borrow();
-        if let Some(at) = slots.iter().position(|slot| slot.contains_focused(window, cx)) {
+        if let Some(at) = self.slots.iter().position(|slot| slot.contains_focused(window, cx)) {
             self.scroll.scroll_to_item(at);
         }
     }
@@ -148,7 +146,10 @@ impl ChatView {
         if !offered {
             return;
         }
-        if self.options.as_deref() != Some(message.as_str()) {
+        if self.options.as_deref() == Some(message.as_str()) {
+            // the keys start on the first row: a menu the wheel scrolled goes back to its top
+            self.menu_keys.scroll.set_offset(gpui::Point::default());
+        } else {
             self.toggle_options(&message, cx);
         }
         self.side_list = None;
