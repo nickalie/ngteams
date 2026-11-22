@@ -31,7 +31,7 @@ use teams_store::{Conversation, ConversationKind, Member, Message};
 use teams_ui::compose::Compose;
 use teams_ui::draft_translate::{self, Engine, Session};
 use teams_ui::local_ai::{Backend, Failure, Launch, Tools};
-use teams_ui::settings::{Settings, SettingsModel};
+use teams_ui::settings::{ComposeTool, Settings, SettingsModel};
 use teams_ui::settings_view::Page;
 use teams_ui::shell::{Shell, ShellParts};
 use teams_ui::theme::{Appearance, DARK_KEY, LIGHT_KEY};
@@ -267,6 +267,7 @@ fn open(theme: &'static str, surface: String, cx: &mut App) -> gpui::Result<()> 
         },
         selected_chat: Some(AB.to_owned()),
         draft_translate_to: "German".to_owned(),
+        compose_shown: vec![ComposeTool::Translate],
         ..Settings::default()
     };
     // both tools "installed" at paths nothing runs: the made-up translator answers in their place

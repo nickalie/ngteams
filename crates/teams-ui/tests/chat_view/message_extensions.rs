@@ -157,7 +157,7 @@ fn the_lit_row_of_a_long_flyout_stays_in_view() {
         cx.simulate_keystrokes("up");
     }
     assert!(
-        inside(cx, &row(FINDER), "apps-flyout-list"),
+        inside(cx, "compose-correct-row", "apps-flyout-list"),
         "Up keeps the lit row in view"
     );
 }
@@ -568,6 +568,14 @@ fn down_past_the_actions(view: &Entity<ChatView>, cx: &mut VisualTestContext) {
     }
 }
 
+/// The space between the bottom of the row `above` and the top of the row `below`.
+fn gap(cx: &mut VisualTestContext, above: &'static str, below: &'static str) -> gpui::Pixels {
+    draw(cx);
+    let above = cx.debug_bounds(above).expect("the row above");
+    let below = cx.debug_bounds(below).expect("the row below");
+    below.top() - above.bottom()
+}
+
 fn flyout_labels(view: &Entity<ChatView>, cx: &mut VisualTestContext) -> Vec<String> {
     view.read_with(cx, |view, cx| {
         let compose = view.compose().read(cx);
@@ -587,6 +595,10 @@ fn a_hidden_action_in_the_flyout_shows_its_key_follows_the_box_and_gives_the_key
     assert_eq!(flyout_labels(&view, cx)[0], "Show formatting options");
     // the AI tools' rows stand apart from the Teams action before them
     assert_eq!(flyout_apart(&view, cx), [false, true, false, false]);
+    assert!(
+        gap(cx, "compose-format-row", "compose-correct-row") > gap(cx, "compose-correct-row", "compose-translate-row"),
+        "the flyout draws the line over Correct"
+    );
     // the box's state changes while the flyout is open: the row says what its click does now
     let compose = view.read_with(cx, |view, _| view.compose().clone());
     cx.update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_expanded(window, cx)));

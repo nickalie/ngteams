@@ -605,8 +605,8 @@ impl AppsFlyout {
         )
     }
 
-    /// The box's actions' rows, a line over each that starts a group and under the last, as Teams draws its own over the apps. Each is one child of the
-    /// list, so that the row Up and Down light is the child the list scrolls to.
+    /// The box's actions' rows, a line over each that starts a group and under the last, as Teams draws its own over
+    /// the apps. Each is one child of the list, so that the row Up and Down light is the child the list scrolls to.
     fn action_rows(&self, palette: Palette, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let actions = self.shown_actions(cx).to_vec();
         let last = actions.len().saturating_sub(1);
