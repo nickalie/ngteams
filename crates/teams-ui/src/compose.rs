@@ -55,8 +55,8 @@
 //!
 //! - **A channel's box** ([`Compose::in_channel`]): "Message in <channel>" posting to the channel, or a post's
 //!   thread's "Reply in thread" posting to the post's chain, with Teams' "Send to: thread only" over its text. It
-//!   offers Format, Emoji, "+", the AI tools and Send, no more: it sends no typing (no capture showed a channel's)
-//!   and takes no file (a channel's files go to its team's site, which this app doesn't upload to).
+//!   offers Format, Emoji, Attach, Loop, "+", the AI tools and Send, and sends no typing (no capture showed a
+//!   channel's). Its files go to the channel's folder on the team's site ([`Core::upload_channel_file`]).
 //! - **New message's box** ([`Compose::for_new_chat`]): a chat's box for a chat not made yet. It sends no typing and
 //!   takes no pasted picture; its first message is handed to New message ([`ComposeEvent::Start`]), which makes the
 //!   chat and sends it there, and comes back to the box if that fails ([`Compose::started`]).
@@ -729,7 +729,7 @@ pub struct Compose {
     translated: translated::Translated,
     /// What a read-only box says in place of its text area ([`READ_ONLY_APP`]); `None` for a box that writes.
     read_only: Option<&'static str>,
-    /// Where it writes ([`Compose::in_channel`]): a channel's box sends no typing and takes no file.
+    /// Where it writes ([`Compose::in_channel`]): a channel's box sends no typing, and its files go to the channel's folder.
     writes: Writes,
     /// New message's first message while its chat is being made ([`ComposeEvent::Start`]): given back if that fails.
     starting: Option<Draft>,
@@ -1170,7 +1170,9 @@ impl Compose {
 
     /// Discard: empties the box and ends a reply or an edit.
     pub fn discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.attachments.clear();
+        for file in std::mem::take(&mut self.attachments) {
+            self.recycle_channel_file(file, cx);
+        }
         self.copy_notice = false;
         self.editor.update(cx, super::editor::Editor::clear);
         if self.mode != Mode::New {

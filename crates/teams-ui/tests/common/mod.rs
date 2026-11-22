@@ -577,6 +577,11 @@ impl Core for FakeCore {
     }
     fn upload_channel_file(&self, conversation: String, path: std::path::PathBuf) -> Reply<teams_proto::UploadedFile> {
         locked(&self.channel_uploads).push((conversation.clone(), path.clone()));
+        if *locked(&self.hold_uploads) {
+            let (answer, reply) = Reply::later();
+            locked(&self.held_uploads).push(answer);
+            return reply;
+        }
         // an empty queued name keeps the file's own
         let queued = locked(&self.channel_upload_names)
             .pop_front()

@@ -88,7 +88,7 @@ impl<T: Transport<Error = HttpError>> Outbox<T> {
         log::info!("attachment write: {}", tried.summary());
         tried
     }
-    /// A channel file's write on its team's site (`crate::attachments`): one attempt, no row, its answer back to the
+    /// A channel file's write on its team's site (`crate::channel_files`): one attempt, no row, its answer back to the
     /// asker; another attempt only as [`CallRetries`] allows.
     pub async fn try_channel_file(&self, write: teams_proto::ChannelFileWrite) -> CallTried {
         let tried = routed(self.transport.deliver_channel_file(write).await, "channel file");

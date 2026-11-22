@@ -215,6 +215,75 @@ fn a_channel_s_box_takes_files_into_the_channel_s_folder() {
     removing_the_copy_recycles_it(cx, &compose, &rig.core);
 }
 
+/// A channel's box with a draft, as Teams' "Post in channel" box.
+fn channel_box(rig: &super::Rig) -> (Entity<Compose>, &'static mut VisualTestContext) {
+    let parts = parts::parts(rig, Settings::default(), Arc::new(ViewTrace::off()));
+    let app: &'static mut gpui::TestAppContext = Box::leak(Box::new(rig.cx.clone()));
+    let (view, cx) = app.add_window_view(|window, cx| {
+        let compose = ChatView::channel_box(&parts, CHANNEL, &Place::Channel, "Post in channel".into(), window, cx);
+        ChatView::in_place(parts, CHANNEL.to_owned(), Place::Channel, compose, window, cx)
+    });
+    cx.simulate_resize(size(gpui::px(800.0), gpui::px(600.0)));
+    draw(cx);
+    let compose = compose(&view, cx);
+    (compose, cx)
+}
+
+#[test]
+fn a_channel_file_removed_while_it_uploads_goes_to_the_recycle_bin_when_its_upload_ends() {
+    let rig = rig_with(Vec::new());
+    *rig.core.hold_uploads.lock().unwrap() = true;
+    let (compose, cx) = channel_box(&rig);
+    let dir = tempfile::tempdir().unwrap();
+    let files = made_up_files(dir.path(), &["made-up notes.txt"]);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.attach_files(&files, window, cx)));
+    draw(cx);
+    assert_eq!(staged(&compose, cx), ["made-up notes.txt"]);
+
+    let remove = cx.debug_bounds("compose-attachment-remove-0").unwrap();
+    cx.simulate_click(remove.center(), gpui::Modifiers::none());
+    draw(cx);
+    assert!(staged(&compose, cx).is_empty());
+    assert!(rig.core.discarded_files.lock().unwrap().is_empty());
+
+    rig.core
+        .held_uploads
+        .lock()
+        .unwrap()
+        .remove(0)
+        .send(Ok(super::common::channel_file(CHANNEL, "made-up notes.txt")));
+    draw(cx);
+    let discarded = rig.core.discarded_files.lock().unwrap().clone();
+    assert_eq!(discarded.len(), 1);
+    assert_eq!(discarded[0].name(), "made-up notes.txt");
+    assert!(staged(&compose, cx).is_empty());
+}
+
+#[test]
+fn discard_sends_the_draft_s_channel_files_to_the_recycle_bin() {
+    let rig = rig_with(Vec::new());
+    let (compose, cx) = channel_box(&rig);
+    type_draft(&compose, cx, "A made-up post");
+    let dir = tempfile::tempdir().unwrap();
+    let files = made_up_files(dir.path(), &["made-up notes.txt", "made-up plan.docx"]);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.attach_files(&files, window, cx)));
+    draw(cx);
+    assert_eq!(staged(&compose, cx), ["made-up notes.txt", "made-up plan.docx"]);
+
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.discard(window, cx)));
+    draw(cx);
+    assert!(staged(&compose, cx).is_empty());
+    let discarded: Vec<_> = rig
+        .core
+        .discarded_files
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|file| file.name().to_owned())
+        .collect();
+    assert_eq!(discarded, ["made-up notes.txt", "made-up plan.docx"]);
+}
+
 /// Remove on the numbered copy sends it to the recycle bin; the notice stays while another channel file is staged.
 fn removing_the_copy_recycles_it(
     cx: &mut VisualTestContext,

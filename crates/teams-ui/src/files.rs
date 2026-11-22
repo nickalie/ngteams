@@ -516,7 +516,7 @@ impl FileCard {
     /// Microsoft's file service.
     fn own(&self) -> Option<OwnFile> {
         let source = self.source.clone()?;
-        let link = self.file.share_url.clone()?;
+        let link = self.file.open_link()?.to_owned();
         (!teams_proto::chat::is_file_link(&link)).then(|| OwnFile {
             link,
             name: self.file.name.clone(),
@@ -541,8 +541,9 @@ impl FileCard {
     /// shows there.
     fn picture(&self, kind: FileKind, cx: &mut App) -> AnyElement {
         let palette = self.palette;
-        let state = match (&self.source, self.file.share_url.as_deref()) {
-            (Some(source), Some(share_url)) if kind.has_thumbnail() => thumbnail(share_url, source, cx),
+        // a channel file has no sharing link: its own address names it
+        let state = match (&self.source, self.file.open_link()) {
+            (Some(source), Some(link)) if kind.has_thumbnail() => thumbnail(link, source, cx),
             _ => PictureState::Missing,
         };
         let id = self.id.clone();

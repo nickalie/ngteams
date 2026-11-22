@@ -327,10 +327,11 @@ added `properties.atp` (the file's address, encoded).
 - Remove (X) on a card sends the uploaded file to the site's recycle bin: `DELETE
   <site>/_api/web/GetFileById('<UniqueId>')/recycle`, 200.
 
-**The native client** (`teams_proto::channel_file`, `teams-core`'s `channel_files`) uploads the same way: it reads the
+**The native client** (`teams_proto::channel_file`, `teams-core`'s `channel_files`) uploads with the same steps: it reads the
 folder from the channel's thread, takes only a tenant site (`/sites/` or `/teams/`, never a personal site) and a folder
 inside it, and sends `addStub` (numbered as the web client numbers it while the name is taken), `StartUpload` with all
-the bytes and `FinishUpload`, each once through the outbox. Before each write the transport reads the channel's thread
+the bytes and `FinishUpload`, each once through the outbox, again only after a 401 or a short throttle
+(`CallRetries`). It doesn't send the web client's `application`, `scenario` and `scenariotype` headers. Before each write the transport reads the channel's thread
 again and refuses a write whose folder isn't the channel's now; before a write that names a file, it reads the file by
 its id and refuses one that isn't right in that folder. A failed step after `addStub` recycles the empty file. Remove
 recycles the file. The engine takes a channel file only in a post or a reply of its own channel, and an own-drive file

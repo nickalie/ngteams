@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui::{
     AnyElement, Context, InteractiveElement as _, IntoElement as _, ParentElement as _,
@@ -191,20 +192,29 @@ impl Compose {
         };
         let route: super::Route<u64> = Rc::new(RefCell::new((cx.weak_entity(), id)));
         self.routes.files.insert(id, Rc::clone(&route));
+        let core = Arc::clone(&self.core);
         cx.spawn(async move |_, cx| {
-            let answer = reply.await;
+            let mut answer = Some(reply.await);
             // the file may have moved to another box meanwhile ([`Compose::hand_draft_to`])
             let (to, id) = route.borrow().clone();
             let _ = to.update(cx, |this, cx| {
                 if this.routes.files.get(&id).is_some_and(|held| Rc::ptr_eq(held, &route)) {
                     this.routes.files.remove(&id);
                 }
-                if let Some(file) = this.attachments.iter_mut().find(|file| file.id == id) {
+                if let Some(file) = this.attachments.iter_mut().find(|file| file.id == id)
+                    && let Some(answer) = answer.take()
+                {
                     file.complete(answer);
                     this.copy_notice |= file.is_copy_of(&chosen);
                     cx.notify();
                 }
             });
+            // removed while it uploaded: the team would see a file nobody posted
+            if let Some(Ok(uploaded)) = answer
+                && uploaded.channel().is_some()
+            {
+                let _ = core.discard_channel_file(uploaded).await;
+            }
         })
         .detach();
         cx.notify();
@@ -217,15 +227,7 @@ impl Compose {
             return;
         };
         let file = self.attachments.remove(index);
-        if let AttachmentState::Ready(uploaded) = file.state
-            && uploaded.channel().is_some()
-        {
-            let discarded = self.core.discard_channel_file(*uploaded);
-            cx.spawn(async move |_, _| {
-                let _ = discarded.await;
-            })
-            .detach();
-        }
+        self.recycle_channel_file(file, cx);
         if !self
             .attachments
             .iter()
@@ -234,6 +236,26 @@ impl Compose {
             self.copy_notice = false;
         }
         cx.notify();
+    }
+
+    /// Sends a channel file the draft let go to its site's recycle bin, and says so when that fails. A file still
+    /// uploading goes there when its upload ends ([`Self::upload_attachment`]).
+    pub(super) fn recycle_channel_file(&self, file: Attachment, cx: &mut Context<Self>) {
+        let AttachmentState::Ready(uploaded) = file.state else {
+            return;
+        };
+        if uploaded.channel().is_none() {
+            return;
+        }
+        let discarded = self.core.discard_channel_file(*uploaded);
+        cx.spawn(async move |this, cx| {
+            if discarded.await.is_err() {
+                let _ = this.update(cx, |this, cx| {
+                    this.show_problem(format!("{} couldn't be removed from the channel's files.", file.name), cx);
+                });
+            }
+        })
+        .detach();
     }
 
     /// Teams' notice over a channel's box once a file went to the channel's folder as a numbered copy.

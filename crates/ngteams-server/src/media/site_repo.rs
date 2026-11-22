@@ -162,18 +162,15 @@ pub(super) async fn fill(db: &Db, file: &ChannelFile, upload: &str, size: i64, q
 pub(super) async fn remove(db: &Db, id: &str) -> Result<bool, DbError> {
     with_conn!(db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
-            let Some((owner, size)) = channel_files::table
-                .find(id)
-                .select((channel_files::owner_id, channel_files::size))
-                .first::<(String, i64)>(conn)
+            // the size comes from the deleted row: a fill that held the row has committed by then
+            let Some((owner, size)) = diesel::delete(channel_files::table.find(id))
+                .returning((channel_files::owner_id, channel_files::size))
+                .get_result::<(String, i64)>(conn)
                 .await
                 .optional()?
             else {
                 return Ok(false);
             };
-            if diesel::delete(channel_files::table.find(id)).execute(conn).await? == 0 {
-                return Ok(false);
-            }
             let freed = -size;
             let _ = charge!(conn, &owner, freed, 0);
             Ok(true)

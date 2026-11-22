@@ -198,20 +198,31 @@ impl<C: Credentials> HttpTransport<C> {
         if DriveSite::from_web_url_in(&self.cloud, url.as_str()).as_ref() != Some(site) {
             return Err(HttpError::Refused(Refusal::NotAllowed));
         }
-        let audience = site.audience();
+        self.site_read(&site.audience(), &url, headers, "own-drive").await
+    }
+
+    /// A read on a SharePoint site with that site's token: once more after a 401 with a new token, or after a
+    /// throttle with the token fetched again after the wait.
+    pub(super) async fn site_read(
+        &self,
+        audience: &str,
+        url: &url::Url,
+        headers: &[(String, String)],
+        what: &str,
+    ) -> Result<Response, HttpError> {
         let mut token = self
             .credentials
-            .bearer(&audience)
+            .bearer(audience)
             .await
             .map_err(HttpError::Credentials)?;
         let first = self
-            .send_as(reqwest::Method::GET, &url, headers, Auth::Bearer(&token), None)
+            .send_as(reqwest::Method::GET, url, headers, Auth::Bearer(&token), None)
             .await?;
         let retry = match first.status() {
             401 => {
                 token = self
                     .credentials
-                    .bearer_rejected(&audience, &token)
+                    .bearer_rejected(audience, &token)
                     .await
                     .map_err(HttpError::Credentials)?;
                 true
@@ -222,13 +233,13 @@ impl<C: Credentials> HttpTransport<C> {
                     .unwrap_or(super::DEFAULT_RETRY_WAIT)
                     .min(self.max_retry_wait);
                 log::info!(
-                    "own-drive read: HTTP {status}, sent once more after {} ms",
+                    "{what} read: HTTP {status}, sent once more after {} ms",
                     wait.as_millis()
                 );
                 tokio::time::sleep(wait).await;
                 token = self
                     .credentials
-                    .bearer(&audience)
+                    .bearer(audience)
                     .await
                     .map_err(HttpError::Credentials)?;
                 true
@@ -236,7 +247,7 @@ impl<C: Credentials> HttpTransport<C> {
             _ => false,
         };
         let answer = if retry {
-            self.send_as(reqwest::Method::GET, &url, headers, Auth::Bearer(&token), None)
+            self.send_as(reqwest::Method::GET, url, headers, Auth::Bearer(&token), None)
                 .await?
         } else {
             first

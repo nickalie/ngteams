@@ -75,50 +75,11 @@ impl<C: Credentials> HttpTransport<C> {
         Ok(answer)
     }
 
-    /// A read on a team's site with that site's token: once more after a 401 with a new token, or after a throttle.
     async fn team_site_read(&self, site: &TeamSite, url: &url::Url) -> Result<Response, HttpError> {
         if !site.holds(url) {
             return Err(HttpError::Refused(Refusal::NotAllowed));
         }
-        let audience = site.audience();
         let headers = [("accept".to_owned(), "application/json".to_owned())];
-        let mut token = self
-            .credentials
-            .bearer(&audience)
-            .await
-            .map_err(HttpError::Credentials)?;
-        let first = self
-            .send_as(reqwest::Method::GET, url, &headers, Auth::Bearer(&token), None)
-            .await?;
-        let retry = match first.status() {
-            401 => {
-                token = self
-                    .credentials
-                    .bearer_rejected(&audience, &token)
-                    .await
-                    .map_err(HttpError::Credentials)?;
-                true
-            }
-            429 | 503 => {
-                let wait = first
-                    .retry_after()
-                    .unwrap_or(super::DEFAULT_RETRY_WAIT)
-                    .min(self.max_retry_wait);
-                tokio::time::sleep(wait).await;
-                true
-            }
-            _ => false,
-        };
-        let answer = if retry {
-            self.send_as(reqwest::Method::GET, url, &headers, Auth::Bearer(&token), None)
-                .await?
-        } else {
-            first
-        };
-        if answer.is_success() {
-            Ok(answer)
-        } else {
-            Err(HttpError::Status(Box::new(answer)))
-        }
+        self.site_read(&site.audience(), url, &headers, "team-site").await
     }
 }

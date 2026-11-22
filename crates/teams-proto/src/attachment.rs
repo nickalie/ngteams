@@ -202,7 +202,7 @@ impl UploadedFile {
             Some(channel) => {
                 crate::is_team_thread_id(channel)
                     && crate::read::is_guid(&self.guid)
-                    && valid_name(&self.name)
+                    && crate::channel_file::valid_name(&self.name)
                     && crate::TeamSite::from_url_in(cloud, &self.site).is_some_and(|site| {
                         site.base() == self.site
                             && Url::parse(&self.object_url).is_ok_and(|url| {

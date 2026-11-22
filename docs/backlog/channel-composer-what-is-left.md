@@ -20,7 +20,15 @@ or a read nobody has made yet:
 - **Files in a channel: what is left.** Attach, drop and paste upload into the channel's folder on the team's site,
   as Teams does ([channels.md](../protocol/channels.md#files-in-a-channel)). Teams' copy notice also offers "Reshare
   older file instead", and its Attach menu "Attach cloud files" and "Browse Teams and Channels"; none of these was
-  captured. The toast "You've shared <file>" after the post isn't shown.
+  captured. The toast "You've shared <file>" after the post isn't shown. Also left:
+  - An `addStub` whose answer was lost (`CallTried::Uncertain`) can leave an empty file in the channel's folder. A fix
+    reads the tried name's path in the folder and recycles that file; no capture showed a read of a file by its path.
+  - On the own server, a file keeps the folder it was added in after its channel is renamed, but the client's
+    preflight accepts only a file in the channel's folder now. So Remove of a draft file after a rename is refused
+    and the file stays. Decide: the server moves a channel's files with its folder (as SharePoint renames the
+    folder), or the client recycles in the folder the upload answered.
+  - `UploadedFile` holds an own-drive file and a channel file, told apart by `channel()`. An enum of the two kinds
+    would keep the own-drive accessors (`site`, `item_url`) off a channel file.
 - **Mentions in a channel.** The box's picker offers a chat's stored members; a channel stores none, so it offers
   nobody. Teams offers the team's people and the channel and the team themselves (`@channel`, `@team`).
 - **"Send to: thread and channel".** Teams' thread box can also post the reply to the channel; the app says "Send to:
