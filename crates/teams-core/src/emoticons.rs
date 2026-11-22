@@ -3,8 +3,9 @@
 //! token), the way the web client reads them.
 //!
 //! - **Kept for the run**: a strip read is kept in memory and answered from there after; a reaction the CDN has none for
-//!   (an answer that isn't a success, or isn't a PNG) is kept as missing. A read that failed on the way isn't kept
-//!   and is answered [`EngineError::AnimationUnread`], so the next ask reads again.
+//!   (an answer that isn't a success, or isn't a PNG) is kept as missing. A read that failed on the way, or that the
+//!   CDN answered with a status that can pass (408, 429, 5xx), isn't kept and is answered
+//!   [`EngineError::AnimationUnread`], so the next ask reads again.
 //! - **One read per reaction at a time**: asks while its read runs wait for that read.
 //! - Nothing is stored and nothing is written.
 
@@ -70,7 +71,7 @@ impl<C: Credentials + 'static> Animations<C> {
 }
 
 /// Reads `id`'s animation and answers every ask that waits for it; keeps it, or that there is none, unless the read
-/// failed on the way ([`EngineError::AnimationUnread`]).
+/// failed on the way or the CDN failed for now ([`EngineError::AnimationUnread`]).
 async fn read_animation<C: Credentials + 'static>(
     client: Arc<Client<HttpTransport<C>>>,
     read: ReactionAnimation,
@@ -79,7 +80,7 @@ async fn read_animation<C: Credentials + 'static>(
 ) {
     let answer = match client.read(&read).await {
         Ok(answer) => Some(read.read_answer(&answer).map(Strip::from)),
-        Err(HttpError::Status(_)) => Some(None),
+        Err(HttpError::Status(answer)) if !matches!(answer.status(), 408 | 429 | 500..=599) => Some(None),
         Err(_) => None,
     };
     let waiting = match answer.clone() {

@@ -2023,6 +2023,14 @@ fn an_animation_whose_read_failed_on_the_way_is_asked_again() {
     );
     cx.run_until_parked();
     assert_eq!(asked(), 1);
+    assert!(
+        cx.update(|_, cx| teams_ui::reactions::animation("1f440_eyes", &core, cx))
+            .is_none()
+    );
+    cx.run_until_parked();
+    assert_eq!(asked(), 1, "not asked again before the wait is over");
+    cx.executor().advance_clock(teams_ui::reactions::ANIMATION_RETRY_AFTER);
+    cx.run_until_parked();
 
     // the read fails again: asked again, not kept as none
     assert!(

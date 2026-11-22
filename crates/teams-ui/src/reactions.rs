@@ -36,6 +36,9 @@ pub const MOST_FOUND: usize = 240;
 const ANIMATION_FPS: u32 = 24;
 /// How many frames Teams' 3D emoji of a call reaction have: 4.25 s at [`ANIMATION_FPS`].
 pub const EMOJI_3D_FRAMES: u32 = 102;
+/// How long an animation whose read failed is drawn without it before it is asked for again: a CDN that fails for a
+/// while isn't asked on each frame a tile draws.
+pub const ANIMATION_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// A reaction Teams offers.
 #[derive(Debug)]
@@ -340,8 +343,8 @@ pub fn frame_at(elapsed: std::time::Duration, frames: usize) -> usize {
 }
 
 /// The animation kept as `id` when it was read; otherwise asks for it once with `ask` and cuts it with `decode` (the
-/// windows drawn again once it arrives; a read that failed on the way is asked again when next drawn) and answers
-/// `None` meanwhile.
+/// windows drawn again once it arrives; a read that failed is asked again when drawn after [`ANIMATION_RETRY_AFTER`])
+/// and answers `None` meanwhile.
 fn decoded(
     id: Kept,
     ask: impl FnOnce() -> teams_core::Reply<Option<teams_core::Strip>>,
@@ -359,8 +362,8 @@ fn decoded(
         let strip = match reply.await {
             Ok(Some(strip)) => strip,
             Ok(None) => return,
-            // failed on the way: asked again
             Err(_) => {
+                cx.background_executor().timer(ANIMATION_RETRY_AFTER).await;
                 cx.update(|cx| cx.default_global::<Animations>().known.remove(&id));
                 return;
             }

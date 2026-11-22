@@ -2902,6 +2902,34 @@ async fn a_call_reaction_s_3d_emoji_is_read_once_apart_from_its_strip_and_other_
     a.shutdown();
 }
 
+#[tokio::test]
+async fn an_animation_the_cdn_failed_to_serve_for_now_is_read_again_and_a_missing_one_is_not() {
+    let lab = Lab::start().await;
+    let a = native(&lab, LAB_A, QUIET);
+    a.handle.sync().await.unwrap();
+    let sprite = "/evergreen-assets/skype/v2/heartV4-3D/112a.png";
+    // mounted first: it answers before the file does
+    lab.mock
+        .answer_next("GET", "heartV4-3D/112a.png", 500, &json!({}))
+        .await;
+    lab.mock
+        .serve_bytes(sprite, "image/png", b"synthetic 3D sprite".to_vec())
+        .await;
+    assert!(
+        a.handle.call_reaction_animation("heart", 112).await.is_err(),
+        "not kept as missing"
+    );
+    let strip = a.handle.call_reaction_animation("heart", 112).await.unwrap().unwrap();
+    assert_eq!(strip.as_ref(), b"synthetic 3D sprite");
+    assert!(a.handle.call_reaction_animation("heart", 140).await.unwrap().is_none());
+    assert!(a.handle.call_reaction_animation("heart", 140).await.unwrap().is_none());
+    let requests = lab.mock.received_requests().await;
+    let count = |wanted: &str| requests.iter().filter(|request| request.url.path() == wanted).count();
+    assert_eq!(count(sprite), 2);
+    assert_eq!(count("/evergreen-assets/skype/v2/heartV4-3D/140a.png"), 1);
+    a.shutdown();
+}
+
 fn conversation_delivery(id: &str, horizon: Option<&str>) -> Value {
     let mut resource = json!({"id": id});
     if let Some(horizon) = horizon {
