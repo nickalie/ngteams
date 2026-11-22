@@ -1450,10 +1450,10 @@ fn soon_reminders(qa: &mut Qa<'_>) -> SandboxResult {
         qa.ready.elapsed()
     ));
     qa.shot("reminders-soon")?;
-    qa.card_has_notice(DISMISSED_SUBJECT, dismissed.id)?;
-    qa.card_has_notice(JOINED_SUBJECT, joined.id)?;
+    before_start(qa, DISMISSED_SUBJECT, dismissed.id)?;
     qa.sandbox.bus().invoke_action(dismissed.id, "dismiss")?;
     qa.closed(dismissed.id, "after the notice's Dismiss")?;
+    before_start(qa, JOINED_SUBJECT, joined.id)?;
     qa.sandbox.bus().invoke_action(joined.id, "join")?;
     let prejoin = qa.prejoin_until(JOIN_CHAT);
     // the pre-join (its window titled with the meeting's subject) comes to the front, over the main window its Join
@@ -1479,6 +1479,21 @@ fn soon_reminders(qa: &mut Qa<'_>) -> SandboxResult {
     ensure(
         soon.body.starts_with("Starts in 2 minutes") || soon.body.starts_with("Starts in 1 minute"),
         || format!("the reminder before the start says {:?}", soon.body),
+    )
+}
+
+/// Fails unless the card of `subject` holds notice `id` and both still say the meeting starts later: the
+/// "Starting now" notice takes the id of the notice it replaces.
+fn before_start(qa: &mut Qa<'_>, subject: &str, id: u32) -> SandboxResult {
+    qa.card_has_notice(subject, id)?;
+    let cards = qa.cards()?;
+    let notices = qa.notices_of(0, subject);
+    ensure(
+        cards
+            .iter()
+            .any(|(title, when)| title == subject && when.starts_with("Starts in "))
+            && !notices.iter().any(|notice| notice.body.starts_with("Starting now")),
+        || format!("{subject:?} is no longer before its start: cards {cards:?}, notices {notices:?}"),
     )
 }
 
