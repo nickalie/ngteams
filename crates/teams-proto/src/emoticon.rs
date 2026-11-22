@@ -19,6 +19,8 @@ pub const MAX_ANIMATION: usize = 1024 * 1024;
 /// The strip read: 50 px frames, the size the web client's picker draws.
 const STRIP: &str = "50_anim_f.png";
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+/// A PNG's first chunk after its signature: its length (13) and type.
+const IHDR: &[u8] = b"\0\0\0\x0dIHDR";
 
 /// The sides of a call reaction's 3D emoji that Teams' CDN has, px, the smallest first.
 pub const EMOJI_3D_SIDES: [u16; 3] = [56, 112, 140];
@@ -68,7 +70,8 @@ impl ReactionAnimation {
         })
     }
 
-    /// The animation's bytes in the answer: when it is a PNG of at most [`MAX_ANIMATION`] bytes, else `None`.
+    /// The animation's bytes in the answer: when it is a PNG (its signature, then an image header of a non-empty
+    /// picture) of at most [`MAX_ANIMATION`] bytes, else `None`.
     #[must_use]
     pub fn read_answer(&self, answer: &Response) -> Option<Vec<u8>> {
         let png = answer.content_type().is_some_and(|content_type| {
@@ -78,7 +81,7 @@ impl ReactionAnimation {
                 .is_some_and(|media| media.trim().eq_ignore_ascii_case("image/png"))
         });
         let bytes = answer.body();
-        (png && bytes.starts_with(PNG_SIGNATURE) && bytes.len() <= MAX_ANIMATION).then(|| bytes.to_vec())
+        (png && has_png_header(bytes) && bytes.len() <= MAX_ANIMATION).then(|| bytes.to_vec())
     }
 
     /// A name of this read that no other read has: what an engine keeps its answer by.
@@ -89,6 +92,22 @@ impl ReactionAnimation {
             Form::Emoji3d(side) => format!("{}V4-3D/{side}", self.id),
         }
     }
+}
+
+/// Whether `bytes` start with a PNG's signature and an image header of a picture with a width and a height.
+fn has_png_header(bytes: &[u8]) -> bool {
+    let Some(header) = bytes
+        .strip_prefix(PNG_SIGNATURE)
+        .and_then(|rest| rest.strip_prefix(IHDR))
+    else {
+        return false;
+    };
+    let side = |at: usize| {
+        header
+            .get(at..at + 4)
+            .is_some_and(|side| side.iter().any(|byte| *byte != 0))
+    };
+    side(0) && side(4)
 }
 
 /// Whether `id` is in the form of Teams' reaction ids.

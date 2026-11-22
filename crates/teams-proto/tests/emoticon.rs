@@ -20,6 +20,8 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CHAT_BASE: &str = "https://teams.microsoft.com/api/chatsvc/amer";
+/// A PNG's signature and the image header of a 1 px picture: the made-up bodies start with it.
+const PNG_HEAD: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x01\0\0\0\x01\x08\x06\0\0\0";
 const STRIP_PATH: &str = "/evergreen-assets/personal-expressions/v2/assets/emoticons/1f440_eyes/default/50_anim_f.png";
 
 /// Records every audience a token was asked for: the CDN's read asks for none.
@@ -40,6 +42,13 @@ impl Credentials for FakeTokens {
     fn bearer_rejected(&self, audience: &str, _: &Secret) -> impl Future<Output = Result<Secret, TokenError>> + Send {
         self.bearer(audience)
     }
+}
+
+/// A body with a PNG's header, one byte over [`MAX_ANIMATION`]: only the length limit refuses it.
+fn oversized_png() -> Vec<u8> {
+    let mut body = PNG_HEAD.to_vec();
+    body.resize(MAX_ANIMATION + 1, 0);
+    body
 }
 
 async fn setup() -> (MockServer, Arc<FakeTokens>, Client<HttpTransport<FakeTokens>>) {
@@ -102,7 +111,7 @@ fn a_call_reaction_s_3d_emoji_is_read_by_the_cdn_s_name_and_a_side_it_has() {
 #[tokio::test]
 async fn a_call_reaction_s_3d_emoji_is_a_get_with_no_token() {
     let (server, tokens, client) = setup().await;
-    let sprite = b"\x89PNG\r\n\x1a\nmade-up sprite".to_vec();
+    let sprite = [PNG_HEAD, b"made-up sprite"].concat();
     Mock::given(method("GET"))
         .and(path("/evergreen-assets/skype/v2/yesV4-3D/112a.png"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(sprite.clone(), "image/png"))
@@ -125,7 +134,7 @@ async fn a_call_reaction_s_3d_emoji_is_a_get_with_no_token() {
 #[tokio::test]
 async fn the_strip_is_a_get_with_no_token_and_only_a_png_is_kept() {
     let (server, tokens, client) = setup().await;
-    let strip = b"\x89PNG\r\n\x1a\nmade-up strip".to_vec();
+    let strip = [PNG_HEAD, b"made-up strip"].concat();
     Mock::given(method("GET"))
         .and(path(STRIP_PATH))
         .respond_with(ResponseTemplate::new(200).set_body_raw(strip.clone(), "image/png"))
@@ -165,10 +174,26 @@ async fn the_strip_is_a_get_with_no_token_and_only_a_png_is_kept() {
         "labelled a PNG, but not one"
     );
 
+    let no_picture = [&PNG_HEAD[..8], b"made-up text"].concat();
+    let empty_picture = [&PNG_HEAD[..16], &[0; 4], &PNG_HEAD[20..]].concat();
+    for (body, why) in [
+        (PNG_HEAD[..8].to_vec(), "a signature only"),
+        (no_picture, "a signature with no image header"),
+        (empty_picture, "a picture with no width"),
+    ] {
+        server.reset().await;
+        Mock::given(method("GET"))
+            .and(path(STRIP_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "image/png"))
+            .mount(&server)
+            .await;
+        assert_eq!(read.read_answer(&client.read(&read).await.unwrap()), None, "{why}");
+    }
+
     server.reset().await;
     Mock::given(method("GET"))
         .and(path(STRIP_PATH))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(vec![0; MAX_ANIMATION + 1], "image/png"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(oversized_png(), "image/png"))
         .mount(&server)
         .await;
     assert_eq!(read.read_answer(&client.read(&read).await.unwrap()), None, "too large");

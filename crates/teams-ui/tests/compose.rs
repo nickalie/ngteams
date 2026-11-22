@@ -2002,14 +2002,14 @@ fn the_reaction_under_the_pointer_plays_its_animation_once_read() {
 
 #[test]
 fn an_animation_whose_read_failed_on_the_way_is_asked_again() {
-    let rig = rig_with(vec![]);
+    let theirs = message(NOON, LAB_B, "<p>nice</p>");
+    let rig = rig_with(vec![theirs.clone()]);
     rig.core
         .unread_animations
         .lock()
         .unwrap()
         .insert("1f440_eyes".to_owned());
-    let (_view, cx, _) = chat_window(&rig, no_receipts());
-    let core: Arc<dyn Core> = rig.core.clone();
+    let (view, cx, _) = chat_window(&rig, no_receipts());
     let asked = || {
         rig.core
             .asked()
@@ -2017,36 +2017,23 @@ fn an_animation_whose_read_failed_on_the_way_is_asked_again() {
             .filter(|name| **name == "reaction_animation")
             .count()
     };
-    assert!(
-        cx.update(|_, cx| teams_ui::reactions::animation("1f440_eyes", &core, cx))
-            .is_none()
-    );
-    cx.run_until_parked();
+    act(&view, cx, MessageAction::React, &theirs.id);
+    keys(cx, "5");
+    type_text(cx, "eyes");
+    let cell = cx.debug_bounds("emoji-1f440_eyes").unwrap();
+    cx.simulate_mouse_move(cell.center(), None, Modifiers::none());
+    draw(cx);
     assert_eq!(asked(), 1);
-    assert!(
-        cx.update(|_, cx| teams_ui::reactions::animation("1f440_eyes", &core, cx))
-            .is_none()
-    );
-    cx.run_until_parked();
+    draw(cx);
     assert_eq!(asked(), 1, "not asked again before the wait is over");
     let step = std::time::Duration::from_millis(100);
     cx.executor()
         .advance_clock(teams_ui::reactions::ANIMATION_RETRY_AFTER.saturating_sub(step));
-    cx.run_until_parked();
-    assert!(
-        cx.update(|_, cx| teams_ui::reactions::animation("1f440_eyes", &core, cx))
-            .is_none()
-    );
-    cx.run_until_parked();
+    draw(cx);
     assert_eq!(asked(), 1, "not asked again just before the wait is over");
-    cx.executor().advance_clock(step);
-    cx.run_until_parked();
 
-    // the read fails again: asked again, not kept as none
-    assert!(
-        cx.update(|_, cx| teams_ui::reactions::animation("1f440_eyes", &core, cx))
-            .is_none()
-    );
+    // nothing else draws the window: the end of the wait draws it again
+    cx.executor().advance_clock(step);
     cx.run_until_parked();
     assert_eq!(asked(), 2, "a failed read isn't kept as none");
 }
