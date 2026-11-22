@@ -818,7 +818,7 @@ fn an_updates_restart_waits_for_a_channel_files_recycle_after_an_unsent_message(
         .cx
         .update(|cx| {
             window.update(cx, |_, window, cx| {
-                compose.update(cx, |compose, cx| compose.discard(window, cx))
+                compose.update(cx, |compose, cx| compose.discard(window, cx));
             })
         })
         .unwrap();

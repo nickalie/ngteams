@@ -5,7 +5,7 @@
 //! video icon without a thumbnail), a document's card the large icon of its type; Teams' type icons and header
 //! buttons; a click on the name opens the sharing link, "More options" offers Teams' items; Share (the video card's
 //! button and the item) asks for "Share this file" for its file, and the read-only app offers no Share;
-//! an own server's file names its owner; nothing about the files is said to be unshown; an image with a preview is
+//! an own server's file names its owner; a channel's cards show no location; nothing about the files is said to be unshown; an image with a preview is
 //! drawn as the picture alone, its card when the preview can't be had. The message is the synthetic fixture
 //! `tests/fixtures/chatsvc/files.json`: every name, link and id is made up.
 
@@ -17,7 +17,9 @@ use gpui::{Bounds, Entity, Modifiers, Pixels, VisualTestContext, px, size};
 use serde_json::Value;
 use teams_proto::chat::shared_files;
 use teams_store::Message;
-use teams_ui::chat_view::{ChatView, ChatViewEvent, UnshownParts};
+use teams_ui::ViewTrace;
+use teams_ui::chat_view::{ChatView, ChatViewEvent, Place, UnshownParts};
+use teams_ui::settings::Settings;
 
 use super::common::{LAB_A, LAB_B, Rig};
 use super::{NOON, chat_window, draw, items, message, rig_with, trace};
@@ -971,6 +973,29 @@ fn five_files_are_a_grid_of_two_columns_with_where_each_is_kept_and_share_on_the
         assert!(bounds(cx, &format!("video-player-{ID}-{at}")).is_some(), "video {at}");
     }
     headers_have_location_and_share_on_the_videos(cx);
+}
+
+#[test]
+fn a_channel_posts_files_show_their_names_without_where_they_are_kept() {
+    const CHANNEL: &str = "19:made-up-channel@thread.tacv2";
+    let mut post = grid_message(|files| files);
+    post.conversation_id = CHANNEL.to_owned();
+    let rig = Box::leak(Box::new(rig_with(Vec::new())));
+    rig.core.messages.lock().unwrap().insert(CHANNEL.to_owned(), vec![post]);
+    let parts = super::parts::parts(rig, Settings::default(), Arc::new(ViewTrace::off()));
+    let app: &'static mut gpui::TestAppContext = Box::leak(Box::new(rig.cx.clone()));
+    let (_, cx) = app.add_window_view(|window, cx| {
+        let compose = ChatView::channel_box(&parts, CHANNEL, &Place::Channel, "Post in channel".into(), window, cx);
+        ChatView::in_place(parts, CHANNEL.to_owned(), Place::Channel, compose, window, cx)
+    });
+    cx.simulate_resize(size(px(1100.0), px(1400.0)));
+    for at in 0..5 {
+        assert!(bounds(cx, &format!("file-name-{ID}-{at}")).is_some(), "the name {at}");
+        assert!(
+            bounds(cx, &format!("file-location-{ID}-{at}")).is_none(),
+            "no location {at}"
+        );
+    }
 }
 
 /// Where each file of the grid is kept, under its name; Share on the videos alone, More options on each.

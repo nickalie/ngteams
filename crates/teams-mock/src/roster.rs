@@ -311,6 +311,7 @@ pub(crate) fn made_up(state: &mut State, index: usize, people: &[(String, String
 const MADE_UP_AUDIO: i64 = 7_000;
 
 /// The made-up audio source id of `mri`, someone the mock made up in call `id`.
+#[cfg(feature = "media")]
 pub(crate) fn made_up_audio(state: &State, id: &str, mri: &str) -> Option<i64> {
     let call = state.calling.calls.iter().find(|call| call.id == id)?;
     call.roster

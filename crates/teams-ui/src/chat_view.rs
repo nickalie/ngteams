@@ -3881,7 +3881,7 @@ impl ChatView {
                 }
             }
             Some(Item::Pending(pending)) => {
-                let row = pending_row(pending, &self.text_selection, palette, cx);
+                let row = pending_row(pending, &self.text_selection, self.place.in_channel(), palette, cx);
                 let id = SharedString::from(format!("pending-in-{}", pending.created_at));
                 crate::motion::rise(div().w_full().child(row), id, 12.0, cx)
             }
@@ -4849,6 +4849,7 @@ fn note_line(note: &Note, palette: Palette, cx: &mut Context<ChatView>) -> AnyEl
 fn pending_row(
     pending: &PendingItem,
     selection: &TextSelection,
+    in_channel: bool,
     palette: Palette,
     cx: &mut Context<ChatView>,
 ) -> AnyElement {
@@ -4882,6 +4883,7 @@ fn pending_row(
             &pending.files,
             None,
             None,
+            in_channel,
             palette,
         ))
         .child(note_line(&pending.note, palette, cx))
@@ -5731,6 +5733,7 @@ fn bubble(
                 &item.files,
                 text.0.source.as_ref(),
                 chat.share.as_ref(),
+                chat.root.is_some(),
                 palette,
             ),
             link_preview::cards(&item.id, &item.links, text.0.source.as_ref(), palette),

@@ -138,7 +138,7 @@ where
                 self.outbox.me().mri().as_str(),
             )
             .ok_or_else(|| failed("The file's sharing details can't be read."))?;
-            send(&self.outbox, write).await?;
+            send(&self.outbox, write, NOT_SHARED).await?;
             let answer = self
                 .client
                 .transport()
@@ -213,7 +213,7 @@ where
     }
     let write = DriveWrite::upload(&site, &name, bytes, outbox.me().mri().as_str())
         .ok_or_else(|| failed("This file can't be uploaded. Rename it and try again."))?;
-    let body = send(outbox, write).await?;
+    let body = send(outbox, write, NOT_UPLOADED).await?;
     UploadedFile::from_upload(&site, &body)
         .ok_or_else(|| failed("The upload completed, but its file details couldn't be read. Choose the file again."))
 }
@@ -330,7 +330,15 @@ async fn recipients<C: Credentials>(
     Ok((addresses, people))
 }
 
-async fn send<T: Transport<Error = HttpError>>(outbox: &Outbox<T>, write: DriveWrite) -> Result<Vec<u8>, EngineError> {
+/// What the user sees when the file service refuses an upload, in Teams' words: no HTTP status.
+pub(crate) const NOT_UPLOADED: &str = "The file couldn't be uploaded. Try again.";
+const NOT_SHARED: &str = "The file couldn't be shared. Try again.";
+
+async fn send<T: Transport<Error = HttpError>>(
+    outbox: &Outbox<T>,
+    write: DriveWrite,
+    refused: &str,
+) -> Result<Vec<u8>, EngineError> {
     let mut retries = CallRetries::default();
     loop {
         let tried = outbox.try_attachment(write.clone()).await;
@@ -340,10 +348,10 @@ async fn send<T: Transport<Error = HttpError>>(outbox: &Outbox<T>, write: DriveW
         }
         return match tried {
             CallTried::Answered(answer) if answer.is_success() => Ok(answer.body().to_vec()),
-            CallTried::Answered(answer) => Err(failed(&format!(
-                "The file service answered {}. Try again.",
-                answer.status()
-            ))),
+            CallTried::Answered(answer) => {
+                log::info!("a file write was answered HTTP {}", answer.status());
+                Err(failed(refused))
+            }
             CallTried::Denied(reason) | CallTried::NotSent(reason) => Err(failed(&reason)),
             CallTried::Uncertain(_) => Err(failed(
                 "The file service didn't confirm the upload or share. Check your connection before trying again.",

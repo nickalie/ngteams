@@ -196,7 +196,7 @@ async fn a_failed_upload_recycles_the_empty_file_it_left() {
         .unwrap_err();
 
     assert!(
-        matches!(&error, EngineError::Attachment { why } if why.contains("500")),
+        matches!(&error, EngineError::Attachment { why } if why == "The file couldn't be uploaded. Try again."),
         "{error:?}"
     );
     assert_eq!(

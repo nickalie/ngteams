@@ -384,8 +384,19 @@ async fn own_upload(mock: &ChatServiceMock, a: &EngineHandle, dir: &std::path::P
             grants,
         ),
     ];
-    for (path, answer) in reads {
-        mock.answer_next("GET", &path, 200, &answer).await;
+    let path = dir.join("demo.txt");
+    std::fs::write(&path, b"abc").unwrap();
+    for (path, answer) in &reads {
+        mock.answer_next("GET", path, 200, answer).await;
+    }
+    mock.answer_next("PUT", "/content", 500, &json!({})).await;
+    let refused = a.upload_file(path.clone()).await.unwrap_err();
+    assert!(
+        matches!(&refused, teams_core::EngineError::Attachment { why } if why == "The file couldn't be uploaded. Try again."),
+        "{refused:?}"
+    );
+    for (path, answer) in &reads {
+        mock.answer_next("GET", path, 200, answer).await;
     }
     mock.answer_next(
         "PUT",
@@ -398,8 +409,6 @@ async fn own_upload(mock: &ChatServiceMock, a: &EngineHandle, dir: &std::path::P
         }),
     )
     .await;
-    let path = dir.join("demo.txt");
-    std::fs::write(&path, b"abc").unwrap();
     let file = a.upload_file(path).await.unwrap();
     assert_eq!(file.name(), "demo.txt");
     assert_eq!(file.size(), 3);

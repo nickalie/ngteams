@@ -3,7 +3,8 @@
 //!
 //! - **A card** ([`FileCard`]): a header with the file type's icon (Teams' own for a video, a play mark in a white
 //!   box, and for a zip, a yellow folder: [`kind_icon`]; another type's in the colour Teams gives that type), the
-//!   file's name and, under it, where it is kept (`personal > <owner>`), each on one line, cut with an ellipsis; then
+//!   file's name and, under it, where it is kept (`personal > <owner>`; not in a channel, as Teams), each on one line,
+//!   cut with an ellipsis; then
 //!   Share (on a video's card only, as Teams has it) and "More options" (…), buttons of Teams' size. Under the header,
 //!   a 16:9 picture of the card's width, also in a narrow card: a video's card has the player that plays it in the card
 //!   (`crate::video_player`, its thumbnail alone standing in until it plays). Any other card has a picture of the file:
@@ -207,13 +208,14 @@ impl ShareFile {
 
 /// The cards of `files`, carried by the message `message`, in a row that wraps; `None` without files. `source` is the
 /// engine their thumbnails are asked of (none: no thumbnail, each picture its placeholder); `share` what their Share
-/// calls (none: no Share).
+/// calls (none: no Share); `in_channel` drops the line of where each file is kept, as Teams' channel cards have none.
 #[must_use]
 pub fn file_cards(
     message: &str,
     files: &[SharedFile],
     source: Option<&PictureSource>,
     share: Option<&ShareFile>,
+    in_channel: bool,
     palette: Palette,
 ) -> Option<AnyElement> {
     if files.is_empty() {
@@ -225,6 +227,7 @@ pub fn file_cards(
         file: file.clone(),
         source: source.cloned(),
         share: share.cloned(),
+        in_channel,
         palette,
     });
     let cards: Vec<FileCard> = cards.collect();
@@ -249,6 +252,7 @@ pub struct FileCard {
     file: SharedFile,
     source: Option<PictureSource>,
     share: Option<ShareFile>,
+    in_channel: bool,
     palette: Palette,
 }
 
@@ -412,7 +416,7 @@ impl FileCard {
     /// The name over where the file is kept, each on one line, cut with an ellipsis.
     fn title(&self, name: SharedString) -> AnyElement {
         let line = || div().overflow_hidden().text_ellipsis().whitespace_nowrap();
-        let location = self.file.location.clone().map(|location| {
+        let location = self.file.location.clone().filter(|_| !self.in_channel).map(|location| {
             let id = self.id.clone();
             line()
                 .debug_selector(move || format!("file-location-{id}"))
