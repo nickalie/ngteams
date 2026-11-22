@@ -1,8 +1,8 @@
 //! The live reactions of a call, as Teams shows them in every layout (the gallery, the speaker view, a share with its
 //! strip), the account's own too:
 //!
-//! - **On the sender's tile** while it is on the stage: the reaction's 3D emoji from Teams' CDN, large (56, 112 or 140
-//!   px, as the tile's size), centred on the tile with its top at the tile's middle. Its 102 frames play once over
+//! - **On the sender's tile** while it is on the stage: the reaction's 3D emoji from Teams' CDN, its size from the
+//!   tile's (up to 140 px; the CDN's 56, 112 or 140 px file), centred on the tile with its top at the tile's middle. Its 102 frames play once over
 //!   Teams' 4.25 s while it fades in and out, and the tile's picture dims meanwhile. Until the 3D emoji is read, or
 //!   when the CDN has none, the picker's small animation loops in its place. A newer reaction of the same person takes
 //!   its place.

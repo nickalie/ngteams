@@ -8,7 +8,9 @@
 use std::io::Cursor;
 
 use image::{ImageFormat, Rgba, RgbaImage};
-use teams_ui::reactions::{MOST_FOUND, catalog, description, frame_at, frames, glyph};
+use teams_ui::reactions::{
+    EMOJI_3D_FRAMES, MOST_FOUND, catalog, description, emoji_3d_frames, frame_at, frames, glyph,
+};
 
 #[test]
 fn every_category_teams_offers_is_there_in_its_order() {
@@ -129,6 +131,19 @@ fn a_3d_emoji_plays_its_102_frames_once_over_4_25_s_and_holds_the_last() {
     assert_eq!(at(4_250), 101, "the last frame at its end");
     assert_eq!(at(60_000), 101, "never again from the first");
     assert_eq!(frame_at(Duration::from_secs(1), 0), 0, "no frames");
+}
+
+#[test]
+fn a_3d_emoji_is_decoded_only_as_teams_102_frames_of_its_side() {
+    let emoji = emoji_3d_frames(&strip(4, EMOJI_3D_FRAMES), 4).unwrap();
+    assert_eq!(emoji.frame_count(), 102);
+    assert!(emoji_3d_frames(&strip(4, 1), 4).is_none(), "one frame");
+    assert!(emoji_3d_frames(&strip(4, EMOJI_3D_FRAMES), 8).is_none(), "another side");
+    assert!(
+        emoji_3d_frames(&strip(8, EMOJI_3D_FRAMES / 2), 4).is_none(),
+        "wider than its side"
+    );
+    assert!(emoji_3d_frames(b"not a png", 4).is_none());
 }
 
 #[test]

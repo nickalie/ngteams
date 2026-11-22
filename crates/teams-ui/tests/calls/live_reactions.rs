@@ -12,6 +12,7 @@ use teams_proto::Mri;
 use teams_ui::call_stage::CallStage;
 use teams_ui::call_window::CallWindows;
 use teams_ui::calls::REACTION_SHOWN;
+use teams_ui::reactions::EMOJI_3D_FRAMES;
 
 use super::{LAB_A, LAB_C, Rig, call, call_windows, click, draw, drawn, registered, shell_window, stage, status};
 use super::{TRIO, in_group_call, trace, view};
@@ -248,7 +249,7 @@ fn a_live_reaction_plays_teams_3d_emoji_on_the_tile_in_place_of_the_strip() {
         .animations_3d
         .lock()
         .unwrap()
-        .insert(("heart".to_owned(), side), sprite(8, 102));
+        .insert(("heart".to_owned(), side), sprite(u32::from(side), EMOJI_3D_FRAMES));
     react(&rig, LAB_C, "heart");
     // the 3D emoji read and decoded
     later(&rig, stage, Duration::from_millis(1));
@@ -274,6 +275,29 @@ fn a_live_reaction_without_a_3d_emoji_plays_the_picker_s_strip() {
     let (trace, _) = trace();
     let (_windows, stage) = in_group_call(&rig, &trace);
     react(&rig, LAB_C, "surprised");
+    later(&rig, stage, Duration::from_millis(1));
+    assert!(drawn(stage, "call-participant-1-reaction-playing"), "the strip plays");
+    assert!(!drawn(stage, "call-participant-1-reaction-3d"));
+}
+
+#[test]
+fn a_3d_emoji_of_another_shape_plays_the_picker_s_strip() {
+    let rig = super::calling();
+    rig.core
+        .animations
+        .lock()
+        .unwrap()
+        .insert("heart".to_owned(), sprite(4, 3));
+    let (trace, _) = trace();
+    let (_windows, stage) = in_group_call(&rig, &trace);
+    for side in teams_proto::EMOJI_3D_SIDES {
+        rig.core
+            .animations_3d
+            .lock()
+            .unwrap()
+            .insert(("heart".to_owned(), side), sprite(u32::from(side), 1));
+    }
+    react(&rig, LAB_C, "heart");
     later(&rig, stage, Duration::from_millis(1));
     assert!(drawn(stage, "call-participant-1-reaction-playing"), "the strip plays");
     assert!(!drawn(stage, "call-participant-1-reaction-3d"));

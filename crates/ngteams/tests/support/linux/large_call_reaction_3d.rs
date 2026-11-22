@@ -2,10 +2,13 @@
 //! window on the mock. The mock serves made-up 3D emoji on the path of Teams' CDN (`skype/v2/<id>V4-3D/<side>a.png`,
 //! 102 frames, each a disk of its own colour), so the colour of the emoji tells which frame shows.
 //!
-//! - A made-up person's Like on their gallery tile: the frames come in order at about 24 a second, never from the
+//! - A made-up person's Applause on their gallery tile: the frames come in order at about 24 a second, never from the
 //!   first again (played once), and the tile is as before after 4.25 s.
 //! - A reaction the CDN has no 3D emoji for (Surprised: the mock answers 404) plays the picker's strip in its place.
 //! - Shots in Teams Light and Dark.
+//!
+//! The step uses Applause and Laugh because qa-reactions shows them only as floats. The app keeps a missing 3D emoji
+//! for the run, and qa-reactions sends Like and Love to tiles of the same sides earlier in the same app.
 
 use std::thread;
 use std::time::Duration;
@@ -148,7 +151,7 @@ pub(super) fn reaction_3d(rig: &mut Rig<'_>) -> SandboxResult {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     for side in teams_proto::EMOJI_3D_SIDES {
         let png = sprite_png(u32::from(side))?;
-        for id in ["yes", "heart"] {
+        for id in ["clap", "laugh"] {
             runtime.block_on(rig.mock.serve_bytes(
                 &format!("{CDN}/skype/v2/{id}V4-3D/{side}a.png"),
                 "image/png",
@@ -166,7 +169,7 @@ pub(super) fn reaction_3d(rig: &mut Rig<'_>) -> SandboxResult {
     thread::sleep(SETTLE);
     let page = gallery(rig)?;
     let (person, tile) = first_person(&page)?;
-    let looks = watch_tile(rig, tile, person, "like")?;
+    let looks = watch_tile(rig, tile, person, "applause")?;
     if let Some(middle) = looks.iter().find(|look| look.at > Duration::from_millis(2_000)) {
         save_shot(rig, &middle.shot, "qa696-reaction-3d-light")?;
     }
@@ -186,7 +189,7 @@ pub(super) fn reaction_3d(rig: &mut Rig<'_>) -> SandboxResult {
     rig.theme(teams_ui::theme::DARK_KEY)?;
     rig.park()?;
     thread::sleep(SETTLE);
-    react(rig, person, "heart")?;
+    react(rig, person, "laugh")?;
     thread::sleep(Duration::from_millis(2_000));
     rig.save("qa696-reaction-3d-dark")?;
     thread::sleep(ON_TILE);

@@ -34,6 +34,8 @@ const TONES: u8 = 5;
 pub const MOST_FOUND: usize = 240;
 /// The frames a second Teams' reaction animations play at (every one in its catalog).
 const ANIMATION_FPS: u32 = 24;
+/// How many frames Teams' 3D emoji of a call reaction have: 4.25 s at [`ANIMATION_FPS`].
+pub const EMOJI_3D_FRAMES: u32 = 102;
 
 /// A reaction Teams offers.
 #[derive(Debug)]
@@ -272,7 +274,15 @@ pub fn emoji(key: &str, size: Pixels) -> AnyElement {
 /// read still runs; an id never asked for, or whose read failed on the way (asked again when next drawn), isn't here.
 #[derive(Default)]
 struct Animations {
-    known: HashMap<String, Option<Arc<RenderImage>>>,
+    known: HashMap<Kept, Option<Arc<RenderImage>>>,
+}
+
+/// What an animation is kept by: a strip by its id, a call reaction's 3D emoji by its reaction and side, so that no
+/// emoticon id a message names can stand for a 3D emoji.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Kept {
+    Strip(String),
+    Emoji3d(String, u16),
 }
 
 impl Global for Animations {}
@@ -290,15 +300,33 @@ pub fn animation_of(key: &str, core: &dyn crate::inline::PictureEngine, cx: &mut
     let id = catalog()
         .get(key)
         .map_or_else(|| key.to_owned(), |(reaction, _)| reaction.id.to_owned());
-    decoded(id.clone(), || core.reaction_animation(id), cx)
+    decoded(Kept::Strip(id.clone()), || core.reaction_animation(id), frames, cx)
 }
 
 /// The 3D emoji Teams plays once on the tile of a call reaction (`reaction`: `like`, `heart`, `applause`, `laugh`,
 /// `surprised`), with frames of `side` px (one of [`teams_proto::EMOJI_3D_SIDES`]), as [`animation`] keeps it: `None`
-/// until it was read, or when Teams' CDN has none.
+/// until it was read, or when Teams' CDN has none or one of another shape.
 pub fn call_emoji_3d(reaction: &str, side: u16, core: &Arc<dyn Core>, cx: &mut App) -> Option<Arc<RenderImage>> {
-    let known = format!("{reaction}@3d/{side}");
-    decoded(known, || core.call_reaction_animation(reaction.to_owned(), side), cx)
+    let known = Kept::Emoji3d(reaction.to_owned(), side);
+    decoded(
+        known,
+        || core.call_reaction_animation(reaction.to_owned(), side),
+        move |strip| emoji_3d_frames(strip, side),
+        cx,
+    )
+}
+
+/// A 3D emoji's frames when its PNG is [`EMOJI_3D_FRAMES`] frames of `side` px, read from its header before any pixel
+/// is decoded; `None` for another shape.
+#[must_use]
+pub fn emoji_3d_frames(strip: &[u8], side: u16) -> Option<RenderImage> {
+    let (width, height) = image::ImageReader::with_format(std::io::Cursor::new(strip), image::ImageFormat::Png)
+        .into_dimensions()
+        .ok()?;
+    let side = u32::from(side);
+    (width == side && Some(height) == side.checked_mul(EMOJI_3D_FRAMES))
+        .then(|| frames(strip))
+        .flatten()
 }
 
 /// Which frame of an animation of `frames` frames played once shows `elapsed` after it started: one a
@@ -311,11 +339,13 @@ pub fn frame_at(elapsed: std::time::Duration, frames: usize) -> usize {
         .min(frames.saturating_sub(1))
 }
 
-/// The animation kept as `id` when it was read; otherwise asks for it once with `ask` (the windows drawn again once it
-/// arrives; a read that failed on the way is asked again when next drawn) and answers `None` meanwhile.
+/// The animation kept as `id` when it was read; otherwise asks for it once with `ask` and cuts it with `decode` (the
+/// windows drawn again once it arrives; a read that failed on the way is asked again when next drawn) and answers
+/// `None` meanwhile.
 fn decoded(
-    id: String,
+    id: Kept,
     ask: impl FnOnce() -> teams_core::Reply<Option<teams_core::Strip>>,
+    decode: impl FnOnce(&[u8]) -> Option<RenderImage> + Send + 'static,
     cx: &mut App,
 ) -> Option<Arc<RenderImage>> {
     let animations = cx.default_global::<Animations>();
@@ -337,7 +367,7 @@ fn decoded(
         };
         let decoded = cx
             .background_executor()
-            .spawn(async move { frames(&strip) })
+            .spawn(async move { decode(&strip) })
             .await
             .map(Arc::new);
         if decoded.is_some() {
