@@ -217,7 +217,7 @@ impl MessageText {
     /// # Errors
     /// Returns [`ComposeError::FileCloud`] for an off-cloud file, or a text validation error.
     pub fn for_cloud(self, cloud: &crate::Cloud) -> Result<Self, ComposeError> {
-        if self.files.iter().any(|file| file.site_in(cloud).is_none())
+        if self.files.iter().any(|file| !file.is_in(cloud))
             || !self.shared.iter().all(|entry| super::is_share_entry_in(cloud, entry))
         {
             return Err(ComposeError::FileCloud);
@@ -405,7 +405,7 @@ impl TryFrom<Stored> for MessageText {
             .as_deref()
             .map_or(Ok(crate::Cloud::Microsoft), crate::Cloud::own)
             .map_err(|_| ComposeError::Origin)?;
-        if stored.files.iter().any(|file| file.site_in(&cloud).is_none())
+        if stored.files.iter().any(|file| !file.is_in(&cloud))
             || !stored
                 .shared
                 .iter()

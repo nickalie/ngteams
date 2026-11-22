@@ -17,6 +17,7 @@ mod attachment;
 pub mod bot;
 mod calendar;
 pub mod captions;
+pub mod channel_file;
 mod channel_meeting;
 mod channel_own;
 mod channel_read;
@@ -62,6 +63,7 @@ pub use attachment::{DriveSite, DriveWrite, MAX_ATTACHMENT_SIZE, OwnDrive, Uploa
 pub use bot::{
     BotInvoke, CardInvoke, CommandContext, ComposeCommand, DialogSize, InvokeAnswer, InvokeKind, TaskDialog,
 };
+pub use channel_file::{ChannelFileStep, ChannelFileWrite, ChannelFolder, ChannelThread, TeamSite};
 mod extensions;
 pub use extensions::{CommandParameter, ExtensionApp, ExtensionCommand, TaskInfo, extension_apps};
 mod urlp;

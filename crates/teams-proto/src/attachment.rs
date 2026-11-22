@@ -87,6 +87,9 @@ pub struct UploadedFile {
     size: u64,
     drive: String,
     sharepoint_ids: Value,
+    /// The channel a channel file is in (`crate::channel_file`); `None` for a file on the account's own drive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    channel: Option<String>,
 }
 
 impl UploadedFile {
@@ -123,6 +126,7 @@ impl UploadedFile {
             size: 0,
             drive: entry.pointer("/sharepointIds/driveId")?.as_str()?.to_owned(),
             sharepoint_ids: entry.get("sharepointIds")?.clone(),
+            channel: None,
         })
     }
     /// The captured successful upload answer; links must remain in the site the upload went to.
@@ -152,7 +156,63 @@ impl UploadedFile {
             size: body.get("size")?.as_u64()?,
             drive,
             sharepoint_ids: body.get("sharepointIds")?.clone(),
+            channel: None,
         })
+    }
+
+    /// A file uploaded into a channel's folder ([`crate::channel_file::uploaded_file`]).
+    pub(crate) fn in_channel(
+        folder: &crate::ChannelFolder,
+        guid: &str,
+        name: &str,
+        object_url: &str,
+        size: u64,
+    ) -> Self {
+        Self {
+            site: folder.site().base().to_owned(),
+            item: String::new(),
+            guid: guid.to_owned(),
+            name: name.to_owned(),
+            object_url: object_url.to_owned(),
+            size,
+            drive: String::new(),
+            sharepoint_ids: Value::Null,
+            channel: Some(folder.channel().to_owned()),
+        }
+    }
+
+    /// The channel a channel file is in; `None` for a file on the account's own drive.
+    #[must_use]
+    pub fn channel(&self) -> Option<&str> {
+        self.channel.as_deref()
+    }
+
+    /// The file's `UniqueId` on its site.
+    #[must_use]
+    pub fn unique_id(&self) -> &str {
+        &self.guid
+    }
+
+    /// Whether the file is on the account's cloud: an own-drive file on its personal site, a channel file on its
+    /// team's site.
+    #[must_use]
+    pub fn is_in(&self, cloud: &crate::Cloud) -> bool {
+        match &self.channel {
+            None => self.site_in(cloud).is_some(),
+            Some(channel) => {
+                crate::is_team_thread_id(channel)
+                    && crate::read::is_guid(&self.guid)
+                    && valid_name(&self.name)
+                    && crate::TeamSite::from_url_in(cloud, &self.site).is_some_and(|site| {
+                        site.base() == self.site
+                            && Url::parse(&self.object_url).is_ok_and(|url| {
+                                url.origin().ascii_serialization() == site.audience()
+                                    && url.query().is_none()
+                                    && url.fragment().is_none()
+                            })
+                    })
+            }
+        }
     }
     #[must_use]
     pub fn name(&self) -> &str {
@@ -178,6 +238,9 @@ impl UploadedFile {
     }
     #[must_use]
     pub fn entry(&self) -> Value {
+        if self.channel.is_some() {
+            return self.channel_entry();
+        }
         let extension = self.name.rsplit_once('.').map_or("", |(_, extension)| extension);
         let mut ids = self.sharepoint_ids.clone();
         if let Some(ids) = ids.as_object_mut() {
@@ -190,6 +253,22 @@ impl UploadedFile {
             "type":extension,"title":self.name,"state":"active","chicletBreadcrumbs":null,"providerData":"",
             "botFileProperties":{},"isUploadError":null,"progressComplete":null,
             "filePreview":{"previewUrl":"","previewHeight":0,"previewWidth":0},"sharepointIds":ids,"publication":null,"site":null})
+    }
+}
+
+impl UploadedFile {
+    /// A channel file's entry as the web client posts it: the team's site, no item id, share link or SharePoint ids,
+    /// `serviceName` `teams`.
+    fn channel_entry(&self) -> Value {
+        let extension = self.name.rsplit_once('.').map_or("", |(_, extension)| extension);
+        let site = self.site.trim_end_matches('/');
+        json!({"itemid":self.guid,"fileName":self.name,"fileType":extension,
+            "fileInfo":{"itemId":null,"fileUrl":self.object_url,"siteUrl":site,"serverRelativeUrl":"","shareUrl":null,"shareId":null},
+            "fileChicletState":{"serviceName":"teams","state":"active"},"@type":"http://schema.skype.com/File",
+            "version":2,"id":self.guid,"baseUrl":site,"objectUrl":self.object_url,"openUrl":null,
+            "type":extension,"title":self.name,"state":"active","altText":null,"chicletBreadcrumbs":null,"providerData":"",
+            "botFileProperties":{},"isUploadError":null,"progressComplete":null,"permissionScope":null,
+            "filePreview":{"previewUrl":"","previewHeight":0,"previewWidth":0},"sharepointIds":null,"publication":null,"site":null})
     }
 }
 

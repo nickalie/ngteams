@@ -41,6 +41,17 @@ pub trait Transport: Sync {
         async { None }
     }
 
+    /// A typed write of a channel file on its team's site ([`crate::channel_file`]), issued only by the outbox; the
+    /// transport checks the channel's folder again first. A transport without this route answers `None` and sends
+    /// nothing.
+    fn deliver_channel_file(
+        &self,
+        write: crate::ChannelFileWrite,
+    ) -> impl Future<Output = Option<Result<Response, Self::Error>>> + Send {
+        let _ = write;
+        async { None }
+    }
+
     /// A typed bot invoke on the account's chat service ([`crate::bot`]), sent once: a Microsoft account's body gets
     /// its Teams service token, an own-server account's none. A transport without this route answers `None` and
     /// sends nothing.

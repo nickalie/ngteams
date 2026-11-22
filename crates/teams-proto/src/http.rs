@@ -33,6 +33,7 @@ use crate::write::on_calling_service;
 
 mod bot;
 mod captions;
+mod channel_file;
 mod drive;
 mod identity;
 mod workflows;
@@ -172,6 +173,9 @@ pub enum HttpError {
 pub enum Refusal {
     #[error("the attachment owner or expected direct recipients do not match")]
     Attachment,
+    /// A channel file's write whose folder or file isn't the channel's as its thread names it now.
+    #[error("the channel file's folder or file is not the channel's")]
+    ChannelFile,
     #[error("the operation does not belong to the current call")]
     CallState,
     /// An endpoint with an empty, `.` or `..` segment.
@@ -1548,6 +1552,19 @@ impl<C: Credentials> Transport for HttpTransport<C> {
         Some(self.deliver_drive(&write).await)
     }
 
+    async fn deliver_channel_file(&self, write: crate::ChannelFileWrite) -> Option<Result<Response, HttpError>> {
+        if self.read_only {
+            return Some(Err(Self::refused_read_only(
+                write.method().as_str(),
+                write.url().as_str(),
+            )));
+        }
+        if let Err(error) = self.preflight_channel_file(&write).await {
+            return Some(Err(error));
+        }
+        Some(self.deliver_team_site(&write).await)
+    }
+
     fn read<R: Read>(&self, request: &R) -> impl Future<Output = Result<Response, HttpError>> + Send {
         let service = request.service();
         let endpoint = request.endpoint();
@@ -2308,6 +2325,9 @@ fn failure(error: &reqwest::Error) -> HttpError {
 #[cfg(test)]
 #[path = "http/attachment_tests.rs"]
 mod attachment_tests;
+#[cfg(test)]
+#[path = "http/channel_file_tests.rs"]
+mod channel_file_tests;
 
 #[cfg(test)]
 mod cloud_tests;
