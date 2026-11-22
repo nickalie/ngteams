@@ -646,6 +646,9 @@ impl Rect {
             u32::midpoint(self.top, self.bottom),
         )
     }
+    fn holds(&self, x: u32, y: u32) -> bool {
+        (self.left..self.right).contains(&x) && (self.top..self.bottom).contains(&y)
+    }
 }
 
 fn pixel(shot: &image::RgbImage, x: u32, y: u32) -> Rgb {
@@ -797,7 +800,7 @@ fn ink_words(shot: &image::RgbImage, row: Rect, gap: u32, ink: impl Fn(Rgb) -> b
 struct Drawn {
     bubble: Rect,
     rows: Vec<Rect>,
-    /// Ink pixels left of the bubble below the avatar, and right of another's bubble.
+    /// Ink pixels beside the bubble over its full height, left of it (its avatar left out) and right of another's.
     outside: u32,
 }
 
@@ -814,10 +817,11 @@ fn drawn(png: &Path) -> SandboxResult<Drawn> {
     let rows = ink_rows(&shot, inside, 2, |seen| distance(seen, colour) > INK);
     let background = pane_background(&shot);
     let away = |seen: Rgb| distance(seen, background) > INK;
+    let avatar = avatar_beside(bubble);
     let mut outside = 0;
-    for y in (bubble.top + 60).min(bubble.bottom)..bubble.bottom {
+    for y in bubble.top..bubble.bottom {
         outside += (MESSAGES.left..bubble.left.saturating_sub(2))
-            .filter(|&x| away(pixel(&shot, x, y)))
+            .filter(|&x| !avatar.holds(x, y) && away(pixel(&shot, x, y)))
             .count();
         if bubble.left < 600 {
             outside += ((bubble.right + 2)..MESSAGES.right)
@@ -830,6 +834,16 @@ fn drawn(png: &Path) -> SandboxResult<Drawn> {
         rows,
         outside: u32::try_from(outside).unwrap_or(u32::MAX),
     })
+}
+
+/// Where another's avatar may draw beside `bubble`: level with its top, a gap left of it, at each font size.
+fn avatar_beside(bubble: Rect) -> Rect {
+    Rect {
+        left: bubble.left.saturating_sub(48),
+        top: bubble.top.saturating_sub(4),
+        right: bubble.left.saturating_sub(8),
+        bottom: bubble.top + 40,
+    }
 }
 
 /// The left half of a group chat's avatar tile in the chat list, in Teams Light and Dark.
@@ -1445,15 +1459,21 @@ impl Walk<'_> {
         self.run.look(false, DEFAULT_SIZE)
     }
 
-    /// Search (Ctrl+E, the words, Enter, its Messages tab) finds `chat`'s message by `words` (pasted or typed): its
+    /// Search (Ctrl+E, the words, Enter, its Messages tab) finds the sender's message in `chat` by `words` (pasted or typed): its
     /// snippet holds `words` and is a part of `text`, in the order of its letters.
     fn search(&mut self) -> SandboxResult {
-        self.search_for(("جاهزون", true), "Arabic desk", ARABIC, "search-arabic")?;
+        self.search_for(("جاهزون", true), ("Arabic desk", "Lab B"), ARABIC, "search-arabic")?;
         let user = format!("{USER_FIRST} {} {USER_LAST}", user_line());
-        self.search_for(("agree", false), "Options room", &user, "search-user")
+        self.search_for(("agree", false), ("Options room", "Lab B"), &user, "search-user")
     }
 
-    fn search_for(&mut self, (words, pasted): (&str, bool), chat: &str, text: &str, name: &str) -> SandboxResult {
+    fn search_for(
+        &mut self,
+        (words, pasted): (&str, bool),
+        (chat, sender): (&str, &str),
+        text: &str,
+        name: &str,
+    ) -> SandboxResult {
         self.run.press("ctrl+e")?;
         if pasted {
             self.paste(words)?;
@@ -1464,15 +1484,17 @@ impl Walk<'_> {
         self.run.ok("tab-messages")?;
         let results = self
             .run
-            .until("search", "the search's results", |results| hit(results, chat).is_some())
+            .until("search", "the search's results", |results| {
+                hit(results, chat, sender).is_some()
+            })
             .or_else(|_| self.run.json("search"))?;
         save_line(&format!("{name}.json"), &results.to_string())?;
-        let snippet = hit(&results, chat)
+        let snippet = hit(&results, chat, sender)
             .and_then(|hit| hit["snippet"].as_str())
             .unwrap_or_default()
             .to_owned();
         check(
-            &format!("search {words:?} finds the message in {chat}, its snippet in the order of its letters"),
+            &format!("search {words:?} finds {sender}'s message in {chat}, its snippet in the order of its letters"),
             snippet.contains(words) && in_order(&snippet, text),
             || format!("its snippet is {snippet:?}; results {results}"),
         );
@@ -1482,8 +1504,11 @@ impl Walk<'_> {
     }
 }
 
-fn hit<'v>(results: &'v Value, chat: &str) -> Option<&'v Value> {
-    results["hits"].as_array()?.iter().find(|hit| hit["chat"] == chat)
+fn hit<'v>(results: &'v Value, chat: &str, sender: &str) -> Option<&'v Value> {
+    results["hits"]
+        .as_array()?
+        .iter()
+        .find(|hit| hit["chat"] == chat && hit["sender"] == sender)
 }
 
 // --- the child ---
