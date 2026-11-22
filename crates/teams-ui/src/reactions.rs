@@ -22,7 +22,7 @@ use gpui::{
     AnyElement, App, ElementId, Global, Image, ImageFormat, InteractiveElement as _, IntoElement as _,
     ParentElement as _, Pixels, RenderImage, Styled as _, div, img,
 };
-use image::{Delay, Frame, imageops};
+use image::{Delay, Frame};
 
 use crate::bridge::Core;
 
@@ -285,6 +285,7 @@ struct Animations {
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum Kept {
     Strip(String),
+    PaddedStrip(String),
     Emoji3d(String, u16),
 }
 
@@ -306,6 +307,19 @@ pub fn animation_of(key: &str, core: &dyn crate::inline::PictureEngine, cx: &mut
     decoded(Kept::Strip(id.clone()), || core.reaction_animation(id), frames, cx)
 }
 
+/// The animation of the call reaction `key` as a call's stage draws it: as [`animation`], cut by [`padded_frames`].
+pub fn call_reaction_strip(key: &str, core: &Arc<dyn Core>, cx: &mut App) -> Option<Arc<RenderImage>> {
+    let id = catalog()
+        .get(key)
+        .map_or_else(|| key.to_owned(), |(reaction, _)| reaction.id.to_owned());
+    decoded(
+        Kept::PaddedStrip(id.clone()),
+        || core.reaction_animation(id),
+        padded_frames,
+        cx,
+    )
+}
+
 /// The 3D emoji Teams plays once on the tile of a call reaction (`reaction`: `like`, `heart`, `applause`, `laugh`,
 /// `surprised`), with frames of `side` px (one of [`teams_proto::EMOJI_3D_SIDES`]), as [`animation`] keeps it: `None`
 /// until it was read, or when Teams' CDN has none or one of another shape.
@@ -319,8 +333,8 @@ pub fn call_emoji_3d(reaction: &str, side: u16, core: &Arc<dyn Core>, cx: &mut A
     )
 }
 
-/// A 3D emoji's frames when its PNG is [`EMOJI_3D_FRAMES`] frames of `side` px, read from its header before any pixel
-/// is decoded; `None` for another shape.
+/// A 3D emoji's frames, cut by [`padded_frames`], when its PNG is [`EMOJI_3D_FRAMES`] frames of `side` px, read from
+/// its header before any pixel is decoded; `None` for another shape.
 #[must_use]
 pub fn emoji_3d_frames(strip: &[u8], side: u16) -> Option<RenderImage> {
     let (width, height) = image::ImageReader::with_format(std::io::Cursor::new(strip), image::ImageFormat::Png)
@@ -328,7 +342,7 @@ pub fn emoji_3d_frames(strip: &[u8], side: u16) -> Option<RenderImage> {
         .ok()?;
     let side = u32::from(side);
     (width == side && Some(height) == side.checked_mul(EMOJI_3D_FRAMES))
-        .then(|| frames(strip))
+        .then(|| padded_frames(strip))
         .flatten()
 }
 
@@ -340,6 +354,15 @@ pub fn frame_at(elapsed: std::time::Duration, frames: usize) -> usize {
     usize::try_from(index)
         .unwrap_or(usize::MAX)
         .min(frames.saturating_sub(1))
+}
+
+/// Which frame of an animation of `frames` frames that loops shows `elapsed` after it started: one a
+/// [`ANIMATION_FPS`]th of a second.
+#[must_use]
+pub fn frame_looping(elapsed: std::time::Duration, frames: usize) -> usize {
+    let index = elapsed.as_millis() * u128::from(ANIMATION_FPS) / 1_000;
+    let frames = u128::try_from(frames).unwrap_or(1).max(1);
+    usize::try_from(index % frames).unwrap_or(0)
 }
 
 /// The animation kept as `id` when it was read; otherwise asks for it once with `ask` and cuts it with `decode` (the
@@ -391,6 +414,19 @@ fn decoded(
 /// [`ANIMATION_FPS`]; `None` for one that isn't a PNG or whose frames aren't square.
 #[must_use]
 pub fn frames(strip: &[u8]) -> Option<RenderImage> {
+    cut(strip, 0)
+}
+
+/// How many px of its own edge each frame of [`padded_frames`] repeats around it.
+pub const FRAME_PAD: u32 = 1;
+
+/// [`frames`], each with its edge px repeated [`FRAME_PAD`] px around it, for [`paint_padded`].
+#[must_use]
+pub fn padded_frames(strip: &[u8]) -> Option<RenderImage> {
+    cut(strip, FRAME_PAD)
+}
+
+fn cut(strip: &[u8], pad: u32) -> Option<RenderImage> {
     let strip = image::load_from_memory_with_format(strip, image::ImageFormat::Png)
         .ok()?
         .into_rgba8();
@@ -399,17 +435,45 @@ pub fn frames(strip: &[u8]) -> Option<RenderImage> {
         return None;
     }
     let delay = Delay::from_numer_denom_ms(1_000, ANIMATION_FPS);
+    let outer = side + 2 * pad;
     let frames: Vec<Frame> = (0..height / side)
         .map(|index| {
-            let mut frame = imageops::crop_imm(&strip, 0, index * side, side, side).to_image();
-            // GPUI draws BGRA
-            for pixel in frame.pixels_mut() {
+            let frame = image::RgbaImage::from_fn(outer, outer, |x, y| {
+                let inside = |at: u32| at.saturating_sub(pad).min(side - 1);
+                let mut pixel = *strip.get_pixel(inside(x), index * side + inside(y));
+                // GPUI draws BGRA
                 pixel.0.swap(0, 2);
-            }
+                pixel
+            });
             Frame::from_parts(frame, 0, 0, delay)
         })
         .collect();
     Some(RenderImage::new(frames))
+}
+
+/// Paints frame `frame` of `frames` (cut by [`padded_frames`]) into `bounds`, its pad outside them.
+///
+/// GPUI's atlas packs pictures with no gap and samples them smoothly, so a frame drawn larger than its px blends its
+/// edge with the next picture in the atlas: a line of another picture's colours along it. The pad is what it blends
+/// with here.
+pub fn paint_padded(window: &mut gpui::Window, bounds: gpui::Bounds<Pixels>, frames: Arc<RenderImage>, frame: usize) {
+    // a frame it has not is 0 px: nothing is drawn
+    let side = u32::try_from(frames.size(frame).width.0)
+        .unwrap_or(0)
+        .saturating_sub(2 * FRAME_PAD);
+    let (Ok(side @ 1..), Ok(pad)) = (u16::try_from(side), u16::try_from(FRAME_PAD)) else {
+        return;
+    };
+    let pad = bounds.size.width * (f32::from(pad) / f32::from(side));
+    // a frame it cannot draw leaves the stage as it is
+    let _ = window.paint_image(
+        bounds,
+        bounds.dilate(pad),
+        gpui::Corners::default(),
+        frames,
+        frame,
+        false,
+    );
 }
 
 /// `key` drawn `size` square, playing its animation when `animated` holds one ([`animation`]), else as [`emoji`].

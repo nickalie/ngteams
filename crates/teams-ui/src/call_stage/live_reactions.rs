@@ -156,16 +156,16 @@ impl CallStage {
             .then(|| crate::reactions::call_emoji_3d(&reaction.reaction, side, &self.core, cx))
             .flatten();
         let animated = (moving && emoji_3d.is_none())
-            .then(|| crate::reactions::animation(key, &self.core, cx))
+            .then(|| crate::reactions::call_reaction_strip(key, &self.core, cx))
             .flatten();
         let selector = format!("{selector}-reaction");
+        let elapsed = now.saturating_duration_since(reaction.at);
         let picture = match emoji_3d {
             Some(frames) => {
-                let frame =
-                    crate::reactions::frame_at(now.saturating_duration_since(reaction.at), frames.frame_count());
+                let frame = crate::reactions::frame_at(elapsed, frames.frame_count());
                 played_once(frames, frame, emoji, &selector)
             }
-            None => playing(key, emoji, animated, &selector),
+            None => playing(key, emoji, animated.map(|frames| (frames, elapsed)), &selector),
         };
         let emoji = div()
             .id(SharedString::from(format!("call-reaction-on-tile-{}", reaction.seq)))
@@ -212,8 +212,9 @@ impl CallStage {
             .map(|(index, reaction)| {
                 let key = key_of(reaction);
                 let animated = moving
-                    .then(|| crate::reactions::animation(key, &self.core, cx))
-                    .flatten();
+                    .then(|| crate::reactions::call_reaction_strip(key, &self.core, cx))
+                    .flatten()
+                    .map(|frames| (frames, now.saturating_duration_since(reaction.at)));
                 let (up, side, opacity) = if moving {
                     float_at(share_of(reaction.at, now, FLOAT_FOR))
                 } else {
@@ -302,18 +303,18 @@ fn played_once(frames: std::sync::Arc<gpui::RenderImage>, frame: usize, size: f3
                 .debug_selector(move || three_d.clone())
                 .size(px(size))
                 .flex_none()
-                .child(
-                    gpui::canvas(
-                        |_, _, _| (),
-                        move |bounds, (), window, _| {
-                            // a frame it cannot draw leaves the tile as it is
-                            let _ = window.paint_image(bounds, bounds, gpui::Corners::default(), frames, frame, false);
-                        },
-                    )
-                    .size_full(),
-                ),
+                .child(frame_drawn(frames, frame)),
         )
         .into_any_element()
+}
+
+/// Frame `frame` of `frames` (cut by [`crate::reactions::padded_frames`]), filling its parent.
+fn frame_drawn(frames: std::sync::Arc<gpui::RenderImage>, frame: usize) -> impl IntoElement {
+    gpui::canvas(
+        |_, _, _| (),
+        move |bounds, (), window, _| crate::reactions::paint_padded(window, bounds, frames, frame),
+    )
+    .size_full()
 }
 
 /// The emoji key `reaction` is drawn by.
@@ -324,18 +325,31 @@ fn key_of(reaction: &calls::LiveReaction) -> &str {
         .map_or(reaction.reaction.as_str(), |(_, key, _)| key)
 }
 
-/// `key`'s emoji `size` px square (test selector `selector`), playing its animation when `animated` holds one
-/// (`<selector>-playing`).
-fn playing(key: &str, size: f32, animated: Option<std::sync::Arc<gpui::RenderImage>>, selector: &str) -> AnyElement {
+/// `key`'s emoji `size` px square (test selector `selector`), playing its animation in a loop when `animated` holds
+/// one, with the time since it started (`<selector>-playing`).
+fn playing(
+    key: &str,
+    size: f32,
+    animated: Option<(std::sync::Arc<gpui::RenderImage>, Duration)>,
+    selector: &str,
+) -> AnyElement {
     let shown = selector.to_owned();
-    let playing = animated.is_some().then(|| format!("{selector}-playing"));
+    let picture = match animated {
+        Some((frames, elapsed)) => {
+            let playing = format!("{selector}-playing");
+            let frame = crate::reactions::frame_looping(elapsed, frames.frame_count());
+            div()
+                .debug_selector(move || playing.clone())
+                .size(px(size))
+                .flex_none()
+                .child(frame_drawn(frames, frame))
+                .into_any_element()
+        }
+        None => crate::reactions::emoji(key, px(size)),
+    };
     div()
         .debug_selector(move || shown.clone())
-        .child(
-            div()
-                .when_some(playing, |emoji, playing| emoji.debug_selector(move || playing.clone()))
-                .child(crate::reactions::emoji_playing(key, px(size), animated)),
-        )
+        .child(picture)
         .into_any_element()
 }
 

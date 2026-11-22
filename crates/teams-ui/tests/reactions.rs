@@ -9,7 +9,8 @@ use std::io::Cursor;
 
 use image::{ImageFormat, Rgba, RgbaImage};
 use teams_ui::reactions::{
-    EMOJI_3D_FRAMES, MOST_FOUND, catalog, description, emoji_3d_frames, frame_at, frames, glyph,
+    EMOJI_3D_FRAMES, FRAME_PAD, MOST_FOUND, catalog, description, emoji_3d_frames, frame_at, frame_looping, frames,
+    glyph, padded_frames,
 };
 
 #[test]
@@ -137,6 +138,7 @@ fn a_3d_emoji_plays_its_102_frames_once_over_4_25_s_and_holds_the_last() {
 fn a_3d_emoji_is_decoded_only_as_teams_102_frames_of_its_side() {
     let emoji = emoji_3d_frames(&strip(4, EMOJI_3D_FRAMES), 4).unwrap();
     assert_eq!(emoji.frame_count(), 102);
+    assert_eq!(emoji.size(0).width.0, 6, "padded for the stage");
     assert!(emoji_3d_frames(&strip(4, 1), 4).is_none(), "one frame");
     assert!(emoji_3d_frames(&strip(4, EMOJI_3D_FRAMES), 8).is_none(), "another side");
     assert!(
@@ -158,4 +160,44 @@ fn a_strip_is_cut_into_its_square_frames_in_bgra() {
     let mut png = Vec::new();
     uneven.write_to(&mut Cursor::new(&mut png), ImageFormat::Png).unwrap();
     assert!(frames(&png).is_none(), "frames that aren't square");
+}
+
+#[test]
+fn a_strip_loops_at_24_frames_a_second() {
+    use std::time::Duration;
+    let at = |ms: u64| frame_looping(Duration::from_millis(ms), 48);
+    assert_eq!(at(0), 0);
+    assert_eq!(at(42), 1);
+    assert_eq!(at(1_990), 47);
+    assert_eq!(at(2_000), 0, "from the first again after its 48 frames");
+    assert_eq!(frame_looping(Duration::from_secs(1), 0), 0, "no frames");
+}
+
+/// A frame drawn on a stage repeats its own edge px around it: a sampler that reads past the frame's edge reads them,
+/// never the next picture in GPUI's atlas (a line of its colours along the frame's top).
+#[test]
+fn a_padded_frame_repeats_its_own_edge_around_it() {
+    let (side, pad) = (4, FRAME_PAD);
+    let image = padded_frames(&strip(side, 3)).expect("frames");
+    assert_eq!(image.frame_count(), 3);
+    let outer = side + 2 * pad;
+    assert_eq!(image.size(1).width.0, i32::try_from(outer).unwrap());
+    assert_eq!(image.size(1).height.0, i32::try_from(outer).unwrap());
+    let plain = frames(&strip(side, 3)).unwrap();
+    let (frame, inner) = (image.as_bytes(1).unwrap(), plain.as_bytes(1).unwrap());
+    let at = |bytes: &[u8], width: u32, x: u32, y: u32| {
+        let start = usize::try_from((y * width + x) * 4).unwrap();
+        bytes[start..start + 4].to_vec()
+    };
+    for y in 0..outer {
+        for x in 0..outer {
+            let clamp = |at: u32| at.saturating_sub(pad).min(side - 1);
+            assert_eq!(
+                at(frame, outer, x, y),
+                at(inner, side, clamp(x), clamp(y)),
+                "px {x},{y} is its frame's px or the nearest edge px"
+            );
+        }
+    }
+    assert!(padded_frames(b"not a png").is_none());
 }

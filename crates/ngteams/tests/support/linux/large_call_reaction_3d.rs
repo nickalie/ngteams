@@ -19,7 +19,7 @@ use ui_sandbox::SandboxResult;
 
 use super::pixels::Rect;
 use super::qa_order::{gallery, qa_call, speak};
-use super::qa_reactions::{Look, first_person, on_tile, react, strip_png, watch_tile};
+use super::qa_reactions::{FrameSeen, emoji_side, first_person, on_tile, react, strip_frame, strip_png, watch_tile};
 use super::{Rig, SETTLE, save_shot, say};
 
 /// How many frames Teams' 3D emoji have, at 24 a second: 4.25 s.
@@ -71,11 +71,14 @@ fn sprite_png(side: u32) -> SandboxResult<Vec<u8>> {
     Ok(bytes)
 }
 
-/// The frame a look shows at the middle of the emoji on `tile` (its top at the tile's middle, `side` px), when its
-/// colour is one of the frames'.
-fn frame_seen(shot: &RgbImage, tile: Rect, side: i32) -> Option<u32> {
+/// The frame a look shows at the middle of the emoji on `tile` (its top at the tile's middle), at its full opacity:
+/// the one of its colour.
+fn frame_seen(shot: &RgbImage, tile: Rect) -> Option<u32> {
+    let side = emoji_side(tile.h);
     let (x, y) = (tile.center().0, tile.y + tile.h / 2 + side / 2);
-    let pixel = shot.get_pixel(u32::try_from(x).ok()?, u32::try_from(y).ok()?).0;
+    let pixel = shot
+        .get_pixel_checked(u32::try_from(x).ok()?, u32::try_from(y).ok()?)?
+        .0;
     (0..FRAMES)
         .map(|index| {
             let distance = frame_colour(index)
@@ -91,55 +94,36 @@ fn frame_seen(shot: &RgbImage, tile: Rect, side: i32) -> Option<u32> {
         .map(|(_, index)| index)
 }
 
-/// The emoji's side on a tile `h` px tall, as the app sizes it.
-fn emoji_side(h: i32) -> i32 {
-    if h >= 480 {
-        140
-    } else if h >= 240 {
-        112
-    } else {
-        (h * 43 / 100).clamp(16, 56)
-    }
-}
-
-/// The frames seen while the reaction showed fully: in order, at about 24 a second, never the first again.
-fn played_once(looks: &[Look], tile: Rect, case: &str) -> SandboxResult {
-    let side = emoji_side(tile.h);
-    let seen: Vec<(Duration, Duration, u32)> = looks
-        .iter()
-        .filter_map(|look| frame_seen(&look.shot, tile, side).map(|frame| (look.at, look.until, frame)))
-        .collect();
-    say(&format!(
-        "qa696 {case}: frames seen {:?}",
-        seen.iter()
-            .map(|(at, _, frame)| format!("{:.2}s:{frame}", at.as_secs_f32()))
-            .collect::<Vec<_>>()
-    ));
-    if seen.len() < 2 {
-        return Err(format!("{case}: fewer than two looks show a frame of the 3D emoji").into());
-    }
-    for pair in seen.windows(2) {
-        if pair[1].2 < pair[0].2 {
+/// The frames each try read: in order within a try, each due at 24 a second from the reaction's start; all tries
+/// together read two different frames or more (a busy machine's slow shots catch few of each play).
+fn played_once(plays: &[Vec<FrameSeen>], case: &str) -> SandboxResult {
+    say(&format!("qa696 {case}: frames seen {plays:?}"));
+    for seen in plays {
+        if let Some(pair) = seen.windows(2).find(|pair| pair[1].frame < pair[0].frame) {
             return Err(format!(
                 "{case}: frame {} came after frame {}: it plays again",
-                pair[1].2, pair[0].2
+                pair[1].frame, pair[0].frame
             )
             .into());
         }
-    }
-    if seen.first().map(|first| first.2) == seen.last().map(|last| last.2) {
-        return Err(format!("{case}: the 3D emoji doesn't play").into());
-    }
-    for (at, until, frame) in &seen {
-        // the frame is due by the end of the look's shot, and the reaction came at most 1 s after it was sent
-        let latest = until.as_secs_f64() * FPS + 3.0;
-        let earliest = (at.as_secs_f64() - 1.0) * FPS - 3.0;
-        if f64::from(*frame) > latest || f64::from(*frame) < earliest {
-            return Err(format!(
-                "{case}: frame {frame} showed in the look {at:?}-{until:?}: not 24 frames a second from the start"
-            )
-            .into());
+        for seen in seen {
+            // the frame is due by the end of the look's shot, and the reaction came at most 1 s after it was sent
+            let latest = seen.until.as_secs_f64() * FPS + 3.0;
+            let earliest = (seen.at.as_secs_f64() - 1.0) * FPS - 3.0;
+            if f64::from(seen.frame) > latest || f64::from(seen.frame) < earliest {
+                return Err(format!(
+                    "{case}: frame {} showed in the look {:?}-{:?}: not 24 frames a second from the start",
+                    seen.frame, seen.at, seen.until
+                )
+                .into());
+            }
         }
+    }
+    let mut frames: Vec<u32> = plays.iter().flatten().map(|seen| seen.frame).collect();
+    frames.sort_unstable();
+    frames.dedup();
+    if frames.len() < 2 {
+        return Err(format!("{case}: the 3D emoji doesn't play: frames {frames:?}").into());
     }
     Ok(())
 }
@@ -148,40 +132,46 @@ fn played_once(looks: &[Look], tile: Rect, case: &str) -> SandboxResult {
 pub(super) fn reaction_3d(rig: &mut Rig<'_>) -> SandboxResult {
     qa_call(rig)?;
     speak(rig, &[])?;
+    rig.resize((1280, 800))?;
+    rig.gallery_size(9, super::qa_order::PEOPLE)?;
+    thread::sleep(SETTLE);
+    let page = gallery(rig)?;
+    let (person, tile) = first_person(&page)?;
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    for side in teams_proto::EMOJI_3D_SIDES {
-        let png = sprite_png(u32::from(side))?;
-        for id in ["clap", "laugh"] {
-            runtime.block_on(rig.mock.serve_bytes(
-                &format!("{CDN}/skype/v2/{id}V4-3D/{side}a.png"),
-                "image/png",
-                png.clone(),
-            ));
-        }
+    // only the side this tile reads: the mock answers with the first file mounted on a path, and qa-reaction-3d,
+    // later in the same app, mounts its own on the other sides
+    let side = teams_proto::EMOJI_3D_SIDES
+        .into_iter()
+        .find(|side| i32::from(*side) >= emoji_side(tile.h))
+        .ok_or("no CDN side for the tile")?;
+    let png = sprite_png(u32::from(side))?;
+    for id in ["clap", "laugh"] {
+        runtime.block_on(rig.mock.serve_bytes(
+            &format!("{CDN}/skype/v2/{id}V4-3D/{side}a.png"),
+            "image/png",
+            png.clone(),
+        ));
     }
     runtime.block_on(rig.mock.serve_bytes(
         &format!("{CDN}/personal-expressions/v2/assets/emoticons/surprised/default/50_anim_f.png"),
         "image/png",
         strip_png()?,
     ));
-    rig.resize((1280, 800))?;
-    rig.gallery_size(9, super::qa_order::PEOPLE)?;
-    thread::sleep(SETTLE);
-    let page = gallery(rig)?;
-    let (person, tile) = first_person(&page)?;
-    let looks = watch_tile(rig, tile, person, "applause")?;
-    if let Some(middle) = looks.iter().find(|look| look.at > Duration::from_millis(2_000)) {
+    let watched = watch_tile(rig, (tile, person), "applause", frame_seen, true)?;
+    if let Some(middle) = watched.looks.iter().find(|look| look.at > Duration::from_millis(2_000)) {
         save_shot(rig, &middle.shot, "qa696-reaction-3d-light")?;
     }
-    on_tile(&looks, true, "a 3D emoji on a gallery tile")?;
-    played_once(&looks, tile, "a 3D emoji on a gallery tile")?;
+    on_tile(&watched, true, "a 3D emoji on a gallery tile")?;
+    played_once(&watched.plays, "a 3D emoji on a gallery tile")?;
 
-    let looks = watch_tile(rig, tile, person, "surprised")?;
-    on_tile(&looks, true, "the strip in place of a 3D emoji the CDN has not")?;
-    let side = emoji_side(tile.h);
-    if looks
+    let watched = watch_tile(rig, (tile, person), "surprised", strip_frame, true)?;
+    on_tile(&watched, true, "the strip in place of a 3D emoji the CDN has not")?;
+    // only at full opacity: a fading strip blends with the tile into colours close to a 3D frame's
+    if watched
+        .looks
         .iter()
-        .any(|look| frame_seen(&look.shot, tile, side).is_some_and(|frame| frame > 2))
+        .filter(|look| look.at >= Duration::from_millis(1_400) && look.until <= Duration::from_millis(3_400))
+        .any(|look| frame_seen(&look.shot, tile).is_some())
     {
         return Err("a reaction without a 3D emoji shows one".into());
     }

@@ -24,7 +24,7 @@ use ui_sandbox::SandboxResult;
 
 use super::pixels::Rect;
 use super::qa_order::{PEOPLE, Page, Seen, gallery, qa_call, speak};
-use super::qa_reactions::{Look, check_window_shots, react, strip_png, watch};
+use super::qa_reactions::{Look, check_window_shots, no_top_line, react, strip_png, watch};
 use super::{Rig, SETTLE, View, save_shot, say};
 
 /// How many frames Teams' 3D emoji have, at 24 a second: 4.25 s.
@@ -283,7 +283,8 @@ impl Watched {
 }
 
 /// `act` sent and the tile watched for `length`; sent again, at most three times in all, while `enough` does not hold
-/// (a busy machine's shots are slow).
+/// (a busy machine's shots are slow). Each try starts its looks 0.5 s later than the one before, so that slow shots
+/// of the tries see different frames.
 fn watch_3d(
     rig: &mut Rig<'_>,
     (tile, length): (Rect, Duration),
@@ -302,7 +303,12 @@ fn watch_3d(
         if attempt > 0 {
             thread::sleep(SETTLE);
         }
-        let (_, looks) = watch(rig, tile, length, &act)?;
+        let later = Duration::from_millis(500) * attempt;
+        let (_, looks) = watch(rig, tile, length, |rig| {
+            act(rig)?;
+            thread::sleep(later);
+            Ok(())
+        })?;
         let seen = codes(&looks, area);
         say(&format!("qa696 {case}: try {attempt}: {}", listed(&seen)));
         let mut plays = std::mem::take(&mut watched.plays);
@@ -556,10 +562,12 @@ pub(super) fn qa_reaction_3d(rig: &mut Rig<'_>) -> SandboxResult {
     float_unchanged(rig)?;
     let page = gallery(rig)?;
     let first = first_two(&page)?[0];
+    // Heart on the 56 and 140 px tiles: qa-reactions runs earlier in the same app and leaves Like's files of those
+    // sides missing (404), which the app keeps for the run
     one_play(
         rig,
         first,
-        "like",
+        "heart",
         "qa696-r1-3d-56-light",
         "a 3D emoji on a tile of the 9-gallery",
     )?;
@@ -677,6 +685,11 @@ fn missing(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
     if !watched.seen.is_empty() {
         return Err(format!("{case}: a 3D frame shows: {}", listed(&watched.seen)).into());
     }
+    for look in watched.looks.iter().filter(|look| {
+        look.at >= Duration::from_millis(1_000) && look.until <= Duration::from_millis(4_000) && look.from_start >= 400
+    }) {
+        no_top_line(&look.shot, tile, case)?;
+    }
     let reads = reads_3d(rig)?;
     if !reads.iter().any(|path| path.contains("surprisedV4-3D/56a.png")) {
         return Err(format!("{case}: the app did not ask the CDN: {reads:?}").into());
@@ -736,9 +749,8 @@ fn slow(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
     if let Some(late) = looks.get(first_3d) {
         save_shot(rig, &late.shot, "qa696-r1-slow-3d")?;
     }
-    if strip.is_none() {
-        return Err(format!("{case}: no look before the 3D emoji came shows the strip on the tile").into());
-    }
+    let strip = strip.ok_or_else(|| format!("{case}: no look before the 3D emoji came shows the strip on the tile"))?;
+    no_top_line(&strip.shot, tile, case)?;
     let first = seen
         .first()
         .ok_or_else(|| format!("{case}: the 3D emoji never shows after it came"))?;
@@ -919,7 +931,7 @@ fn speaker(rig: &mut Rig<'_>) -> SandboxResult {
         one_play(
             rig,
             large,
-            "like",
+            "heart",
             "qa696-r1-3d-140-light",
             "a 3D emoji on the speaker view's large tile",
         )
@@ -943,7 +955,7 @@ fn small(rig: &mut Rig<'_>) -> SandboxResult {
     let first = first_two(&page)?[0];
     say(&format!("qa696: a small tile {:?}", first.1));
     let outcome = if emoji_side(first.1.h) < 56 {
-        one_play(rig, first, "like", "qa696-r1-3d-small", "a 3D emoji on a small tile")
+        one_play(rig, first, "heart", "qa696-r1-3d-small", "a 3D emoji on a small tile")
     } else {
         Err(format!("the tile {:?} is not small", first.1).into())
     };

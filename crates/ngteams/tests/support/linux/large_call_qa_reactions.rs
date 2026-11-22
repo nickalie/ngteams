@@ -3,11 +3,11 @@
 //! account sends its own from React's menu. The mock serves a made-up animation strip on the path of Teams' CDN
 //! (48 frames of 50×50, each a disk of another colour), so a reaction that plays changes its picture frame by frame.
 //!
-//! - On the sender's tile while it is on the stage (the account's own too): the reaction shows, plays (its picture
-//!   changes while it is fully shown), dims the face under it, and is gone after about 4.25 s, in the gallery, the
+//! - On the sender's tile while it is on the stage (the account's own too): the reaction shows, plays (looks at its
+//!   full opacity read different frames by their colour), dims the face under it, and is gone after about 4.25 s, in the gallery, the
 //!   speaker view and the strip beside a share.
 //! - Floating while the sender's tile is not on the stage (another page, Focus on content): it rises from the stage's
-//!   bottom middle and is gone after about 2 s; three at once float side by side in lanes about 200 px apart.
+//!   bottom middle (a look that reads a later frame shows it higher) and is gone after about 2 s; three at once float side by side in lanes about 200 px apart.
 //! - "Play animations" off: the reaction stands still, and still goes on time.
 //! - With no reaction on the screen the window stays still (no frame changes), and the app's CPU time is no higher
 //!   than before the reaction.
@@ -55,6 +55,120 @@ fn frame_colour(index: u32) -> [u8; 3] {
             .unwrap_or(230)
     };
     [channel(4.0), channel(2.0), channel(0.0)]
+}
+
+/// The frame of the made-up strip a look shows at `at` at its full opacity: the one of its colour, within 6 levels.
+fn strip_frame_at(shot: &RgbImage, at: (i32, i32)) -> Option<u32> {
+    let pixel = shot
+        .get_pixel_checked(u32::try_from(at.0).ok()?, u32::try_from(at.1).ok()?)?
+        .0;
+    (0..FRAMES)
+        .map(|index| {
+            let distance = frame_colour(index)
+                .iter()
+                .zip(pixel)
+                .map(|(a, b)| a.abs_diff(b))
+                .max()
+                .unwrap_or(u8::MAX);
+            (distance, index)
+        })
+        .min()
+        .filter(|(distance, _)| *distance <= 6)
+        .map(|(_, index)| index)
+}
+
+/// The emoji's side on a tile `h` px tall, as the app sizes it.
+pub(super) fn emoji_side(h: i32) -> i32 {
+    if h >= 480 {
+        140
+    } else if h >= 240 {
+        112
+    } else {
+        (h * 43 / 100).clamp(16, 56)
+    }
+}
+
+/// Where a reaction's emoji has its middle on `tile`: centred, its top at the tile's middle.
+fn emoji_middle(tile: Rect) -> (i32, i32) {
+    let side = emoji_side(tile.h);
+    (tile.center().0, tile.y + tile.h / 2 + side / 2)
+}
+
+/// The frame of the made-up strip the reaction on `tile` shows at its full opacity: read at its middle, else a quarter
+/// of its side to the right (a small tile's name label can cover the middle).
+pub(super) fn strip_frame(shot: &RgbImage, tile: Rect) -> Option<u32> {
+    let (x, y) = emoji_middle(tile);
+    strip_frame_at(shot, (x, y)).or_else(|| strip_frame_at(shot, (x + emoji_side(tile.h) / 4, y)))
+}
+
+/// The strip on `tile` has no line along its top edge: its top rows are as the row 3 px above them, as each frame
+/// of the made-up strip is clear at its top. (GPUI's atlas once drew a row of the next picture there.)
+pub(super) fn no_top_line(shot: &RgbImage, tile: Rect, case: &str) -> SandboxResult {
+    let side = emoji_side(tile.h);
+    let (left, top) = (tile.center().0 - side / 2, tile.y + tile.h / 2);
+    let px = |x: i32, y: i32| {
+        shot.get_pixel_checked(u32::try_from(x).ok()?, u32::try_from(y).ok()?)
+            .map(|pixel| pixel.0)
+    };
+    let columns = (left + side / 10)..(left + side - side / 10);
+    for row in [top - 1, top] {
+        let differ = columns
+            .clone()
+            .filter(|x| match (px(*x, row), px(*x, top - 3)) {
+                (Some(a), Some(b)) => a.iter().zip(b).any(|(a, b)| a.abs_diff(b) > 4),
+                _ => false,
+            })
+            .count();
+        if differ * 2 > columns.len() {
+            return Err(format!(
+                "{case}: a line along the top of the emoji on {tile:?}: {differ} px of row {row} differ from the row \
+                 3 px above"
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+/// Reads the frame a look shows of a reaction on a tile, when it shows one at its full opacity.
+pub(super) type FrameReader = fn(&RgbImage, Rect) -> Option<u32>;
+
+/// A frame a look read: when its shot started and ended, from the reaction's sending.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FrameSeen {
+    pub(super) at: Duration,
+    pub(super) until: Duration,
+    pub(super) frame: u32,
+}
+
+/// The frames `read` reads in `looks` of `tile`.
+fn frames_seen(looks: &[Look], tile: Rect, read: FrameReader) -> Vec<FrameSeen> {
+    looks
+        .iter()
+        .filter_map(|look| {
+            read(&look.shot, tile).map(|frame| FrameSeen {
+                at: look.at,
+                until: look.until,
+                frame,
+            })
+        })
+        .collect()
+}
+
+/// A reaction watched on a tile: the looks of the last try, and the frames each try read.
+pub(super) struct TileWatch {
+    pub(super) looks: Vec<Look>,
+    pub(super) plays: Vec<Vec<FrameSeen>>,
+}
+
+impl TileWatch {
+    /// The different frames all tries read, in order.
+    pub(super) fn frames(&self) -> Vec<u32> {
+        let mut frames: Vec<u32> = self.plays.iter().flatten().map(|seen| seen.frame).collect();
+        frames.sort_unstable();
+        frames.dedup();
+        frames
+    }
 }
 
 /// The reactions' ids on Teams' CDN, as the call's five reactions name them.
@@ -175,46 +289,74 @@ fn summary(looks: &[Look]) -> String {
 }
 
 /// A made-up person's reaction `reaction` on their tile `tile`, watched for 6.8 s; sent again, at most three times
-/// in all, while fewer than three looks catch it or no two looks one after the other catch it at its full opacity (a
-/// busy machine's shots are slow).
-pub(super) fn watch_tile(rig: &mut Rig<'_>, tile: Rect, person: usize, reaction: &str) -> SandboxResult<Vec<Look>> {
-    let mut looks = Vec::new();
+/// in all, until [`enough`] holds (a busy machine's shots are slow). `read` reads the frames.
+pub(super) fn watch_tile(
+    rig: &mut Rig<'_>,
+    (tile, person): (Rect, usize),
+    reaction: &str,
+    read: FrameReader,
+    playing: bool,
+) -> SandboxResult<TileWatch> {
+    let mut watched = TileWatch {
+        looks: Vec::new(),
+        plays: Vec::new(),
+    };
     for _ in 0..3 {
-        (_, looks) = watch(rig, tile, Duration::from_millis(6_800), |rig| {
+        let (_, looks) = watch(rig, tile, Duration::from_millis(6_800), |rig| {
             react(rig, person, reaction)
         })?;
-        let caught = looks.iter().filter(|look| look.from_start >= 400).count();
-        let steady = steady_pairs(&looks).count();
-        if caught >= 3 && steady >= 1 {
+        watched.plays.push(frames_seen(&looks, tile, read));
+        watched.looks = looks;
+        if enough(&watched, playing) {
             break;
         }
         say(&format!(
-            "qa666: {caught} looks caught {person}'s reaction on the tile, {steady} pairs at its full opacity: sent \
-             again"
+            "qa666: {person}'s reaction on the tile: frames {:?} in {} tries: sent again",
+            watched.frames(),
+            watched.plays.len()
         ));
     }
-    Ok(looks)
+    Ok(watched)
 }
 
-/// What a reaction on a tile did: shown, played while fully shown, and gone on time.
-pub(super) fn on_tile(looks: &[Look], playing: bool, case: &str) -> SandboxResult {
-    say(&format!("qa666 {case}: {}", summary(looks)));
-    let shown = looks
+/// The last try caught the reaction while it should be fully shown and a look after its end; and, when it should
+/// play, the tries read two different frames or more.
+fn enough(watched: &TileWatch, playing: bool) -> bool {
+    let shown = fully_shown(&watched.looks);
+    !shown.is_empty()
+        && shown.iter().all(|look| look.from_start >= 400)
+        && end_of(&watched.looks).is_some()
+        && (!playing || watched.frames().len() >= 2)
+}
+
+/// The looks that started while a reaction on a tile should be fully shown.
+fn fully_shown(looks: &[Look]) -> Vec<&Look> {
+    looks
         .iter()
         .filter(|look| look.at > Duration::from_millis(1_400) && look.at < Duration::from_millis(3_400))
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+/// What a reaction on a tile did: shown, played (its looks read different frames) or stood still, and gone on time.
+pub(super) fn on_tile(watched: &TileWatch, playing: bool, case: &str) -> SandboxResult {
+    let looks = &watched.looks;
+    let frames = watched.frames();
+    say(&format!("qa666 {case}: {}; frames {frames:?}", summary(looks)));
+    let shown = fully_shown(looks);
     if shown.is_empty() || shown.iter().any(|look| look.from_start < 400) {
         return Err(format!("{case}: the reaction isn't on the tile while it should be fully shown").into());
     }
-    // a change between two looks that showed the reaction at its full opacity: its picture moved, as no fade
-    // changes it there (the strip of 48 frames loops every 2 s, so two looks less than 2 s apart show different
-    // frames)
-    let moving = steady_pairs(looks).filter(|pair| pair[1].from_last >= 150).count();
-    if playing && moving < 1 {
-        return Err(format!("{case}: the reaction's picture doesn't play ({moving} looks changed)").into());
+    if playing && frames.len() < 2 {
+        return Err(format!("{case}: the reaction's picture doesn't play (frames {frames:?})").into());
     }
-    if !playing && moving > 0 {
-        return Err(format!("{case}: the reaction moves with Play animations off ({moving} looks changed)").into());
+    // a change between two looks that showed the reaction at its full opacity: its picture moved, as no fade
+    // changes it there
+    let moving = steady_pairs(looks).filter(|pair| pair[1].from_last >= 150).count();
+    if !playing && (moving > 0 || frames.len() > 1) {
+        return Err(format!(
+            "{case}: the reaction moves with Play animations off ({moving} looks changed, frames {frames:?})"
+        )
+        .into());
     }
     // it ended after the start of the last look that showed it and before the end of the next look
     let (last_on, first_off) = end_of(looks).ok_or_else(|| format!("{case}: no look after the reaction's end"))?;
@@ -257,50 +399,61 @@ fn end_of(looks: &[Look]) -> Option<(Duration, Duration)> {
     Some((looks[last].at, next.until))
 }
 
-/// What a floating reaction did: shown near the stage's bottom middle, rising (when `playing`), gone after about 2 s.
-fn floated(looks: &[Look], stage: Rect, playing: bool, case: &str) -> SandboxResult {
-    say(&format!(
-        "qa666 {case}: {}; where {:?}",
-        summary(looks),
-        looks
-            .iter()
-            .map(|look| look.changed.map(|at| (at.x, at.y)))
-            .collect::<Vec<_>>()
-    ));
-    let seen: Vec<(Duration, Rect)> = looks
+/// A look that caught a float: where the float was, and the frame read at its middle (at its full opacity).
+#[derive(Clone, Copy, Debug)]
+struct FloatSeen {
+    place: Rect,
+    frame: Option<u32>,
+}
+
+/// The looks of one try that caught a float.
+fn caught(looks: &[Look]) -> Vec<FloatSeen> {
+    looks
         .iter()
-        .filter_map(|look| look.changed.filter(|_| look.from_start >= 60).map(|at| (look.at, at)))
+        .filter_map(|look| {
+            look.changed.filter(|_| look.from_start >= 60).map(|place| FloatSeen {
+                place,
+                frame: strip_frame_at(&look.shot, place.center()),
+            })
+        })
+        .collect()
+}
+
+/// How far up a float is at frame `frame` of the strip it plays, px: it rises 56 px over its 2 s (48 frames), fast at
+/// first.
+fn rise_at(frame: u32) -> f64 {
+    let t = f64::from(frame.min(FRAMES)) / f64::from(FRAMES);
+    56.0 * (1.0 - (1.0 - t) * (1.0 - t))
+}
+
+/// Two looks that show how far a float rose, and how far it is due to rise between them, px.
+type Rise = (FloatSeen, FloatSeen, f64);
+
+/// Of the looks of all tries that read a frame, the two whose frames are due farthest apart in height, when that is
+/// 6 px or more; else the first and the last look of a try that caught it two times (due to rise 20 px, as such
+/// looks are about 1 s apart).
+fn rise_seen(tries: &[Vec<FloatSeen>]) -> Option<Rise> {
+    let framed: Vec<(FloatSeen, u32)> = tries
+        .iter()
+        .flatten()
+        .filter_map(|seen| seen.frame.map(|frame| (*seen, frame)))
         .collect();
-    let (first, last) = (
-        seen.first().ok_or_else(|| format!("{case}: nothing floated"))?,
-        seen.last().ok_or("")?,
-    );
-    let middle = stage.x + stage.w / 2;
-    if (first.1.center().0 - middle).abs() > 330 {
-        return Err(format!(
-            "{case}: the float at {:?} is not about the stage's middle {middle}",
-            first.1
-        )
-        .into());
+    let low = framed.iter().min_by_key(|(_, frame)| *frame);
+    let high = framed.iter().max_by_key(|(_, frame)| *frame);
+    if let (Some(low), Some(high)) = (low, high) {
+        let due = rise_at(high.1) - rise_at(low.1);
+        if due >= 6.0 {
+            return Some((low.0, high.0, due));
+        }
     }
-    if first.1.bottom() < stage.bottom() - 200 {
-        return Err(format!(
-            "{case}: the float at {:?} is not near the stage's bottom {}",
-            first.1,
-            stage.bottom()
-        )
-        .into());
-    }
-    if playing && last.1.y >= first.1.y - 10 {
-        return Err(format!("{case}: the float didn't rise: {:?} then {:?}", first.1, last.1).into());
-    }
-    if !playing && (last.1.y - first.1.y).abs() > 4 {
-        return Err(format!(
-            "{case}: the float moved with Play animations off: {:?} then {:?}",
-            first.1, last.1
-        )
-        .into());
-    }
+    tries
+        .iter()
+        .find(|seen| seen.len() >= 2)
+        .and_then(|seen| Some((*seen.first()?, *seen.last()?, 20.0)))
+}
+
+/// The float of one try ended on time: no look shows it after about 2 s.
+fn ended(looks: &[Look], case: &str) -> SandboxResult {
     if let Some((last_on, _)) = end_of(looks)
         && last_on > FLOAT + Duration::from_millis(700)
     {
@@ -315,6 +468,45 @@ fn floated(looks: &[Look], stage: Rect, playing: bool, case: &str) -> SandboxRes
     Ok(())
 }
 
+/// What a floating reaction did over all tries: shown near the stage's bottom middle; rising (when `playing`: a look
+/// that read a later frame shows it higher), else standing still.
+fn floated(tries: &[Vec<FloatSeen>], stage: Rect, playing: bool, case: &str) -> SandboxResult {
+    say(&format!("qa666 {case}: {tries:?}"));
+    let seen: Vec<FloatSeen> = tries.concat();
+    let middle = stage.x + stage.w / 2;
+    for float in &seen {
+        if (float.place.center().0 - middle).abs() > 330 {
+            return Err(format!(
+                "{case}: the float at {:?} is not about the stage's middle {middle}",
+                float.place
+            )
+            .into());
+        }
+        if float.place.bottom() < stage.bottom() - 200 {
+            return Err(format!(
+                "{case}: the float at {:?} is not near the stage's bottom {}",
+                float.place,
+                stage.bottom()
+            )
+            .into());
+        }
+    }
+    if playing {
+        let (low, high, due) = rise_seen(tries).ok_or_else(|| format!("{case}: no two looks show the rise"))?;
+        let rose = f64::from(low.place.y - high.place.y);
+        if rose < due / 2.0 {
+            return Err(format!("{case}: the float rose {rose} px, not about {due:.0}: {low:?} then {high:?}").into());
+        }
+    } else if let (Some(top), Some(bottom)) = (
+        seen.iter().map(|float| float.place.y).min(),
+        seen.iter().map(|float| float.place.y).max(),
+    ) && bottom - top > 4
+    {
+        return Err(format!("{case}: the float moved with Play animations off: {seen:?}").into());
+    }
+    Ok(())
+}
+
 /// A float to check: who sends it, over which stage, and whether it moves ("Play animations").
 struct Float {
     stage: Rect,
@@ -325,9 +517,11 @@ struct Float {
 }
 
 impl Float {
-    /// `reaction` sent and watched as it floats (see [`floated`]); sent again, at most five times in all, while
-    /// fewer than two looks catch it (a busy machine's shots are slow).
+    /// `reaction` sent and watched as it floats (see [`floated`]); sent again, at most five times in all, until the
+    /// tries together show it rise ([`rise_seen`]) or, standing still, two looks caught it (a busy machine's shots
+    /// are slow).
     fn check(&self, rig: &mut Rig<'_>, reaction: &str, shot: &str, case: &str) -> SandboxResult {
+        let mut tries: Vec<Vec<FloatSeen>> = Vec::new();
         for _ in 0..5 {
             let area = float_area(self.stage);
             let (before, mut looks) = watch(rig, area, Duration::from_millis(4_000), |rig| {
@@ -339,15 +533,20 @@ impl Float {
             if let Some(look) = looks.iter().find(|look| look.at > Duration::from_millis(700)) {
                 save_shot(rig, &look.shot, shot)?;
             }
-            let caught = looks.iter().filter(|look| look.from_start >= 60).count();
-            if caught >= 2 {
-                return floated(&looks, self.stage, self.playing, case);
+            say(&format!("qa666 {case}: {}", summary(&looks)));
+            ended(&looks, case)?;
+            tries.push(caught(&looks));
+            let enough = if self.playing {
+                rise_seen(&tries).is_some()
+            } else {
+                tries.iter().map(Vec::len).sum::<usize>() >= 2
+            };
+            if enough {
+                return floated(&tries, self.stage, self.playing, case);
             }
-            say(&format!(
-                "qa666 {case}: only {caught} look caught the float: sent again"
-            ));
+            say(&format!("qa666 {case}: not enough of the float yet: sent again"));
         }
-        Err(format!("{case}: no two looks caught the float in five tries").into())
+        Err(format!("{case}: the looks of five tries did not show enough of the float: {tries:?}").into())
     }
 }
 
@@ -486,18 +685,20 @@ fn gallery_reactions(rig: &mut Rig<'_>) -> SandboxResult {
     say(&format!("qa666 reactions: the gallery's first page {on_page:?}"));
     let (person, tile) = first_person(&page)?;
     let face_before = face_count(&page.shot, tile, person);
-    let looks = watch_tile(rig, tile, person, "like")?;
-    let middle = looks
+    let watched = watch_tile(rig, (tile, person), "like", strip_frame, true)?;
+    let middle = watched
+        .looks
         .iter()
         .find(|look| look.at > Duration::from_millis(2_000))
         .ok_or("no look in the middle of the reaction")?;
     rig.save("qa666-reaction-gallery-tile")?;
     save_shot(rig, &middle.shot, "qa666-reaction-gallery-tile-playing")?;
+    no_top_line(&middle.shot, tile, "a reaction on a gallery tile")?;
     let face_during = face_count(&middle.shot, tile, person);
     say(&format!(
         "qa666: the face under the reaction: {face_before} px of its colour before, {face_during} during"
     ));
-    on_tile(&looks, true, "a reaction on a gallery tile")?;
+    on_tile(&watched, true, "a reaction on a gallery tile")?;
     if face_during * 2 > face_before {
         return Err(format!(
             "the face under the reaction isn't dimmed: {face_before} px of its colour before, {face_during} during"
@@ -616,28 +817,36 @@ fn own_reaction(rig: &mut Rig<'_>) -> SandboxResult {
         .first()
         .ok_or_else(|| format!("no pictures in React's menu at {menu:?}"))?;
     say(&format!("qa666: React's menu at {menu:?}, its pictures {pictures:?}"));
-    // sent again, at most three times in all, while no two looks one after the other catch it at its full opacity
-    let mut looks = Vec::new();
+    // sent again, at most three times in all, until the tries read two frames
+    let mut watched = TileWatch {
+        looks: Vec::new(),
+        plays: Vec::new(),
+    };
     for attempt in 0..3 {
         if attempt > 0 {
             rig.click(bar.react)?;
             thread::sleep(SETTLE);
         }
         let sent = rig.sent("sendMessage") + 1;
-        (_, looks) = watch(rig, own, Duration::from_millis(6_800), |rig| {
+        let (_, looks) = watch(rig, own, Duration::from_millis(6_800), |rig| {
             rig.click(like)?;
             rig.key("escape")
         })?;
         rig.wait_sent("sendMessage", sent, "React's Like")?;
-        if steady_pairs(&looks).count() >= 1 {
+        watched.plays.push(frames_seen(&looks, own, strip_frame));
+        watched.looks = looks;
+        if enough(&watched, true) {
             break;
         }
-        say("qa666: no two looks caught the own reaction at its full opacity: sent again");
+        say(&format!(
+            "qa666: the own reaction: frames {:?} so far: sent again",
+            watched.frames()
+        ));
     }
-    if let Some(look) = looks.iter().find(|look| look.at > Duration::from_millis(2_200)) {
+    if let Some(look) = watched.looks.iter().find(|look| look.at > Duration::from_millis(2_200)) {
         save_shot(rig, &look.shot, "qa666-reaction-own-tile")?;
     }
-    on_tile(&looks, true, "the account's own reaction on its tile")
+    on_tile(&watched, true, "the account's own reaction on its tile")
 }
 
 /// The speaker view: a strip tile's reaction on it, someone off the strip's page floats.
@@ -657,11 +866,11 @@ fn speaker_reactions(rig: &mut Rig<'_>) -> SandboxResult {
     let Seen::Person(person) = strip_tile.1 else {
         return Err("no person".into());
     };
-    let looks = watch_tile(rig, strip_tile.0, person, "like")?;
-    if let Some(look) = looks.iter().find(|look| look.at > Duration::from_millis(2_200)) {
+    let watched = watch_tile(rig, (strip_tile.0, person), "like", strip_frame, true)?;
+    if let Some(look) = watched.looks.iter().find(|look| look.at > Duration::from_millis(2_200)) {
         save_shot(rig, &look.shot, "qa666-reaction-speaker-strip-tile")?;
     }
-    on_tile(&looks, true, "a reaction on a speaker strip tile")?;
+    on_tile(&watched, true, "a reaction on a speaker strip tile")?;
     let shown: Vec<Seen> = page.people();
     let away = (0..PEOPLE)
         .rev()
@@ -695,11 +904,11 @@ fn share_reactions(rig: &mut Rig<'_>) -> SandboxResult {
     say(&format!("qa666 reactions: the share's strip {:?}", page.people()));
     let (person, tile) = first_person(&page)?;
     // the share plays on under the strip: only the tile is watched
-    let looks = watch_tile(rig, tile, person, "like")?;
-    if let Some(look) = looks.iter().find(|look| look.at > Duration::from_millis(2_200)) {
+    let watched = watch_tile(rig, (tile, person), "like", strip_frame, true)?;
+    if let Some(look) = watched.looks.iter().find(|look| look.at > Duration::from_millis(2_200)) {
         save_shot(rig, &look.shot, "qa666-reaction-share-strip-tile")?;
     }
-    on_tile(&looks, true, "a reaction on a share strip tile")?;
+    on_tile(&watched, true, "a reaction on a share strip tile")?;
     let shown = page.people();
     let away = (0..PEOPLE)
         .rev()
@@ -761,11 +970,11 @@ fn still_reactions(rig: &mut Rig<'_>) -> SandboxResult {
     rig.theme(super::ANIMATIONS_OFF)?;
     let page = gallery(rig)?;
     let (person, tile) = first_person(&page)?;
-    let looks = watch_tile(rig, tile, person, "heart")?;
-    if let Some(look) = looks.iter().find(|look| look.at > Duration::from_millis(2_200)) {
+    let watched = watch_tile(rig, (tile, person), "heart", strip_frame, false)?;
+    if let Some(look) = watched.looks.iter().find(|look| look.at > Duration::from_millis(2_200)) {
         save_shot(rig, &look.shot, "qa666-reaction-tile-animations-off")?;
     }
-    let outcome = on_tile(&looks, false, "a reaction on a tile with Play animations off");
+    let outcome = on_tile(&watched, false, "a reaction on a tile with Play animations off");
     let away = (0..PEOPLE)
         .find(|index| !page.people().contains(&Seen::Person(*index)))
         .ok_or("everyone on the first page")?;
