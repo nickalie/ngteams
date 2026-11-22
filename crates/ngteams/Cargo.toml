@@ -246,6 +246,11 @@ name = "qa_ai_notice_ring_window"
 harness = false
 
 [[test]]
+# QA of task 712: the buttons of the message hover bar chosen by the user, in the app's window over the mock
+name = "qa_bar_customize_window"
+harness = false
+
+[[test]]
 # QA of task 575: one message translated from its More options menu, over the mock and an own server, in the UI sandbox
 name = "qa_translate_message_window"
 harness = false
