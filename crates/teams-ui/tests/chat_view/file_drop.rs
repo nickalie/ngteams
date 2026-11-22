@@ -260,6 +260,35 @@ fn a_channel_file_removed_while_it_uploads_goes_to_the_recycle_bin_when_its_uplo
 }
 
 #[test]
+fn a_failed_recycle_of_a_file_removed_while_it_uploads_is_told() {
+    let rig = rig_with(Vec::new());
+    *rig.core.hold_uploads.lock().unwrap() = true;
+    *rig.core.discard_fails.lock().unwrap() = true;
+    let (compose, cx) = channel_box(&rig);
+    let dir = tempfile::tempdir().unwrap();
+    let files = made_up_files(dir.path(), &["made-up notes.txt"]);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.attach_files(&files, window, cx)));
+    draw(cx);
+    let remove = cx.debug_bounds("compose-attachment-remove-0").unwrap();
+    cx.simulate_click(remove.center(), gpui::Modifiers::none());
+    draw(cx);
+    assert_eq!(problem(&compose, cx), None);
+
+    rig.core
+        .held_uploads
+        .lock()
+        .unwrap()
+        .remove(0)
+        .send(Ok(super::common::channel_file(CHANNEL, "made-up notes.txt")));
+    draw(cx);
+    assert_eq!(rig.core.discarded_files.lock().unwrap().len(), 1);
+    assert_eq!(
+        problem(&compose, cx).as_deref(),
+        Some("made-up notes.txt couldn't be removed from the channel's files.")
+    );
+}
+
+#[test]
 fn discard_sends_the_draft_s_channel_files_to_the_recycle_bin() {
     let rig = rig_with(Vec::new());
     let (compose, cx) = channel_box(&rig);

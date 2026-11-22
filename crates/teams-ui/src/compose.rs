@@ -1170,6 +1170,8 @@ impl Compose {
 
     /// Discard: empties the box and ends a reply or an edit.
     pub fn discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // a send held for its translation would post the files recycled here
+        self.drop_translation_of(&self.mode.clone(), cx);
         for file in std::mem::take(&mut self.attachments) {
             self.recycle_channel_file(file, cx);
         }

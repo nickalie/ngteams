@@ -49,6 +49,14 @@ impl Compose {
         self.translated.running.is_some()
     }
 
+    /// Whether the send held for its translation carries the attachment `id`.
+    pub(super) fn holds_attachment(&self, id: u64) -> bool {
+        self.translated
+            .running
+            .as_ref()
+            .is_some_and(|(_, from)| from.attachments.iter().any(|file| file.id == id))
+    }
+
     /// Why the last send wasn't translated (nothing was sent), if it wasn't.
     #[must_use]
     pub fn untranslated(&self) -> Option<&SharedString> {

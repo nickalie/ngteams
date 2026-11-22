@@ -29,10 +29,11 @@ use teams_core::Action;
 use teams_store::Message;
 use teams_ui::ViewTrace;
 use teams_ui::chat_translate::{ChatTranslation, header_button};
-use teams_ui::chat_view::{ChatView, Item};
+use teams_ui::chat_view::{ChatView, Item, Place};
 use teams_ui::local_ai::{Backend, Tools};
 use teams_ui::settings::{ChatLanguage, Settings, SettingsModel};
 
+const CHANNEL: &str = "19:made-up-channel@thread.tacv2";
 const AB: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-8000-00000000000b@unq.gbl.spaces";
 
 /// A fake Claude Code: each message of a batch as `DE <text>`, an outgoing message as `EN <text>`.
@@ -344,6 +345,88 @@ fn a_translated_send_refused_comes_back_beside_a_file_attached_meanwhile() {
     });
     assert_eq!(message_writes(&rig).len(), 1, "asked once");
     cx.update(|_, cx| assert_eq!(compose.read(cx).attachments().len(), 1, "the file stays beside it"));
+}
+
+/// A channel translated into German, its posts' box in a window of its own, with a draft and one file in the
+/// channel's folder, sent: the send is held while the fake translates it (a second).
+fn held_channel_post(rig: &Rig, dir: &Path) -> (Entity<teams_ui::compose::Compose>, &'static mut VisualTestContext) {
+    let slow = FAKE_CLAUDE.replace("*'<outgoing'*)\n", "*'<outgoing'*)\n      sleep 1\n");
+    let fake = tool(dir, "claude", &slow);
+    rig.cx
+        .update(|cx| cx.set_global(Tools::with(vec![(Backend::Claude, fake)])));
+    let mut hello = message("1001", 1_000, LAB_B, "Hello");
+    hello.conversation_id = CHANNEL.to_owned();
+    rig.core
+        .messages
+        .lock()
+        .unwrap()
+        .insert(CHANNEL.to_owned(), vec![hello]);
+    rig.cx.update(teams_ui::window::init);
+    let settings = Settings {
+        chat_languages: vec![ChatLanguage {
+            account: LAB_A.to_owned(),
+            chat: CHANNEL.to_owned(),
+            language: "de",
+        }],
+        ..Settings::default()
+    };
+    let parts = parts::parts(rig, settings, Arc::new(ViewTrace::off()));
+    let app: &'static mut TestAppContext = Box::leak(Box::new(rig.cx.clone()));
+    let (view, cx) = app.add_window_view(|window, cx| {
+        let compose = ChatView::channel_box(&parts, CHANNEL, &Place::Channel, "Post in channel".into(), window, cx);
+        ChatView::in_place(parts, CHANNEL.to_owned(), Place::Channel, compose, window, cx)
+    });
+    cx.simulate_resize(size(px(800.0), px(600.0)));
+    draw(cx);
+    let compose = cx.update(|_, cx| view.read(cx).compose().clone());
+    let file = dir.join("made-up-notes.txt");
+    fs::write(&file, "synthetic").unwrap();
+    cx.update(|window, cx| {
+        compose.update(cx, |compose, cx| {
+            compose.attach_files(std::slice::from_ref(&file), window, cx)
+        });
+    });
+    draw(cx);
+    send(&view, cx, "Hallo");
+    cx.update(|_, cx| assert!(compose.read(cx).translating()));
+    (compose, cx)
+}
+
+#[test]
+fn discard_during_a_held_channel_post_sends_nothing_and_recycles_its_file() {
+    let rig = Rig::start();
+    let dir = tempfile::tempdir().unwrap();
+    let (compose, cx) = held_channel_post(&rig, dir.path());
+
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.discard(window, cx)));
+    cx.update(|_, cx| assert!(!compose.read(cx).translating()));
+    std::thread::sleep(Duration::from_millis(1_500));
+    draw(cx);
+    assert!(message_writes(&rig).is_empty(), "{:?}", message_writes(&rig));
+    assert_eq!(rig.core.discarded_files.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn a_file_of_a_held_channel_post_is_not_removed_and_goes_with_it() {
+    use teams_ui::compose::TRANSLATING_FIRST;
+
+    let rig = Rig::start();
+    let dir = tempfile::tempdir().unwrap();
+    let (compose, cx) = held_channel_post(&rig, dir.path());
+    let id = cx.update(|_, cx| compose.read(cx).attachments()[0].id);
+    cx.update(|_, cx| compose.update(cx, |compose, cx| compose.remove_attachment(id, cx)));
+    draw(cx);
+    cx.update(|_, cx| {
+        assert_eq!(compose.read(cx).problem().cloned(), Some(TRANSLATING_FIRST.into()));
+        assert_eq!(compose.read(cx).attachments().len(), 1);
+    });
+    assert!(rig.core.discarded_files.lock().unwrap().is_empty());
+    until(cx, |_| !message_writes(&rig).is_empty());
+    match &message_writes(&rig)[..] {
+        [Action::Send { text, .. }] => assert_eq!(text.files().len(), 1),
+        other => panic!("one post with its file: {other:?}"),
+    }
+    assert!(rig.core.discarded_files.lock().unwrap().is_empty());
 }
 
 /// The header's language picker on its own.

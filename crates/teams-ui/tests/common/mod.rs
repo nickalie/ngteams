@@ -60,6 +60,8 @@ pub struct FakeCore {
     pub channel_upload_names: Mutex<VecDeque<String>>,
     /// Every channel file a draft let go, in order.
     pub discarded_files: Mutex<Vec<teams_proto::UploadedFile>>,
+    /// The recycle of a channel file fails.
+    pub discard_fails: Mutex<bool>,
     /// Every picture sent, with its conversation, in order; each answered from `picture_answers`, else an object of
     /// its own (`0-made-up-d1-<n>`).
     pub picture_uploads: Mutex<Vec<(String, teams_proto::PastedPicture)>>,
@@ -596,6 +598,9 @@ impl Core for FakeCore {
     }
     fn discard_channel_file(&self, file: teams_proto::UploadedFile) -> Reply<()> {
         locked(&self.discarded_files).push(file);
+        if *locked(&self.discard_fails) {
+            return Reply::ready(Err(EngineError::Stopped));
+        }
         Reply::ready(Ok(()))
     }
     fn upload_picture(&self, conversation: String, picture: teams_proto::PastedPicture) -> Reply<String> {

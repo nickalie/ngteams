@@ -86,6 +86,10 @@ impl Attachment {
     }
 }
 
+fn not_recycled(name: &str) -> String {
+    format!("{name} couldn't be removed from the channel's files.")
+}
+
 fn size_label(size: u64) -> String {
     if size < 1024 {
         format!("{size} B")
@@ -210,10 +214,16 @@ impl Compose {
                 }
             });
             // removed while it uploaded: the team would see a file nobody posted
-            if let Some(Ok(uploaded)) = answer
-                && uploaded.channel().is_some()
+            let late = match answer {
+                Some(Ok(uploaded)) if uploaded.channel().is_some() => {
+                    Some((uploaded.name().to_owned(), core.discard_channel_file(uploaded)))
+                }
+                _ => None,
+            };
+            if let Some((name, discarded)) = late
+                && discarded.await.is_err()
             {
-                let _ = core.discard_channel_file(uploaded).await;
+                let _ = to.update(cx, |this, cx| this.show_problem(not_recycled(&name), cx));
             }
         })
         .detach();
@@ -226,6 +236,9 @@ impl Compose {
         let Some(index) = self.attachments.iter().position(|file| file.id == id) else {
             return;
         };
+        if self.holds_attachment(id) {
+            return self.show_problem(super::TRANSLATING_FIRST, cx);
+        }
         let file = self.attachments.remove(index);
         self.recycle_channel_file(file, cx);
         if !self
@@ -251,7 +264,7 @@ impl Compose {
         cx.spawn(async move |this, cx| {
             if discarded.await.is_err() {
                 let _ = this.update(cx, |this, cx| {
-                    this.show_problem(format!("{} couldn't be removed from the channel's files.", file.name), cx);
+                    this.show_problem(not_recycled(&file.name), cx);
                 });
             }
         })
