@@ -305,12 +305,6 @@ impl FormatBar {
         }
     }
 
-    /// Its row of tools, which Tab passes as one stop.
-    #[must_use]
-    pub fn row(&self) -> &keyboard::Row {
-        &self.row
-    }
-
     /// It without Discard.
     #[must_use]
     pub fn without_discard(mut self) -> Self {

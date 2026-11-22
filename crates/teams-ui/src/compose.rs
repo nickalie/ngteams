@@ -2464,7 +2464,7 @@ impl Compose {
                 .overflow_hidden()
                 .children(send_to)
                 .children(self.expanded.then(|| self.format_bar.clone()))
-                .child(self.around_text(div().px_1().pt_1(), cx))
+                .child(self.around_text(div().px_1().pt_1()))
                 // Tab from a card's last button enters the tools as Tab from the text does
                 .children(
                     self.box_cards(palette, cx)
@@ -2482,7 +2482,7 @@ impl Compose {
             .gap_1()
             .child(
                 // one line sits in the middle of the box; more lines grow it, the toolbar staying at its foot
-                self.around_text(div().flex_1().min_w_0().self_center().py_1(), cx),
+                self.around_text(div().flex_1().min_w_0().self_center().py_1()),
             )
             .child(self.toolbar(palette, &fit, cx));
         surface
@@ -2499,16 +2499,9 @@ impl Compose {
             .into_any_element()
     }
 
-    /// The text in `place`: Tab from it to the tools lands on the tool the keys were last on, and Shift+Tab from it
-    /// to the format bar on the bar's, as in Teams.
-    fn around_text(&self, place: gpui::Div, cx: &App) -> gpui::Div {
-        let place = self.tools.before(place).child(self.editor.clone());
-        if self.expanded {
-            // one element has one key context: the bar's goes on a wrapper
-            self.format_bar.read(cx).row().after(div().child(place))
-        } else {
-            place
-        }
+    /// The text in `place`: Tab from it to the tools lands on the tool the keys were last on, as in Teams.
+    fn around_text(&self, place: gpui::Div) -> gpui::Div {
+        self.tools.before(place).child(self.editor.clone())
     }
 
     fn picker_view(&self, palette: Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
