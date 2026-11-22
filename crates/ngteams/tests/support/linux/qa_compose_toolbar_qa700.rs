@@ -43,8 +43,16 @@ pub(super) const OLD_FILE: [Check; 1] = [("qa700_old_file", old_file)];
 /// The language a user read in before task 700, the only one an old settings file names.
 const OLD_LANGUAGE: &str = "Spanish";
 
-/// The settings file as an app before task 700 left it: one language, `message_translate_to`, for both.
+/// The settings file as an app before task 700 left it: one language, `message_translate_to`, for both. With no
+/// earlier run (a filtered run), the file holds only that language.
 pub(super) fn write_old_file(file: &Path) -> SandboxResult {
+    if !file.exists() {
+        if let Some(dir) = file.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        fs::write(file, format!("message_translate_to = \"{OLD_LANGUAGE}\"\n"))?;
+        return Ok(());
+    }
     let text = fs::read_to_string(file)?;
     let mut old = String::new();
     for line in text.lines() {
@@ -138,6 +146,7 @@ fn plus_rows(user: &mut User<'_>) -> SandboxResult {
 /// show; the right-click list hides both again.
 fn shown_from_plus(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
+    user.ask("language German")?;
     user.show_ai(&[])?;
     user.click_menu(0, "Plus")?;
     user.press("up")?;
@@ -237,6 +246,7 @@ fn settings_switches(user: &mut User<'_>) -> SandboxResult {
 /// their "+" has no AI rows.
 fn other_boxes(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
+    user.ask("language German")?;
     user.show_ai(&["correct", "translate"])?;
     user.ask(&format!("open {NOTES}"))?;
     user.until("the notes chat", |state| {
@@ -268,6 +278,16 @@ fn other_boxes(user: &mut User<'_>) -> SandboxResult {
     user.until("the channel", |state| !state["post"].is_null())?;
     user.ask("open-thread")?;
     user.until("the thread", |state| !state["thread"].is_null())?;
+    let state = user.state()?;
+    for key in ["post", "thread"] {
+        let row = &state[key]["row_tools"];
+        ensure(
+            row.as_array()
+                .is_some_and(|row| row.ends_with(&[json!("compose-correct"), json!("compose-translate")]))
+                && state[key]["plus_rows"] == json!(["compose-customize"]),
+            || format!("the {key} box does not show the tools on its bar alone: {}", state[key]),
+        )?;
+    }
     user.shots_in_both_themes("qa700-channel-thread-shown")?;
     for key in ["post", "thread"] {
         user.ask(&format!("box-menu {key} plus"))?;
@@ -286,6 +306,7 @@ fn other_boxes(user: &mut User<'_>) -> SandboxResult {
 /// from there; at 24 px too.
 fn narrow_more(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
+    user.ask("language German")?;
     user.show_ai(&["correct", "translate"])?;
     user.resize_focused(520)?;
     let mut faults = Vec::new();

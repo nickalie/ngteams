@@ -500,6 +500,60 @@ fn the_choice_applies_to_every_box() {
 }
 
 #[test]
+fn a_channel_s_boxes_show_the_shown_ai_tools_and_keep_them_out_of_plus() {
+    let rig = Rig::start();
+    let Opened { compose, cx, .. } = chat_with(&rig, showing_ai(), 900.0);
+    let layout = |compose: &Entity<Compose>, cx: &mut VisualTestContext| {
+        compose.read_with(cx, |compose, cx| {
+            (compose.row_tools(cx), compose.menu_selectors(MenuKind::Plus, cx))
+        })
+    };
+    let (row, plus) = layout(&compose, cx);
+    assert!(
+        row.ends_with(&["compose-apps", "compose-correct", "compose-translate"]),
+        "{row:?}"
+    );
+    assert_eq!(plus, ["compose-customize"]);
+    for writes in [Writes::Channel, Writes::Thread] {
+        compose.update(cx, |compose, cx| {
+            compose.in_channel(writes, "Message in A made-up channel", cx);
+        });
+        draw(cx);
+        let (row, plus) = layout(&compose, cx);
+        assert_eq!(
+            row,
+            [
+                "compose-format",
+                "compose-emoji",
+                "compose-apps",
+                "compose-correct",
+                "compose-translate"
+            ],
+            "{writes:?}"
+        );
+        assert_eq!(plus, ["compose-customize"], "{writes:?}");
+    }
+    let settings = compose.read_with(cx, |compose, _| compose.settings().clone());
+    cx.update(|_, cx| {
+        settings.update(cx, |model, cx| {
+            model.change(|settings| settings.compose_shown.clear(), cx);
+        });
+    });
+    draw(cx);
+    let (row, plus) = layout(&compose, cx);
+    assert_eq!(row, ["compose-format", "compose-emoji", "compose-apps"]);
+    assert_eq!(
+        plus,
+        [
+            "compose-correct",
+            "compose-translate",
+            "compose-language",
+            "compose-customize"
+        ]
+    );
+}
+
+#[test]
 fn with_the_ai_features_off_nothing_of_ai_shows() {
     let rig = Rig::start();
     let Opened {

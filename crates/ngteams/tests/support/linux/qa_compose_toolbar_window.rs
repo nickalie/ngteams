@@ -2338,6 +2338,8 @@ fn box_state(compose: &Entity<Compose>, window: &Window, cx: &App) -> Value {
         "narrow": compose.is_narrow(),
         "more_open": compose.more_open(),
         "menu": compose.menu_open().map(|kind| format!("{kind:?}")),
+        "row_tools": compose.row_tools(cx),
+        "plus_rows": compose.menu_selectors(MenuKind::Plus, cx),
         "customize": compose.customize_open(),
         "expanded": compose.is_expanded(),
         "format_in_more": compose.format_bar().read(cx).in_more_options(),

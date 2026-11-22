@@ -82,6 +82,19 @@ impl Tool {
         }
     }
 
+    /// The selector of its button.
+    fn selector(self) -> &'static str {
+        match self {
+            Self::Format => "compose-format",
+            Self::Emoji => "compose-emoji",
+            Self::Attach => "compose-attach",
+            Self::Loop => "compose-loop",
+            Self::Apps => "compose-apps",
+            Self::Correct => "compose-correct",
+            Self::Translate => "compose-translate",
+        }
+    }
+
     /// The setting that hides it, for a tool that can hide.
     #[must_use]
     pub(crate) fn hides_as(self) -> Option<ComposeTool> {
@@ -172,6 +185,12 @@ impl Compose {
         let mut fit = fit(self.box_at.get().map(|bounds| bounds.size.width), self.rem, &shown);
         fit.hidden = hidden;
         fit
+    }
+
+    /// The selectors of the tools on the box's own row, in order, as it was last drawn.
+    #[must_use]
+    pub fn row_tools(&self, cx: &App) -> Vec<&'static str> {
+        self.fit(cx).row.into_iter().map(Tool::selector).collect()
     }
 
     /// Whether the box was last drawn stacked: the text on top, its tools on a row under it.

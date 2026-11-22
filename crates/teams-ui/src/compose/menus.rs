@@ -223,6 +223,12 @@ impl Compose {
         items
     }
 
+    /// The selectors of the rows `kind` lists now; with `-row`, each row's.
+    #[must_use]
+    pub fn menu_selectors(&self, kind: MenuKind, cx: &App) -> Vec<&'static str> {
+        self.menu_items(kind, cx).into_iter().map(Item::selector).collect()
+    }
+
     fn menu_rows(&self, kind: MenuKind, cx: &App) -> Vec<Row> {
         self.menu_items(kind, cx)
             .into_iter()
