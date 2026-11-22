@@ -33,6 +33,7 @@ const FLOAT: Duration = Duration::from_millis(2_000);
 /// How many frames the made-up strip has: at the app's 24 a second it loops every 2 s, so two looks less than 2 s
 /// apart never meet the same frame.
 const FRAMES: u32 = 48;
+pub(super) const STRIP_FRAMES: u32 = FRAMES;
 
 /// Frame `index`'s colour: a full hue round over the frames, none white or grey (a float shows over the white own
 /// tile too).
@@ -99,6 +100,32 @@ fn emoji_middle(tile: Rect) -> (i32, i32) {
 pub(super) fn strip_frame(shot: &RgbImage, tile: Rect) -> Option<u32> {
     let (x, y) = emoji_middle(tile);
     strip_frame_at(shot, (x, y)).or_else(|| strip_frame_at(shot, (x + emoji_side(tile.h) / 4, y)))
+}
+
+/// The frame of the made-up strip the reaction on `tile` shows at any opacity of 15 % or more: the frame whose colour,
+/// blended over the same px of `before` (the shot before the reaction), gives the px at the emoji's middle.
+pub(super) fn strip_frame_faded(shot: &RgbImage, before: &RgbImage, tile: Rect) -> Option<u32> {
+    let (x, y) = emoji_middle(tile);
+    let (x, y) = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
+    let got = shot.get_pixel_checked(x, y)?.0.map(f64::from);
+    let ground = before.get_pixel_checked(x, y)?.0.map(f64::from);
+    let off = |colour: [f64; 3], weight: f64| {
+        (0..3)
+            .map(|channel| (got[channel] - ground[channel] - weight * (colour[channel] - ground[channel])).abs())
+            .fold(0.0, f64::max)
+    };
+    (0..FRAMES)
+        .filter_map(|index| {
+            let colour = frame_colour(index).map(f64::from);
+            let span: f64 = (0..3).map(|channel| (colour[channel] - ground[channel]).powi(2)).sum();
+            let weight = (0..3)
+                .map(|channel| (got[channel] - ground[channel]) * (colour[channel] - ground[channel]))
+                .sum::<f64>()
+                / span;
+            ((0.15..=1.05).contains(&weight) && off(colour, weight) <= 6.0).then(|| (off(colour, weight), index))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, index)| index)
 }
 
 /// The strip on `tile` has no line along its top edge: its top rows are as the row 3 px above them, as each frame

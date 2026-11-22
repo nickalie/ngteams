@@ -24,7 +24,9 @@ use ui_sandbox::SandboxResult;
 
 use super::pixels::Rect;
 use super::qa_order::{PEOPLE, Page, Seen, gallery, qa_call, speak};
-use super::qa_reactions::{Look, check_window_shots, no_top_line, react, strip_png, watch};
+use super::qa_reactions::{
+    Look, STRIP_FRAMES, check_window_shots, no_top_line, react, strip_frame_faded, strip_png, watch,
+};
 use super::{Rig, SETTLE, View, save_shot, say};
 
 /// How many frames Teams' 3D emoji have, at 24 a second: 4.25 s.
@@ -282,9 +284,9 @@ impl Watched {
     }
 }
 
-/// `act` sent and the tile watched for `length`; sent again, at most three times in all, while `enough` does not hold
-/// (a busy machine's shots are slow). Each try starts its looks 0.5 s later than the one before, so that slow shots
-/// of the tries see different frames.
+/// `act` sent and the tile watched for `length`; sent again, at most five times in all, while `enough` does not hold
+/// (a busy machine's shots are slow). Each try starts its looks 0.3 s later than the one before, so that slow shots
+/// of the tries see different frames (the fade's frames show for less time than one slow shot takes).
 fn watch_3d(
     rig: &mut Rig<'_>,
     (tile, length): (Rect, Duration),
@@ -299,11 +301,11 @@ fn watch_3d(
         seen: Vec::new(),
         plays: Vec::new(),
     };
-    for attempt in 0..3 {
+    for attempt in 0..5 {
         if attempt > 0 {
             thread::sleep(SETTLE);
         }
-        let later = Duration::from_millis(500) * attempt;
+        let later = Duration::from_millis(300) * attempt;
         let (_, looks) = watch(rig, tile, length, |rig| {
             act(rig)?;
             thread::sleep(later);
@@ -329,7 +331,8 @@ fn watch_3d(
 /// The looks caught the start, the middle and the end of the play.
 fn start_middle_end(seen: &[Seen3d]) -> bool {
     let caught = |from: u32, to: u32| seen.iter().any(|seen| (from..=to).contains(&seen.frame));
-    caught(16, 40) && caught(41, 70) && caught(71, 101)
+    // the end is the fade after the last frame at full opacity (83), so a play that stops early fails
+    caught(16, 40) && caught(41, 70) && caught(84, 101)
 }
 
 /// The reaction `code` played once in each play: in order, at about 24 frames a second; the plays together show
@@ -368,18 +371,22 @@ fn played_once(plays: &[Vec<Seen3d>], code: u32, case: &str) -> SandboxResult {
     Ok(())
 }
 
-/// Each frame was due within its look: 24 a second from the reaction's start, which came at most 1 s after `sent`.
+/// The frames of one play came at 24 a second from one start, which came at most 1 s after `sent`: each look
+/// limits the start to a window (its frame ± 3, due within its shot), and the windows of all looks overlap.
 fn on_time(seen: &[Seen3d], sent: Duration, case: &str) -> SandboxResult {
+    let sent = sent.as_secs_f64();
+    let (mut earliest, mut latest) = (sent, sent + 1.0);
     for seen in seen {
-        let latest = seen.until.saturating_sub(sent).as_secs_f64() * FPS + 3.0;
-        let earliest = (seen.at.saturating_sub(sent).as_secs_f64() - 1.0) * FPS - 3.0;
-        if f64::from(seen.frame) > latest || f64::from(seen.frame) < earliest {
-            return Err(format!(
-                "{case}: frame {} showed in the look {:?}-{:?}: not 24 frames a second from the start",
-                seen.frame, seen.at, seen.until
-            )
-            .into());
-        }
+        let frame = f64::from(seen.frame);
+        earliest = earliest.max(seen.at.as_secs_f64() - (frame + 3.0) / FPS);
+        latest = latest.min(seen.until.as_secs_f64() - (frame - 3.0) / FPS);
+    }
+    if earliest > latest {
+        return Err(format!(
+            "{case}: the frames do not come at 24 a second from one start within 1 s of the sending: {}",
+            listed(seen)
+        )
+        .into());
     }
     Ok(())
 }
@@ -718,7 +725,7 @@ fn slow(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
     let case = "a 3D emoji the CDN gives 2.2 s late";
     let area = expected_area(tile);
     // one try only: the app keeps the emoji once read, so a second try is not slow
-    let (_, looks) = watch(rig, tile, Duration::from_millis(6_800), |rig| {
+    let (before, looks) = watch(rig, tile, Duration::from_millis(6_800), |rig| {
         react(rig, person, "clap")
     })?;
     let seen = codes(&looks, area);
@@ -751,6 +758,18 @@ fn slow(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
     }
     let strip = strip.ok_or_else(|| format!("{case}: no look before the 3D emoji came shows the strip on the tile"))?;
     no_top_line(&strip.shot, tile, case)?;
+    let strip_frames: Vec<u32> = looks[..first_3d]
+        .iter()
+        .filter_map(|look| strip_frame_faded(&look.shot, &before, tile))
+        .collect();
+    say(&format!("qa696 {case}: strip frames {strip_frames:?}"));
+    // 3 frames or more apart: a faint look of one frame can read a frame next to it
+    let apart = |a: u32, b: u32| a.abs_diff(b).min(STRIP_FRAMES - a.abs_diff(b)) >= 3;
+    if !strip_frames.iter().any(|a| strip_frames.iter().any(|b| apart(*a, *b))) {
+        return Err(
+            format!("{case}: the strip does not play before the 3D emoji came: frames {strip_frames:?}").into(),
+        );
+    }
     let first = seen
         .first()
         .ok_or_else(|| format!("{case}: the 3D emoji never shows after it came"))?;
