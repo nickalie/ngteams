@@ -145,8 +145,10 @@ impl Compose {
     /// taken now.
     fn flyout_actions(&self, rows: &[Row], window: &Window, cx: &App) -> Vec<FlyoutAction> {
         let text = self.editor.read(cx).focus.clone();
+        let befores = std::iter::once(None).chain(rows.iter().map(|row| Some(row.item)));
         rows.iter()
-            .map(|row| FlyoutAction {
+            .zip(befores)
+            .map(|(row, before)| FlyoutAction {
                 selector: format!("{}-row", row.item.selector()).into(),
                 label: row.label.clone(),
                 glyph: row.item.glyph(),
@@ -155,6 +157,7 @@ impl Compose {
                     .action()
                     .and_then(|action| Kbd::binding_for_action_in(action, &text, window)),
                 disabled: row.disabled,
+                apart: super::menus::apart(before, row.item),
             })
             .collect()
     }

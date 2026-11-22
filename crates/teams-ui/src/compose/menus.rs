@@ -144,6 +144,12 @@ impl Item {
     }
 }
 
+/// Whether a line goes above `item`, after `before`: Customize, and the AI tools' rows, stand apart from the rows
+/// before them.
+pub(super) fn apart(before: Option<Item>, item: Item) -> bool {
+    before.is_some_and(|before| item == Item::Customize || before.uses_ai() != item.uses_ai())
+}
+
 /// A tool's actions as menu rows; `apps`: whether "+" offers apps, so that its row in More opens them.
 fn items_of(tool: Tool, apps: bool) -> Vec<Item> {
     match tool {
@@ -308,11 +314,8 @@ impl Compose {
                 .fold(menu.min_w(px(260.0)).action_context(text.clone()), |menu, row| {
                     let compose = compose.clone();
                     let item = row.item;
-                    // Customize, and the AI tools' rows, stand apart from the rows before them
-                    let apart =
-                        before.is_some_and(|before| item == Item::Customize || before.uses_ai() != item.uses_ai());
+                    let menu = if apart(before, item) { menu.separator() } else { menu };
                     before = Some(item);
-                    let menu = if apart { menu.separator() } else { menu };
                     menu.item(menu_row(row, &text, window).on_click(move |_, window, cx| {
                         let _ = compose.update(cx, |this, cx| this.take(item, window, cx));
                     }))

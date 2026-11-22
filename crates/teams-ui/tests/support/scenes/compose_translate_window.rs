@@ -266,7 +266,7 @@ fn open(theme: &'static str, surface: String, cx: &mut App) -> gpui::Result<()> 
             ..Appearance::default()
         },
         selected_chat: Some(AB.to_owned()),
-        message_translate_to: "German".to_owned(),
+        draft_translate_to: "German".to_owned(),
         ..Settings::default()
     };
     // both tools "installed" at paths nothing runs: the made-up translator answers in their place

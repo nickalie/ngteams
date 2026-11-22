@@ -105,6 +105,7 @@ fn the_plus_lists_the_apps_for_the_box_and_its_search_and_keys_work() {
     // Enter chooses the row Up and Down stand on; Escape goes back, then closes
     rig.core.bot_answers.lock().unwrap().push_back(Ok(results()));
     click(cx, "compose-apps");
+    down_past_the_actions(&view, cx);
     cx.simulate_keystrokes("down up enter");
     cx.run_until_parked();
     assert!(found(cx, "apps-flyout-pane-name"));
@@ -138,20 +139,21 @@ fn inside(cx: &mut VisualTestContext, selector: &str, list: &str) -> bool {
 fn the_lit_row_of_a_long_flyout_stays_in_view() {
     let rig = apps_rig(true);
     let extra: Vec<String> = (1..=12).map(|n| more_finder(&rig, n)).collect();
-    let (_view, cx) = window(&rig);
+    let (view, cx) = window(&rig);
     click(cx, "compose-apps");
+    let rows = flyout_labels(&view, cx).len() + 1 + extra.len();
     let row = |id: &str| format!("apps-flyout-app-{id}");
     let last = row(extra.last().expect("an extra app"));
     assert!(
         !inside(cx, &last, "apps-flyout-list"),
         "the list is longer than its view"
     );
-    for _ in 0..14 {
+    for _ in 0..rows {
         cx.simulate_keystrokes("down");
     }
     assert!(inside(cx, &last, "apps-flyout-list"), "Down keeps the lit row in view");
     assert!(!inside(cx, &row(FINDER), "apps-flyout-list"), "the list scrolled");
-    for _ in 0..14 {
+    for _ in 0..rows {
         cx.simulate_keystrokes("up");
     }
     assert!(
@@ -551,6 +553,21 @@ fn hiding(view: &Entity<ChatView>, cx: &mut VisualTestContext, tool: teams_ui::s
     });
 }
 
+fn flyout_apart(view: &Entity<ChatView>, cx: &mut VisualTestContext) -> Vec<bool> {
+    view.read_with(cx, |view, cx| {
+        let compose = view.compose().read(cx);
+        let flyout = compose.apps_flyout().expect("the flyout is open").read(cx);
+        flyout.actions().iter().map(|action| action.apart).collect()
+    })
+}
+
+/// The hidden tools' actions come first: Down past them, onto the first app.
+fn down_past_the_actions(view: &Entity<ChatView>, cx: &mut VisualTestContext) {
+    for _ in 0..flyout_labels(view, cx).len() {
+        cx.simulate_keystrokes("down");
+    }
+}
+
 fn flyout_labels(view: &Entity<ChatView>, cx: &mut VisualTestContext) -> Vec<String> {
     view.read_with(cx, |view, cx| {
         let compose = view.compose().read(cx);
@@ -567,13 +584,15 @@ fn a_hidden_action_in_the_flyout_shows_its_key_follows_the_box_and_gives_the_key
     click(cx, "compose-apps");
     assert!(found(cx, "compose-format-row"));
     assert!(found(cx, "compose-format-row-key"), "the row shows its key");
-    assert_eq!(flyout_labels(&view, cx), ["Show formatting options"]);
+    assert_eq!(flyout_labels(&view, cx)[0], "Show formatting options");
+    // the AI tools' rows stand apart from the Teams action before them
+    assert_eq!(flyout_apart(&view, cx), [false, true, false, false]);
     // the box's state changes while the flyout is open: the row says what its click does now
     let compose = view.read_with(cx, |view, _| view.compose().clone());
     cx.update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_expanded(window, cx)));
     draw(cx);
     assert!(found(cx, "apps-flyout"));
-    assert_eq!(flyout_labels(&view, cx), ["Hide formatting options"]);
+    assert_eq!(flyout_labels(&view, cx)[0], "Hide formatting options");
     // the row taken: the flyout closes and the keyboard is in the text again
     click(cx, "compose-format-row");
     assert!(!found(cx, "apps-flyout"));

@@ -89,6 +89,8 @@ pub struct FlyoutAction {
     pub key: Option<Kbd>,
     /// It cannot be taken now.
     pub disabled: bool,
+    /// A line above it: it starts a group apart from the actions before it.
+    pub apart: bool,
 }
 
 /// A search's results, as they stand.
@@ -603,7 +605,7 @@ impl AppsFlyout {
         )
     }
 
-    /// The box's actions' rows, a line under the last, as Teams draws its own over the apps. Each is one child of the
+    /// The box's actions' rows, a line over each that starts a group and under the last, as Teams draws its own over the apps. Each is one child of the
     /// list, so that the row Up and Down light is the child the list scrolls to.
     fn action_rows(&self, palette: Palette, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let actions = self.shown_actions(cx).to_vec();
@@ -613,6 +615,9 @@ impl AppsFlyout {
             .enumerate()
             .map(|(at, action)| {
                 div()
+                    .when(action.apart, |row| {
+                        row.pt_1().mt_1().border_t_1().border_color(rgb(palette.border))
+                    })
                     .when(at == last, |row| {
                         row.pb_1().mb_1().border_b_1().border_color(rgb(palette.border))
                     })
