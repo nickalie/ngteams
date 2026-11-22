@@ -238,8 +238,9 @@ impl Page {
         });
     }
 
-    /// Closes the reply channel of each evaluation still open, since `WebKit` completes none after the engine's stop.
-    pub(crate) fn abandon_evaluations(&self) {
+    /// Closes the reply channel of each evaluation still open: a closed page answers none, and after the engine's
+    /// stop `WebKit` completes none.
+    fn abandon_evaluations(&self) {
         for reply in self
             .evaluations
             .take()
@@ -253,6 +254,7 @@ impl Page {
     /// Ends the page: no more events, its handlers and load go, its view stops sending frames.
     pub(crate) fn close(&self) {
         self.closed.set(true);
+        self.abandon_evaluations();
         for handler in &self.handlers {
             self.content.unregister_handler(&handler.name, handler.world.as_deref());
         }

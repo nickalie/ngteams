@@ -12,9 +12,9 @@
 //! - [`Host::start`] spawns the engine thread with its own `GMainContext` (thread-default before any `WebKit` object
 //!   exists) and a display that renders on the consumer's render node with the formats it imports ([`HostConfig`],
 //!   [`FrameMode`]). One in-process engine per process: `WebKit` binds its main run loop to the first thread that uses
-//!   it, and that thread never ends (a shutdown closes everything and leaves it parked, its main loop stopped; the process then ends through
-//!   [`exit_process`], since `WebKit`'s exit handlers must not run off its main thread). A worker engine
-//!   ([`Host::start_worker`]) is a process of its own, so a process may start one after another.
+//!   it, and that thread never ends (a shutdown closes everything and leaves it parked, its main loop stopped; the
+//!   process then ends through [`exit_process`], since `WebKit`'s exit handlers must not run off its main thread). A
+//!   worker engine ([`Host::start_worker`]) is a process of its own, so a process may start one after another.
 //! - Commands go in through [`Host`]'s methods; everything else comes out as [`Event`]s on one channel: frames, load
 //!   progress, what a page shows, and the questions `WebKit` asks (navigation and response policy, script messages,
 //!   reads of the consumer's URI schemes), each held open until the consumer answers it by token.

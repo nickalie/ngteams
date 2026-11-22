@@ -119,9 +119,9 @@ enum Engine {
 /// process or in a worker process ([`Backend`]).
 ///
 /// One in-process engine per process (a worker engine is a process of its own). Dropping it shuts the engine down, as
-/// [`Host::shutdown`] does. In process, the thread itself lives on, parked with its main loop stopped, until the process ends, since it is `WebKit`'s main thread, which must never end (its thread-local
-/// teardown waits forever on the run loop it tears down); the process then ends through [`exit_process`]. A worker
-/// ends with its engine.
+/// [`Host::shutdown`] does. In process, the thread itself lives on, parked with its main loop stopped, until the
+/// process ends, since it is `WebKit`'s main thread, which must never end (its thread-local teardown waits forever on
+/// the run loop it tears down); the process then ends through [`exit_process`]. A worker ends with its engine.
 ///
 /// `Send` and `Sync`: every method posts a command, so a renderer thread may report a frame presented.
 #[derive(Debug)]

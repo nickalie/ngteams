@@ -121,7 +121,18 @@ fn child(backend: Backend, frames: FrameMode) -> Result {
     scenarios::run(&mut engine)?;
     assert_eq!(engine.frames.values().any(|frame| frame.dma), expects_dma);
     assert!(engine.frames.values().any(|frame| frame.shm));
+    let spinning = if backend == Backend::InProcess {
+        Some(scenarios::spinning(&mut engine)?)
+    } else {
+        None
+    };
     engine.shutdown();
+    if let Some(pending) = spinning {
+        assert!(
+            matches!(pending.try_recv(), Err(async_channel::TryRecvError::Closed)),
+            "an evaluation pending at the shutdown is left open"
+        );
+    }
     if backend == Backend::Worker {
         let config = scenarios::with_extensions(config, &engine.root)?;
         let mut next = pump::Engine::start(config, backend, engine.root.clone())?;

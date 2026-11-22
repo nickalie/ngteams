@@ -78,10 +78,10 @@ fn send(events: &Sender<Event>, event: Event) {
 ///
 /// The thread then lives on, parked, for the life of the process: it is `WebKit`'s main thread, whose thread-local
 /// teardown waits forever on the run loop it tears down, so it must never end. Its main loop does not run again
-/// (only the sources already picked for the stop's iteration still dispatch): a web process `WebKit` was still launching when the stop ended it ([`spares`]) has not yet sent its credentials
-/// through the bubblewrap launcher's socket, and the launcher's watch on that socket, dispatched, aborts the whole
-/// process (`g_error` in `IPC::Connection::remoteProcessID`, `Source/WebKit/Platform/IPC/glib/ConnectionGLib.cpp` at
-/// `wpewebkit-2.54`).
+/// (only the sources already picked for the stop's iteration still dispatch): a web process `WebKit` was still
+/// launching when the stop ended it ([`spares`]) has not yet sent its credentials through the bubblewrap launcher's
+/// socket, and the launcher's watch on that socket, dispatched, aborts the whole process (`g_error` in
+/// `IPC::Connection::remoteProcessID`, `Source/WebKit/Platform/IPC/glib/ConnectionGLib.cpp` at `wpewebkit-2.54`).
 pub(crate) fn run(
     config: &HostConfig,
     commands: Receiver<Command>,
@@ -189,13 +189,12 @@ fn apply(command: Command) {
 
 /// Closes every page, ends its web process ([`Page::end_web_process`]) and the ones `WebKit` keeps with no page
 /// (module `spares`), and drops the engine; the main loop stops right after ([`serve`]), so `WebKit` completes nothing
-/// that is still open, and each pending evaluation's channel is closed here instead.
+/// that is still open, and closing each page closes its pending evaluations' channels instead.
 fn stop() {
     let pages = with(|engine| engine.pages.values().cloned().collect::<Vec<_>>()).unwrap_or_default();
     for page in pages {
         close_view(page.id);
         page.end_web_process();
-        page.abandon_evaluations();
     }
     spares::end();
     let engine = ENGINE.with(RefCell::take);

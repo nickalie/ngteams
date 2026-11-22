@@ -125,6 +125,17 @@ pub(super) fn restart(engine: &mut Engine) -> Result {
     Ok(())
 }
 
+/// An evaluation that never ends, already in `WebKit` (the engine made a page after it), on a page left open for
+/// the shutdown to close.
+pub(super) fn spinning(engine: &mut Engine) -> Result<async_channel::Receiver<teams_wpe::Evaluation>> {
+    let session = engine.host.create_session(SessionSpec::Ephemeral);
+    let view = create(engine, spec(session))?;
+    engine.load(view, teams_wpe::Load::Uri(page::TWO.into()))?;
+    let pending = engine.host.evaluate(view, "for(;;){}".to_owned(), None);
+    create(engine, spec(session))?;
+    Ok(pending)
+}
+
 pub(super) fn with_extensions(mut config: HostConfig, root: &std::path::Path) -> Result<HostConfig> {
     let directory = root.join("extensions");
     std::fs::create_dir_all(&directory)?;
