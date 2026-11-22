@@ -15,9 +15,9 @@
 //! - **A Nix install** ([`teams_update::NixInstall`]): the check runs as for any release, but nothing is downloaded.
 //!   The button says Update available, its tooltip gives the command that updates this kind of Nix install, and its
 //!   press copies that command ([`teams_ui::update::UpdateStatus::Manual`]).
-//! - **The press** (Restart to update, once the download is verified): unless a call is up or ringing or a box holds a
-//!   message not sent yet ([`teams_ui::update::Waiting`]), the update is installed and the app restarts; else the
-//!   press says what holds it up. Only a system package asks for a password, at the press: a per-user copy replaces
+//! - **The press** (Restart to update, once the download is verified): unless a call is up or ringing, a box holds a
+//!   message not sent yet, or a channel file is still uploading or being removed ([`teams_ui::update::Waiting`]), the
+//!   update is installed and the app restarts; else the press says what holds it up. Only a system package asks for a password, at the press: a per-user copy replaces
 //!   its own files. A closed password prompt keeps the download and returns to Restart to update. A failed rollback
 //!   keeps the previous installation in the stage named by the error.
 //! - **The restart**: once the update is in, the app quits as it always does, every engine shut down first (the
@@ -375,7 +375,8 @@ fn failed(shown: &SharedString, error: &Error, cx: &mut App) {
 /// The arguments' environment a restart into an update clears: an AppImage's runtime sets them again.
 pub const APPIMAGE_ENV: [&str; 4] = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"];
 
-/// What holds a restart up in `desktop`'s window: its calls, its unsent messages.
+/// What holds a restart up in `desktop`'s window: its calls, its unsent messages, its channel files still uploading or
+/// being removed.
 #[must_use]
 pub fn holds(desktop: gpui::WeakEntity<teams_ui::Desktop>) -> Holds {
     Rc::new(move |cx: &App| {

@@ -7,7 +7,8 @@
 //!
 //! - **Downloading update… n%**, **Installing update…**: a spinner, no press.
 //! - **Restart to update** (downloaded and verified): the press installs and restarts, unless something holds the
-//!   restart up (a call, or a message not sent yet, [`Waiting`]): then it says what does.
+//!   restart up (a call, a message not sent yet, or a channel file still uploading or being removed, [`Waiting`]):
+//!   then it says what does.
 //! - **Update failed**: why in its tooltip; the press tries again, as the next check does.
 //! - **Update available** (a copy that only Nix updates): the tooltip gives the command that updates it, and the press
 //!   copies that command.

@@ -777,3 +777,69 @@ fn an_updates_restart_waits_for_an_unsent_message_and_for_a_call() {
     d.close(window);
     assert_eq!(waiting(&d), Some(Waiting::Call));
 }
+
+/// A channel file still on its way to the recycle bin holds an update's restart up (`Waiting::Files`), after a message
+/// not sent yet, until its recycle ends.
+#[test]
+fn an_updates_restart_waits_for_a_channel_files_recycle_after_an_unsent_message() {
+    use teams_ui::editor::doc::{Block, Doc};
+    use teams_ui::update::Waiting;
+    let d = OnDesktop::start();
+    *d.rig.core.hold_discards.lock().unwrap() = true;
+    let waiting = |d: &OnDesktop| d.rig.cx.read(|cx| d.desktop.read(cx).update_waiting(cx));
+    d.rig.cx.update(|cx| {
+        d.desktop
+            .update(cx, |desktop, cx| desktop.open_channel(CHANNEL.to_owned(), cx));
+    });
+    d.rig.cx.run_until_parked();
+    let window = d.window().unwrap();
+    let compose = d.rig.cx.update(|cx| {
+        let root = window::content(window, cx).unwrap();
+        let shell = root.read(cx).shell().unwrap().clone();
+        let channel = shell.read(cx).channel().unwrap().clone();
+        let posts = channel.read(cx).posts().clone();
+        posts.read(cx).compose().clone()
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("made-up notes.txt");
+    std::fs::write(&file, "synthetic").unwrap();
+    d.rig
+        .cx
+        .update(|cx| {
+            window.update(cx, |_, window, cx| {
+                compose.update(cx, |compose, cx| {
+                    compose.attach_files(std::slice::from_ref(&file), window, cx);
+                });
+            })
+        })
+        .unwrap();
+    d.rig.cx.run_until_parked();
+    d.rig
+        .cx
+        .update(|cx| {
+            window.update(cx, |_, window, cx| {
+                compose.update(cx, |compose, cx| compose.discard(window, cx))
+            })
+        })
+        .unwrap();
+    d.rig.cx.run_until_parked();
+    assert_eq!(waiting(&d), Some(Waiting::Files), "the discarded file's recycle");
+    let draft = |text: Option<&str>| {
+        d.rig.cx.update(|cx| {
+            let editor = compose.read(cx).editor().clone();
+            let doc = text.map_or_else(Doc::default, |text| Doc::new(vec![Block::paragraph(text)]));
+            editor.update(cx, |editor, cx| editor.set_doc(doc, cx));
+        });
+    };
+    draft(Some("Made-up post"));
+    assert_eq!(waiting(&d), Some(Waiting::Unsent), "an unsent message first");
+    draft(None);
+    assert_eq!(waiting(&d), Some(Waiting::Files));
+    let held: Vec<_> = d.rig.core.held_discards.lock().unwrap().drain(..).collect();
+    assert_eq!(held.len(), 1);
+    for answer in held {
+        answer.send(Ok(()));
+    }
+    d.rig.cx.run_until_parked();
+    assert_eq!(waiting(&d), None, "the recycle ended");
+}
