@@ -28,6 +28,7 @@ use super::doc::Kind;
 use super::{Bold, BulletList, Editor, Italic, NumberedList, Quote, Strikethrough, Underline};
 use crate::chat_view::measured;
 use crate::icons::{Glyph, icon_button, icon_button_with_key, selected_by};
+use crate::keyboard;
 use crate::rich_text;
 use crate::theme::{self, Palette};
 
@@ -280,6 +281,8 @@ pub struct FormatBar {
     drawn_at: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// How many of [`TOOLS`] the bar kept as it was last drawn; the others are in its More options.
     kept: usize,
+    /// Its tools and More options: one stop of Tab, as Teams' bar is; Discard is a stop of its own.
+    row: keyboard::Row,
     _editor: Subscription,
 }
 
@@ -297,8 +300,15 @@ impl FormatBar {
             discard: true,
             drawn_at: Rc::default(),
             kept: TOOLS.len(),
+            row: keyboard::Row::new(cx),
             _editor: observing,
         }
+    }
+
+    /// Its row of tools, which Tab passes as one stop.
+    #[must_use]
+    pub fn row(&self) -> &keyboard::Row {
+        &self.row
     }
 
     /// It without Discard.
@@ -956,10 +966,14 @@ impl Render for FormatBar {
             .flex()
             .items_center()
             .gap(px(GAP))
-            .children(self.kept_tools(palette, cx))
-            .child(self.more_button(cx))
+            .child(
+                self.row
+                    .wrap(div().flex().items_center().gap(px(GAP)))
+                    .children(self.kept_tools(palette, cx))
+                    .child(self.more_button(cx)),
+            )
             .child(div().flex_1())
-            .children(discard)
+            .children(discard.map(|discard| self.row.after(div().flex()).child(discard)))
             .child(measured(&self.drawn_at))
             .children(self.popover(palette, cx))
             .when(read_only, |bar| bar.opacity(0.5))

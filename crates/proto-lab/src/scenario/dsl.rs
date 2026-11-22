@@ -204,6 +204,22 @@ impl Key {
         text: Some(" "),
         modifiers: 0,
     };
+    /// Tab: moves the focus to the next control.
+    pub const TAB: Self = Self {
+        key: "Tab",
+        code: "Tab",
+        virtual_key: 9,
+        text: None,
+        modifiers: 0,
+    };
+    /// Shift+Tab: moves the focus to the previous control.
+    pub const SHIFT_TAB: Self = Self {
+        key: "Tab",
+        code: "Tab",
+        virtual_key: 9,
+        text: None,
+        modifiers: 8,
+    };
     /// Ctrl+A: selects everything in the focused editor.
     pub const SELECT_ALL: Self = Self {
         key: "a",

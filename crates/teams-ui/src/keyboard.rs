@@ -11,6 +11,8 @@
 //! - [`submenu_escape`]: Escape in one of the kit's submenus closes that submenu alone and gives the keyboard back to
 //!   the menu it opened from, as Teams' menus do (the kit closes every level at once).
 //!
+//! - [`row`]: a row of controls that Tab passes as one stop, as Teams' toolbars are; arrows move inside it.
+//!
 //! Tab and Shift+Tab are the kit's root's ([`gpui_component::Root`]): a dialog traps them with the kit's `focus_trap`.
 
 use std::cell::RefCell;
@@ -24,6 +26,10 @@ use gpui::{
 };
 
 use crate::theme::Palette;
+
+pub mod row;
+
+pub use row::Row;
 
 /// How a stop shows that the keyboard is on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

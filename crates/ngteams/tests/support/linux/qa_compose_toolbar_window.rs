@@ -14,6 +14,7 @@
 //! - **Every box**: a channel post, a thread reply, New message, edit mode, the call's Chat pane, a narrow window, a
 //!   large font, Teams Dark.
 //! - **"Use AI features"** off and on again.
+//! - **Tab and Shift+Tab** (task 721, [`qa721`]): between each box's text and its controls, a staged file too.
 //! - **A restart**: a second run of the app over the same settings file keeps the hidden buttons.
 //!
 //! `QA584_ONLY` (a comma list of check names) runs only those. `QA584_EVIDENCE` names a directory that gets the
@@ -183,7 +184,7 @@ fn wanted(name: &str) -> bool {
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
 /// The first run of the app: a new settings file, the AI features on.
-const FIRST: [Check; 23] = [
+const FIRST: [Check; 25] = [
     ("bar_and_ai_in_plus", bar_and_ai_in_plus),
     ("ai_rows_act", ai_rows_act),
     ("ai_keys_and_language", ai_keys_and_language),
@@ -206,6 +207,8 @@ const FIRST: [Check; 23] = [
     qa700::FIRST[4],
     qa700::FIRST[5],
     qa700::FIRST[6],
+    qa721::FIRST[0],
+    qa721::FIRST[1],
     ("hide_for_restart", hide_for_restart),
 ];
 
@@ -218,6 +221,9 @@ const RESTART: [Check; 3] = [
 
 #[path = "qa_compose_toolbar_qa700.rs"]
 mod qa700;
+
+#[path = "qa_compose_toolbar_qa721.rs"]
+mod qa721;
 
 #[derive(Default)]
 struct Tally {
@@ -2171,6 +2177,8 @@ fn on_shell_with(shell: &Entity<Shell>, other: &str, window: &mut Window, cx: &m
         "ok".to_owned()
     } else if let Some(reply) = qa700::on_verb(shell, other, window, cx) {
         reply
+    } else if let Some(reply) = qa721::on_verb(shell, other, window, cx) {
+        reply
     } else {
         format!("unknown {other}")
     }
@@ -2334,6 +2342,7 @@ fn box_state(compose: &Entity<Compose>, window: &Window, cx: &App) -> Value {
         "text": compose.value(cx).to_string(),
         "mode": mode,
         "focused": compose.focused(window, cx),
+        "tools_focused": compose.tools_focused(window, cx),
         "stacked": compose.is_stacked(cx),
         "narrow": compose.is_narrow(),
         "more_open": compose.more_open(),

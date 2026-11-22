@@ -1,8 +1,9 @@
 //! The message box's toolbar, less crowded, on GPUI's test context over the fake engine (`common`): no AI button; the
 //! AI tools (Correct, Translate and its language) are rows of "+" until the user shows them, and buttons the user
 //! shows or hides, by a right click on the toolbar or "Customize toolbar" in "+", or in Settings. A hidden button's
-//! action stays in "+", with its key. Send and "+" cannot hide. With the AI features off, nothing of AI shows. Every
-//! id, name and text is made up.
+//! action stays in "+", with its key. Send and "+" cannot hide. With the AI features off, nothing of AI shows. The
+//! keys move as in Teams: the text, a staged file's buttons, the tools as one stop of Tab (Left and Right between
+//! them), then Send; expanded, the format bar and Discard come before the text. Every id, name and text is made up.
 
 #![cfg(test)]
 
@@ -14,7 +15,7 @@ mod parts;
 use std::sync::Arc;
 
 use common::Rig;
-use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, px, size};
+use gpui::{AppContext as _, Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, px, size};
 use teams_ui::ViewTrace;
 use teams_ui::chat_view::ChatView;
 use teams_ui::compose::{Compose, MenuKind, Writes};
@@ -612,4 +613,266 @@ fn a_very_narrow_box_puts_the_hidden_actions_in_more_options() {
     cx.simulate_keystrokes("up enter");
     draw(cx);
     assert!(compose.read_with(cx, |compose, _| compose.customize_open()));
+}
+
+/// The a–b chat in a window `width` px wide under the kit's root, which moves the focus on Tab and Shift+Tab; its box
+/// focused.
+fn rooted_chat(rig: &Rig, width: f32) -> (Entity<Compose>, &'static mut VisualTestContext) {
+    rig.cx.update(teams_ui::window::init);
+    rig.cx.update(teams_ui::chat_view::init);
+    let parts = parts::parts(rig, Settings::default(), Arc::new(ViewTrace::off()));
+    let app: &'static mut TestAppContext = Box::leak(Box::new(rig.cx.clone()));
+    let (root, cx) = app.add_window_view(|window, cx| {
+        let view = cx.new(|cx| ChatView::new(parts, AB.to_owned(), window, cx));
+        teams_ui::window::KitRoot::new(view, window, cx)
+    });
+    let view = cx.update(|_, cx| root.read(cx).view().clone().downcast::<ChatView>().unwrap());
+    cx.simulate_resize(size(px(width), px(640.0)));
+    draw(cx);
+    let compose = view.read_with(cx, |view, _| view.compose().clone());
+    focus_box(&compose, cx);
+    (compose, cx)
+}
+
+fn focus_box(compose: &Entity<Compose>, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.focus(window, cx)));
+    draw(cx);
+}
+
+fn box_focused(compose: &Entity<Compose>, cx: &mut VisualTestContext) -> bool {
+    cx.update(|window, cx| compose.read(cx).focused(window, cx))
+}
+
+fn tools_focused(compose: &Entity<Compose>, cx: &mut VisualTestContext) -> bool {
+    cx.update(|window, cx| compose.read(cx).tools_focused(window, cx))
+}
+
+fn focused(cx: &mut VisualTestContext) -> gpui::FocusHandle {
+    cx.update(|window, cx| window.focused(cx))
+        .expect("something has the keys")
+}
+
+fn press(cx: &mut VisualTestContext, key: &str) {
+    cx.simulate_keystrokes(key);
+    draw(cx);
+}
+
+/// The stops `key` passes from the box until it is in the box again, the box last; at most `limit`.
+fn round_by(key: &str, compose: &Entity<Compose>, cx: &mut VisualTestContext, limit: usize) -> Vec<gpui::FocusHandle> {
+    let mut stops = Vec::new();
+    for _ in 0..limit {
+        press(cx, key);
+        stops.push(focused(cx));
+        if box_focused(compose, cx) {
+            break;
+        }
+    }
+    stops
+}
+
+/// Each box the app draws: a chat's, a channel's post, a thread's reply, and a stacked one in a narrow window.
+fn each_box(test: impl Fn(&Entity<Compose>, &mut VisualTestContext, &str)) {
+    for (width, writes) in [
+        (900.0, None),
+        (900.0, Some(Writes::Channel)),
+        (900.0, Some(Writes::Thread)),
+        (360.0, None),
+    ] {
+        let rig = Rig::start();
+        let (compose, cx) = rooted_chat(&rig, width);
+        if let Some(writes) = writes {
+            compose.update(cx, |compose, cx| {
+                compose.in_channel(writes, "Message in A made-up channel", cx);
+            });
+            draw(cx);
+            focus_box(&compose, cx);
+        }
+        let stacked = compose.read_with(cx, Compose::is_stacked);
+        assert_eq!(stacked, width < 900.0, "{width} px");
+        test(&compose, cx, &format!("{writes:?} at {width} px"));
+    }
+}
+
+#[test]
+fn shift_tab_from_the_tools_gives_the_box_the_keys_back() {
+    each_box(|compose, cx, which| {
+        type_in(compose, cx, "a draft");
+        press(cx, "tab");
+        assert!(
+            tools_focused(compose, cx),
+            "{which}: Tab goes from the text to the tools"
+        );
+        press(cx, "shift-tab");
+        assert!(box_focused(compose, cx), "{which}: Shift+Tab comes back to the text");
+        assert_eq!(
+            compose.read_with(cx, |compose, cx| compose.value(cx).to_string()),
+            "a draft",
+            "{which}"
+        );
+    });
+}
+
+#[test]
+fn tab_and_shift_tab_go_round_the_same_stops_the_other_way() {
+    each_box(|compose, cx, which| {
+        // a draft lights Send: greyed, it is no stop
+        type_in(compose, cx, "a draft");
+        let start = focused(cx);
+        let ahead = round_by("tab", compose, cx, 200);
+        assert_eq!(ahead.last(), Some(&start), "{which}: Tab comes round to the text again");
+        let back = round_by("shift-tab", compose, cx, 200);
+        assert_eq!(
+            back.last(),
+            Some(&start),
+            "{which}: Shift+Tab comes round to the text again"
+        );
+        let mut reversed = ahead[..ahead.len() - 1].to_vec();
+        reversed.reverse();
+        assert_eq!(
+            &back[..back.len() - 1],
+            &reversed[..],
+            "{which}: the same stops, the other way"
+        );
+    });
+}
+
+#[test]
+fn the_tools_are_one_stop_and_the_arrows_move_between_them() {
+    each_box(|compose, cx, which| {
+        type_in(compose, cx, "a draft");
+        press(cx, "tab");
+        let first = focused(cx);
+        assert!(tools_focused(compose, cx), "{which}");
+        // Left at the first tool stays
+        press(cx, "left");
+        assert_eq!(focused(cx), first, "{which}: Left stops at the first tool");
+        // Tab passes the other tools: one Tab to Send, and Shift+Tab back to the same tool
+        press(cx, "tab");
+        assert!(
+            !tools_focused(compose, cx) && !box_focused(compose, cx),
+            "{which}: Send"
+        );
+        let send = focused(cx);
+        press(cx, "shift-tab");
+        assert_eq!(
+            focused(cx),
+            first,
+            "{which}: Shift+Tab from Send to the tool the keys were on"
+        );
+        // Right moves; the tools keep the one the keys were last on
+        press(cx, "right");
+        let second = focused(cx);
+        assert!(
+            second != first && tools_focused(compose, cx),
+            "{which}: Right goes to the next tool"
+        );
+        press(cx, "tab");
+        assert_eq!(focused(cx), send, "{which}");
+        press(cx, "shift-tab");
+        assert_eq!(focused(cx), second, "{which}: back on the second tool");
+        press(cx, "shift-tab");
+        assert!(box_focused(compose, cx), "{which}");
+        press(cx, "tab");
+        assert_eq!(
+            focused(cx),
+            second,
+            "{which}: Tab from the text lands on the second tool too"
+        );
+        // End and Right at the last; Home to the first
+        press(cx, "end");
+        let last = focused(cx);
+        assert!(last != second && tools_focused(compose, cx), "{which}: End");
+        press(cx, "right");
+        assert_eq!(focused(cx), last, "{which}: Right stops at the last tool");
+        press(cx, "home");
+        assert_eq!(focused(cx), first, "{which}: Home");
+        press(cx, "shift-tab");
+        assert!(box_focused(compose, cx), "{which}");
+    });
+}
+
+#[test]
+fn a_tool_s_menu_keeps_its_own_arrows_and_gives_the_keys_back_to_its_button() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    press(cx, "tab");
+    press(cx, "end");
+    let plus = focused(cx);
+    press(cx, "enter");
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        Some(MenuKind::Plus)
+    );
+    press(cx, "down");
+    press(cx, "right");
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        Some(MenuKind::Plus),
+        "the menu's own keys"
+    );
+    press(cx, "escape");
+    assert_eq!(compose.read_with(cx, |compose, _| compose.menu_open()), None);
+    assert_eq!(focused(cx), plus, "Escape gives the keys back to \"+\"");
+    press(cx, "shift-tab");
+    assert!(box_focused(&compose, cx));
+}
+
+#[test]
+fn the_format_bar_and_discard_come_before_the_text() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_expanded(window, cx)));
+    draw(cx);
+    focus_box(&compose, cx);
+    press(cx, "shift-tab");
+    let discard = focused(cx);
+    assert!(!box_focused(&compose, cx), "Shift+Tab from the text goes to Discard");
+    press(cx, "shift-tab");
+    let bold = focused(cx);
+    assert!(bold != discard, "then to the bar's tools");
+    press(cx, "right");
+    let italic = focused(cx);
+    assert!(italic != bold, "the bar's arrows");
+    press(cx, "tab");
+    assert_eq!(focused(cx), discard, "Tab passes the bar's other tools");
+    press(cx, "shift-tab");
+    assert_eq!(focused(cx), italic, "the bar keeps the tool the keys were on");
+    press(cx, "tab");
+    press(cx, "tab");
+    assert!(box_focused(&compose, cx), "Discard, then the text");
+    press(cx, "tab");
+    assert!(tools_focused(&compose, cx), "then the box's tools");
+}
+
+#[test]
+fn a_staged_file_s_buttons_come_between_the_text_and_the_tools() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("made-up-notes.txt");
+    std::fs::write(&file, "made-up notes").unwrap();
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.attach_files(&[file], window, cx)));
+    draw(cx);
+    assert_eq!(compose.read_with(cx, |compose, _| compose.attachments().len()), 1);
+    focus_box(&compose, cx);
+    press(cx, "tab");
+    assert!(
+        !box_focused(&compose, cx) && !tools_focused(&compose, cx),
+        "Tab goes to the file first"
+    );
+    press(cx, "shift-tab");
+    assert!(
+        box_focused(&compose, cx),
+        "Shift+Tab from the file gives the text the keys"
+    );
+    let mut stops = 0;
+    while !tools_focused(&compose, cx) && stops < 10 {
+        press(cx, "tab");
+        stops += 1;
+    }
+    assert!(tools_focused(&compose, cx), "after the file's buttons, the tools");
+    for _ in 0..stops {
+        press(cx, "shift-tab");
+    }
+    assert!(box_focused(&compose, cx), "and back the same way");
 }

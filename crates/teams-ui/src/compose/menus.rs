@@ -189,6 +189,8 @@ pub(super) struct ToolMenu {
     kind: MenuKind,
     menu: Entity<PopupMenu>,
     rows: Vec<Row>,
+    /// The tool the keyboard was on when the menu opened: Escape gives the keyboard back to it, as in Teams.
+    back_to: Option<FocusHandle>,
     _dismissed: Subscription,
 }
 
@@ -299,7 +301,11 @@ impl Compose {
         if rows.is_empty() {
             return;
         }
-        self.menu = Some(self.tool_menu(kind, rows, window, cx));
+        let back_to = match &self.menu {
+            Some(open) => open.back_to.clone(),
+            None => self.tools.drawn_on(),
+        };
+        self.menu = Some(self.tool_menu(kind, rows, back_to, window, cx));
         cx.notify();
     }
 
@@ -309,7 +315,14 @@ impl Compose {
     }
 
     /// The menu `kind` of `rows`, the keyboard in it.
-    fn tool_menu(&self, kind: MenuKind, rows: Vec<Row>, window: &mut Window, cx: &mut Context<Self>) -> ToolMenu {
+    fn tool_menu(
+        &self,
+        kind: MenuKind,
+        rows: Vec<Row>,
+        back_to: Option<FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolMenu {
         let compose = cx.entity().downgrade();
         let text = self.editor.read(cx).focus.clone();
         let built = rows.clone();
@@ -327,17 +340,21 @@ impl Compose {
                     }))
                 })
         });
-        let dismissed = cx.subscribe_in(&menu, window, move |this: &mut Self, _, _: &DismissEvent, _, cx| {
-            if this.menu.as_ref().is_some_and(|menu| menu.kind == kind) {
-                this.menu = None;
-                cx.notify();
-            }
-        });
+        let dismissed = cx.subscribe_in(
+            &menu,
+            window,
+            move |this: &mut Self, _, _: &DismissEvent, window, cx| {
+                if this.menu.as_ref().is_some_and(|menu| menu.kind == kind) {
+                    this.menu_closed(false, window, cx);
+                }
+            },
+        );
         menu.focus_handle(cx).focus(window, cx);
         ToolMenu {
             kind,
             menu,
             rows,
+            back_to,
             _dismissed: dismissed,
         }
     }
@@ -366,7 +383,24 @@ impl Compose {
         if rows.is_empty() {
             return self.close_more(window, cx);
         }
-        self.menu = Some(self.tool_menu(kind, rows, window, cx));
+        let back_to = open.back_to.clone();
+        self.menu = Some(self.tool_menu(kind, rows, back_to, window, cx));
+        cx.notify();
+    }
+
+    /// The open menu closed: by its button (`to_text`: Escape, a press outside it) or by the menu itself (a row
+    /// taken, Escape). The keyboard goes back to the tool it opened from while the keyboard is still in the menu, or in
+    /// the text where the menu itself puts it. Else it goes to the text if `to_text`: a press or a row that sent the
+    /// keyboard elsewhere keeps it there.
+    fn menu_closed(&mut self, to_text: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.menu.take() else { return };
+        let keys_near = menu.menu.focus_handle(cx).contains_focused(window, cx)
+            || (!to_text && self.editor.read(cx).focus.is_focused(window));
+        match menu.back_to {
+            Some(tool) if keys_near => tool.focus(window, cx),
+            _ if to_text => self.focus(window, cx),
+            _ => {}
+        }
         cx.notify();
     }
 
@@ -391,8 +425,8 @@ impl Compose {
     }
 
     /// The button of the menu `kind` on the box's row: a menu of its rows, each with its icon, its key and its state.
-    /// Escape closes it and gives the keyboard back to the text. What a row of it opens (the language menu, the emoji
-    /// picker, apps) opens by this button.
+    /// Escape closes it and gives the keyboard back to the button, or to the text when the keyboard was not on the
+    /// button. What a row of it opens (the language menu, the emoji picker, apps) opens by this button.
     pub(super) fn menu_button(&self, kind: MenuKind, fit: &Fit, cx: &mut Context<Self>) -> AnyElement {
         let open = self.menu_open() == Some(kind);
         let menu = self
@@ -414,7 +448,7 @@ impl Compose {
                     if open {
                         this.open_menu(kind, window, cx);
                     } else {
-                        this.close_more(window, cx);
+                        this.menu_closed(true, window, cx);
                     }
                 });
             })

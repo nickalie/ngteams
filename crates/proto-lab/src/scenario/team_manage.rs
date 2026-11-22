@@ -223,6 +223,8 @@ async fn step(
                 "enter" => Key::ENTER,
                 "backspace" => Key::BACKSPACE,
                 "space" => Key::SPACE,
+                "tab" => Key::TAB,
+                "shift+tab" => Key::SHIFT_TAB,
                 _ => Key::ESCAPE,
             };
             drive.press("a key", key).await?;

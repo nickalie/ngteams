@@ -165,7 +165,8 @@ impl Editor {
     /// An empty editor; its keys bound once per app.
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         keys::bind(cx);
-        let focus = cx.focus_handle();
+        // a stop of Tab's order, so Shift+Tab from the controls after it comes back to it
+        let focus = cx.focus_handle().tab_stop(true);
         let subscriptions = vec![
             cx.on_focus(&focus, window, |_, _, cx| {
                 cx.emit(EditorEvent::Focus);

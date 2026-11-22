@@ -21,7 +21,10 @@
 //!   Enter starts a new paragraph, Shift+Enter breaks the line and Ctrl+Enter sends. With the mention picker open, Up
 //!   and Down move in it, Enter or Tab chooses, Escape closes it; Escape cancels a reply or an edit, and with nothing
 //!   to cancel is handed on (the chat view moves the focus to its message list); Up in an empty box asks to edit the
-//!   account's last message ([`ComposeEvent::EditLast`], which the chat view carries out).
+//!   account's last message ([`ComposeEvent::EditLast`], which the chat view carries out). Tab goes as in Teams: the
+//!   text, a staged file's buttons, the tools as one stop (Left, Right, Home and End move between them, and the keys
+//!   come back to the tool they were last on, [`keyboard::Row`]), then Send; expanded, the format bar (one stop too)
+//!   and Discard come before the text. Shift+Tab goes the same way back.
 //! - **Reply** ([`Compose::reply_to`]): the quoted message's id, sender, sender's name, time and a one-line preview of
 //!   its text, sent as the captured reply's quote (`reply.json`). **Edit** ([`Compose::edit`]): the message's rich
 //!   text loaded back into the editor ([`load`]) with its formats, its mentions as atoms again by their MRI, its quote
@@ -125,6 +128,7 @@ use crate::bridge::Core;
 use crate::chat_view::measured;
 use crate::fun_picker::{FunPicker, FunPickerEvent};
 use crate::icons::{Glyph, icon_button, icon_button_with_key, selected_by};
+use crate::keyboard;
 use crate::presence::{self, Presences};
 use crate::reactions;
 use crate::rich_text;
@@ -708,6 +712,8 @@ pub struct ComposeParts {
 pub struct Compose {
     /// The lit Send button's own focus (it is a solid face of ours, not the kit's button, so it keeps its own).
     send_focus: gpui::FocusHandle,
+    /// The box's tools: one stop of Tab, as Teams' are, their arrows moving between them.
+    tools: keyboard::Row,
     core: Arc<dyn Core>,
     settings: Entity<SettingsModel>,
     trace: Arc<ViewTrace>,
@@ -889,6 +895,7 @@ impl Compose {
         Self {
             // a tracked handle is a stop of the keyboard only by its own flag, not by the div's
             send_focus: cx.focus_handle().tab_stop(true),
+            tools: keyboard::Row::new(cx),
             core: parts.core,
             settings: parts.settings,
             trace: parts.trace,
@@ -1312,6 +1319,11 @@ impl Compose {
         }
         let focus = self.editor.read(cx).focus.clone();
         window.focus(&focus, cx);
+    }
+
+    /// Whether one of the box's tools has the keys.
+    pub fn tools_focused(&self, window: &Window, cx: &App) -> bool {
+        self.tools.has_focus(window, cx)
     }
 
     /// Whether the box has the focus.
@@ -2315,6 +2327,11 @@ impl Compose {
             .iter()
             .map(|tool| self.tool_button(*tool, fit, palette, cx))
             .collect();
+        let tools = self
+            .tools
+            .wrap(div().flex().items_center().gap_1())
+            .children(tools)
+            .children((!fit.more.is_empty()).then(|| self.menu_button(MenuKind::More, fit, cx)));
         div()
             .debug_selector(|| "compose-toolbar".to_owned())
             .on_mouse_down(
@@ -2331,11 +2348,10 @@ impl Compose {
             .when(fit.stacked, gpui::Styled::w_full)
             // the box's inside, its padding and border taken off: centred on one line, at the foot of more
             .h(px(BOX_HEIGHT - 2.0 * BOX_PADDING - 2.0))
-            .children(tools)
-            .children((!fit.more.is_empty()).then(|| self.menu_button(MenuKind::More, fit, cx)))
+            .child(tools)
             .when(fit.stacked, |row| row.child(div().flex_1()))
             .child(div().w(px(1.0)).h(px(20.0)).mx_1().bg(rgb(palette.border)))
-            .child(self.send_button(palette, cx))
+            .child(self.tools.after(div().flex().child(self.send_button(palette, cx))))
             .into_any_element()
     }
 
@@ -2448,7 +2464,7 @@ impl Compose {
                 .overflow_hidden()
                 .children(send_to)
                 .children(self.expanded.then(|| self.format_bar.clone()))
-                .child(div().px_1().pt_1().child(self.editor.clone()))
+                .child(self.around_text(div().px_1().pt_1(), cx))
                 .children(self.box_cards(palette, cx))
                 .child(div().flex().justify_end().child(self.toolbar(palette, &fit, cx)))
                 .child(measured(&self.box_at))
@@ -2460,13 +2476,8 @@ impl Compose {
             .items_end()
             .gap_1()
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    // one line sits in the middle of the box; more lines grow it, the toolbar staying at its foot
-                    .self_center()
-                    .py_1()
-                    .child(self.editor.clone()),
+                // one line sits in the middle of the box; more lines grow it, the toolbar staying at its foot
+                self.around_text(div().flex_1().min_w_0().self_center().py_1(), cx),
             )
             .child(self.toolbar(palette, &fit, cx));
         surface
@@ -2481,6 +2492,17 @@ impl Compose {
             .child(measured(&self.box_at))
             .children(accent)
             .into_any_element()
+    }
+
+    /// The text in `place`: Tab from it to the tools lands on the tool the keys were last on, and Shift+Tab from it
+    /// to the format bar on the bar's, as in Teams.
+    fn around_text(&self, place: gpui::Div, cx: &App) -> gpui::Div {
+        let place = self.tools.before(place).child(self.editor.clone());
+        if self.expanded {
+            self.format_bar.read(cx).row().after(place)
+        } else {
+            place
+        }
     }
 
     fn picker_view(&self, palette: Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2666,6 +2688,7 @@ impl Render for Compose {
         self.rem = window.rem_size();
         self.menus_follow_tools(window, cx);
         self.flyout_follows_tools(window, cx);
+        self.tools.note(window, cx);
         let focused = self.focused(window, cx);
         let keyed = div()
             .key_context(CONTEXT)

@@ -23,6 +23,8 @@ async fn commands_dispatch_keys_typing_navigation_and_observation() {
         ("press enter", "pressed"),
         ("press backspace", "pressed"),
         ("press space", "pressed"),
+        ("press tab", "pressed"),
+        ("press shift+tab", "pressed"),
         ("press other", "pressed"),
         ("go https://synthetic.invalid/", "loaded"),
         ("js true", "true"),
@@ -58,6 +60,11 @@ async fn commands_dispatch_keys_typing_navigation_and_observation() {
     for key in ["Enter", "Backspace", " ", "Escape"] {
         assert!(commands.iter().any(|command| command["params"]["key"] == key));
     }
+    assert!(
+        commands
+            .iter()
+            .any(|command| command["params"]["key"] == "Tab" && command["params"]["modifiers"] == 8)
+    );
     assert!(
         commands
             .iter()
