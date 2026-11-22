@@ -279,9 +279,11 @@ fn other_boxes(user: &mut User<'_>) -> SandboxResult {
         shows_ai_on_bar(state, "post")
     })?;
     user.ask("open-thread")?;
-    user.until("the thread box shows the tools on its bar alone", |state| {
-        shows_ai_on_bar(state, "thread")
-    })?;
+    // with Attach and Loop of task 706, the thread's reply box is stacked too: its AI tools are in More options
+    user.until(
+        "the thread box shows the tools on its bar or in More options alone",
+        |state| shows_ai_alone(state, "thread"),
+    )?;
     user.shots_in_both_themes("qa700-channel-thread-shown")?;
     for key in ["post", "thread"] {
         user.ask(&format!("box-menu {key} plus"))?;
@@ -304,6 +306,20 @@ fn shows_ai_on_bar(state: &Value, key: &str) -> bool {
         .as_array()
         .is_some_and(|row| row.ends_with(&[json!("compose-correct"), json!("compose-translate")]))
         && state[key]["plus_rows"] == json!(["compose-customize"])
+}
+
+/// Whether the box `key` shows Correct and Translate, on its bar or, when it is stacked, in More options, and its "+"
+/// holds only "Customize toolbar".
+fn shows_ai_alone(state: &Value, key: &str) -> bool {
+    let boxed = &state[key];
+    if boxed["stacked"] != true {
+        return shows_ai_on_bar(state, key);
+    }
+    let ai = [json!("compose-correct"), json!("compose-translate")];
+    boxed["more_rows"]
+        .as_array()
+        .is_some_and(|rows| ai.iter().all(|tool| rows.contains(tool)))
+        && boxed["plus_rows"] == json!(["compose-customize"])
 }
 
 /// A 520 px window with both tools shown: "More options" holds Correct, Translate and the language, and each works
