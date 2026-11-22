@@ -622,6 +622,89 @@ fn a_tall_more_actions_list_fits_the_window_and_leaves_the_menu_in_it() {
     );
 }
 
+/// The 12 workflows' menu open in a 260 px window with client-side decorations (a 20 px inset), "More actions"' list
+/// beside it.
+fn tall_more_actions(
+    rig: &common::Rig,
+) -> (
+    Entity<ChatView>,
+    Rc<RefCell<Vec<ChatViewEvent>>>,
+    &'static mut VisualTestContext,
+) {
+    let (view, events, cx) = chat(rig);
+    *rig.core.workflow_handler.lock().unwrap() = Some(many_answer);
+    cx.simulate_resize(size(px(900.0), px(260.0)));
+    cx.update(|window, _| window.set_client_inset(px(20.0)));
+    draw(cx);
+    open_menu(cx);
+    let menu = bounds(cx, "message-menu").expect("the menu");
+    wheel(cx, menu.center(), 3000.0);
+    click(cx, "message-more-actions");
+    (view, events, cx)
+}
+
+fn wheel(cx: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>, down: f32) {
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: at,
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-down))),
+        touch_phase: gpui::TouchPhase::Moved,
+        ..gpui::ScrollWheelEvent::default()
+    });
+    draw(cx);
+}
+
+/// The inside of the 260 px window: its 20 px inset and the 8 px snap margin.
+fn snapped(at: gpui::Bounds<gpui::Pixels>) -> bool {
+    at.top() >= px(28.0) && at.bottom() <= px(232.0)
+}
+
+#[test]
+fn the_wheel_brings_a_clipped_more_actions_row_into_view_and_a_click_on_it_runs_it() {
+    let rig = common::Rig::start();
+    let (_view, events, cx) = tall_more_actions(&rig);
+    let list = bounds(cx, "message-more-actions-menu").expect("the list");
+    assert!(snapped(list), "the list stays in the window inside its inset: {list:?}");
+    let create = bounds(cx, "message-create-workflows").expect("the row");
+    assert!(
+        create.top() >= list.bottom(),
+        "the rows keep their height: the last is out of view: {create:?}"
+    );
+    wheel(cx, list.center(), 3000.0);
+    let create = bounds(cx, "message-create-workflows").expect("the row");
+    assert!(snapped(create), "the wheel brings it into view: {create:?}");
+    click(cx, "message-create-workflows");
+    assert_eq!(*events.borrow(), [ChatViewEvent::CreateWorkflows(chat_message())]);
+}
+
+#[test]
+fn the_keys_scroll_the_more_actions_list_to_their_row() {
+    let rig = common::Rig::start();
+    let (view, _events, cx) = chat(&rig);
+    *rig.core.workflow_handler.lock().unwrap() = Some(many_answer);
+    cx.simulate_resize(size(px(900.0), px(260.0)));
+    cx.update(|window, _| window.set_client_inset(px(20.0)));
+    cx.update(|window, cx| {
+        let compose = view.read(cx).compose().clone();
+        compose.update(cx, |compose, cx| compose.focus(window, cx));
+    });
+    draw(cx);
+    // Escape out of the box and Up select the message; the menu's last row is Customize, the one above it More
+    // actions; Right opens its list, the keys on its first row
+    for key in ["escape", "up", "shift-f10", "end", "up", "right", "end"] {
+        cx.simulate_keystrokes(key);
+        draw(cx);
+    }
+    let create = bounds(cx, "message-create-workflows").expect("the list is open");
+    assert!(snapped(create), "End scrolls the list to its last row: {create:?}");
+    cx.simulate_keystrokes("down");
+    draw(cx);
+    let first = bounds(cx, "message-workflow-synthetic-many-3").expect("the list's first workflow");
+    assert!(
+        snapped(first),
+        "Down past the end wraps the list back to its first row: {first:?}"
+    );
+}
+
 #[test]
 fn a_read_only_app_offers_no_workflow_on_a_message() {
     let rig = common::Rig::start();

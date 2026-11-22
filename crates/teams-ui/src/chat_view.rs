@@ -4543,7 +4543,10 @@ impl ChatView {
         let more = (offers_workflows || offers_apps)
             .then(|| self.more_actions_list(&message, &workflows, offers_workflows, palette, cx))
             .flatten()
-            .map(|list| list.max_h(menu_height_cap(window)).overflow_y_scroll());
+            .map(|list| self.more_actions_holder(list, window));
+        if more.is_none() {
+            self.menu_keys.side_scroll.set_offset(gpui::Point::default());
+        }
         if offers_workflows {
             entries.extend(self.workflow_entries(&message, &workflows, palette, cx));
         } else if offers_apps {
@@ -4728,7 +4731,7 @@ impl ChatView {
     /// "More actions"' list beside the menu, while it is open: the other workflows, the apps' actions, then "Create
     /// workflows" (where the account's cloud serves `workflows`).
     fn more_actions_list(
-        &self,
+        &mut self,
         message: &str,
         workflows: &[crate::workflow_dialog::FlowRef],
         offers_workflows: bool,
@@ -4739,32 +4742,44 @@ impl ChatView {
         if !self.side_open(SideList::MoreActions, message) {
             return None;
         }
-        let mut list = menu::panel("message-more-actions-menu", palette)
-            .track_focus(&self.menu_keys.side)
-            .relative()
-            .child(measured(&self.menu_keys.side_at));
+        let mut rows = Vec::new();
         let rest: Vec<_> = workflows.iter().skip(menu::MAIN_MENU).collect();
         for flow in &rest {
             let (flow_ref, message) = ((*flow).clone(), message.to_owned());
             let view = cx.entity().downgrade();
-            list = list.child(menu::workflow_row(flow, palette, move |_, _, cx| {
+            rows.push(menu::workflow_row(flow, palette, move |_, _, cx| {
                 let _ = view.update(cx, |this, cx| this.run_workflow(flow_ref.clone(), &message, cx));
             }));
         }
-        let apps = self.app_action_rows(message, palette, cx);
-        let listed = !rest.is_empty() || !apps.is_empty();
-        list = list.children(apps);
-        if !offers_workflows {
-            return Some(list);
+        rows.extend(self.app_action_rows(message, palette, cx));
+        if offers_workflows {
+            if !rows.is_empty() {
+                rows.push(menu::separator(palette));
+            }
+            let (view, message) = (cx.entity().downgrade(), message.to_owned());
+            rows.push(menu::create_row(palette, move |_, _, cx| {
+                let _ = view.update(cx, |this, cx| this.create_workflows(&message, cx));
+            }));
         }
-        if listed {
-            list = list.child(menu::separator(palette));
-        }
-        let (view, message) = (cx.entity().downgrade(), message.to_owned());
-        list = list.child(menu::create_row(palette, move |_, _, cx| {
-            let _ = view.update(cx, |this, cx| this.create_workflows(&message, cx));
-        }));
-        Some(list)
+        let rows = self.menu_keys.side_slotted(rows, cx);
+        Some(
+            menu::panel("message-more-actions-menu", palette)
+                .track_focus(&self.menu_keys.side)
+                .children(rows),
+        )
+    }
+
+    /// The "More actions" `list` at most as tall as the window, scrolling, in a holder that does not scroll: a click
+    /// in the holder is one in the list wherever the list has scrolled to.
+    fn more_actions_holder(&self, list: gpui::Stateful<gpui::Div>, window: &Window) -> gpui::Div {
+        div()
+            .relative()
+            .child(
+                list.max_h(menu_height_cap(window))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.menu_keys.side_scroll),
+            )
+            .child(measured(&self.menu_keys.side_at))
     }
 
     /// The right-click menu over the text selected with the mouse, while it is open: "Copy", with its key.

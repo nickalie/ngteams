@@ -8,8 +8,8 @@
 //! The kit's root binds Tab and Shift+Tab, and a binding takes a key before any key listener hears it: the menu's own
 //! key context ([`CONTEXT`]) binds them to [`LeaveMenu`], which takes precedence over the root's.
 //!
-//! A menu taller than the window scrolls. The focus moving by the keys does not scroll it, so each of its rows sits in
-//! a slot with its own focus handle: the slot that holds the focus is the row the menu scrolls to.
+//! A menu or a "More actions" list taller than the window scrolls. The focus moving by the keys does not scroll it, so
+//! each of its rows sits in a slot with its own focus handle: the slot that holds the focus is the row it scrolls to.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -59,6 +59,10 @@ pub(super) struct MenuKeys {
     pub(super) scroll: ScrollHandle,
     /// The slots of the menu's rows, in their order.
     slots: Vec<FocusHandle>,
+    /// The scroll of the "More actions" list, when it is taller than the window.
+    pub(super) side_scroll: ScrollHandle,
+    /// The slots of that list's rows, in their order.
+    side_slots: Vec<FocusHandle>,
     back: keyboard::Return,
     due: Option<Due>,
     /// The keys opened the menu: it gives the focus back when it closes.
@@ -75,6 +79,8 @@ impl MenuKeys {
             more_actions: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             slots: Vec::new(),
+            side_scroll: ScrollHandle::new(),
+            side_slots: Vec::new(),
             back: keyboard::Return::default(),
             due: None,
             keyed: false,
@@ -102,28 +108,23 @@ impl MenuKeys {
 
     /// `entries` each in its slot, as the menu holds them.
     pub(super) fn slotted(&mut self, entries: Vec<AnyElement>, cx: &App) -> Vec<AnyElement> {
-        while self.slots.len() < entries.len() {
-            self.slots.push(cx.focus_handle());
-        }
-        entries
-            .into_iter()
-            .zip(self.slots.iter())
-            .map(|(entry, slot)| {
-                div()
-                    .flex_none()
-                    .flex()
-                    .flex_col()
-                    .track_focus(slot)
-                    .child(entry)
-                    .into_any_element()
-            })
-            .collect()
+        in_slots(&mut self.slots, entries, cx)
     }
 
-    /// Scrolls the menu to the row that holds the focus.
-    fn reveal_focused(&self, window: &Window, cx: &App) {
-        if let Some(at) = self.slots.iter().position(|slot| slot.contains_focused(window, cx)) {
-            self.scroll.scroll_to_item(at);
+    /// `entries` each in its slot, as the "More actions" list holds them.
+    pub(super) fn side_slotted(&mut self, entries: Vec<AnyElement>, cx: &App) -> Vec<AnyElement> {
+        in_slots(&mut self.side_slots, entries, cx)
+    }
+
+    /// Scrolls the menu (or the list beside it, `in_side`) to the row that holds the focus.
+    fn reveal_focused(&self, in_side: bool, window: &Window, cx: &App) {
+        let (slots, scroll) = if in_side {
+            (&self.side_slots, &self.side_scroll)
+        } else {
+            (&self.slots, &self.scroll)
+        };
+        if let Some(at) = slots.iter().position(|slot| slot.contains_focused(window, cx)) {
+            scroll.scroll_to_item(at);
         }
     }
 
@@ -196,12 +197,10 @@ impl ChatView {
         cx.stop_propagation();
     }
 
-    /// The row the keys moved to in the menu (not `in_side`, the list beside it) scrolls into view.
+    /// The row the keys moved to in the menu (or in the list beside it, `in_side`) scrolls into view.
     fn reveal_menu_row(&self, in_side: bool, window: &Window, cx: &mut Context<Self>) {
-        if !in_side {
-            self.menu_keys.reveal_focused(window, cx);
-            cx.notify();
-        }
+        self.menu_keys.reveal_focused(in_side, window, cx);
+        cx.notify();
     }
 
     /// The menu's keys on `holder`, which holds the menu and the list beside it.
@@ -262,6 +261,26 @@ impl ChatView {
             keyboard::move_within(&root, true, window, cx);
         });
     }
+}
+
+/// `entries` each in a slot of `slots` (one more for each new row), which does not shrink.
+fn in_slots(slots: &mut Vec<FocusHandle>, entries: Vec<AnyElement>, cx: &App) -> Vec<AnyElement> {
+    while slots.len() < entries.len() {
+        slots.push(cx.focus_handle());
+    }
+    entries
+        .into_iter()
+        .zip(slots.iter())
+        .map(|(entry, slot)| {
+            div()
+                .flex_none()
+                .flex()
+                .flex_col()
+                .track_focus(slot)
+                .child(entry)
+                .into_any_element()
+        })
+        .collect()
 }
 
 /// Gives the focus back to `back` when what a row picked from the keys did left it on nothing, or on one of the
