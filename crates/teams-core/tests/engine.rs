@@ -2845,11 +2845,21 @@ async fn reaction_history_and_animation_queries_are_answered_without_exposing_wr
     );
     let animation = "/evergreen-assets/personal-expressions/v2/assets/emoticons/wow/default/50_anim_f.png";
     lab.mock
-        .serve_bytes(animation, "image/png", b"synthetic animation strip".to_vec())
+        .serve_bytes(
+            animation,
+            "image/png",
+            b"\x89PNG\r\n\x1a\nsynthetic animation strip".to_vec(),
+        )
         .await;
     let (one, two) = tokio::join!(a.handle.reaction_animation("wow"), a.handle.reaction_animation("wow"));
-    assert_eq!(one.unwrap().unwrap().as_ref(), b"synthetic animation strip");
-    assert_eq!(two.unwrap().unwrap().as_ref(), b"synthetic animation strip");
+    assert_eq!(
+        one.unwrap().unwrap().as_ref(),
+        b"\x89PNG\r\n\x1a\nsynthetic animation strip"
+    );
+    assert_eq!(
+        two.unwrap().unwrap().as_ref(),
+        b"\x89PNG\r\n\x1a\nsynthetic animation strip"
+    );
     assert!(a.handle.reaction_animation("missing").await.unwrap().is_none());
     assert!(a.handle.reaction_animation("missing").await.unwrap().is_none());
     let requests = lab.mock.received_requests().await;
@@ -2877,14 +2887,14 @@ async fn a_call_reaction_s_3d_emoji_is_read_once_apart_from_its_strip_and_other_
     a.handle.sync().await.unwrap();
     let sprite = "/evergreen-assets/skype/v2/yesV4-3D/112a.png";
     lab.mock
-        .serve_bytes(sprite, "image/png", b"synthetic 3D sprite".to_vec())
+        .serve_bytes(sprite, "image/png", b"\x89PNG\r\n\x1a\nsynthetic 3D sprite".to_vec())
         .await;
     let (one, two) = tokio::join!(
         a.handle.call_reaction_animation("like", 112),
         a.handle.call_reaction_animation("like", 112)
     );
-    assert_eq!(one.unwrap().unwrap().as_ref(), b"synthetic 3D sprite");
-    assert_eq!(two.unwrap().unwrap().as_ref(), b"synthetic 3D sprite");
+    assert_eq!(one.unwrap().unwrap().as_ref(), b"\x89PNG\r\n\x1a\nsynthetic 3D sprite");
+    assert_eq!(two.unwrap().unwrap().as_ref(), b"\x89PNG\r\n\x1a\nsynthetic 3D sprite");
     assert!(a.handle.call_reaction_animation("like", 140).await.unwrap().is_none());
     assert!(
         a.handle.call_reaction_animation("like", 64).await.unwrap().is_none(),
@@ -2913,14 +2923,14 @@ async fn an_animation_the_cdn_failed_to_serve_for_now_is_read_again_and_a_missin
         .answer_next("GET", "heartV4-3D/112a.png", 500, &json!({}))
         .await;
     lab.mock
-        .serve_bytes(sprite, "image/png", b"synthetic 3D sprite".to_vec())
+        .serve_bytes(sprite, "image/png", b"\x89PNG\r\n\x1a\nsynthetic 3D sprite".to_vec())
         .await;
     assert!(
         a.handle.call_reaction_animation("heart", 112).await.is_err(),
         "not kept as missing"
     );
     let strip = a.handle.call_reaction_animation("heart", 112).await.unwrap().unwrap();
-    assert_eq!(strip.as_ref(), b"synthetic 3D sprite");
+    assert_eq!(strip.as_ref(), b"\x89PNG\r\n\x1a\nsynthetic 3D sprite");
     assert!(a.handle.call_reaction_animation("heart", 140).await.unwrap().is_none());
     assert!(a.handle.call_reaction_animation("heart", 140).await.unwrap().is_none());
     let requests = lab.mock.received_requests().await;

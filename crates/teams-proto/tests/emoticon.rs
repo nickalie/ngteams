@@ -102,7 +102,7 @@ fn a_call_reaction_s_3d_emoji_is_read_by_the_cdn_s_name_and_a_side_it_has() {
 #[tokio::test]
 async fn a_call_reaction_s_3d_emoji_is_a_get_with_no_token() {
     let (server, tokens, client) = setup().await;
-    let sprite = b"\x89PNG made-up sprite".to_vec();
+    let sprite = b"\x89PNG\r\n\x1a\nmade-up sprite".to_vec();
     Mock::given(method("GET"))
         .and(path("/evergreen-assets/skype/v2/yesV4-3D/112a.png"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(sprite.clone(), "image/png"))
@@ -125,7 +125,7 @@ async fn a_call_reaction_s_3d_emoji_is_a_get_with_no_token() {
 #[tokio::test]
 async fn the_strip_is_a_get_with_no_token_and_only_a_png_is_kept() {
     let (server, tokens, client) = setup().await;
-    let strip = b"\x89PNG made-up strip".to_vec();
+    let strip = b"\x89PNG\r\n\x1a\nmade-up strip".to_vec();
     Mock::given(method("GET"))
         .and(path(STRIP_PATH))
         .respond_with(ResponseTemplate::new(200).set_body_raw(strip.clone(), "image/png"))
@@ -152,6 +152,18 @@ async fn the_strip_is_a_get_with_no_token_and_only_a_png_is_kept() {
         .mount(&server)
         .await;
     assert_eq!(read.read_answer(&client.read(&read).await.unwrap()), None, "not a PNG");
+
+    server.reset().await;
+    Mock::given(method("GET"))
+        .and(path(STRIP_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(b"made-up text".to_vec(), "image/png"))
+        .mount(&server)
+        .await;
+    assert_eq!(
+        read.read_answer(&client.read(&read).await.unwrap()),
+        None,
+        "labelled a PNG, but not one"
+    );
 
     server.reset().await;
     Mock::given(method("GET"))

@@ -273,8 +273,8 @@ pub fn emoji(key: &str, size: Pixels) -> AnyElement {
     }
 }
 
-/// The reactions' and messages' emoticons' animations this run, by id: decoded, or `None` when there is none or its
-/// read still runs; an id never asked for, or whose read failed on the way (asked again when next drawn), isn't here.
+/// The reactions' and messages' emoticons' animations this run, by id: decoded, or `None` when there is none, its read
+/// still runs, or its read failed less than [`ANIMATION_RETRY_AFTER`] ago; an id never asked for isn't here.
 #[derive(Default)]
 struct Animations {
     known: HashMap<Kept, Option<Arc<RenderImage>>>,
@@ -292,8 +292,8 @@ impl Global for Animations {}
 
 /// The animation of `key` (a reaction's key, or the id of an emoticon a message shows, which may be one the catalog
 /// doesn't hold) when it was read; otherwise asks the engine for it once (the windows drawn again once it arrives; a
-/// read that failed on the way is asked again when next drawn) and answers `None` meanwhile, as for a reaction without
-/// one.
+/// read that failed is asked again when drawn after [`ANIMATION_RETRY_AFTER`]) and answers `None` meanwhile, as for a
+/// reaction without one.
 pub fn animation(key: &str, core: &Arc<dyn Core>, cx: &mut App) -> Option<Arc<RenderImage>> {
     animation_of(key, crate::inline::PictureSource::new(Arc::clone(core)).engine(), cx)
 }
@@ -364,7 +364,10 @@ fn decoded(
             Ok(None) => return,
             Err(_) => {
                 cx.background_executor().timer(ANIMATION_RETRY_AFTER).await;
-                cx.update(|cx| cx.default_global::<Animations>().known.remove(&id));
+                cx.update(|cx| {
+                    cx.default_global::<Animations>().known.remove(&id);
+                    cx.refresh_windows();
+                });
                 return;
             }
         };

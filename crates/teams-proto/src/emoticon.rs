@@ -18,6 +18,7 @@ use crate::read::Read;
 pub const MAX_ANIMATION: usize = 1024 * 1024;
 /// The strip read: 50 px frames, the size the web client's picker draws.
 const STRIP: &str = "50_anim_f.png";
+const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 /// The sides of a call reaction's 3D emoji that Teams' CDN has, px, the smallest first.
 pub const EMOJI_3D_SIDES: [u16; 3] = [56, 112, 140];
@@ -77,7 +78,7 @@ impl ReactionAnimation {
                 .is_some_and(|media| media.trim().eq_ignore_ascii_case("image/png"))
         });
         let bytes = answer.body();
-        (png && !bytes.is_empty() && bytes.len() <= MAX_ANIMATION).then(|| bytes.to_vec())
+        (png && bytes.starts_with(PNG_SIGNATURE) && bytes.len() <= MAX_ANIMATION).then(|| bytes.to_vec())
     }
 
     /// A name of this read that no other read has: what an engine keeps its answer by.
