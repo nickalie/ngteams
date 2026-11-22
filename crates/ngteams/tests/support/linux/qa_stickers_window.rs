@@ -1185,23 +1185,32 @@ fn bare_stickers(user: &mut User<'_>) -> SandboxResult {
     ensure(faults.is_empty(), || faults.join("; "))
 }
 
-/// The sticker's GIF plays: its mouth changes between screenshots.
+/// The sticker's GIF plays: its mouth changes between screenshots, taken until it has or [`WAIT`] has passed.
 fn gif_moves(user: &mut User<'_>) -> SandboxResult {
     let chat = user.chats.stickers.clone();
     user.open(&chat, 3)?;
+    // GPUI plays a GIF only in the active window
+    user.until("the main window active", |state| state["active"] == true)?;
     let (_, found) = user.stickers("gif-frame-0", 2)?;
+    let start = Instant::now();
     let mut seen = BTreeSet::new();
-    for frame in 0..8 {
-        let path = user.shot(&format!("gif-frame-{}", frame + 1))?;
+    let mut frame = 0;
+    while seen.len() < 2 && start.elapsed() < WAIT {
+        frame += 1;
+        let path = user.shot(&format!("gif-frame-{frame}"))?;
         let image = image::open(path)?.to_rgb8();
         for sticker in stickers_in(&image).into_iter().take(1) {
             seen.insert(mouth_ink(&image, sticker));
         }
         thread::sleep(Duration::from_millis(140));
     }
-    say(&format!("  mouth ink seen: {seen:?} ({} stickers)", found.len()));
+    say(&format!(
+        "  mouth ink seen: {seen:?} in {frame} shots ({} stickers)",
+        found.len()
+    ));
+    let active = user.state()?["active"].clone();
     ensure(seen.len() >= 2, || {
-        format!("the GIF does not move: the mouth is always {seen:?}")
+        format!("the GIF does not move: the mouth is always {seen:?} in {frame} shots; the window active: {active}")
     })
 }
 
@@ -2080,6 +2089,7 @@ fn state_of(shell: &Entity<Shell>, window: &Window, cx: &App) -> Value {
         .map(|chat| chat_state(chat, window, cx));
     json!({
         "main": main,
+        "active": window.is_window_active(),
         "chat": chat,
         "list": list_state(shell_ref, cx),
     })
