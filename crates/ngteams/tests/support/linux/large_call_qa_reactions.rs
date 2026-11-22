@@ -34,6 +34,8 @@ const FLOAT: Duration = Duration::from_millis(2_000);
 /// apart never meet the same frame.
 const FRAMES: u32 = 48;
 pub(super) const STRIP_FRAMES: u32 = FRAMES;
+/// The opacity of an avatar's face while a reaction is on it, as in the app (`DIMMED` in `call_stage/live_reactions.rs`).
+const DIMMED: f64 = 0.4;
 
 /// Frame `index`'s colour: a full hue round over the frames, none white or grey (a float shows over the white own
 /// tile too).
@@ -103,12 +105,34 @@ pub(super) fn strip_frame(shot: &RgbImage, tile: Rect) -> Option<u32> {
 }
 
 /// The frame of the made-up strip the reaction on `tile` shows at any opacity of 15 % or more: the frame whose colour,
-/// blended over the same px of `before` (the shot before the reaction), gives the px at the emoji's middle.
+/// blended over the ground at the emoji's middle, gives the px there. The ground is the px of `before` (the shot
+/// before the reaction), or that px dimmed as the app dims an avatar's face while a reaction is on it.
 pub(super) fn strip_frame_faded(shot: &RgbImage, before: &RgbImage, tile: Rect) -> Option<u32> {
     let (x, y) = emoji_middle(tile);
-    let (x, y) = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
-    let got = shot.get_pixel_checked(x, y)?.0.map(f64::from);
-    let ground = before.get_pixel_checked(x, y)?.0.map(f64::from);
+    let px = |image: &RgbImage, x: i32, y: i32| {
+        image
+            .get_pixel_checked(u32::try_from(x).ok()?, u32::try_from(y).ok()?)
+            .map(|pixel| pixel.0.map(f64::from))
+    };
+    let got = px(shot, x, y)?;
+    let ground = px(before, x, y)?;
+    // a corner of the tile has no avatar: there the dimmed face shows what is behind it
+    let (corner_x, corner_y) = (tile.x + 12, tile.y + 12);
+    let (corner_got, corner_before) = (px(shot, corner_x, corner_y)?, px(before, corner_x, corner_y)?);
+    let dimmed: [f64; 3] = std::array::from_fn(|channel| {
+        let behind = (corner_got[channel] - DIMMED * corner_before[channel]) / (1.0 - DIMMED);
+        DIMMED * ground[channel] + (1.0 - DIMMED) * behind
+    });
+    [ground, dimmed]
+        .into_iter()
+        .filter_map(|ground| faded_frame(got, ground))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, index)| index)
+}
+
+/// The strip frame whose colour, blended over `ground` at 15 % opacity or more, gives `got` within 6 levels, and how
+/// far off it is.
+fn faded_frame(got: [f64; 3], ground: [f64; 3]) -> Option<(f64, u32)> {
     let off = |colour: [f64; 3], weight: f64| {
         (0..3)
             .map(|channel| (got[channel] - ground[channel] - weight * (colour[channel] - ground[channel])).abs())
@@ -125,7 +149,6 @@ pub(super) fn strip_frame_faded(shot: &RgbImage, before: &RgbImage, tile: Rect) 
             ((0.15..=1.05).contains(&weight) && off(colour, weight) <= 6.0).then(|| (off(colour, weight), index))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, index)| index)
 }
 
 /// The strip on `tile` has no line along its top edge: its top rows are as the row 3 px above them, as each frame

@@ -38,8 +38,8 @@ const ROWS: u32 = 12;
 const MAGENTA: [u8; 3] = [255, 0, 255];
 const GREEN: [u8; 3] = [0, 255, 0];
 const CDN: &str = "/evergreen-assets";
-/// How long the slow CDN holds back its answer.
-const SLOW: Duration = Duration::from_millis(2_200);
+/// How long the slow CDN holds back its answer: long enough for three slow shots of the strip.
+const SLOW: Duration = Duration::from_millis(2_800);
 /// The reactions as the mock sends them, their ids on the CDN, and their code in the made-up emoji.
 const REACTIONS: [(&str, &str, u32); 5] = [
     ("like", "yes", 1),
@@ -270,6 +270,26 @@ struct Watched {
     seen: Vec<Seen3d>,
     /// The codes of each try so far, this one's last.
     plays: Vec<Vec<Seen3d>>,
+    /// The looks of the tries before this one, without their shots.
+    earlier: Vec<Glance>,
+}
+
+/// When a look was and how much of the tile differed from the shot before the reaction.
+#[derive(Clone, Copy, Debug)]
+struct Glance {
+    at: Duration,
+    until: Duration,
+    from_start: i64,
+}
+
+impl From<&Look> for Glance {
+    fn from(look: &Look) -> Self {
+        Self {
+            at: look.at,
+            until: look.until,
+            from_start: look.from_start,
+        }
+    }
 }
 
 impl Watched {
@@ -300,6 +320,7 @@ fn watch_3d(
         looks: Vec::new(),
         seen: Vec::new(),
         plays: Vec::new(),
+        earlier: Vec::new(),
     };
     for attempt in 0..5 {
         if attempt > 0 {
@@ -315,11 +336,14 @@ fn watch_3d(
         say(&format!("qa696 {case}: try {attempt}: {}", listed(&seen)));
         let mut plays = std::mem::take(&mut watched.plays);
         plays.push(seen.clone());
+        let mut earlier = std::mem::take(&mut watched.earlier);
+        earlier.extend(watched.looks.iter().map(Glance::from));
         watched = Watched {
             tile,
             looks,
             seen,
             plays,
+            earlier,
         };
         if enough(&watched) {
             break;
@@ -393,16 +417,21 @@ fn on_time(seen: &[Seen3d], sent: Duration, case: &str) -> SandboxResult {
 
 /// The tile is as before the reaction once it ended, and no code reads there.
 fn gone(watched: &Watched, after: Duration, case: &str) -> SandboxResult {
-    let late: Vec<&Look> = watched
-        .looks
-        .iter()
-        .filter(|look| look.at > after + Duration::from_millis(800))
-        .collect();
-    if late.is_empty() {
+    let last: Vec<Glance> = watched.looks.iter().map(Glance::from).collect();
+    let late = |glance: &&Glance| glance.at > after + Duration::from_millis(800);
+    if !last.iter().any(|glance| late(&glance)) {
         return Err(format!("{case}: no look after the reaction's end").into());
     }
-    if late.iter().any(|look| look.from_start > 40) {
+    let every = || last.iter().chain(&watched.earlier);
+    if every().filter(late).any(|glance| glance.from_start > 40) {
         return Err(format!("{case}: the tile is not as before after the reaction ended").into());
+    }
+    // the sending reaches the tile within 1.5 s, so from 2.2 s until near its end the reaction is surely on the tile
+    let shown_from = after.saturating_sub(ON_TILE) + Duration::from_millis(2_200);
+    if let Some(early) = every().find(|glance| {
+        glance.at >= shown_from && glance.until + Duration::from_millis(300) <= after && glance.from_start <= 40
+    }) {
+        return Err(format!("{case}: the reaction left the tile before its end: {early:?}").into());
     }
     Ok(())
 }
@@ -722,7 +751,7 @@ fn still(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
 
 /// A slow CDN: the strip plays until the 3D emoji comes, then the 3D emoji at the frame due, never from its start.
 fn slow(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
-    let case = "a 3D emoji the CDN gives 2.2 s late";
+    let case = "a 3D emoji the CDN gives 2.8 s late";
     let area = expected_area(tile);
     // one try only: the app keeps the emoji once read, so a second try is not slow
     let (before, looks) = watch(rig, tile, Duration::from_millis(6_800), |rig| {
@@ -794,6 +823,7 @@ fn slow(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
             looks,
             seen,
             plays,
+            earlier: Vec::new(),
         },
         ON_TILE,
         case,
