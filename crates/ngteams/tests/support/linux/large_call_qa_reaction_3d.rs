@@ -825,6 +825,7 @@ fn slow_try(
     })?;
     let seen = codes(&looks, area);
     say(&format!("qa696 {case}: {}", listed(&seen)));
+    late_3d_right(&seen, reaction, case)?;
     let first_3d = looks
         .iter()
         .position(|look| read_code(&look.shot, area).is_some())
@@ -857,23 +858,9 @@ fn slow_try(
             "the strip does not play before the 3D emoji came: frames {strip_frames:?}"
         )));
     }
-    let Some(first) = seen.first() else {
+    if seen.is_empty() {
         return Ok(Some("the 3D emoji never shows after it came".to_owned()));
-    };
-    if first.frame < 45 {
-        return Err(format!(
-            "{case}: the 3D emoji started at frame {}, not at the frame due",
-            first.frame
-        )
-        .into());
     }
-    if seen.iter().any(|seen| seen.code != code_of(reaction)) {
-        return Err(format!("{case}: another reaction shows: {}", listed(&seen)).into());
-    }
-    if seen.windows(2).any(|pair| pair[1].frame < pair[0].frame) {
-        return Err(format!("{case}: the 3D emoji plays again: {}", listed(&seen)).into());
-    }
-    on_time(&seen, Duration::ZERO, case)?;
     let plays = vec![seen.clone()];
     let watched = Watched {
         tile,
@@ -887,6 +874,50 @@ fn slow_try(
     }
     gone(&watched, ON_TILE, case)?;
     Ok(None)
+}
+
+/// The late 3D emoji's frames that a try of [`slow`] read are right: from the frame due, of `reaction`, in order and
+/// on time. A try with too few looks is still checked, so that a fault seen only once is not lost in a retry.
+fn late_3d_right(seen: &[Seen3d], reaction: &str, case: &str) -> SandboxResult {
+    let Some(first) = seen.first() else {
+        return Ok(());
+    };
+    if first.frame < 45 {
+        return Err(format!(
+            "{case}: the 3D emoji started at frame {}, not at the frame due",
+            first.frame
+        )
+        .into());
+    }
+    if seen.iter().any(|seen| seen.code != code_of(reaction)) {
+        return Err(format!("{case}: another reaction shows: {}", listed(seen)).into());
+    }
+    if seen.windows(2).any(|pair| pair[1].frame < pair[0].frame) {
+        return Err(format!("{case}: the 3D emoji plays again: {}", listed(seen)).into());
+    }
+    on_time(seen, Duration::ZERO, case)
+}
+
+/// The order of Heart then Laugh in one try: no third reaction, no Heart after Laugh came, and Laugh plays once.
+fn heart_then_laugh(seen: &[Seen3d], case: &str) -> SandboxResult {
+    let (heart, laugh) = (code_of("heart"), code_of("laugh"));
+    if seen.iter().any(|seen| seen.code != heart && seen.code != laugh) {
+        return Err(format!("{case}: a third reaction shows: {}", listed(seen)).into());
+    }
+    if let Some(first_laugh) = seen.iter().find(|seen| seen.code == laugh)
+        && seen.iter().any(|seen| seen.code == heart && seen.at > first_laugh.at)
+    {
+        return Err(format!("{case}: Heart shows again after Laugh took its place: {}", listed(seen)).into());
+    }
+    let laugh_frames: Vec<u32> = seen
+        .iter()
+        .filter(|seen| seen.code == laugh)
+        .map(|seen| seen.frame)
+        .collect();
+    if laugh_frames.windows(2).any(|pair| pair[1] < pair[0]) {
+        return Err(format!("{case}: Laugh plays again: {}", listed(seen)).into());
+    }
+    Ok(())
 }
 
 /// Heart, then Laugh 1.6 s later from the same person: Laugh takes Heart's place, plays from its own start, and goes
@@ -932,20 +963,11 @@ fn in_a_row(rig: &mut Rig<'_>, (person, tile): (usize, Rect)) -> SandboxResult {
     let (Some(last_heart), Some(first_laugh)) = (heart.last(), laugh.first()) else {
         return Err(format!("{case}: the looks did not see both reactions: {}", listed(seen)).into());
     };
-    if seen
-        .iter()
-        .any(|seen| seen.code != code_of("heart") && seen.code != code_of("laugh"))
-    {
-        return Err(format!("{case}: a third reaction shows: {}", listed(seen)).into());
-    }
-    if heart.iter().any(|seen| seen.at > first_laugh.at) {
-        return Err(format!("{case}: Heart shows again after Laugh took its place: {}", listed(seen)).into());
+    for play in &watched.plays {
+        heart_then_laugh(play, case)?;
     }
     if first_laugh.frame >= last_heart.frame && first_laugh.at < last_heart.at + Duration::from_millis(1_000) {
         return Err(format!("{case}: Laugh did not start from its own start: {}", listed(seen)).into());
-    }
-    if laugh.windows(2).any(|pair| pair[1].frame < pair[0].frame) {
-        return Err(format!("{case}: Laugh plays again: {}", listed(seen)).into());
     }
     on_time(&laugh, second_after, case)?;
     gone(&watched, second_after + ON_TILE, case)
