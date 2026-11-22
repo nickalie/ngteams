@@ -333,6 +333,20 @@ async fn recipients<C: Credentials>(
 /// What the user sees when the file service refuses an upload, in Teams' words: no HTTP status.
 pub(crate) const NOT_UPLOADED: &str = "The file couldn't be uploaded. Try again.";
 const NOT_SHARED: &str = "The file couldn't be shared. Try again.";
+const TOO_LARGE: &str = "This file is too large to upload.";
+const NO_SPACE: &str = "There isn't enough storage space for this file. Delete some files and try again.";
+const UNAVAILABLE: &str = "The file service isn't available now. Try again later.";
+
+/// A refusal whose reason the user can act on keeps that reason; any other refusal gets `otherwise`.
+pub(crate) fn refusal(status: u16, otherwise: &str) -> EngineError {
+    log::info!("a file write was answered HTTP {status}");
+    failed(match status {
+        413 => TOO_LARGE,
+        507 => NO_SPACE,
+        503 => UNAVAILABLE,
+        _ => otherwise,
+    })
+}
 
 async fn send<T: Transport<Error = HttpError>>(
     outbox: &Outbox<T>,
@@ -348,10 +362,7 @@ async fn send<T: Transport<Error = HttpError>>(
         }
         return match tried {
             CallTried::Answered(answer) if answer.is_success() => Ok(answer.body().to_vec()),
-            CallTried::Answered(answer) => {
-                log::info!("a file write was answered HTTP {}", answer.status());
-                Err(failed(refused))
-            }
+            CallTried::Answered(answer) => Err(refusal(answer.status(), refused)),
             CallTried::Denied(reason) | CallTried::NotSent(reason) => Err(failed(&reason)),
             CallTried::Uncertain(_) => Err(failed(
                 "The file service didn't confirm the upload or share. Check your connection before trying again.",

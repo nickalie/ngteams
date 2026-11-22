@@ -34,7 +34,7 @@ async fn an_account_stores_no_more_than_its_quota() {
         .await
         .unwrap();
     let refused = upload(&trio, "large.bin", &vec![7; 3001]).await.unwrap_err();
-    assert!(refused.contains("507"), "{refused}");
+    assert!(refused.contains("enough storage space"), "{refused}");
     assert_eq!(upload(&trio, "fits.bin", &vec![7; 2000]).await, Ok(2000));
     let refused = trio
         .a
@@ -44,7 +44,7 @@ async fn an_account_stores_no_more_than_its_quota() {
     assert!(format!("{refused:?}").contains("507"), "{refused:?}");
     assert_eq!(upload(&trio, "rest.bin", &vec![7; 1000]).await, Ok(1000));
     let refused = upload(&trio, "one-more.bin", b"x").await.unwrap_err();
-    assert!(refused.contains("507"), "{refused}");
+    assert!(refused.contains("enough storage space"), "{refused}");
     // the other account's storage is its own
     let share = send_file(&trio, "sent.bin", b"").await;
     assert_eq!(trio.b.file_size(share).await.unwrap(), 0);
@@ -87,7 +87,7 @@ async fn a_picture_filled_many_times_at_once_counts_its_bytes_once() {
         let rest = large.len() - small.len();
         assert_eq!(upload(&trio, "rest.bin", &vec![7; rest]).await, Ok(rest as u64));
         let refused = upload(&trio, "one-more.bin", b"x").await.unwrap_err();
-        assert!(refused.contains("507"), "{refused}");
+        assert!(refused.contains("enough storage space"), "{refused}");
         trio.stop().await;
     }
 }
@@ -135,7 +135,7 @@ async fn a_picture_filled_with_different_bytes_at_once_serves_the_bytes_it_count
         let rest = large.len() - counted;
         assert_eq!(upload(&trio, "rest.bin", &vec![7; rest]).await, Ok(rest as u64));
         let refused = upload(&trio, "one-more.bin", b"x").await.unwrap_err();
-        assert!(refused.contains("507"), "{refused}");
+        assert!(refused.contains("enough storage space"), "{refused}");
         trio.stop().await;
     }
 }
@@ -156,7 +156,7 @@ async fn pictures_and_files_over_their_size_limits_are_refused() {
         .unwrap_err();
     assert!(format!("{refused:?}").contains("413"), "{refused:?}");
     let refused = upload(&trio, "large.bin", &vec![1; 3001]).await.unwrap_err();
-    assert!(refused.contains("413"), "{refused}");
+    assert!(refused.contains("too large to upload"), "{refused}");
     assert_eq!(upload(&trio, "fits.bin", &vec![1; 3000]).await, Ok(3000));
 
     let writer = client(&trio.server, "a@own.test", &trio.ids[0]).await;
@@ -200,6 +200,6 @@ async fn a_store_that_fails_answers_unavailable_and_keeps_no_trace_of_the_bytes(
     let read: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!((status, &read["contents"]), (200, &serde_json::json!({})));
     let refused = upload(&trio, "lost.bin", b"bytes").await.unwrap_err();
-    assert!(refused.contains("503"), "{refused}");
+    assert!(refused.contains("isn't available now"), "{refused}");
     trio.stop().await;
 }

@@ -70,7 +70,7 @@ async fn with_the_bucket_out_of_reach_uploads_fail_and_the_chat_goes_on() {
         asked.elapsed()
     );
     assert!(pasted.contains("503"), "{pasted}");
-    assert!(uploaded.contains("503"), "{uploaded}");
+    assert!(uploaded.contains("isn't available now"), "{uploaded}");
     assert!(asked.elapsed() < Duration::from_secs(8), "{:?}", asked.elapsed());
 
     let id = a.send(&chat, "the chat goes on").await;

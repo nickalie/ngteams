@@ -206,6 +206,38 @@ async fn a_failed_upload_recycles_the_empty_file_it_left() {
 }
 
 #[tokio::test]
+async fn a_refusal_the_user_can_act_on_keeps_its_reason() {
+    let cases = [
+        (413, "This file is too large to upload."),
+        (
+            507,
+            "There isn't enough storage space for this file. Delete some files and try again.",
+        ),
+        (503, "The file service isn't available now. Try again later."),
+    ];
+    for (status, said) in cases {
+        let server = MockServer::start().await;
+        channel(&server, "notes.txt").await;
+        stub_answers(&server, "notes.txt", 200, sp_file("notes.txt", 0)).await;
+        step_answers(&server, "StartUpload", status, json!({})).await;
+        recycles(&server).await;
+        let dir = tempfile::tempdir().unwrap();
+        let handle = engine(&server, &dir, false);
+
+        let error = handle
+            .requests()
+            .upload_channel_file(CHANNEL.to_owned(), made_up_file(&dir, "notes.txt"))
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(&error, EngineError::Attachment { why } if why == said),
+            "{status}: {error:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_removed_file_goes_to_the_sites_recycle_bin() {
     let server = MockServer::start().await;
     channel(&server, "notes.txt").await;

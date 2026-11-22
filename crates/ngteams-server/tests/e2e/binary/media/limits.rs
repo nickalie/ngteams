@@ -60,7 +60,7 @@ async fn a_picture_or_file_over_its_size_and_an_upload_given_up_leave_nothing_in
 
         let over = noise(8 * MIB + 1, 1);
         let said = refused(&a, "over.bin", &over).await;
-        assert!(said.contains("413"), "{said}");
+        assert!(said.contains("too large to upload"), "{said}");
         let own = token(&a, &stage.rig.origin).await;
         let status = streamed_upload(node, &upload_path(&a, "streamed.bin"), &own, &over).await;
         assert_eq!(status, 413);
@@ -91,7 +91,7 @@ async fn an_account_at_its_quota_is_refused_the_next_upload_and_the_others_keep_
         paste(&a, &stage.cloud, &chat, &small, (8, 8)).await;
 
         let said = refused(&a, "large.bin", &[7; 3001]).await;
-        assert!(said.contains("507"), "{said}");
+        assert!(said.contains("enough storage space"), "{said}");
         let own = token(&a, &stage.rig.origin).await;
         let status = streamed_upload(node, &upload_path(&a, "streamed.bin"), &own, &[7; 3001]).await;
         assert_eq!(status, 507);
@@ -102,7 +102,7 @@ async fn an_account_at_its_quota_is_refused_the_next_upload_and_the_others_keep_
         pasting_fails_with(&a, &chat, png(64, 64), "507").await;
         assert_eq!(try_upload(&a, "rest.bin", &[7; 1000]).await.unwrap().size(), 1000);
         let said = refused(&a, "one-more.bin", b"x").await;
-        assert!(said.contains("507"), "{said}");
+        assert!(said.contains("enough storage space"), "{said}");
 
         assert_eq!(try_upload(&b, "theirs.bin", &[7; 2000]).await.unwrap().size(), 2000);
         let kept = stage.blobs.keys().await;
@@ -136,7 +136,7 @@ async fn an_account_at_its_quota_uploads_again_after_it_deleted_what_it_sent() {
         let share = card(&mut b, &stage.cloud, &chat, &sent).await.share_url.unwrap();
         let (file, link) = item(stage.rig.other(), &b, &stage, &share).await.unwrap();
         let said = refused(&a, "one-more.bin", b"x").await;
-        assert!(said.contains("507"), "{said}");
+        assert!(said.contains("enough storage space"), "{said}");
 
         for message_id in [pasted, sent] {
             a.write(Action::Delete {
@@ -155,7 +155,7 @@ async fn an_account_at_its_quota_uploads_again_after_it_deleted_what_it_sent() {
         assert_eq!(kept(&stage).await, (0, 1), "the picture stayed, or the file went");
         let (src, _) = paste(&a, &stage.cloud, &chat, &small, (8, 8)).await;
         let said = refused(&a, "after.bin", &[7; 3000]).await;
-        assert!(said.contains("507"), "{said}");
+        assert!(said.contains("enough storage space"), "{said}");
 
         let object = src.split_once("/ams/v1/objects/").unwrap().1;
         let object = format!("/ams/v1/objects/{}", object.split('/').next().unwrap());
@@ -193,7 +193,7 @@ async fn an_account_at_its_quota_uploads_again_after_it_deleted_what_it_sent() {
             whole.len() as u64
         );
         let said = refused(&a, "one-more.bin", b"x").await;
-        assert!(said.contains("507"), "{said}");
+        assert!(said.contains("enough storage space"), "{said}");
         drop((a, b, c));
         stage.stop().await;
     }

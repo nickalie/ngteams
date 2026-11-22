@@ -1313,18 +1313,19 @@ fn box_at<'a>(state: &'a Value, key: &str) -> &'a Value {
     if key == "call" { call_box(state) } else { &state[key] }
 }
 
-/// A place in the box's text near its left end: on its first line, or, for a box with a row over its text (a thread's
-/// "Send to"), on its last line, beside its tools.
+/// A place in the box's one line of text near its left end: beside the tools of a box on one line, or just over the
+/// tools' row of a stacked box, under any row over its text (a thread's "Send to").
 #[expect(
     clippy::cast_possible_truncation,
     reason = "a window's logical px are small whole numbers"
 )]
-fn in_text(boxed: &Value, foot: bool) -> SandboxResult<(i32, i32)> {
+fn in_text(boxed: &Value) -> SandboxResult<(i32, i32)> {
     let at = |index: usize| boxed["bounds"][index].as_f64().map(|value| value.round() as i32);
     let (Some(x), Some(y), Some(height)) = (at(0), at(1), at(3)) else {
         return Err(format!("the box was not drawn: {boxed}").into());
     };
-    Ok((x + 40, if foot { y + height - 27 } else { y + 20 }))
+    let above_foot = if boxed["stacked"] == true { 64 } else { 27 };
+    Ok((x + 40, y + height - above_foot))
 }
 
 impl User<'_> {
@@ -1493,12 +1494,12 @@ fn edge_focus_moves(user: &mut User<'_>) -> SandboxResult {
     // the boxes' places once the thread's pane has narrowed the channel
     thread::sleep(SETTLE);
     let state = user.state()?;
-    user.click(in_text(&state["post"], false)?)?;
+    user.click(in_text(&state["post"])?)?;
     let state = user.until("the post box focused", |state| state["post"]["focused"] == true)?;
     ensure(state["thread"]["focused"] == false, || format!("both focused: {state}"))?;
     user.type_text("A made-up post")?;
     user.edge_shots("edge-focus-post", &["post", "thread"])?;
-    user.click(in_text(&state["thread"], true)?)?;
+    user.click(in_text(&state["thread"])?)?;
     let state = user.until("the thread box focused", |state| state["thread"]["focused"] == true)?;
     ensure(state["post"]["focused"] == false, || format!("both focused: {state}"))?;
     user.type_text("A made-up reply")?;
@@ -1521,7 +1522,7 @@ fn edge_new_chat(user: &mut User<'_>) -> SandboxResult {
         format!("the box has the focus, not To: {state}")
     })?;
     user.edge_shots("edge-new-chat-to", &["new_chat"])?;
-    user.click(in_text(&state["new_chat"], false)?)?;
+    user.click(in_text(&state["new_chat"])?)?;
     user.until("the new chat's box focused", |state| {
         state["new_chat"]["focused"] == true
     })?;

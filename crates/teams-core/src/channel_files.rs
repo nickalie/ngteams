@@ -177,8 +177,7 @@ async fn send<T: Transport<Error = HttpError>>(
 }
 
 fn answered(answer: &Response) -> EngineError {
-    log::info!("a channel file write was answered HTTP {}", answer.status());
-    failed(crate::attachments::NOT_UPLOADED)
+    crate::attachments::refusal(answer.status(), crate::attachments::NOT_UPLOADED)
 }
 
 fn failed(why: &str) -> EngineError {

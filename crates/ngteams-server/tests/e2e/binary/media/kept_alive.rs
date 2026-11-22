@@ -329,7 +329,7 @@ async fn a_client_refused_an_oversized_attachment_then_sends_messages_and_a_file
         for round in 0..10_u64 {
             let refused = tokio::time::timeout(HANG, try_upload(&a, "over.bin", &over)).await;
             let said = refused.expect("the refused upload hung").map(|_| ()).unwrap_err();
-            assert!(said.contains("413"), "round {round}: {said}");
+            assert!(said.contains("too large to upload"), "round {round}: {said}");
             let picture = PastedPicture {
                 format: PastedFormat::Png,
                 bytes: large.clone(),

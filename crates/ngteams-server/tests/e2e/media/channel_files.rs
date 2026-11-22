@@ -381,7 +381,7 @@ async fn a_file_over_the_limit_is_refused_and_its_empty_file_recycled() {
         .upload_channel_file(crew.team.clone(), crew.file("big.txt", b"more than eight bytes"))
         .await;
     assert!(
-        matches!(&refused, Err(teams_core::EngineError::Attachment { why }) if why.contains("413")),
+        matches!(&refused, Err(teams_core::EngineError::Attachment { why }) if why.contains("too large to upload")),
         "{refused:?}"
     );
     let small = crew.upload(&crew.ada, &crew.team, "big.txt", b"small").await;
