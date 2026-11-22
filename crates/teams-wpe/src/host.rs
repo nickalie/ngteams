@@ -195,7 +195,7 @@ impl Host {
     }
 
     /// Runs `script` in the page's main frame, in `world` (`None`: the page's own); the result arrives on the
-    /// returned channel (an error when the engine ended first).
+    /// returned channel (an error when the page closed or the engine ended first).
     #[must_use]
     pub fn evaluate(&self, view: ViewId, script: String, world: Option<String>) -> Receiver<Evaluation> {
         match &self.engine {

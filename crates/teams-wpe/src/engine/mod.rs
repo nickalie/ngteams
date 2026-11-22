@@ -293,7 +293,8 @@ fn create_view(id: ViewId, spec: &ViewSpec) {
     }
 }
 
-/// Closes page `id`, answering what it left open: navigations are ignored, replies refused, scheme reads failed.
+/// Closes page `id`, answering what it left open: navigations are ignored, replies refused, scheme reads failed,
+/// evaluations' channels closed.
 fn close_view(id: ViewId) {
     let Some((page, policies, replies, schemes)) = with(|engine| {
         let page = engine.pages.remove(&id);
