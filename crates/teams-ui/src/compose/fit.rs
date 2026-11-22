@@ -163,7 +163,7 @@ pub(crate) fn fit(width: Option<Pixels>, rem: Pixels, tools: &[Tool]) -> Fit {
 
 impl Compose {
     /// The tools this box has, shown or hidden, a channel's as a chat's: the AI tools only while the AI features are on.
-    fn tools(&self, cx: &App) -> Vec<Tool> {
+    fn tools(cx: &App) -> Vec<Tool> {
         let mut tools = vec![Tool::Format, Tool::Emoji, Tool::Attach, Tool::Loop, Tool::Apps];
         if crate::local_ai::enabled(cx) {
             tools.extend([Tool::Correct, Tool::Translate]);
@@ -174,8 +174,7 @@ impl Compose {
     /// Where this box's tools go at the width it was last drawn at, the ones the user hid apart.
     pub(super) fn fit(&self, cx: &App) -> Fit {
         let settings = self.settings.read(cx).settings();
-        let (shown, hidden): (Vec<Tool>, Vec<Tool>) = self
-            .tools(cx)
+        let (shown, hidden): (Vec<Tool>, Vec<Tool>) = Self::tools(cx)
             .into_iter()
             .partition(|tool| tool.hides_as().is_none_or(|hides| settings.shows_compose_tool(hides)));
         let mut fit = fit(self.box_at.get().map(|bounds| bounds.size.width), self.rem, &shown);

@@ -155,9 +155,11 @@ fn a_folder_is_told_on_the_drop_while_the_files_with_it_go_in() {
     );
 }
 
+/// The made-up channel the channel boxes write to.
+const CHANNEL: &str = "19:made-up-channel@thread.tacv2";
+
 #[test]
 fn a_channel_s_box_takes_files_into_the_channel_s_folder() {
-    const CHANNEL: &str = "19:made-up-channel@thread.tacv2";
     let rig = rig_with(Vec::new());
     let parts = parts::parts(&rig, Settings::default(), Arc::new(ViewTrace::off()));
     let app: &'static mut gpui::TestAppContext = Box::leak(Box::new(rig.cx.clone()));
@@ -210,11 +212,20 @@ fn a_channel_s_box_takes_files_into_the_channel_s_folder() {
         "the numbered copy is told as Teams tells it"
     );
 
+    removing_the_copy_recycles_it(cx, &compose, &rig.core);
+}
+
+/// Remove on the numbered copy sends it to the recycle bin; the notice stays while another channel file is staged.
+fn removing_the_copy_recycles_it(
+    cx: &mut VisualTestContext,
+    compose: &Entity<Compose>,
+    core: &super::common::FakeCore,
+) {
     let remove = cx.debug_bounds("compose-attachment-remove-1").unwrap();
     cx.simulate_click(remove.center(), gpui::Modifiers::none());
     draw(cx);
-    assert_eq!(staged(&compose, cx), ["made-up notes.txt"]);
-    let discarded = rig.core.discarded_files.lock().unwrap().clone();
+    assert_eq!(staged(compose, cx), ["made-up notes.txt"]);
+    let discarded = core.discarded_files.lock().unwrap().clone();
     assert_eq!(discarded.len(), 1);
     assert_eq!(discarded[0].name(), "made-up plan 1.docx");
     assert_eq!(discarded[0].channel(), Some(CHANNEL));

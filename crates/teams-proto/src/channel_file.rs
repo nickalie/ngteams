@@ -237,15 +237,7 @@ impl ChannelFileWrite {
         ))
         .ok()?;
         url.set_query(Some(&format!("@v={}&@fn={}", odata(&folder.path), odata(name))));
-        Some(Self::new(
-            folder,
-            ChannelFileStep::AddStub,
-            None,
-            None,
-            url,
-            Method::Post,
-            Vec::new(),
-        ))
+        Some(Self::new(folder, ChannelFileStep::AddStub, url, Method::Post))
     }
 
     /// The bytes of the file `file` (named `name`, made by [`Self::add_stub`]), sent whole in one fresh upload.
@@ -261,15 +253,10 @@ impl ChannelFileWrite {
         ))
         .ok()?;
         url.set_query(Some(&located(folder, name)));
-        Some(Self::new(
-            folder,
-            ChannelFileStep::StartUpload,
-            Some(file),
-            Some(upload),
-            url,
-            Method::Post,
-            bytes,
-        ))
+        let mut write = Self::new(folder, ChannelFileStep::StartUpload, url, Method::Post).naming(file);
+        write.upload = Some(upload);
+        write.body = bytes.into();
+        Some(write)
     }
 
     /// The end of the upload `start` began, at `offset` bytes (all of them).
@@ -285,50 +272,35 @@ impl ChannelFileWrite {
         ))
         .ok()?;
         url.set_query(Some(&located(&start.folder, name)));
-        Some(Self::new(
-            &start.folder,
-            ChannelFileStep::FinishUpload,
-            Some(file),
-            Some(upload.to_owned()),
-            url,
-            Method::Post,
-            Vec::new(),
-        ))
+        let mut write = Self::new(&start.folder, ChannelFileStep::FinishUpload, url, Method::Post).naming(file);
+        write.upload = Some(upload.to_owned());
+        Some(write)
     }
 
     /// The file `file` of the folder to the site's recycle bin.
     #[must_use]
     pub fn recycle(folder: &ChannelFolder, file: &str) -> Option<Self> {
         let url = Url::parse(&format!("{}/recycle", folder.file_by_id(file)?)).ok()?;
-        Some(Self::new(
-            folder,
-            ChannelFileStep::Recycle,
-            Some(file),
-            None,
-            url,
-            Method::Delete,
-            Vec::new(),
-        ))
+        Some(Self::new(folder, ChannelFileStep::Recycle, url, Method::Delete).naming(file))
     }
 
-    fn new(
-        folder: &ChannelFolder,
-        step: ChannelFileStep,
-        file: Option<&str>,
-        upload: Option<String>,
-        url: Url,
-        method: Method,
-        body: Vec<u8>,
-    ) -> Self {
+    /// A write with no file, no upload and no body yet.
+    fn new(folder: &ChannelFolder, step: ChannelFileStep, url: Url, method: Method) -> Self {
         Self {
             folder: folder.clone(),
             step,
-            file: file.map(str::to_owned),
-            upload,
+            file: None,
+            upload: None,
             url,
             method,
-            body: body.into(),
+            body: Vec::new().into(),
         }
+    }
+
+    /// The write, naming the file `file` of the folder.
+    fn naming(mut self, file: &str) -> Self {
+        self.file = Some(file.to_owned());
+        self
     }
 
     #[must_use]

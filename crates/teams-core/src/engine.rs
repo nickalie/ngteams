@@ -3046,21 +3046,7 @@ where
                 if let Some((channel, post)) = teams_proto::reply_chain(&conversation) {
                     self.standing(channel, post)?;
                 }
-                // a channel's files are in its own folder, which its team reaches; a chat's are shared with its people
-                let channel = teams_proto::stored_conversation(&conversation);
-                let in_channel = teams_proto::is_team_thread_id(channel);
-                if text.files().iter().any(|file| {
-                    if in_channel {
-                        file.channel() != Some(channel)
-                    } else {
-                        file.channel().is_some()
-                    }
-                }) {
-                    return Err(EngineError::Attachment {
-                        why: "These files were attached somewhere else. Remove them and attach them again here."
-                            .to_owned(),
-                    });
-                }
+                files_in_place(&conversation, &text)?;
                 Command::Send { conversation, text }
             }
             Action::Edit {
@@ -4113,6 +4099,26 @@ async fn next_push(push: Option<&mut TrouterHandle>) -> Option<PushEvent> {
         Some(push) => push.next().await,
         None => pending().await,
     }
+}
+
+/// Checks that a send's files belong where it goes: a channel's are in its own folder, which its team reaches, so they
+/// go only to that channel's posts and replies; an own-drive file goes only to a chat, shared with its people.
+fn files_in_place(conversation: &str, text: &MessageText) -> Result<(), EngineError> {
+    let channel = teams_proto::stored_conversation(conversation);
+    let in_channel = teams_proto::is_team_thread_id(channel);
+    let elsewhere = |file: &teams_proto::UploadedFile| {
+        if in_channel {
+            file.channel() != Some(channel)
+        } else {
+            file.channel().is_some()
+        }
+    };
+    if text.files().iter().any(elsewhere) {
+        return Err(EngineError::Attachment {
+            why: "These files were attached somewhere else. Remove them and attach them again here.".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1587,7 +1587,12 @@ pub fn uploaded_file(name: &str) -> teams_proto::UploadedFile {
     teams_proto::UploadedFile::from_upload(&site, body.to_string().as_bytes()).expect("synthetic upload")
 }
 
-/// A synthetic file named `name` in the made-up folder of `channel` (a team thread's id).
+/// A synthetic file named `name` in the made-up folder of `channel` (a team thread's id); this never contacts a
+/// service.
+///
+/// # Panics
+/// If `channel` isn't a team thread's id, or the synthetic answer no longer matches the supported one.
+#[must_use]
 pub fn channel_file(channel: &str, name: &str) -> teams_proto::UploadedFile {
     let thread = serde_json::json!({"id": channel, "properties": {
         "sharepointSiteUrl": "https://madeup.sharepoint.com/sites/madeupteam",

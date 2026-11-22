@@ -71,7 +71,7 @@ async fn writes(server: &MockServer) -> Vec<wiremock::Request> {
         .collect()
 }
 
-fn refused(answer: Option<Result<super::Response, HttpError>>) -> bool {
+fn refused(answer: Option<&Result<super::Response, HttpError>>) -> bool {
     matches!(answer, Some(Err(HttpError::Refused(Refusal::ChannelFile))))
 }
 
@@ -131,7 +131,7 @@ async fn a_write_for_a_folder_the_channel_no_longer_names_is_never_sent() {
     channel_says(&server, "/sites/labteam/Shared Documents/Renamed").await;
     let transport = transport(&server);
     let stub = ChannelFileWrite::add_stub(&folder(), "a.txt").unwrap();
-    assert!(refused(transport.deliver_channel_file(stub).await));
+    assert!(refused(transport.deliver_channel_file(stub).await.as_ref()));
     assert!(writes(&server).await.is_empty());
 }
 
@@ -142,9 +142,9 @@ async fn a_write_naming_a_file_outside_the_folder_is_never_sent() {
     file_is_at(&server, "/sites/labteam/Shared Documents/Other/a.txt").await;
     let transport = transport(&server);
     let recycle = ChannelFileWrite::recycle(&folder(), FILE).unwrap();
-    assert!(refused(transport.deliver_channel_file(recycle).await));
+    assert!(refused(transport.deliver_channel_file(recycle).await.as_ref()));
     let start = ChannelFileWrite::start_upload(&folder(), FILE, "a.txt", b"abc".to_vec()).unwrap();
-    assert!(refused(transport.deliver_channel_file(start).await));
+    assert!(refused(transport.deliver_channel_file(start).await.as_ref()));
     assert!(writes(&server).await.is_empty());
 }
 

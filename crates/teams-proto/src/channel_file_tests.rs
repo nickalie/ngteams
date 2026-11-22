@@ -109,6 +109,14 @@ fn the_upload_steps_are_the_web_clients_rest_calls() {
         "https://madeup.sharepoint.com/sites/labteam/_api/web/GetFolderByServerRelativeUrl(@v)/Files/addStub(@fn)\
          ?@v=%27%2Fsites%2Flabteam%2FShared%20Documents%2FGeneral%27&@fn=%27lab%20notes.txt%27"
     );
+    // a quote is doubled inside the OData string
+    let quoted = ChannelFileWrite::add_stub(&folder, "it's.txt").unwrap();
+    assert!(quoted.url().as_str().ends_with("&@fn=%27it%27%27s.txt%27"));
+}
+
+#[test]
+fn the_steps_after_the_stub_name_the_file_by_its_id() {
+    let folder = folder();
     let start = ChannelFileWrite::start_upload(&folder, FILE, "lab notes.txt", b"abc".to_vec()).unwrap();
     assert_eq!(start.body(), b"abc");
     assert_eq!(start.file(), Some(FILE));
@@ -130,9 +138,11 @@ fn the_upload_steps_are_the_web_clients_rest_calls() {
         recycle.url().as_str(),
         format!("{SITE}/_api/web/GetFileById('{FILE}')/recycle")
     );
-    // a quote is doubled inside the OData string
-    let quoted = ChannelFileWrite::add_stub(&folder, "it's.txt").unwrap();
-    assert!(quoted.url().as_str().ends_with("&@fn=%27it%27%27s.txt%27"));
+}
+
+#[test]
+fn a_name_or_an_id_sharepoint_cannot_hold_makes_no_write() {
+    let folder = folder();
     for name in ["", ".", "..", "a/b.txt", "a#b.txt", "50%.txt", " lead.txt", "tab\t.txt"] {
         assert!(ChannelFileWrite::add_stub(&folder, name).is_none(), "{name:?}");
     }
@@ -167,6 +177,9 @@ fn the_answered_file_must_be_right_in_the_folder() {
     );
     assert!(file.is_in(&crate::Cloud::Microsoft));
     assert!(!file.is_in(&crate::Cloud::own("https://chat.example").unwrap()));
+    // kept in the outbox and read back the same
+    let stored: crate::UploadedFile = serde_json::from_value(serde_json::to_value(&file).unwrap()).unwrap();
+    assert_eq!(stored, file);
     for (name, path) in [
         ("a.txt", "/sites/labteam/Shared Documents/Other/a.txt"),
         ("a.txt", "/sites/labteam/Shared Documents/General/sub/a.txt"),
@@ -174,6 +187,14 @@ fn the_answered_file_must_be_right_in_the_folder() {
     ] {
         assert!(uploaded_file(&folder, &answer(name, path)).is_none(), "{path}");
     }
+}
+
+#[test]
+fn a_channel_files_entry_is_the_web_clients() {
+    let folder = folder();
+    let answer = json!({"UniqueId": FILE, "Name": "a.txt", "Length": "40",
+        "ServerRelativeUrl": "/sites/labteam/Shared Documents/General/a.txt"});
+    let file = uploaded_file(&folder, &serde_json::to_vec(&answer).unwrap()).unwrap();
     let entry = file.entry();
     assert_eq!(
         entry["fileInfo"]["fileUrl"],
@@ -189,9 +210,6 @@ fn the_answered_file_must_be_right_in_the_folder() {
     assert_eq!(entry["permissionScope"], Value::Null);
     assert_eq!(entry["itemid"], FILE);
     assert_eq!(entry["fileType"], "txt");
-    // kept in the outbox and read back the same
-    let stored: crate::UploadedFile = serde_json::from_value(serde_json::to_value(&file).unwrap()).unwrap();
-    assert_eq!(stored, file);
 }
 
 #[test]

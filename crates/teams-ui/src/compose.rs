@@ -1403,7 +1403,7 @@ impl Compose {
                 self.attachments
                     .iter()
                     .filter_map(|file| match &file.state {
-                        attachments::AttachmentState::Ready(uploaded) => Some(uploaded.clone()),
+                        attachments::AttachmentState::Ready(uploaded) => Some((**uploaded).clone()),
                         _ => None,
                     })
                     .collect(),

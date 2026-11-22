@@ -33,7 +33,7 @@ pub struct Attachment {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AttachmentState {
     Uploading,
-    Ready(teams_proto::UploadedFile),
+    Ready(Box<teams_proto::UploadedFile>),
     Failed(gpui::SharedString),
 }
 
@@ -68,12 +68,17 @@ impl Attachment {
             state: AttachmentState::Uploading,
         })
     }
+    /// Whether the file went to a channel's folder under another name than `chosen`: the folder had that name.
+    fn is_copy_of(&self, chosen: &str) -> bool {
+        matches!(&self.state, AttachmentState::Ready(uploaded) if uploaded.channel().is_some() && uploaded.name() != chosen)
+    }
+
     fn complete(&mut self, answer: Result<teams_proto::UploadedFile, teams_core::EngineError>) {
         self.state = match answer {
             Ok(uploaded) => {
                 uploaded.name().clone_into(&mut self.name);
                 self.size = uploaded.size();
-                AttachmentState::Ready(uploaded)
+                AttachmentState::Ready(Box::new(uploaded))
             }
             Err(error) => AttachmentState::Failed(error.to_string().into()),
         };
@@ -196,10 +201,7 @@ impl Compose {
                 }
                 if let Some(file) = this.attachments.iter_mut().find(|file| file.id == id) {
                     file.complete(answer);
-                    // the folder had the name: Teams says the file went as a copy
-                    if matches!(&file.state, AttachmentState::Ready(uploaded) if uploaded.channel().is_some() && uploaded.name() != chosen) {
-                        this.copy_notice = true;
-                    }
+                    this.copy_notice |= file.is_copy_of(&chosen);
                     cx.notify();
                 }
             });
@@ -218,7 +220,7 @@ impl Compose {
         if let AttachmentState::Ready(uploaded) = file.state
             && uploaded.channel().is_some()
         {
-            let discarded = self.core.discard_channel_file(uploaded);
+            let discarded = self.core.discard_channel_file(*uploaded);
             cx.spawn(async move |_, _| {
                 let _ = discarded.await;
             })

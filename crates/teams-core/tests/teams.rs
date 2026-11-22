@@ -367,9 +367,25 @@ async fn a_post_goes_to_the_channel_and_a_reply_to_its_posts_chain_both_stored_w
             .await;
         assert!(matches!(refused, Err(EngineError::Attachment { .. })), "{refused:?}");
     }
-    // a file in the channel's own folder goes in a post and in a reply; one of another place is refused
+    files_go_only_to_their_own_place(&requests, &chain).await;
+    // a reaction on the reply goes to the channel, as a chat's
+    let reacted = requests
+        .write(Action::React {
+            conversation: TEAM_CHANNEL.to_owned(),
+            message_id: reply,
+            key: "like".to_owned(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(reacted.state, OutboxState::Sent, "{reacted:?}");
+}
+
+/// A file in the channel's own folder goes in a post and in a reply; one of another place is refused, and so is a
+/// channel file in a chat.
+async fn files_go_only_to_their_own_place(requests: &teams_core::engine::EngineRequests, chain: &str) {
+    let text = |words: &str| MessageText::plain(words).unwrap();
     let in_channel = channel_file(TEAM_CHANNEL, "notes.txt");
-    for conversation in [TEAM_CHANNEL.to_owned(), chain.clone()] {
+    for conversation in [TEAM_CHANNEL.to_owned(), chain.to_owned()] {
         let sent = requests
             .write(Action::Send {
                 conversation,
@@ -392,16 +408,6 @@ async fn a_post_goes_to_the_channel_and_a_reply_to_its_posts_chain_both_stored_w
             .await;
         assert!(matches!(refused, Err(EngineError::Attachment { .. })), "{refused:?}");
     }
-    // a reaction on the reply goes to the channel, as a chat's
-    let reacted = requests
-        .write(Action::React {
-            conversation: TEAM_CHANNEL.to_owned(),
-            message_id: reply,
-            key: "like".to_owned(),
-        })
-        .await
-        .unwrap();
-    assert_eq!(reacted.state, OutboxState::Sent, "{reacted:?}");
 }
 
 #[tokio::test]

@@ -1579,6 +1579,18 @@ impl ChatView {
         self.file_drop == FileDrop::Hovering
     }
 
+    /// The compose box, and the drop highlight while files hover the view: over the box in a channel, where Teams
+    /// covers only the box the files go to and names the channel; else over the whole view (the second element).
+    fn compose_with_drop(&mut self, palette: Palette, cx: &App) -> (gpui::Div, Option<AnyElement>) {
+        let file_drop = self.file_drop_shown(cx);
+        let compose = self.compose.read(cx);
+        let in_channel = compose.writes_a_channel();
+        let overlay = file_drop.then(|| file_drop_overlay(palette, compose.drop_label()).into_any_element());
+        let (on_box, over_all) = if in_channel { (overlay, None) } else { (None, overlay) };
+        let boxed = div().relative().child(self.compose.clone()).children(on_box);
+        (boxed, over_all)
+    }
+
     /// Whether the operating-system file drop target is currently highlighted.
     #[must_use]
     pub fn file_drop_active(&self) -> bool {
@@ -6085,14 +6097,7 @@ impl Render for ChatView {
         self.drawn.clear();
         #[cfg(feature = "test-support")]
         self.placed.faces.borrow_mut().clear();
-        let file_drop = self.file_drop_shown(cx);
-        // in a channel Teams covers only the box the files go to, and names the channel
-        let in_channel = self.compose.read(cx).writes_a_channel();
-        let label = self.compose.read(cx).drop_label();
-        let compose = div()
-            .relative()
-            .child(self.compose.clone())
-            .children((file_drop && in_channel).then(|| file_drop_overlay(palette, label.clone())));
+        let (compose, over_all) = self.compose_with_drop(palette, cx);
         let more = self.more_overlay();
         let options = self.options_overlay(palette, window, cx);
         let selection_menu = self.selection_menu(palette, window, cx);
@@ -6176,7 +6181,7 @@ impl Render for ChatView {
             .children(reactors)
             .children(options)
             .children(selection_menu)
-            .children((file_drop && !in_channel).then(|| file_drop_overlay(palette, label)))
+            .children(over_all)
     }
 }
 
