@@ -1,6 +1,6 @@
 //! A reaction's animation on Teams' CDN ([`ReactionAnimation`], `docs/protocol/chat.md`, "Reaction pictures") on
 //! wiremock, through the `test-support` mock origin: a `GET` of the picker's `<id>/default/50_anim_f.png` or a call
-//! reaction's `skype/v2/<id>V4-3D/<side>a.png` with no token, its answer kept only when it is a PNG of at most
+//! reaction's `skype/v2/<id>V4-3D/<side>a.png` with no token, its answer kept only when it is a whole PNG of at most
 //! `MAX_ANIMATION` bytes; an id that isn't one path segment of Teams' form, or a side the CDN has not, makes no read.
 //!
 //! The strip's bytes are made up.
@@ -20,8 +20,10 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const CHAT_BASE: &str = "https://teams.microsoft.com/api/chatsvc/amer";
-/// A PNG's signature and the image header of a 1 px picture: the made-up bodies start with it.
-const PNG_HEAD: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x01\0\0\0\x01\x08\x06\0\0\0";
+/// A PNG's signature and the image header chunk of a 1 px picture, with a made-up checksum.
+const PNG_HEAD: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x01\0\0\0\x01\x08\x06\0\0\0\0\0\0\0";
+/// A PNG's end chunk, with a made-up checksum.
+const PNG_END: &[u8] = b"\0\0\0\0IEND\0\0\0\0";
 const STRIP_PATH: &str = "/evergreen-assets/personal-expressions/v2/assets/emoticons/1f440_eyes/default/50_anim_f.png";
 
 /// Records every audience a token was asked for: the CDN's read asks for none.
@@ -44,11 +46,21 @@ impl Credentials for FakeTokens {
     }
 }
 
-/// A body with a PNG's header, one byte over [`MAX_ANIMATION`]: only the length limit refuses it.
+/// A chunk of `kind` that holds `data`, with a made-up checksum.
+fn chunk(kind: &[u8], data: &[u8]) -> Vec<u8> {
+    let length = u32::try_from(data.len()).unwrap().to_be_bytes();
+    [&length[..], kind, data, &[0; 4]].concat()
+}
+
+/// A made-up whole PNG: its image data chunk holds `data`.
+fn png(data: &[u8]) -> Vec<u8> {
+    [PNG_HEAD, &chunk(b"IDAT", data), PNG_END].concat()
+}
+
+/// A whole PNG one byte over [`MAX_ANIMATION`]: only the length limit refuses it.
 fn oversized_png() -> Vec<u8> {
-    let mut body = PNG_HEAD.to_vec();
-    body.resize(MAX_ANIMATION + 1, 0);
-    body
+    let overhead = png(b"").len();
+    png(&vec![0; MAX_ANIMATION + 1 - overhead])
 }
 
 async fn setup() -> (MockServer, Arc<FakeTokens>, Client<HttpTransport<FakeTokens>>) {
@@ -111,7 +123,7 @@ fn a_call_reaction_s_3d_emoji_is_read_by_the_cdn_s_name_and_a_side_it_has() {
 #[tokio::test]
 async fn a_call_reaction_s_3d_emoji_is_a_get_with_no_token() {
     let (server, tokens, client) = setup().await;
-    let sprite = [PNG_HEAD, b"made-up sprite"].concat();
+    let sprite = png(b"made-up sprite");
     Mock::given(method("GET"))
         .and(path("/evergreen-assets/skype/v2/yesV4-3D/112a.png"))
         .respond_with(ResponseTemplate::new(200).set_body_raw(sprite.clone(), "image/png"))
@@ -134,7 +146,7 @@ async fn a_call_reaction_s_3d_emoji_is_a_get_with_no_token() {
 #[tokio::test]
 async fn the_strip_is_a_get_with_no_token_and_only_a_png_is_kept() {
     let (server, tokens, client) = setup().await;
-    let strip = [PNG_HEAD, b"made-up strip"].concat();
+    let strip = png(b"made-up strip");
     Mock::given(method("GET"))
         .and(path(STRIP_PATH))
         .respond_with(ResponseTemplate::new(200).set_body_raw(strip.clone(), "image/png"))
@@ -174,22 +186,6 @@ async fn the_strip_is_a_get_with_no_token_and_only_a_png_is_kept() {
         "labelled a PNG, but not one"
     );
 
-    let no_picture = [&PNG_HEAD[..8], b"made-up text"].concat();
-    let empty_picture = [&PNG_HEAD[..16], &[0; 4], &PNG_HEAD[20..]].concat();
-    for (body, why) in [
-        (PNG_HEAD[..8].to_vec(), "a signature only"),
-        (no_picture, "a signature with no image header"),
-        (empty_picture, "a picture with no width"),
-    ] {
-        server.reset().await;
-        Mock::given(method("GET"))
-            .and(path(STRIP_PATH))
-            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "image/png"))
-            .mount(&server)
-            .await;
-        assert_eq!(read.read_answer(&client.read(&read).await.unwrap()), None, "{why}");
-    }
-
     server.reset().await;
     Mock::given(method("GET"))
         .and(path(STRIP_PATH))
@@ -205,4 +201,44 @@ async fn the_strip_is_a_get_with_no_token_and_only_a_png_is_kept() {
         .mount(&server)
         .await;
     assert!(matches!(client.read(&read).await, Err(HttpError::Status(_))));
+}
+
+#[tokio::test]
+async fn a_png_that_is_not_whole_is_not_kept() {
+    let (server, _, client) = setup().await;
+    let read = ReactionAnimation::of("1f440_eyes").unwrap();
+    let no_picture = [&PNG_HEAD[..8], b"made-up text"].concat();
+    let empty_picture = [
+        &PNG_HEAD[..16],
+        &[0; 4],
+        &PNG_HEAD[20..],
+        &chunk(b"IDAT", b"x"),
+        PNG_END,
+    ]
+    .concat();
+    let whole = png(b"made-up strip");
+    for (body, why) in [
+        (PNG_HEAD[..8].to_vec(), "a signature only"),
+        (no_picture, "a signature with no image header"),
+        (empty_picture, "a picture with no width"),
+        (PNG_HEAD[..24].to_vec(), "a body that stops after the sides"),
+        (PNG_HEAD.to_vec(), "an image header only"),
+        ([PNG_HEAD, PNG_END].concat(), "no image data"),
+        (whole[..whole.len() - PNG_END.len()].to_vec(), "no end chunk"),
+        (whole[..whole.len() - 1].to_vec(), "an end chunk cut short"),
+        ([&whole[..], b"x"].concat(), "bytes after the end chunk"),
+        ([PNG_HEAD, &chunk(b"IDAT", b"x")[..6]].concat(), "image data cut short"),
+        (
+            [&PNG_HEAD[..8], &chunk(b"IDAT", b"x"), PNG_END].concat(),
+            "image data before the image header",
+        ),
+    ] {
+        server.reset().await;
+        Mock::given(method("GET"))
+            .and(path(STRIP_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "image/png"))
+            .mount(&server)
+            .await;
+        assert_eq!(read.read_answer(&client.read(&read).await.unwrap()), None, "{why}");
+    }
 }
