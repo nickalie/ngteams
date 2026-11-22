@@ -390,7 +390,13 @@ fn chats_are_titled_counted_and_previewed_as_the_chat_list_shows_them() {
         rows,
         [
             (PROJECT, "Project", "group", 1, Some("Budget review")),
-            (ONE_TO_ONE, "Bee Example", "one-to-one", 2, Some("Someone line one")),
+            (
+                ONE_TO_ONE,
+                "Bee Example",
+                "one-to-one",
+                2,
+                Some("Someone line one line two")
+            ),
             (TRIO_ONE, "Bee and Cee", "group", 0, Some("You: Trio one")),
             (TRIO_TWO, "Bee and Cee", "group", 0, Some("You: Trio two")),
         ],
