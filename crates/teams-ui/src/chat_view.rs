@@ -47,7 +47,8 @@
 //!   focus: Escape in the compose box with nothing to cancel there (no reply, edit or open picker) moves it there,
 //!   whatever the box holds, and Escape in the list with nothing open or selected moves it back; the list is also the
 //!   stop of Tab before the box, one stop that Tab passes the controls in, ringed while the keyboard is on it, as in
-//!   Teams): reply, react and
+//!   Teams; Enter there goes to the selected message's first control, or the list's first with none selected, Tab
+//!   goes on from it, and Escape on a control in the list gives the keys back to the list): reply, react and
 //!   copy text, and for the account's own message edit (not a forward's) and delete. They are on Teams' hover bar over
 //!   the bubble's top right ([`ChatView::hover_bar`]): the quick reactions (the account's most used,
 //!   [`Core::frequent_reactions`], then Teams' own: [`quick_reactions`]), react, edit, reply, and "More options" (copy
@@ -357,8 +358,8 @@ pub fn init(cx: &mut App) {
     let input = Some(crate::card_view::INPUT_CONTEXT);
     cx.bind_keys(
         [
-            "up", "down", "r", "a", "e", "t", "delete", "escape", "enter", "1", "2", "3", "4", "5", "right", "left",
-            "space",
+            "up", "down", "r", "a", "e", "t", "u", "delete", "escape", "enter", "1", "2", "3", "4", "5", "right",
+            "left", "space",
         ]
         .map(|key| KeyBinding::new(key, gpui::NoAction, input)),
     );
@@ -1259,6 +1260,8 @@ pub struct ChatView {
 /// The list's focus: a stop of Tab's order, as Teams' list is, so Shift+Tab from the box comes to it.
 struct ListFocus {
     handle: FocusHandle,
+    /// The selected message's row: it holds the controls that Enter on the list goes to, and is no stop itself.
+    selected_row: FocusHandle,
     /// How the list last took the keys, which its ring follows.
     keys: ListKeys,
 }
@@ -1276,6 +1279,7 @@ impl ListFocus {
     fn new(cx: &mut App) -> Self {
         Self {
             handle: cx.focus_handle().tab_stop(true),
+            selected_row: cx.focus_handle().tab_stop(false),
             keys: ListKeys::Off,
         }
     }
@@ -2596,6 +2600,8 @@ impl ChatView {
             | self.text_selection.clear();
         if open {
             cx.notify();
+        } else if self.on_a_control_in_the_list(window, cx) {
+            self.focus_messages(window, cx);
         } else if self.selected.is_some() {
             self.select(None, cx);
         } else {
@@ -2674,13 +2680,49 @@ impl ChatView {
         }
     }
 
+    fn on_a_control_in_the_list(&self, window: &Window, cx: &App) -> bool {
+        self.focus.handle.contains_focused(window, cx) && !self.focus.handle.is_focused(window)
+    }
+
+    /// Enter in the list: the delete it asks for, if one is asked; on the list itself, the keys go into it.
+    fn enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.deleting.is_some() {
+            self.confirm_delete(cx);
+        } else if self.focus.handle.is_focused(window) {
+            self.keys_into_the_list(window, cx);
+        } else {
+            cx.propagate();
+        }
+    }
+
+    /// The first control of the selected message, or of the list with none selected; the list keeps the keys if it
+    /// has none. Its controls come after it in Tab's order, so the steps end where the focus leaves it.
+    fn keys_into_the_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let target = if self.selected.is_some() {
+            &self.focus.selected_row
+        } else {
+            &self.focus.handle
+        };
+        let target = target.clone();
+        for _ in 0..MOST_STEPS {
+            window.focus_next(cx);
+            if !self.focus.handle.contains_focused(window, cx) || self.focus.handle.is_focused(window) {
+                break;
+            }
+            if target.contains_focused(window, cx) {
+                cx.notify();
+                return;
+            }
+        }
+        self.focus_messages(window, cx);
+    }
+
     /// After a key: Shift+Tab from outside the list that came to a control in it (from the box, its format bar or
     /// anything after the list) gives the keys to the list itself, its one stop.
     fn keys_to_the_list(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
         let back = event.keystroke.key == "tab" && event.keystroke.modifiers.shift;
         let from_outside = !event.context_stack.iter().any(|context| context.contains(CONTEXT));
-        let handle = &self.focus.handle;
-        if back && from_outside && handle.contains_focused(window, cx) && !handle.is_focused(window) {
+        if back && from_outside && self.on_a_control_in_the_list(window, cx) {
             self.focus_messages(window, cx);
         }
     }
@@ -4055,6 +4097,13 @@ impl ChatView {
             let avatar = (!item.own && item.email.is_none()).then(|| self.avatar_column(item, palette, cx));
             row.children(avatar)
                 .child(self.message_column(item, highlighted, palette, cx))
+        };
+        let row = if highlighted {
+            // the handle only marks the row's controls for Enter: a click on the row moves no focus
+            row.track_focus(&self.focus.selected_row)
+                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+        } else {
+            row
         };
         row.into_any_element()
     }
@@ -6354,7 +6403,7 @@ impl ChatView {
             .on_action(cx.listener(|this, _: &TranslateSelected, _, cx| this.translate_selected(cx)))
             .on_action(cx.listener(|this, _: &OpenSelectedMenu, window, cx| this.open_selected_menu(window, cx)))
             .on_action(cx.listener(|this, _: &ClearSelection, window, cx| this.escape(window, cx)))
-            .on_action(cx.listener(|this, _: &ConfirmDelete, _, cx| this.confirm_delete(cx)))
+            .on_action(cx.listener(|this, _: &ConfirmDelete, window, cx| this.enter(window, cx)))
     }
 
     /// Who is typing, under the messages, while anyone is.

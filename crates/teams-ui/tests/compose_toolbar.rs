@@ -1110,3 +1110,69 @@ fn escape_in_the_emoji_picker_after_emoji_went_into_more_gives_the_text_the_keys
     assert!(compose.read_with(cx, |compose, _| compose.emoji_picker().is_none()));
     assert!(box_focused(&compose, cx), "Escape gives the text the keys");
 }
+
+/// The bot card message `id`: one text input and its Send.
+fn card_message(id: &str) -> teams_store::Message {
+    use base64::Engine as _;
+    let card = serde_json::json!({
+        "type": "AdaptiveCard",
+        "body": [{"type": "Input.Text", "id": "said"}],
+        "actions": [{"type": "Action.Submit", "title": "Send"}]
+    });
+    let activity = serde_json::json!({"type": "message/card", "attachments": [
+        {"contentType": "application/vnd.microsoft.card.adaptive", "content": card}
+    ]});
+    let b64 = base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(&activity).unwrap());
+    let mut message = many(1).remove(0);
+    message.id = id.to_owned();
+    message.sender = Some("28:00000000-0000-4000-8000-0000000000b0".to_owned());
+    message.message_type = "RichText/Media_Card".to_owned();
+    message.arrival_time += 30_000;
+    message.content =
+        format!("<URIObject type=\"SWIFT.1\"><Title>Card</Title><Swift b64=\"{b64}\"></Swift></URIObject>");
+    message
+}
+
+#[test]
+fn enter_on_the_selected_message_goes_to_its_controls_and_escape_comes_back() {
+    let rig = Rig::start();
+    let mut messages = many(2);
+    messages.insert(1, card_message("700"));
+    rig.core.messages.lock().unwrap().insert(AB.to_owned(), messages);
+    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
+    let (view, compose, cx) = rooted_view(&rig, Settings::default(), 900.0);
+    assert!(shown(cx, "card-700-c0-in-said"), "the card's input is drawn");
+    press(cx, "shift-tab");
+    assert!(list_focused(&view, cx));
+    press(cx, "up");
+    press(cx, "up");
+    assert_eq!(
+        view.read_with(cx, |view, _| view.selected().map(str::to_owned))
+            .as_deref(),
+        Some("700")
+    );
+    press(cx, "enter");
+    assert!(!list_focused(&view, cx), "Enter goes to the card's input");
+    cx.simulate_input("lunch");
+    draw(cx);
+    press(cx, "tab");
+    key_click(cx);
+    let asks = rig.core.bot_asks.lock().unwrap().clone();
+    assert!(
+        matches!(&asks[..], [ask] if matches!(&ask.kind, teams_proto::InvokeKind::Submit(sent)
+            if sent.data == serde_json::json!({"said": "lunch"}))),
+        "the keyboard alone fills in and sends the card: {asks:?}"
+    );
+    press(cx, "escape");
+    assert!(
+        list_focused(&view, cx),
+        "Escape on the card's button gives the keys back to the list"
+    );
+    assert_eq!(
+        view.read_with(cx, |view, _| view.selected().map(str::to_owned))
+            .as_deref(),
+        Some("700")
+    );
+    press(cx, "tab");
+    assert!(box_focused(&compose, cx), "Tab from the list still passes its controls");
+}
