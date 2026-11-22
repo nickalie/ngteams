@@ -234,6 +234,13 @@ impl Engine {
         let pid = self.host.worker_pid();
         self.host.shutdown();
         self.host.shutdown();
+        if let (None, Some(view)) = (pid, self.frames.keys().next().copied()) {
+            let late = self.host.evaluate(view, "1".to_owned(), None);
+            assert!(
+                matches!(late.try_recv(), Err(async_channel::TryRecvError::Closed)),
+                "an evaluation after the shutdown is not dropped"
+            );
+        }
         if let Some(pid) = pid {
             assert!(
                 !std::path::Path::new(&format!("/proc/{pid}")).exists(),

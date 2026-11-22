@@ -48,6 +48,8 @@ pub(crate) struct Page {
     /// The web process is being ended for the fall-back to SHM: its termination is not reported, and the page
     /// reloads.
     falling_back: Cell<bool>,
+    /// The reply channels of the evaluations `WebKit` has not completed yet.
+    evaluations: std::cell::RefCell<Vec<async_channel::WeakSender<Evaluation>>>,
 }
 
 impl Page {
@@ -98,6 +100,7 @@ impl Page {
             dmabuf: Cell::new(display.renders_dmabuf()),
             pressed_at: Rc::new(Cell::new((0, 0))),
             falling_back: Cell::new(false),
+            evaluations: std::cell::RefCell::default(),
         });
         if let Some(background) = spec.background {
             page.web_view.set_background_color(background);
@@ -217,6 +220,11 @@ impl Page {
     }
 
     fn evaluate(&self, script: &str, world: Option<&str>, reply: Sender<Evaluation>) {
+        {
+            let mut pending = self.evaluations.borrow_mut();
+            pending.retain(|reply| reply.upgrade().is_some());
+            pending.push(reply.downgrade());
+        }
         self.web_view.evaluate_javascript(script, world, move |result| {
             let result = result
                 .map(|value| {
@@ -228,6 +236,18 @@ impl Page {
             // the caller may have stopped waiting
             let _ = reply.try_send(result);
         });
+    }
+
+    /// Closes the reply channel of each evaluation still open, since `WebKit` completes none after the engine's stop.
+    pub(crate) fn abandon_evaluations(&self) {
+        for reply in self
+            .evaluations
+            .take()
+            .iter()
+            .filter_map(async_channel::WeakSender::upgrade)
+        {
+            reply.close();
+        }
     }
 
     /// Ends the page: no more events, its handlers and load go, its view stops sending frames.

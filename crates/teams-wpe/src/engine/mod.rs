@@ -77,14 +77,14 @@ fn send(events: &Sender<Event>, event: Event) {
 /// [`Command::Quit`], after which it tells `stopped`.
 ///
 /// The thread then lives on, parked, for the life of the process: it is `WebKit`'s main thread, whose thread-local
-/// teardown waits forever on the run loop it tears down, so it must never end. Its main loop does not run again: a
-/// web process `WebKit` was still launching when the stop ended it ([`spares`]) has not yet sent its credentials
+/// teardown waits forever on the run loop it tears down, so it must never end. Its main loop does not run again
+/// (only the sources already picked for the stop's iteration still dispatch): a web process `WebKit` was still launching when the stop ended it ([`spares`]) has not yet sent its credentials
 /// through the bubblewrap launcher's socket, and the launcher's watch on that socket, dispatched, aborts the whole
 /// process (`g_error` in `IPC::Connection::remoteProcessID`, `Source/WebKit/Platform/IPC/glib/ConnectionGLib.cpp` at
 /// `wpewebkit-2.54`).
 pub(crate) fn run(
     config: &HostConfig,
-    commands: &Receiver<Command>,
+    commands: Receiver<Command>,
     events: Sender<Event>,
     ready: &SyncSender<Result<(), String>>,
     stopped: SyncSender<()>,
@@ -95,7 +95,7 @@ pub(crate) fn run(
             Ok(display) => display,
             Err(message) => {
                 let _ = ready.send(Err(message));
-                return false;
+                return;
             }
         };
         interaction::watch_clipboard(&display, events.clone());
@@ -113,21 +113,17 @@ pub(crate) fn run(
             }));
         });
         let main_loop = glib::MainLoop::new(Some(&context), false);
-        context.spawn_local(serve(commands.clone(), stopped, main_loop.clone()));
+        context.spawn_local(serve(commands, stopped, main_loop.clone()));
         let _ = ready.send(Ok(()));
         main_loop.run();
-        true
-    });
-    match ran {
-        Ok(true) => loop {
+        loop {
             std::thread::park();
-        },
-        Ok(false) => {}
-        Err(err) => {
-            let _ = ready.send(Err(format!(
-                "the engine's main context could not be made the thread's default: {err}"
-            )));
         }
+    });
+    if let Err(err) = ran {
+        let _ = ready.send(Err(format!(
+            "the engine's main context could not be made the thread's default: {err}"
+        )));
     }
 }
 
@@ -152,7 +148,8 @@ fn start(config: &HostConfig) -> Result<Display, String> {
 }
 
 /// Runs commands as they come, until [`Command::Quit`] or the host is gone; then stops the engine and its main loop,
-/// in this one dispatch, before the loop could see a web process the stop ended ([`run`]).
+/// in this one dispatch, before the loop could see a web process the stop ended ([`run`]). The queue closes with it, so
+/// a command still queued or posted later is dropped and its reply sender with it.
 async fn serve(commands: Receiver<Command>, stopped: SyncSender<()>, main_loop: glib::MainLoop) {
     while let Ok(command) = commands.recv().await {
         if matches!(command, Command::Quit) {
@@ -160,6 +157,8 @@ async fn serve(commands: Receiver<Command>, stopped: SyncSender<()>, main_loop: 
         }
         apply(command);
     }
+    commands.close();
+    while commands.try_recv().is_ok() {}
     stop();
     main_loop.quit();
     let _ = stopped.send(());
@@ -189,12 +188,14 @@ fn apply(command: Command) {
 }
 
 /// Closes every page, ends its web process ([`Page::end_web_process`]) and the ones `WebKit` keeps with no page
-/// (module `spares`), and drops the engine; the main loop stops right after ([`serve`]), so `WebKit` calls back nothing.
+/// (module `spares`), and drops the engine; the main loop stops right after ([`serve`]), so `WebKit` completes nothing
+/// that is still open, and each pending evaluation's channel is closed here instead.
 fn stop() {
     let pages = with(|engine| engine.pages.values().cloned().collect::<Vec<_>>()).unwrap_or_default();
     for page in pages {
         close_view(page.id);
         page.end_web_process();
+        page.abandon_evaluations();
     }
     spares::end();
     let engine = ENGINE.with(RefCell::take);

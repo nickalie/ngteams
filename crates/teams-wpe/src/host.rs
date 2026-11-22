@@ -66,7 +66,7 @@ impl Local {
         // never joined: the engine thread outlives the host (type docs)
         std::thread::Builder::new()
             .name("wpe-engine".to_owned())
-            .spawn(move || engine::run(&config, &command_queue, events, &ready, stop))
+            .spawn(move || engine::run(&config, command_queue, events, &ready, stop))
             .map_err(StartError::Thread)?;
         let local = Self {
             commands,
@@ -119,7 +119,7 @@ enum Engine {
 /// process or in a worker process ([`Backend`]).
 ///
 /// One in-process engine per process (a worker engine is a process of its own). Dropping it shuts the engine down, as
-/// [`Host::shutdown`] does. In process, the thread itself lives on, idle, until the process ends, since it is `WebKit`'s main thread, which must never end (its thread-local
+/// [`Host::shutdown`] does. In process, the thread itself lives on, parked with its main loop stopped, until the process ends, since it is `WebKit`'s main thread, which must never end (its thread-local
 /// teardown waits forever on the run loop it tears down); the process then ends through [`exit_process`]. A worker
 /// ends with its engine.
 ///

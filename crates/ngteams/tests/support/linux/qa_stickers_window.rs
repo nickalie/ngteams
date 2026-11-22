@@ -1208,10 +1208,17 @@ fn gif_moves(user: &mut User<'_>) -> SandboxResult {
         "  mouth ink seen: {seen:?} in {frame} shots ({} stickers)",
         found.len()
     ));
-    let active = user.state()?["active"].clone();
-    ensure(seen.len() >= 2, || {
+    if seen.len() >= 2 {
+        return Ok(());
+    }
+    // a state lookup that fails must not hide the frame counts
+    let active = user
+        .state()
+        .map_or_else(|err| format!("unknown ({err})"), |state| state["active"].to_string());
+    Err(
         format!("the GIF does not move: the mouth is always {seen:?} in {frame} shots; the window active: {active}")
-    })
+            .into(),
+    )
 }
 
 /// b's sticker under b's words in one message: in the bubble, under the text.
