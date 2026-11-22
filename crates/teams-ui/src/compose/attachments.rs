@@ -86,8 +86,8 @@ impl Attachment {
     }
 }
 
-fn not_recycled(name: &str) -> String {
-    format!("{name} couldn't be removed from the channel's files.")
+fn not_recycled(names: &[String]) -> String {
+    format!("{} couldn't be removed from the channel's files.", names.join(", "))
 }
 
 fn size_label(size: u64) -> String {
@@ -268,15 +268,32 @@ impl Compose {
         .detach();
     }
 
-    /// A recycle ended: a failure shows over the box, which stays while it shows ([`Self::has_draft`]).
+    /// A recycle ended: a failure shows over the box, with the failures it already shows, and the box stays while it
+    /// shows ([`Self::keeps_box`]).
     fn recycle_ended(&mut self, name: &str, recycled: bool, cx: &mut Context<Self>) {
         self.recycling = self.recycling.saturating_sub(1);
         if !recycled {
-            let problem = SharedString::from(not_recycled(name));
+            if self.problem.is_none() || self.problem != self.recycle_failed {
+                self.recycle_failed_names.clear();
+            }
+            self.recycle_failed_names.push(name.to_owned());
+            let problem = SharedString::from(not_recycled(&self.recycle_failed_names));
             self.recycle_failed = Some(problem.clone());
             self.show_problem(problem, cx);
         }
         cx.notify();
+    }
+
+    /// Takes away a failed recycle's notice, if the box shows it.
+    pub(super) fn clear_recycle_failed(&mut self) {
+        if self
+            .recycle_failed
+            .take()
+            .is_some_and(|failed| self.problem.as_ref() == Some(&failed))
+        {
+            self.problem = None;
+        }
+        self.recycle_failed_names.clear();
     }
 
     /// Teams' notice over a channel's box once a file went to the channel's folder as a numbered copy.

@@ -297,10 +297,12 @@ impl Shell {
             .chat
             .as_ref()
             .is_some_and(|chat| chat.read(cx).compose().read(cx).has_draft(cx));
-        let channel = self
-            .channel
-            .as_ref()
-            .is_some_and(|(view, _)| !view.read(cx).drafts(cx).is_empty());
+        let channel = self.channel.as_ref().is_some_and(|(view, _)| {
+            view.read(cx)
+                .drafts(cx)
+                .iter()
+                .any(|(_, compose)| compose.read(cx).has_draft(cx))
+        });
         let new_chat = self.new_chat.iter().chain(&self.kept_new).any(|(view, _)| {
             let view = view.read(cx);
             view.is_starting() || view.compose(cx).read(cx).has_draft(cx)

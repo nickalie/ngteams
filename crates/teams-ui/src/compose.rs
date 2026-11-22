@@ -715,6 +715,8 @@ pub struct Compose {
     recycling: usize,
     /// What a failed recycle shows over the box, while it shows.
     recycle_failed: Option<SharedString>,
+    /// The files the failed recycle's notice names.
+    recycle_failed_names: Vec<String>,
     picker: Option<Picker>,
     /// The chat's members the picker offers, once read, and the bots people can mention there.
     candidates: Option<Vec<Candidate>>,
@@ -887,6 +889,7 @@ impl Compose {
             routes: Routes::default(),
             recycling: 0,
             recycle_failed: None,
+            recycle_failed_names: Vec::new(),
             picker: None,
             candidates: None,
             bots: BTreeMap::new(),
@@ -1113,14 +1116,19 @@ impl Compose {
             || matches!(self.mode, Mode::Reply(_))
     }
 
-    /// A chat keeps its editor alive while a local draft or upload remains, including across chat navigation. A box
-    /// also stays while a channel file it let go is on its way to the recycle bin, and while it says that failed.
+    /// A chat keeps its editor alive while a local draft or upload remains, including across chat navigation.
     pub(crate) fn has_draft(&self, cx: &App) -> bool {
         !self.editor.read(cx).is_empty()
             || self.mode != Mode::New
             || !self.attachments.is_empty()
             || !self.apps.cards.is_empty()
             || self.sending_files > 0
+    }
+
+    /// A channel's box also stays, with no draft to send, while a file it let go still uploads or is on its way to the
+    /// recycle bin, and while it says that failed.
+    pub(crate) fn keeps_box(&self, cx: &App) -> bool {
+        self.has_draft(cx)
             || !self.routes.files.is_empty()
             || self.recycling > 0
             || self.recycle_failed.is_some() && self.problem == self.recycle_failed
@@ -1187,6 +1195,7 @@ impl Compose {
             self.recycle_channel_file(file, cx);
         }
         self.copy_notice = false;
+        self.clear_recycle_failed();
         self.editor.update(cx, super::editor::Editor::clear);
         if self.mode != Mode::New {
             self.cancel(window, cx);

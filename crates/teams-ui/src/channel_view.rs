@@ -331,10 +331,10 @@ impl ChannelView {
 
     /// Takes the open thread away, keeping its box when it holds a draft: the thread's post, if one was open.
     fn put_thread_away(&mut self, cx: &App) -> Option<String> {
-        self.drafts.retain(|_, compose| compose.read(cx).has_draft(cx));
+        self.drafts.retain(|_, compose| compose.read(cx).keeps_box(cx));
         let thread = self.thread.take()?;
         let compose = thread.view.read(cx).compose().clone();
-        if compose.read(cx).has_draft(cx) {
+        if compose.read(cx).keeps_box(cx) {
             let place = Place::Thread {
                 post: thread.post.clone(),
             };
@@ -344,9 +344,9 @@ impl ChannelView {
         Some(thread.post)
     }
 
-    /// The boxes holding a draft, by the conversation each writes to (the channel's posts' box by the channel, a
-    /// thread's by its post's chain): the shell keeps them while another channel is shown, for the channel's next view
-    /// ([`Self::new`]).
+    /// The boxes holding a draft or a file's upload or recycle, by the conversation each writes to (the channel's
+    /// posts' box by the channel, a thread's by its post's chain): the shell keeps them while another channel is shown,
+    /// for the channel's next view ([`Self::new`]).
     #[must_use]
     pub fn drafts(&self, cx: &App) -> Vec<(String, Entity<Compose>)> {
         let posts = (self.channel.clone(), self.posts.read(cx).compose().clone());
@@ -364,7 +364,7 @@ impl ChannelView {
                     .iter()
                     .map(|(target, compose)| (target.clone(), compose.clone())),
             )
-            .filter(|(_, compose)| compose.read(cx).has_draft(cx))
+            .filter(|(_, compose)| compose.read(cx).keeps_box(cx))
             .collect()
     }
 

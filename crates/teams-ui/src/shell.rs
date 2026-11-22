@@ -2708,7 +2708,7 @@ impl Shell {
         id: &str,
         cx: &App,
     ) -> std::collections::HashMap<String, Entity<crate::compose::Compose>> {
-        self.drafts.retain(|_, compose| compose.read(cx).has_draft(cx));
+        self.drafts.retain(|_, compose| compose.read(cx).keeps_box(cx));
         if let Some((view, _)) = &self.channel {
             self.drafts.extend(view.read(cx).drafts(cx));
         }
@@ -2725,7 +2725,7 @@ impl Shell {
     }
 
     fn keep_draft(&mut self, cx: &App) {
-        self.drafts.retain(|_, compose| compose.read(cx).has_draft(cx));
+        self.drafts.retain(|_, compose| compose.read(cx).keeps_box(cx));
         if let Some(chat) = &self.chat {
             let chat = chat.read(cx);
             let compose = chat.compose();
