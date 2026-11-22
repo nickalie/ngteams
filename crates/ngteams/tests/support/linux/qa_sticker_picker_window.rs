@@ -110,28 +110,28 @@ const NIRI_CONFIG: &str = "layout {\n    gaps 0\n    default-column-width { prop
 const SCREEN: (u32, u32) = (1280, 800);
 
 /// Where a user sees the box's controls and the picker at 1280 px and font 14 (the UI tour's shots).
-const EMOJI_BUTTON: (i32, i32) = (1070, 750);
+const EMOJI_BUTTON: (i32, i32) = (1101, 750);
 const SEND_BUTTON: (i32, i32) = (1236, 750);
-const TAB_ALL: (i32, i32) = (773, 370);
-const TAB_EMOJI: (i32, i32) = (825, 370);
-const TAB_STICKERS: (i32, i32) = (893, 370);
-const SEE_ALL_EMOJI: (i32, i32) = (1040, 445);
-const SEE_ALL_STICKERS: (i32, i32) = (1040, 538);
+const TAB_ALL: (i32, i32) = (804, 370);
+const TAB_EMOJI: (i32, i32) = (856, 370);
+const TAB_STICKERS: (i32, i32) = (924, 370);
+const SEE_ALL_EMOJI: (i32, i32) = (1071, 445);
+const SEE_ALL_STICKERS: (i32, i32) = (1071, 538);
 /// A pack's "More options".
-const PACK_MORE: (i32, i32) = (1065, 471);
+const PACK_MORE: (i32, i32) = (1096, 471);
 /// The end of the search field: its magnifier or its X; and a point of the field's own background.
 const SEARCH_MARK: Rect = Rect {
-    x: 1046,
+    x: 1077,
     y: 399,
     w: 26,
     h: 17,
 };
-const SEARCH_FIELD: (i32, i32) = (1000, 407);
+const SEARCH_FIELD: (i32, i32) = (1031, 407);
 /// The pixels of a 16 px glyph's strokes, at the least.
 const MARK_INK: usize = 12;
 /// The picker, and the chat's messages, on the screen.
 const PICKER: Rect = Rect {
-    x: 746,
+    x: 777,
     y: 349,
     w: 338,
     h: 382,

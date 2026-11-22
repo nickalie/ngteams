@@ -16,7 +16,8 @@
 //!   a typed dot after a link); one edit saved, its PUT read on the mock.
 //! - **Other languages and ends**: Cyrillic, CJK, an emoji, ":)", "...", pasted where the keymap has no key. A CJK
 //!   full stop "。" that the model adds is no change either (`cjk_full_stop_added`).
-//! - **More options**: a narrow window, Correct by its row in More options, the proposal taken by the row again.
+//! - **More options**: Correct shown on the bar, a narrow window, Correct by its row in More options, the proposal taken
+//!   by the row again.
 //! - **Send corrected** (Ctrl+Enter): the POST on the mock has no added dot.
 //!
 //! `QA_FINAL_DOT_ONLY` (a comma list of check names) runs only those. `QA_FINAL_DOT_EVIDENCE` names a directory that
@@ -1026,6 +1027,8 @@ fn send_corrected(user: &mut User<'_>) -> SandboxResult {
 /// A narrow window, Correct in More options: its row asks, its row again gives the keyboard to the proposal, Enter
 /// takes it; an answer that only adds a dot is no change there too.
 fn more_options_row(user: &mut User<'_>) -> SandboxResult {
+    // Correct is a row of "+" until the user shows it on the bar; only a shown tool goes into More options
+    user.answer_ok("show-correct")?;
     let mut chosen = None;
     for width in [700, 640, 600, 560] {
         user.resize(width)?;
@@ -1406,6 +1409,16 @@ fn on_shell(shell: &Entity<Shell>, verb: &str, window: &mut Window, cx: &mut App
                         settings.appearance.follow_system = false;
                         settings.appearance.theme = key;
                     },
+                    cx,
+                );
+            });
+            "ok".to_owned()
+        }
+        "show-correct" => {
+            let model = shell.read(cx).settings().clone();
+            model.update(cx, |model, cx| {
+                model.change(
+                    |settings| settings.show_compose_tool(teams_ui::settings::ComposeTool::Correct, true),
                     cx,
                 );
             });

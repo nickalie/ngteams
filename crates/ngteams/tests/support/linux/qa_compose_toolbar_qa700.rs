@@ -275,19 +275,13 @@ fn other_boxes(user: &mut User<'_>) -> SandboxResult {
     user.ask("clear")?;
     // a channel's post and a thread's reply
     user.ask("open-channel")?;
-    user.until("the channel", |state| !state["post"].is_null())?;
+    user.until("the post box shows the tools on its bar alone", |state| {
+        shows_ai_on_bar(state, "post")
+    })?;
     user.ask("open-thread")?;
-    user.until("the thread", |state| !state["thread"].is_null())?;
-    let state = user.state()?;
-    for key in ["post", "thread"] {
-        let row = &state[key]["row_tools"];
-        ensure(
-            row.as_array()
-                .is_some_and(|row| row.ends_with(&[json!("compose-correct"), json!("compose-translate")]))
-                && state[key]["plus_rows"] == json!(["compose-customize"]),
-            || format!("the {key} box does not show the tools on its bar alone: {}", state[key]),
-        )?;
-    }
+    user.until("the thread box shows the tools on its bar alone", |state| {
+        shows_ai_on_bar(state, "thread")
+    })?;
     user.shots_in_both_themes("qa700-channel-thread-shown")?;
     for key in ["post", "thread"] {
         user.ask(&format!("box-menu {key} plus"))?;
@@ -300,6 +294,16 @@ fn other_boxes(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
     user.show_ai(&[])?;
     Ok(())
+}
+
+/// Whether the box `key` shows Correct and Translate at the end of its bar, and its "+" holds only "Customize toolbar".
+/// The post box is checked before the thread opens: beside the thread it is stacked, and its AI tools go to More
+/// options. A box keeps the width it was last drawn at, so a check waits for the box to be drawn again.
+fn shows_ai_on_bar(state: &Value, key: &str) -> bool {
+    state[key]["row_tools"]
+        .as_array()
+        .is_some_and(|row| row.ends_with(&[json!("compose-correct"), json!("compose-translate")]))
+        && state[key]["plus_rows"] == json!(["compose-customize"])
 }
 
 /// A 520 px window with both tools shown: "More options" holds Correct, Translate and the language, and each works

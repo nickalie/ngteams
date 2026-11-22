@@ -109,7 +109,7 @@ const HOVER: [u8; 3] = [240, 240, 240];
 /// Where the chat's pane starts on the 1280-wide screen: the rail and the chat list are left of it.
 const PANE_X: u32 = 455;
 /// The compose box's "+" (Actions and apps) on the 1280-wide screen, a one-line box.
-const PLUS: (u32, u32) = (1163, 749);
+const PLUS: (u32, u32) = (1194, 749);
 
 /// The fixture's apps (`teams_mock::extension_apps_answer`) and their bots.
 const FINDER_APP: &str = "00000000-0000-4000-8000-00000000e001";
@@ -404,16 +404,19 @@ impl Walk<'_> {
         expect(listed == wanted, || {
             format!("the flyout lists {listed:?}, expected {wanted:?} (no message-only app, no store offer)")
         });
-        // the keyboard goes down the many apps: the lit row stays in view
-        for _ in 0..wanted.len() - 2 {
+        // the keyboard goes past the box's own rows (the AI tools) and down the many apps: the lit row stays in view
+        let actions = self.state()?["compose"]["flyout"]["actions"]
+            .as_u64()
+            .ok_or("the flyout tells no action rows")?;
+        let downs = usize::try_from(actions)? + wanted.len() - 2;
+        for _ in 0..downs {
             self.key(keys::DOWN)?;
         }
         let down_lit = lit_in(&load(&self.shots("flyout-down")?)?, flyout);
         expect(first_lit < 2000 || down_lit > 500, || {
             format!(
-                "Down {} times: the lit row is out of the list's view, the list does not scroll to it ({first_lit} lit \
-                 px on the first row, {down_lit} after; {})",
-                wanted.len() - 2,
+                "Down {downs} times: the lit row is out of the list's view, the list does not scroll to it ({first_lit} \
+                 lit px on the first row, {down_lit} after; {})",
                 shots_dir()
                     .map(|dir| dir.join("qa-me-flyout-down-light.png").display().to_string())
                     .unwrap_or_default()
@@ -429,8 +432,7 @@ impl Walk<'_> {
             .to_owned();
         expect(chosen == wanted[wanted.len() - 2], || {
             format!(
-                "Down {} times and Enter opens {chosen}, expected {}",
-                wanted.len() - 2,
+                "Down {downs} times and Enter opens {chosen}, expected {}",
                 wanted[wanted.len() - 2]
             )
         });
@@ -805,7 +807,7 @@ const FINDER_INVOKE_END: &str = "00000000eb01/invoke";
 // --- an action app's dialog ---
 
 /// The flyout's left edge: it opens up and left from the "+", 340 px wide.
-const FLYOUT_X0: u32 = 839;
+const FLYOUT_X0: u32 = 870;
 /// The flyout's "New record" tab, from the flyout's left edge and its top.
 const NEW_RECORD_TAB: (u32, u32) = (128, 54);
 
@@ -2662,6 +2664,7 @@ fn chat_state(shell: &Shell, cx: &App) -> Value {
         json!({
             "loaded": flyout.loaded(),
             "listed": listed,
+            "actions": flyout.actions().len(),
             "pane": flyout.pane().map(|(name, tabs, found)| json!([name, tabs, found])),
         })
     });
