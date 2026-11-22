@@ -130,6 +130,9 @@ pub(super) fn thread(app: &App, tenant: &str, chat: &Chat, place: &Place, reader
     if let Some(settings) = &place.channel.settings {
         properties["channelSettings"] = json!(settings);
     }
+    for (key, value) in crate::media::thread_properties(app, &place.team, &place.channel) {
+        properties[key] = value;
+    }
     json!({
         "id": chat.id, "type": "Thread", "tenantId": tenant, "version": chat.version,
         "rosterVersion": chat.created_at, "eTag": format!("\"{}\"", chat.version),

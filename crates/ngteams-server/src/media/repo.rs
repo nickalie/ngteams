@@ -23,6 +23,7 @@ macro_rules! charge {
         changed == 1
     }};
 }
+pub(super) use charge;
 
 #[derive(Clone, Queryable, Selectable, Insertable)]
 #[diesel(table_name = media_objects)]

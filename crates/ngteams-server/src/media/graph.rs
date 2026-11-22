@@ -1,6 +1,7 @@
 //! Graph's file reads under `/graph/v1.0/` (its people are `crate::routes::graph`'s): the account's drive, and a shared file by its sharing link
 //! (`docs/protocol/graph.md`, "A shared file's thumbnail" and "A shared file's content"). A file answers only the
-//! accounts it is shared with; its bytes and pictures are behind links signed for an hour ([`super::drive`]).
+//! accounts it is shared with, a channel's file only the accounts in its channel ([`super::sites`]); its bytes and
+//! pictures are behind links signed for an hour ([`super::drive`]).
 
 use std::sync::Arc;
 
@@ -12,7 +13,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::{Value, json};
 
-use super::{Error, account, drive, repo, thumbs};
+use super::{Error, account, drive, repo, sites, thumbs};
 use crate::app::App;
 use crate::db::users::User;
 
@@ -46,14 +47,19 @@ pub(super) fn link_of(share: &str) -> Result<String, Error> {
         .ok_or(Error::Invalid("The sharing token can't be read."))
 }
 
-/// The file a sharing token (`u!<the link, base64url>`) names, when `caller` may read it.
-async fn shared(app: &App, caller: &User, share: &str) -> Result<repo::Item, Error> {
+/// The file a sharing token (`u!<the link, base64url>`) names, when `caller` may read it, as Graph describes it: a
+/// file shared with `caller`, or a file in a channel `caller` is in, by its address.
+async fn shared(app: &App, caller: &User, share: &str) -> Result<(repo::Item, Value), Error> {
     let link = link_of(share)?;
+    if let Some(found) = sites::by_link(app, caller, &link).await? {
+        return Ok(found);
+    }
     let item = drive::shared(app, &link).await?;
     if !repo::grants(&app.db, &item.id).await?.contains(&caller.id) {
         return Err(Error::Forbidden);
     }
-    Ok(item)
+    let described = drive::drive_item(app, &item)?;
+    Ok((item, described))
 }
 
 async fn item(
@@ -62,8 +68,7 @@ async fn item(
     Path(share): Path<String>,
 ) -> Result<Json<Value>, Error> {
     let caller = caller(&app, &headers).await?;
-    let item = shared(&app, &caller, &share).await?;
-    let mut answer = drive::drive_item(&app, &item)?;
+    let (item, mut answer) = shared(&app, &caller, &share).await?;
     answer["@microsoft.graph.downloadUrl"] = drive::download_link(&app, &caller, &item)?.into();
     Ok(Json(answer))
 }
@@ -74,7 +79,11 @@ async fn thumbnails(
     Path(share): Path<String>,
 ) -> Result<Json<Value>, Error> {
     let caller = caller(&app, &headers).await?;
-    let item = shared(&app, &caller, &share).await?;
+    let (item, _) = shared(&app, &caller, &share).await?;
+    // an empty file has none, and a channel file still empty gets its bytes later: nothing is kept for it now
+    if item.size == 0 {
+        return Ok(Json(json!({"value": []})));
+    }
     let made = thumbs::of(&app, &item).await?;
     if made.sizes.is_empty() {
         return Ok(Json(json!({"value": []})));

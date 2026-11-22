@@ -42,4 +42,19 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    channel_files (id) {
+        id -> Text,
+        team_id -> Text,
+        channel_id -> Text,
+        folder -> Text,
+        name -> Text,
+        owner_id -> Text,
+        stage -> Text,
+        upload_id -> Nullable<Text>,
+        size -> BigInt,
+        created_at -> BigInt,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(drive_items, drive_grants);

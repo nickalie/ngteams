@@ -374,7 +374,7 @@ async fn upload(app: &App, caller: &User, name: &str, headers: &HeaderMap, body:
 
 /// `why`, once the body of the upload it refuses is read and dropped, up to [`REFUSED_BODY`] and for at most
 /// [`REFUSED_WAIT`]: a client still sending when its connection closes loses the answer.
-async fn refused(body: Body, why: Error) -> Error {
+pub(super) async fn refused(body: Body, why: Error) -> Error {
     let mut body = body.into_data_stream();
     let dropped = async {
         let mut left = REFUSED_BODY;
@@ -406,7 +406,7 @@ pub(super) fn drive_item(app: &App, item: &repo::Item) -> Result<Value, Error> {
     }))
 }
 
-fn mime(name: &str) -> String {
+pub(super) fn mime(name: &str) -> String {
     mime_guess::from_path(name).first_or_octet_stream().to_string()
 }
 
@@ -442,7 +442,7 @@ async fn invite(app: &App, caller: &User, item: &repo::Item, body: &[u8]) -> Res
 }
 
 /// The item a link's `tempauth` is the credential for, while the account it was handed to is the one it was and the
-/// file is still shared with it.
+/// file is still shared with it (a channel file: while the account is in its channel).
 async fn linked(app: &App, audience: &str, id: &str, query: &HashMap<String, String>) -> Result<repo::Item, Error> {
     let credential = query.get("tempauth").ok_or(Error::Unauthorized)?;
     let link = app
@@ -457,7 +457,9 @@ async fn linked(app: &App, audience: &str, id: &str, query: &HashMap<String, Str
         .await?
         .filter(|holder| !holder.disabled && holder.password_version == link.pwd_ver)
         .ok_or(Error::Unauthorized)?;
-    let item = repo::item(&app.db, id).await?.ok_or(Error::Missing)?;
+    let Some(item) = repo::item(&app.db, id).await? else {
+        return super::sites::readable(app, id, &link.oid).await?.ok_or(Error::Missing);
+    };
     if !repo::grants(&app.db, &item.id).await?.contains(&link.oid) {
         return Err(Error::Forbidden);
     }

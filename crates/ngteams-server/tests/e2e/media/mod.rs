@@ -2,6 +2,7 @@
 //! blobs in the S3 store `NGTEAMS_SERVER_S3_URL` names (else a local directory).
 
 mod access;
+mod channel_files;
 pub(crate) mod files;
 mod freeing;
 mod limits;

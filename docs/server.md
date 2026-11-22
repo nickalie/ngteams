@@ -1114,6 +1114,49 @@ Sharing needs two people reads: `POST <middle tier>/beta/users/fetchShortProfile
 and `GET /graph/v1.0/users/<id>` ([People](#people)). Authz hands out `middleTier` and `amsV2`, so a client signed
 in through authz pastes pictures and sends files.
 
+### Files in a channel (`/sp/sites/`)
+
+The client puts a file for a channel post or reply into the channel's folder on its team's site, as Teams on the
+web does (`docs/protocol/channels.md`, "Files in a channel"). Each team has one site, named by the team's group id,
+and each channel has one folder in the site's `Shared Documents`:
+
+1. The channel's thread (`GET v1/threads/<channel>?view=msnp24Equivalent`) names the folder in its `properties`:
+   `sharepointSiteUrl` (`<origin>/sp/sites/<group id>`), `sharepointRootLibrary` (`Shared Documents`),
+   `sharepointChannelDocsFolder` and `channelDocsFolderRelativeUrl` (`/sp/sites/<group id>/Shared
+   Documents/<folder>`). The general channel's folder is `General`. Another channel's folder has the channel's
+   name, or `Channel <the channel id's letters and digits>` when the name has a character that a folder can't have.
+   A file keeps the folder that it got: when a channel gets a new name, new files go to the new folder.
+2. Under `/sp/sites/<group id>/_api/web/`, with a token whose audience is the server's own origin, only for an
+   account on the team (else 403; a site that no team has: 404). A step on a file also needs the account in the
+   file's channel, so the files of a private channel stay with its members:
+   - `POST GetFolderByServerRelativeUrl(@v)/Files/addStub(@fn)?@v='<folder path>'&@fn='<name>'`: an empty file
+     (`OData` strings in quotes, a quote doubled, percent-encoded). 200 with the file (`SP.File`: `UniqueId`,
+     `Name`, `ServerRelativeUrl`, `Length` `"0"`). The folder must be a channel's folder of that site (else 404),
+     the channel must not be archived (else 403), and the name must be one that SharePoint holds (else 400). When
+     the folder has the name, 400 with SharePoint's `odata.error` (`-2130575257, Microsoft.SharePoint.SPException`,
+     "A file with the name … already exists."). The client then tries `<name> 1.<extension>`.
+   - `POST GetFileById('<id>')/StartUpload(uploadId=guid'<guid>')`: the file's bytes, streamed to the store, never
+     held whole. 200 with `{"value":"<bytes taken>"}`. Only the account that added the empty file fills it (else
+     403), and only once (else 400). 413 over `media.max_file_bytes`, 507 over the quota. The bytes count against
+     that account, as the bytes of a chat file do.
+   - `POST GetFileById('<id>')/FinishUpload(uploadId=guid'<guid>',fileOffset=<length>)`: 200 with the file and its
+     `Length`. The upload id and the offset must be those of the `StartUpload` (else 400).
+   - `GET GetFileById('<id>')`: the file. When `StartUpload` or `FinishUpload` names `@folder` or `@file`, they must
+     be the file's (else 400).
+   - `DELETE GetFileById('<id>')/recycle`: 200. Any account in the channel can do it, as a member of a team's site
+     can. The file is gone at once: its bytes and thumbnails leave the store and the count of the account that
+     added it. There is no recycle bin to restore it from.
+3. The post names the file by its address, `<origin>/sp/sites/<group id>/Shared Documents/<folder>/<name>`
+   (`objectUrl`, `fileInfo.fileUrl`). Each account in the channel reads the file through Graph by that address, as a
+   chat file is read by its sharing link: `GET /graph/v1.0/shares/u!<address, base64url>/driveItem` and
+   `…/driveItem/thumbnails`, and the signed download and thumbnail links. 403 for an account that is not in the
+   channel. The links stop when the account leaves the channel.
+4. Nothing is shared or granted. A post that names a channel file in another chat or channel gives nobody access
+   to it: only the accounts in the file's channel read it.
+
+The operator's `ngteams-server media list|delete` shows and deletes the channel files that an account added
+(`channel-file`).
+
 ### Freeing storage
 
 An account at `media.user_quota_bytes` gets 507 for each new picture or file until some of what it stored is
@@ -1123,6 +1166,8 @@ deleted:
   of the sender's that the message showed (`amsreferences`), and that no other message in its chats still names,
   is deleted. `DELETE /ams/v1/objects/<id>` deletes one whatever shows it. A picture taken out of a message by
   an edit, or pasted and never sent, stays until its object is deleted.
+- **A channel file** stays in its channel's folder when its post is deleted. `DELETE …/GetFileById('<id>')/recycle`
+  deletes it.
 - **A file** stays in its sender's drive when its message is deleted, as a file stays in the sender's OneDrive in
   Teams. Its owner deletes it with `DELETE drive/items/<item>`. ngteams has no command for that yet, so on a
   server of ngteams clients the operator frees files with `ngteams-server media list|delete`.

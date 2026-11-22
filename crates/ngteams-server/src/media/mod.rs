@@ -13,6 +13,8 @@ mod fetch;
 mod graph;
 mod repo;
 mod schema;
+mod site_repo;
+mod sites;
 mod thumbs;
 mod urlp;
 
@@ -21,6 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub(crate) use fetch::{Fetcher, embedded_v4, is_public};
+pub(crate) use sites::thread_properties;
 pub(crate) use thumbs::{decode, decoding};
 
 use axum::http::header::WWW_AUTHENTICATE;
@@ -115,9 +118,14 @@ pub(crate) fn router(app: &App) -> Router<Arc<App>> {
     } else {
         Router::new()
     };
-    let long = ams::router(app).merge(drive::router()).merge(previews).layer(
-        tower_http::timeout::TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, LONG),
-    );
+    let long = ams::router(app)
+        .merge(drive::router())
+        .merge(sites::router())
+        .merge(previews)
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            LONG,
+        ));
     small.merge(long)
 }
 
@@ -298,7 +306,8 @@ pub(crate) struct Stored {
     pub created_at: i64,
 }
 
-/// What `owner` keeps in the store: its files, then its pictures, oldest first.
+/// What `owner` keeps in the store: its files, then the files it added to channels, then its pictures, oldest
+/// first.
 pub(crate) async fn stored(db: &crate::db::Db, owner: &str) -> Result<Vec<Stored>, DbError> {
     let files = repo::items(db, owner).await?.into_iter().map(|item| Stored {
         kind: "file",
@@ -307,6 +316,13 @@ pub(crate) async fn stored(db: &crate::db::Db, owner: &str) -> Result<Vec<Stored
         size: item.size,
         created_at: item.created_at,
     });
+    let channel_files = site_repo::owned(db, owner).await?.into_iter().map(|file| Stored {
+        kind: "channel-file",
+        id: file.id,
+        name: file.name,
+        size: file.size,
+        created_at: file.created_at,
+    });
     let pictures = repo::objects(db, owner).await?.into_iter().map(|object| Stored {
         kind: "picture",
         id: object.id,
@@ -314,17 +330,19 @@ pub(crate) async fn stored(db: &crate::db::Db, owner: &str) -> Result<Vec<Stored
         size: object.size,
         created_at: object.created_at,
     });
-    Ok(files.chain(pictures).collect())
+    Ok(files.chain(channel_files).chain(pictures).collect())
 }
 
-/// Removes the file or the picture `id` of `owner` with its bytes; whether the owner had it.
+/// Removes the file, the channel file or the picture `id` of `owner` with its bytes; whether the owner had it.
 pub(crate) async fn remove_stored(
     db: &crate::db::Db,
     storage: &dyn crate::storage::Storage,
     owner: &str,
     id: &str,
 ) -> Result<bool, DbError> {
-    Ok(drive::remove(db, storage, owner, id).await? || ams::remove(db, storage, owner, id).await?)
+    Ok(drive::remove(db, storage, owner, id).await?
+        || sites::remove(db, storage, Some(owner), id).await?
+        || ams::remove(db, storage, owner, id).await?)
 }
 
 fn quota(app: &App) -> i64 {

@@ -64,7 +64,7 @@ pub(super) async fn of(app: &App, item: &repo::Item) -> Result<Made, Error> {
     }
     let made = make(app, item).await;
     // a delete meanwhile cleared keys that weren't there yet, whether every write went through or not
-    if repo::item(&app.db, &item.id).await?.is_none() {
+    if repo::item(&app.db, &item.id).await?.is_none() && !super::sites::exists(&app.db, &item.id).await? {
         for key in keys(&item.id) {
             super::clear(app.storage.as_ref(), &key).await;
         }
