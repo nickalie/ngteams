@@ -1036,3 +1036,77 @@ fn escape_in_the_emoji_picker_gives_the_keys_back_to_emoji() {
     let text = compose.read_with(cx, |compose, cx| compose.value(cx).to_string());
     assert!(text.starts_with("a draft") && text.len() > "a draft".len(), "{text}");
 }
+
+/// `count` made-up messages from b in the a–b chat, a minute apart.
+fn many(count: i64) -> Vec<teams_store::Message> {
+    (1..=count)
+        .map(|n| teams_store::Message {
+            conversation_id: AB.to_owned(),
+            id: n.to_string(),
+            version: 1,
+            client_message_id: None,
+            sender: Some(common::LAB_B.to_owned()),
+            sender_name: None,
+            message_type: "RichText/Html".to_owned(),
+            content: format!("<p>number {n}</p>"),
+            properties: None,
+            arrival_time: 1_767_268_800_000 + n * 60_000,
+            compose_time: None,
+            edit_time: None,
+            delete_time: None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_message_list_is_one_stop_with_a_button_in_it() {
+    let rig = Rig::start();
+    rig.core.messages.lock().unwrap().insert(AB.to_owned(), many(100));
+    let (view, compose, cx) = rooted_view(&rig, Settings::default(), 900.0);
+    let list = cx.debug_bounds("chat-messages").expect("the message list is drawn");
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: list.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(1_000.0))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    draw(cx);
+    assert!(shown(cx, "jump-to-newest"), "scrolled up, the list holds a button");
+    focus_box(&compose, cx);
+    press(cx, "shift-tab");
+    assert!(
+        list_focused(&view, cx),
+        "Shift+Tab from the text, the list, not its button"
+    );
+    press(cx, "tab");
+    assert!(
+        box_focused(&compose, cx),
+        "Tab from the list, past its button to the text"
+    );
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_expanded(window, cx)));
+    draw(cx);
+    focus_box(&compose, cx);
+    press(cx, "shift-tab");
+    press(cx, "shift-tab");
+    press(cx, "shift-tab");
+    assert!(list_focused(&view, cx), "from the format bar, the list, not its button");
+}
+
+#[test]
+fn escape_in_the_emoji_picker_after_emoji_went_into_more_gives_the_text_the_keys() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    type_in(&compose, cx, "a draft");
+    press(cx, "tab");
+    press(cx, "right");
+    key_click(cx);
+    assert!(compose.read_with(cx, |compose, _| compose.emoji_picker().is_some()));
+    cx.simulate_resize(size(px(150.0), px(640.0)));
+    draw(cx);
+    assert!(!shown(cx, "compose-emoji"), "Emoji is in More options now");
+    if compose.read_with(cx, |compose, _| compose.emoji_picker().is_some()) {
+        press(cx, "escape");
+    }
+    assert!(compose.read_with(cx, |compose, _| compose.emoji_picker().is_none()));
+    assert!(box_focused(&compose, cx), "Escape gives the text the keys");
+}

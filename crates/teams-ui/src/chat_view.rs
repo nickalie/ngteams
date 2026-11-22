@@ -46,7 +46,8 @@
 //! - **Actions** on a message, under the pointer or selected with the keyboard (Up and Down, once the list has the
 //!   focus: Escape in the compose box with nothing to cancel there (no reply, edit or open picker) moves it there,
 //!   whatever the box holds, and Escape in the list with nothing open or selected moves it back; the list is also the
-//!   stop of Tab before the box, ringed while the keyboard is on it, as in Teams): reply, react and
+//!   stop of Tab before the box, one stop that Tab passes the controls in, ringed while the keyboard is on it, as in
+//!   Teams): reply, react and
 //!   copy text, and for the account's own message edit (not a forward's) and delete. They are on Teams' hover bar over
 //!   the bubble's top right ([`ChatView::hover_bar`]): the quick reactions (the account's most used,
 //!   [`Core::frequent_reactions`], then Teams' own: [`quick_reactions`]), react, edit, reply, and "More options" (copy
@@ -111,9 +112,10 @@ use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeZone, Utc};
 use gpui::ClipboardItem;
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Bounds, Context, ElementId, Entity, EventEmitter, FocusHandle,
-    FollowMode, Global, InteractiveElement as _, IntoElement, KeyBinding, ListAlignment, ListOffset, ListState,
-    MouseButton, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Task, WeakEntity, Window, actions, anchored, canvas, deferred, div, list, px, relative, rems, rgb,
+    FollowMode, Global, InteractiveElement as _, IntoElement, KeyBinding, KeystrokeEvent, ListAlignment, ListOffset,
+    ListState, MouseButton, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, Task, WeakEntity, Window, actions, anchored, canvas, deferred, div, list, px, relative,
+    rems, rgb,
 };
 use gpui_component::Selectable as _;
 use gpui_component::button::{Button, ButtonRounded, ButtonVariants as _};
@@ -196,7 +198,7 @@ actions!(
         TranslateSelected,
         OpenSelectedMenu,
         MarkUnreadSelected,
-        BackFromBox
+        PastMessages
     ]
 );
 
@@ -204,8 +206,8 @@ actions!(
 /// text area has it).
 pub const CONTEXT: &str = "ChatMessages";
 
-/// The key context of the compose box under the list: Shift+Tab from it that would go into the list stops on the list.
-const BOX_CONTEXT: &str = "ChatBox";
+/// The most stops Tab passes to leave the list: more than a list has controls.
+const MOST_STEPS: usize = 256;
 /// A reaction drawn in the hover bar's quick reactions, px.
 const QUICK_EMOJI: f32 = 20.0;
 /// A button of the hover bar, px: a quick reaction's or an action's square.
@@ -349,7 +351,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("right", reactors::NextReaction, context),
         KeyBinding::new("left", reactors::PreviousReaction, context),
         KeyBinding::new("space", reactors::PressReaction, context),
-        KeyBinding::new("shift-tab", BackFromBox, Some(BOX_CONTEXT)),
+        KeyBinding::new("tab", PastMessages, context),
     ]);
     // a bot card's input in the list takes its keys as text: the list's own keys are off there
     let input = Some(crate::card_view::INPUT_CONTEXT);
@@ -1249,8 +1251,9 @@ pub struct ChatView {
     seeking: Option<((i64, String), u32)>,
     /// Where a click on a reply's quote is going ([`ChatView::go_to_quoted`]).
     quote: QuoteJump,
-    /// The models' changes, the compose box's events, the window's activation and the presence model's changes.
-    _subscriptions: [Subscription; 4],
+    /// The models' changes, the compose box's events, the window's activation, the presence model's changes and the
+    /// keys that bring Shift+Tab into the list.
+    _subscriptions: [Subscription; 5],
 }
 
 /// The list's focus: a stop of Tab's order, as Teams' list is, so Shift+Tab from the box comes to it.
@@ -1577,7 +1580,7 @@ impl ChatView {
         compose: &Entity<Compose>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> [Subscription; 4] {
+    ) -> [Subscription; 5] {
         let observing = cx.observe(&models.chats, |this: &mut Self, chats, cx| {
             let at = {
                 let chats = chats.read(cx);
@@ -1610,7 +1613,8 @@ impl ChatView {
         });
         // a presence the engine told: the senders' badges are drawn again from the model
         let presence = cx.observe(&models.presence, |_: &mut Self, _, cx| cx.notify());
-        [observing, compose_events, activation, presence]
+        let keys = cx.observe_keystrokes(|this: &mut Self, event, window, cx| this.keys_to_the_list(event, window, cx));
+        [observing, compose_events, activation, presence, keys]
     }
 
     /// The compose box under the messages.
@@ -2638,6 +2642,7 @@ impl ChatView {
         let messages = reactors::reaction_keys(hover_bar_keys(div(), cx), cx)
             .key_context(CONTEXT)
             .track_focus(&self.focus.handle)
+            .on_action(cx.listener(|this, _: &PastMessages, window, cx| this.past_messages(window, cx)))
             // a click in the messages leaves the focus where it is (the compose box, as in Teams): the list takes it
             // only from the keyboard (Escape in the box) and from the actions that need its keys
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default());
@@ -2654,11 +2659,28 @@ impl ChatView {
             .children(self.list_ring(palette, window))
     }
 
-    /// Shift+Tab in the box goes to the stop before; one in the list gives the keys to the list itself, the one stop
-    /// before the box in Teams.
-    fn back_from_box(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus_prev(cx);
-        if self.focus.handle.contains_focused(window, cx) {
+    /// Tab on the list itself: the first stop past its controls, as the list is one stop of Tab in Teams. On a control
+    /// in the list, Tab goes on as anywhere.
+    fn past_messages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.focus.handle.is_focused(window) {
+            cx.propagate();
+            return;
+        }
+        for _ in 0..MOST_STEPS {
+            window.focus_next(cx);
+            if !self.focus.handle.contains_focused(window, cx) {
+                return;
+            }
+        }
+    }
+
+    /// After a key: Shift+Tab from outside the list that came to a control in it (from the box, its format bar or
+    /// anything after the list) gives the keys to the list itself, its one stop.
+    fn keys_to_the_list(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let back = event.keystroke.key == "tab" && event.keystroke.modifiers.shift;
+        let from_outside = !event.context_stack.iter().any(|context| context.contains(CONTEXT));
+        let handle = &self.focus.handle;
+        if back && from_outside && handle.contains_focused(window, cx) && !handle.is_focused(window) {
             self.focus_messages(window, cx);
         }
     }
@@ -6452,11 +6474,7 @@ impl Render for ChatView {
             .children(ChatTranslation::notice(&self.translation, palette, cx))
             .children(self.confirmation(palette, cx))
             .children(self.suggested_actions(palette, cx))
-            .child(
-                compose
-                    .key_context(BOX_CONTEXT)
-                    .on_action(cx.listener(|this, _: &BackFromBox, window, cx| this.back_from_box(window, cx))),
-            )
+            .child(compose)
             .children(more)
             .children(reactors)
             .children(options)

@@ -1981,7 +1981,7 @@ impl Compose {
                 let held = picker.read(cx).holds_focus(window, cx);
                 this.emoji = None;
                 match &back_to {
-                    Some(tool) if held => tool.focus(window, cx),
+                    Some(tool) if held && this.tools.holds(tool, window) => tool.focus(window, cx),
                     _ if held => this.focus(window, cx),
                     _ => {}
                 }

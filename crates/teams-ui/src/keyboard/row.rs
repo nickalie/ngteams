@@ -96,6 +96,12 @@ impl Row {
         self.0.handle.contains_focused(window, cx)
     }
 
+    /// Whether `control` is still drawn in the row.
+    #[must_use]
+    pub fn holds(&self, control: &FocusHandle, window: &Window) -> bool {
+        self.0.handle.contains(control, window)
+    }
+
     /// `element` as the row: it holds the row's controls and takes their keys.
     #[must_use]
     pub fn wrap(&self, element: Div) -> Div {
@@ -217,7 +223,7 @@ impl Row {
             return;
         }
         let last = self.0.last.borrow().clone();
-        match last.filter(|last| self.0.handle.contains(last, window)) {
+        match last.filter(|last| self.holds(last, window)) {
             Some(last) => last.focus(window, cx),
             None if !forward => self.to_end(false, window, cx),
             None => {}
