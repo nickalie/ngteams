@@ -836,13 +836,14 @@ fn drawn(png: &Path) -> SandboxResult<Drawn> {
     })
 }
 
-/// Where another's avatar may draw beside `bubble`: level with its top, a gap left of it, at each font size.
+/// Where another's 32 px avatar and its badge (2 px past it) draw beside `bubble`: level with its top, a gap left of
+/// it, at each font size.
 fn avatar_beside(bubble: Rect) -> Rect {
     Rect {
         left: bubble.left.saturating_sub(48),
-        top: bubble.top.saturating_sub(4),
+        top: bubble.top,
         right: bubble.left.saturating_sub(8),
-        bottom: bubble.top + 40,
+        bottom: bubble.top + 34,
     }
 }
 
