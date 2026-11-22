@@ -869,7 +869,7 @@ fn take(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem
         key if TRANSLATIONS.contains(&key) => take_translation(settings, key, value)?,
         keys::COMPOSE_HIDDEN => settings.compose_hidden = toolbar::take(keys::COMPOSE_HIDDEN, false, value)?,
         keys::COMPOSE_SHOWN => settings.compose_shown = toolbar::take(keys::COMPOSE_SHOWN, true, value)?,
-        keys::MESSAGE_BAR => settings.message_bar = message_bar::take(value)?,
+        keys::MESSAGE_BAR => message_bar::take(&mut settings.message_bar, value)?,
         keys::FIRST_ACCOUNT => {
             settings.first_account = Some(chat_id(value).ok_or(bad(keys::FIRST_ACCOUNT, "not an account's MRI"))?);
         }

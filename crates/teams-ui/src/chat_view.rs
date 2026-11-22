@@ -211,6 +211,8 @@ const WORKFLOW_MENU_WIDTH: f32 = 300.0;
 const BAR_GAP: f32 = 2.0;
 /// The hover bar's more-options menu's width, px.
 const MENU_WIDTH: f32 = 200.0;
+/// The space the menus keep from the window's edges.
+const MENU_MARGIN: f32 = 8.0;
 /// A reaction drawn in its pill under a message, px.
 const CHIP_EMOJI: f32 = 18.0;
 /// A reaction's pill's height, px.
@@ -2368,6 +2370,7 @@ impl ChatView {
             Some(message.to_owned())
         };
         self.side_list = None;
+        self.menu_keys.scroll.set_offset(gpui::Point::default());
         if self.options.is_some() && !self.core.read_only() && self.core.capabilities().workflows {
             self.read_workflows(cx);
         }
@@ -4367,13 +4370,6 @@ fn plain_text(rendered: &Rendered) -> String {
 }
 
 impl ChatView {
-    /// A message's hover bar, as Teams draws it, while the message is under the pointer or selected (or its bar, its
-    /// reactions or its more-options menu is): over its bubble's top, flush with the bubble's right edge and never past
-    /// its left, floating over the header line or the message above. In it, Teams' order: the quick reactions (the
-    /// account's most used first, each setting or taking back the account's own), "React" (every reaction), then
-    /// edit on the account's own, reply (Teams' quote), and "More options" holding the rest. The user chooses which
-    /// of them show, and may show more of the rest ([`bar_customize`]); a button that does not apply to the message
-    /// does not show. A right click on the bar opens that choice. None on a message that offers no action.
     /// The quick reactions the account shows on the bar; each keeps its place's key.
     fn quick_shown(&self, item: &MessageItem, reacting: bool, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
         let places: Vec<bool> = (0..self.quick.len())
@@ -4394,6 +4390,13 @@ impl ChatView {
             .children(quick)
     }
 
+    /// A message's hover bar, as Teams draws it, while the message is under the pointer or selected (or its bar, its
+    /// reactions or its more-options menu is): over its bubble's top, flush with the bubble's right edge and never past
+    /// its left, floating over the header line or the message above. In it, Teams' order: the quick reactions (the
+    /// account's most used first, each setting or taking back the account's own), "React" (every reaction), then
+    /// edit on the account's own, reply (Teams' quote), and "More options" holding the rest. The user chooses which
+    /// of them show, and may show more of the rest ([`bar_customize`]); a button that does not apply to the message
+    /// does not show. A right click on the bar opens that choice. None on a message that offers no action.
     fn hover_bar(
         &self,
         item: &MessageItem,
@@ -4491,17 +4494,11 @@ impl ChatView {
             if !self.bar_shows(shown, cx) {
                 continue;
             }
-            let action = match shown {
-                BarItem::Reply => [MessageAction::Reply, MessageAction::ReplyInThread]
-                    .into_iter()
-                    .find(|action| actions.contains(action)),
-                BarItem::Translate => {
-                    buttons.extend(Self::translate_button(item, cx));
-                    continue;
-                }
-                other => bar_customize::action_of(other).filter(|action| actions.contains(action)),
-            };
-            buttons.extend(action.map(|action| bar_button(item, action, cx)));
+            if shown == BarItem::Translate {
+                buttons.extend(Self::translate_button(item, cx));
+            } else {
+                buttons.extend(bar_customize::bar_action(shown, actions).map(|action| bar_button(item, action, cx)));
+            }
         }
         buttons
     }
@@ -4566,10 +4563,15 @@ impl ChatView {
             }
             entries.push(customize);
         }
+        let entries = self.menu_keys.slotted(entries, cx);
         let menu = div()
             .id("message-menu")
             .debug_selector(|| "message-menu".to_owned())
             .track_focus(&self.menu_keys.menu)
+            // no taller than the window, inside its margin and the holder's top padding: the rest scrolls
+            .max_h(window.viewport_size().height - px(MENU_MARGIN * 2.0 + 4.0))
+            .overflow_y_scroll()
+            .track_scroll(&self.menu_keys.scroll)
             // a click in the menu leaves the focus where it is (the compose box, as in Teams)
             .capture_any_mouse_down(|_, window, _| window.prevent_default())
             // Teams' menu widens for the workflows' names
@@ -4598,7 +4600,7 @@ impl ChatView {
                 anchored()
                     .anchor(gpui::Anchor::TopRight)
                     .position(at.bottom_right())
-                    .snap_to_window_with_margin(px(8.0))
+                    .snap_to_window_with_margin(px(MENU_MARGIN))
                     .child(
                         Self::menu_keys_on(div().pt_1().flex().items_end().gap_1(), cx)
                             .children(more.flatten())
@@ -4615,7 +4617,7 @@ impl ChatView {
 impl ChatView {
     /// The first rows of `message`'s more-options menu: the buttons that the bar does not show and that apply to the
     /// message. The quick reactions come first, then a hairline, then React, Reply, Edit, Copy text and Delete, then
-    /// after a hairline Mark as unread and "Translation".
+    /// after a hairline Mark as unread and "Translation" (which stays, for its settings, with Translate on the bar).
     fn hidden_entries(
         &self,
         message: &str,
@@ -4629,18 +4631,16 @@ impl ChatView {
         } else {
             Vec::new()
         };
-        let reply = [MessageAction::Reply, MessageAction::ReplyInThread]
-            .into_iter()
-            .find(|action| actions.contains(action));
         let hidden: Vec<MessageAction> = [
-            (BarItem::React, Some(MessageAction::React)),
-            (BarItem::Reply, reply),
-            (BarItem::Edit, Some(MessageAction::Edit)),
-            (BarItem::Copy, Some(MessageAction::Copy)),
-            (BarItem::Delete, Some(MessageAction::Delete)),
+            BarItem::React,
+            BarItem::Reply,
+            BarItem::Edit,
+            BarItem::Copy,
+            BarItem::Delete,
         ]
         .into_iter()
-        .filter_map(|(item, action)| action.filter(|action| actions.contains(action) && !self.bar_shows(item, cx)))
+        .filter(|item| !self.bar_shows(*item, cx))
+        .filter_map(|item| bar_customize::bar_action(item, actions))
         .collect();
         if !entries.is_empty() && !hidden.is_empty() {
             entries.push(crate::workflow_run::menu::separator(palette));
@@ -4651,15 +4651,15 @@ impl ChatView {
                 .map(|action| menu_entry(message, action, palette, window, cx)),
         );
         // Teams' own group after a hairline: Mark as unread, then the translation
-        if actions.contains(&MessageAction::MarkUnread) && !self.bar_shows(BarItem::MarkUnread, cx) {
+        if !self.bar_shows(BarItem::MarkUnread, cx) && bar_customize::bar_action(BarItem::MarkUnread, actions).is_some()
+        {
             if !entries.is_empty() {
                 entries.push(crate::workflow_run::menu::separator(palette));
             }
             entries.push(menu_entry(message, MessageAction::MarkUnread, palette, window, cx));
         }
-        if !self.bar_shows(BarItem::Translate, cx) {
-            entries.extend(self.translation_entry(message, palette, cx));
-        }
+        // the row stays with Translate on the bar: its list holds the translation's settings
+        entries.extend(self.translation_entry(message, palette, cx));
         entries
     }
 

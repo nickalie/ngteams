@@ -1483,6 +1483,19 @@ fn a_hover_bar_name_of_a_newer_build_is_passed_over_and_a_bad_table_reported() {
             "{bad}: {problems:?}"
         );
     }
+    // one account's bad table leaves the other account's choice kept
+    let (read, problems) = parse(&format!(
+        "[message_bar.\"{A}\"]\nhidden = [\"reply\"]\n[message_bar.\"{B}\"]\nhidden = \"reply\""
+    ))
+    .expect("TOML");
+    assert_eq!(read.message_bar[A].hidden, [BarItem::Reply]);
+    assert!(!read.message_bar.contains_key(B));
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.to_string().contains("message_bar")),
+        "{problems:?}"
+    );
 }
 
 #[test]

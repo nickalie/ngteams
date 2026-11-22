@@ -17,6 +17,13 @@ use crate::settings::ComposeTool;
 /// The customize list's title.
 pub const SHOW_IN_TOOLBAR: &str = "Show in the toolbar";
 
+/// A row of the list: a button that can hide, or one that always shows (its key, icon and name).
+#[derive(Clone, Copy)]
+enum Row {
+    Tool(ComposeTool),
+    Fixed(&'static str, Glyph, &'static str),
+}
+
 impl Compose {
     /// Opens the customize list by a right click at `at` in the window: its foot over the toolbar's buttons, as from
     /// "Customize toolbar", so that the bar shows while the user changes it.
@@ -63,14 +70,17 @@ impl Compose {
         }
     }
 
-    /// The list's buttons: each that can hide (the AI tools only while the AI features are on), then "+" and Send
-    /// (`None`), as they always show.
-    fn customize_tools(cx: &App) -> Vec<Option<ComposeTool>> {
+    /// The list's rows: each button that can hide (the AI tools only while the AI features are on), then "+" and
+    /// Send, as they always show.
+    fn customize_rows(cx: &App) -> Vec<Row> {
         ComposeTool::ALL
             .into_iter()
             .filter(|tool| !tool.uses_ai() || crate::local_ai::enabled(cx))
-            .map(Some)
-            .chain([None, None])
+            .map(Row::Tool)
+            .chain([
+                Row::Fixed("apps", Glyph::PLUS, ACTIONS_AND_APPS),
+                Row::Fixed("send", Glyph::SEND, "Send"),
+            ])
             .collect()
     }
 
@@ -79,28 +89,25 @@ impl Compose {
     pub(super) fn customize_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let list = self.customize.as_ref()?;
         let settings = self.settings.read(cx).settings();
-        let mut fixed = [("apps", Glyph::PLUS, ACTIONS_AND_APPS), ("send", Glyph::SEND, "Send")].into_iter();
-        let lines = Self::customize_tools(cx)
+        let lines = Self::customize_rows(cx)
             .into_iter()
-            .filter_map(|tool| {
-                let (key, glyph, label, checked) = if let Some(tool) = tool {
-                    (
+            .map(|row| {
+                let (key, glyph, label, checked) = match row {
+                    Row::Tool(tool) => (
                         tool.key(),
                         glyph_of(tool),
                         tool.label(),
                         settings.shows_compose_tool(tool),
-                    )
-                } else {
-                    let (key, glyph, label) = fixed.next()?;
-                    (key, glyph, label, true)
+                    ),
+                    Row::Fixed(key, glyph, label) => (key, glyph, label, true),
                 };
-                Some(Line {
+                Line {
                     key: key.into(),
                     icon: glyph.icon().size(px(14.0)).into_any_element(),
                     label: label.into(),
                     checked,
-                    takes: tool.is_some(),
-                })
+                    takes: matches!(row, Row::Tool(_)),
+                }
             })
             .collect();
         let shown = Shown {
@@ -118,12 +125,15 @@ impl Customizable for Compose {
     }
 
     fn customize_takes(&self, cx: &App) -> Vec<bool> {
-        Self::customize_tools(cx).iter().map(Option::is_some).collect()
+        Self::customize_rows(cx)
+            .iter()
+            .map(|row| matches!(row, Row::Tool(_)))
+            .collect()
     }
 
     /// Shows the button of the list's row `ix` again, or hides it; the list stays open, the row selected.
     fn customize_toggle(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(tool) = Self::customize_tools(cx).get(ix).copied().flatten() else {
+        let Some(Row::Tool(tool)) = Self::customize_rows(cx).get(ix).copied() else {
             return;
         };
         self.settings.update(cx, |model, cx| {

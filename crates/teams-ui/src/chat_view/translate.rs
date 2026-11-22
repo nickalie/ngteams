@@ -15,6 +15,7 @@ use gpui_component::{Sizable as _, Size};
 use super::{BAR_BUTTON, CONTEXT, ChatView, ChatViewEvent, MessageItem, SideList, TranslateSelected, measured};
 use crate::chat_translate;
 use crate::icons::{Glyph, icon_button_with_key, selected_by};
+use crate::settings::BarItem;
 use crate::theme::Palette;
 use crate::workflow_run::menu;
 
@@ -63,8 +64,8 @@ impl ChatView {
         Some(selected_by("action-translate", button))
     }
 
-    /// The "Translation" list beside the menu, while it is open: what the message offers, with its key, then
-    /// "Settings".
+    /// The "Translation" list beside the menu, while it is open: what the message offers, with its key (when the bar
+    /// does not show Translate), then "Settings".
     pub(super) fn translation_menu(
         &self,
         message: &str,
@@ -104,13 +105,19 @@ impl ChatView {
                 });
             },
         );
+        // with Translate on the bar, the list holds only what the bar does not
+        let on_bar = self.bar_shows(BarItem::Translate, cx);
         Some(
             menu::panel("message-translation-menu", palette)
                 .track_focus(&self.menu_keys.side)
                 .relative()
                 .child(measured(&self.menu_keys.side_at))
-                .child(translate)
-                .child(menu::separator(palette))
+                .children(
+                    (!on_bar)
+                        .then(|| [translate, menu::separator(palette)])
+                        .into_iter()
+                        .flatten(),
+                )
                 .child(settings)
                 .into_any_element(),
         )

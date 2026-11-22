@@ -7,12 +7,16 @@
 //!
 //! The kit's root binds Tab and Shift+Tab, and a binding takes a key before any key listener hears it: the menu's own
 //! key context ([`CONTEXT`]) binds them to [`LeaveMenu`], which takes precedence over the root's.
+//!
+//! A menu taller than the window scrolls. The focus moving by the keys does not scroll it, so each of its rows sits in
+//! a slot with its own focus handle: the slot that holds the focus is the row the menu scrolls to.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui::{
-    App, Bounds, Context, Div, FocusHandle, InteractiveElement as _, KeyBinding, KeyDownEvent, Pixels, Window, actions,
+    AnyElement, App, Bounds, Context, Div, FocusHandle, InteractiveElement as _, IntoElement as _, KeyBinding,
+    KeyDownEvent, ParentElement as _, Pixels, ScrollHandle, Styled as _, Window, actions, div,
 };
 
 use super::{ChatView, MessageAction, SideList};
@@ -51,6 +55,10 @@ pub(super) struct MenuKeys {
     /// The rows that open a list beside the menu.
     translation: FocusHandle,
     more_actions: FocusHandle,
+    /// The menu's scroll, when it is taller than the window.
+    pub(super) scroll: ScrollHandle,
+    /// The slots of the menu's rows, in their order.
+    slots: RefCell<Vec<FocusHandle>>,
     back: keyboard::Return,
     due: Option<Due>,
     /// The keys opened the menu: it gives the focus back when it closes.
@@ -65,6 +73,8 @@ impl MenuKeys {
             side_at: Rc::default(),
             translation: cx.focus_handle(),
             more_actions: cx.focus_handle(),
+            scroll: ScrollHandle::new(),
+            slots: RefCell::default(),
             back: keyboard::Return::default(),
             due: None,
             keyed: false,
@@ -88,6 +98,35 @@ impl MenuKeys {
         let back = keyboard::Return::default();
         back.keep(window, cx);
         back
+    }
+
+    /// `entries` each in its slot, as the menu holds them.
+    pub(super) fn slotted(&self, entries: Vec<AnyElement>, cx: &App) -> Vec<AnyElement> {
+        let mut slots = self.slots.borrow_mut();
+        while slots.len() < entries.len() {
+            slots.push(cx.focus_handle());
+        }
+        entries
+            .into_iter()
+            .zip(slots.iter())
+            .map(|(entry, slot)| {
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .track_focus(slot)
+                    .child(entry)
+                    .into_any_element()
+            })
+            .collect()
+    }
+
+    /// Scrolls the menu to the row that holds the focus.
+    fn reveal_focused(&self, window: &Window, cx: &App) {
+        let slots = self.slots.borrow();
+        if let Some(at) = slots.iter().position(|slot| slot.contains_focused(window, cx)) {
+            self.scroll.scroll_to_item(at);
+        }
     }
 
     fn opened_by(&self, window: &Window) -> Option<SideList> {
@@ -128,11 +167,14 @@ impl ChatView {
         let in_side = self.side_list.is_some() && keys.side.contains_focused(window, cx);
         let root = if in_side { keys.side.clone() } else { keys.menu.clone() };
         match event.keystroke.key.as_str() {
-            "down" => keyboard::move_within(&root, true, window, cx),
-            "up" => keyboard::move_within(&root, false, window, cx),
+            "down" | "up" => {
+                keyboard::move_within(&root, event.keystroke.key == "down", window, cx);
+                self.reveal_menu_row(in_side, window, cx);
+            }
             "home" | "end" => {
                 root.focus(window, cx);
                 keyboard::move_within(&root, event.keystroke.key == "home", window, cx);
+                self.reveal_menu_row(in_side, window, cx);
             }
             "right" if !in_side => {
                 let Some(list) = keys.opened_by(window) else { return };
@@ -151,6 +193,14 @@ impl ChatView {
             _ => return,
         }
         cx.stop_propagation();
+    }
+
+    /// The row the keys moved to in the menu (not `in_side`, the list beside it) scrolls into view.
+    fn reveal_menu_row(&self, in_side: bool, window: &Window, cx: &mut Context<Self>) {
+        if !in_side {
+            self.menu_keys.reveal_focused(window, cx);
+            cx.notify();
+        }
     }
 
     /// The menu's keys on `holder`, which holds the menu and the list beside it.

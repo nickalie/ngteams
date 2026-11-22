@@ -35,7 +35,7 @@ fn rows() -> impl Iterator<Item = Option<BarItem>> {
 }
 
 /// The action a button does, for its icon, its name and its key; `None`: a quick reaction or Translate.
-pub(super) fn action_of(item: BarItem) -> Option<MessageAction> {
+fn action_of(item: BarItem) -> Option<MessageAction> {
     match item {
         BarItem::React => Some(MessageAction::React),
         BarItem::Edit => Some(MessageAction::Edit),
@@ -47,13 +47,25 @@ pub(super) fn action_of(item: BarItem) -> Option<MessageAction> {
     }
 }
 
+/// The action `item` does on a message that offers `actions`, when it applies there: Reply is "Reply in thread" on a
+/// channel's post. `None` also for a quick reaction or Translate.
+pub(super) fn bar_action(item: BarItem, actions: &[MessageAction]) -> Option<MessageAction> {
+    let action = match item {
+        BarItem::Reply => [MessageAction::Reply, MessageAction::ReplyInThread]
+            .into_iter()
+            .find(|action| actions.contains(action)),
+        other => action_of(other),
+    };
+    action.filter(|action| actions.contains(action))
+}
+
 impl ChatView {
     /// Whether the account's hover bar shows `item`.
     pub(super) fn bar_shows(&self, item: BarItem, cx: &App) -> bool {
         self.settings.read(cx).settings().shows_bar_item(self.core.me(), item)
     }
 
-    /// Opens the list by a right click at `at` on `message`'s bar.
+    /// Opens the list by a right click at `at` on `message`'s bar; "More options" closes.
     pub fn open_bar_customize(
         &mut self,
         message: &str,
@@ -70,8 +82,6 @@ impl ChatView {
             .options_at
             .get()
             .map_or_else(Point::default, |bounds: Bounds<Pixels>| bounds.bottom_right());
-        self.options = None;
-        self.side_list = None;
         self.open_bar_customize_with(message, at, gpui::Anchor::TopRight, window, cx);
     }
 
@@ -90,6 +100,9 @@ impl ChatView {
             Some(open) => open.back,
             None => self.menu_keys.focus_return(window, cx),
         };
+        // a right click on the open menu's own button is not a click outside it: the menu closes here
+        self.options = None;
+        self.side_list = None;
         self.bar_customize = Some(BarCustomize {
             list: CustomizeList::open(at, anchor, window, cx),
             message: message.to_owned(),

@@ -327,3 +327,90 @@ fn a_new_view_of_the_account_shows_its_choice() {
     hover(cx, "message-1");
     assert!(!shown(cx, "pick-surprised") && shown(cx, "action-copy") && shown(cx, "action-reply"));
 }
+
+#[test]
+fn translate_on_the_bar_leaves_the_translation_settings_in_more_options() {
+    let rig = two();
+    let mut settings = Settings::default();
+    settings.show_bar_item(LAB_A, BarItem::Translate, true);
+    let (_, _, cx) = window_with(&rig, settings);
+    hover(cx, "message-1");
+    assert!(shown(cx, "action-translate"));
+    click(cx, "message-more");
+    click(cx, "action-translation");
+    let list = cx.debug_bounds("message-translation-menu").unwrap();
+    let settings_row = cx.debug_bounds("action-translation-settings").unwrap();
+    assert!(list.contains(&settings_row.center()), "the list holds Settings");
+    let translate = cx.debug_bounds("action-translate").unwrap();
+    assert!(
+        !list.contains(&translate.center()),
+        "Translate is on the bar, not in the list"
+    );
+}
+
+#[test]
+fn a_right_click_on_the_open_more_options_closes_it_for_the_list() {
+    let rig = two();
+    // a short menu, under its button and clear of it
+    let mut settings = Settings::default();
+    for item in [BarItem::Copy, BarItem::Delete, BarItem::MarkUnread, BarItem::Translate] {
+        settings.show_bar_item(LAB_A, item, true);
+    }
+    let (view, _, cx) = window_with(&rig, settings);
+    hover(cx, "message-2");
+    click(cx, "message-more");
+    let menu = cx.debug_bounds("message-menu").unwrap();
+    let more = cx.debug_bounds("message-more").unwrap();
+    assert!(
+        !menu.contains(&more.center()),
+        "the menu is clear of its button: {menu:?} {more:?}"
+    );
+    cx.simulate_mouse_down(more.center(), gpui::MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(more.center(), gpui::MouseButton::Right, Modifiers::none());
+    draw(cx);
+    assert!(cx.update(|_, cx| view.read(cx).bar_customize_open()));
+    assert!(!shown(cx, "message-menu"), "the menu closes for the list");
+}
+
+#[test]
+fn more_options_taller_than_the_window_scrolls_to_the_row_of_the_keys() {
+    let rig = two();
+    let mut settings = Settings::default();
+    for item in [
+        BarItem::Reaction(0),
+        BarItem::Reaction(1),
+        BarItem::Reaction(2),
+        BarItem::Reaction(3),
+        BarItem::React,
+        BarItem::Edit,
+        BarItem::Reply,
+    ] {
+        settings.show_bar_item(LAB_A, item, false);
+    }
+    let (view, _, cx) = window_with(&rig, settings);
+    cx.simulate_resize(size(px(800.0), px(260.0)));
+    draw(cx);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.select(Some("2".to_owned()), cx);
+            view.focus_handle().clone().focus(window, cx);
+        });
+    });
+    draw(cx);
+    cx.simulate_keystrokes("shift-f10");
+    draw(cx);
+    draw(cx);
+    let menu = cx.debug_bounds("message-menu").unwrap();
+    assert!(menu.size.height <= px(260.0), "the menu fits the window: {menu:?}");
+    let customize = cx.debug_bounds("action-customize").unwrap();
+    assert!(!menu.contains(&customize.center()), "Customize is under the fold");
+    cx.simulate_keystrokes("end");
+    draw(cx);
+    draw(cx);
+    let menu = cx.debug_bounds("message-menu").unwrap();
+    let customize = cx.debug_bounds("action-customize").unwrap();
+    assert!(
+        menu.contains(&customize.center()),
+        "End scrolls to Customize: {menu:?} {customize:?}"
+    );
+}

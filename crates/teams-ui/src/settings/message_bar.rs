@@ -110,16 +110,15 @@ impl BarChoice {
     }
 }
 
-/// Takes the accounts' choices: a table of tables under the account's MRI, each with `hidden` and `shown` lists of
+/// Takes the accounts' choices into `choices`: a table of tables under the account's MRI, each with `hidden` and `shown` lists of
 /// names. A name this build does not know, or a button of the other list, is passed over. An account whose table is
 /// bad is left out, the others are taken.
-pub(super) fn take(value: &Value) -> Result<BTreeMap<String, BarChoice>, Problem> {
+pub(super) fn take(choices: &mut BTreeMap<String, BarChoice>, value: &Value) -> Result<(), Problem> {
     let bad = Problem::BadValue {
         key: keys::MESSAGE_BAR,
         why: "not a table of accounts, each with lists of button names",
     };
     let table = value.as_table().ok_or(bad.clone())?;
-    let mut choices = BTreeMap::new();
     let mut failed = false;
     for (account, kept) in table {
         let taken = chat_id(&Value::String(account.clone()))
@@ -133,7 +132,7 @@ pub(super) fn take(value: &Value) -> Result<BTreeMap<String, BarChoice>, Problem
             None => failed = true,
         }
     }
-    if failed { Err(bad) } else { Ok(choices) }
+    if failed { Err(bad) } else { Ok(()) }
 }
 
 fn take_choice(kept: &Table) -> Option<BarChoice> {
