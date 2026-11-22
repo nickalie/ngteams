@@ -468,6 +468,34 @@ async fn a_teams_sticker_is_read_from_its_cdn_once_and_then_from_the_cache() {
 }
 
 #[tokio::test]
+async fn a_teams_sticker_s_preview_is_read_from_its_cdn_once_and_then_from_the_cache() {
+    const PREVIEW: &str = "/evergreen-assets/funstuff/stickers/en-us/assets/MadeUp/Preview/MadeUp_Hi.png";
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(PREVIEW))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(PNG.to_vec(), "image/png"))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let store_file = store_file(&dir);
+    let src = format!("https://teams.public.onecdn.static.microsoft{PREVIEW}?v=5");
+
+    let first = engine(&server, &store_file);
+    let read = first.requests().message_picture(src.clone()).await.unwrap().unwrap();
+    assert_eq!((read.format, read.bytes.as_slice()), (PastedFormat::Png, PNG));
+    first.shutdown();
+
+    // the next run: from the cache
+    let second = engine(&server, &store_file);
+    assert_eq!(
+        second.requests().message_picture(src).await.unwrap().unwrap().bytes,
+        PNG
+    );
+    second.shutdown();
+    assert_eq!(requests_to(&server, PREVIEW).await, 1);
+}
+
+#[tokio::test]
 async fn an_app_s_tile_is_read_once_cached_by_its_version_and_refused_off_the_cdn() {
     const TILE: &str = "/teamsappdata/evergreen-assets/apps/00000000-0000-4000-8000-00000000a002_largeImage.png";
     let url = |version: &str| format!("https://res.cdn.office.net{TILE}?v={version}");

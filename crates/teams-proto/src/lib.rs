@@ -143,7 +143,7 @@ pub use search::{
     ALL_PAGE, Found, FoundChannel, FoundChat, FoundFile, FoundMessage, FoundPerson, PAGE, SUBSTRATE_AUDIENCE,
     SUBSTRATE_HOST, SearchAnswerError, SearchKind, SubstrateSearch, highlighted,
 };
-pub use sticker::{STICKERS_HOST, StickerPicture};
+pub use sticker::{STICKERS_HOST, StickerPicture, StickerPreview};
 pub use team_apps::{
     AppDefinitions, AppStore, DEFINITIONS_PAGE, DefaultTeamPicture, InstalledApp, OwnedGroups, StoreApp,
     TEMPLATE_LOCALE, TeamApps, TeamTemplateCard, TeamTemplateDetails, TeamTemplateRead, TeamTemplates, TemplateChannel,

@@ -510,13 +510,15 @@ Giphy's public media CDN holds GIFs selected by Teams' picker. The native transp
 
 Teams' public CDN holds the pictures of its own sticker packs. The web client loads them as any browser loads an
 `<img>`, with no credential. The native transport uses `Service::Stickers` on
-`https://teams.public.onecdn.static.microsoft/evergreen-assets/stickerassets/` with no account credential and
-implements the picture read below.
+`https://teams.public.onecdn.static.microsoft/evergreen-assets/stickerassets/` and `Service::StickerPreviews` on
+`https://teams.public.onecdn.static.microsoft/evergreen-assets/funstuff/`, with no account credential, and implements
+the picture reads below. An own-server account reads a sticker that a message names here too, but its picker offers
+none of Teams' packs.
 
 | Method | Path | What it does | Native | Notes · task | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| `GET` | `/evergreen-assets/stickerassets/<pack>-250x250/<locale>/<Name>.gif` (a message names it with `?v=5`; `statics.teams.cdn.office.net` serves the same path) | a sticker a message shows: its GIF | Read (`StickerPicture`) | [chat.md](chat.md#stickers-team-manage-2026-11-19) · 649 | team-manage 2026-11-19 (a sent one, b read it); the read without the query checked by hand (the same 226 KB GIF); native on the mock only; own server: public host |
-| `GET` | `/evergreen-assets/funstuff/stickers/<locale>/assets/<Pack>/Preview/<name>.png?v=5` | the picker's preview of a sticker, and the still picture Teams shows of a sticker message when the GIF does not play | not used | [chat.md](chat.md#stickers-team-manage-2026-11-19) · 649 | team-manage 2026-11-19 |
+| `GET` | `/evergreen-assets/stickerassets/<pack>-250x250[/<locale>]/<Name>.gif`, `.png` or `.jpg` (`meme-500x500` for a meme; a message names it with `?v=5`; `statics.teams.cdn.office.net` serves the same path) | a sticker a message shows, and the picture the picker puts in the box: its GIF, PNG or JPEG | Read (`StickerPicture`) | [chat.md](chat.md#teams-own-sticker-packs-team-manage-2026-11-22) · 649, 654 | team-manage 2026-11-19 (a GIF sent, b read it) and 2026-11-22 (a PNG sent with no locale); the read without the query checked by hand (the same bytes); native on the mock only; own server: public host |
+| `GET` | `/evergreen-assets/funstuff/stickers/<locale>/assets/<Pack>/Preview/<name>.png` and `/evergreen-assets/funstuff/meme/assets/Preview/<name>.png` (named with `?v=5`) | the picker's preview of a sticker and a pack's header (and the still picture Teams shows of a sticker message when the GIF does not play) | Read (`StickerPreview`) | [chat.md](chat.md#teams-own-sticker-packs-team-manage-2026-11-22) · 654 | team-manage 2026-11-19 and 2026-11-22 (every pack's header and the previews of four packs); the read without the query checked by hand; native on the mock only; own server: none offered |
 
 ## AI providers with the user's own key (`api.anthropic.com`, `api.openai.com`, a compatible server's base URL)
 

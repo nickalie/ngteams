@@ -1,15 +1,19 @@
 //! The compose box's picker, as Teams' "Emoji, GIFs and Stickers" (Teams' GIFs tab is not here): the tabs All, Emoji
 //! and Stickers over one "Find something fun" search field.
 //!
-//! - **All**: Emoji (six of Recent's) and Stickers (four: the recent ones first, then the packs'), each with "See all",
+//! - **All**: Emoji (six of Recent's) and Stickers (four: the recent ones first, then the user's packs', then Teams'
+//!   popular ones), each with "See all",
 //!   which opens its tab. A search lists the emoji and the stickers it finds; Enter picks the first emoji found, or the
 //!   first sticker when no emoji is.
 //! - **Emoji**: the emoji picker ([`ReactionPicker::embedded`]), searched from this field.
-//! - **Stickers**: Recent, then "Sticker packs": a tile for each pack the user added (the first four, "See all" for
-//!   every one), and "Add a sticker pack" (import a folder or a `.zip` file of pictures, [`crate::stickers::import`]).
-//!   A pack's tile opens its stickers, with "More options" to rename or remove it. A search lists the stickers whose
-//!   label or pack has its words. How an import goes (its progress, what it added and skipped, why it failed) shows
-//!   here until it is closed.
+//! - **Stickers**: Recent, then "Sticker packs": a tile for each pack the user added, then Teams' own packs in Teams'
+//!   order with their headers ([`crate::stickers::teams`], for an account of Microsoft's cloud: an own server has
+//!   none), the first four, "See all" for every one; and "Add a sticker pack" (import a folder or a `.zip` file of
+//!   pictures, [`crate::stickers::import`]). A pack's tile opens its stickers (Teams' previews, read from Teams'
+//!   sticker CDN with no credential and kept by the engine); a pack the user added has "More options" to rename or
+//!   remove it. A search lists the user's stickers whose label or pack has its words, then Teams' stickers as Teams
+//!   finds them (by name or keyword). How an import goes (its progress, what it added and skipped, why it failed)
+//!   shows here until it is closed.
 //!
 //! A pick only tells ([`FunPickerEvent`]): the box puts an emoji in its text, and a sticker in the box as a picture
 //! (sent to the media service at once, then with the message, as Teams' box sends a sticker). A box that takes no
@@ -33,8 +37,10 @@ use gpui_component::{Sizable as _, Size};
 
 use crate::bridge::Core;
 use crate::icons::{Glyph, selected_by};
+use crate::inline::{PictureSource, PictureState};
 use crate::reaction_picker::{ReactionPicker, ReactionPickerEvent, Section};
 use crate::reactions;
+use crate::stickers::teams;
 use crate::stickers::{ImportKind, ImportState, Shelf, StickerRef, Thumb};
 use crate::theme::{self, Palette};
 
@@ -107,6 +113,8 @@ pub enum StickerView {
     Packs,
     /// A pack's stickers, opened from Home or from every pack.
     Pack { id: String, from_packs: bool },
+    /// One of Teams' packs, opened from Home or from every pack.
+    TeamsPack { id: String, from_packs: bool },
 }
 
 /// Something in a tab that a click or the keyboard acts on.
@@ -115,6 +123,8 @@ pub enum Item {
     Emoji(&'static str),
     Sticker(StickerRef),
     Pack(String),
+    /// One of Teams' packs, by its id.
+    TeamsPack(String),
     SeeAllEmoji,
     SeeAllStickers,
     SeeAllPacks,
@@ -141,6 +151,7 @@ impl Item {
             Self::Emoji(key) => format!("fun-emoji-{key}"),
             Self::Sticker(sticker) => sticker_selector(sticker),
             Self::Pack(id) => format!("sticker-pack-{id}"),
+            Self::TeamsPack(id) => format!("teams-pack-{}", id.to_lowercase()),
             Self::SeeAllEmoji => "emoji-see-all".to_owned(),
             Self::SeeAllStickers => "stickers-see-all".to_owned(),
             Self::SeeAllPacks => "sticker-packs-see-all".to_owned(),
@@ -161,9 +172,12 @@ impl Item {
     }
 }
 
-/// A sticker's test selector: `sticker-<pack>-<file's number>`.
+/// A sticker's test selector: `sticker-<pack>-<file's number>`, or `sticker-teams-<id>` for one of Teams'.
 #[must_use]
 pub fn sticker_selector(sticker: &StickerRef) -> String {
+    if sticker.is_teams() {
+        return format!("sticker-teams-{}", sticker.file.to_lowercase());
+    }
     let number = sticker.file.split('.').next().unwrap_or_default();
     format!("sticker-{}-{number}", sticker.pack)
 }
@@ -234,6 +248,10 @@ pub struct FunPicker {
     shelf: Entity<Shelf>,
     /// Whether stickers are offered (the box takes pictures).
     stickers: bool,
+    /// Whether Teams' own packs are offered: stickers are, and the account is on Microsoft's cloud.
+    teams: bool,
+    /// Where Teams' pictures are read: the account's engine.
+    pictures: PictureSource,
     tabs_focus: FocusHandle,
     items_focus: FocusHandle,
     /// The item the keyboard is on, while the items have the focus.
@@ -263,6 +281,8 @@ impl FunPicker {
         cx: &mut Context<Self>,
     ) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Find something fun"));
+        let teams = stickers && core.capabilities().teams_stickers;
+        let pictures = PictureSource::new(Arc::clone(&core));
         let emoji = cx.new(|cx| ReactionPicker::embedded(core, window, cx));
         let mut subscriptions = vec![
             cx.subscribe_in(&search, window, |this: &mut Self, _, event: &InputEvent, _, cx| {
@@ -295,6 +315,8 @@ impl FunPicker {
             emoji,
             shelf,
             stickers,
+            teams,
+            pictures,
             tabs_focus: cx.focus_handle(),
             items_focus: cx.focus_handle(),
             at: (0, 0),
@@ -387,6 +409,12 @@ impl FunPicker {
         cx.notify();
     }
 
+    /// Puts `query` in the search field, as if typed.
+    pub fn search_for(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.update(cx, |search, cx| search.set_value(query, window, cx));
+        self.searched(cx);
+    }
+
     fn close_menus(&mut self) {
         self.panel = Panel::None;
         self.renaming = None;
@@ -459,6 +487,17 @@ impl FunPicker {
                     cx,
                 );
             }
+            Item::TeamsPack(id) => {
+                let from_packs = self.view == StickerView::Packs;
+                self.show_stickers(
+                    StickerView::TeamsPack {
+                        id: id.clone(),
+                        from_packs,
+                    },
+                    window,
+                    cx,
+                );
+            }
             Item::SeeAllEmoji => self.show(Tab::Emoji, cx),
             Item::SeeAllStickers => self.show_stickers(StickerView::Home, window, cx),
             Item::SeeAllPacks => self.show_stickers(StickerView::Packs, window, cx),
@@ -475,7 +514,9 @@ impl FunPicker {
             Item::ImportArchive => Self::choose_import(ImportKind::Archive, cx),
             Item::Back => {
                 let back = match &self.view {
-                    StickerView::Pack { from_packs: true, .. } => StickerView::Packs,
+                    StickerView::Pack { from_packs: true, .. } | StickerView::TeamsPack { from_packs: true, .. } => {
+                        StickerView::Packs
+                    }
                     _ => StickerView::Home,
                 };
                 self.show_stickers(back, window, cx);
@@ -590,11 +631,33 @@ impl FunPicker {
         }
     }
 
+    /// The user's stickers the search finds, then Teams' (as Teams finds them).
     fn found_stickers(&self, cx: &App) -> Vec<StickerRef> {
         if !self.stickers {
             return Vec::new();
         }
-        self.shelf.read(cx).search(&self.query(cx))
+        let query = self.query(cx);
+        let mut found = self.shelf.read(cx).search(&query);
+        if self.teams {
+            found.extend(
+                teams::catalog()
+                    .search(&query)
+                    .into_iter()
+                    .map(|sticker| StickerRef::teams(&sticker.id)),
+            );
+        }
+        found
+    }
+
+    /// Recent's stickers this picker offers: Teams' only to an account that has them.
+    fn recent(&self, cx: &App) -> Vec<StickerRef> {
+        self.shelf
+            .read(cx)
+            .recent()
+            .iter()
+            .filter(|sticker| self.teams || !sticker.is_teams())
+            .cloned()
+            .collect()
     }
 
     // --- the keyboard ---
@@ -796,22 +859,27 @@ impl FunPicker {
         lines
     }
 
-    /// All's stickers: the recent ones, then the packs', [`ALL_STICKERS`] in all.
+    /// All's stickers: the recent ones, then the user's packs', then Teams' popular ones, [`ALL_STICKERS`] in all.
     fn all_stickers(&self, cx: &App) -> Vec<StickerRef> {
         let held = self.shelf.read(cx);
-        let mut stickers: Vec<StickerRef> = held.recent().to_vec();
-        for pack in held.packs() {
-            for sticker in &pack.stickers {
-                if stickers.len() >= ALL_STICKERS {
-                    break;
-                }
-                let sticker = StickerRef {
-                    pack: pack.id.clone(),
-                    file: sticker.file.clone(),
-                };
-                if !stickers.contains(&sticker) {
-                    stickers.push(sticker);
-                }
+        let own = held.packs().iter().flat_map(|pack| {
+            pack.stickers.iter().map(|sticker| StickerRef {
+                pack: pack.id.clone(),
+                file: sticker.file.clone(),
+            })
+        });
+        let popular = teams::catalog()
+            .popular()
+            .into_iter()
+            .filter(|_| self.teams)
+            .map(|sticker| StickerRef::teams(&sticker.id));
+        let mut stickers = self.recent(cx);
+        for sticker in own.chain(popular) {
+            if stickers.len() >= ALL_STICKERS {
+                break;
+            }
+            if !stickers.contains(&sticker) {
+                stickers.push(sticker);
             }
         }
         stickers.truncate(ALL_STICKERS);
@@ -840,56 +908,80 @@ impl FunPicker {
             }));
         }
         match &self.view {
-            StickerView::Home | StickerView::Packs if held.packs().is_empty() => lines.push(Line::Empty),
+            StickerView::Home | StickerView::Packs if held.packs().is_empty() && !self.teams => lines.push(Line::Empty),
             StickerView::Home => {
-                if !held.recent().is_empty() {
+                let recent = self.recent(cx);
+                if !recent.is_empty() {
                     lines.push(Line::Heading {
                         title: "Recent".into(),
                         actions: Vec::new(),
                     });
-                    lines.extend(sticker_rows(held.recent(), 4));
+                    lines.extend(sticker_rows(&recent, 4));
                 }
                 self.packs_lines(&mut lines, held, true);
             }
             StickerView::Packs => self.packs_lines(&mut lines, held, false),
-            StickerView::Pack { id, .. } => {
-                let Some(pack) = held.pack(id) else {
-                    lines.push(Line::Note("That sticker pack isn't there anymore.".into()));
-                    return lines;
-                };
-                lines.push(Line::Heading {
-                    title: pack.name.clone().into(),
-                    actions: vec![Item::PackMenu],
-                });
-                if self.panel == Panel::Menu {
-                    lines.push(Line::Menu(Item::Rename));
-                    lines.push(Line::Menu(Item::Remove));
-                }
-                if self.renaming.is_some() {
-                    lines.push(Line::Renaming);
-                }
-                if self.panel == Panel::Removing {
-                    let count = pack.stickers.len();
-                    let plural = if count == 1 { "" } else { "s" };
-                    lines.push(Line::Removing(
-                        format!("Remove \u{201c}{}\u{201d} and its {count} sticker{plural}?", pack.name).into(),
-                    ));
-                }
-                if let Some(problem) = &self.problem {
-                    lines.push(Line::Note(problem.clone()));
-                }
-                let stickers: Vec<StickerRef> = pack
-                    .stickers
-                    .iter()
-                    .map(|sticker| StickerRef {
-                        pack: pack.id.clone(),
-                        file: sticker.file.clone(),
-                    })
-                    .collect();
-                lines.extend(sticker_rows(&stickers, 3));
-            }
+            StickerView::TeamsPack { id, .. } => self.teams_pack_lines(&mut lines, id),
+            StickerView::Pack { id, .. } => self.pack_lines(&mut lines, held, id),
         }
         lines
+    }
+
+    /// One of Teams' packs: its name, then its stickers.
+    fn teams_pack_lines(&self, lines: &mut Vec<Line>, id: &str) {
+        let catalog = teams::catalog();
+        let Some(pack) = catalog.pack(id).filter(|_| self.teams) else {
+            lines.push(Line::Note("That sticker pack isn't there anymore.".into()));
+            return;
+        };
+        lines.push(Line::Heading {
+            title: pack.name.clone().into(),
+            actions: Vec::new(),
+        });
+        let stickers: Vec<StickerRef> = catalog
+            .stickers_of(&pack.id)
+            .into_iter()
+            .map(|sticker| StickerRef::teams(&sticker.id))
+            .collect();
+        lines.extend(sticker_rows(&stickers, 3));
+    }
+
+    /// A pack the user added: its name and menu, a rename or removal under way, then its stickers.
+    fn pack_lines(&self, lines: &mut Vec<Line>, held: &Shelf, id: &str) {
+        let Some(pack) = held.pack(id) else {
+            lines.push(Line::Note("That sticker pack isn't there anymore.".into()));
+            return;
+        };
+        lines.push(Line::Heading {
+            title: pack.name.clone().into(),
+            actions: vec![Item::PackMenu],
+        });
+        if self.panel == Panel::Menu {
+            lines.push(Line::Menu(Item::Rename));
+            lines.push(Line::Menu(Item::Remove));
+        }
+        if self.renaming.is_some() {
+            lines.push(Line::Renaming);
+        }
+        if self.panel == Panel::Removing {
+            let count = pack.stickers.len();
+            let plural = if count == 1 { "" } else { "s" };
+            lines.push(Line::Removing(
+                format!("Remove \u{201c}{}\u{201d} and its {count} sticker{plural}?", pack.name).into(),
+            ));
+        }
+        if let Some(problem) = &self.problem {
+            lines.push(Line::Note(problem.clone()));
+        }
+        let stickers: Vec<StickerRef> = pack
+            .stickers
+            .iter()
+            .map(|sticker| StickerRef {
+                pack: pack.id.clone(),
+                file: sticker.file.clone(),
+            })
+            .collect();
+        lines.extend(sticker_rows(&stickers, 3));
     }
 
     fn packs_lines(&self, lines: &mut Vec<Line>, held: &Shelf, home: bool) {
@@ -905,11 +997,13 @@ impl FunPicker {
             lines.push(Line::Menu(Item::ImportFolder));
             lines.push(Line::Menu(Item::ImportArchive));
         }
+        let teams_packs = teams::catalog().packs().iter().filter(|_| self.teams);
         let packs: Vec<Item> = held
             .packs()
             .iter()
-            .take(if home { HOME_PACKS } else { usize::MAX })
             .map(|pack| Item::Pack(pack.id.clone()))
+            .chain(teams_packs.map(|pack| Item::TeamsPack(pack.id.clone())))
+            .take(if home { HOME_PACKS } else { usize::MAX })
             .collect();
         lines.extend(packs.chunks(2).map(|row| Line::Packs(row.to_vec())));
     }
@@ -1104,11 +1198,16 @@ impl FunPicker {
                     .child(reactions::emoji(key, px(32.0)))
             }
             Item::Sticker(sticker) => {
-                let label: SharedString = self
-                    .shelf
-                    .read(cx)
-                    .sticker(sticker)
-                    .map_or_else(|| "Sticker".into(), |held| held.label.clone().into());
+                let label: SharedString = if sticker.is_teams() {
+                    teams::catalog()
+                        .sticker(&sticker.file)
+                        .map_or_else(|| "Sticker".into(), |held| held.name.clone().into())
+                } else {
+                    self.shelf
+                        .read(cx)
+                        .sticker(sticker)
+                        .map_or_else(|| "Sticker".into(), |held| held.label.clone().into())
+                };
                 let picture = self.picture(sticker, px(side - 10.0), palette, cx);
                 base.bg(rgb(palette.hover))
                     .hover(move |style| style.bg(rgb(palette.selected)))
@@ -1128,6 +1227,13 @@ impl FunPicker {
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if sticker.is_teams() {
+            let catalog = teams::catalog();
+            return match catalog.sticker(&sticker.file) {
+                Some(held) => self.preview(&catalog.preview(held), side, palette, cx),
+                None => broken(palette),
+            };
+        }
         let shown = self.shelf.read(cx).sticker(sticker).map_or((1, 1), |held| held.size);
         match self.shelf.update(cx, |shelf, cx| shelf.thumb(sticker, cx)) {
             Thumb::Ready(image) => {
@@ -1141,31 +1247,55 @@ impl FunPicker {
                     .into_any_element()
             }
             Thumb::Loading => div().size(side).into_any_element(),
-            Thumb::Broken => Glyph::IMAGE
-                .icon()
-                .size(px(20.0))
-                .text_color(rgb(palette.muted_foreground))
-                .into_any_element(),
+            Thumb::Broken => broken(palette),
+        }
+    }
+
+    /// A picture of Teams' sticker CDN at `src` (a preview or a pack's header), fitted in `side`; read by the account's
+    /// engine the first time it is drawn.
+    fn preview(&self, src: &str, side: gpui::Pixels, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
+        match crate::inline::picture(src, &self.pictures, cx) {
+            PictureState::Shown(image, (width, height)) => {
+                #[expect(clippy::cast_precision_loss, reason = "a preview is a few hundred pixels")]
+                let (width, height) = (width as f32, height as f32);
+                let scale = side / px(width.max(height).max(1.0));
+                img(image)
+                    .w(px(width * scale))
+                    .h(px(height * scale))
+                    .flex_none()
+                    .into_any_element()
+            }
+            PictureState::Reading => div().size(side).into_any_element(),
+            PictureState::Missing => broken(palette),
         }
     }
 
     fn pack_tile(&mut self, item: &Item, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
-        let Item::Pack(id) = item else {
-            return div().into_any_element();
-        };
-        let (name, first) = self.shelf.read(cx).pack(id).map_or_else(
-            || (SharedString::default(), None),
-            |pack| {
-                (
+        let (name, header) = match item {
+            Item::Pack(id) => {
+                let (name, first) = self.shelf.read(cx).pack(id).map_or_else(
+                    || (SharedString::default(), None),
+                    |pack| {
+                        (
+                            pack.name.clone().into(),
+                            pack.stickers.first().map(|sticker| StickerRef {
+                                pack: pack.id.clone(),
+                                file: sticker.file.clone(),
+                            }),
+                        )
+                    },
+                );
+                (name, first.map(|first| self.picture(&first, px(28.0), palette, cx)))
+            }
+            Item::TeamsPack(id) => match teams::catalog().pack(id) {
+                Some(pack) => (
                     pack.name.clone().into(),
-                    pack.stickers.first().map(|sticker| StickerRef {
-                        pack: pack.id.clone(),
-                        file: sticker.file.clone(),
-                    }),
-                )
+                    Some(self.preview(&pack.header(), px(28.0), palette, cx)),
+                ),
+                None => (SharedString::default(), None),
             },
-        );
-        let header = first.map(|first| self.picture(&first, px(28.0), palette, cx));
+            _ => return div().into_any_element(),
+        };
         let selector = item.selector();
         let tip = name.clone();
         let element = div()
@@ -1462,6 +1592,15 @@ impl FunPicker {
             .child(Glyph::X.icon().size(px(16.0)).text_color(rgb(palette.foreground)))
             .into_any_element()
     }
+}
+
+/// A picture that can't be shown: the picture mark.
+fn broken(palette: Palette) -> AnyElement {
+    Glyph::IMAGE
+        .icon()
+        .size(px(20.0))
+        .text_color(rgb(palette.muted_foreground))
+        .into_any_element()
 }
 
 /// A running import: its progress, and why a second import is refused, when one was.

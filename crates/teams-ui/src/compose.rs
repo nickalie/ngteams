@@ -50,8 +50,9 @@
 //!   ([`FunPicker`]: All, Emoji and Stickers, searchable). An emoji picked goes in at the cursor, in place of the text
 //!   selected, as if typed: it is only text in the box. A sticker picked (from the packs the user added,
 //!   [`crate::stickers`]) goes in as Teams' box takes one: a picture sent to the media service at once, then named by
-//!   the message as a sticker when it is sent ([`crate::editor::pictures::Picture::sticker`]). A box that takes no
-//!   picture offers no sticker.
+//!   the message as a sticker when it is sent ([`crate::editor::pictures::Picture::sticker`]). One of Teams' own packs
+//!   ([`crate::stickers::teams`]) goes in once its picture is read, named by its address on Teams' sticker CDN and
+//!   never sent to the media service. A box that takes no picture offers no sticker.
 //!
 //! - **A channel's box** ([`Compose::in_channel`]): "Message in <channel>" posting to the channel, or a post's
 //!   thread's "Reply in thread" posting to the post's chain, with Teams' "Send to: thread only" over its text. It
@@ -1944,6 +1945,9 @@ impl Compose {
         self.emoji = None;
         self.focus(window, cx);
         cx.notify();
+        if sticker.is_teams() {
+            return self.put_teams_sticker(sticker, &packs, cx);
+        }
         let picture = {
             let kept = packs.read(cx);
             kept.sticker(sticker).cloned().and_then(|held| {
@@ -1956,15 +1960,64 @@ impl Compose {
         if self.read_only.is_some() || !self.editor.read(cx).takes_pictures() {
             return;
         }
-        // as a paste, a picture doesn't split a code block
         if !self.editor.read(cx).takes_picture_here() {
             return self.show_problem("A sticker can't go in a code block.", cx);
         }
         packs.update(cx, |packs, cx| packs.record_recent(sticker, cx));
+        self.put_picture(picture, cx);
+    }
+
+    /// Puts `picture` in the box, unless the box takes no picture there.
+    fn put_picture(&mut self, picture: editor::pictures::Picture, cx: &mut Context<Self>) {
+        if self.read_only.is_some() || !self.editor.read(cx).takes_pictures() {
+            return;
+        }
+        // as a paste, a picture doesn't split a code block
+        if !self.editor.read(cx).takes_picture_here() {
+            return self.show_problem("A sticker can't go in a code block.", cx);
+        }
         self.editor.update(cx, |editor, cx| {
             editor.insert_picture(picture, cx);
         });
         self.fit_pictures(cx);
+    }
+
+    /// Puts one of Teams' stickers in the box once its picture is read from Teams' sticker CDN (no credential): the
+    /// message names it at its address there, as Teams' box does, and nothing is sent to the media service.
+    fn put_teams_sticker(
+        &mut self,
+        sticker: &crate::stickers::StickerRef,
+        packs: &Entity<crate::stickers::Shelf>,
+        cx: &mut Context<Self>,
+    ) {
+        let catalog = crate::stickers::teams::catalog();
+        let Some(held) = catalog.sticker(&sticker.file) else {
+            return self.show_problem("That sticker can't be read.", cx);
+        };
+        if self.read_only.is_some()
+            || !self.editor.read(cx).takes_pictures()
+            || !self.core.capabilities().teams_stickers
+        {
+            return;
+        }
+        if !self.editor.read(cx).takes_picture_here() {
+            return self.show_problem("A sticker can't go in a code block.", cx);
+        }
+        packs.update(cx, |packs, cx| packs.record_recent(sticker, cx));
+        let (src, label) = (catalog.picture(held), held.name.clone());
+        let reply = self.core.message_picture(src.clone());
+        cx.spawn(async move |this, cx| {
+            let picture = reply
+                .await
+                .ok()
+                .flatten()
+                .and_then(|bytes| editor::pictures::Picture::teams_sticker((*bytes).clone(), &src, &label));
+            let _ = this.update(cx, |this, cx| match picture {
+                Some(picture) => this.put_picture(picture, cx),
+                None => this.show_problem("That sticker can't be read. Check your connection, then try again.", cx),
+            });
+        })
+        .detach();
     }
 
     // --- keys ---

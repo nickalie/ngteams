@@ -13,7 +13,8 @@
 //!   aren't all sent waits ([`Editor::pictures_ready`]).
 //! - **A sticker** ([`Picture::sticker`], the compose box's picker's) is such a picture, shown at its sticker's size and
 //!   named by the message as Teams names a sticker: the `readonly` element of itemtype Sticker around its `<img>`,
-//!   labelled ([`teams_proto::chat::Sticker`]).
+//!   labelled ([`teams_proto::chat::Sticker`]). One of Teams' own ([`Picture::teams_sticker`]) is already on Teams'
+//!   sticker CDN: it is not sent, and the message names it at its address there, as Teams' box does.
 //! - A picture's bytes stay in the editor while it lives, so undo brings a removed picture back as it was.
 
 use std::path::{Path, PathBuf};
@@ -58,6 +59,8 @@ pub struct Picture {
     pub state: PictureState,
     /// The label of a sticker; `None` for a picture.
     pub sticker: Option<SharedString>,
+    /// Where one of Teams' own stickers is on Teams' sticker CDN: it is not sent.
+    pub hosted: Option<String>,
 }
 
 impl std::fmt::Debug for Picture {
@@ -68,6 +71,7 @@ impl std::fmt::Debug for Picture {
             .field("given", &self.given)
             .field("state", &self.state)
             .field("sticker", &self.sticker)
+            .field("hosted", &self.hosted)
             .finish_non_exhaustive()
     }
 }
@@ -98,6 +102,7 @@ impl Picture {
             given,
             state: PictureState::Sending,
             sticker: None,
+            hosted: None,
         })
     }
 
@@ -107,6 +112,16 @@ impl Picture {
         let mut picture = Self::of(bytes.bytes, 1.0)?;
         picture.given = (shown.0.max(1), shown.1.max(1));
         picture.sticker = Some(SharedString::from(label.to_owned()));
+        Some(picture)
+    }
+
+    /// One of Teams' own stickers: its picture `bytes` as read from `src`, its address on Teams' sticker CDN, shown at
+    /// Teams' sticker size, labelled `label`. `None` when the bytes hold no picture or `src` is off that CDN.
+    #[must_use]
+    pub fn teams_sticker(bytes: teams_proto::PastedPicture, src: &str, label: &str) -> Option<Self> {
+        teams_proto::StickerPicture::of(src)?;
+        let mut picture = Self::sticker(bytes, crate::stickers::teams::SHOWN, label)?;
+        picture.hosted = Some(src.to_owned());
         Some(picture)
     }
 
@@ -216,18 +231,22 @@ impl Editor {
         true
     }
 
-    /// Puts `picture` in the box at the cursor, in place of the selection, and tells the owner to send it; its id.
+    /// Puts `picture` in the box at the cursor, in place of the selection, and tells the owner to send it (one of Teams'
+    /// stickers is there already); its id.
     pub fn insert_picture(&mut self, mut picture: Picture, cx: &mut Context<Self>) -> u64 {
         self.next_picture += 1;
         let id = self.next_picture;
-        picture.state = PictureState::Sending;
+        let hosted = picture.hosted.clone();
+        picture.state = hosted.clone().map_or(PictureState::Sending, PictureState::Sent);
         self.pictures.insert(id, picture);
         self.edit(Step::Other, cx, move |doc, selection| {
             let (start, end) = selection.range();
             let at = doc.delete(start, end);
             Selection::caret(doc.insert_fragment(at, vec![Block::new(Kind::Picture(id), 0, Vec::new())]))
         });
-        cx.emit(EditorEvent::Picture(id));
+        if hosted.is_none() {
+            cx.emit(EditorEvent::Picture(id));
+        }
         id
     }
 
@@ -312,6 +331,11 @@ impl Editor {
         let PictureState::Sent(object) = &picture.state else {
             return None;
         };
+        if let Some(src) = &picture.hosted {
+            let label = picture.sticker.as_deref().unwrap_or_default();
+            return teams_proto::chat::Sticker::of_teams(src, picture.given, label)
+                .map(teams_proto::chat::Node::Sticker);
+        }
         let image = teams_proto::sent_picture(object, picture.given)?;
         Some(match &picture.sticker {
             Some(label) => teams_proto::chat::Node::Sticker(teams_proto::chat::Sticker {

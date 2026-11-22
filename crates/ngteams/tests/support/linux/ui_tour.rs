@@ -10,7 +10,8 @@
 //! thumbnails, in Teams Dark and Light, its first video played in its card and paused, "Share this file" from a
 //! video's card (empty, its "More actions", two recipients and a message, the format bar and emoji picker, shared, and
 //! Copy link's "Link created"); a message of lines, small
-//! pictures and a block of code, in Teams Dark and Light; stickers alone with no bubble, in Teams Dark and Light; a
+//! pictures and a block of code, in Teams Dark and Light; stickers alone with no bubble, in Teams Dark and Light, and
+//! one of Teams' own picked and sent; Teams' sticker packs in the picker, one opened and a search; a
 //! picture opened in the picture viewer, fitted and zoomed;
 //! the 12-hour time format and a chat's times on it; a group chat's presence; the "Chats" section's See more, what it
 //! brings and a chat opened from below the rows shown; New message, its To: line's suggestions, the chat two people
@@ -199,7 +200,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 354 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 359 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -380,6 +381,20 @@ const STEPS: [Step; 5 + 354 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     // the keyboard in the pack: from the search field down past Back and "More options" to its second sticker
     ("chat-fun-sticker-keys", |_, window, cx| {
         press(window, cx, "down down down right");
+    }),
+    // one of Teams' own packs (Clippy), its previews read from Teams' sticker CDN (the mock's made-up pictures,
+    // `seed_stickers`)
+    ("chat-fun-teams-pack", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, window, cx| {
+            picker.activate(&FunItem::TeamsPack("Clippy".to_owned()), window, cx);
+        });
+    }),
+    // the Stickers tab searched as Teams searches: the user's stickers, then Teams' found by name or keyword
+    ("chat-fun-teams-search", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, window, cx| {
+            picker.show_stickers(teams_ui::fun_picker::StickerView::Home, window, cx);
+            picker.search_for("hello", window, cx);
+        });
     }),
     // a sticker picked: in the box at its size, sent to the media service at once
     ("chat-sticker-in-box", |shell, window, cx| {
@@ -1433,6 +1448,11 @@ const STEPS: [Step; 5 + 354 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
             picker.activate(&FunItem::Pack(STICKER_PACK.to_owned()), window, cx);
         });
     }),
+    ("chat-dark-fun-teams-pack", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, window, cx| {
+            picker.activate(&FunItem::TeamsPack("OfficeDrama".to_owned()), window, cx);
+        });
+    }),
     // b's pasted picture with an emoticon in its text, b's wave alone, c's GIF from the GIF picker, b's link with its
     // preview card and b's phone screenshot alone in its square frame (`seed_pictures`), in Teams Dark
     ("chat-pictures", |shell, window, cx| {
@@ -2210,6 +2230,17 @@ const STEPS: [Step; 5 + 354 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     }),
     ("chat-sticker", |shell, _, cx| {
         fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+    }),
+    // one of Teams' stickers picked there: in the box once its picture is read from Teams' sticker CDN
+    ("chat-teams-sticker-in-box", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, window, cx| {
+            let sticker = teams_ui::stickers::StickerRef::teams("Teamsquatch_BugSquash");
+            picker.activate(&FunItem::Sticker(sticker), window, cx);
+        });
+    }),
+    // sent by its address on the CDN, as Teams sends one: alone at 180 by 180, with no bubble
+    ("chat-teams-sticker-sent", |shell, window, cx| {
+        with_compose(shell, cx, |compose, cx| compose.send(window, cx));
     }),
     // messages a tenant's policy blocked, as Teams shows them: a's own with its text and file put back from the
     // service's copy under the red notice and its link, b's with the notice alone (a file type, then a policy); in
@@ -6083,6 +6114,8 @@ fn seed_stickers(mock: &ChatServiceMock, runtime: &tokio::runtime::Runtime) -> S
         "image/gif",
         gif,
     ));
+    runtime.block_on(mock.serve_bytes_under("/evergreen-assets/funstuff/", made_up_teams_picture));
+    runtime.block_on(mock.serve_bytes_under("/evergreen-assets/stickerassets/", made_up_teams_picture));
     let chat = mock.add_group("Lab stickers", &[LAB_A, LAB_B]).ok_or("no chat made")?;
     mock.post_as(LAB_B, &chat, "<p>Made-up sticker test</p>")
         .ok_or("b's words refused")?;
@@ -6100,6 +6133,51 @@ fn seed_stickers(mock: &ChatServiceMock, runtime: &tokio::runtime::Runtime) -> S
     mock.post_as(LAB_A, &chat, &sent).ok_or("a's sticker refused")?;
     STICKER_CHAT.set(chat).map_err(|_| "the sticker chat was set twice")?;
     Ok(())
+}
+
+/// A made-up picture for a path of Teams' sticker CDN, as that CDN would serve one: a still GIF for a `.gif`, else a
+/// PNG (a pack's header 52 px, a preview 108 px, a sticker 250 px) of a round face on a white ground, its colour taken
+/// from the path, so that each sticker looks its own.
+fn made_up_teams_picture(path: &str) -> Vec<u8> {
+    let side = if path.contains("header") {
+        52
+    } else if path.contains("/Preview/") {
+        108
+    } else {
+        250
+    };
+    let hash = path
+        .bytes()
+        .fold(7u32, |hash, byte| hash.wrapping_mul(31).wrapping_add(u32::from(byte)));
+    let colour = [
+        u8::try_from(60 + hash % 160).unwrap_or(120),
+        u8::try_from(60 + (hash / 160) % 160).unwrap_or(120),
+        u8::try_from(60 + (hash / 25_600) % 160).unwrap_or(120),
+        255,
+    ];
+    let centre = i64::from(side / 2);
+    let radius = centre * 3 / 4;
+    let picture = image::RgbaImage::from_fn(side, side, |x, y| {
+        let (dx, dy) = (i64::from(x) - centre, i64::from(y) - centre);
+        let eye = (dx.abs() - radius / 3).pow(2) + (dy + radius / 4).pow(2) <= (radius / 8).pow(2);
+        if eye {
+            image::Rgba([40, 30, 20, 255])
+        } else if dx * dx + dy * dy <= radius * radius {
+            image::Rgba(colour)
+        } else {
+            image::Rgba([255, 255, 255, 255])
+        }
+    });
+    let format = if path.rsplit_once('.').is_some_and(|(_, extension)| extension == "gif") {
+        image::ImageFormat::Gif
+    } else {
+        image::ImageFormat::Png
+    };
+    let mut bytes = Vec::new();
+    if let Err(error) = picture.write_to(&mut std::io::Cursor::new(&mut bytes), format) {
+        eprintln!("tour sticker picture: {error}");
+    }
+    bytes
 }
 
 /// A made-up animated sticker, 180 by 180 on a clear ground: a yellow face whose mouth opens and closes over four

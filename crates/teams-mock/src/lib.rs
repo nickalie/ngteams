@@ -590,6 +590,21 @@ impl ChatServiceMock {
             .await;
     }
 
+    /// Answers every `GET` of a path that starts with `prefix` with the bytes `draw` makes for that path, below the
+    /// answers [`Self::serve_bytes`] mounts: a test's stand-in for a whole folder of a CDN (the pictures of Teams'
+    /// sticker packs).
+    pub async fn serve_bytes_under(&self, prefix: &str, draw: impl Fn(&str) -> Vec<u8> + Send + Sync + 'static) {
+        let prefix = prefix.to_owned();
+        Mock::given(method("GET"))
+            .and(move |request: &Request| request.url.path().starts_with(&prefix))
+            .respond_with(move |request: &Request| {
+                ResponseTemplate::new(200).set_body_raw(draw(request.url.path()), "application/octet-stream")
+            })
+            .with_priority(2)
+            .mount(&self.server)
+            .await;
+    }
+
     /// [`Self::serve_bytes`], each answer held back for `delay`: a slow CDN.
     pub async fn serve_bytes_after(&self, path: &str, content_type: &str, body: Vec<u8>, delay: std::time::Duration) {
         Mock::given(method("GET"))

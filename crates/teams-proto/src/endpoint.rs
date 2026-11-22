@@ -100,6 +100,11 @@ pub enum Service {
     /// Teams' own packs a message shows (`<pack folder>[/<locale>]/<file>`, [`crate::StickerPicture`]). Reads only,
     /// nothing of the account's sent.
     Stickers,
+    /// The previews of Teams' own stickers and the headers of its packs, on the same CDN under
+    /// `https://teams.public.onecdn.static.microsoft/evergreen-assets/funstuff/`, with no token (public files, as
+    /// [`Service::Stickers`]): what the picker's Stickers tab shows (`stickers/<locale>/assets/<pack>/Preview/<file>`,
+    /// `meme/assets/Preview/<file>`, [`crate::StickerPreview`]). Reads only, nothing of the account's sent.
+    StickerPreviews,
     /// App tiles on Microsoft's CDN, `https://res.cdn.office.net/teamsappdata/`, with no token (public files the web
     /// client's `<img>` loads as any browser does): the picture an app definition's `largeImageUrl` names
     /// ([`crate::AppPicture`]). Reads only, nothing of the account's sent.

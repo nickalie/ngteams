@@ -27,7 +27,7 @@ use crate::post_read::PostRead;
 use crate::read::Read;
 use crate::request::Request;
 use crate::search::{SUBSTRATE_AUDIENCE, SUBSTRATE_HOST, SubstrateSearch};
-use crate::sticker::{STICKERS_HOST, STICKERS_PATH};
+use crate::sticker::{PREVIEWS_PATH, STICKERS_HOST, STICKERS_PATH};
 use crate::thumbnail::{ThumbnailLink, is_thumbnail_link_in};
 use crate::write::on_calling_service;
 
@@ -67,7 +67,7 @@ pub const TROUTER_HOST: &str = "go.trouter.teams.microsoft.com";
 pub const MAX_BODY: usize = 4 * 1024 * 1024;
 
 /// The largest body read from AMS ([`Service::Ams`]), Giphy ([`Service::Giphy`]) or Teams' sticker CDN
-/// ([`Service::Stickers`]), in bytes: a picture pasted into a message, a photo's original included, or a GIF at its full
+/// ([`Service::Stickers`], [`Service::StickerPreviews`]), in bytes: a picture pasted into a message, a photo's original included, or a GIF at its full
 /// size; a longer one is [`HttpError::BodyTooLarge`].
 pub const MAX_PICTURE_BODY: usize = 24 * 1024 * 1024;
 
@@ -1024,6 +1024,7 @@ impl<C: Credentials> HttpTransport<C> {
             Service::Emoticons => public(format!("https://{EMOTICONS_HOST}/{EMOTICONS_PATH}")),
             Service::Giphy => public(format!("https://{GIPHY_HOST}/")),
             Service::Stickers => public(format!("https://{STICKERS_HOST}/{}", STICKERS_PATH.join("/"))),
+            Service::StickerPreviews => public(format!("https://{STICKERS_HOST}/{}", PREVIEWS_PATH.join("/"))),
             Service::AppPictures => fixed(
                 format!("https://{APP_PICTURES_HOST}/{APP_PICTURES_PATH}"),
                 &format!("/{APP_PICTURES_PATH}"),
@@ -1699,6 +1700,12 @@ const fn is_loki(service: Service) -> bool {
 /// which only the first frame is drawn).
 const GIF_ACCEPT: &str = "image/gif";
 
+/// The `Accept` a sticker of Teams' is read with: its file is a GIF, a PNG or a JPEG ([`Service::Stickers`]).
+const STICKER_ACCEPT: &str = "image/gif,image/png,image/jpeg";
+
+/// The `Accept` a sticker's preview is read with: a PNG ([`Service::StickerPreviews`]).
+const PREVIEW_ACCEPT: &str = "image/png";
+
 /// The Entra audience of the bearer token `service` takes, if it takes one.
 fn audience(service: Service) -> Option<&'static str> {
     match service {
@@ -1721,6 +1728,7 @@ fn audience(service: Service) -> Option<&'static str> {
         | Service::FileContent
         | Service::Giphy
         | Service::Stickers
+        | Service::StickerPreviews
         | Service::AppPictures
         | Service::StaticAppPictures => None,
     }
@@ -1750,6 +1758,7 @@ fn plain_headers(service: Service, body: bool) -> Vec<(String, String)> {
         | Service::FileContent
         | Service::Giphy
         | Service::Stickers
+        | Service::StickerPreviews
         | Service::AppPictures
         | Service::StaticAppPictures
         | Service::Substrate
@@ -1759,7 +1768,9 @@ fn plain_headers(service: Service, body: bool) -> Vec<(String, String)> {
     // a picture's view and a thumbnail answer an image, as a browser's `<img>` asks for one
     let accept = match service {
         Service::Ams | Service::FileThumbnail | Service::AppPictures | Service::StaticAppPictures => PICTURE_ACCEPT,
-        Service::Giphy | Service::Stickers => GIF_ACCEPT,
+        Service::Giphy => GIF_ACCEPT,
+        Service::Stickers => STICKER_ACCEPT,
+        Service::StickerPreviews => PREVIEW_ACCEPT,
         // a file's bytes, whatever it holds, as a browser's media element asks for them
         Service::FileContent => "*/*",
         Service::ChatService
@@ -1848,6 +1859,7 @@ fn service_headers(service: Service) -> &'static [(&'static str, &'static str)] 
         | Service::FileContent
         | Service::Giphy
         | Service::Stickers
+        | Service::StickerPreviews
         | Service::AppPictures
         | Service::StaticAppPictures
         | Service::Substrate => &[],
@@ -1859,7 +1871,11 @@ fn on_base_in(cloud: &Cloud, service: Service, base: &Url, url: &Url, endpoint: 
     if cloud.is_microsoft()
         || matches!(
             service,
-            Service::Emoticons | Service::Giphy | Service::Stickers | Service::StaticAppPictures
+            Service::Emoticons
+                | Service::Giphy
+                | Service::Stickers
+                | Service::StickerPreviews
+                | Service::StaticAppPictures
         )
     {
         return on_base(service, base, url, endpoint);
@@ -1924,6 +1940,7 @@ fn on_base(service: Service, base: &Url, url: &Url, endpoint: &Endpoint) -> bool
         | Service::FileContent
         | Service::Giphy
         | Service::Stickers
+        | Service::StickerPreviews
         | Service::AppPictures
         | Service::StaticAppPictures
         | Service::Substrate

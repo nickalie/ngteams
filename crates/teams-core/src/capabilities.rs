@@ -34,6 +34,8 @@ pub struct Capabilities {
     pub apps: bool,
     /// Copilot: the AI workflows.
     pub copilot: bool,
+    /// Teams' own sticker packs in the picker: Microsoft's, which no own server serves.
+    pub teams_stickers: bool,
 }
 
 impl Capabilities {
@@ -45,6 +47,7 @@ impl Capabilities {
         recording: true,
         apps: true,
         copilot: true,
+        teams_stickers: true,
     };
 
     /// The services `cloud` serves: all on Microsoft's, on an own server those whose GTM `names` holds.
@@ -60,6 +63,7 @@ impl Capabilities {
             recording: names(RECORDING_GTM),
             apps: names(APPS_GTM),
             copilot: names(COPILOT_GTM),
+            teams_stickers: false,
         }
     }
 }
@@ -88,6 +92,7 @@ mod tests {
                 recording: false,
                 apps: false,
                 copilot: false,
+                teams_stickers: false,
             }
         );
         let workflows = Capabilities::of(&own, |gtm| gtm == WORKFLOWS_GTM);
@@ -97,6 +102,10 @@ mod tests {
         assert!(Capabilities::of(&own, |gtm| gtm == CAPTIONS_GTM).captions);
         assert!(Capabilities::of(&own, |gtm| gtm == RECORDING_GTM).recording);
         assert!(Capabilities::of(&own, |gtm| gtm == COPILOT_GTM).copilot);
+        assert!(
+            !Capabilities::of(&own, |_| true).teams_stickers,
+            "no own server serves Teams' stickers"
+        );
         assert_eq!(Capabilities::default(), Capabilities::ALL);
     }
 }

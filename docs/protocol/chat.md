@@ -700,6 +700,57 @@ once, as it sends a pasted picture (a still sticker as a PNG, an animated one as
 `<p>&nbsp;</p>` when the sticker is alone. An own server takes it with no change: its AMS rows keep the picture, and it
 keeps the message's HTML as it comes.
 
+## Teams' own sticker packs (team-manage, 2026-11-22)
+
+Browser Teams as a, in the a–b 1:1 chat (`team-manage`, its writes let through). The capture is
+`team-manage/20261122T190925Z` in the lab's data dir. a sent one sticker to b.
+
+**Where the list comes from.** No request lists the packs or the stickers. The web client has them in its script:
+41 packs and their stickers, each with an id, a file, a pack, words to search by and, for some, a caption. The names
+and the words are keys in the client's string table for the locale. The client shows a pack only when the account's
+licence allows it and the pack's flag is on:
+
+- the `EDU_*` packs only for the Teacher and Student licences, and a work account sees the others;
+- `RubberStamps` for no licence (an empty list of licences);
+- `BMac` only when its flag is on (it was off).
+
+A work account sees 18 packs, in this order: Popular, Clippy, Office Drama, Meme, Designers, Devs, Legal, Broccoli,
+Bee, Teamsquatch, Calamity Bert, Cats In Suits, Word Art, Monkey, Octocorn, Donut Friends, Uncle Blob and
+Animalopolis. Popular is not a pack of its own stickers: it shows 12 stickers of other packs. A pack shows its
+stickers in the order of the list, three to a row, under the back arrow and the search box, with no title.
+
+**The addresses** (`stickerUrlConfig`: `cdnVersion` 5) are all on `teams.public.onecdn.static.microsoft`:
+
+- The preview of a sticker: `/evergreen-assets/funstuff/stickers/<locale>/assets/<Pack>/Preview/<file>.png?v=5`
+  (108 by 108). The Meme pack's: `/evergreen-assets/funstuff/meme/assets/Preview/<file>.png?v=5`. A pack's header is
+  in the same folder (52 by 52).
+- The picture a message names: `/evergreen-assets/stickerassets/<pack, lowercase>-250x250/<file>?v=5`. Only a pack
+  with pictures for each locale (Clippy) has `/<locale>` before the file. The Meme pack's folder is `meme-500x500`.
+  Most stickers are a PNG (250 by 250); Clippy's are GIFs.
+
+**A still sticker sent.** A click on "teamsquatch squashing a bug" put it in the box, and Send posted the form above
+with the PNG: `<img src="https://teams.public.onecdn.static.microsoft/evergreen-assets/stickerassets/teamsquatch-250x250/Teamsquatch_BugSquash.png?v=5"
+height="180" alt="teamsquatch squashing a bug" width="180" data-image-type="standard" data-image-mode="single"
+itemtype="http://schema.skype.com/Sticker">` in the `readonly` element, with `amsreferences` `[]`. Teams showed it
+alone at 180 by 180 with no bubble.
+
+**A sticker with a caption.** A click on such a sticker (all 12 of Popular, the Office Drama, Designers, Devs, Legal
+and Meme packs) opens the caption editor, not the box. The sticker's picture with its own words is the address above
+(`OfficeDrama_HighFive.png`, 250 by 250). The picture with no words is beside it (`…_Template.png`). A meme has only
+the picture with no words (`<name>-template.png`; two are JPEGs): Teams draws its words on it.
+
+**The search.** Teams finds a sticker when its name, or one of the words in its comma-separated list, holds the
+typed text, in any case. A sticker with no words is never found. "hello" found Clippy's "Hello there", Office
+Drama's "hey", Broccoli's wave, Bee's "hi", Word Art's "hello" and Animalopolis's lemur, in that order.
+
+**The native client** keeps a copy of the list's data as a table (`crates/teams-ui/src/stickers/teams_catalog.txt`,
+with the date of the script), never the script. It shows Teams' packs after the user's own in the Stickers tab, for
+an account of Microsoft's cloud only (an own server has none). It reads the previews and the headers with
+`StickerPreview` ([endpoints.md](endpoints.md#teams-sticker-cdn-teamspubliconecdnstaticmicrosoft)). A pick reads the
+sticker's picture, puts it in the box, and Send posts the captured form with its address (`Sticker::of_teams`), with
+nothing sent to AMS. A sticker with a caption is sent as its picture with its own words, and a meme as its picture
+with no words: the caption editor is not built yet.
+
 ## Link previews
 
 How a received message carries the preview of a link, from the user's own chats as the personal build stored them,

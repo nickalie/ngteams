@@ -9,6 +9,7 @@
 
 pub mod import;
 pub mod store;
+pub mod teams;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ use gpui::{App, AppContext as _, Context, Entity, Global, RenderImage};
 use teams_proto::PastedPicture;
 
 pub use import::{ImportError, ImportKind, Imported, Progress, Skip, Skipped};
-pub use store::{Pack, Sticker, StickerRef, StoreError};
+pub use store::{Pack, Sticker, StickerRef, StoreError, TEAMS_PACK};
 
 /// How the last import stands, while the shelf keeps it.
 #[derive(Clone, Debug, PartialEq, Eq)]

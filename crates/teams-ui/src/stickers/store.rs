@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! stickers/
-//!   recent.toml           # recent = ["<pack>/<file>", …], the last sent first
+//!   recent.toml           # recent = ["<pack>/<file>", …], the last sent first ("@teams/<id>": one of Teams')
 //!   <pack id>/
 //!     pack.toml           # name, added, and a [[stickers]] table per sticker: file, label, width, height
 //!     001.png             # a still sticker, as it is sent
@@ -94,7 +94,25 @@ pub struct StickerRef {
     pub file: String,
 }
 
+/// The pack of every sticker of Teams' own ([`super::teams`]): no pack the user adds has this id ([`is_id`]).
+pub const TEAMS_PACK: &str = "@teams";
+
 impl StickerRef {
+    /// Teams' sticker `id` ([`super::teams::Catalog::sticker`]).
+    #[must_use]
+    pub fn teams(id: &str) -> Self {
+        Self {
+            pack: TEAMS_PACK.to_owned(),
+            file: id.to_owned(),
+        }
+    }
+
+    /// Whether it is one of Teams' stickers.
+    #[must_use]
+    pub fn is_teams(&self) -> bool {
+        self.pack == TEAMS_PACK
+    }
+
     /// `<pack>/<file>`, as [`RECENT_FILE`] keeps it.
     fn key(&self) -> String {
         format!("{}/{}", self.pack, self.file)
@@ -102,6 +120,9 @@ impl StickerRef {
 
     fn of_key(key: &str) -> Option<Self> {
         let (pack, file) = key.split_once('/')?;
+        if pack == TEAMS_PACK {
+            return super::teams::catalog().sticker(file).map(|_| Self::teams(file));
+        }
         (is_id(pack) && is_file_name(file)).then(|| Self {
             pack: pack.to_owned(),
             file: file.to_owned(),
@@ -315,7 +336,7 @@ pub fn recent(dir: &Path) -> Vec<StickerRef> {
             recent.push(sticker);
         }
     }
-    recent.retain(|sticker| path_of(dir, sticker).is_some());
+    recent.retain(|sticker| sticker.is_teams() || path_of(dir, sticker).is_some());
     recent.truncate(RECENT);
     recent
 }

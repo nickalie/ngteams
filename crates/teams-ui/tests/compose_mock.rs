@@ -455,6 +455,74 @@ impl Walk {
         assert_eq!(uploaded.body, std::fs::read(stickers.join("lab-cats/001.png")).unwrap());
     }
 
+    /// One of Teams' stickers picked in the picker: its picture read from the mock's sticker CDN (with no token) into
+    /// the box, then posted by its address there when a presses Enter, as Teams' web client posts one, with nothing
+    /// sent to the media service. b gets the sticker.
+    fn a_teams_sticker_from_the_picker(&mut self) {
+        use teams_ui::fun_picker::Item;
+        use teams_ui::stickers::StickerRef;
+
+        const PICTURE: &str = "/evergreen-assets/stickerassets/teamsquatch-250x250/Teamsquatch_BugSquash.png";
+        let mut picture = Vec::new();
+        image::RgbaImage::from_pixel(250, 250, image::Rgba([40, 160, 40, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut picture), image::ImageFormat::Png)
+            .unwrap();
+        self.lab
+            .runtime
+            .block_on(self.lab.mock.serve_bytes(PICTURE, "image/png", picture));
+        let before = self.lab.runtime.block_on(self.lab.mock.received_requests()).len();
+
+        focus_compose(&self.view, self.cx);
+        let compose = compose(&self.view, self.cx);
+        self.cx
+            .update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_emoji(window, cx)));
+        let picker = self
+            .cx
+            .update(|_, cx| compose.read(cx).emoji_picker().cloned())
+            .expect("the picker is open");
+        let sticker = Item::Sticker(StickerRef::teams("Teamsquatch_BugSquash"));
+        self.cx
+            .update(|window, cx| picker.update(cx, |picker, cx| picker.activate(&sticker, window, cx)));
+        self.until_the_sticker_is_sent(&compose);
+        self.cx.simulate_keystrokes("enter");
+        let (change, posted) = self.b.message(self.cx);
+        assert_eq!(change, MessageChange::New);
+        let text = teams_proto::chat::parse_html(&posted.content);
+        let got = text
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                teams_proto::chat::Node::Sticker(sticker) => Some(sticker.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("b got a sticker: {}", posted.content));
+        assert_eq!(got.label.as_deref(), Some("teamsquatch squashing a bug"));
+        assert_eq!(
+            got.image.src,
+            format!("https://teams.public.onecdn.static.microsoft{PICTURE}?v=5")
+        );
+        let requests = self.lab.runtime.block_on(self.lab.mock.received_requests());
+        let read = requests[before..]
+            .iter()
+            .find(|request| request.url.path() == PICTURE)
+            .expect("its picture was read from the CDN");
+        assert!(read.headers.get("authorization").is_none(), "with no token");
+        assert!(
+            requests[before..]
+                .iter()
+                .all(|request| request.method.as_str() == "GET" || !request.url.path().contains("/v1/objects")),
+            "nothing was sent to the media service"
+        );
+        let sent = self
+            .lab
+            .posted()
+            .into_iter()
+            .rfind(|body| body.contains("Teamsquatch_BugSquash"))
+            .unwrap();
+        let sent: Value = serde_json::from_str(&sent).unwrap();
+        assert_eq!(sent["amsreferences"], serde_json::json!([]));
+    }
+
     /// b posts `text`, and a's view holds it. Its id.
     fn b_posts(&mut self, text: &str) -> String {
         let row = self
@@ -755,5 +823,6 @@ fn each_write_from_a_s_view_reaches_b_through_the_mock() {
     walk.an_edit_by_up(&reply);
     walk.a_reaction_and_a_delete(&theirs, &posted);
     walk.a_sticker_from_the_picker();
+    walk.a_teams_sticker_from_the_picker();
     walk.stop();
 }

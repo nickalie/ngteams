@@ -1,7 +1,9 @@
 //! The compose box's picker (`teams_ui::fun_picker`) on GPUI's test context, over the fake engine (`common`): the tabs
 //! All, Emoji and Stickers, a sticker put in the box and sent as Teams sends one, the import of a folder from the
-//! picker, a pack renamed and removed, the keyboard's reach, and a box that offers no sticker. The settings live in a
-//! directory of their own per test, beside the stickers. Every picture, name and id is made up.
+//! picker, a pack renamed and removed, the keyboard's reach, and a box that offers no sticker; Teams' own packs for an
+//! account of Microsoft's cloud (their previews, a pick sent by its address, the search, the keyboard) and none for an
+//! own server's. The settings live in a directory of their own per test, beside the stickers. Every picture, name and
+//! id is made up, but for Teams' packs' names and ids.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -73,7 +75,18 @@ impl Setup {
     }
 }
 
+/// An account with only the user's packs: an own server's, which has none of Teams'.
 fn new_rig() -> Rig {
+    let rig = teams_rig();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        teams_stickers: false,
+        ..teams_core::Capabilities::ALL
+    });
+    rig
+}
+
+/// An account of Microsoft's cloud: Teams' packs too.
+fn teams_rig() -> Rig {
     let rig = Rig::start();
     rig.core
         .members
@@ -728,4 +741,325 @@ fn every_grid_fits_the_picker_at_each_font_size() {
         rows_fit(&picker, cx, &format!("a pack at {font}"));
         keys(cx, "escape");
     }
+}
+
+/// A made-up picture's bytes for Teams' sticker `id`'s preview and its own picture, as the engine reads them.
+fn teams_pictures(rig: &Rig, ids: &[&str]) {
+    let catalog = teams_ui::stickers::teams::catalog();
+    let mut pictures = rig.core.pictures.lock().unwrap();
+    for id in ids {
+        let held = catalog.sticker(id).unwrap();
+        for src in [catalog.preview(held), catalog.picture(held)] {
+            let bytes = picture(60, [40, 160, 40], ImageFormat::Png);
+            pictures.insert(
+                src,
+                Arc::new(teams_proto::PastedPicture {
+                    format: teams_proto::PastedFormat::Png,
+                    bytes,
+                }),
+            );
+        }
+    }
+}
+
+fn teams(id: &str) -> Item {
+    Item::Sticker(StickerRef::teams(id))
+}
+
+#[test]
+fn teams_packs_follow_the_user_s_in_teams_order_and_open_with_their_previews() {
+    let place = Setup::new().with_cats();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["Clippy_Admire"]);
+    let (view, cx) = chat_window(&rig, &place);
+    click(cx, "compose-emoji");
+    let picker = picker(&view, cx).unwrap();
+    // All: the user's stickers, then Teams' popular ones
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    assert_eq!(
+        rows[3],
+        [
+            Item::Sticker(sticker("lab-cats", "001.png")),
+            Item::Sticker(sticker("lab-cats", "002.png")),
+            teams("OfficeDrama_OhYeah"),
+            teams("doge"),
+        ]
+    );
+    click(cx, "fun-tab-stickers");
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    assert_eq!(rows[0], [Item::AddPack, Item::SeeAllPacks]);
+    assert_eq!(
+        rows[1],
+        [Item::Pack("lab-cats".to_owned()), Item::TeamsPack("Popular".to_owned())]
+    );
+    assert_eq!(
+        rows[2],
+        [
+            Item::TeamsPack("Clippy".to_owned()),
+            Item::TeamsPack("OfficeDrama".to_owned())
+        ]
+    );
+    assert_eq!(rows.len(), 3, "the first four packs");
+    assert!(drawn(cx, "teams-pack-popular") && drawn(cx, "teams-pack-clippy"));
+    click(cx, "sticker-packs-see-all");
+    let tiles: Vec<Item> = cx
+        .update(|_, cx| picker.read(cx).rows(cx))
+        .into_iter()
+        .skip(2)
+        .flatten()
+        .collect();
+    assert_eq!(tiles.len(), 19, "the user's pack and Teams' 18: {tiles:?}");
+    assert_eq!(tiles.last(), Some(&Item::TeamsPack("Animalopolis".to_owned())));
+
+    a_teams_pack_opens_with_no_menu(&rig, &picker, cx);
+}
+
+/// Clippy's pack opened from every pack: Back, then its stickers three to a row, their previews read through the
+/// engine; Back goes to every pack again.
+fn a_teams_pack_opens_with_no_menu(rig: &Rig, picker: &Entity<FunPicker>, cx: &mut VisualTestContext) {
+    click(cx, "teams-pack-clippy");
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).sticker_view().clone()),
+        StickerView::TeamsPack {
+            id: "Clippy".to_owned(),
+            from_packs: true
+        }
+    );
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    assert_eq!(
+        rows[0],
+        [Item::Back],
+        "no menu: Teams' packs are not the user's to change"
+    );
+    assert_eq!(
+        rows[1],
+        [
+            teams("Clippy_Admire"),
+            teams("Clippy_AreYouThere"),
+            teams("Clippy_Bandaged")
+        ],
+        "three to a row, in Teams' order"
+    );
+    assert!(drawn(cx, "sticker-teams-clippy_admire"));
+    assert!(!drawn(cx, "sticker-pack-menu"));
+    assert!(
+        rig.core.asked.lock().unwrap().contains(&"message_picture"),
+        "the previews are read through the engine"
+    );
+    click(cx, "sticker-back");
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).sticker_view().clone()),
+        StickerView::Packs
+    );
+}
+
+#[test]
+fn a_teams_sticker_goes_in_the_box_and_is_sent_by_its_address_with_no_upload() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["Teamsquatch_BugSquash"]);
+    let (view, cx) = chat_window(&rig, &place);
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    cx.update(|window, cx| {
+        picker.update(cx, |picker, cx| {
+            picker.activate(&teams("Teamsquatch_BugSquash"), window, cx);
+        });
+    });
+    draw(cx);
+    assert!(self::picker(&view, cx).is_none(), "a pick closes the picker");
+    assert!(drawn(cx, "editor-picture-1"), "it shows in the box once read");
+    assert!(
+        rig.core.picture_uploads.lock().unwrap().is_empty(),
+        "nothing goes to the media service"
+    );
+    let shelf = cx.update(|_, cx| Shelf::of(Some(place.stickers.clone()), cx));
+    assert_eq!(
+        cx.update(|_, cx| shelf.read(cx).recent().to_vec()),
+        [StickerRef::teams("Teamsquatch_BugSquash")]
+    );
+    keys(cx, "enter");
+    let posted = sent(&rig);
+    assert_eq!(posted.len(), 1);
+    assert!(posted[0].pictures().is_empty(), "no AMS reference, as Teams sends it");
+    // the capture's form, byte for byte (a sticker team-manage sent from a to b, 2026-11-22)
+    assert_eq!(
+        posted[0].html(),
+        "<p>&nbsp;</p><readonly aria-label=\"teamsquatch squashing a bug\" contenteditable=\"false\" \
+         itemtype=\"http://schema.skype.com/Sticker\" title=\"teamsquatch squashing a bug\"><img \
+         src=\"https://teams.public.onecdn.static.microsoft/evergreen-assets/stickerassets/teamsquatch-250x250/\
+         Teamsquatch_BugSquash.png?v=5\" height=\"180\" alt=\"teamsquatch squashing a bug\" width=\"180\" \
+         data-image-type=\"standard\" data-image-mode=\"single\" itemtype=\"http://schema.skype.com/Sticker\">\
+         </readonly><p>&nbsp;</p>"
+    );
+
+    // Recent shows it first now, on the Stickers tab
+    keys(cx, "ctrl-.");
+    click(cx, "fun-tab-stickers");
+    let picker = self::picker(&view, cx).unwrap();
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    assert_eq!(rows[0], [teams("Teamsquatch_BugSquash")]);
+}
+
+#[test]
+fn a_teams_sticker_that_cannot_be_read_says_so() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    cx.update(|window, cx| picker.update(cx, |picker, cx| picker.activate(&teams("Clippy_Nap"), window, cx)));
+    draw(cx);
+    let compose = compose(&view, cx);
+    assert!(!drawn(cx, "editor-picture-1"));
+    assert_eq!(
+        cx.update(|_, cx| compose.read(cx).problem().cloned()),
+        Some("That sticker can't be read. Check your connection, then try again.".into())
+    );
+}
+
+#[test]
+fn the_search_finds_teams_stickers_after_the_user_s_and_the_keyboard_picks_one() {
+    let place = Setup::new().with_cats();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["Clippy_HelloThere"]);
+    let (view, cx) = chat_window(&rig, &place);
+    keys(cx, "ctrl-.");
+    click(cx, "fun-tab-stickers");
+    cx.simulate_input("hello");
+    draw(cx);
+    let picker = picker(&view, cx).unwrap();
+    let found: Vec<Item> = cx
+        .update(|_, cx| picker.read(cx).rows(cx))
+        .into_iter()
+        .flatten()
+        .collect();
+    assert_eq!(
+        found,
+        [
+            teams("Clippy_HelloThere"),
+            teams("OfficeDrama_Hey"),
+            teams("Broccoli_Wave"),
+            teams("Bee_Hi"),
+            teams("WordArt_Hello"),
+            teams("Animalopolis_weird_lemur"),
+        ],
+        "as Teams' search found them"
+    );
+    keys(cx, "down");
+    let current = |cx: &mut VisualTestContext| cx.update(|window, cx| picker.read(cx).current(window, cx));
+    assert_eq!(current(cx), Some(teams("Clippy_HelloThere")));
+    keys(cx, "enter");
+    assert!(self::picker(&view, cx).is_none());
+    assert!(drawn(cx, "editor-picture-1"));
+    keys(cx, "enter");
+    let html = sent(&rig).pop().unwrap().html().to_owned();
+    assert!(
+        html.contains("stickerassets/clippy-250x250/en-us/Clippy_HelloThere.gif?v=5"),
+        "{html}"
+    );
+    // the user's stickers come first
+    keys(cx, "ctrl-.");
+    cx.simulate_input("cat");
+    draw(cx);
+    click(cx, "fun-tab-stickers");
+    let picker = self::picker(&view, cx).unwrap();
+    let found: Vec<Item> = cx
+        .update(|_, cx| picker.read(cx).rows(cx))
+        .into_iter()
+        .flatten()
+        .collect();
+    assert_eq!(
+        found[..2],
+        [
+            Item::Sticker(sticker("lab-cats", "001.png")),
+            Item::Sticker(sticker("lab-cats", "002.png"))
+        ]
+    );
+    assert!(
+        found[2..]
+            .iter()
+            .all(|item| matches!(item, Item::Sticker(found) if found.is_teams()))
+    );
+}
+
+#[test]
+fn the_keyboard_opens_a_teams_pack_and_picks_its_sticker() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["OfficeDrama_OhYeah"]);
+    let (view, cx) = chat_window(&rig, &place);
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    let current = |cx: &mut VisualTestContext| cx.update(|window, cx| picker.read(cx).current(window, cx));
+    keys(cx, "up end down down");
+    assert_eq!(current(cx), Some(Item::AddPack));
+    keys(cx, "down");
+    assert_eq!(current(cx), Some(Item::TeamsPack("Popular".to_owned())));
+    keys(cx, "enter");
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).sticker_view().clone()),
+        StickerView::TeamsPack {
+            id: "Popular".to_owned(),
+            from_packs: false
+        }
+    );
+    keys(cx, "down");
+    assert_eq!(
+        current(cx),
+        Some(teams("OfficeDrama_OhYeah")),
+        "Back, then the stickers: no menu"
+    );
+    keys(cx, "space");
+    assert!(self::picker(&view, cx).is_none(), "Space picks");
+    assert!(drawn(cx, "editor-picture-1"));
+}
+
+#[test]
+fn an_own_server_account_sees_only_the_user_s_packs() {
+    let place = Setup::new().with_cats();
+    teams_ui::stickers::store::record_recent(&place.stickers, &StickerRef::teams("Clippy_HelloThere")).unwrap();
+    teams_ui::stickers::store::record_recent(&place.stickers, &sticker("lab-cats", "002.png")).unwrap();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    let all: Vec<Item> = cx
+        .update(|_, cx| picker.read(cx).rows(cx))
+        .into_iter()
+        .flatten()
+        .collect();
+    assert!(
+        all.iter()
+            .all(|item| !matches!(item, Item::Sticker(found) if found.is_teams())),
+        "no Teams sticker in All, Recent's neither: {all:?}"
+    );
+    click(cx, "fun-tab-stickers");
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    assert_eq!(
+        rows[0],
+        [Item::Sticker(sticker("lab-cats", "002.png"))],
+        "Recent: the user's only"
+    );
+    assert!(
+        rows.iter().flatten().all(|item| !matches!(item, Item::TeamsPack(_))),
+        "no Teams pack: {rows:?}"
+    );
+    assert!(!drawn(cx, "teams-pack-popular"));
+    cx.simulate_input("hello");
+    draw(cx);
+    assert_eq!(
+        cx.update(|_, cx| picker.read(cx).rows(cx)),
+        Vec::<Vec<Item>>::new(),
+        "the search finds none of Teams'"
+    );
+    // a Teams sticker asked for anyway goes nowhere
+    cx.update(|window, cx| {
+        picker.update(cx, |picker, cx| {
+            picker.activate(&teams("Clippy_HelloThere"), window, cx);
+        });
+    });
+    draw(cx);
+    assert!(!drawn(cx, "editor-picture-1"));
+    assert!(sent(&rig).is_empty());
 }
