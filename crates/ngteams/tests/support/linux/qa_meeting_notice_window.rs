@@ -602,6 +602,26 @@ impl<'a> Qa<'a> {
             .unwrap_or_default())
     }
 
+    /// Waits until the card titled `title` holds desktop notice `id`.
+    fn card_has_notice(&mut self, title: &str, id: u32) -> SandboxResult {
+        let deadline = Instant::now() + BANNER_WAIT;
+        loop {
+            let cards = self.ask("cards")?;
+            let held = cards["cards"].as_array().is_some_and(|cards| {
+                cards
+                    .iter()
+                    .any(|card| text(card, "title") == title && card["notice"].as_u64() == Some(u64::from(id)))
+            });
+            if held {
+                return Ok(());
+            }
+            if Instant::now() > deadline {
+                return Err(format!("the card {title:?} doesn't hold notice {id}: {cards}").into());
+            }
+            thread::sleep(Duration::from_millis(300));
+        }
+    }
+
     /// How many times the app traced the reminder of the meeting in `chat` shown.
     fn reminded(&mut self, chat: &str) -> usize {
         self.app
@@ -1405,6 +1425,8 @@ fn notice_shape(qa: &mut Qa<'_>) -> SandboxResult {
 
 fn notice_snooze(qa: &mut Qa<'_>) -> SandboxResult {
     let notice = one_minute_notice(qa)?;
+    // the bus records a notice before the app has its id, and the app ignores an action on an id it doesn't have
+    qa.card_has_notice(ONE_SUBJECT, notice.id)?;
     qa.sandbox.bus().invoke_action(notice.id, "snooze")?;
     qa.snoozed.push((ONE_SUBJECT, Instant::now()));
     qa.closed(notice.id, "after the notice's Snooze")?;
@@ -1428,6 +1450,8 @@ fn soon_reminders(qa: &mut Qa<'_>) -> SandboxResult {
         qa.ready.elapsed()
     ));
     qa.shot("reminders-soon")?;
+    qa.card_has_notice(DISMISSED_SUBJECT, dismissed.id)?;
+    qa.card_has_notice(JOINED_SUBJECT, joined.id)?;
     qa.sandbox.bus().invoke_action(dismissed.id, "dismiss")?;
     qa.closed(dismissed.id, "after the notice's Dismiss")?;
     qa.sandbox.bus().invoke_action(joined.id, "join")?;
@@ -1977,7 +2001,7 @@ fn cards(reminders: &Entity<MeetingReminders>, cx: &App) -> Value {
             } else {
                 teams_ui::meeting_reminder::when_text(card.start, now)
             };
-            json!({"title": card.title, "when": when, "times": card.times})
+            json!({"title": card.title, "when": when, "times": card.times, "notice": card.notice})
         })
         .collect();
     json!({"cards": cards})

@@ -171,6 +171,8 @@ pub struct ReminderCard {
     pub times: Option<String>,
     /// Whether its Join goes anywhere: the meeting's chat or its link is known, and the build shows calls.
     pub joinable: bool,
+    /// The id of its desktop notice once the server answered: until then its notice's actions find no reminder.
+    pub notice: Option<u32>,
 }
 
 /// What the reminders ask of the desktop.
@@ -297,6 +299,7 @@ impl MeetingReminders {
                     end: kept.end,
                     times: time_range(&kept.event, crate::clock::cycle(cx).time_of_day()),
                     joinable: joins && (kept.event.meeting_chat.is_some() || kept.event.join_url.is_some()),
+                    notice: kept.notice,
                 })
             })
             .collect();
