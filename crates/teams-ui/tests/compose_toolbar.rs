@@ -525,6 +525,8 @@ fn a_channel_s_boxes_show_the_shown_ai_tools_and_keep_them_out_of_plus() {
             [
                 "compose-format",
                 "compose-emoji",
+                "compose-attach",
+                "compose-loop",
                 "compose-apps",
                 "compose-correct",
                 "compose-translate"
@@ -541,7 +543,16 @@ fn a_channel_s_boxes_show_the_shown_ai_tools_and_keep_them_out_of_plus() {
     });
     draw(cx);
     let (row, plus) = layout(&compose, cx);
-    assert_eq!(row, ["compose-format", "compose-emoji", "compose-apps"]);
+    assert_eq!(
+        row,
+        [
+            "compose-format",
+            "compose-emoji",
+            "compose-attach",
+            "compose-loop",
+            "compose-apps"
+        ]
+    );
     assert_eq!(
         plus,
         [
