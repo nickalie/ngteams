@@ -615,18 +615,25 @@ impl Desktop {
     }
 
     /// What holds an update's restart up now ([`crate::update::Waiting`]): any account's call, up or ringing, then a
-    /// message any account's box holds unsent in the window.
+    /// message any account's box holds unsent in the window, then a channel file upload or recycle not complete.
     #[must_use]
     pub fn update_waiting(&self, cx: &App) -> Option<crate::update::Waiting> {
         if self.slots.iter().any(|slot| slot.shell.models.calls.read(cx).busy()) {
             return Some(crate::update::Waiting::Call);
         }
-        let unsent = self
+        let shells = self
             .root
             .as_ref()
             .and_then(WeakEntity::upgrade)
-            .is_some_and(|root| root.read(cx).shells().iter().any(|shell| shell.read(cx).has_unsent(cx)));
-        unsent.then_some(crate::update::Waiting::Unsent)
+            .map(|root| root.read(cx).shells().to_vec())
+            .unwrap_or_default();
+        if shells.iter().any(|shell| shell.read(cx).has_unsent(cx)) {
+            return Some(crate::update::Waiting::Unsent);
+        }
+        shells
+            .iter()
+            .any(|shell| shell.read(cx).moves_channel_files(cx))
+            .then_some(crate::update::Waiting::Files)
     }
 
     /// The tray item's total.

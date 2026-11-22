@@ -26,6 +26,7 @@ use gpui_component::tooltip::Tooltip;
 use gpui_component::{Disableable as _, Selectable as _};
 
 use super::{FontLarger, FontReset, FontSmaller, LIST_WIDTH, Main, RAIL_WIDTH, Shell, shown_as};
+use crate::compose::Compose;
 use crate::icons::{Glyph, icon_button, icon_button_with_key, selected_by};
 use crate::people;
 use crate::presence;
@@ -289,26 +290,37 @@ impl Shell {
     }
 
     /// Whether a box of this account holds a message not sent yet (a chat's, a channel's or a thread's, New
-    /// message's), or a channel file it let go that is not in the recycle bin yet: an update's restart waits for it
-    /// ([`crate::update::Waiting::Unsent`]).
+    /// message's): an update's restart waits for it ([`crate::update::Waiting::Unsent`]).
     #[must_use]
     pub fn has_unsent(&self, cx: &App) -> bool {
-        let kept = self.drafts.values().any(|compose| compose.read(cx).holds_restart(cx));
-        let chat = self
-            .chat
-            .as_ref()
-            .is_some_and(|chat| chat.read(cx).compose().read(cx).has_draft(cx));
-        let channel = self.channel.as_ref().is_some_and(|(view, _)| {
-            view.read(cx)
-                .drafts(cx)
-                .iter()
-                .any(|(_, compose)| compose.read(cx).holds_restart(cx))
-        });
         let new_chat = self.new_chat.iter().chain(&self.kept_new).any(|(view, _)| {
             let view = view.read(cx);
             view.is_starting() || view.compose(cx).read(cx).has_draft(cx)
         });
-        kept || chat || channel || new_chat
+        new_chat || self.any_box(cx, |compose| compose.has_draft(cx))
+    }
+
+    /// Whether a channel box of this account has a channel file upload or recycle that is not complete: an update's
+    /// restart waits for it ([`crate::update::Waiting::Files`]).
+    #[must_use]
+    pub fn moves_channel_files(&self, cx: &App) -> bool {
+        self.any_box(cx, Compose::moves_channel_files)
+    }
+
+    /// Whether `test` holds for a kept box, the open chat's box or a box of the open channel view.
+    fn any_box(&self, cx: &App, test: impl Fn(&Compose) -> bool) -> bool {
+        let kept = self.drafts.values().any(|compose| test(compose.read(cx)));
+        let chat = self
+            .chat
+            .as_ref()
+            .is_some_and(|chat| test(chat.read(cx).compose().read(cx)));
+        let channel = self.channel.as_ref().is_some_and(|(view, _)| {
+            view.read(cx)
+                .drafts(cx)
+                .iter()
+                .any(|(_, compose)| test(compose.read(cx)))
+        });
+        kept || chat || channel
     }
 
     /// The app launcher: the app's own places, as Teams lists its apps.

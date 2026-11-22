@@ -1825,15 +1825,22 @@ fn a_closed_threads_box_stays_and_holds_a_restart_while_its_recycles_run_and_nam
     cx.run_until_parked();
     assert!(cx.update(|_, cx| shell.read(cx).has_unsent(cx)), "the held files");
     cx.update(|window, cx| compose.update(cx, |compose, cx| compose.discard(window, cx)));
-    assert!(
-        cx.update(|_, cx| shell.read(cx).has_unsent(cx)),
-        "a quit would leave a file still on its way to the recycle bin"
-    );
+    let moves = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let shell = shell.read(cx);
+            (shell.has_unsent(cx), shell.moves_channel_files(cx))
+        })
+    };
+    assert_eq!(moves(cx), (false, true), "a file still on its way to the recycle bin");
     click(cx, "channel-thread-close");
-    assert!(
-        cx.update(|_, cx| shell.read(cx).has_unsent(cx)),
-        "a closed thread's running recycles"
+    assert_eq!(moves(cx), (false, true), "a closed thread's running recycles");
+    click(cx, "channel-row-0");
+    assert_eq!(
+        moves(cx),
+        (false, true),
+        "another channel's kept box's running recycles"
     );
+    click(cx, "channel-row-1");
 
     let held: Vec<_> = rig.core.held_discards.lock().unwrap().drain(..).collect();
     assert_eq!(held.len(), 2);
@@ -1841,10 +1848,7 @@ fn a_closed_threads_box_stays_and_holds_a_restart_while_its_recycles_run_and_nam
         answer.send(Err(EngineError::Stopped));
     }
     cx.run_until_parked();
-    assert!(
-        !cx.update(|_, cx| shell.read(cx).has_unsent(cx)),
-        "a failed recycle is no unsent message"
-    );
+    assert_eq!(moves(cx), (false, false), "a failed recycle holds no restart");
     click(cx, &format!("replies-{POST}"));
     let (_, view) = thread(&shell, cx).expect("the thread opens again");
     let reopened = cx.update(|_, cx| view.read(cx).compose().clone());
@@ -1876,7 +1880,15 @@ fn a_closed_threads_box_stays_to_tell_a_failed_recycle_of_a_file_removed_while_i
     cx.run_until_parked();
     let id = cx.update(|_, cx| compose.read(cx).attachments()[0].id);
     cx.update(|_, cx| compose.update(cx, |compose, cx| compose.remove_attachment(id, cx)));
+    let moves = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let shell = shell.read(cx);
+            (shell.has_unsent(cx), shell.moves_channel_files(cx))
+        })
+    };
+    assert_eq!(moves(cx), (false, true), "a removed file's running upload");
     click(cx, "channel-thread-close");
+    assert_eq!(moves(cx), (false, true), "a closed thread's running upload");
 
     rig.core
         .held_uploads
@@ -1886,6 +1898,7 @@ fn a_closed_threads_box_stays_to_tell_a_failed_recycle_of_a_file_removed_while_i
         .send(Ok(common::channel_file(CHANNEL, "made-up notes.txt")));
     cx.run_until_parked();
     assert_eq!(rig.core.discarded_files.lock().unwrap().len(), 1);
+    assert_eq!(moves(cx), (false, false), "a failed recycle holds no restart");
     click(cx, &format!("replies-{POST}"));
     let (_, view) = thread(&shell, cx).expect("the thread opens again");
     let reopened = cx.update(|_, cx| view.read(cx).compose().clone());

@@ -1127,19 +1127,18 @@ impl Compose {
             || self.sending_files > 0
     }
 
-    /// A channel's box also stays, with no draft to send, while a file it let go still uploads or is on its way to the
-    /// recycle bin, and while it says that failed.
+    /// A channel's box also stays, with no draft to send, while its channel file uploads or recycles run, and while it
+    /// says that a recycle failed.
     pub(crate) fn keeps_box(&self, cx: &App) -> bool {
         self.has_draft(cx)
-            || !self.routes.files.is_empty()
-            || self.recycling > 0
+            || self.moves_channel_files()
             || self.recycle_failed.is_some() && self.problem == self.recycle_failed
     }
 
-    /// A channel's box holds an update's restart also while a file it let go still uploads or is on its way to the
-    /// recycle bin: a quit then would leave the file in the channel's folder. A failed recycle does not hold it.
-    pub(crate) fn holds_restart(&self, cx: &App) -> bool {
-        self.has_draft(cx) || !self.routes.files.is_empty() || self.recycling > 0
+    /// Whether a channel file upload or recycle of this box is not complete: a quit then could leave a file it let go
+    /// in the channel's folder, so an update's restart waits for it.
+    pub(crate) fn moves_channel_files(&self) -> bool {
+        self.writes_a_channel() && (!self.routes.files.is_empty() || self.recycling > 0)
     }
 
     /// The rich-text editor the box writes with.

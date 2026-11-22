@@ -60,6 +60,8 @@ pub enum Waiting {
     Call,
     /// A message is typed and not sent yet (any account's box): a restart would lose it.
     Unsent,
+    /// A channel file upload or recycle is not complete: a restart could leave the file in the channel's folder.
+    Files,
 }
 
 impl Waiting {
@@ -69,6 +71,9 @@ impl Waiting {
         match self {
             Self::Call => "The update installs after your call: end it, then select Restart to update",
             Self::Unsent => "Send or discard your unsent messages, then select Restart to update",
+            Self::Files => {
+                "Your channel files are still uploading or being removed: select Restart to update in a moment"
+            }
         }
     }
 }
@@ -382,6 +387,10 @@ mod tests {
         assert_eq!(
             words(UpdateStatus::Ready(version.clone()), Some(Waiting::Unsent)).2,
             Waiting::Unsent.says()
+        );
+        assert_eq!(
+            words(UpdateStatus::Ready(version.clone()), Some(Waiting::Files)).2,
+            Waiting::Files.says()
         );
         assert!(!words(UpdateStatus::Installing(version.clone()), None).0);
         let failed = words(
