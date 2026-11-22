@@ -104,8 +104,10 @@ const PEER_TONE: Tone = Tone {
 const CHANNEL_POST: &str = "1760000300000";
 
 /// A made-up Claude Code (`__STATE__` its state directory) for Correct and Translate. Translate (a question with a
-/// `<language>`) gives the draft back with "hello" in German; Correct gives it back with "teh" as "the". It waits
-/// while `hold` exists.
+/// `<language>`) gives the draft back with "hello" in German, or with `[<language>] ` inside its first marker for
+/// another language;
+/// Correct gives it back with "teh" as "the". A chat's batch (`<translate>`) gives each message back with
+/// `[<language>] ` before it, the language that its instructions read the chat in. It waits while `hold` exists.
 const FAKE_CLAUDE: &str = r#"#!/bin/bash
 state="__STATE__"
 case "$1" in
@@ -113,12 +115,24 @@ case "$1" in
     printf '%s\n' "Usage: claude [options]" "  --model <model>  Model for the current session: an alias such as 'sonnet' or 'opus'"
     exit 0;;
 esac
+reading=$(printf '%s\n' "$@" | sed -n 's/.*who reads and writes it in \([A-Za-z]*\)\..*/\1/p')
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$state/received.log"
   while [ -e "$state/hold" ]; do sleep 0.02; done
   t=$(printf '%s' "$line" | sed 's/.*<message>\\n\(.*\)\\n<\/message>.*/\1/')
   case "$line" in
-    *"<language>"*) t=$(printf '%s' "$t" | sed 's/hello/hallo/g'); ans="<translated>$t</translated>";;
+    *'<translate>'*)
+      ans=""
+      inner=$(printf '%s' "$line" | sed 's/.*<translate>\\n//; s/\\n<\/translate>.*//')
+      while IFS= read -r m; do
+        [ -z "$m" ] && continue
+        m=$(printf '%s' "$m" | sed 's/^\(<m id=\\"[0-9]*\\"\)[^>]*>\(<x[0-9]*>\)\{0,1\}/\1 lang=\\"en\\">\2['"$reading"'] /')
+        ans="$ans$m\\n"
+      done < <(printf '%s\n' "$inner" | sed 's/\\n/\n/g');;
+    *"<language>"*)
+      lang=$(printf '%s' "$line" | sed 's/.*<language>\([^<]*\)<\/language>.*/\1/')
+      if [ "$lang" = German ]; then t=$(printf '%s' "$t" | sed 's/hello/hallo/g'); else t=$(printf '%s' "$t" | sed 's/^\(<x[0-9]*>\)\{0,1\}/&['"$lang"'] /'); fi
+      ans="<translated>$t</translated>";;
     *) t=$(printf '%s' "$t" | sed 's/teh/the/g'); ans="<corrected>$t</corrected>";;
   esac
   printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}\n' "$ans"
@@ -169,7 +183,7 @@ fn wanted(name: &str) -> bool {
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
 /// The first run of the app: a new settings file, the AI features on.
-const FIRST: [Check; 16] = [
+const FIRST: [Check; 23] = [
     ("bar_and_ai_in_plus", bar_and_ai_in_plus),
     ("ai_rows_act", ai_rows_act),
     ("ai_keys_and_language", ai_keys_and_language),
@@ -185,11 +199,25 @@ const FIRST: [Check; 16] = [
     ("narrow_font_dark", narrow_font_dark),
     ("ai_off_and_on", ai_off_and_on),
     ("font_key_with_menu_open", font_key_with_menu_open),
+    qa700::FIRST[0],
+    qa700::FIRST[1],
+    qa700::FIRST[2],
+    qa700::FIRST[3],
+    qa700::FIRST[4],
+    qa700::FIRST[5],
+    qa700::FIRST[6],
     ("hide_for_restart", hide_for_restart),
 ];
 
 /// The second run of the app over the same settings file.
-const RESTART: [Check; 1] = [("kept_after_restart", kept_after_restart)];
+const RESTART: [Check; 3] = [
+    qa700::RESTART_FIRST,
+    ("kept_after_restart", kept_after_restart),
+    qa700::RESTART_LAST,
+];
+
+#[path = "qa_compose_toolbar_qa700.rs"]
+mod qa700;
 
 #[derive(Default)]
 struct Tally {
@@ -219,9 +247,16 @@ fn parent() -> SandboxResult {
     let tool = FakeTool::install(&sandbox)?;
     let mut tally = Tally::default();
     let mut quits = Vec::new();
-    for (run, checks) in [("first", &FIRST[..]), ("restart", &RESTART[..])] {
+    for (run, checks) in [
+        ("first", &FIRST[..]),
+        ("restart", &RESTART[..]),
+        ("old-file", &qa700::OLD_FILE[..]),
+    ] {
         if !checks.iter().any(|(name, _)| wanted(name)) {
             continue;
+        }
+        if run == "old-file" {
+            qa700::write_old_file(&dir.path().join("a/settings.toml"))?;
         }
         say(&format!("run {run}"));
         let app = AppUnderTest::start(&sandbox, &mock, &relay.to_string(), trouter.origin(), dir.path(), &tool)?;
@@ -236,7 +271,11 @@ fn parent() -> SandboxResult {
         if let Some(evidence) = std::env::var_os(EVIDENCE_ENV) {
             let _ = fs::copy(
                 dir.path().join("a/settings.toml"),
-                PathBuf::from(evidence).join(format!("settings-after-{run}.toml")),
+                PathBuf::from(&evidence).join(format!("settings-after-{run}.toml")),
+            );
+            let _ = fs::copy(
+                tool.state.join("received.log"),
+                PathBuf::from(evidence).join(format!("ai-tool-received-{run}.log")),
             );
         }
     }
@@ -2130,6 +2169,8 @@ fn on_shell_with(shell: &Entity<Shell>, other: &str, window: &mut Window, cx: &m
         };
         change_settings(shell, cx, |settings| settings.appearance.font_size = size);
         "ok".to_owned()
+    } else if let Some(reply) = qa700::on_verb(shell, other, window, cx) {
+        reply
     } else {
         format!("unknown {other}")
     }
@@ -2249,8 +2290,11 @@ fn state_of(shell: &Entity<Shell>, window: &Window, cx: &App) -> Value {
         .filter(|_| *shell_ref.main() == Main::NewChat)
         .map(|view| box_state(&view.read(cx).compose(cx), window, cx));
     let calls = shell_ref.models().calls.read(cx);
+    let (rows, selected) = qa700::chat_rows(shell_ref, cx);
     json!({
         "main": main,
+        "rows": rows,
+        "selected": selected,
         "chat": chat,
         "new_chat": new_chat,
         "post": post,
