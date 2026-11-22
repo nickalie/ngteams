@@ -138,7 +138,7 @@ where
                 self.outbox.me().mri().as_str(),
             )
             .ok_or_else(|| failed("The file's sharing details can't be read."))?;
-            send(&self.outbox, write, NOT_SHARED).await?;
+            send(&self.outbox, write, not_shared).await?;
             let answer = self
                 .client
                 .transport()
@@ -213,7 +213,7 @@ where
     }
     let write = DriveWrite::upload(&site, &name, bytes, outbox.me().mri().as_str())
         .ok_or_else(|| failed("This file can't be uploaded. Rename it and try again."))?;
-    let body = send(outbox, write, NOT_UPLOADED).await?;
+    let body = send(outbox, write, not_uploaded).await?;
     UploadedFile::from_upload(&site, &body)
         .ok_or_else(|| failed("The upload completed, but its file details couldn't be read. Choose the file again."))
 }
@@ -348,10 +348,20 @@ pub(crate) fn refusal(status: u16, otherwise: &str) -> EngineError {
     })
 }
 
+fn not_uploaded(status: u16) -> EngineError {
+    refusal(status, NOT_UPLOADED)
+}
+
+// A refused invite is about the chat's recipients, not the file's size or the storage space.
+fn not_shared(status: u16) -> EngineError {
+    log::info!("a file share was answered HTTP {status}");
+    failed(NOT_SHARED)
+}
+
 async fn send<T: Transport<Error = HttpError>>(
     outbox: &Outbox<T>,
     write: DriveWrite,
-    refused: &str,
+    refused: fn(u16) -> EngineError,
 ) -> Result<Vec<u8>, EngineError> {
     let mut retries = CallRetries::default();
     loop {
@@ -362,7 +372,7 @@ async fn send<T: Transport<Error = HttpError>>(
         }
         return match tried {
             CallTried::Answered(answer) if answer.is_success() => Ok(answer.body().to_vec()),
-            CallTried::Answered(answer) => Err(refusal(answer.status(), refused)),
+            CallTried::Answered(answer) => Err(refused(answer.status())),
             CallTried::Denied(reason) | CallTried::NotSent(reason) => Err(failed(&reason)),
             CallTried::Uncertain(_) => Err(failed(
                 "The file service didn't confirm the upload or share. Check your connection before trying again.",

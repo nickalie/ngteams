@@ -446,3 +446,28 @@ async fn native_share_confirms_exact_people_after_the_single_successful_grant() 
         );
     }
 }
+#[tokio::test]
+async fn a_refused_invite_keeps_the_share_text_for_every_status() {
+    for status in [413, 503, 507] {
+        let server = MockServer::start().await;
+        let (client, outbox) = native(&server);
+        mock_upload(&server).await;
+        let chat = mock_recipients(&server, B, false).await;
+        mock_share(&server, B).await;
+        override_reply(
+            &server,
+            "POST",
+            &format!("{ITEM}/invite"),
+            ResponseTemplate::new(status),
+        )
+        .await;
+        let error = Uploads::new(client, outbox)
+            .share(&chat, &[staged_file()])
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, crate::EngineError::Attachment { why } if why == "The file couldn't be shared. Try again."),
+            "{status}: {error:?}"
+        );
+    }
+}
