@@ -4,7 +4,7 @@
 //! that transcript searched, Part 2, Part 1's recording playing as the engine streams it and paused; paused with its
 //! captions on, its speed menu at 1.5x, its settings and its caption settings open; Part 1's recording downloading,
 //! downloaded and failed), the Recap of a meeting transcribed and not recorded, and the Shared tab; Part 1's AI summary
-//! offered, being made, failed, made, and previewed before it is sent to the chat (made by a fake `claude`, or a
+//! offered, being made, failed, made, with the keyboard focus on its first point, and previewed before it is sent to the chat (made by a fake `claude`, or a
 //! made-up summary kept for the run). A 1:1 chat's call captions saved on this computer: the Transcript chip under its
 //! call's end, its Recap (the transcript, its AI summary made, its Delete transcript confirmation). The same chat's call
 //! recorded: its recording's recap card under its saved line, its Recap at the recording (its Transcript saying there is
@@ -37,7 +37,7 @@ use std::time::Duration;
 use std::{fs, mem};
 
 use common::{FakeCore, FakeEvents};
-use gpui::{App, AppContext as _, Entity, Window};
+use gpui::{App, AppContext as _, Entity, Keystroke, Window};
 use teams_core::ChatListing;
 use teams_ui::settings::{Settings, SettingsModel};
 use teams_ui::shell::{ChatTab, Shell, ShellParts};
@@ -56,9 +56,11 @@ mod fixture;
 use fixture::{Running, Sandbox, SandboxResult, sandbox_or_skip};
 
 const CHILD_ENV: &str = "TEAMS_UI_RECAP_WINDOW_TEST";
+/// Another count of Tab presses for the `summary-focus` page.
+const FOCUS_TABS_ENV: &str = "RECAP_FOCUS_TABS";
 
 /// Each page and the themes it is shot in.
-const PAGES: [(&str, &[&str]); 30] = [
+const PAGES: [(&str, &[&str]); 31] = [
     ("call-chat", &[LIGHT_KEY, DARK_KEY]),
     ("call-transcribed-chat", &[LIGHT_KEY]),
     ("call-transcribed", &[LIGHT_KEY, DARK_KEY]),
@@ -70,6 +72,7 @@ const PAGES: [(&str, &[&str]); 30] = [
     ("saved-summary", &[LIGHT_KEY]),
     ("saved-delete", &[LIGHT_KEY]),
     ("summary", &[LIGHT_KEY, DARK_KEY]),
+    ("summary-focus", &[LIGHT_KEY, DARK_KEY]),
     ("summary-offer", &[LIGHT_KEY, DARK_KEY]),
     ("summary-running", &[LIGHT_KEY]),
     ("summary-failed", &[LIGHT_KEY]),
@@ -145,7 +148,12 @@ fn parent() -> SandboxResult {
 
 fn shot(sandbox: &Sandbox, theme: &str, page: &str) -> SandboxResult {
     let mode = format!("{theme}:{page}");
-    let child = sandbox.spawn(&std::env::current_exe()?, &[], &[(CHILD_ENV, &mode)])?;
+    let tabs = std::env::var(FOCUS_TABS_ENV).unwrap_or_default();
+    let mut env = vec![(CHILD_ENV, mode.as_str())];
+    if !tabs.is_empty() {
+        env.push((FOCUS_TABS_ENV, tabs.as_str()));
+    }
+    let child = sandbox.spawn(&std::env::current_exe()?, &[], &env)?;
     let mut running = Running::new(child)?;
     running
         .line_where(Duration::from_secs(90), |line| line == "ready")
@@ -570,7 +578,7 @@ fn seed_summary(page: &str, cx: &mut App) {
             "read -r line\necho '{\"type\":\"result\",\"is_error\":true,\"result\":\"Not logged in · Please run /login\"}'\n"
         }
         "summary-offer" => "",
-        "summary" | "summary-preview" => {
+        "summary" | "summary-preview" | "summary-focus" => {
             teams_ui::recap_summary::keep(&fixtures::sharing_link("ITEM1"), &made_summary(), None, cx);
             return;
         }
@@ -779,7 +787,7 @@ fn step(shell: &Entity<Shell>, page: &str, window: &mut Window, cx: &mut App) {
 }
 
 /// The page's step once its tab shows.
-fn then(shell: &Entity<Shell>, page: &str, _: &mut Window, cx: &mut App) {
+fn then(shell: &Entity<Shell>, page: &str, window: &mut Window, cx: &mut App) {
     let Some(recap) = shell.read(cx).recap_view().cloned() else {
         return;
     };
@@ -819,4 +827,25 @@ fn then(shell: &Entity<Shell>, page: &str, _: &mut Window, cx: &mut App) {
         page if PLAYED.contains(&page) => recap.play_from(Duration::from_millis(500), cx),
         _ => {}
     });
+    if page == "summary-focus" {
+        focus_first_point(window, cx);
+    }
+}
+
+/// The Tab presses from the window's start to the summary's first point.
+const TABS_TO_FIRST_POINT: usize = 16;
+
+/// The focus moved on until it is on the summary's first point, the last step a Tab press, so that the focus shows as
+/// the keyboard's; `RECAP_FOCUS_TABS` sets another count.
+fn focus_first_point(window: &mut Window, cx: &mut App) {
+    let tabs = std::env::var(FOCUS_TABS_ENV)
+        .ok()
+        .and_then(|tabs| tabs.parse().ok())
+        .unwrap_or(TABS_TO_FIRST_POINT);
+    for _ in 1..tabs {
+        window.focus_next(cx);
+    }
+    if let Ok(tab) = Keystroke::parse("tab") {
+        window.dispatch_keystroke(tab, cx);
+    }
 }

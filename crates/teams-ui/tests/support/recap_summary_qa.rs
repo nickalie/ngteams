@@ -245,34 +245,77 @@ fn qa_regenerate_asks_the_tool_for_simplified_technical_english_and_shows_the_re
     assert!(spoken(cx, 2), "the new next step plays from 0:20");
 }
 
-/// Tab moves the focus from the summary pane's tab to the points; Enter on a point plays its moment. Each Tab count
-/// runs in a new window: Enter on a control before the points (Copy, Regenerate) changes the pane.
+/// The transcript lines the keyed summary's points play, in the drawn order: the point at 0:15 (Bo's paragraph), the
+/// next step at 0:20 (Ada's last paragraph), the question moved to 0:04 (Ada's first line). The drawn order is not the
+/// time order, so a Tab order by time fails.
+const KEYED_LINES: [&str; 3] = ["recap-paragraph-1-0", "recap-paragraph-2-0", "recap-paragraph-0-0"];
+
+/// What a key press did: the transcript did not show, or it showed with the lines marked as spoken.
+#[derive(Debug, PartialEq, Eq)]
+enum Played {
+    Nothing,
+    Lines(Vec<String>),
+}
+
+impl Played {
+    fn line(line: &str) -> Self {
+        Self::Lines(vec![line.to_owned()])
+    }
+}
+
+/// Tab and Shift+Tab move through the points in the drawn order, and Enter and Space play the moment of the point
+/// with the focus: the transcript marks exactly the line of that moment. Each count runs in a new window, because
+/// Enter on a control before the points (Copy, Send to chat, Regenerate) changes the pane.
 #[test]
 fn qa_tab_reaches_each_point_and_enter_plays_its_moment() {
-    let mut played = Vec::new();
+    let mut first = None;
     for tabs in 1..=12 {
-        if let Some(line) = tab_and_enter(tabs) {
-            played.push((tabs, line));
-        }
-        // more Tab presses leave the recap, where Enter opens other pages
-        if played.len() == 3 {
+        let played = keyed(tabs, "enter");
+        if played != Played::Nothing {
+            assert_eq!(
+                played,
+                Played::line(KEYED_LINES[0]),
+                "the first stop that plays (after {tabs} Tab presses) is the first point, 0:15"
+            );
+            first = Some(tabs);
             break;
         }
     }
+    let first = first.expect("Tab reaches a point, and Enter plays it");
+    for (step, line) in KEYED_LINES.into_iter().enumerate() {
+        for key in ["enter", "space"] {
+            assert_eq!(
+                keyed(first + step, key),
+                Played::line(line),
+                "{key} on point {step} (after {} Tab presses) plays its own moment",
+                first + step
+            );
+        }
+    }
     assert!(
-        played.len() >= 3,
-        "Tab and Enter reach the three points with a moment; Enter played after these Tab counts: {played:?}"
+        !matches!(keyed(first + 3, "enter"), Played::Lines(lines) if lines.iter().any(|line| KEYED_LINES.contains(&line.as_str()))),
+        "the last point is the last stop that plays a moment"
     );
-    assert!(
-        played.iter().any(|(_, line)| line.starts_with("recap-paragraph-1-"))
-            && played.iter().any(|(_, line)| line.starts_with("recap-paragraph-2-")),
-        "each point plays its own moment: {played:?}"
+    assert_eq!(
+        keyed(first + 2, "shift-tab enter"),
+        Played::line(KEYED_LINES[1]),
+        "Shift+Tab from the question goes back to the next step"
+    );
+    assert_eq!(
+        keyed(first + 2, "shift-tab shift-tab space"),
+        Played::line(KEYED_LINES[0]),
+        "two Shift+Tab presses from the question go back to the first point"
+    );
+    assert_eq!(
+        keyed(first, "shift-tab enter"),
+        Played::Nothing,
+        "Shift+Tab from the first point leaves the points"
     );
 }
 
-/// In a new window on the stored summary, its pill clicked: `tabs` Tab presses and Enter; the transcript line a point
-/// played, if one did (Enter on a pill shows the transcript without one).
-fn tab_and_enter(tabs: usize) -> Option<&'static str> {
+/// In a new window on the stored summary, its question moved to 0:04 and its pill clicked: `tabs` Tab presses (the
+/// summary pane stays shown), then `keys`; what the last key played.
+fn keyed(tabs: usize, keys: &str) -> Played {
     let rig = transcribed_rig();
     let dir = tempfile::tempdir().unwrap();
     // Enter on Regenerate starts this stub, never a real tool.
@@ -281,16 +324,27 @@ fn tab_and_enter(tabs: usize) -> Option<&'static str> {
         Tools::with(vec![(Backend::Claude, script(dir.path(), "exit 1\n"))]),
     );
     let (_shell, cx) = kit_window(&rig, fixtures::TRANSCRIPT_ONLY);
+    let mut made = stored();
+    made.summary.questions[0].at = Some(4);
     cx.update(|_, cx| {
-        teams_ui::recap_summary::keep(&fixtures::transcript_location("ITEM9"), &stored(), None, cx);
+        teams_ui::recap_summary::keep(&fixtures::transcript_location("ITEM9"), &made, None, cx);
     });
     summary_pane(cx);
     click(cx, "recap-pane-summary shown");
     for _ in 0..tabs {
         press(cx, "tab");
     }
-    press(cx, "enter");
-    ["recap-paragraph-1-0 spoken", "recap-paragraph-2-0 spoken"]
-        .into_iter()
-        .find(|line| drawn(cx, line))
+    assert!(
+        drawn(cx, "recap-pane-summary shown") && !drawn(cx, "recap-pane-transcript shown"),
+        "Tab alone plays nothing ({tabs} presses)"
+    );
+    press(cx, keys);
+    if !drawn(cx, "recap-pane-transcript shown") {
+        return Played::Nothing;
+    }
+    let lines = (0..4)
+        .flat_map(|turn| (0..6).map(move |line| format!("recap-paragraph-{turn}-{line}")))
+        .filter(|line| drawn(cx, Box::leak(format!("{line} spoken").into_boxed_str())))
+        .collect();
+    Played::Lines(lines)
 }
