@@ -809,6 +809,18 @@ impl ChatServiceMock {
         roster::made_up(&mut state, index, &people)
     }
 
+    /// The roster entry `entry` (its `version` set by the mock) for `mri` in group call `id`, told to everyone in it as
+    /// the service tells a change: a shape the mock's own parties never take (an MRI in another case, a second
+    /// endpoint, a nameless app that only listens, a wait in the lobby). `false` without such a group call.
+    #[must_use = "false says there was no such group call"]
+    pub fn tell_roster_entry(&self, id: &str, mri: &str, entry: Value) -> bool {
+        let mut state = self.lock();
+        let Some(index) = state.calling.calls.iter().position(|call| call.id == id) else {
+            return false;
+        };
+        roster::told_whole(&mut state, index, mri, entry)
+    }
+
     /// `mri`, someone [`Self::join_made_up`] made up, leaves group call `id`: everyone left is told. `false` when it
     /// wasn't in it.
     #[must_use = "false says nobody left"]

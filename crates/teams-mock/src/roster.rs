@@ -416,11 +416,35 @@ fn body(state: &mut State, index: usize, changed: Option<&str>) -> Option<Value>
     Some(json!({"participants": participants, "type": "Delta", "sequenceNumber": version}))
 }
 
+/// `entry`, a roster entry a test wrote whole, for `mri` in group call `index` at the roster's next version: everyone in
+/// it is told, as a change is. `false` without such a group call.
+pub(crate) fn told_whole(state: &mut State, index: usize, mri: &str, mut entry: Value) -> bool {
+    let Some(call) = state
+        .calling
+        .calls
+        .get_mut(index)
+        .filter(|call| call.group_chat.is_some())
+    else {
+        return false;
+    };
+    call.roster_version += 1;
+    let version = call.roster_version;
+    entry["version"] = json!(version);
+    let body = json!({"participants": {mri: entry}, "type": "Delta", "sequenceNumber": version});
+    deliver(state, index, &body);
+    true
+}
+
 /// The change of `changed` in group call `index` delivered to every party still in it and every watcher, once each.
 fn send(state: &mut State, index: usize, changed: Option<&str>) {
     let Some(body) = body(state, index, changed) else {
         return;
     };
+    deliver(state, index, &body);
+}
+
+/// `body`, a roster update of group call `index`, delivered to every party still in it and every watcher, once each.
+fn deliver(state: &mut State, index: usize, body: &Value) {
     let call = &state.calling.calls[index];
     let mut links: Vec<String> = call
         .roster

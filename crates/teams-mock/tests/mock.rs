@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use teams_auth::secrets::Secret;
 use teams_auth::token::TokenError;
 use teams_mock::{
-    AB_CHAT, ABC_CHAT, AC_CHAT, AX_CHAT, CHANNEL, CHAT_BASE, ChatEvent, ChatServiceMock, EventKind, LAB_A, LAB_B,
+    AB_CHAT, ABC_CHAT, AC_CHAT, AX_CHAT, CHANNEL, CHAT_BASE, ChatEvent, ChatServiceMock, ECHO, EventKind, LAB_A, LAB_B,
     LAB_C, NOTIFICATIONS, OUTSIDER, REGIONAL_HOST, TEAM_CHANNEL, TENANT,
 };
 use teams_proto::Mri;
@@ -2128,6 +2128,10 @@ async fn made_up_people_join_share_and_leave_only_a_group_call() -> TestResult {
     assert!(!mock.leave_made_up(&group, people[1].0), "left already");
     assert!(!mock.share_made_up(&group, people[1].0, true), "gone");
     assert!(!mock.react_made_up(&group, people[1].0, "like"), "gone");
+    let whole = json!({"state": "active", "details": {"id": ECHO}, "endpoints": {}});
+    assert!(mock.tell_roster_entry(&group, ECHO, whole.clone()));
+    assert!(!mock.tell_roster_entry(&one_to_one, ECHO, whole.clone()), "a 1:1 call");
+    assert!(!mock.tell_roster_entry("NoSuchCall", ECHO, whole));
     Ok(())
 }
 

@@ -294,6 +294,11 @@ name = "qa_channel_meeting_window"
 harness = false
 
 [[test]]
+# QA of task 798: a meeting shows only who joined it, its invitees under "Others invited", in the app's window over the mock
+name = "qa_meeting_roster_window"
+harness = false
+
+[[test]]
 # QA of task 710: a meeting hosted in another region, joined on its regional flight proxy, in the app's window over the mock
 name = "qa_regional_proxy_window"
 harness = false
