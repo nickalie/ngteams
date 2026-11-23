@@ -3488,7 +3488,7 @@ pub struct KeystrokeEvent {
     /// The context stack at the time
     pub context_stack: Vec<KeyContext>,
 
-    /// Whether the keystroke is a key-repeat of a held key
+    /// Whether the keystroke is a key-repeat of a held key; a replayed pending keystroke reports `false`
     pub is_held: bool,
 }
 

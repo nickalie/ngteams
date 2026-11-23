@@ -1578,7 +1578,7 @@ impl ChatView {
     }
 
     /// What the view follows: the models (its chat's changes, typing, names, presence), its compose box's events, the
-    /// window's activation, and the keystrokes that bring Shift+Tab into the list or that are a held Enter or Space.
+    /// window's activation, and the keystrokes that bring Shift+Tab into the list, Escape in it, or a held Enter or Space.
     fn subscriptions(
         models: &Models,
         compose: &Entity<Compose>,
@@ -2704,14 +2704,15 @@ impl ChatView {
         self.focus.handle.contains_focused(window, cx) && !self.focus.handle.is_focused(window)
     }
 
-    /// Enter in the list: the delete it asks for, if one is asked; on the list itself, the keys go into it.
+    /// Enter on the list itself: the delete it asks for, if one is asked, else the keys go into it. On a control in
+    /// the list, Enter is the control's.
     fn enter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.deleting.is_some() {
-            self.confirm_delete(cx);
-        } else if self.focus.handle.is_focused(window) {
-            self.keys_into_the_list(window, cx);
-        } else {
+        if !self.focus.handle.is_focused(window) {
             cx.propagate();
+        } else if self.deleting.is_some() {
+            self.confirm_delete(cx);
+        } else {
+            self.keys_into_the_list(window, cx);
         }
     }
 
@@ -2738,12 +2739,20 @@ impl ChatView {
     }
 
     /// After a key: Shift+Tab from outside the list that came to a control in it (from the box, its format bar or
-    /// anything after the list) gives the keys to the list itself, its one stop.
+    /// anything after the list) gives the keys to the list itself, its one stop; Escape in the list closes a
+    /// confirmation.
     fn keys_to_the_list(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let in_the_list = event.context_stack.iter().any(|context| context.contains(CONTEXT));
         let back = event.keystroke.key == "tab" && event.keystroke.modifiers.shift;
-        let from_outside = !event.context_stack.iter().any(|context| context.contains(CONTEXT));
-        if back && from_outside && self.on_a_control_in_the_list(window, cx) {
+        if back && !in_the_list && self.on_a_control_in_the_list(window, cx) {
             self.focus_messages(window, cx);
+        }
+        // a popup in a card (a time's list) takes its Escape before the list does
+        if event.keystroke.key == "escape"
+            && in_the_list
+            && (self.deleting.take().is_some() | self.resending.take().is_some())
+        {
+            cx.notify();
         }
     }
 
