@@ -734,6 +734,10 @@ impl FunPicker {
         if modifiers.number_of_modifiers() != 0 {
             return false;
         }
+        // the held Escape's first push acted (it ended the rename or closed the picker): its repeats do nothing more
+        if key == "escape" && event.is_held {
+            return true;
+        }
         let renaming = self
             .renaming
             .as_ref()

@@ -2774,15 +2774,24 @@ impl ChatView {
                 || (escape && (self.escape_in_a_popup.get() || self.escape_in_the_list.get())))
     }
 
-    /// A plain Escape with a more-options menu open and the keys out of the list, the menus and the confirmation (in
-    /// the compose box or one of its popups): the menu closes first, alone.
+    /// A new push of Escape (with any modifiers, as the apps flyout takes it) with a more-options menu open and the
+    /// keys out of the list, the menus, the confirmation and the emoji picker (in the compose box or one of its other
+    /// popups): the menu closes first, alone.
     fn escape_outside_the_list(&mut self, event: &gpui::KeyDownEvent, window: &Window, cx: &mut Context<Self>) {
-        let plain = event.keystroke.key == "escape" && !event.keystroke.modifiers.modified();
-        if plain
+        // GPUI runs the first capture listener even after an interceptor took the key (the held guard, the picker)
+        let picker_has_it = || {
+            self.compose
+                .read(cx)
+                .emoji_picker()
+                .is_some_and(|picker| picker.read(cx).holds_focus(window, cx))
+        };
+        if event.keystroke.key == "escape"
+            && !event.is_held
             && self.options.is_some()
             && !self.focus.handle.contains_focused(window, cx)
             && !self.focus.confirmation.contains_focused(window, cx)
             && !self.popup_has_focus(window, cx)
+            && !picker_has_it()
         {
             self.escape_closes_options(cx);
         }

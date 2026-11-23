@@ -2007,6 +2007,54 @@ fn escape_in_the_apps_flyout_closes_a_message_s_menu_first() {
     assert!(compose.read_with(cx, |compose, _| compose.apps_flyout().is_none()));
 }
 
+#[test]
+fn escape_in_the_emoji_picker_keeps_a_message_s_menu_open_also_when_held() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    let compose = view.read_with(cx, |view, _| view.compose().clone());
+    open_the_card_s_menu_by_a_click(&view, cx);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_emoji(window, cx)));
+    draw(cx);
+    assert!(compose.read_with(cx, |compose, _| compose.emoji_picker().is_some()));
+    press(cx, "escape");
+    assert!(
+        compose.read_with(cx, |compose, _| compose.emoji_picker().is_none()),
+        "Escape closes the picker"
+    );
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_some()),
+        "one Escape closes only the picker"
+    );
+    hold(cx, "escape");
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_some()),
+        "the held Escape's repeats do not close the message's menu"
+    );
+    press(cx, "escape");
+    assert!(view.read_with(cx, |view, _| view.options().is_none()));
+}
+
+#[test]
+fn shift_escape_in_the_apps_flyout_closes_a_message_s_menu_first() {
+    let rig = Rig::start();
+    *rig.core.extension_apps.lock().unwrap() =
+        teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    let compose = view.read_with(cx, |view, _| view.compose().clone());
+    open_the_card_s_menu_by_a_click(&view, cx);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_apps(window, cx)));
+    draw(cx);
+    press(cx, "shift-escape");
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_none()),
+        "Shift+Escape closes the message's menu first"
+    );
+    assert!(
+        compose.read_with(cx, |compose, _| compose.apps_flyout().is_some()),
+        "the flyout stays open"
+    );
+}
+
 /// The box replies to a made-up message, with the keys in it.
 fn replying_in(compose: &Entity<Compose>, cx: &mut VisualTestContext) {
     let quoted = teams_ui::compose::Quoted {

@@ -611,6 +611,8 @@ fn a_pack_is_renamed_and_removed_from_its_menu() {
     assert!(!drawn(cx, "sticker-rename-field"));
     assert!(picker(&view, cx).is_some(), "Escape ends the rename only");
 
+    escape_held_in_the_rename_ends_only_the_rename(&view, cx);
+
     click(cx, "sticker-pack-menu");
     click(cx, "sticker-pack-remove");
     click(cx, "sticker-pack-remove-cancel");
@@ -625,6 +627,26 @@ fn a_pack_is_renamed_and_removed_from_its_menu() {
         StickerView::Home
     );
     assert!(drawn(cx, "sticker-packs-empty"));
+}
+
+/// A held Escape in the name field: its first push ends the rename, its repeats do not close the picker.
+fn escape_held_in_the_rename_ends_only_the_rename(view: &Entity<ChatView>, cx: &mut VisualTestContext) {
+    click(cx, "sticker-pack-menu");
+    click(cx, "sticker-pack-rename");
+    keys(cx, "escape");
+    for _ in 0..3 {
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke::parse("escape").unwrap(),
+            is_held: true,
+            prefer_character_input: false,
+        });
+        draw(cx);
+    }
+    assert!(!drawn(cx, "sticker-rename-field"));
+    assert!(
+        picker(view, cx).is_some(),
+        "the held Escape's repeats leave the picker open"
+    );
 }
 
 #[test]
