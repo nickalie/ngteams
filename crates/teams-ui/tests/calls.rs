@@ -408,7 +408,7 @@ fn notes_and_self_only_chats_keep_the_engines_permanent_call_refusal() {
 }
 
 #[test]
-fn a_staged_meeting_call_waits_for_its_members() {
+fn a_staged_meeting_call_reads_its_meeting_and_never_rings() {
     let rig = calling();
     rig.core
         .conversations
@@ -425,7 +425,8 @@ fn a_staged_meeting_call_waits_for_its_members() {
     cx.update(|_, cx| shell.update(cx, |shell, cx| shell.ask_call(Ask::Call { chat: TRIO.into() }, cx)));
     cx.run_until_parked();
     assert!(actions(&rig).is_empty());
-    assert_eq!(kinds(&lines(&written, "call", "refused")[0]), ["call", "no-roster"]);
+    assert_eq!(lines(&written, "call", "meeting-read").len(), 1);
+    assert_eq!(kinds(&lines(&written, "call", "refused")[0]), ["join", "no-meeting"]);
 }
 
 #[test]
@@ -439,7 +440,16 @@ fn a_meeting_chat_with_its_invitees_is_joined_never_called() {
         .find(|chat| chat.id == TRIO)
         .unwrap()
         .kind = ConversationKind::Meeting;
-    let (trace, _) = trace();
+    let meeting = meeting_to_join().meeting().unwrap().clone();
+    rig.core.meetings.lock().unwrap().insert(
+        TRIO.to_owned(),
+        teams_core::MeetingDetails {
+            meeting: meeting.clone(),
+            title: Some("Synthetic meeting".to_owned()),
+            join_url: None,
+        },
+    );
+    let (trace, written) = trace();
     let (shell, cx) = shell_window(&rig, Some(TRIO), trace);
     registered(&rig);
     cx.update(|_, cx| {
@@ -449,10 +459,13 @@ fn a_meeting_chat_with_its_invitees_is_joined_never_called() {
     });
     cx.simulate_keystrokes("ctrl-shift-c");
     cx.run_until_parked();
-    assert!(
-        asked(&rig, |action| matches!(action, CallAction::Call { .. })).is_empty(),
-        "its invitees are never rung"
-    );
+    assert!(actions(&rig).is_empty(), "its invitees are never rung");
+    assert_eq!(lines(&written, "call", "meeting-read").len(), 1);
+    let prejoin = rig
+        .cx
+        .read(|cx| calls_of(&rig).read(cx).prejoin().cloned())
+        .expect("the meeting's pre-join opened");
+    assert_eq!(prejoin.to_join.meeting(), Some(&meeting));
 }
 
 #[test]
@@ -2604,6 +2617,33 @@ fn a_dropped_group_call_offers_rejoin_and_a_one_to_one_invitation_call_back_by_t
     assert_eq!(actions(&rig).last(), Some(&CallAction::Call { chat: AB.into() }));
     let told: Vec<Vec<String>> = lines(&written, "call-window", "ended").iter().map(kinds).collect();
     assert_eq!(told, [["dropped", "rejoin"], ["ended-by-other", "call-back"]]);
+    no_name_in(&written);
+}
+
+#[test]
+fn an_answered_invitation_into_a_meeting_s_chat_never_offers_call_back() {
+    let rig = calling();
+    let (trace, written) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    rig.send(Event::IncomingCall(invitation(
+        4,
+        Some(CALLER_NAME),
+        Some(MEETING_CHAT),
+    )));
+    click(cx, "call-answer");
+    status(&rig, 4, CallStatus::Connected);
+    let window = stage(&rig, &windows);
+    status(&rig, 4, CallStatus::Ended(hung_up_by(LAB_B, CALLER_NAME)));
+    assert!(drawn(window, "call-end"));
+    assert!(!drawn(window, "call-end-call-back"), "its invitees are never rung");
+    window.simulate_keystrokes("ctrl-shift-c");
+    window.run_until_parked();
+    assert!(
+        asked(&rig, |action| matches!(action, CallAction::Call { .. })).is_empty(),
+        "nor by the key"
+    );
     no_name_in(&written);
 }
 

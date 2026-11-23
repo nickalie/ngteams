@@ -393,6 +393,12 @@ impl Ended {
         self.check.is_some() || !(self.declined || matches!(self.end, End::HungUp | End::Declined))
     }
 
+    /// Whether it was a meeting's call: one gone into as a meeting, or one in a meeting's chat (an invitation into it).
+    #[must_use]
+    pub fn is_meeting(&self) -> bool {
+        self.kind == CallKind::Meeting || self.chat.as_deref().is_some_and(teams_proto::is_meeting_chat_id)
+    }
+
     /// The group chat it was in, if it was a group call (a 1:1 chat's id names its two members).
     #[must_use]
     pub fn group_chat(&self) -> Option<&str> {

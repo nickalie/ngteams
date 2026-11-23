@@ -1091,8 +1091,16 @@ impl Shell {
         self.call_button_traced = Some(shown);
     }
 
-    /// The user asks `ask` of the calls (a key, a button, a command).
+    /// The user asks `ask` of the calls (a key, a button, a command). A Call in a meeting's chat goes into the meeting.
     pub fn ask_call(&mut self, ask: Ask, cx: &mut Context<Self>) {
+        if let Ask::Call { chat } = &ask
+            && self.is_meeting_chat(chat, cx)
+        {
+            // a meeting chat's members are its invitees: a call of the chat would ring each of them
+            let title = self.chat_title(chat, cx);
+            self.join_meeting_chat(chat.clone(), title, None, cx);
+            return;
+        }
         let enters = matches!(ask, Ask::Call { .. } | Ask::Join { .. } | Ask::TestCall | Ask::Answer);
         if enters && self.busy_elsewhere(cx) {
             calls::refuse_here(&self.models.calls, &self.trace, &ask, "another-account", cx);
@@ -1104,7 +1112,7 @@ impl Shell {
                 .list
                 .read(cx)
                 .row(chat)
-                .is_some_and(|row| matches!(row.kind, RowKind::Group | RowKind::Meeting) && row.members == 0)
+                .is_some_and(|row| row.kind == RowKind::Group && row.members == 0)
         {
             calls::refuse_here(&self.models.calls, &self.trace, &ask, "no-roster", cx);
             return;
@@ -1303,11 +1311,6 @@ impl Shell {
     pub fn call_chat(&mut self, cx: &mut Context<Self>) {
         if let Main::Chat(id) = &self.main {
             let chat = id.clone();
-            if self.is_meeting_chat(&chat, cx) {
-                // a meeting chat's members are its invitees: a call of the chat would ring each of them
-                self.join_call(cx);
-                return;
-            }
             self.ask_call(Ask::Call { chat }, cx);
         } else {
             let ask = Ask::Call { chat: String::new() };
@@ -1320,7 +1323,7 @@ impl Shell {
         self.list
             .read(cx)
             .row(id)
-            .is_some_and(|row| row.kind == crate::chat_list::RowKind::Meeting)
+            .is_some_and(|row| row.kind == RowKind::Meeting)
     }
 
     /// The chat `id`'s name, when the list names it.

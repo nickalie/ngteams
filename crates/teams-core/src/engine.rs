@@ -4049,13 +4049,16 @@ fn call_ended(store: &Store, conversation: &str, start: &str) -> Result<bool, St
 const POSTED_CALL_LOOKBACK: usize = 50;
 
 /// Whom a call from `chat` calls: a 1:1 chat's other member (from its id), or a group chat's other members as the
-/// store holds them.
+/// store holds them. A meeting chat is never called: its stored members are its invitees, who are joined, not rung.
 fn placement(store: &Store, me: &str, chat: &str) -> Result<Placement, CallActionError> {
     if let Some(other) = one_to_one_other(chat, me) {
         return Ok(Placement::Chat {
             callees: vec![Mri::new(other)],
             group_chat: None,
         });
+    }
+    if is_meeting_chat(store, chat) {
+        return Err(CallActionError::NotAChat);
     }
     let members = store.members(chat).map_err(|_| CallActionError::NotAChat)?;
     let callees: Vec<Mri> = members
@@ -4071,6 +4074,16 @@ fn placement(store: &Store, me: &str, chat: &str) -> Result<Placement, CallActio
         callees,
         group_chat: Some(chat.to_owned()),
     })
+}
+
+/// Whether `chat` is a meeting's chat, by its id or by the kind the store keeps for it.
+fn is_meeting_chat(store: &Store, chat: &str) -> bool {
+    teams_proto::is_meeting_chat_id(chat)
+        || store
+            .conversation(chat)
+            .ok()
+            .flatten()
+            .is_some_and(|stored| stored.kind.is_meeting())
 }
 
 /// A read in the background that is over.
@@ -4244,6 +4257,51 @@ mod start_within {
         let others = "19:00000000-0000-4000-8000-00000000000b_00000000-0000-4000-8000-00000000000c@unq.gbl.spaces";
         let call = resolved(CallAction::Call { chat: others.into() });
         assert!(matches!(call, Err(CallActionError::NotAChat)), "not the account's chat");
+    }
+
+    #[test]
+    fn a_call_from_a_meeting_chat_with_its_invitees_stored_rings_nobody() {
+        let other = "8:orgid:00000000-0000-4000-8000-00000000000b";
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("store.db")).unwrap();
+        let stored = |store: &mut Store, chat: &str, kind: teams_store::ConversationKind| {
+            store
+                .upsert_conversation(&teams_store::Conversation {
+                    id: chat.to_owned(),
+                    kind,
+                    topic: None,
+                    version: 1,
+                    last_activity: None,
+                })
+                .unwrap();
+            let invitees = [
+                teams_store::Member::new(ME, None),
+                teams_store::Member::new(other, None),
+            ];
+            store.replace_members(chat, 1, &invitees).unwrap();
+        };
+        let group = "19:00000000000000000000000000000001@thread.v2";
+        stored(&mut store, group, teams_store::ConversationKind::Group);
+        let call = call_act(&store, ME, CallAction::Call { chat: group.into() });
+        assert!(
+            matches!(call, Ok(Act::Place(Placement::Chat { .. }))),
+            "a group chat is called"
+        );
+        let by_id = "19:meeting_MadeUpMeeting01@thread.v2";
+        stored(&mut store, by_id, teams_store::ConversationKind::Group);
+        let call = call_act(&store, ME, CallAction::Call { chat: by_id.into() });
+        assert!(matches!(call, Err(CallActionError::NotAChat)), "a meeting chat's id");
+        let by_kind = "19:00000000000000000000000000000002@thread.v2";
+        stored(
+            &mut store,
+            by_kind,
+            teams_store::ConversationKind::Other("thread_type:meeting".to_owned()),
+        );
+        let call = call_act(&store, ME, CallAction::Call { chat: by_kind.into() });
+        assert!(
+            matches!(call, Err(CallActionError::NotAChat)),
+            "a meeting chat's stored kind"
+        );
     }
 
     #[test]

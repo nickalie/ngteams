@@ -855,9 +855,9 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
             Some(synced) => synced,
             None => self.sync_messages(store, id).await?,
         };
-        let chat = store.conversation(id)?.is_some_and(|stored| {
-            matches!(stored.kind, ConversationKind::OneToOne | ConversationKind::Group) || stored.kind.is_meeting()
-        });
+        let chat = store
+            .conversation(id)?
+            .is_some_and(|stored| keeps_stored_members(&stored.kind));
         if chat {
             let reads = ChatReads::new(&self.client);
             let thread = self.waiting(store, reads.thread(id)).await?;
@@ -1788,7 +1788,12 @@ fn thread_version(listed: &chat::Conversation) -> Option<i64> {
 /// Whether the store keeps the members of a conversation of `kind`: a 1:1 or group chat's, and a meeting chat's (its
 /// invitees, whom the call window lists under "Others invited").
 fn keeps_members(kind: &chat::ConversationKind) -> bool {
-    !kind.is_read_only() || store_kind(kind).is_meeting()
+    keeps_stored_members(&store_kind(kind))
+}
+
+/// [`keeps_members`] for a conversation as the store keeps its kind.
+fn keeps_stored_members(kind: &ConversationKind) -> bool {
+    matches!(kind, ConversationKind::OneToOne | ConversationKind::Group) || kind.is_meeting()
 }
 
 /// A conversation of the list as the store keeps it, at `version`.

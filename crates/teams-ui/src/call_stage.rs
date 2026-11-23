@@ -768,7 +768,7 @@ impl CallStage {
         if reason == EndReason::Own {
             return None;
         }
-        if ended.kind == CallKind::Meeting {
+        if ended.is_meeting() {
             // a meeting can be gone into at any time, whatever became of its call
             let ask = self.calls.read(cx).rejoin_of(ended)?;
             return Some(FollowUp { ask, rejoin: true });
