@@ -1,25 +1,26 @@
 //! What a Lottie animation may make `rasterlottie` do, checked before it is prepared.
 //!
 //! `rasterlottie` follows a precomposition's asset and a layer's parents with no depth limit, draws as many repeater
-//! copies, repeater steps and polystar points as an animation asks for, draws a matte source again for each layer
-//! that uses it, makes canvas-sized pixmaps for each mask, each layer with effects and each track-matted layer and its
-//! matte source, passes over a layer's surface once for each effect, chokes a surface over a window as wide as the
-//! choke asks, dashes each path a dashed stroke draws into as many as a million dashes, reads a stroke's whole dash
-//! list each time it draws with it, copies all the keyframes of an animated value and all their numbers each time it
-//! samples it, samples each ancestor's transform again for each layer under it, looks up a precomposition's asset through all the assets each time it draws it, comparing whole ids, and goes
-//! through each layer list once per layer for each path expression and each parent: a crafted `.tgs` overflows the
-//! stack, panics, hangs or takes all memory. So the animation is refused ([`Skip::Unsupported`]) when its
-//! precompositions nest deeper than [`MAX_DEPTH`] (a cycle nests without end, so this refuses it too), a layer list
-//! holds more than [`MAX_LAYERS`] layers or the animation more than [`MAX_LAYERS`] assets, an asset id or a reference
-//! to one is longer than [`MAX_ID`] bytes, a parent chain is longer than [`MAX_PARENTS`], a shape path has an
-//! expression, a repeater's copies plus its offset or a polystar's points can be more than [`MAX_COPIES`], or a frame
-//! does more than [`MAX_WORK`] work: layers, shapes, the numbers of each keyframe (at least one) and of each static
-//! value, path vertices and polystar points (two each), the entries of a dash list, the transforms of a layer's
-//! ancestors, [`MASK_WORK`] for each mask, each layer with effects, each effect and each canvas-sized surface of a
-//! track matte, [`MASK_WORK`] for each pixel of a choke's window in place of the choke's pass, [`DASH_WORK`] for each
-//! dash a dashed stroke can draw (the longest each path can be times the dash pairs over the shortest period, and each entry of its list for each path) and one
-//! for each [`SCANS_PER_WORK`] assets looked through, with each precomposition, matte and copy counted. Values are
-//! bounded as the renderer reads them, in `f32`: a number that is not finite there has no bound.
+//! copies, repeater steps and polystar points as an animation asks for, draws a matte source again for each layer that
+//! uses it, makes canvas-sized pixmaps for each mask, each layer with effects and each track-matted layer and its matte
+//! source, passes over a layer's surface once for each effect, chokes a surface over a window as wide as the choke
+//! asks, dashes each path a dashed stroke draws into as many as a million dashes, reads a stroke's whole dash list each
+//! time it draws with it, copies all the keyframes of an animated value and all their numbers each time it samples it,
+//! samples each ancestor's transform again for each layer under it, looks up a precomposition's asset through all the
+//! assets each time it draws it, comparing whole ids, and goes through each layer list once per layer for each path
+//! expression and each parent: a crafted `.tgs` overflows the stack, panics, hangs or takes all memory. So the
+//! animation is refused ([`Skip::Unsupported`]) when its precompositions nest deeper than [`MAX_DEPTH`] (a cycle nests
+//! without end, so this refuses it too), a layer list holds more than [`MAX_LAYERS`] layers or the animation more than
+//! [`MAX_LAYERS`] assets, an asset id or a reference to one is longer than [`MAX_ID`] bytes, a parent chain is longer
+//! than [`MAX_PARENTS`], a shape path has an expression, a repeater's copies plus its offset or a polystar's points can
+//! be more than [`MAX_COPIES`], or a frame does more than [`MAX_WORK`] work: layers, shapes, the numbers of each
+//! keyframe (at least one) and of each static value, path vertices and polystar points (two each), the entries of a
+//! dash list, the transforms of a layer's ancestors, [`MASK_WORK`] for each mask, each layer with effects, each effect
+//! and each canvas-sized surface of a track matte, [`MASK_WORK`] for each pixel of a choke's window in place of the
+//! choke's pass, [`DASH_WORK`] for each dash a dashed stroke can draw (the longest each path can be times the dash
+//! pairs over the shortest period, and each entry of its list for each path) and one for each [`SCANS_PER_WORK`] assets
+//! looked through, with each precomposition, matte and copy counted. Values are bounded as the renderer reads them, in
+//! `f32`: a number that is not finite there has no bound.
 
 use std::collections::HashMap;
 use std::f64::consts::PI;
@@ -317,8 +318,8 @@ fn dash_entries(item: &ShapeItem) -> Option<&[Value]> {
     item.extra.get("d").and_then(Value::as_array).map(Vec::as_slice)
 }
 
-/// The dashes of a stroke: `tiny-skia` draws the length of each path times the dash pairs over the period, and walks
-/// the whole list on each path, even where it is longer than the path.
+/// The dashes of a stroke: `tiny-skia` draws the length of each path times the dash pairs over the period, and can
+/// walk the whole list on each path, since entries of length 0 never move it along.
 #[derive(Clone, Copy, Default)]
 struct Dash {
     /// The dashes for each unit of path length, 0 when the stroke draws none. The renderer doubles an odd list,

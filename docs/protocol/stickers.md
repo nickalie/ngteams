@@ -39,9 +39,9 @@ strokes it and the groups in it that have no visible stroke of their own. A grad
 decode (too few colour numbers) leaves the stroke of the list around it in use, so a gradient stroke counts the larger
 of its own dashes and that stroke's. The dashes of a path are the longest it can be (its size, radii and roundness,
 or the control polygon of its static shape or of its keyframe ends) times the dash pairs over the shortest period that
-the dash and gap values can ease to, plus one dash for each dash and gap entry, because the renderer walks the whole
-list on each path. A layer also counts the transforms of its parents. Each precomposition, matte and copy counts each
-time it is drawn. A number that is not finite as a 32-bit float has no bound.
+the dash and gap values can ease to, plus one dash for each dash and gap entry, because the renderer can walk the
+whole list on each path. A layer also counts the transforms of its parents. Each precomposition, matte and copy counts
+each time it is drawn. A number that is not finite as a 32-bit float has no bound.
 
 ## A pack from its link: the Bot API
 
