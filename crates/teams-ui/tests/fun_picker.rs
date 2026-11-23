@@ -11,7 +11,9 @@
 #[expect(dead_code, reason = "the shared stand-ins hold more than this test uses")]
 mod common;
 
+use std::cell::RefCell;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use common::{LAB_A, LAB_B, Rig, Written};
@@ -21,14 +23,18 @@ use teams_core::Action;
 use teams_proto::chat::MessageText;
 use teams_store::Member;
 use teams_ui::chat_view::ChatView;
-use teams_ui::compose::Compose;
+use teams_ui::compose::{Compose, ComposeEvent, Loaded, Mode, STICKER_LOADING_FIRST};
+use teams_ui::editor::doc::Doc;
 use teams_ui::fun_picker::{FunPicker, Item, Place, StickerView, Tab};
 use teams_ui::settings::SettingsModel;
+use teams_ui::shell::Shell;
 use teams_ui::stickers::import::{self, ImportKind};
 use teams_ui::stickers::{Shelf, StickerRef};
 use teams_ui::{SettingsFile, ShellParts, ViewTrace};
 
 const AB: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-8000-00000000000b@unq.gbl.spaces";
+/// A group chat (made up).
+const OTHER: &str = "19:labgroup0001@thread.v2";
 
 /// A made-up still picture, `side` square, in `format`.
 fn picture(side: u32, colour: [u8; 3], format: ImageFormat) -> Vec<u8> {
@@ -1009,6 +1015,93 @@ fn send_waits_for_a_teams_sticker_still_read() {
     keys(cx, "enter");
     let html = sent(&rig).pop().unwrap().html().to_owned();
     assert!(html.contains("Clippy_HelloThere.gif"), "{html}");
+}
+
+/// Picks Teams' sticker `id` in `view`'s box while the engine holds its read.
+fn pick_held_teams_sticker(rig: &Rig, view: &Entity<ChatView>, id: &str, cx: &mut VisualTestContext) {
+    keys(cx, "ctrl-.");
+    let picker = picker(view, cx).unwrap();
+    *rig.core.hold_pictures.lock().unwrap() = true;
+    cx.update(|window, cx| picker.update(cx, |picker, cx| picker.activate(&teams(id), window, cx)));
+    draw(cx);
+}
+
+fn release_held_pictures(rig: &Rig) {
+    *rig.core.hold_pictures.lock().unwrap() = false;
+    let held = std::mem::take(&mut *rig.core.held_pictures.lock().unwrap());
+    assert_eq!(held.len(), 1);
+    for (src, answer) in held {
+        answer.send(Ok(rig.core.pictures.lock().unwrap().get(&src).cloned()));
+    }
+}
+
+#[test]
+fn an_edit_waits_for_a_teams_sticker_still_read() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["Clippy_HelloThere"]);
+    let (view, cx) = chat_window(&rig, &place);
+    pick_held_teams_sticker(&rig, &view, "Clippy_HelloThere", cx);
+    let compose = compose(&view, cx);
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let seen = Rc::clone(&events);
+    cx.update(|_, cx| {
+        cx.subscribe(&compose, move |_, event: &ComposeEvent, _| {
+            seen.borrow_mut().push(event.clone())
+        })
+        .detach();
+    });
+    keys(cx, "up");
+    assert!(!events.borrow().contains(&ComposeEvent::EditLast), "Up starts no edit");
+    let loaded = Loaded {
+        doc: Doc::default(),
+        quotes: Vec::new(),
+    };
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.edit("1".to_owned(), loaded, window, cx)));
+    assert_eq!(cx.update(|_, cx| compose.read(cx).mode().clone()), Mode::New);
+    assert_eq!(
+        cx.update(|_, cx| compose.read(cx).problem().cloned()),
+        Some(STICKER_LOADING_FIRST.into())
+    );
+    release_held_pictures(&rig);
+    draw(cx);
+    assert!(drawn(cx, "editor-picture-1"), "the sticker stays in the new message");
+}
+
+#[test]
+fn a_box_with_only_a_teams_sticker_still_read_survives_a_chat_switch() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["Clippy_HelloThere"]);
+    let parts = ShellParts {
+        core: rig.cx.read(|cx| rig.bridge.read(cx).core()),
+        models: rig.models.clone(),
+        settings: rig
+            .cx
+            .update(|cx| cx.new(|_| SettingsModel::load(SettingsFile::new(place.settings.clone())))),
+        trace: Arc::new(ViewTrace::new(Written::default())),
+    };
+    let app: &'static mut gpui::TestAppContext = Box::leak(Box::new(rig.cx.clone()));
+    let (shell, cx) = app.add_window_view(|window, cx| Shell::new(parts, window, cx));
+    cx.simulate_resize(size(px(800.0), px(700.0)));
+    cx.update(|window, _| window.activate_window());
+    cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_chat(AB.to_owned(), window, cx)));
+    draw(cx);
+    let chat = |cx: &mut VisualTestContext| cx.update(|_, cx| shell.read(cx).chat().unwrap().clone());
+    let view = chat(cx);
+    let first = compose(&view, cx);
+    cx.update(|window, cx| first.update(cx, |compose, cx| compose.focus(window, cx)));
+    draw(cx);
+    pick_held_teams_sticker(&rig, &view, "Clippy_HelloThere", cx);
+    cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_chat(OTHER.to_owned(), window, cx)));
+    draw(cx);
+    release_held_pictures(&rig);
+    draw(cx);
+    cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_chat(AB.to_owned(), window, cx)));
+    draw(cx);
+    let view = chat(cx);
+    assert_eq!(compose(&view, cx), first, "the box is kept while its sticker is read");
+    assert!(drawn(cx, "editor-picture-1"));
 }
 
 #[test]

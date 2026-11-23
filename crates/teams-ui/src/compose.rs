@@ -595,6 +595,8 @@ pub const NO_LOOP: &str = "Loop components aren't available in this app";
 pub const READ_ONLY_APP: &str = "Read-only: this window sends nothing";
 /// What the box says when a reply or an edit is started while the message sent is translated.
 pub const TRANSLATING_FIRST: &str = "Wait for your message to be translated and sent first.";
+/// What the box says when an edit is started while one of Teams' stickers is still read into it.
+pub const STICKER_LOADING_FIRST: &str = "Wait for your sticker to load before editing a message.";
 /// Over the box of a chat when its draft from New message met an edit of a message there ([`Compose::hand_draft_to`]):
 /// the edit is called off, the draft stays.
 pub const EDIT_CALLED_OFF: &str =
@@ -1032,8 +1034,8 @@ impl Compose {
 
     /// The full draft of the box moves to `other`, a box of the same chat (New message's box for the chat that it
     /// found, and the own box of that chat): the text, the pictures, the files, and the reply or edit. The draft comes
-    /// after the draft that `other` holds. The answers on their way (an upload of a file or a picture, a send) go to
-    /// `other` from now on ([`Routes`]). `other` keeps its own reply or edit; it takes the reply or edit of this box
+    /// after the draft that `other` holds. The answers on their way (an upload of a file or a picture, a read of one of
+    /// Teams' stickers, a send) go to `other` from now on ([`Routes`]). `other` keeps its own reply or edit; it takes the reply or edit of this box
     /// only when it has none. An edit carries no other draft: when an edit and a draft meet, the edit is called off
     /// (as Esc does), the draft stays, and `other` tells it ([`EDIT_CALLED_OFF`]).
     pub fn hand_draft_to(&mut self, other: &Entity<Self>, cx: &mut Context<Self>) {
@@ -1345,6 +1347,9 @@ impl Compose {
         }
         if !self.apps.cards.is_empty() {
             return self.show_problem("Send or remove your cards before editing a message.", cx);
+        }
+        if !self.routes.stickers.is_empty() {
+            return self.show_problem(STICKER_LOADING_FIRST, cx);
         }
         self.trace.record(
             &TraceLine::new("compose", "editing")
@@ -2052,6 +2057,7 @@ impl Compose {
             && self.editor.read(cx).is_empty()
             && self.attachments.is_empty()
             && self.apps.cards.is_empty()
+            && self.routes.stickers.is_empty()
         {
             cx.emit(ComposeEvent::EditLast);
             cx.stop_propagation();
