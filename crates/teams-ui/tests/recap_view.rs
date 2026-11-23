@@ -19,8 +19,8 @@ use std::time::Duration;
 
 use common::Rig;
 use gpui::{
-    AppContext as _, Entity, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase, VisualTestContext,
-    point, px, size,
+    AppContext as _, Entity, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ScrollDelta, ScrollWheelEvent,
+    TestAppContext, TouchPhase, VisualTestContext, point, px, size,
 };
 use teams_ui::ViewTrace;
 use teams_ui::recap_view::RecapView;
@@ -163,6 +163,20 @@ fn click(cx: &mut VisualTestContext, selector: &'static str) {
         .unwrap_or_else(|| panic!("{selector} is drawn"));
     cx.simulate_click(at.center(), Modifiers::none());
     draw(cx);
+}
+
+/// Presses each key of `keys`, down and up as a person does: a focused element is clicked on the key's release.
+fn press(cx: &mut VisualTestContext, keys: &str) {
+    for spec in keys.split(' ') {
+        let keystroke = Keystroke::parse(spec).unwrap();
+        cx.simulate_event(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(KeyUpEvent { keystroke });
+        draw(cx);
+    }
 }
 
 fn recap(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> Entity<RecapView> {

@@ -384,3 +384,56 @@ fn turning_ai_off_stops_a_summary_being_made_also_after_its_recap_closed() {
     assert!(!drawn(cx, "recap-summary-running"));
     assert!(drawn(cx, "recap-summary-generate"));
 }
+
+/// The keyboard reaches each point with a moment in the drawn order after the pane's pills and buttons: Tab moves to
+/// the next one, Shift+Tab back, and Enter or Space plays its moment as a click does (the transcript shows at the line
+/// spoken then).
+#[test]
+fn tab_and_shift_tab_move_through_the_points_and_enter_or_space_plays_one() {
+    let first = (2..=10)
+        .find(|&tabs| pressed(tabs, "enter") == Some("recap-paragraph-1-0 spoken"))
+        .expect("Tab reaches the first point, and Enter plays it from 0:15");
+    assert_eq!(
+        pressed(first + 1, "space"),
+        Some("recap-paragraph-2-0 spoken"),
+        "the next Tab reaches the next point, 0:20"
+    );
+    assert_eq!(
+        pressed(first + 2, "shift-tab enter"),
+        Some("recap-paragraph-2-0 spoken"),
+        "Shift+Tab from the last point goes back to the one before it"
+    );
+    assert_eq!(
+        pressed(first + 1, "shift-tab space"),
+        Some("recap-paragraph-1-0 spoken"),
+        "Shift+Tab goes back to the first point"
+    );
+}
+
+/// In a new window on the stored summary: its pill clicked (the focus on it), `tabs` Tab presses, then `then`; the
+/// transcript line played, if the transcript shows.
+fn pressed(tabs: usize, then: &str) -> Option<&'static str> {
+    let rig = super::summary_qa::transcribed_rig();
+    let dir = tempfile::tempdir().unwrap();
+    installed(
+        &rig,
+        Tools::with(vec![(Backend::Claude, script(dir.path(), "exit 1\n"))]),
+    );
+    let (_shell, cx) = kit_window(&rig, fixtures::TRANSCRIPT_ONLY);
+    cx.update(|_, cx| {
+        let location = fixtures::transcript_location("ITEM9");
+        teams_ui::recap_summary::keep(&location, &super::summary_qa::stored(), None, cx);
+    });
+    super::summary_qa::summary_pane(cx);
+    click(cx, "recap-pane-summary shown");
+    for _ in 0..tabs {
+        press(cx, "tab");
+    }
+    press(cx, then);
+    if !drawn(cx, "recap-pane-transcript shown") {
+        return None;
+    }
+    ["recap-paragraph-1-0 spoken", "recap-paragraph-2-0 spoken"]
+        .into_iter()
+        .find(|line| drawn(cx, line))
+}

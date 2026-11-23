@@ -20,6 +20,7 @@ use teams_proto::recap::RecapPart;
 use super::{Pane, Post, Read, RecapView, centred, event_row, spinner};
 use crate::clock;
 use crate::icons::{Glyph, Spinning as _, icon_button, selected_by};
+use crate::keyboard;
 use crate::local_ai::{AiChoice, Backend, Failure, Tools, Work};
 use crate::recap::local_line_of;
 use crate::recap_summary::{self, Input, Made, Point, RecapSummary, State, Step, Topic, cache_key, stamp};
@@ -825,13 +826,14 @@ fn bullet(
     let index = *moments;
     *moments += 1;
     let words = words(owner, text, Some(index));
-    row(words, palette)
-        .id(SharedString::from(format!("recap-summary-at-{index}")))
+    let key = SharedString::from(format!("recap-summary-at-{index}"));
+    let point = row(words, palette)
+        .id(key.clone())
         .debug_selector(move || format!("recap-summary-at-{index}"))
         .rounded_sm()
         .cursor_pointer()
         .hover(move |row| row.bg(rgb(palette.hover)))
         .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new(PLAY_FROM_HERE).build(window, cx))
-        .on_click(cx.listener(move |this, _, _, cx| this.seek_summary(at, cx)))
-        .into_any_element()
+        .on_click(cx.listener(move |this, _, _, cx| this.seek_summary(at, cx)));
+    keyboard::stop(key, point, palette).into_any_element()
 }

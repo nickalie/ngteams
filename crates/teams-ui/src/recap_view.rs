@@ -69,6 +69,7 @@ use crate::bridge::Core;
 use crate::clock;
 use crate::icons::{Glyph, icon_button, selected_by};
 use crate::inline::PictureSource;
+use crate::keyboard;
 use crate::people;
 use crate::recap::{
     AI_NOTICE, NO_FILES, Search, SharedItem, Transcript, listed, local_line_of, part_label, recording_file_name,
@@ -1320,8 +1321,9 @@ impl RecapView {
         let shown = self.pane(cx);
         let pill = |pane: Pane, label: &'static str, key: &'static str, cx: &mut Context<Self>| {
             let chosen = shown == pane;
-            div()
-                .id(SharedString::from(format!("recap-pane-{key}")))
+            let id = SharedString::from(format!("recap-pane-{key}"));
+            let pill = div()
+                .id(id.clone())
                 .debug_selector(move || format!("recap-pane-{key}{}", if chosen { " shown" } else { "" }))
                 .h(px(32.0))
                 .px_3()
@@ -1340,7 +1342,8 @@ impl RecapView {
                     pill.child(Glyph::SPARKLES.icon().size(px(14.0)))
                 })
                 .child(label)
-                .on_click(cx.listener(move |this, _, _, cx| this.show_pane(pane, cx)))
+                .on_click(cx.listener(move |this, _, _, cx| this.show_pane(pane, cx)));
+            keyboard::stop(id, pill, palette)
         };
         let ai = crate::local_ai::enabled(cx);
         let mut pills = div().flex_none().flex().gap_2().px_4().pt_4().pb_2();

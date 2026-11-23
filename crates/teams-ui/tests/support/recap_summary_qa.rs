@@ -15,7 +15,7 @@ const MOMENTS: [(u64, &str); 3] = [(15, "0:15"), (20, "0:20"), (24, "0:24")];
 
 /// A stored summary of the transcribed meeting: one point, one next step and one question with a moment each, and a
 /// point without one.
-fn stored() -> Made {
+pub(super) fn stored() -> Made {
     Made {
         summary: Summary {
             purpose: "Check the made-up video player.".to_owned(),
@@ -51,21 +51,21 @@ fn stored() -> Made {
 }
 
 /// The recap of the transcribed meeting (no recording), its transcript answered.
-fn transcribed_rig() -> Rig {
+pub(super) fn transcribed_rig() -> Rig {
     let rig = rig(false);
     locked(&rig.core.transcripts).insert(fixtures::transcript_location("ITEM9"), fixtures::VTT.to_owned());
     rig
 }
 
 /// The summary pane of `chat`'s Recap.
-fn summary_pane(cx: &mut VisualTestContext) {
+pub(super) fn summary_pane(cx: &mut VisualTestContext) {
     click(cx, "chat-tab-recap");
     show_summary(cx);
     assert!(drawn(cx, "recap-summary-made"), "the stored summary shows");
 }
 
 /// The summary pane shown, if the transcript is shown.
-fn show_summary(cx: &mut VisualTestContext) {
+pub(super) fn show_summary(cx: &mut VisualTestContext) {
     if drawn(cx, "recap-pane-summary") {
         click(cx, "recap-pane-summary");
     }
@@ -247,10 +247,15 @@ fn qa_regenerate_asks_the_tool_for_simplified_technical_english_and_shows_the_re
 
 /// Tab moves the focus from the summary pane's tab to the points; Enter on a point plays its moment.
 #[test]
-#[ignore = "QA 795 Q1: a summary point takes no focus and no Enter (the same on main)"]
 fn qa_tab_reaches_each_point_and_enter_plays_its_moment() {
     let rig = transcribed_rig();
-    let (_shell, cx) = shell_window(&rig, fixtures::TRANSCRIPT_ONLY);
+    let dir = tempfile::tempdir().unwrap();
+    // Enter on Regenerate starts this stub, never a real tool.
+    installed(
+        &rig,
+        Tools::with(vec![(Backend::Claude, script(dir.path(), "exit 1\n"))]),
+    );
+    let (_shell, cx) = kit_window(&rig, fixtures::TRANSCRIPT_ONLY);
     cx.update(|_, cx| {
         teams_ui::recap_summary::keep(&fixtures::transcript_location("ITEM9"), &stored(), None, cx);
     });
@@ -261,7 +266,7 @@ fn qa_tab_reaches_each_point_and_enter_plays_its_moment() {
         for _ in 0..tabs {
             cx.simulate_keystrokes("tab");
         }
-        cx.simulate_keystrokes("enter");
+        press(cx, "enter");
         draw(cx);
         if drawn(cx, "recap-pane-transcript shown") {
             played.push(tabs);
