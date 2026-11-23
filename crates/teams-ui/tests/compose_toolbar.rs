@@ -1899,6 +1899,28 @@ fn customize_toolbar_taken_from_the_apps_flyout_of_a_focused_plus_gives_the_keys
     }
 }
 
+#[test]
+fn escape_in_the_apps_flyout_of_a_focused_plus_gives_the_keys_back_to_plus() {
+    let rig = Rig::start();
+    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
+    *rig.core.extension_apps.lock().unwrap() =
+        teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    focus_box(&compose, cx);
+    press(cx, "tab");
+    press(cx, "end");
+    let plus = focused(cx);
+    key_click(cx);
+    assert!(compose.read_with(cx, |compose, _| compose.apps_flyout().is_some()));
+    assert_ne!(focused(cx), plus, "the flyout's search takes the keys");
+    press(cx, "escape");
+    assert!(
+        compose.read_with(cx, |compose, _| compose.apps_flyout().is_none()),
+        "Escape closes the flyout"
+    );
+    assert_eq!(focused(cx), plus, "Escape gives the keys back to \"+\"");
+}
+
 /// The box replies to a made-up message, with the keys in it.
 fn replying_in(compose: &Entity<Compose>, cx: &mut VisualTestContext) {
     let quoted = teams_ui::compose::Quoted {

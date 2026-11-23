@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable as _,
+    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable as _,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, RenderImage, ScrollHandle,
     SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity, Window, div, px, rgb,
 };
@@ -183,6 +183,12 @@ impl AppsFlyout {
             asked: 0,
             _search: watch,
         }
+    }
+
+    /// Whether the keys are in the flyout.
+    #[must_use]
+    pub fn has_keys(&self, window: &Window, cx: &App) -> bool {
+        self.focus.contains_focused(window, cx)
     }
 
     /// The flyout with `actions` over its apps.

@@ -1270,6 +1270,8 @@ struct ListFocus {
     selected_row: FocusHandle,
     /// The confirmation under the list: its buttons go when it closes, so the keys on them go back to the list.
     confirmation: FocusHandle,
+    /// The button of the confirmation that had the keys at a press, until the press reaches the bar.
+    pressed_from_confirmation: Option<FocusHandle>,
     /// How the list last took the keys, which its ring follows.
     keys: ListKeys,
 }
@@ -1289,6 +1291,7 @@ impl ListFocus {
             handle: cx.focus_handle().tab_stop(true),
             selected_row: cx.focus_handle().tab_stop(false),
             confirmation: cx.focus_handle().tab_stop(false),
+            pressed_from_confirmation: None,
             keys: ListKeys::Off,
         }
     }
@@ -4579,7 +4582,17 @@ impl ChatView {
                 .debug_selector(|| "confirmation".to_owned())
                 .track_focus(&self.focus.confirmation)
                 // a press on the question keeps the keys where they were: the bar has no keys of its own
-                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        window.prevent_default();
+                        if let Some(button) = this.focus.pressed_from_confirmation.take()
+                            && this.focus.handle.is_focused(window)
+                        {
+                            button.focus(window, cx);
+                        }
+                    }),
+                )
                 .on_key_down(cx.listener(Self::escape_on_the_confirmation))
                 .flex()
                 .items_center()
@@ -6633,6 +6646,9 @@ impl Render for ChatView {
                     return;
                 }
                 this.focus.keys = ListKeys::Pointer;
+                this.focus.pressed_from_confirmation = window
+                    .focused(cx)
+                    .filter(|_| this.focus.confirmation.contains_focused(window, cx));
                 if !this.focus.handle.is_focused(window) && !this.compose.read(cx).focused(window, cx) {
                     this.focus.handle.focus(window, cx);
                 }

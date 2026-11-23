@@ -2371,6 +2371,27 @@ fn a_press_on_the_confirmation_s_question_keeps_the_keys_in_the_list() {
 }
 
 #[test]
+fn a_press_on_the_confirmation_s_question_keeps_the_keys_on_cancel() {
+    let mine = message(NOON, LAB_A, "<p>mine</p>");
+    let rig = rig_with(vec![mine.clone()]);
+    let (view, cx, _) = chat_window(&rig, no_receipts());
+    delete_asked_under_a_clicked_menu(&view, cx, &mine);
+    press(cx, "tab");
+    cx.update(gpui::Window::focus_next);
+    let bar = cx.debug_bounds("confirmation").expect("the confirmation");
+    let question = gpui::point(bar.origin.x + px(24.0), bar.center().y);
+    cx.simulate_click(question, Modifiers::none());
+    draw(cx);
+    assert_eq!(focused(&view, cx), (false, false), "the list does not take the keys");
+    press(cx, "enter");
+    assert!(
+        cx.update(|_, cx| view.read(cx).deleting().is_none()),
+        "Enter on Cancel closes the confirmation"
+    );
+    assert!(rig.core.actions.lock().unwrap().is_empty(), "nothing is deleted");
+}
+
+#[test]
 fn escape_on_a_confirmation_button_closes_a_clicked_menu_then_the_confirmation() {
     let mine = message(NOON, LAB_A, "<p>mine</p>");
     let rig = rig_with(vec![mine.clone()]);
