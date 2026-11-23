@@ -756,10 +756,10 @@ impl CallStage {
             .filter(|ended| ended.check.is_none() && ended.stays_in_window())
     }
 
-    /// What the end offers: Rejoin for a meeting's call, whatever ended it (a meeting never offers Call back), and for
-    /// a group call that runs on without the account (it dropped, never got in, or the chat's call was running already)
-    /// and that an invitation named; else Call back to its chat, or for a 1:1 invitation to the caller's chat; nothing
-    /// in the read-only mode or for a test call.
+    /// What the end offers: Rejoin for a meeting joined from its pre-join, whatever ended it, and for a group or
+    /// meeting chat's call that runs on without the account (it dropped, never got in, or the chat's call was running
+    /// already) and that an invitation named; else Call back to its chat (never a meeting's), or for a 1:1 invitation
+    /// to the caller's chat; nothing in the read-only mode or for a test call.
     fn follow_up(&self, ended: &Ended, cx: &App) -> Option<FollowUp> {
         if self.core.read_only() || ended.kind == CallKind::TestCall {
             return None;
@@ -768,9 +768,7 @@ impl CallStage {
         if reason == EndReason::Own {
             return None;
         }
-        if ended.is_meeting() {
-            // a meeting can be gone into at any time, whatever became of its call
-            let ask = self.calls.read(cx).rejoin_of(ended)?;
+        if let Some(ask) = self.calls.read(cx).rejoin_of(ended) {
             return Some(FollowUp { ask, rejoin: true });
         }
         if let Some(chat) = ended.group_chat() {
@@ -785,6 +783,9 @@ impl CallStage {
             if reason == EndReason::ChatHasCall {
                 return None;
             }
+        }
+        if ended.is_meeting() {
+            return None;
         }
         let chat = ended.call_back_chat(self.core.me())?;
         Some(FollowUp {

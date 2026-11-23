@@ -430,6 +430,21 @@ fn a_staged_meeting_call_reads_its_meeting_and_never_rings() {
 }
 
 #[test]
+fn a_call_asked_of_a_meeting_chat_id_the_list_lacks_reads_its_meeting_and_never_rings() {
+    let rig = calling();
+    let (trace, written) = trace();
+    let (shell, cx) = shell_window(&rig, Some(TRIO), trace);
+    registered(&rig);
+    let ask = Ask::Call {
+        chat: MEETING_CHAT.into(),
+    };
+    cx.update(|_, cx| shell.update(cx, |shell, cx| shell.ask_call(ask, cx)));
+    cx.run_until_parked();
+    assert!(actions(&rig).is_empty());
+    assert_eq!(lines(&written, "call", "meeting-read").len(), 1);
+}
+
+#[test]
 fn a_meeting_chat_with_its_invitees_is_joined_never_called() {
     let rig = calling();
     rig.core
@@ -2621,7 +2636,7 @@ fn a_dropped_group_call_offers_rejoin_and_a_one_to_one_invitation_call_back_by_t
 }
 
 #[test]
-fn an_answered_invitation_into_a_meeting_s_chat_never_offers_call_back() {
+fn an_answered_invitation_into_a_meeting_s_chat_offers_rejoin_never_call_back() {
     let rig = calling();
     let (trace, written) = trace();
     let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
@@ -2643,6 +2658,26 @@ fn an_answered_invitation_into_a_meeting_s_chat_never_offers_call_back() {
     assert!(
         asked(&rig, |action| matches!(action, CallAction::Call { .. })).is_empty(),
         "nor by the key"
+    );
+
+    // the same invitation, dropped: the meeting runs on, and Rejoin goes back into it
+    rig.send(Event::IncomingCall(invitation(
+        5,
+        Some(CALLER_NAME),
+        Some(MEETING_CHAT),
+    )));
+    click(cx, "call-answer");
+    status(&rig, 5, CallStatus::Connected);
+    let window = stage(&rig, &windows);
+    status(&rig, 5, CallStatus::Ended(End::Failed("media")));
+    assert!(drawn(window, "call-end-rejoin") && !drawn(window, "call-end-call-back"));
+    window.simulate_keystrokes("ctrl-shift-j");
+    window.run_until_parked();
+    assert_eq!(
+        actions(&rig).last(),
+        Some(&CallAction::Join {
+            chat: MEETING_CHAT.into()
+        })
     );
     no_name_in(&written);
 }

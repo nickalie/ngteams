@@ -1318,12 +1318,14 @@ impl Shell {
         }
     }
 
-    /// Whether the chat `id` is a meeting's, as the list has it.
+    /// Whether the chat `id` is a meeting's, by its id or as the list has it (the engine's rule).
     fn is_meeting_chat(&self, id: &str, cx: &App) -> bool {
-        self.list
-            .read(cx)
-            .row(id)
-            .is_some_and(|row| row.kind == RowKind::Meeting)
+        teams_proto::is_meeting_chat_id(id)
+            || self
+                .list
+                .read(cx)
+                .row(id)
+                .is_some_and(|row| row.kind == RowKind::Meeting)
     }
 
     /// The chat `id`'s name, when the list names it.
