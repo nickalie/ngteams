@@ -20,6 +20,13 @@ const LONG_POINT: &str = "Ada said that the player must keep the place of the tr
 /// An owner list nearly as wide as the pane.
 const LONG_OWNER: &str = "Ada Lab, Bo Lab, Cy Lab, Dee Lab";
 
+/// An owner list wider than the pane.
+const WIDER_OWNER: &str = "Ada Lab, Bo Lab, Cy Lab, Dee Lab, Eve Lab, Fay Lab, Gus Lab, Hal Lab, Ivy Lab, Jo Lab, Kai Lab, \
+                           Lee Lab, Max Lab, Ned Lab, Oli Lab, Pat Lab, Quin Lab, Rex Lab, Sam Lab, Tia Lab";
+
+/// A window so narrow that the summary's words are narrower than an owned text's basis.
+const NARROW_WINDOW: f32 = 520.0;
+
 /// A made-up summary of the fixtures' transcript, as a JSON string the fake tool's answer carries.
 fn fake_summary() -> String {
     let summary = serde_json::json!({
@@ -31,7 +38,8 @@ fn fake_summary() -> String {
         ]}],
         "next_steps": [
             {"owner": "Ada Lab", "text": LONG_POINT, "at": "0:20"},
-            {"owner": LONG_OWNER, "text": "Check the search.", "at": "0:21"}
+            {"owner": LONG_OWNER, "text": "Check the search.", "at": "0:21"},
+            {"owner": WIDER_OWNER, "text": "Check the noise.", "at": "0:22"}
         ],
         "questions": []
     });
@@ -227,6 +235,37 @@ fn a_wide_owner_puts_its_text_below(cx: &mut VisualTestContext) {
         words.left(),
         "the text in the full width: {words:?} {text:?}"
     );
+    an_owner_wider_than_the_pane_wraps(cx);
+}
+
+/// An owner wider than its words wraps in them, on more than one line.
+fn an_owner_wider_than_the_pane_wraps(cx: &mut VisualTestContext) {
+    let words = cx.debug_bounds("recap-summary-at-4-words").unwrap();
+    let owner = cx.debug_bounds("recap-summary-at-4-owner").unwrap();
+    assert!(
+        owner.right() <= words.right(),
+        "the owner in its words: {words:?} {owner:?}"
+    );
+    assert!(owner.size.height > gpui::px(30.0), "more than one line: {owner:?}");
+    a_narrow_pane_shrinks_the_text(cx);
+}
+
+/// In a pane so narrow that its words are narrower than the text's basis, an owned text shrinks to stay in its words.
+fn a_narrow_pane_shrinks_the_text(cx: &mut VisualTestContext) {
+    cx.simulate_resize(gpui::size(gpui::px(NARROW_WINDOW), gpui::px(1000.0)));
+    draw(cx);
+    let words = cx.debug_bounds("recap-summary-at-2-words").unwrap();
+    let text = cx.debug_bounds("recap-summary-at-2-text").unwrap();
+    assert!(
+        words.size.width < gpui::px(160.0),
+        "words narrower than the basis: {words:?}"
+    );
+    assert!(
+        text.right() <= words.right(),
+        "the text in its words: {words:?} {text:?}"
+    );
+    cx.simulate_resize(gpui::size(gpui::px(1600.0), gpui::px(1000.0)));
+    draw(cx);
 }
 
 /// The summary shown: copied as Markdown, then sent to the meeting's chat only once its preview's Send is clicked.
