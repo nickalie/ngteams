@@ -1380,6 +1380,7 @@ impl Compose {
         }
         if self.editing() {
             self.editor.update(cx, |editor, cx| editor.set_doc(Doc::default(), cx));
+            self.routes.stickers.clear();
         }
         // the reply or the edit being translated is called off with it: nothing of it is sent
         self.drop_translation_of(&self.mode.clone(), cx);
@@ -2029,7 +2030,12 @@ impl Compose {
                 .and_then(|bytes| editor::pictures::Picture::teams_sticker((*bytes).clone(), &src, &label));
             let to = route.borrow().0.clone();
             let _ = to.update(cx, |this, cx| {
+                let before = this.routes.stickers.len();
                 this.routes.stickers.retain(|held| !Rc::ptr_eq(held, &route));
+                // an edit called off drops the stickers it waited for
+                if this.routes.stickers.len() == before {
+                    return;
+                }
                 cx.notify();
                 match picture {
                     Some(picture) if this.takes_picture(cx) => {

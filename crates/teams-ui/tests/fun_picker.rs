@@ -959,23 +959,10 @@ fn a_teams_sticker_still_read_goes_with_its_draft_to_another_box() {
     teams_pictures(&rig, &["Clippy_HelloThere"]);
     let (view, cx) = chat_window(&rig, &place);
     let (other_view, other_cx) = chat_window(&rig, &place);
-    keys(cx, "ctrl-.");
-    let picker = picker(&view, cx).unwrap();
-    *rig.core.hold_pictures.lock().unwrap() = true;
-    cx.update(|window, cx| {
-        picker.update(cx, |picker, cx| {
-            picker.activate(&teams("Clippy_HelloThere"), window, cx);
-        });
-    });
-    draw(cx);
+    pick_held_teams_sticker(&rig, &view, "Clippy_HelloThere", cx);
     let (compose, other) = (compose(&view, cx), self::compose(&other_view, other_cx));
     cx.update(|_, cx| compose.update(cx, |compose, cx| compose.hand_draft_to(&other, cx)));
-    *rig.core.hold_pictures.lock().unwrap() = false;
-    let held = std::mem::take(&mut *rig.core.held_pictures.lock().unwrap());
-    assert_eq!(held.len(), 1);
-    for (src, answer) in held {
-        answer.send(Ok(rig.core.pictures.lock().unwrap().get(&src).cloned()));
-    }
+    release_held_pictures(&rig);
     draw(cx);
     draw(other_cx);
     assert!(!drawn(cx, "editor-picture-1"), "the box the draft left");
@@ -988,15 +975,7 @@ fn send_waits_for_a_teams_sticker_still_read() {
     let rig = teams_rig();
     teams_pictures(&rig, &["Clippy_HelloThere"]);
     let (view, cx) = chat_window(&rig, &place);
-    keys(cx, "ctrl-.");
-    let picker = picker(&view, cx).unwrap();
-    *rig.core.hold_pictures.lock().unwrap() = true;
-    cx.update(|window, cx| {
-        picker.update(cx, |picker, cx| {
-            picker.activate(&teams("Clippy_HelloThere"), window, cx);
-        });
-    });
-    draw(cx);
+    pick_held_teams_sticker(&rig, &view, "Clippy_HelloThere", cx);
     cx.simulate_input("hi");
     keys(cx, "enter");
     assert!(sent(&rig).is_empty(), "Send waits for the sticker");
@@ -1005,11 +984,7 @@ fn send_waits_for_a_teams_sticker_still_read() {
         cx.update(|_, cx| compose.read(cx).problem().cloned()),
         Some("Wait for your pictures to upload, or retry or remove a failed one.".into())
     );
-    *rig.core.hold_pictures.lock().unwrap() = false;
-    let held = std::mem::take(&mut *rig.core.held_pictures.lock().unwrap());
-    for (src, answer) in held {
-        answer.send(Ok(rig.core.pictures.lock().unwrap().get(&src).cloned()));
-    }
+    release_held_pictures(&rig);
     draw(cx);
     assert!(drawn(cx, "editor-picture-1"));
     keys(cx, "enter");
@@ -1047,7 +1022,7 @@ fn an_edit_waits_for_a_teams_sticker_still_read() {
     let seen = Rc::clone(&events);
     cx.update(|_, cx| {
         cx.subscribe(&compose, move |_, event: &ComposeEvent, _| {
-            seen.borrow_mut().push(event.clone())
+            seen.borrow_mut().push(event.clone());
         })
         .detach();
     });
@@ -1066,6 +1041,33 @@ fn an_edit_waits_for_a_teams_sticker_still_read() {
     release_held_pictures(&rig);
     draw(cx);
     assert!(drawn(cx, "editor-picture-1"), "the sticker stays in the new message");
+}
+
+#[test]
+fn an_edit_called_off_drops_the_teams_sticker_it_still_reads() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["Clippy_HelloThere"]);
+    let (view, cx) = chat_window(&rig, &place);
+    let compose = compose(&view, cx);
+    let loaded = Loaded {
+        doc: Doc::default(),
+        quotes: Vec::new(),
+    };
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.edit("1".to_owned(), loaded, window, cx)));
+    pick_held_teams_sticker(&rig, &view, "Clippy_HelloThere", cx);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.cancel(window, cx)));
+    assert_eq!(cx.update(|_, cx| compose.read(cx).mode().clone()), Mode::New);
+    release_held_pictures(&rig);
+    draw(cx);
+    assert!(
+        !drawn(cx, "editor-picture-1"),
+        "the new message doesn't get the edit's sticker"
+    );
+    assert!(
+        teams_ui::stickers::store::recent(&place.stickers).is_empty(),
+        "a sticker that never reached the box isn't Recent"
+    );
 }
 
 #[test]
