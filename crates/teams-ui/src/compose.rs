@@ -680,6 +680,9 @@ struct Routes {
     /// Sends: with `true`, a refused draft comes back after the draft that its box holds, with ids of that box for its
     /// pictures and files (it moved there).
     sends: Vec<Route<bool>>,
+    /// Reads of Teams' stickers picked, from Teams' sticker CDN: Send waits for them, and each goes in the box that
+    /// holds the draft once read.
+    stickers: Vec<Route<()>>,
 }
 
 /// What a compose box is made of.
@@ -748,8 +751,6 @@ pub struct Compose {
     draft_translation: draft_translation::DraftTranslation,
     /// The emoji picker, while it is open.
     emoji: Option<(Entity<FunPicker>, Subscription)>,
-    /// Teams' stickers picked whose pictures are still read from Teams' sticker CDN: Send waits for them.
-    stickers_read: usize,
     /// Where the emoji button was last drawn, for the picker to open by.
     emoji_at: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Where the box was last drawn: a narrow one can stack ([`fit`]).
@@ -911,7 +912,6 @@ impl Compose {
             correction,
             draft_translation: draft_translation::DraftTranslation::new(),
             emoji: None,
-            stickers_read: 0,
             emoji_at: Rc::default(),
             box_at: Rc::default(),
             rem: px(f32::from(theme::FONT_SIZE)),
@@ -1083,6 +1083,10 @@ impl Compose {
                 route.borrow_mut().1 = true;
                 other.routes.sends.push(route);
             }
+            for route in routes.stickers {
+                route.borrow_mut().0 = to.clone();
+                other.routes.stickers.push(route);
+            }
             other.sending_files += sending_files;
             if other.mode == Mode::New {
                 other.mode = mode;
@@ -1114,10 +1118,11 @@ impl Compose {
         matches!(self.mode, Mode::Edit { .. })
     }
 
-    /// Whether the box holds a draft that an edit can not carry: text, files (also files of a send on its way), or a
-    /// reply.
+    /// Whether the box holds a draft that an edit can not carry: text, pictures (also Teams' stickers still read),
+    /// files (also files of a send on its way), or a reply.
     fn holds_draft(&self, cx: &App) -> bool {
         !self.editor.read(cx).is_empty()
+            || !self.routes.stickers.is_empty()
             || !self.attachments.is_empty()
             || !self.apps.cards.is_empty()
             || self.sending_files > 0
@@ -1127,6 +1132,7 @@ impl Compose {
     /// A chat keeps its editor alive while a local draft or upload remains, including across chat navigation.
     pub(crate) fn has_draft(&self, cx: &App) -> bool {
         !self.editor.read(cx).is_empty()
+            || !self.routes.stickers.is_empty()
             || self.mode != Mode::New
             || !self.attachments.is_empty()
             || !self.apps.cards.is_empty()
@@ -1407,7 +1413,7 @@ impl Compose {
         if !self.files_ready() {
             return self.show_problem("Wait for your files to upload, or retry or remove a failed file.", cx);
         }
-        if !self.editor.read(cx).pictures_ready() || self.stickers_read > 0 {
+        if !self.editor.read(cx).pictures_ready() || !self.routes.stickers.is_empty() {
             return self.show_problem("Wait for your pictures to upload, or retry or remove a failed one.", cx);
         }
         let doc = self.editor.read(cx).doc().clone();
@@ -1941,8 +1947,9 @@ impl Compose {
         cx.notify();
     }
 
-    /// Puts `sticker` in the box at the cursor, as Teams' box takes one: a picture sent at once, named by the message
-    /// as a sticker; it closes the picker and goes first in Recent.
+    /// Puts `sticker` in the box at the cursor, as Teams' box takes one, named by the message as a sticker: one of the
+    /// user's packs is a picture sent at once; one of Teams' goes in once read ([`Self::put_teams_sticker`]). It closes
+    /// the picker, and the sticker goes first in Recent once it is in the box.
     fn put_sticker(&mut self, sticker: &crate::stickers::StickerRef, window: &mut Window, cx: &mut Context<Self>) {
         let packs = crate::stickers::Shelf::of(self.settings.read(cx).stickers_dir(), cx);
         self.emoji = None;
@@ -1989,7 +1996,7 @@ impl Compose {
 
     /// Puts one of Teams' stickers in the box once its picture is read from Teams' sticker CDN (no credential): the
     /// message names it at its address there, as Teams' box does, and nothing is sent to the media service. It goes
-    /// first in Recent only once it is in the box.
+    /// first in Recent only once it is in the box. A draft that moves to another box takes the read with it.
     fn put_teams_sticker(
         &mut self,
         sticker: &crate::stickers::StickerRef,
@@ -2006,16 +2013,18 @@ impl Compose {
         let (src, label) = (catalog.picture(held), held.name.clone());
         let (sticker, packs) = (sticker.clone(), packs.clone());
         let reply = self.core.message_picture(src.clone());
-        self.stickers_read += 1;
+        let route: Route<()> = Rc::new(RefCell::new((cx.weak_entity(), ())));
+        self.routes.stickers.push(Rc::clone(&route));
         cx.notify();
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |_, cx| {
             let picture = reply
                 .await
                 .ok()
                 .flatten()
                 .and_then(|bytes| editor::pictures::Picture::teams_sticker((*bytes).clone(), &src, &label));
-            let _ = this.update(cx, |this, cx| {
-                this.stickers_read = this.stickers_read.saturating_sub(1);
+            let to = route.borrow().0.clone();
+            let _ = to.update(cx, |this, cx| {
+                this.routes.stickers.retain(|held| !Rc::ptr_eq(held, &route));
                 cx.notify();
                 match picture {
                     Some(picture) if this.takes_picture(cx) => {
@@ -2143,7 +2152,7 @@ impl Compose {
             && (self.editing() || (self.attachments.is_empty() && self.apps.cards.is_empty())))
             || !self.files_ready()
             || !self.editor.read(cx).pictures_ready()
-            || self.stickers_read > 0;
+            || !self.routes.stickers.is_empty();
         let tip = match (matches!(self.mode, Mode::Edit { .. }), self.expanded) {
             (true, false) => "Save (Enter)",
             (true, true) => concat!("Save (", ctrl!(), "+Enter)"),

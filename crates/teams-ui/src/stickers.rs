@@ -249,7 +249,7 @@ impl Shelf {
             let mut recent = std::mem::take(&mut self.recent);
             recent.retain(|held| held != sticker);
             recent.insert(0, sticker.clone());
-            recent.truncate(store::RECENT_KEPT);
+            store::keep_recent(&mut recent);
             recent
         });
         cx.notify();

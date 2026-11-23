@@ -923,6 +923,60 @@ fn a_teams_sticker_that_cannot_be_read_says_so() {
 }
 
 #[test]
+fn recent_shows_the_last_eight_sent() {
+    let place = Setup::new();
+    let ids: Vec<String> = teams_ui::stickers::teams::catalog()
+        .stickers_of("Clippy")
+        .into_iter()
+        .take(10)
+        .map(|held| held.id.clone())
+        .collect();
+    for id in &ids {
+        teams_ui::stickers::store::record_recent(&place.stickers, &StickerRef::teams(id)).unwrap();
+    }
+    let rig = teams_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    keys(cx, "ctrl-.");
+    click(cx, "fun-tab-stickers");
+    let picker = picker(&view, cx).unwrap();
+    let rows = cx.update(|_, cx| picker.read(cx).rows(cx));
+    let recent: Vec<Item> = rows[..2].iter().flatten().cloned().collect();
+    let last: Vec<Item> = ids.iter().rev().take(8).map(|id| teams(id)).collect();
+    assert_eq!(recent, last, "two rows of four, the last sent first");
+    assert_eq!(rows[2], [Item::AddPack, Item::SeeAllPacks]);
+}
+
+#[test]
+fn a_teams_sticker_still_read_goes_with_its_draft_to_another_box() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["Clippy_HelloThere"]);
+    let (view, cx) = chat_window(&rig, &place);
+    let (other_view, other_cx) = chat_window(&rig, &place);
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    *rig.core.hold_pictures.lock().unwrap() = true;
+    cx.update(|window, cx| {
+        picker.update(cx, |picker, cx| {
+            picker.activate(&teams("Clippy_HelloThere"), window, cx);
+        });
+    });
+    draw(cx);
+    let (compose, other) = (compose(&view, cx), self::compose(&other_view, other_cx));
+    cx.update(|_, cx| compose.update(cx, |compose, cx| compose.hand_draft_to(&other, cx)));
+    *rig.core.hold_pictures.lock().unwrap() = false;
+    let held = std::mem::take(&mut *rig.core.held_pictures.lock().unwrap());
+    assert_eq!(held.len(), 1);
+    for (src, answer) in held {
+        answer.send(Ok(rig.core.pictures.lock().unwrap().get(&src).cloned()));
+    }
+    draw(cx);
+    draw(other_cx);
+    assert!(!drawn(cx, "editor-picture-1"), "the box the draft left");
+    assert!(drawn(other_cx, "editor-picture-1"), "the box that holds the draft");
+}
+
+#[test]
 fn send_waits_for_a_teams_sticker_still_read() {
     let place = Setup::new();
     let rig = teams_rig();
@@ -1058,9 +1112,11 @@ fn the_keyboard_opens_a_teams_pack_and_picks_its_sticker() {
 fn an_own_server_account_sees_only_the_user_s_packs() {
     let place = Setup::new().with_cats();
     teams_ui::stickers::store::record_recent(&place.stickers, &sticker("lab-cats", "002.png")).unwrap();
-    // a work account's eight Teams stickers after it keep the user's own in this account's Recent
+    // a work account's Teams stickers after it, more than the file keeps of them, keep the user's own in Recent
     let catalog = teams_ui::stickers::teams::catalog();
-    for held in catalog.stickers_of("Clippy").into_iter().take(8) {
+    let clippy = catalog.stickers_of("Clippy");
+    assert!(clippy.len() > teams_ui::stickers::store::RECENT_KEPT);
+    for held in clippy {
         teams_ui::stickers::store::record_recent(&place.stickers, &StickerRef::teams(&held.id)).unwrap();
     }
     let rig = new_rig();
