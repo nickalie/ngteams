@@ -1180,6 +1180,20 @@ fn a_click_on_more_options_with_the_keys_on_translation_gives_them_back_to_the_l
 }
 
 #[test]
+fn a_click_out_of_a_keyed_menu_with_the_keys_on_translation_gives_them_back_to_the_list() {
+    let rig = Rig::start();
+    let (view, cx) = keyed_chat(&rig);
+    keys(cx, &["shift-f10", "down", "down"]);
+    assert!(!list_focused(&view, cx), "the keys are on Translation");
+    let out = cx.debug_bounds("message-1003").unwrap();
+    cx.simulate_click(out.center(), Modifiers::none());
+    draw(cx);
+    draw(cx);
+    assert_eq!(options_of(&view, cx), None, "the click closes the menu");
+    assert!(list_focused(&view, cx), "the keys are back on the message list");
+}
+
+#[test]
 fn escape_in_the_translation_list_closes_it_alone_and_its_settings_row_takes_enter() {
     let rig = Rig::start();
     let (view, cx) = keyed_chat(&rig);

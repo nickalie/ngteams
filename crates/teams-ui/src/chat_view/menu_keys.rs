@@ -219,16 +219,15 @@ impl ChatView {
 
     /// "More options" on a message's hover bar clicked: its menu opens or closes, and the keys go back to where they
     /// are now when they close it. When the keys are in the menu, they go back at once to where they came from, before
-    /// its rows are gone.
+    /// its rows are gone, and a menu the click opens gives them back there too.
     pub(super) fn toggle_options_by_mouse(&mut self, message: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let had_keys = self.menu_keys.has_focus(window, cx);
-        if had_keys {
+        if self.menu_keys.has_focus(window, cx) {
             self.menu_keys.keyed = false;
             self.menu_keys.due = None;
             self.menu_keys.back.give_back(window, cx);
         }
         self.toggle_options(message, cx);
-        if self.options.is_some() && !had_keys {
+        if self.options.is_some() {
             self.menu_keys.back.keep(window, cx);
         }
     }
@@ -263,9 +262,10 @@ impl ChatView {
         if self.options.is_none() {
             keys.due = None;
             if std::mem::take(&mut keys.keyed) {
-                let (back, menu, side) = (keys.back.clone(), keys.menu.clone(), keys.side.clone());
+                let back = keys.back.clone();
+                let held = [&keys.menu, &keys.side, &keys.translation, &keys.more_actions].map(FocusHandle::clone);
                 window.defer(cx, move |window, cx| {
-                    give_back_if_lost(&back, [&menu, &side], window, cx);
+                    give_back_if_lost(&back, &held, window, cx);
                 });
             }
             return;
@@ -311,9 +311,9 @@ fn in_slots(slots: &mut Vec<FocusHandle>, entries: Vec<AnyElement>, cx: &App) ->
 }
 
 /// Gives the focus back to `back` when what a row picked from the keys did left it on nothing, or on one of the
-/// menu's `roots`.
-fn give_back_if_lost(back: &keyboard::Return, roots: [&FocusHandle; 2], window: &mut Window, cx: &mut App) {
-    let lost = window.focused(cx).is_none_or(|focused| roots.contains(&&focused));
+/// menu's own handles (`held`), which outlive its rows.
+fn give_back_if_lost(back: &keyboard::Return, held: &[FocusHandle], window: &mut Window, cx: &mut App) {
+    let lost = window.focused(cx).is_none_or(|focused| held.contains(&focused));
     if lost {
         back.give_back(window, cx);
     }

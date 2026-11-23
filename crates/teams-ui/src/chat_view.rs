@@ -2717,6 +2717,16 @@ impl ChatView {
             && (self.focus.handle.contains_focused(window, cx) || (escape && self.escape_in_a_popup.get()))
     }
 
+    /// Escape with a more-options menu open closes it; the held Escape's repeats then do nothing more.
+    fn escape_closes_options(&mut self, cx: &mut Context<Self>) {
+        if self.options.take().is_some() {
+            self.side_list = None;
+            self.escape_in_a_popup.set(true);
+            cx.stop_propagation();
+            cx.notify();
+        }
+    }
+
     /// Whether the keys are in the more-options menu or in the hover bar's list.
     fn popup_has_focus(&self, window: &Window, cx: &App) -> bool {
         self.menu_keys.has_focus(window, cx)
@@ -6539,11 +6549,11 @@ impl Render for ChatView {
         let typing = self.typing_line(palette, cx);
         Self::file_drop_target(cx)
             // Escape with a more-options menu open closes the menu first, as in Teams, wherever the focus is
-            .capture_action(cx.listener(|this, _: &ComposeEscape, _, cx| {
-                if this.options.take().is_some() {
-                    this.side_list = None;
-                    cx.stop_propagation();
-                    cx.notify();
+            .capture_action(cx.listener(|this, _: &ComposeEscape, _, cx| this.escape_closes_options(cx)))
+            // the same from where no binding takes Escape (a tool of the compose box)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
+                    this.escape_closes_options(cx);
                 }
             }))
             // Escape the compose box handed on (nothing to cancel there): the list takes the focus

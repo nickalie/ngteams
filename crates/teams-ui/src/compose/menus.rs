@@ -12,9 +12,11 @@
 //! A row keeps its tool's action, its key (bound in the box's key context as before) and its state (checked while its
 //! button would be lit).
 
+use std::cell::Cell;
+
 use gpui::{
     AnyElement, App, Context, DismissEvent, Entity, FocusHandle, Focusable as _, InteractiveElement as _, IntoElement,
-    MouseButton, ParentElement as _, SharedString, Styled as _, Subscription, Window, div, px,
+    KeystrokeEvent, MouseButton, ParentElement as _, SharedString, Styled as _, Subscription, Window, div, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::kbd::Kbd;
@@ -473,6 +475,25 @@ impl Compose {
         }
     }
 
+    /// Whether the keys are in the open menu of tools.
+    fn menu_has_focus(&self, window: &Window, cx: &App) -> bool {
+        self.menu
+            .as_ref()
+            .is_some_and(|open| open.menu.focus_handle(cx).contains_focused(window, cx))
+    }
+
+    /// A held Escape whose first push was in the open menu of tools: only that push acts (it closed the menu), so its
+    /// repeats do not go on to cancel a reply or an edit.
+    fn held_escape_after_menu(&self, event: &KeystrokeEvent, window: &Window, cx: &App) -> bool {
+        if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() {
+            return false;
+        }
+        if !event.is_held {
+            self.held_escape.in_menu.set(self.menu_has_focus(window, cx));
+        }
+        event.is_held && self.held_escape.in_menu.get()
+    }
+
     /// Whether "More options" is open.
     #[must_use]
     pub fn more_open(&self) -> bool {
@@ -628,4 +649,28 @@ fn menu_row(row: &Row, text: &FocusHandle, window: &Window) -> PopupMenuItem {
     })
     .icon(row.item.glyph().icon())
     .disabled(row.disabled)
+}
+
+/// Drops the repeats of a held Escape whose first push closed the open menu of tools, before the bindings.
+pub(super) struct HeldEscape {
+    /// The last new push of a plain Escape was in the open menu of tools.
+    in_menu: Cell<bool>,
+    _intercept: Subscription,
+}
+
+impl HeldEscape {
+    pub(super) fn new(cx: &mut Context<Compose>) -> Self {
+        let this = cx.weak_entity();
+        let intercept = cx.intercept_keystrokes(move |event, window, cx| {
+            let drop = this.read_with(cx, |this, cx| this.held_escape_after_menu(event, window, cx));
+            if matches!(drop, Ok(true)) {
+                window.prevent_default();
+                cx.stop_propagation();
+            }
+        });
+        Self {
+            in_menu: Cell::new(false),
+            _intercept: intercept,
+        }
+    }
 }

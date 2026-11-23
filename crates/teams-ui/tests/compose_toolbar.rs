@@ -1774,11 +1774,8 @@ fn escape_in_customize_chosen_by_the_keys_in_a_clicked_menu_gives_the_keys_back_
     assert_eq!(focused(cx), input, "Escape gives the keys back to the card's input");
 }
 
-#[test]
-fn escape_held_in_customize_chosen_in_a_clicked_menu_does_not_cancel_the_reply() {
-    let rig = Rig::start();
-    let (view, cx) = card_selected(&rig, card_message("700"));
-    let compose = view.read_with(cx, |view, _| view.compose().clone());
+/// The box replies to a made-up message, with the keys in it.
+fn replying_in(compose: &Entity<Compose>, cx: &mut VisualTestContext) {
     let quoted = teams_ui::compose::Quoted {
         message_id: "1700000000000".into(),
         sender: "8:orgid:00000000-0000-4000-8000-00000000000b".into(),
@@ -1788,13 +1785,33 @@ fn escape_held_in_customize_chosen_in_a_clicked_menu_does_not_cancel_the_reply()
         shown: None,
     };
     cx.update(|window, cx| compose.update(cx, |compose, cx| compose.reply_to(quoted, window, cx)));
-    focus_box(&compose, cx);
-    let replying = |cx: &mut VisualTestContext| {
-        compose.read_with(cx, |compose, _| {
-            matches!(compose.mode(), teams_ui::compose::Mode::Reply(_))
-        })
-    };
-    assert!(replying(cx));
+    focus_box(compose, cx);
+    assert!(replying(compose, cx));
+}
+
+fn replying(compose: &Entity<Compose>, cx: &mut VisualTestContext) -> bool {
+    compose.read_with(cx, |compose, _| {
+        matches!(compose.mode(), teams_ui::compose::Mode::Reply(_))
+    })
+}
+
+/// A held Escape keeps the reply; a new Escape in the box then cancels it.
+fn held_escape_keeps_the_reply(compose: &Entity<Compose>, cx: &mut VisualTestContext) {
+    hold(cx, "escape");
+    assert!(
+        replying(compose, cx),
+        "the held Escape's repeats do not cancel the reply"
+    );
+    press(cx, "escape");
+    assert!(!replying(compose, cx), "a new Escape in the box cancels the reply");
+}
+
+#[test]
+fn escape_held_in_customize_chosen_in_a_clicked_menu_does_not_cancel_the_reply() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    let compose = view.read_with(cx, |view, _| view.compose().clone());
+    replying_in(&compose, cx);
     let tabs = tabs_out_of_a_clicked_menu(&view, cx);
     focus_box(&compose, cx);
     open_the_card_s_menu_by_a_click(&view, cx);
@@ -1810,10 +1827,130 @@ fn escape_held_in_customize_chosen_in_a_clicked_menu_does_not_cancel_the_reply()
     press(cx, "escape");
     assert!(!cx.update(|_, cx| view.read(cx).bar_customize_open()));
     assert!(box_focused(&compose, cx), "Escape gives the keys back to the box");
-    hold(cx, "escape");
-    assert!(replying(cx), "the held Escape's repeats do not cancel the reply");
+    held_escape_keeps_the_reply(&compose, cx);
+}
+
+#[test]
+fn escape_held_in_a_clicked_message_menu_does_not_cancel_the_reply() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    let compose = view.read_with(cx, |view, _| view.compose().clone());
+    replying_in(&compose, cx);
+    let tabs = tabs_out_of_a_clicked_menu(&view, cx);
+    focus_box(&compose, cx);
+    open_the_card_s_menu_by_a_click(&view, cx);
+    for _ in 1..tabs {
+        press(cx, "tab");
+    }
+    assert!(view.read_with(cx, |view, _| view.options().is_some()));
+    assert!(
+        !box_focused(&compose, cx) && !tools_focused(&compose, cx),
+        "the keys are in the menu"
+    );
     press(cx, "escape");
-    assert!(!replying(cx), "a new Escape in the box cancels the reply");
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_none()),
+        "Escape closes the menu"
+    );
+    assert!(box_focused(&compose, cx), "Escape gives the keys back to the box");
+    held_escape_keeps_the_reply(&compose, cx);
+}
+
+#[test]
+fn escape_held_with_a_clicked_message_menu_over_the_box_does_not_cancel_the_reply() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    let compose = view.read_with(cx, |view, _| view.compose().clone());
+    replying_in(&compose, cx);
+    open_the_card_s_menu_by_a_click(&view, cx);
+    assert!(box_focused(&compose, cx), "the click leaves the keys in the box");
+    press(cx, "escape");
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_none()),
+        "Escape closes the menu"
+    );
+    assert!(
+        replying(&compose, cx),
+        "the Escape that closed the menu keeps the reply"
+    );
+    held_escape_keeps_the_reply(&compose, cx);
+}
+
+#[test]
+fn escape_on_a_tool_closes_a_clicked_message_menu() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    let compose = view.read_with(cx, |view, _| view.compose().clone());
+    focus_box(&compose, cx);
+    press(cx, "tab");
+    assert!(tools_focused(&compose, cx), "Tab goes to the tools");
+    let tool = focused(cx);
+    open_the_card_s_menu_by_a_click(&view, cx);
+    assert_eq!(focused(cx), tool, "the click leaves the keys on the tool");
+    press(cx, "escape");
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_none()),
+        "Escape closes the menu"
+    );
+    assert_eq!(focused(cx), tool, "the tool keeps the keys");
+}
+
+#[test]
+fn a_click_on_another_message_s_more_options_from_the_keys_in_a_menu_keeps_where_to_give_them_back() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    press(cx, "enter");
+    let tabs = tabs_out_of_a_clicked_menu(&view, cx);
+    press(cx, "escape");
+    assert!(list_focused(&view, cx));
+    press(cx, "up");
+    let other = view.read_with(cx, |view, _| view.selected().map(str::to_owned));
+    assert_ne!(other.as_deref(), Some("700"));
+    press(cx, "shift-f10");
+    press(cx, "down");
+    assert_eq!(view.read_with(cx, |view, _| view.options().map(str::to_owned)), other);
+    assert!(!list_focused(&view, cx), "the keys are in the other message's menu");
+    open_the_card_s_menu_by_a_click(&view, cx);
+    assert_eq!(
+        view.read_with(cx, |view, _| view.options().map(str::to_owned))
+            .as_deref(),
+        Some("700")
+    );
+    assert!(list_focused(&view, cx), "the click gives the keys back to the list");
+    press(cx, "down");
+    press(cx, "enter");
+    for _ in 1..tabs {
+        press(cx, "tab");
+    }
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_some()),
+        "the keys are in the card's menu"
+    );
+    press(cx, "escape");
+    assert!(view.read_with(cx, |view, _| view.options().is_none()));
+    assert!(
+        list_focused(&view, cx),
+        "Escape gives the keys back to where the click left them"
+    );
+}
+
+#[test]
+fn escape_held_after_it_closed_plus_does_not_cancel_the_reply() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    replying_in(&compose, cx);
+    click(cx, "compose-apps");
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        Some(MenuKind::Plus)
+    );
+    press(cx, "escape");
+    assert_eq!(compose.read_with(cx, |compose, _| compose.menu_open()), None);
+    assert!(
+        replying(&compose, cx),
+        "the Escape that closed the menu keeps the reply"
+    );
+    held_escape_keeps_the_reply(&compose, cx);
 }
 
 #[test]
