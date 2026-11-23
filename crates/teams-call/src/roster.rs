@@ -89,7 +89,7 @@ impl Roster {
     pub(crate) fn own(&self, me: &Mri) -> Own {
         self.entries
             .iter()
-            .find(|entry| &entry.mri == me && entry.active)
+            .find(|entry| is_me(&entry.mri, me) && entry.active)
             .map(|entry| Own {
                 hand: entry.hand.clone(),
                 organizer: entry.organizer,
@@ -101,7 +101,7 @@ impl Roster {
     pub(crate) fn own_video_source(&self, me: &Mri) -> Option<i64> {
         self.entries
             .iter()
-            .find(|entry| &entry.mri == me && entry.active)
+            .find(|entry| is_me(&entry.mri, me) && entry.active)
             .and_then(|entry| entry.video_source)
     }
 
@@ -123,10 +123,10 @@ impl Roster {
         let waiting: Vec<Participant> = self
             .entries
             .iter()
-            .filter(|entry| entry.in_lobby && &entry.mri != me)
+            .filter(|entry| entry.in_lobby && !is_me(&entry.mri, me))
             .map(participant)
             .collect();
-        let own = self.entries.iter().any(|entry| entry.in_lobby && &entry.mri == me);
+        let own = self.entries.iter().any(|entry| entry.in_lobby && is_me(&entry.mri, me));
         let mut change = LobbyChange::default();
         if waiting != self.told_waiting {
             self.told_waiting.clone_from(&waiting);
@@ -152,7 +152,7 @@ impl Roster {
         let now: Vec<Participant> = self
             .entries
             .iter()
-            .filter(|entry| entry.active && &entry.mri != me)
+            .filter(|entry| entry.active && !is_me(&entry.mri, me))
             .map(participant)
             .collect();
         if now == self.told {
@@ -161,6 +161,11 @@ impl Roster {
         self.told.clone_from(&now);
         Some(now)
     }
+}
+
+/// Whether `mri` is the account `me`: an MRI's object id is a GUID, which a roster may write in another case.
+fn is_me(mri: &Mri, me: &Mri) -> bool {
+    mri.as_str().eq_ignore_ascii_case(me.as_str())
 }
 
 /// A roster entry as told.

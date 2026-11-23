@@ -4,7 +4,9 @@
 //! without pictures (the other one's tile and the account's self view), ringing with the other one's picture, a group
 //! call whose participants have a picture or not (one speaking, one muted with a hand up), the same with People open,
 //! the group call in Teams Dark, and three tiles with two hands raised in turn (Teams Light and Dark, and with the
-//! account's own hand). The test runs itself again inside the sandbox per scene; the parent screenshots
+//! account's own hand). Then a meeting whose chat invited three others with People open: the account alone in it
+//! (nobody's tile, the three under "Others invited"), and once Ben joined. The test runs itself again inside the
+//! sandbox per scene; the parent screenshots
 //! each window into `target/ui-shots/call-faces-*.png`.
 //!
 //! Without weston 15, niri or `dbus-daemon` it says so and passes, unless `GPUI_SMOKE_REQUIRE=1`.
@@ -56,7 +58,7 @@ const WAIT: Duration = Duration::from_secs(20);
 const READY_FRAMES: usize = 30;
 
 /// The scenes, each screenshotted as `call-faces-<name>.png`.
-const SCENES: [&str; 10] = [
+const SCENES: [&str; 12] = [
     "one-to-one-pictures",
     "one-to-one-initials",
     "ringing-picture",
@@ -67,6 +69,8 @@ const SCENES: [&str; 10] = [
     "group-hands",
     "group-hands-dark",
     "group-hands-self",
+    "meeting-alone",
+    "meeting-joined",
 ];
 
 pub(super) fn main() -> ExitCode {
@@ -138,6 +142,7 @@ const LAB_D: &str = "8:orgid:00000000-0000-4000-8000-00000000000d";
 const ECHO: &str = "28:00000000-0000-4000-8000-0000000000ec";
 const AB: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-8000-00000000000b@unq.gbl.spaces";
 const GROUP: &str = "19:0000000000000000000000000000trio@thread.v2";
+const MEETING: &str = "19:meeting_MadeUpMeeting0001@thread.v2";
 
 fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -232,6 +237,13 @@ fn seed(core: &FakeCore, scene: &str) {
                 .map(|mri| Member::new(mri, None))
                 .collect(),
         ),
+        (
+            MEETING.to_owned(),
+            [LAB_A, LAB_B, LAB_C, LAB_D]
+                .iter()
+                .map(|mri| Member::new(mri, None))
+                .collect(),
+        ),
     ]);
 }
 
@@ -318,6 +330,7 @@ fn open(scene: String, cx: &mut App) {
     windows.update(cx, |windows, cx| windows.add(parts.clone(), cx));
     let _ = events.send(Event::CallingRegistration(RegistrationReport::Registered));
     let group = scene.starts_with("group");
+    let meeting = scene.starts_with("meeting");
     let chat = if group { GROUP } else { AB };
     let core = parts.core.clone();
     let calls_model = models.calls.clone();
@@ -326,7 +339,12 @@ fn open(scene: String, cx: &mut App) {
     cx.spawn(async move |cx| {
         cx.background_executor().timer(Duration::from_millis(300)).await;
         cx.update(|cx| {
-            calls::ask(&calls_model, &core, &trace, Ask::Call { chat: chat.to_owned() }, cx);
+            if meeting {
+                calls_model.update(cx, |calls, cx| calls.open_prejoin(meeting_to_join(), cx));
+                calls::join_now(&calls_model, &core, &trace, cx);
+            } else {
+                calls::ask(&calls_model, &core, &trace, Ask::Call { chat: chat.to_owned() }, cx);
+            }
         });
         cx.background_executor().timer(Duration::from_millis(300)).await;
         let call = CallId::for_tests(1);
@@ -338,16 +356,7 @@ fn open(scene: String, cx: &mut App) {
         let _ = send.send(Event::Call { call, status });
         if scene.starts_with("group-hands") {
             hands(&send, call, scene.ends_with("-self"), cx).await;
-        } else if group {
-            let view = CallView {
-                participants: vec![
-                    participant(LAB_B, "Ben Bright", (false, false, false)),
-                    participant(LAB_C, "Cleo Sea", (true, false, false)),
-                    participant(LAB_D, "Dan Dee", (false, true, true)),
-                ],
-                speaking: false,
-                hearing: true,
-            };
+        } else if let Some(view) = roster(&scene) {
             let _ = send.send(Event::CallParticipants { call, view });
         }
         cx.background_executor().timer(Duration::from_millis(500)).await;
@@ -356,6 +365,38 @@ fn open(scene: String, cx: &mut App) {
         mem::forget((bridge, send));
     })
     .detach();
+}
+
+/// Who `scene`'s roster says is in its call besides the account, unless it says nothing.
+fn roster(scene: &str) -> Option<CallView> {
+    let participants = match scene {
+        "meeting-joined" => vec![participant(LAB_B, "Ben Bright", (false, false, false))],
+        _ if scene.starts_with("meeting") => Vec::new(),
+        _ if scene.starts_with("group") => vec![
+            participant(LAB_B, "Ben Bright", (false, false, false)),
+            participant(LAB_C, "Cleo Sea", (true, false, false)),
+            participant(LAB_D, "Dan Dee", (false, true, true)),
+        ],
+        _ => return None,
+    };
+    Some(CallView {
+        participants,
+        speaking: false,
+        hearing: true,
+    })
+}
+
+/// The made-up meeting, joined by its chat.
+fn meeting_to_join() -> calls::MeetingToJoin {
+    calls::MeetingToJoin::Chat {
+        chat: MEETING.to_owned(),
+        meeting: teams_core::MeetingInfo {
+            organizer_id: "00000000-0000-4000-8000-00000000000b".to_owned(),
+            tenant_id: "00000000-0000-4000-8000-0000000000f1".to_owned(),
+        },
+        title: "Weekly sync".to_owned(),
+        post: None,
+    }
 }
 
 /// Three tiles, the hands raised in turn: Dan's first, then Ben's (or, with `own`, the account's), each its own roster
@@ -399,7 +440,7 @@ fn ready(windows: &gpui::Entity<CallWindows>, scene: &str, cx: &mut App) {
     let _ = window.update(cx, move |kit: &mut KitRoot, window, cx| {
         if let Ok(stage) = kit.view().clone().downcast::<CallStage>() {
             stage.update(cx, |stage, cx| match scene.as_str() {
-                "group-people" => stage.show_roster(true, cx),
+                "group-people" | "meeting-alone" | "meeting-joined" => stage.show_roster(true, cx),
                 "group-speaker" => stage.set_layout(teams_ui::call_stage::Layout::Speaker, cx),
                 _ => {}
             });

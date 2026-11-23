@@ -1,8 +1,9 @@
 //! The call window's People pane ("Participants"), as Teams shows it: a meeting's Share invite (its join link
 //! copied), who waits in its lobby (Admit all, and Admit or Deny each), and who is in the call (the account first),
 //! each with whether they speak, their microphone muted and their hand raised, the organizer's Mute all beside them;
-//! then in a group call "People added to the chat": its chat's members who aren't in it, each with Request to join
-//! as the pointer is on them (they are called into the call, as an add is).
+//! then in a group call "People added to the chat", in a meeting "Others invited": its chat's members who aren't in
+//! it, each with Request to join as the pointer is on them (they are called into the call, as an add is). A meeting's
+//! chat members are its invitees: only the roster says who joined.
 use super::*;
 use teams_core::LobbyPerson;
 
@@ -17,7 +18,7 @@ impl CallStage {
             self.hand_rank(me),
             palette,
         )];
-        if active.view.participants.is_empty() {
+        if active.people_stand_in() {
             rows.extend(people.iter().enumerate().map(|(index, (mri, name))| {
                 let row = format!("call-roster-{index}");
                 let face = faces::small_face(&self.faces, (&row, mri), name);
@@ -187,13 +188,14 @@ impl CallStage {
             .into_any_element()
     }
 
-    /// "People added to the chat (n)": in a group call, its chat's members who aren't in it and aren't being called,
-    /// each with its avatar and name, and Request to join while the pointer is on it (not in the read-only mode).
+    /// "People added to the chat (n)" in a group call, "Others invited (n)" in a meeting: its chat's members who aren't
+    /// in it, waiting in its lobby or being called, each with its avatar and name, and Request to join while the
+    /// pointer is on it (not in the read-only mode).
     fn added_section(&self, active: &ActiveCall, palette: Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if meeting::is_meeting(active)
-            || !controls::group_or_meeting(active)
+        let meeting = meeting::is_meeting(active);
+        if !controls::group_or_meeting(active)
             || active.status != CallStatus::Connected
-            || active.view.participants.is_empty()
+            || (!meeting && active.view.participants.is_empty())
         {
             return None;
         }
@@ -203,20 +205,27 @@ impl CallStage {
             .of(active.id)
             .iter()
             .filter(|(mri, _)| {
+                // an app in the chat is nobody to ask in
                 *mri != me
+                    && !Mri::new(mri.as_str()).is_bot()
                     && !active
                         .view
                         .participants
                         .iter()
                         .any(|participant| participant.mri == *mri)
                     && !active.invited.iter().any(|invited| invited.mri.as_str() == mri)
+                    && !active.lobby.iter().any(|person| person.mri.as_str() == mri)
             })
             .cloned()
             .collect();
         if out.is_empty() {
             return None;
         }
-        let heading = format!("People added to the chat ({})", out.len());
+        let heading = if meeting {
+            format!("Others invited ({})", out.len())
+        } else {
+            format!("People added to the chat ({})", out.len())
+        };
         let rows: Vec<AnyElement> = out
             .into_iter()
             .enumerate()

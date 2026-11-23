@@ -2828,6 +2828,67 @@ fn in_meeting(rig: &Rig, trace: &Arc<ViewTrace>) -> (Entity<CallWindows>, &'stat
     (windows, stage)
 }
 
+/// The made-up meeting's chat holding a, b and c: who was invited, none of them in its call by that.
+fn invite_to_meeting(rig: &Rig) {
+    rig.core.members.lock().unwrap().insert(
+        MEETING_CHAT.to_owned(),
+        vec![
+            Member::new(LAB_A, None),
+            Member::new(LAB_B, None),
+            Member::new(LAB_C, None),
+        ],
+    );
+}
+
+#[test]
+fn a_meeting_nobody_else_joined_shows_its_invitees_as_invited_not_in_it() {
+    let rig = calling();
+    invite_to_meeting(&rig);
+    let (trace, _) = trace();
+    let (_windows, stage) = in_meeting(&rig, &trace);
+    // the roster names nobody else: the stage waits, with no invitee's tile
+    rig.send(Event::CallParticipants {
+        call: call(1),
+        view: view(&[], false),
+    });
+    rig.cx.run_until_parked();
+    draw(stage);
+    assert!(!drawn(stage, "call-person-0"), "an invitee isn't in the call");
+    assert!(!drawn(stage, "call-participant-0"));
+    click(stage, "call-roster");
+    assert!(!drawn(stage, "call-roster-0"), "only the account is in the meeting");
+    assert!(drawn(stage, "call-roster-added"), "Others invited");
+    assert!(drawn(stage, "call-roster-added-0"));
+    assert!(drawn(stage, "call-roster-added-1"));
+    let active = rig.cx.read(|cx| calls_of(&rig).read(cx).call().cloned()).unwrap();
+    assert!(
+        !active.people_stand_in(),
+        "a meeting's invitees never stand in for its roster"
+    );
+    // b joins: b's tile and row; only c is still invited
+    rig.send(Event::CallParticipants {
+        call: call(1),
+        view: view(&[(LAB_B, "Lab Bee", true, Some(1), false)], false),
+    });
+    rig.cx.run_until_parked();
+    draw(stage);
+    assert!(drawn(stage, "call-participant-0"));
+    assert!(drawn(stage, "call-roster-0"));
+    assert!(!drawn(stage, "call-roster-1"));
+    assert!(drawn(stage, "call-roster-added-0"));
+    assert!(!drawn(stage, "call-roster-added-1"), "b joined");
+    let row = stage.debug_bounds("call-roster-added-0").unwrap();
+    stage.simulate_mouse_move(row.center(), None, Modifiers::none());
+    click(stage, "call-roster-request-0");
+    assert_eq!(
+        actions(&rig).last(),
+        Some(&CallAction::Add {
+            call: call(1),
+            invitee: Mri::new(LAB_C),
+        })
+    );
+}
+
 #[test]
 fn whoever_waits_in_the_meetings_lobby_is_admitted_or_denied_from_the_stage() {
     let rig = calling();

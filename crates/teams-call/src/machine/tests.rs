@@ -1053,6 +1053,68 @@ fn a_meetings_running_call_tells_who_is_in_it_from_the_starts_answer() {
     assert_eq!(participants[0].name.as_deref(), Some("Lab Bee"));
 }
 
+/// A roster endpoint in a meeting's call with its media listed: main audio `audio`, main video `video`.
+fn meeting_endpoint(audio: &str, video: &str) -> Value {
+    json!({"call": {"mediaStreams": [
+        {"type": "audio", "label": "main-audio", "sourceId": 11, "direction": audio},
+        {"type": "video", "label": "main-video", "sourceId": 628, "direction": video},
+        {"type": "data", "label": "data", "sourceId": 13, "direction": "sendrecv"},
+    ]}})
+}
+
+#[test]
+fn a_meeting_the_account_is_alone_in_tells_nobody_else_in_it() {
+    let now = Instant::now();
+    // the account as the roster may write it (its object id in upper case), from two endpoints, its camera on; and a
+    // nameless bot that only listens, as a recorder from another region joins
+    let own = "8:orgid:00000000-0000-4000-8000-00000000000A";
+    let roster = json!({"type": "Delta", "participants": {
+        own: {"version": 3, "state": "active", "meetingRole": "organizer", "details": {"displayName": "Lab A"},
+            "endpoints": {
+                "e1": meeting_endpoint("sendrecv", "sendrecv"),
+                "e2": meeting_endpoint("sendrecv", "recvonly"),
+            }},
+        "28:00000000-0000-4000-8000-0000000000f9": {"version": 2, "state": "active",
+            "endpoints": {"bot": meeting_endpoint("recvonly", "recvonly")}},
+    }});
+    let (mut calls, call, told) = meeting_answered(roster, now);
+    assert!(
+        !told
+            .iter()
+            .any(|event| matches!(event, CallEvent::Participants { participants, .. } if !participants.is_empty())),
+        "{told:#?}"
+    );
+    assert!(
+        told.iter()
+            .any(|event| matches!(event, CallEvent::Own { organizer: true, .. })),
+        "the account's own entry read as its own: {told:#?}"
+    );
+    let roster_path = calls
+        .call
+        .as_ref()
+        .and_then(|call| call.path_of(Kind::Conversation, "rosterUpdate"))
+        .unwrap()
+        .to_owned();
+    // b joins with its camera on: the one participant
+    let joined = json!({"participants": {B: {"version": 4, "state": "active", "details": {"displayName": "Lab Bee"},
+        "endpoints": {"e": meeting_endpoint("sendrecv", "sendrecv")}}}});
+    calls.on_delivery(&delivery(&roster_path, &joined), Observed::Nothing, now);
+    let after = events(&effects(&mut calls));
+    let participants = after
+        .iter()
+        .find_map(|event| match event {
+            CallEvent::Participants { call: of, participants } if *of == call => Some(participants.clone()),
+            _ => None,
+        })
+        .expect("b told");
+    let mris: Vec<&str> = participants
+        .iter()
+        .map(|participant| participant.mri.as_str())
+        .collect();
+    assert_eq!(mris, [B]);
+    assert!(participants[0].video_on);
+}
+
 /// An invitation to `callee` from a in the group chat `chat`, its conversation `Conversation<n>`.
 fn group_invitation(callee: &str, chat: &str, n: u8) -> Value {
     let gp = json!({

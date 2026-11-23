@@ -466,6 +466,13 @@ fn roster_entry(mri: &str, entry: &Value) -> Option<RosterEntry> {
             .and_then(Value::as_str)
             .is_some_and(|direction| matches!(direction, "sendrecv" | "sendonly"))
     };
+    let name = entry
+        .pointer("/details/displayName")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty());
+    if is_service(mri, name, stream("main-audio"), video.is_some_and(sends)) {
+        return None;
+    }
     let server_mute = server_mute(stream("main-audio"), endpoints);
     let state_active = entry.get("state").and_then(Value::as_str) == Some("active");
     let waiting = endpoints.is_some_and(|endpoints| {
@@ -479,11 +486,7 @@ fn roster_entry(mri: &str, entry: &Value) -> Option<RosterEntry> {
         active: state_active && in_call,
         in_lobby: state_active && waiting && !in_call,
         // the echo service's entry names nobody: an empty name is none
-        name: entry
-            .pointer("/details/displayName")
-            .and_then(Value::as_str)
-            .filter(|name| !name.is_empty())
-            .map(str::to_owned),
+        name: name.map(str::to_owned),
         audio_source: stream("main-audio").and_then(|audio| audio.get("sourceId")?.as_i64()),
         video_source: video.and_then(|video| video.get("sourceId")?.as_i64()),
         video_on: video.is_some_and(sends),
@@ -512,6 +515,16 @@ fn roster_entry(mri: &str, entry: &Value) -> Option<RosterEntry> {
                 .map(str::to_owned)
         }),
     })
+}
+
+/// A service in the call rather than a person: an app's MRI (`28:`) with no name that only listens (its main audio
+/// `recvonly`, no video going out), as a recording or transcription bot joins from a region `teams_proto::captions`
+/// doesn't list (Teams shows no such entry among the people). The echo service, nameless too, talks back and stays.
+fn is_service(mri: &str, name: Option<&str>, audio: Option<&Value>, video_out: bool) -> bool {
+    let audio_in_only = audio
+        .and_then(|audio| audio.get("direction")?.as_str())
+        .is_some_and(|direction| matches!(direction, "recvonly" | "inactive"));
+    Mri::new(mri).is_bot() && name.is_none() && audio_in_only && !video_out
 }
 
 /// The organizer's mute of an entry's main `audio`, with the version of its endpoint's mutes it came as.

@@ -135,7 +135,7 @@ impl CallStage {
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let waiting = active.kind == CallKind::Meeting && active.status == CallStatus::Connected;
+        let waiting = active.is_meeting() && active.status == CallStatus::Connected;
         if let Some(since) = active.held {
             // Teams' held call: who it is with, "On hold" and how long, no rings
             let lasted = calls::duration_text(since.elapsed().as_secs());
@@ -467,7 +467,7 @@ impl CallStage {
 
     /// The stage's tiles: the roster's participants once it told who is in the call (the grid, traced when it
     /// changed); before that, once the media connected, the people the call is with (a 1:1 call's far end on line
-    /// 0); none while it rings.
+    /// 0); none while it rings, nor in a meeting nobody else joined (its invitees aren't in it).
     pub(super) fn tiles_of(&mut self, active: &ActiveCall) -> Vec<StageTile> {
         let view = &active.view;
         if !view.participants.is_empty() {
@@ -510,7 +510,7 @@ impl CallStage {
             self.trace_grid(active.id, view);
             return tiles;
         }
-        if !matches!(active.status, CallStatus::Connected | CallStatus::Reconnecting) {
+        if !active.people_stand_in() || !matches!(active.status, CallStatus::Connected | CallStatus::Reconnecting) {
             return Vec::new();
         }
         let people = self.people.of(active.id);

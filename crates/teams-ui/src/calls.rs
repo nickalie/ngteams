@@ -191,6 +191,20 @@ pub const REACTION_SHOWN: Duration = Duration::from_millis(4_250);
 const REACTIONS_SHOWN: usize = 12;
 
 impl ActiveCall {
+    /// Whether it is a meeting's call: one gone into as a meeting, or one in a meeting's chat (an invitation into it).
+    #[must_use]
+    pub fn is_meeting(&self) -> bool {
+        self.kind == CallKind::Meeting || self.chat.as_deref().is_some_and(teams_proto::is_meeting_chat_id)
+    }
+
+    /// Whether the people it is with stand in for its roster while the roster names nobody else: a ring's or a 1:1
+    /// call's far end, a group chat's members. Never a meeting's: its chat's members are who was invited, not who
+    /// joined.
+    #[must_use]
+    pub fn people_stand_in(&self) -> bool {
+        self.view.participants.is_empty() && !self.is_meeting()
+    }
+
     /// Its results, when it is the test call.
     fn test_check(&self) -> Option<DeviceCheck> {
         (self.kind == CallKind::TestCall).then_some(self.check)

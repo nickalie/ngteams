@@ -106,7 +106,7 @@ pub const ATTENDANCE_FILE: &str = "meetingAttendanceList.csv";
 /// it).
 #[must_use]
 pub fn is_meeting(active: &ActiveCall) -> bool {
-    active.kind == CallKind::Meeting || active.chat.as_deref().is_some_and(teams_proto::is_meeting_chat_id)
+    active.is_meeting()
 }
 
 impl CallStage {

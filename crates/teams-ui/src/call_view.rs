@@ -199,9 +199,9 @@ async fn members_named(core: &Arc<dyn Core>, chat: String) -> Vec<(String, Share
 }
 
 /// The names of who `active` is with: the roster's, once it told who is in the call (a name the roster leaves out
-/// as `people` give it), else `people`'s.
+/// as `people` give it), else `people`'s while they stand in for it ([`ActiveCall::people_stand_in`]).
 pub(crate) fn names_in_call(active: &ActiveCall, people: &[(String, SharedString)]) -> Vec<SharedString> {
-    if active.view.participants.is_empty() {
+    if active.people_stand_in() {
         return people.iter().map(|(_, name)| name.clone()).collect();
     }
     active
