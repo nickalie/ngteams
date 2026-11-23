@@ -1216,6 +1216,8 @@ pub struct ChatView {
     menu_keys: menu_keys::MenuKeys,
     /// The list of the hover bar's buttons, while it is open ([`bar_customize`]).
     bar_customize: Option<bar_customize::BarCustomize>,
+    /// The last new push of a plain Escape was in the more-options menu or in the hover bar's list.
+    escape_in_a_popup: Cell<bool>,
     /// The account's workflows that run from a message, read each time a message's menu opens.
     workflows: Option<Entity<crate::workflow_run::menu::MessageWorkflows>>,
     /// The message whose delete waits for its confirmation.
@@ -1440,6 +1442,7 @@ impl ChatView {
             options: None,
             options_at: Rc::default(),
             bar_customize: None,
+            escape_in_a_popup: Cell::new(false),
             side_list: None,
             menu_keys: menu_keys::MenuKeys::new(cx),
             workflows: None,
@@ -2696,16 +2699,31 @@ impl ChatView {
 
     /// A held Enter, Space or Escape in the list: only a new push acts (it may have moved the keys to a control, which
     /// its repeats must not press, or out of a card's field, past which they must not go on to the box), except Enter
-    /// and Space in a card's text field, where a held key types again (not on a time's chevron).
+    /// and Space in a card's text field, where a held key types again (not on a time's chevron). A held Escape that
+    /// closed the more-options menu or the hover bar's list also acts once, wherever it gave the keys back to.
     fn held_press(&self, event: &KeystrokeEvent, window: &Window, cx: &App) -> bool {
         let in_context = |name| event.context_stack.iter().any(|context| context.contains(name));
         let in_text = in_context(crate::card_view::TEXT_CONTEXT) && !in_context(crate::time_picker::CHOICE_CONTEXT);
+        let escape = event.keystroke.key == "escape" && !event.keystroke.modifiers.modified();
+        if escape && !event.is_held {
+            self.escape_in_a_popup.set(self.popup_has_focus(window, cx));
+        }
         let repeated = match event.keystroke.key.as_str() {
             "enter" | "space" => !in_text,
-            "escape" => !event.keystroke.modifiers.modified(),
-            _ => false,
+            _ => escape,
         };
-        event.is_held && repeated && self.focus.handle.contains_focused(window, cx)
+        event.is_held
+            && repeated
+            && (self.focus.handle.contains_focused(window, cx) || (escape && self.escape_in_a_popup.get()))
+    }
+
+    /// Whether the keys are in the more-options menu or in the hover bar's list.
+    fn popup_has_focus(&self, window: &Window, cx: &App) -> bool {
+        self.menu_keys.has_focus(window, cx)
+            || self
+                .bar_customize
+                .as_ref()
+                .is_some_and(|open| open.list.has_focus(window, cx))
     }
 
     fn on_a_control_in_the_list(&self, window: &Window, cx: &App) -> bool {

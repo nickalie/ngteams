@@ -24,7 +24,7 @@ pub const CUSTOMIZE: &str = "Customize";
 
 /// The list while it is open: on which message's bar, and where the focus goes back to.
 pub(super) struct BarCustomize {
-    list: CustomizeList,
+    pub(super) list: CustomizeList,
     /// The rows as the list opened: a click or a key resolves its row against what the list shows.
     rows: Vec<Option<BarItem>>,
     /// The message whose bar stays shown while the list is open.

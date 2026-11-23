@@ -72,6 +72,11 @@ impl CustomizeList {
         }
     }
 
+    /// Whether the keys are in the list.
+    pub(crate) fn has_focus(&self, window: &Window, cx: &App) -> bool {
+        self.focus.contains_focused(window, cx)
+    }
+
     /// Selects row `ix`.
     pub(crate) fn select(&mut self, ix: usize) {
         self.selected = Some(ix);

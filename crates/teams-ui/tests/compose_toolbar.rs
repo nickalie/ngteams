@@ -1663,6 +1663,39 @@ fn more_opened_on_attach_then_attach_moved_into_it(rig: &Rig) -> (Entity<Compose
 }
 
 #[test]
+fn plus_s_menu_closes_when_plus_leaves_the_row_and_the_text_gets_the_keys() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    press(cx, "tab");
+    press(cx, "end");
+    press(cx, "enter");
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        Some(MenuKind::Plus)
+    );
+    let mut width = 900.0;
+    while compose.read_with(cx, Compose::row_tools).contains(&"compose-apps") {
+        width -= 20.0;
+        assert!(width > 100.0, "\"+\" goes into More options in a narrow box");
+        cx.simulate_resize(size(px(width), px(640.0)));
+        draw(cx);
+    }
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        None,
+        "the menu closes with its button gone"
+    );
+    assert!(box_focused(&compose, cx), "the text has the keys");
+    cx.simulate_resize(size(px(900.0), px(640.0)));
+    draw(cx);
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        None,
+        "the menu does not show again in a wide box"
+    );
+}
+
+#[test]
 fn tab_in_a_menu_whose_tool_left_the_row_goes_on_from_its_button() {
     let rig = Rig::start();
     let (compose, cx) = more_opened_on_attach_then_attach_moved_into_it(&rig);
@@ -1739,6 +1772,48 @@ fn escape_in_customize_chosen_by_the_keys_in_a_clicked_menu_gives_the_keys_back_
     press(cx, "escape");
     assert!(!cx.update(|_, cx| view.read(cx).bar_customize_open()));
     assert_eq!(focused(cx), input, "Escape gives the keys back to the card's input");
+}
+
+#[test]
+fn escape_held_in_customize_chosen_in_a_clicked_menu_does_not_cancel_the_reply() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    let compose = view.read_with(cx, |view, _| view.compose().clone());
+    let quoted = teams_ui::compose::Quoted {
+        message_id: "1700000000000".into(),
+        sender: "8:orgid:00000000-0000-4000-8000-00000000000b".into(),
+        sender_name: "Lab Bee".into(),
+        time: "1700000000000".into(),
+        preview: "A made-up message".into(),
+        shown: None,
+    };
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.reply_to(quoted, window, cx)));
+    focus_box(&compose, cx);
+    let replying = |cx: &mut VisualTestContext| {
+        compose.read_with(cx, |compose, _| {
+            matches!(compose.mode(), teams_ui::compose::Mode::Reply(_))
+        })
+    };
+    assert!(replying(cx));
+    let tabs = tabs_out_of_a_clicked_menu(&view, cx);
+    focus_box(&compose, cx);
+    open_the_card_s_menu_by_a_click(&view, cx);
+    for _ in 1..tabs {
+        press(cx, "tab");
+    }
+    press(cx, "end");
+    key_click(cx);
+    assert!(
+        cx.update(|_, cx| view.read(cx).bar_customize_open()),
+        "Customize from the keys opens its list"
+    );
+    press(cx, "escape");
+    assert!(!cx.update(|_, cx| view.read(cx).bar_customize_open()));
+    assert!(box_focused(&compose, cx), "Escape gives the keys back to the box");
+    hold(cx, "escape");
+    assert!(replying(cx), "the held Escape's repeats do not cancel the reply");
+    press(cx, "escape");
+    assert!(!replying(cx), "a new Escape in the box cancels the reply");
 }
 
 #[test]

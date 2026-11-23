@@ -130,7 +130,7 @@ impl MenuKeys {
     }
 
     /// Whether the keys are in the menu or in the list beside it.
-    fn has_focus(&self, window: &Window, cx: &App) -> bool {
+    pub(super) fn has_focus(&self, window: &Window, cx: &App) -> bool {
         self.menu.contains_focused(window, cx) || self.side.contains_focused(window, cx)
     }
 
@@ -218,10 +218,17 @@ impl ChatView {
     }
 
     /// "More options" on a message's hover bar clicked: its menu opens or closes, and the keys go back to where they
-    /// are now when they close it, or, while they are still in the menu that closed, to where they went back from it.
-    pub(super) fn toggle_options_by_mouse(&mut self, message: &str, window: &Window, cx: &mut Context<Self>) {
+    /// are now when they close it. When the keys are in the menu, they go back at once to where they came from, before
+    /// its rows are gone.
+    pub(super) fn toggle_options_by_mouse(&mut self, message: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let had_keys = self.menu_keys.has_focus(window, cx);
+        if had_keys {
+            self.menu_keys.keyed = false;
+            self.menu_keys.due = None;
+            self.menu_keys.back.give_back(window, cx);
+        }
         self.toggle_options(message, cx);
-        if self.options.is_some() && !self.menu_keys.has_focus(window, cx) {
+        if self.options.is_some() && !had_keys {
             self.menu_keys.back.keep(window, cx);
         }
     }

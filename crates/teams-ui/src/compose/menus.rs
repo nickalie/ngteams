@@ -389,15 +389,32 @@ impl Compose {
         }
     }
 
-    /// As the box draws: when a row of the open menu no longer shows its tool's state, the menu is built again after
-    /// this frame.
+    /// As the box draws: when the open menu's button left the row, the menu closes after this frame; when a row of
+    /// the open menu no longer shows its tool's state, the menu is built again after this frame.
     pub(super) fn menus_follow_tools(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if self
-            .menu
-            .as_ref()
-            .is_some_and(|menu| menu.rows != self.menu_rows(menu.kind, cx))
-        {
+        let Some(menu) = &self.menu else { return };
+        if !self.has_button(menu.kind, &self.fit(cx), cx) {
+            cx.defer_in(window, Self::close_menu_without_button);
+        } else if menu.rows != self.menu_rows(menu.kind, cx) {
             cx.defer_in(window, Self::refresh_menu);
+        }
+    }
+
+    /// Whether the row shows the button of the menu `kind`.
+    fn has_button(&self, kind: MenuKind, fit: &Fit, cx: &App) -> bool {
+        match kind {
+            MenuKind::More => !fit.more.is_empty(),
+            MenuKind::Plus => fit.row.contains(&Tool::Apps) && !self.offers_apps(cx),
+        }
+    }
+
+    /// The open menu's button left the row: the menu closes, the keys back on its tool while that is still on the
+    /// row, else in the text.
+    fn close_menu_without_button(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(menu) = &self.menu
+            && !self.has_button(menu.kind, &self.fit(cx), cx)
+        {
+            self.menu_closed(false, window, cx);
         }
     }
 
@@ -425,7 +442,9 @@ impl Compose {
     /// row that sent the keyboard elsewhere keeps it there.
     fn menu_closed(&mut self, to_text: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.menu.take() else { return };
-        let keys_in_menu = menu.menu.focus_handle(cx).contains_focused(window, cx);
+        let menu_focus = menu.menu.focus_handle(cx);
+        // a menu its button no longer draws holds no focus path, but may still hold the focus
+        let keys_in_menu = menu_focus.is_focused(window) || menu_focus.contains_focused(window, cx);
         let keys_near = keys_in_menu || (!to_text && self.editor.read(cx).focus.is_focused(window));
         match menu.back_to {
             Some(tool) if keys_near && self.tools.holds(&tool, window) => tool.focus(window, cx),
