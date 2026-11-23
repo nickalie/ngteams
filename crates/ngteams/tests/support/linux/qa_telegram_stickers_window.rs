@@ -1268,16 +1268,23 @@ fn three_faults(state: &Value, name: &str, video: &str) -> Vec<String> {
     faults
 }
 
-/// The empty state's "Import a folder": a folder of a `.tgs`, a `.webp` and a `.webm`.
+/// "Import a folder" from "Add a sticker pack" (Teams' own packs fill the tab of an account of Microsoft's cloud): a
+/// folder of a `.tgs`, a `.webp` and a `.webm`.
 fn import_folder(user: &mut User<'_>) -> SandboxResult {
-    let state = user.open_stickers_by_pointer()?;
+    let mut state = user.open_stickers_by_pointer()?;
+    if !has_item(&state, "sticker-import-folder") {
+        user.key_pick("sticker-pack-add")?;
+        state = user.until("the Add a sticker pack menu", |state| {
+            has_item(state, "sticker-import-folder")
+        })?;
+    }
     let mut faults = Vec::new();
     for item in ["sticker-import-folder", "sticker-import-zip", "sticker-import-telegram"] {
         if !has_item(&state, item) {
-            faults.push(format!("the empty state has no {item}: {:?}", rows(&state)));
+            faults.push(format!("the import actions have no {item}: {:?}", rows(&state)));
         }
     }
-    user.image("empty-state")?;
+    user.image("import-actions")?;
     user.world.chooser.queue(vec![user.world.sources.join(FOLDER)]);
     user.key_pick("sticker-import-folder")?;
     let (_, state) = user.finish_import("import-folder")?;
@@ -2462,6 +2469,7 @@ fn compose_state(compose: &Entity<Compose>, window: &Window, cx: &App) -> Value 
             let state = match picture.state {
                 PictureState::Sending => "sending",
                 PictureState::Sent(_) => "sent",
+                PictureState::Hosted(_) => "hosted",
                 PictureState::Failed(_) => "failed",
             };
             json!({
