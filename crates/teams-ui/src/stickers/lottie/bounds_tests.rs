@@ -5,7 +5,7 @@ use flate2::write::GzEncoder;
 use rasterlottie::Animation;
 use serde_json::{Value, json};
 
-use super::{MAX_COPIES, MAX_DEPTH, MAX_LAYERS, MAX_PARENTS, check};
+use super::{MAX_COPIES, MAX_DEPTH, MAX_ID, MAX_LAYERS, MAX_PARENTS, check};
 use crate::stickers::import::Skip;
 use crate::stickers::lottie::{frames, renderer};
 
@@ -282,8 +282,25 @@ fn a_matte_source_counts_for_each_layer_it_cuts() {
         }));
         animation(&Value::Array(layers), &heavy)
     };
-    assert_eq!(checked(&cut(50)), Ok(()));
+    assert_eq!(checked(&cut(30)), Ok(()));
     assert_eq!(checked(&cut(200)), Err(Skip::Unsupported));
+}
+
+#[test]
+fn each_track_matte_counts_its_canvas_surfaces() {
+    let mut source = null_layer(1, None);
+    source["td"] = json!(1);
+    let mut user = null_layer(2, None);
+    user["tt"] = json!(1);
+    let matted = |times: usize| {
+        let assets = json!([
+            asset("pair", &json!([source, user])),
+            asset("q", &Value::Array(vec![precomp("pair"); times])),
+        ]);
+        animation(&Value::Array(vec![precomp("q"); times]), &assets)
+    };
+    assert_eq!(checked(&matted(5)), Ok(()));
+    assert_eq!(checked(&matted(10)), Err(Skip::Unsupported));
 }
 
 fn fan_out(times: usize, inner: &Value, filler: usize) -> Value {
@@ -312,6 +329,9 @@ fn each_mask_counts_as_mask_work() {
     let mut once = null_layer(1, None);
     once["masksProperties"] = json!([{ "mode": "a", "pt": { "a": 0, "k": path_of(1) } }]);
     assert_eq!(checked(&fan_out(20, &once, 0)), Err(Skip::Unsupported));
+    let mut long = null_layer(1, None);
+    long["masksProperties"] = json!([{ "mode": "a", "pt": { "a": 0, "k": path_of(250_000) } }]);
+    assert_eq!(checked(&animation(&json!([long]), &json!([]))), Err(Skip::Unsupported));
 }
 
 #[test]
@@ -330,16 +350,68 @@ fn the_animation_holds_at_most_max_layers_assets_and_each_lookup_counts() {
 }
 
 #[test]
+fn an_asset_id_and_a_reference_are_at_most_max_id_long() {
+    let id = |length: usize| "i".repeat(length);
+    let held = |length: usize| animation(&json!([]), &json!([asset(&id(length), &json!([]))]));
+    assert_eq!(checked(&held(MAX_ID)), Ok(()));
+    assert_eq!(checked(&held(MAX_ID + 1)), Err(Skip::Unsupported));
+    let used = |length: usize| animation(&json!([precomp(&id(length))]), &json!([]));
+    assert_eq!(checked(&used(MAX_ID)), Ok(()));
+    assert_eq!(checked(&used(MAX_ID + 1)), Err(Skip::Unsupported));
+}
+
+fn keyframed(times: usize, each: &dyn Fn(usize) -> Value) -> Value {
+    json!({ "a": 1, "k": (0..times).map(each).collect::<Vec<_>>() })
+}
+
+#[test]
+fn each_keyframe_counts_as_work() {
+    let faded = |times: usize| {
+        let mut layer = null_layer(1, None);
+        layer["ks"] = json!({ "o": keyframed(times, &|at| json!({ "t": at, "s": [100] })) });
+        fan_out(100, &layer, 0)
+    };
+    assert_eq!(checked(&faded(10)), Ok(()));
+    assert_eq!(checked(&faded(100)), Err(Skip::Unsupported));
+    let coloured = |times: usize| {
+        let fill =
+            json!({ "ty": "fl", "nm": "fill", "c": keyframed(times, &|at| json!({ "t": at, "s": [1, 0, 0, 1] })) });
+        fan_out(100, &shape_layer(&json!([fill])), 0)
+    };
+    assert_eq!(checked(&coloured(10)), Ok(()));
+    assert_eq!(checked(&coloured(100)), Err(Skip::Unsupported));
+    let trimmed = |times: usize| {
+        let trim = json!({ "ty": "tm", "nm": "trim", "e": keyframed(times, &|at| json!({ "t": at, "s": [50] })) });
+        fan_out(100, &shape_layer(&json!([trim])), 0)
+    };
+    assert_eq!(checked(&trimmed(10)), Ok(()));
+    assert_eq!(checked(&trimmed(100)), Err(Skip::Unsupported));
+}
+
+#[test]
+fn a_dashed_stroke_counts_as_dash_work() {
+    let stroke = |dashes: &Value| {
+        let stroke = json!({ "ty": "st", "nm": "line", "c": { "a": 0, "k": [0, 0, 0, 1] }, "w": { "a": 0, "k": 1 }, "d": dashes });
+        shape_layer(&json!([ellipse(), stroke]))
+    };
+    let dashed = json!([{ "n": "d", "v": { "a": 0, "k": 1 } }, { "n": "g", "v": { "a": 0, "k": 1 } }]);
+    assert_eq!(checked(&fan_out(30, &stroke(&json!([])), 0)), Ok(()));
+    assert_eq!(checked(&fan_out(4, &stroke(&dashed), 0)), Ok(()));
+    assert_eq!(checked(&fan_out(30, &stroke(&dashed), 0)), Err(Skip::Unsupported));
+}
+
+#[test]
 fn each_path_vertex_counts_as_work() {
     let shape =
         |vertices: usize| shape_layer(&json!([{ "ty": "sh", "nm": "p", "ks": { "a": 0, "k": path_of(vertices) } }]));
     assert_eq!(checked(&fan_out(100, &shape(10), 0)), Ok(()));
     assert_eq!(checked(&fan_out(100, &shape(100), 0)), Err(Skip::Unsupported));
-    let keyframed = shape_layer(&json!([{ "ty": "sh", "nm": "p", "ks": { "a": 1, "k": [
-        { "t": 0, "s": [path_of(1)] },
-        { "t": 30, "s": [path_of(100)] },
-    ] } }]));
-    assert_eq!(checked(&fan_out(100, &keyframed, 0)), Err(Skip::Unsupported));
+    let animated = |times: usize| {
+        let path = keyframed(times, &|at| json!({ "t": at, "s": [path_of(10)] }));
+        shape_layer(&json!([{ "ty": "sh", "nm": "p", "ks": path }]))
+    };
+    assert_eq!(checked(&fan_out(100, &animated(1), 0)), Ok(()));
+    assert_eq!(checked(&fan_out(100, &animated(10), 0)), Err(Skip::Unsupported));
 }
 
 #[test]

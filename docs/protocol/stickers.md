@@ -27,10 +27,12 @@ stickers.
 Limits: the unpacked animation is at most 8 MB, its canvas at most 4096 px on a side, and at most 200 frames come out.
 An animation that uses a feature the renderer cannot draw is skipped with a reason. An animation that could make the
 renderer do too much is skipped as unsupported too: precompositions nested more than 16 deep or in a cycle, more than
-1000 layers in one layer list or 1000 assets, a parent chain longer than 16, an expression on a shape path, more than
-1000 repeater copies (with the repeater's offset added) or polystar points, or more than 250,000 work in one frame. A
-layer, shape, path vertex and point is one work, a mask 1000 and each 100 assets the renderer looks through for a
-precomposition one; each precomposition, matte and copy counts each time it is drawn. A number that is not finite as a
+1000 layers in one layer list or 1000 assets, an asset id or a reference to one longer than 256 bytes, a parent chain
+longer than 16, an expression on a shape path, more than 1000 repeater copies (with the repeater's offset added) or
+polystar points, or more than 250,000 work in one frame. A layer, shape, keyframe and path vertex is one work, a
+polystar point two (its outer and inner vertex), a mask and each canvas-sized surface of a track matte (two for the
+matted layer, one for its matte source) 1000, a dashed stroke 10,000 and each 100 assets the renderer looks through for
+a precomposition one; each precomposition, matte and copy counts each time it is drawn. A number that is not finite as a
 32-bit float has no bound.
 
 ## A pack from its link: the Bot API
