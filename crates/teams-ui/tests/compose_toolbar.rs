@@ -1942,6 +1942,71 @@ fn escape_held_in_the_apps_flyout_does_not_cancel_the_reply() {
     held_escape_keeps_the_reply(&compose, cx);
 }
 
+#[test]
+fn escape_held_in_the_emoji_picker_does_not_cancel_the_reply() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    replying_in(&compose, cx);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_emoji(window, cx)));
+    draw(cx);
+    assert!(!box_focused(&compose, cx), "the picker's search takes the keys");
+    press(cx, "escape");
+    assert!(
+        compose.read_with(cx, |compose, _| compose.emoji_picker().is_none()),
+        "Escape closes the picker"
+    );
+    assert!(box_focused(&compose, cx), "Escape gives the keys back to the box");
+    held_escape_keeps_the_reply(&compose, cx);
+}
+
+#[test]
+fn shift_escape_held_in_the_apps_flyout_does_not_cancel_the_reply_when_shift_goes_up() {
+    let rig = Rig::start();
+    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
+    *rig.core.extension_apps.lock().unwrap() =
+        teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    replying_in(&compose, cx);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_apps(window, cx)));
+    draw(cx);
+    press(cx, "shift-escape");
+    assert!(
+        compose.read_with(cx, |compose, _| compose.apps_flyout().is_none()),
+        "Shift+Escape closes the flyout"
+    );
+    held_escape_keeps_the_reply(&compose, cx);
+}
+
+#[test]
+fn escape_in_the_apps_flyout_closes_a_message_s_menu_first() {
+    let rig = Rig::start();
+    *rig.core.extension_apps.lock().unwrap() =
+        teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    let compose = view.read_with(cx, |view, _| view.compose().clone());
+    open_the_card_s_menu_by_a_click(&view, cx);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_apps(window, cx)));
+    draw(cx);
+    assert!(compose.read_with(cx, |compose, _| compose.apps_flyout().is_some()));
+    assert!(view.read_with(cx, |view, _| view.options().is_some()));
+    press(cx, "escape");
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_none()),
+        "Escape closes the message's menu first"
+    );
+    assert!(
+        compose.read_with(cx, |compose, _| compose.apps_flyout().is_some()),
+        "the flyout stays open"
+    );
+    hold(cx, "escape");
+    assert!(
+        compose.read_with(cx, |compose, _| compose.apps_flyout().is_some()),
+        "the held Escape's repeats do not close the flyout"
+    );
+    press(cx, "escape");
+    assert!(compose.read_with(cx, |compose, _| compose.apps_flyout().is_none()));
+}
+
 /// The box replies to a made-up message, with the keys in it.
 fn replying_in(compose: &Entity<Compose>, cx: &mut VisualTestContext) {
     let quoted = teams_ui::compose::Quoted {

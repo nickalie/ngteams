@@ -2774,6 +2774,20 @@ impl ChatView {
                 || (escape && (self.escape_in_a_popup.get() || self.escape_in_the_list.get())))
     }
 
+    /// A plain Escape with a more-options menu open and the keys out of the list, the menus and the confirmation (in
+    /// the compose box or one of its popups): the menu closes first, alone.
+    fn escape_outside_the_list(&mut self, event: &gpui::KeyDownEvent, window: &Window, cx: &mut Context<Self>) {
+        let plain = event.keystroke.key == "escape" && !event.keystroke.modifiers.modified();
+        if plain
+            && self.options.is_some()
+            && !self.focus.handle.contains_focused(window, cx)
+            && !self.focus.confirmation.contains_focused(window, cx)
+            && !self.popup_has_focus(window, cx)
+        {
+            self.escape_closes_options(cx);
+        }
+    }
+
     /// Escape with a more-options menu open closes it; the held Escape's repeats then do nothing more.
     fn escape_closes_options(&mut self, cx: &mut Context<Self>) {
         if self.options.take().is_some() {
@@ -6631,11 +6645,9 @@ impl Render for ChatView {
         Self::file_drop_target(cx)
             // Escape with a more-options menu open closes the menu first, as in Teams, wherever the focus is
             .capture_action(cx.listener(|this, _: &ComposeEscape, _, cx| this.escape_closes_options(cx)))
-            // the same from where no binding takes Escape (a tool of the compose box)
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" && !event.keystroke.modifiers.modified() {
-                    this.escape_closes_options(cx);
-                }
+            // the same before a tool or popup of the compose box (the apps flyout) takes Escape for itself
+            .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                this.escape_outside_the_list(event, window, cx);
             }))
             // Escape the compose box handed on (nothing to cancel there): the list takes the focus
             .on_action(cx.listener(|this, _: &ComposeEscape, window, cx| this.focus_messages(window, cx)))
