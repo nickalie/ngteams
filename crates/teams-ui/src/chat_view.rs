@@ -2600,10 +2600,18 @@ impl ChatView {
         })
     }
 
-    /// Escape in the list: what is open closes (the quick reactions, a confirmation); on a control in the list, the
-    /// list also takes the keys back; else, with nothing open, the selection goes, then the focus goes to the box.
+    /// Escape in the list: a more-options menu closes first, alone; else what is open closes (the quick reactions, a
+    /// confirmation). On a control in the list, the list also takes the keys back; else, with nothing open, the
+    /// selection goes, then the focus goes to the box.
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.more = None;
+        if self.options.is_some() {
+            self.escape_closes_options(cx);
+            if self.on_a_control_in_the_list(window, cx) {
+                self.focus_messages(window, cx);
+            }
+            return;
+        }
         let open = self.reacting.take().is_some()
             | self.deleting.take().is_some()
             | self.resending.take().is_some()
@@ -2776,7 +2784,7 @@ impl ChatView {
 
     /// After a key: Shift+Tab from outside the list that came to a control in it (from the box, its format bar or
     /// anything after the list) gives the keys to the list itself, its one stop; Escape in the list closes a
-    /// confirmation.
+    /// confirmation, unless it closed a popup.
     fn keys_to_the_list(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
         let in_context = |name| event.context_stack.iter().any(|context| context.contains(name));
         let in_the_list = in_context(CONTEXT);
@@ -2787,9 +2795,11 @@ impl ChatView {
         }
         // a popup in a card (a time's list) takes its Escape before the list does
         let escape = event.keystroke.key == "escape" && !event.keystroke.modifiers.modified();
-        // the observer sees every view's keys: only an Escape in this view's own list closes its confirmation
+        // the observer sees every view's keys: only an Escape in this view's own list closes its confirmation, and not
+        // one that closed a popup first
         if escape
             && in_the_list
+            && !self.escape_in_a_popup.get()
             && self.focus.handle.contains_focused(window, cx)
             && (self.deleting.take().is_some() | self.resending.take().is_some())
         {

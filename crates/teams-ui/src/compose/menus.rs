@@ -482,14 +482,17 @@ impl Compose {
             .is_some_and(|open| open.menu.focus_handle(cx).contains_focused(window, cx))
     }
 
-    /// A held Escape whose first push was in the open menu of tools: only that push acts (it closed the menu), so its
-    /// repeats do not go on to cancel a reply or an edit.
+    /// A held Escape whose first push was in the open menu of tools or in the customize list: only that push acts (it
+    /// closed the popup), so its repeats do not go on to cancel a reply or an edit.
     fn held_escape_after_menu(&self, event: &KeystrokeEvent, window: &Window, cx: &App) -> bool {
         if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() {
             return false;
         }
         if !event.is_held {
-            self.held_escape.in_menu.set(self.menu_has_focus(window, cx));
+            let in_customize = self.customize.as_ref().is_some_and(|list| list.has_focus(window, cx));
+            self.held_escape
+                .in_menu
+                .set(self.menu_has_focus(window, cx) || in_customize);
         }
         event.is_held && self.held_escape.in_menu.get()
     }

@@ -2213,6 +2213,31 @@ fn a_write_a_newer_one_on_the_same_thing_made_out_of_date_isn_t_offered_again() 
 }
 
 #[test]
+fn escape_in_the_list_closes_a_clicked_menu_before_the_delete_s_confirmation() {
+    let mine = message(NOON, LAB_A, "<p>mine</p>");
+    let rig = rig_with(vec![mine.clone()]);
+    let (view, cx, _) = chat_window(&rig, no_receipts());
+    let open = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            (view.options().is_some(), view.deleting().is_some())
+        })
+    };
+    act(&view, cx, MessageAction::Delete, &mine.id);
+    let row = cx
+        .debug_bounds(Box::leak(format!("message-{}", mine.id).into_boxed_str()))
+        .expect("the message");
+    cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+    draw(cx);
+    click(cx, "message-more");
+    assert_eq!(open(cx), (true, true), "the menu opens over the confirmation");
+    keys(cx, "escape");
+    assert_eq!(open(cx), (false, true), "Escape closes the menu alone");
+    keys(cx, "escape");
+    assert_eq!(open(cx), (false, false), "the next Escape closes the confirmation");
+}
+
+#[test]
 fn moving_the_selection_closes_the_delete_s_confirmation_and_the_quick_reactions() {
     let older = message(NOON, LAB_A, "<p>older</p>");
     let newer = message(NOON + MINUTE, LAB_A, "<p>newer</p>");

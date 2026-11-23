@@ -1954,6 +1954,45 @@ fn escape_held_after_it_closed_plus_does_not_cancel_the_reply() {
 }
 
 #[test]
+fn escape_held_after_it_closed_customize_toolbar_does_not_cancel_the_reply() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    replying_in(&compose, cx);
+    click(cx, "compose-apps");
+    click(cx, "compose-customize-row");
+    assert!(compose.read_with(cx, |compose, _| compose.customize_open()));
+    press(cx, "escape");
+    assert!(!compose.read_with(cx, |compose, _| compose.customize_open()));
+    assert!(
+        replying(&compose, cx),
+        "the Escape that closed the list keeps the reply"
+    );
+    held_escape_keeps_the_reply(&compose, cx);
+}
+
+#[test]
+fn copy_text_picked_by_the_keys_in_a_clicked_menu_gives_them_back_to_the_list() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    let tabs = tabs_out_of_a_clicked_menu(&view, cx);
+    assert!(list_focused(&view, cx));
+    open_the_card_s_menu_by_a_click(&view, cx);
+    for _ in 1..tabs {
+        press(cx, "tab");
+    }
+    assert!(!list_focused(&view, cx), "the keys are in the menu");
+    // the first row the keys reach: Copy text
+    press(cx, "home");
+    key_click(cx);
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_none()),
+        "Copy text closes the menu"
+    );
+    assert!(cx.read_from_clipboard().is_some(), "Copy text copies the message");
+    assert!(list_focused(&view, cx), "the keys go back to the list");
+}
+
+#[test]
 fn enter_held_after_a_time_is_clicked_open_does_not_send_the_draft() {
     let rig = Rig::start();
     let card = card_message_of(
