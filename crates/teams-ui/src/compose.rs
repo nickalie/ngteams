@@ -689,7 +689,8 @@ struct Routes {
     /// holds the draft once read.
     stickers: Vec<Route<()>>,
     /// Refused sends held back only by the sticker reads, oldest first: they come back once the last read puts no
-    /// sticker in the box, or before a refused send with files that comes back at once.
+    /// sticker in the box, or before a refused send with files that comes back at once. One without files stays out
+    /// once the box holds another.
     refused: Vec<(Draft, Option<Moved>)>,
 }
 
@@ -1632,7 +1633,8 @@ impl Compose {
     /// box, else it comes before it. The files given back always get ids of this box.
     /// A refused send without files waits while a sticker read is pending ([`Routes::refused`]).
     fn give_back(&mut self, mut draft: Draft, moved: Option<Moved>, cx: &mut Context<Self>) {
-        if self.keeps_out(&mut draft, cx) {
+        self.take_cards_back(&mut draft);
+        if self.keeps_out(&draft, cx) {
             return cx.notify();
         }
         if draft.attachments.is_empty() && !self.routes.stickers.is_empty() {
@@ -1643,30 +1645,33 @@ impl Compose {
         self.restore(draft, moved, cx);
     }
 
-    /// The refused sends held back come back in the order they were refused.
+    /// The refused sends held back come back oldest first; one without files stays out once the box holds another.
     fn give_back_held(&mut self, cx: &mut Context<Self>) {
         for (draft, moved) in std::mem::take(&mut self.routes.refused) {
             self.restore(draft, moved, cx);
         }
     }
 
-    /// Takes the cards of a refused send back, and tells whether the rest of it stays out of the box.
-    fn keeps_out(&mut self, draft: &mut Draft, cx: &App) -> bool {
-        // files attached since stay beside the text given back (a translated send's text left the box once it went),
-        // but never beside an edit, which carries no files
-        let edit_beside_files = matches!(draft.mode, Mode::Edit { .. }) && !self.attachments.is_empty();
-        // the cards of the refused send come back before the cards that came into the box meanwhile
+    /// Takes the cards of a refused send back, before the cards that came into the box meanwhile.
+    fn take_cards_back(&mut self, draft: &mut Draft) {
         let mut cards = std::mem::take(&mut draft.cards);
         cards.retain(|card| !self.apps.cards.contains(card));
         cards.append(&mut self.apps.cards);
         self.apps.cards = cards;
+    }
+
+    /// Tells whether a refused send, its cards taken back, stays out of the box.
+    fn keeps_out(&self, draft: &Draft, cx: &App) -> bool {
+        // files attached since stay beside the text given back (a translated send's text left the box once it went),
+        // but never beside an edit, which carries no files
+        let edit_beside_files = matches!(draft.mode, Mode::Edit { .. }) && !self.attachments.is_empty();
         let changed = !self.editor.read(cx).is_empty() || self.mode != Mode::New;
         draft.attachments.is_empty() && (changed || edit_beside_files)
     }
 
     /// Puts a refused send back in the box, as [`Compose::give_back`] says.
     fn restore(&mut self, mut draft: Draft, moved: Option<Moved>, cx: &mut Context<Self>) {
-        if self.keeps_out(&mut draft, cx) {
+        if self.keeps_out(&draft, cx) {
             return cx.notify();
         }
         let held = !self.editor.read(cx).is_empty();

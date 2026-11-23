@@ -167,6 +167,9 @@ pub struct FakeCore {
     pub activity_unread: Mutex<bool>,
     pub write_answers: Mutex<std::collections::VecDeque<OutboxEntry>>,
     pub write_errors: Mutex<VecDeque<EngineError>>,
+    /// While set, a write is recorded but held in `held_writes` for the test to answer.
+    pub hold_writes: Mutex<bool>,
+    pub held_writes: Mutex<Vec<Answer<OutboxEntry>>>,
     pub outbox_answers: Mutex<std::collections::VecDeque<OutboxEntry>>,
     /// Every transient asked for, in order; each is answered sent.
     pub transients: Mutex<Vec<Transient>>,
@@ -945,6 +948,11 @@ impl Core for FakeCore {
         drop(actions);
         if let Some(error) = locked(&self.write_errors).pop_front() {
             return Reply::ready(Err(error));
+        }
+        if *locked(&self.hold_writes) {
+            let (answer, reply) = Reply::later();
+            locked(&self.held_writes).push(answer);
+            return reply;
         }
         if *locked(&self.hold_marks)
             && matches!(

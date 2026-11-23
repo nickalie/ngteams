@@ -1393,3 +1393,50 @@ fn a_refused_edit_held_back_goes_with_its_draft_to_another_box() {
     );
     assert_eq!(other_cx.update(|_, cx| other.read(cx).value(cx)), "edited");
 }
+
+#[test]
+fn a_refused_send_with_files_gives_back_the_sends_held_by_a_teams_sticker_read_first() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["Clippy_HelloThere"]);
+    let (view, cx) = chat_window(&rig, &place);
+    let compose = compose(&view, cx);
+    *rig.core.hold_writes.lock().unwrap() = true;
+    cx.simulate_input("first");
+    keys(cx, "enter");
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("notes.txt");
+    std::fs::write(&file, b"made up").unwrap();
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.attach_files(&[file], window, cx)));
+    draw(cx);
+    cx.simulate_input("second");
+    keys(cx, "enter");
+    assert_eq!(cx.update(|_, cx| compose.read(cx).value(cx)), "");
+    pick_held_teams_sticker(&rig, &view, "Clippy_HelloThere", cx);
+    let mut held = std::mem::take(&mut *rig.core.held_writes.lock().unwrap()).into_iter();
+    held.next().unwrap().send(Err(EngineError::Stopped));
+    draw(cx);
+    assert_eq!(
+        cx.update(|_, cx| compose.read(cx).value(cx)),
+        "",
+        "the refused send without files waits for the sticker read"
+    );
+    held.next().unwrap().send(Err(EngineError::Stopped));
+    draw(cx);
+    assert_eq!(cx.update(|_, cx| compose.read(cx).value(cx)), "second\n\nfirst");
+    let names: Vec<_> = cx.update(|_, cx| {
+        compose
+            .read(cx)
+            .attachments()
+            .iter()
+            .map(|file| file.name.clone())
+            .collect()
+    });
+    assert_eq!(names.len(), 1, "{names:?}");
+    release_held_pictures(&rig);
+    draw(cx);
+    assert!(
+        drawn(cx, "editor-picture-1"),
+        "the sticker read lands after the sends given back"
+    );
+}
