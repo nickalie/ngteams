@@ -477,6 +477,7 @@ impl FunPicker {
     /// Opens "Import a Telegram sticker pack" in the picker's place.
     pub fn open_telegram_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.panel = Panel::None;
+        self.signal = None;
         let panel = cx.new(|cx| TelegramImport::new(window, cx));
         let events = cx.subscribe_in(&panel, window, |this, _, event: &TelegramImportEvent, window, cx| {
             this.telegram = None;
@@ -500,6 +501,7 @@ impl FunPicker {
     /// Opens "Import a Signal sticker pack" in the picker's place.
     pub fn open_signal_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.panel = Panel::None;
+        self.telegram = None;
         let panel = cx.new(|cx| SignalImport::new(window, cx));
         let events = cx.subscribe_in(&panel, window, |this, _, event: &SignalImportEvent, window, cx| {
             this.signal = None;

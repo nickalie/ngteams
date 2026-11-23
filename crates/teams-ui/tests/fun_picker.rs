@@ -2016,3 +2016,27 @@ fn the_signal_panel_is_reached_by_the_keyboard() {
     assert!(picker_open(&view, cx), "the picker stays open");
     assert!(drawn(cx, "fun-tab-all"));
 }
+
+#[test]
+fn the_telegram_and_the_signal_panel_are_open_one_at_a_time() {
+    let place = Setup::new();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    click(cx, "compose-emoji");
+    let picker = picker(&view, cx).unwrap();
+    let open = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let picker = picker.read(cx);
+            (picker.telegram_import().is_some(), picker.signal_import().is_some())
+        })
+    };
+    cx.update(|window, cx| picker.update(cx, |picker, cx| picker.open_telegram_import(window, cx)));
+    cx.update(|window, cx| picker.update(cx, |picker, cx| picker.open_signal_import(window, cx)));
+    draw(cx);
+    assert_eq!(open(cx), (false, true), "Signal's replaces Telegram's");
+    assert!(drawn(cx, "signal-import"));
+    cx.update(|window, cx| picker.update(cx, |picker, cx| picker.open_telegram_import(window, cx)));
+    draw(cx);
+    assert_eq!(open(cx), (true, false), "Telegram's replaces Signal's");
+    assert!(!drawn(cx, "signal-import"));
+}
