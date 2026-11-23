@@ -60,6 +60,8 @@ pub(crate) struct CustomizeList {
     at: Point<Pixels>,
     anchor: gpui::Anchor,
     selected: Option<usize>,
+    /// The control the keys were on before the menu that opened the list: they go back to it when the list closes.
+    back_to: Option<FocusHandle>,
 }
 
 impl CustomizeList {
@@ -72,7 +74,22 @@ impl CustomizeList {
             at,
             anchor,
             selected: None,
+            back_to: None,
         }
+    }
+
+    /// The list, the keys back on `control` when it closes.
+    #[must_use]
+    pub(crate) fn back_to(self, control: Option<FocusHandle>) -> Self {
+        Self {
+            back_to: control,
+            ..self
+        }
+    }
+
+    /// The control the keys go back to when the list closes, if one was given.
+    pub(crate) fn return_control(&self) -> Option<&FocusHandle> {
+        self.back_to.as_ref()
     }
 
     /// Whether the keys are in the list.

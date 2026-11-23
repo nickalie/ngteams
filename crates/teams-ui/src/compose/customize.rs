@@ -62,12 +62,15 @@ impl Compose {
         self.customize.is_some()
     }
 
-    /// Closes the customize list, the keyboard back in the text.
+    /// Closes the customize list, the keyboard back on the tool whose menu opened it while that is still on the row,
+    /// else in the text.
     pub fn close_customize(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.customize.take().is_some() {
-            self.focus(window, cx);
-            cx.notify();
+        let Some(list) = self.customize.take() else { return };
+        match list.return_control() {
+            Some(tool) if self.tools.holds(tool, window) => tool.focus(window, cx),
+            _ => self.focus(window, cx),
         }
+        cx.notify();
     }
 
     /// The list's rows: each button that can hide (the AI tools only while the AI features are on), then "+" and

@@ -1268,6 +1268,8 @@ struct ListFocus {
     handle: FocusHandle,
     /// The selected message's row: it holds the controls that Enter on the list goes to, and is no stop itself.
     selected_row: FocusHandle,
+    /// The confirmation under the list: its buttons go when it closes, so the keys on them go back to the list.
+    confirmation: FocusHandle,
     /// How the list last took the keys, which its ring follows.
     keys: ListKeys,
 }
@@ -1286,6 +1288,7 @@ impl ListFocus {
         Self {
             handle: cx.focus_handle().tab_stop(true),
             selected_row: cx.focus_handle().tab_stop(false),
+            confirmation: cx.focus_handle().tab_stop(false),
             keys: ListKeys::Off,
         }
     }
@@ -2635,15 +2638,22 @@ impl ChatView {
         }
     }
 
-    /// Cancel on a confirmation closes it, also with a more-options menu open; from a control in the list, the list
-    /// takes the keys.
+    /// Cancel on a confirmation closes it alone (the delete's is shown before a resend's warning), also with a
+    /// more-options menu open; from a control in the list or on the confirmation, the list takes the keys.
     fn cancel_confirmation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.deleting = None;
-        self.resending = None;
-        if self.on_a_control_in_the_list(window, cx) {
+        let back = self.keys_on_a_confirmation_control(window, cx);
+        if self.deleting.take().is_none() {
+            self.resending = None;
+        }
+        if back {
             self.focus_messages(window, cx);
         }
         cx.notify();
+    }
+
+    /// Whether the keys are on a control that closing a confirmation takes away, or on one in the list.
+    fn keys_on_a_confirmation_control(&self, window: &Window, cx: &App) -> bool {
+        self.on_a_control_in_the_list(window, cx) || self.focus.confirmation.contains_focused(window, cx)
     }
 
     /// Escape in the compose box with nothing to cancel there (no reply, edit or open picker; the box hands it on,
@@ -4535,7 +4545,13 @@ impl ChatView {
             .label(label)
             .primary()
             .with_size(Size::XSmall)
-            .on_click(cx.listener(move |this, _, _, cx| on_yes(this, cx)));
+            .on_click(cx.listener(move |this, _, window, cx| {
+                let back = this.focus.confirmation.contains_focused(window, cx);
+                on_yes(this, cx);
+                if back {
+                    this.focus_messages(window, cx);
+                }
+            }));
         let cancel = Button::new("confirm-cancel")
             .label("Cancel")
             .ghost()
@@ -4544,6 +4560,7 @@ impl ChatView {
         Some(
             div()
                 .debug_selector(|| "confirmation".to_owned())
+                .track_focus(&self.focus.confirmation)
                 .flex()
                 .items_center()
                 .gap_2()

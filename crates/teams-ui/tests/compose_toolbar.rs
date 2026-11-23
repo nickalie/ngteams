@@ -1842,6 +1842,35 @@ fn tab_and_shift_tab_in_customize_toolbar_close_it_and_give_the_text_the_keys() 
     }
 }
 
+#[test]
+fn customize_toolbar_taken_from_plus_by_the_keys_gives_them_back_to_plus_when_it_closes() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    for key in ["escape", "tab", "shift-tab"] {
+        focus_box(&compose, cx);
+        press(cx, "tab");
+        press(cx, "end");
+        let plus = focused(cx);
+        press(cx, "enter");
+        assert_eq!(
+            compose.read_with(cx, |compose, _| compose.menu_open()),
+            Some(MenuKind::Plus)
+        );
+        press(cx, "up");
+        press(cx, "enter");
+        assert!(
+            compose.read_with(cx, |compose, _| compose.customize_open()),
+            "Customize toolbar is the last row"
+        );
+        press(cx, key);
+        assert!(
+            !compose.read_with(cx, |compose, _| compose.customize_open()),
+            "{key} closes the list"
+        );
+        assert_eq!(focused(cx), plus, "{key} gives the keys back to \"+\"");
+    }
+}
+
 /// The box replies to a made-up message, with the keys in it.
 fn replying_in(compose: &Entity<Compose>, cx: &mut VisualTestContext) {
     let quoted = teams_ui::compose::Quoted {

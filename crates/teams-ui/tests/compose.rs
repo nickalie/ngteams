@@ -25,7 +25,8 @@ use std::time::{Duration, Instant};
 
 use common::{LAB_A, LAB_B, Rig, Written, outbox_row};
 use gpui::{
-    Entity, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase, VisualTestContext, point, px, size,
+    Entity, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase,
+    VisualTestContext, point, px, size,
 };
 use teams_core::{Action, Command, Event, MessageChange, Source, Transient};
 use teams_proto::Mri;
@@ -2237,24 +2238,99 @@ fn escape_in_the_list_closes_a_clicked_menu_before_the_delete_s_confirmation() {
     assert_eq!(open(cx), (false, false), "the next Escape closes the confirmation");
 }
 
+/// A key pushed and let go, as a button takes it.
+fn press(cx: &mut VisualTestContext, key: &str) {
+    let keystroke = Keystroke::parse(key).unwrap();
+    cx.simulate_event(KeyDownEvent {
+        keystroke: keystroke.clone(),
+        is_held: false,
+        prefer_character_input: false,
+    });
+    cx.simulate_event(KeyUpEvent { keystroke });
+    draw(cx);
+}
+
+/// A delete asked for `mine`, with its clicked more-options menu open over the confirmation.
+fn delete_asked_under_a_clicked_menu(view: &Entity<ChatView>, cx: &mut VisualTestContext, mine: &Message) {
+    act(view, cx, MessageAction::Delete, &mine.id);
+    let row = cx
+        .debug_bounds(Box::leak(format!("message-{}", mine.id).into_boxed_str()))
+        .expect("the message");
+    cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+    draw(cx);
+    click(cx, "message-more");
+}
+
 #[test]
-fn cancel_on_the_delete_s_confirmation_closes_it_and_keeps_the_selection() {
+fn cancel_from_the_keys_under_a_clicked_menu_closes_only_the_confirmation_and_the_list_takes_the_keys() {
     let mine = message(NOON, LAB_A, "<p>mine</p>");
     let rig = rig_with(vec![mine.clone()]);
     let (view, cx, _) = chat_window(&rig, no_receipts());
-    act(&view, cx, MessageAction::Delete, &mine.id);
-    assert!(cx.update(|_, cx| view.read(cx).deleting().is_some()));
-    click(cx, "confirm-cancel");
-    assert!(
-        cx.update(|_, cx| view.read(cx).deleting().is_none()),
-        "Cancel closes the confirmation"
-    );
-    assert!(cx.debug_bounds("confirmation").is_none());
+    let open = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            (view.options().is_some(), view.deleting().is_some())
+        })
+    };
+    delete_asked_under_a_clicked_menu(&view, cx, &mine);
+    assert_eq!(open(cx), (true, true));
+    // Tab past the list comes to Delete; the window's next stop is Cancel
+    press(cx, "tab");
+    cx.update(gpui::Window::focus_next);
+    press(cx, "enter");
+    assert_eq!(open(cx), (true, false), "Cancel closes the confirmation alone");
     assert_eq!(
-        cx.update(|_, cx| view.read(cx).selected().map(str::to_owned)),
-        Some(mine.id.clone()),
-        "Cancel keeps the selection"
+        focused(&view, cx),
+        (true, false),
+        "the list takes the keys from the gone button"
     );
+    assert_eq!(selected(&view, cx), Some(mine.id.clone()), "Cancel keeps the selection");
+    assert!(rig.core.actions.lock().unwrap().is_empty(), "nothing is deleted");
+    press(cx, "escape");
+    assert_eq!(open(cx), (false, false), "the next Escape closes the menu");
+}
+
+#[test]
+fn delete_from_the_keys_under_a_clicked_menu_gives_the_list_the_keys() {
+    let mine = message(NOON, LAB_A, "<p>mine</p>");
+    let rig = rig_with(vec![mine.clone()]);
+    let (view, cx, _) = chat_window(&rig, no_receipts());
+    delete_asked_under_a_clicked_menu(&view, cx, &mine);
+    press(cx, "tab");
+    press(cx, "enter");
+    assert_eq!(rig.core.actions.lock().unwrap().len(), 1, "the delete goes out");
+    assert_eq!(
+        focused(&view, cx),
+        (true, false),
+        "the list takes the keys from the gone button"
+    );
+    press(cx, "escape");
+    assert!(
+        cx.update(|_, cx| view.read(cx).options().is_none()),
+        "the next Escape closes the menu"
+    );
+}
+
+#[test]
+fn cancel_on_the_delete_s_confirmation_keeps_a_pending_resend_s_warning() {
+    let theirs = message(NOON, LAB_B, "<p>hi</p>");
+    let mine = message(NOON + MINUTE, LAB_A, "<p>mine</p>");
+    let rig = rig_with(vec![theirs.clone(), mine.clone()]);
+    *rig.core.unsettled.lock().unwrap() = rows_of_every_state(&theirs).0;
+    let (view, cx, _) = chat_window(&rig, no_receipts());
+    let asked = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            (view.deleting().is_some(), view.resending())
+        })
+    };
+    click(cx, "send-again-5");
+    act(&view, cx, MessageAction::Delete, &mine.id);
+    assert_eq!(asked(cx), (true, Some(5)), "the delete's confirmation shows first");
+    click(cx, "confirm-cancel");
+    assert_eq!(asked(cx), (false, Some(5)), "Cancel closes the delete's alone");
+    click(cx, "resend-anyway");
+    assert_eq!(*rig.core.resent.lock().unwrap(), [5]);
     assert!(rig.core.actions.lock().unwrap().is_empty(), "nothing is deleted");
 }
 

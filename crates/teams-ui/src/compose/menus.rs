@@ -317,7 +317,11 @@ impl Compose {
             Item::Correct => self.correct_draft(window, cx),
             Item::Translate => self.translate_draft(window, cx),
             Item::Language => self.open_language_menu(window, cx),
-            Item::Customize => self.customize_toolbar(window, cx),
+            Item::Customize => {
+                let back_to = self.menu.as_ref().and_then(|menu| menu.back_to.clone());
+                self.customize_toolbar(window, cx);
+                self.customize = self.customize.take().map(|list| list.back_to(back_to));
+            }
             Item::Loop => {}
         }
     }
