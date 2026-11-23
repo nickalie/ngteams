@@ -154,7 +154,7 @@ fn the_chat_message_and_the_clipboards_text_lay_the_sections_out() {
         "<h3>Meeting purpose</h3><p>Plan the synthetic launch.</p>",
         "<h3>Key takeaways</h3><ul>",
         "<h3>Topics</h3><p><strong>Report</strong></p><ul>",
-        "Bo sends the report.<i> (1:15)</i>",
+        "<li><p>Bo sends the report.</p></li>",
         "<strong>Bo Lab</strong>: Send the synthetic report by Friday.",
         "<h3>Questions raised</h3>",
         "Made with Claude Sonnet on my computer.",
@@ -166,10 +166,33 @@ fn the_chat_message_and_the_clipboards_text_lay_the_sections_out() {
     let plain = plain(&made, "Synthetic sync", Some("Friday"));
     assert!(plain.starts_with("# Synthetic sync: AI summary\nFriday\n"));
     assert!(plain.contains("\n## Key takeaways\n\n- The synthetic report is due Friday.\n"));
-    assert!(plain.contains("\n### Report\n\n- Bo sends the report. (1:15)\n- Out of range.\n"));
-    assert!(
-        plain.contains("- **Bo Lab**: Send the synthetic report by Friday. (1:15)\n- Pick a launch owner. (2:20)\n")
-    );
+    assert!(plain.contains("\n### Report\n\n- Bo sends the report.\n- Out of range.\n"));
+    assert!(plain.contains("- **Bo Lab**: Send the synthetic report by Friday.\n- Pick a launch owner.\n"));
+    assert!(plain.contains("\n## Questions raised\n\n- Who owns the synthetic launch?\n"));
+    // the times stay in the summary for a click to play from, but neither text shows one
+    assert_eq!(made.summary.topics[0].points[0].at, Some(75));
+    for shown in [html, plain.as_str()] {
+        for time in ["1:15", "2:20", "<i> ("] {
+            assert!(!shown.contains(time), "{time} in {shown}");
+        }
+    }
+}
+
+#[test]
+fn the_tool_is_asked_to_write_simplified_technical_english() {
+    for prompt in [instructions(), notes_instructions()] {
+        assert!(prompt.ends_with(STE_RULES), "{prompt}");
+    }
+    for rule in [
+        "ASD-STE100",
+        "20 words",
+        "25 words",
+        "active voice",
+        "no idioms",
+        "In another language",
+    ] {
+        assert!(STE_RULES.contains(rule), "{rule}");
+    }
 }
 
 #[test]

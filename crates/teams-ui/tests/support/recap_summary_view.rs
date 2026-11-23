@@ -99,7 +99,10 @@ fn the_ai_summary_is_made_on_this_computer_played_from_copied_and_sent_after_a_p
         assert!(drawn(cx, selector), "{selector} drawn");
     }
     assert!(!drawn(cx, "recap-summary-questions"), "none raised");
-    // a moment clicked: the recording plays from there
+    // no time shows: a point with a moment is its whole row, not a time beside its words
+    let row = cx.debug_bounds("recap-summary-at-0").unwrap();
+    assert!(row.size.width > gpui::px(200.0), "{row:?}");
+    // a point clicked: the recording plays from its moment
     click(cx, "recap-summary-at-0");
     assert!(drawn(cx, "video-player-recap-0"));
     copied_and_sent(&rig, cx);
@@ -132,6 +135,8 @@ fn copied_and_sent(rig: &Rig, cx: &mut VisualTestContext) {
         .and_then(|item| item.text())
         .unwrap();
     assert!(copied.contains("## Key takeaways\n\n- The video plays and the transcript follows it."));
+    assert!(copied.contains("- Bo checked playback.\n"), "{copied}");
+    assert!(copied.contains("- **Ada Lab**: Look at search next.\n"), "{copied}");
     // Send to chat: previewed, sent only on Send
     click(cx, "recap-summary-send");
     assert!(drawn(cx, "recap-summary-preview"));
@@ -149,6 +154,9 @@ fn copied_and_sent(rig: &Rig, cx: &mut VisualTestContext) {
         sent[0].1
     );
     assert!(sent[0].1.contains("<strong>Ada Lab</strong>: Look at search next."));
+    for shown in [copied.as_str(), sent[0].1.as_str()] {
+        assert!(!shown.contains("0:15") && !shown.contains("0:20"), "a time in {shown}");
+    }
     assert!(!drawn(cx, "recap-summary-preview"));
     assert!(drawn(cx, "recap-note"));
 }

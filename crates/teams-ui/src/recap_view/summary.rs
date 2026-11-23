@@ -1,5 +1,6 @@
 //! The recap's AI summary pane ([`crate::recap_summary`]): offered with what it sends where, made with its progress and
-//! Cancel, shown as Fathom lays a summary out (each moment a click away in the recording), copied, and sent to the
+//! Cancel, shown as Fathom lays a summary out without times (a click on a point plays the recording from its moment),
+//! copied, and sent to the
 //! meeting's chat after a preview the user confirms.
 
 use std::sync::Arc;
@@ -39,6 +40,8 @@ pub const SUMMARY_FAILED: &str = "The summary couldn't be made.";
 pub const SENT: &str = "Sent the summary to the meeting chat.";
 /// The note once the summary was copied.
 pub const COPIED: &str = "Copied the summary.";
+/// The tooltip of a summary point that plays the recording from its moment.
+const PLAY_FROM_HERE: &str = "Play from here";
 
 impl RecapView {
     /// The shown part's summary, kept by its recording (made when first asked for, followed while the view lives).
@@ -346,10 +349,7 @@ impl RecapView {
                     .text_center()
                     .text_sm()
                     .text_color(rgb(palette.muted_foreground))
-                    .child(
-                        "Get its purpose, key takeaways, the topics discussed with their moments in the recording, \
-                         and next steps with their owners.",
-                    ),
+                    .child("Get its purpose, key takeaways, the topics discussed and next steps with their owners."),
             )
             .child(action)
             .child(privacy_note(privacy, palette))
@@ -789,7 +789,7 @@ fn dot(words: String, palette: Palette) -> AnyElement {
         .into_any_element()
 }
 
-/// A point: its moment (a click plays it) or a bullet under the moments, then its words.
+/// A point: a bullet, then its words; a point with a moment plays the recording from there when clicked.
 fn bullet(
     at: Option<u64>,
     moments: &mut usize,
@@ -797,45 +797,31 @@ fn bullet(
     palette: Palette,
     cx: &mut Context<RecapView>,
 ) -> AnyElement {
-    let mark = match at {
-        Some(at) => {
-            let index = *moments;
-            *moments += 1;
-            div()
-                .id(SharedString::from(format!("recap-summary-at-{index}")))
-                .debug_selector(move || format!("recap-summary-at-{index}"))
-                .flex_none()
-                .min_w(px(40.0))
-                .px_1()
-                .rounded_sm()
-                .text_xs()
-                .text_color(rgb(palette.brand))
-                .cursor_pointer()
-                .hover(move |chip| chip.bg(rgb(palette.hover)))
-                .tooltip(move |window, cx| {
-                    gpui_component::tooltip::Tooltip::new(format!("Play from {}", stamp(at))).build(window, cx)
-                })
-                .child(stamp(at))
-                .on_click(cx.listener(move |this, _, _, cx| this.seek_summary(at, cx)))
-                .into_any_element()
-        }
-        None => div()
-            .flex_none()
-            .w(px(40.0))
-            .flex()
-            .justify_end()
-            .pr_2()
-            .text_color(rgb(palette.muted_foreground))
-            .child("•")
-            .into_any_element(),
-    };
-    div()
+    let row = div()
         .pt_1()
         .flex()
         .items_start()
         .gap_2()
         .text_sm()
-        .child(mark)
-        .child(words.flex_1().min_w_0())
+        .child(
+            div()
+                .flex_none()
+                .w(px(12.0))
+                .text_color(rgb(palette.muted_foreground))
+                .child("•"),
+        )
+        .child(words.flex_1().min_w_0());
+    let Some(at) = at else {
+        return row.into_any_element();
+    };
+    let index = *moments;
+    *moments += 1;
+    row.id(SharedString::from(format!("recap-summary-at-{index}")))
+        .debug_selector(move || format!("recap-summary-at-{index}"))
+        .rounded_sm()
+        .cursor_pointer()
+        .hover(move |row| row.bg(rgb(palette.hover)))
+        .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new(PLAY_FROM_HERE).build(window, cx))
+        .on_click(cx.listener(move |this, _, _, cx| this.seek_summary(at, cx)))
         .into_any_element()
 }
