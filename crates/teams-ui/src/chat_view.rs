@@ -1266,6 +1266,8 @@ pub struct ChatView {
 /// The list's focus: a stop of Tab's order, as Teams' list is, so Shift+Tab from the box comes to it.
 struct ListFocus {
     handle: FocusHandle,
+    /// The whole view, overlays too: whether the keys are anywhere in it, not in another view of the window.
+    pane: FocusHandle,
     /// The selected message's row: it holds the controls that Enter on the list goes to, and is no stop itself.
     selected_row: FocusHandle,
     /// The confirmation under the list: its buttons go when it closes, so the keys on them go back to the list.
@@ -1289,6 +1291,7 @@ impl ListFocus {
     fn new(cx: &mut App) -> Self {
         Self {
             handle: cx.focus_handle().tab_stop(true),
+            pane: cx.focus_handle(),
             selected_row: cx.focus_handle().tab_stop(false),
             confirmation: cx.focus_handle().tab_stop(false),
             pressed_from_confirmation: None,
@@ -6656,6 +6659,7 @@ impl Render for ChatView {
         let messages = self.messages(palette, window, cx);
         let typing = self.typing_line(palette, cx);
         Self::file_drop_target(cx)
+            .track_focus(&self.focus.pane)
             // Escape with a more-options menu open closes the menu first, as in Teams, wherever the focus is
             .capture_action(cx.listener(|this, _: &ComposeEscape, _, cx| this.escape_closes_options(cx)))
             // the same before a tool or popup of the compose box (the apps flyout) takes Escape for itself

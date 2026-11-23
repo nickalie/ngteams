@@ -504,6 +504,46 @@ fn a_posts_reply_in_thread_opens_its_thread_beside_the_posts_whose_box_replies_t
 }
 
 #[test]
+fn escape_in_customize_of_a_post_s_bar_opened_from_the_thread_s_more_reactions_gives_the_keys_to_the_posts() {
+    let rig = rig();
+    let (shell, cx) = opened(&rig, Arc::new(ViewTrace::off()));
+    let posts = posts(&shell, cx);
+    hover(cx, POST);
+    click(cx, "action-reply-in-thread");
+    let (_, thread) = thread(&shell, cx).expect("the thread opens");
+    let post = bounds(cx, "message-1760000400000").expect("the second post is drawn");
+    let over_the_post = gpui::point(post.right() - gpui::px(20.0), post.center().y);
+    cx.simulate_mouse_move(over_the_post, None, Modifiers::none());
+    draw(cx);
+    let bar = bounds(cx, "message-actions").expect("the post's hover bar").center();
+    cx.update(|window, cx| {
+        thread.update(cx, |view, cx| {
+            view.act(MessageAction::React, "1760000300200", window, cx);
+            view.open_more(window, cx);
+        });
+    });
+    draw(cx);
+    let picker = cx
+        .update(|_, cx| thread.read(cx).more_reactions().cloned())
+        .expect("more reactions open in the thread");
+    assert!(cx.update(|window, cx| picker.read(cx).holds_focus(window, cx)));
+    cx.simulate_mouse_move(over_the_post, None, Modifiers::none());
+    draw(cx);
+    cx.simulate_mouse_down(bar, gpui::MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(bar, gpui::MouseButton::Right, Modifiers::none());
+    draw(cx);
+    assert!(cx.update(|_, cx| posts.read(cx).bar_customize_open()));
+    assert!(cx.update(|_, cx| thread.read(cx).more_reactions().is_none()));
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert!(!cx.update(|_, cx| posts.read(cx).bar_customize_open()));
+    assert!(
+        cx.update(|window, cx| posts.read(cx).focus_handle().is_focused(window)),
+        "the posts take the keys, not the thread's dismissed search field"
+    );
+}
+
+#[test]
 fn a_posts_replies_summary_opens_its_thread_too() {
     let rig = rig();
     let (shell, cx) = opened(&rig, Arc::new(ViewTrace::off()));

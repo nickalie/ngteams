@@ -149,11 +149,12 @@ impl ChatView {
 
     /// Where the keys go back to when the list closes.
     fn customize_return(&self, window: &mut Window, cx: &mut Context<Self>) -> keyboard::Return {
-        // the right click dismisses "more reactions": the keys must not go back to its search field
-        if self
+        // the right click dismisses "more reactions" (this view's, or another pane's): the keys must not go back to
+        // its search field
+        let in_more = self
             .more_reactions()
-            .is_some_and(|picker| picker.read(cx).holds_focus(window, cx))
-        {
+            .is_some_and(|picker| picker.read(cx).holds_focus(window, cx));
+        if in_more || !self.focus.pane.contains_focused(window, cx) {
             self.focus.handle.focus(window, cx);
         }
         self.menu_keys.focus_return(&self.focus.handle, window, cx)
