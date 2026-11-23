@@ -848,16 +848,16 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         Ok(kept)
     }
 
-    /// A conversation kept to be synced again that the list didn't bring: its messages, and a chat's members read
-    /// again as a thread. What the list said of it was stored when it brought it ([`CatchUp::catch_up_conversation`]).
+    /// A conversation kept to be synced again that the list didn't bring: its messages, and a chat's or a meeting
+    /// chat's members read again as a thread. What the list said of it was stored when it brought it ([`CatchUp::catch_up_conversation`]).
     async fn resync(&self, store: &mut Store, id: &str) -> Result<Synced, CatchUpError> {
         let synced = match self.completed(id) {
             Some(synced) => synced,
             None => self.sync_messages(store, id).await?,
         };
-        let chat = store
-            .conversation(id)?
-            .is_some_and(|stored| matches!(stored.kind, ConversationKind::OneToOne | ConversationKind::Group));
+        let chat = store.conversation(id)?.is_some_and(|stored| {
+            matches!(stored.kind, ConversationKind::OneToOne | ConversationKind::Group) || stored.kind.is_meeting()
+        });
         if chat {
             let reads = ChatReads::new(&self.client);
             let thread = self.waiting(store, reads.thread(id)).await?;

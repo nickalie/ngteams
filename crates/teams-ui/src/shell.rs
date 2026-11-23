@@ -1298,10 +1298,16 @@ impl Shell {
             .is_some_and(|(accounts, _)| accounts.read(cx).busy_elsewhere(self.core.me(), cx))
     }
 
-    /// Calls the chat shown (a 1:1 chat's other member, a group chat's members).
+    /// Calls the chat shown (a 1:1 chat's other member, a group chat's members); in a meeting's chat, goes into the
+    /// meeting as its header's Join does.
     pub fn call_chat(&mut self, cx: &mut Context<Self>) {
         if let Main::Chat(id) = &self.main {
             let chat = id.clone();
+            if self.is_meeting_chat(&chat, cx) {
+                // a meeting chat's members are its invitees: a call of the chat would ring each of them
+                self.join_call(cx);
+                return;
+            }
             self.ask_call(Ask::Call { chat }, cx);
         } else {
             let ask = Ask::Call { chat: String::new() };

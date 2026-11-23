@@ -59,12 +59,13 @@ impl CallStage {
             self.hand_rank(me),
             palette,
         );
-        let mut rows = vec![self.person_stop("call-roster-self", own, palette, cx)];
+        let mut rows = vec![self.person_stop("call-roster-self", own.id("call-roster-self"), palette, cx)];
         if active.people_stand_in() {
             rows.extend(people.iter().enumerate().map(|(index, (mri, name))| {
                 let row = format!("call-roster-{index}");
                 let face = faces::small_face(&self.faces, (&row, mri), name);
-                let drawn = roster_row(row.clone(), (face, name.clone()), Signs::default(), palette);
+                let drawn = roster_row(row.clone(), (face, name.clone()), Signs::default(), palette)
+                    .id(SharedString::from(row.clone()));
                 self.person_stop(&row, drawn, palette, cx)
             }));
         } else {
@@ -80,7 +81,7 @@ impl CallStage {
                 };
                 let row = format!("call-roster-{index}");
                 let face = faces::small_face(&self.faces, (&row, &participant.mri), &name);
-                let drawn = roster_row(row.clone(), (face, name), signs, palette);
+                let drawn = roster_row(row.clone(), (face, name), signs, palette).id(SharedString::from(row.clone()));
                 self.person_stop(&row, drawn, palette, cx)
             }));
         }
@@ -211,6 +212,7 @@ impl CallStage {
         let row = format!("call-roster-invited-{index}");
         let selector = row.clone();
         let drawn = div()
+            .id(SharedString::from(row.clone()))
             .debug_selector(move || selector)
             .h(px(48.0))
             .px_4()
@@ -457,6 +459,7 @@ impl CallStage {
         let row = format!("call-roster-waiting-{index}");
         let selector = row.clone();
         let drawn = div()
+            .id(SharedString::from(row.clone()))
             .debug_selector(move || selector)
             .h(px(44.0))
             .px_4()
@@ -481,13 +484,8 @@ impl CallStage {
     }
 
     /// A row of the People pane as a tab stop keyed by its selector `key`, lit while the keyboard is on it.
-    fn person_stop(&self, key: &str, row: impl Into<Keyed>, palette: Palette, cx: &App) -> AnyElement {
-        let id = SharedString::from(key.to_owned());
-        let row = match row.into() {
-            Keyed::Plain(row) => row.id(id.clone()),
-            Keyed::Stateful(row) => row,
-        };
-        keyboard::stop(id, row, palette)
+    fn person_stop(&self, key: &str, row: gpui::Stateful<gpui::Div>, palette: Palette, cx: &App) -> AnyElement {
+        keyboard::stop(SharedString::from(key.to_owned()), row, palette)
             .handle(&self.people_keys.handles.get(key, cx))
             .into_any_element()
     }
@@ -552,24 +550,6 @@ impl CallStage {
     #[must_use]
     pub fn people_focus(&self, window: &Window) -> Option<String> {
         self.people_keys.handles.focused(window)
-    }
-}
-
-/// A row for [`CallStage::person_stop`]: one that keeps no state of its own yet, or one with its id (its hover).
-enum Keyed {
-    Plain(gpui::Div),
-    Stateful(gpui::Stateful<gpui::Div>),
-}
-
-impl From<gpui::Div> for Keyed {
-    fn from(row: gpui::Div) -> Self {
-        Self::Plain(row)
-    }
-}
-
-impl From<gpui::Stateful<gpui::Div>> for Keyed {
-    fn from(row: gpui::Stateful<gpui::Div>) -> Self {
-        Self::Stateful(row)
     }
 }
 

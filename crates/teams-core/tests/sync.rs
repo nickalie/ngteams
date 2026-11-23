@@ -417,6 +417,26 @@ async fn a_meeting_chats_invitees_are_kept_from_the_list_and_from_a_delivery_tha
     assert_eq!(mris(&a, NAMED), [LAB_A, LAB_B]);
 }
 
+#[tokio::test]
+async fn a_meeting_chat_synced_again_without_the_list_reads_its_invitees_again() {
+    const MEETING: &str = "19:meeting_synthetic-again@thread.v2";
+    let mock = ChatServiceMock::start().await.unwrap();
+    assert!(mock.add_meeting_chat(MEETING, "Synthetic again", &[LAB_A, LAB_B]));
+    let mut a = Account::of(&mock, LAB_A);
+    a.catch_up.catch_up(&mut a.store).await.unwrap();
+    // as a first member read that failed left it: no members, kept to be synced again
+    let stored = a.store.conversation(MEETING).unwrap().unwrap();
+    a.store.forget_conversation(MEETING).unwrap();
+    a.store.upsert_conversation(&stored).unwrap();
+    a.store.set_unsynced(MEETING).unwrap();
+    assert!(a.store.members(MEETING).unwrap().is_empty());
+    let report = a.catch_up.catch_up(&mut a.store).await.unwrap();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert!(a.store.unsynced_conversations().unwrap().is_empty());
+    let mris: Vec<String> = a.store.members(MEETING).unwrap().into_iter().map(|m| m.mri).collect();
+    assert_eq!(mris, [LAB_A, LAB_B]);
+}
+
 // --- a gap ---
 
 #[tokio::test]

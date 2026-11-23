@@ -429,6 +429,33 @@ fn a_staged_meeting_call_waits_for_its_members() {
 }
 
 #[test]
+fn a_meeting_chat_with_its_invitees_is_joined_never_called() {
+    let rig = calling();
+    rig.core
+        .conversations
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|chat| chat.id == TRIO)
+        .unwrap()
+        .kind = ConversationKind::Meeting;
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(TRIO), trace);
+    registered(&rig);
+    cx.update(|_, cx| {
+        let shell = shell.read(cx);
+        assert!(!shell.list().read(cx).can_call(TRIO), "the switcher offers no Call");
+        assert_eq!(shell.call_button(cx), "meeting");
+    });
+    cx.simulate_keystrokes("ctrl-shift-c");
+    cx.run_until_parked();
+    assert!(
+        asked(&rig, |action| matches!(action, CallAction::Call { .. })).is_empty(),
+        "its invitees are never rung"
+    );
+}
+
+#[test]
 fn roster_arrival_clears_the_switcher_highlight_before_enter_can_call() {
     let rig = calling();
     let members = rig.core.members.lock().unwrap().remove(TRIO).unwrap();

@@ -992,11 +992,12 @@ impl ChatList {
             .map(|row| row.id.as_str())
     }
 
-    /// Whether the stored chat identifies whom a call would ring, even while catch-up is still reading its roster.
+    /// Whether the stored chat identifies whom a call would ring, even while catch-up is still reading its roster; a
+    /// meeting's chat is joined, never called.
     #[must_use]
     pub fn can_call(&self, id: &str) -> bool {
         match self.row(id) {
-            Some(row) if row.bot.is_some() => false,
+            Some(row) if row.bot.is_some() || row.kind == RowKind::Meeting => false,
             row => one_to_one_partner(id, self.core.me()).is_some() || row.is_some_and(|row| row.members > 1),
         }
     }
