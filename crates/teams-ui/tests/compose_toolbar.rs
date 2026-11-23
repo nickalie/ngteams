@@ -2521,3 +2521,18 @@ fn escape_in_the_list_closes_a_message_s_menu_before_more_reactions() {
     press(cx, "escape");
     assert!(view.read_with(cx, |view, _| view.more_reactions().is_none()));
 }
+
+#[test]
+fn a_press_on_the_padding_around_the_box_leaves_the_keys_in_the_text() {
+    let rig = Rig::start();
+    let Opened { compose, cx, .. } = chat_with(&rig, Settings::default(), 900.0);
+    assert!(cx.update(|window, cx| compose.read(cx).focused(window, cx)));
+    let around = cx.debug_bounds("compose").expect("the compose area is shown");
+    let padding = gpui::point(around.center().x, around.bottom() - px(4.0));
+    cx.simulate_click(padding, Modifiers::none());
+    draw(cx);
+    assert!(
+        cx.update(|window, cx| compose.read(cx).focused(window, cx)),
+        "the text keeps the keys"
+    );
+}

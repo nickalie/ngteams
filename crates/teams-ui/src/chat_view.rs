@@ -6660,6 +6660,8 @@ impl Render for ChatView {
         let typing = self.typing_line(palette, cx);
         Self::file_drop_target(cx)
             .track_focus(&self.focus.pane)
+            // the handle only tells whether the keys are in the view: a press on a bare spot leaves them where they are
+            .on_any_mouse_down(|_, window, _| window.prevent_default())
             // Escape with a more-options menu open closes the menu first, as in Teams, wherever the focus is
             .capture_action(cx.listener(|this, _: &ComposeEscape, _, cx| this.escape_closes_options(cx)))
             // the same before a tool or popup of the compose box (the apps flyout) takes Escape for itself
