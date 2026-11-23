@@ -141,15 +141,14 @@ fn serve(stream: TcpStream, sets: &[MockSet], seen: &Mutex<Vec<MockRequest>>, fa
             target: target.clone(),
             authorization,
         });
-        let count = |part: &str| seen.iter().filter(|request| request.target.contains(part)).count();
-        (count("/getFile?"), count("/file/bot"))
+        let count = |test: fn(&str) -> bool| seen.iter().filter(|request| test(&request.target)).count();
+        (count(is_get_file), count(is_download))
     };
     let fault = fault.lock().unwrap_or_else(PoisonError::into_inner).clone();
-    let sent = match &fault {
-        Some(MockFault::DroppedFrom(from)) if target.contains("/getFile?") && files_asked > *from => return,
-        Some(MockFault::CutFrom(from)) if target.starts_with("/file/bot") && downloads > *from => 2,
-        _ => 1,
-    };
+    let delivery = delivery(&target, fault.as_ref(), files_asked, downloads);
+    if delivery == Delivery::Nothing {
+        return;
+    }
     let (status, kind, body, location) = faulted(&target, fault, files_asked).unwrap_or_else(|| {
         let (status, kind, body) = answer(&target, sets);
         (status, kind, body, String::new())
@@ -160,10 +159,40 @@ fn serve(stream: TcpStream, sets: &[MockSet], seen: &Mutex<Vec<MockRequest>>, fa
         body.len()
     );
     let _ = stream.write_all(head.as_bytes());
-    let _ = stream.write_all(body.get(..body.len() / sent).unwrap_or_default());
+    let written = if delivery == Delivery::Half {
+        body.len() / 2
+    } else {
+        body.len()
+    };
+    let _ = stream.write_all(body.get(..written).unwrap_or_default());
     let _ = stream.flush();
-    if sent == 1 {
+    if delivery == Delivery::Whole {
         let _ = reader.read(&mut [0; 1]);
+    }
+}
+
+/// How much of its answer a request gets.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    Whole,
+    Half,
+    Nothing,
+}
+
+fn is_get_file(target: &str) -> bool {
+    target.contains("/getFile?")
+}
+
+fn is_download(target: &str) -> bool {
+    target.starts_with("/file/bot")
+}
+
+/// The share of its answer `fault` lets `target` get: the `files_asked`th `getFile` or `downloads`th download (from 1).
+fn delivery(target: &str, fault: Option<&MockFault>, files_asked: usize, downloads: usize) -> Delivery {
+    match fault {
+        Some(MockFault::DroppedFrom(from)) if is_get_file(target) && files_asked > *from => Delivery::Nothing,
+        Some(MockFault::CutFrom(from)) if is_download(target) && downloads > *from => Delivery::Half,
+        _ => Delivery::Whole,
     }
 }
 
@@ -171,7 +200,7 @@ type Faulted = (&'static str, &'static str, Vec<u8>, String);
 
 /// The answer `fault` gives to `target`, the `files_asked`th `getFile` (from 1) if it is one.
 fn faulted(target: &str, fault: Option<MockFault>, files_asked: usize) -> Option<Faulted> {
-    let get_file = target.contains("/getFile?");
+    let get_file = is_get_file(target);
     let with = |(status, kind, body): (&'static str, &'static str, Vec<u8>)| (status, kind, body, String::new());
     match fault? {
         MockFault::RateLimitedFrom(from) if get_file && files_asked > from => Some(with(json_answer(
