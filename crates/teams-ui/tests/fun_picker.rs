@@ -1928,8 +1928,8 @@ fn a_signal_pack_imports_from_its_link_in_the_add_a_pack_menu() {
 
     cx.update(|window, cx| {
         panel.update(cx, |panel, cx| {
-            panel.set_link("https://t.me/addstickers/Cats", window, cx)
-        })
+            panel.set_link("https://t.me/addstickers/Cats", window, cx);
+        });
     });
     click(cx, "signal-import-start");
     assert_eq!(signal_problem(&panel, cx).as_deref(), Some(signal_import::BAD_LINK));

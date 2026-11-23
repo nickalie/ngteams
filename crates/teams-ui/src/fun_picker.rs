@@ -592,16 +592,7 @@ impl FunPicker {
             Item::SeeAllEmoji => self.show(Tab::Emoji, cx),
             Item::SeeAllStickers => self.show_stickers(StickerView::Home, window, cx),
             Item::SeeAllPacks => self.show_stickers(StickerView::Packs, window, cx),
-            Item::AddPack | Item::PackMenu => {
-                self.panel = if self.panel == Panel::Menu {
-                    Panel::None
-                } else {
-                    Panel::Menu
-                };
-                self.renaming = None;
-                self.reveal_menu(cx);
-                cx.notify();
-            }
+            Item::AddPack | Item::PackMenu => self.toggle_menu(cx),
             Item::ImportFolder => Self::choose_import(ImportKind::Folder, cx),
             Item::ImportArchive => Self::choose_import(ImportKind::Archive, cx),
             Item::ImportFiles => Self::choose_files(cx),
@@ -887,6 +878,18 @@ impl FunPicker {
         if self.items_focus.is_focused(window) {
             self.search.update(cx, |search, cx| search.focus(window, cx));
         }
+    }
+
+    /// Opens or closes the add-a-pack or the pack's menu, the whole of an opened one in view.
+    fn toggle_menu(&mut self, cx: &mut Context<Self>) {
+        self.panel = if self.panel == Panel::Menu {
+            Panel::None
+        } else {
+            Panel::Menu
+        };
+        self.renaming = None;
+        self.reveal_menu(cx);
+        cx.notify();
     }
 
     /// Scrolls an opened menu's last row into view, so that none of its rows is hidden below the list.
