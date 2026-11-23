@@ -62,6 +62,7 @@ pub mod profiles;
 mod recap;
 pub mod search;
 pub mod service_search;
+pub mod signal;
 pub mod sync;
 pub mod team_admin;
 mod team_apps;

@@ -12,8 +12,9 @@
 //! Copy link's "Link created"); a message of lines, small
 //! pictures and a block of code, in Teams Dark and Light; stickers alone with no bubble, in Teams Dark and Light, and
 //! one of Teams' own picked and sent; Teams' sticker packs in the picker, one opened and a search; the picker's
-//! "Import a Telegram sticker pack" with no token (Light, then Tab to its token field) and with one kept (Dark); a
-//! picture opened in the picture viewer, fitted and zoomed;
+//! "Import a Telegram sticker pack" with no token (Light, then Tab to its token field) and with one kept (Dark); the
+//! picker's "Import a Signal sticker pack" (Light, then a link that names no pack and Tab to Import; Dark, a link
+//! typed); a picture opened in the picture viewer, fitted and zoomed;
 //! the 12-hour time format and a chat's times on it; a group chat's presence; the "Chats" section's See more, what it
 //! brings and a chat opened from below the rows shown; New message, its To: line's suggestions, the chat two people
 //! already have and a group name, in Teams Dark and Light; a group chat's "Name group chat" in Teams Light and Dark;
@@ -201,7 +202,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 362 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 365 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -411,6 +412,18 @@ const STEPS: [Step; 5 + 362 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
                     panel.set_link("t.me/addstickers/MadeUpCats", window, cx);
                 });
             }
+        });
+        press(window, cx, "tab");
+    }),
+    // "Import a Signal sticker pack" in the picker's place: the link field focused, and where a link comes from
+    ("chat-fun-signal-import", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, FunPicker::open_signal_import);
+    }),
+    // the keyboard in it: a link that names no pack, Enter says so; then Tab to Import, which shows its ring
+    ("chat-fun-signal-keys", |shell, window, cx| {
+        with_signal_import(shell, window, cx, |panel, window, cx| {
+            panel.set_link("signal.art/addstickers/#pack_id=made-up", window, cx);
+            panel.start(window, cx);
         });
         press(window, cx, "tab");
     }),
@@ -1476,6 +1489,15 @@ const STEPS: [Step; 5 + 362 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
         let made_up = teams_auth::secrets::Secret::new("123456789:MADE_UP_tour_token_not_real_0000000");
         let _ = teams_ui::stickers::telegram::BotToken::of(cx).put(&made_up);
         with_fun_picker(shell, window, cx, FunPicker::open_telegram_import);
+    }),
+    // the Signal panel in Teams Dark, a made-up pack's link typed
+    ("chat-dark-fun-signal-import", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, FunPicker::open_signal_import);
+        with_signal_import(shell, window, cx, |panel, window, cx| {
+            let made_up = "https://signal.art/addstickers/#pack_id=5f17e7105f17e7105f17e7105f17e710&pack_key=\
+                           00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+            panel.set_link(made_up, window, cx);
+        });
     }),
     // b's pasted picture with an emoticon in its text, b's wave alone, c's GIF from the GIF picker, b's link with its
     // preview card and b's phone screenshot alone in its square frame (`seed_pictures`), in Teams Dark
@@ -4868,6 +4890,27 @@ fn with_fun_picker(
         .and_then(|chat| chat.read(cx).compose().read(cx).emoji_picker().cloned());
     if let Some(picker) = picker {
         picker.update(cx, |picker, cx| change(picker, window, cx));
+    }
+}
+
+/// Makes `change` to the picker's open "Import a Signal sticker pack".
+fn with_signal_import(
+    shell: &Entity<Shell>,
+    window: &mut Window,
+    cx: &mut App,
+    change: impl FnOnce(
+        &mut teams_ui::signal_import::SignalImport,
+        &mut Window,
+        &mut Context<teams_ui::signal_import::SignalImport>,
+    ),
+) {
+    let panel = shell
+        .read(cx)
+        .chat()
+        .and_then(|chat| chat.read(cx).compose().read(cx).emoji_picker().cloned())
+        .and_then(|picker| picker.read(cx).signal_import().cloned());
+    if let Some(panel) = panel {
+        panel.update(cx, |panel, cx| change(panel, window, cx));
     }
 }
 

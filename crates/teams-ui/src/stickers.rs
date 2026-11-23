@@ -1,7 +1,7 @@
 //! The user's sticker packs: one store for all the app's accounts ([`store`], beside the settings file), the import
 //! of a folder, a `.zip` or chosen files of pictures as a pack ([`import`], Telegram's animated stickers through
-//! [`lottie`]), the import of a Telegram pack from its link ([`telegram`]), and the [`Shelf`] the compose box's picker
-//! shows them from.
+//! [`lottie`]), the import of a Telegram pack ([`telegram`]) or a Signal pack ([`signal`]) from its link, and the
+//! [`Shelf`] the compose box's picker shows them from.
 //!
 //! The shelf reads the store once, then keeps it in step with what the app does to it: an import (run on a background
 //! thread, its progress and its outcome kept on the shelf, so the picker shows them when it opens again), a rename, a
@@ -10,6 +10,7 @@
 
 pub mod import;
 pub mod lottie;
+pub mod signal;
 pub mod store;
 pub mod teams;
 pub mod telegram;
@@ -189,6 +190,16 @@ impl Shelf {
         let apis = telegram::BotApis::of(cx);
         self.run(
             Box::new(move |dir, progress| telegram::import_link(&link, &tokens, &apis, dir, progress)),
+            cx,
+        );
+    }
+
+    /// Imports the Signal pack `link` names as a new pack, from Signal's CDN ([`signal::SignalCdns`]), as
+    /// [`Self::import`] does.
+    pub fn import_signal(&mut self, link: String, cx: &mut Context<Self>) {
+        let cdns = signal::SignalCdns::of(cx);
+        self.run(
+            Box::new(move |dir, progress| signal::import_link(&link, &cdns, dir, progress)),
             cx,
         );
     }

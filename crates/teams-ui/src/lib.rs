@@ -179,6 +179,7 @@ pub mod shared_view;
 pub mod sheet;
 pub mod shell;
 pub mod sidebar;
+pub mod signal_import;
 pub mod sounds;
 pub mod stickers;
 pub mod switcher;

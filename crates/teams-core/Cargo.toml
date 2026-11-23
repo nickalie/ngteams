@@ -17,6 +17,13 @@ test-support = ["teams-proto/test-support"]
 # the AI APIs asked with a key that the user gives (`ai_api`): async requests that a stop can drop at once, run on
 # the API's own runtime (one worker) while the thread that asks blocks
 reqwest.workspace = true
+# a Signal sticker pack's manifest and stickers: keys from HKDF-SHA256 of the pack key, each blob's HMAC-SHA256
+# checked, then AES-256-CBC decrypted (`signal`)
+aes.workspace = true
+cbc.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
+sha2.workspace = true
 # a calendar event's time without an offset placed in the desktop's time zone, as the calendar view places it
 chrono.workspace = true
 # The calendar service expects an IANA zone; Windows does not have /etc/localtime.

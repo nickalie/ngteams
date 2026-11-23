@@ -549,6 +549,18 @@ requests. The formats are in [stickers.md](stickers.md).
 | `GET` | `https://api.telegram.org/bot<token>/getFile?file_id=` | a sticker's file path and size | `telegram::BotApi::file` | [stickers.md](stickers.md#a-pack-from-its-link-the-bot-api) · 651 | native on a loopback mock only; own server: not served (not Teams) |
 | `GET` | `https://api.telegram.org/file/bot<token>/<file_path>` | the sticker's file: `.webp`, `.tgs` or `.webm` (a video sticker is never asked for) | `telegram::BotApi::file` | [stickers.md](stickers.md#a-pack-from-its-link-the-bot-api) · 651 | native on a loopback mock only; own server: not served (not Teams) |
 
+## Signal's sticker CDN (`cdn-ca.signal.org`)
+
+Not Teams: the sticker picker's "Import a Signal sticker pack" reads a pack that a `signal.art` link names from
+Signal's CDN. The requests are `teams_core::signal`'s, outside the Teams transport: `https` only, no proxy, no
+redirect, no retry, no credential, and no Teams or own-server token goes there. The pack key in the link never leaves
+the app: it only decrypts the answers. Nothing logs these requests. The formats are in [stickers.md](stickers.md).
+
+| Method | Path | What it does | Native | Notes · task | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| `GET` | `https://cdn-ca.signal.org/stickers/<pack_id>/manifest.proto` | the pack's manifest, encrypted: its title, author, cover and stickers (id, emoji, content type); 403 for a pack that it does not hold | `signal::SignalCdn::manifest` | [stickers.md](stickers.md#a-signal-pack-from-its-link) · 652 | live read of a public pack (task 652, no account); native on a loopback mock too (`teams_mock::signal`); own server: not served (not Teams) |
+| `GET` | `https://cdn-ca.signal.org/stickers/<pack_id>/full/<sticker id>` | a sticker's picture, encrypted: PNG, WebP or APNG | `signal::SignalCdn::sticker` | [stickers.md](stickers.md#a-signal-pack-from-its-link) · 652 | live read of a public pack (task 652); native on a loopback mock too; own server: not served (not Teams) |
+
 ## App tiles (`res.cdn.office.net`, `statics.teams.cdn.office.net`)
 
 Microsoft's public CDN holds each app's tile, which an app definition names in `largeImageUrl`. The native transport reads it with no account credential, on `Service::AppPictures` (`https://res.cdn.office.net/teamsappdata/`) or `Service::StaticAppPictures` (`https://statics.teams.cdn.office.net/`, its `app-assets/` and `evergreen-assets/apps/` folders only). An own-server account's tiles are on its own origin under `/teamsappdata/`, read on `Service::AppPictures` with no token ([apps.md](apps.md#own-servers)).

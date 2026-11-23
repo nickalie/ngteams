@@ -120,10 +120,14 @@ wpe-platform-sys = { path = "crates/wpe-platform-sys" }
 wpe-webkit-sys = { path = "crates/wpe-webkit-sys" }
 # tests and lab runs only: the private compositor, bus, input and URI opener every GUI process runs in
 ui-sandbox = { path = "crates/ui-sandbox" }
+# A Signal sticker pack's manifest and stickers decrypted (AES-256-CBC, teams-core's `signal`); no logging
+aes = "0.9.4"
 # The video source hands frames to GPUI's foreground executor: the version GPUI already links.
 async-channel = "2.5.0"
 # base64 bodies and frames in captures, decoded by the sanitizer
 base64 = "0.23.1"
+# a Signal sticker pack's blocks chained as Signal encrypts them (teams-core's `signal`); no logging
+cbc = { version = "0.2.1", default-features = false, features = ["block-padding"] }
 # the chat list's times in the local time zone (read from TZ and the zoneinfo files, no libc localtime): the version
 # the UI kit already links, with only its clock
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
@@ -187,6 +191,8 @@ image = { version = "0.25.10", default-features = false }
 image-webp = "=0.2.4"
 # STUN MESSAGE-INTEGRITY (HMAC-SHA1 over a long-term key) for the echo call's TURN client
 hmac = "0.13.0"
+# a Signal sticker pack's keys derived from its pack key, as Signal derives them (teams-core's `signal`); no logging
+hkdf = "0.13.0"
 # a Retry-After given as an HTTP date
 httpdate = "1.0.3"
 # a JSON object read and written in its keys' order whatever serde_json's features (the own server's mentions)

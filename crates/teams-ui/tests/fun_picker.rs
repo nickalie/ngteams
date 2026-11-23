@@ -1,6 +1,6 @@
 //! The compose box's picker (`teams_ui::fun_picker`) on GPUI's test context, over the fake engine (`common`): the tabs
 //! All, Emoji and Stickers, a sticker put in the box and sent as Teams sends one, the import of a folder, of chosen files
-//! and of a Telegram pack's link (against the mock Bot API) from the picker, a pack renamed and removed, the keyboard's
+//! and of a Telegram or a Signal pack's link (against the mock Bot API or the mock CDN) from the picker, a pack renamed and removed, the keyboard's
 //! reach, and a box that offers no sticker; Teams' own packs for an account of Microsoft's cloud (their previews, a
 //! pick sent by its address, the search, the keyboard) and none for an own server's. The settings live in a directory
 //! of their own per test, beside the stickers. Every picture, name and id is made up, but for Teams' packs' names and
@@ -1849,4 +1849,170 @@ fn the_add_a_pack_menu_offers_files_and_a_telegram_pack() {
     click(cx, "sticker-pack-add");
     click(cx, "sticker-import-telegram");
     assert!(cx.update(|_, cx| picker.read(cx).telegram_import().is_some()));
+}
+
+// --- a Signal pack from its link ---
+
+use teams_mock::signal::{self as cdn, MockPack, SignalCdnMock};
+use teams_ui::signal_import::{self, SignalImport};
+use teams_ui::stickers::signal::SignalCdns;
+
+/// A mock CDN holding a pack of two still stickers, made the app's CDN.
+fn signal_mock(cx: &mut VisualTestContext) -> SignalCdnMock {
+    let sticker = |emoji: &str, colour| cdn::MockSticker {
+        emoji: emoji.to_owned(),
+        content_type: "image/png".to_owned(),
+        bytes: picture(256, colour, ImageFormat::Png),
+    };
+    let mock = SignalCdnMock::start(vec![MockPack::synthetic(
+        "Made-up Signal cats",
+        vec![sticker("\u{1f638}", [200, 10, 10]), sticker("\u{1f63a}", [10, 10, 200])],
+    )])
+    .unwrap();
+    let origin = mock.origin();
+    cx.update(|_, cx| {
+        cx.set_global(SignalCdns::new(Arc::new(move || {
+            teams_core::signal::SignalCdn::with_mock_origin(&origin)
+        })));
+    });
+    mock
+}
+
+fn signal_link() -> String {
+    MockPack::synthetic("", Vec::new()).link()
+}
+
+fn signal_panel(picker: &Entity<FunPicker>, cx: &mut VisualTestContext) -> Entity<SignalImport> {
+    cx.update(|_, cx| picker.read(cx).signal_import().cloned())
+        .expect("the Signal panel is open")
+}
+
+fn signal_problem(panel: &Entity<SignalImport>, cx: &mut VisualTestContext) -> Option<String> {
+    cx.update(|_, cx| panel.read(cx).problem().map(ToString::to_string))
+}
+
+/// Until the shelf's import is no longer running; how it ended.
+fn imported(place: &Setup, cx: &mut VisualTestContext) -> Option<teams_ui::stickers::ImportState> {
+    let shelf = cx.update(|_, cx| Shelf::of(Some(place.stickers.clone()), cx));
+    let start = std::time::Instant::now();
+    while cx.update(|_, cx| shelf.read(cx).importing()) {
+        assert!(start.elapsed() < std::time::Duration::from_secs(30), "the import ends");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        draw(cx);
+    }
+    draw(cx);
+    cx.update(|_, cx| shelf.read(cx).import_state().cloned())
+}
+
+#[test]
+fn a_signal_pack_imports_from_its_link_in_the_add_a_pack_menu() {
+    let place = Setup::new().with_cats();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    let mock = signal_mock(cx);
+    click(cx, "compose-emoji");
+    let picker = picker(&view, cx).unwrap();
+    click(cx, "fun-tab-stickers");
+    click(cx, "sticker-pack-add");
+    assert!(drawn(cx, "sticker-import-folder") && drawn(cx, "sticker-import-zip"));
+    click(cx, "sticker-import-signal");
+    let panel = signal_panel(&picker, cx);
+    assert!(
+        drawn(cx, "signal-import") && drawn(cx, "signal-import-help") && !drawn(cx, "fun-tab-all"),
+        "the panel in the picker's place"
+    );
+    assert!(
+        cx.update(|window, cx| panel.read(cx).holds_focus(window, cx)),
+        "the link field has the focus"
+    );
+
+    cx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.set_link("https://t.me/addstickers/Cats", window, cx)
+        })
+    });
+    click(cx, "signal-import-start");
+    assert_eq!(signal_problem(&panel, cx).as_deref(), Some(signal_import::BAD_LINK));
+    assert!(drawn(cx, "signal-import-problem"));
+    assert!(mock.requests().is_empty(), "nothing sent for a bad link");
+    cx.simulate_input(" ");
+    draw(cx);
+    assert_eq!(signal_problem(&panel, cx), None, "a change clears the problem");
+
+    cx.update(|window, cx| panel.update(cx, |panel, cx| panel.set_link(&signal_link(), window, cx)));
+    click(cx, "signal-import-start");
+    assert!(
+        cx.update(|_, cx| picker.read(cx).signal_import().is_none()),
+        "the panel closed"
+    );
+    let Some(teams_ui::stickers::ImportState::Done(done)) = imported(&place, cx) else {
+        panic!("the pack is imported");
+    };
+    assert_eq!(
+        (done.pack.name.as_str(), done.pack.stickers.len()),
+        ("Made-up Signal cats", 2)
+    );
+    assert!(drawn(cx, "sticker-import-summary"));
+    assert!(drawn(cx, "fun-tab-all"), "the picker again");
+
+    click(cx, "sticker-pack-add");
+    click(cx, "sticker-import-signal");
+    click(cx, "signal-import-back");
+    assert!(cx.update(|_, cx| picker.read(cx).signal_import().is_none()), "Back");
+    click(cx, "sticker-pack-add");
+    click(cx, "sticker-import-signal");
+    click(cx, "signal-import-cancel");
+    assert!(cx.update(|_, cx| picker.read(cx).signal_import().is_none()), "Cancel");
+}
+
+#[test]
+fn the_signal_panel_is_reached_by_the_keyboard() {
+    let place = Setup::new();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    let mock = signal_mock(cx);
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    click(cx, "fun-tab-stickers");
+    assert!(
+        drawn(cx, "sticker-import-signal"),
+        "the empty state offers a Signal pack"
+    );
+    // the empty state's buttons are the first row: Down, Right twice, Enter opens the panel
+    keys(cx, "down right right enter");
+    let panel = signal_panel(&picker, cx);
+    cx.simulate_input("not a link");
+    keys(cx, "enter");
+    assert_eq!(signal_problem(&panel, cx).as_deref(), Some(signal_import::BAD_LINK));
+    // Tab to Import, Shift+Tab back to the field, Tab twice to Cancel, Shift+Tab to Import
+    keys(cx, "tab shift-tab");
+    assert!(
+        cx.update(|window, cx| panel.read(cx).holds_focus(window, cx)),
+        "the focus stays in the panel"
+    );
+    keys(cx, "ctrl-a backspace");
+    cx.simulate_input(&signal_link());
+    keys(cx, "tab tab shift-tab enter");
+    assert!(
+        cx.update(|_, cx| picker.read(cx).signal_import().is_none()),
+        "Enter on Import starts it"
+    );
+    assert!(matches!(
+        imported(&place, cx),
+        Some(teams_ui::stickers::ImportState::Done(_))
+    ));
+    assert_eq!(mock.requests().len(), 3);
+
+    // Shift+Tab from the field reaches the back arrow; Enter on it goes back
+    cx.update(|window, cx| picker.update(cx, |picker, cx| picker.open_signal_import(window, cx)));
+    draw(cx);
+    keys(cx, "shift-tab enter");
+    assert!(cx.update(|_, cx| picker.read(cx).signal_import().is_none()), "Back");
+    // Escape leaves the panel for the picker, not the picker
+    cx.update(|window, cx| picker.update(cx, |picker, cx| picker.open_signal_import(window, cx)));
+    draw(cx);
+    keys(cx, "escape");
+    assert!(cx.update(|_, cx| picker.read(cx).signal_import().is_none()));
+    assert!(picker_open(&view, cx), "the picker stays open");
+    assert!(drawn(cx, "fun-tab-all"));
 }

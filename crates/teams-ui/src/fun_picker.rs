@@ -9,12 +9,12 @@
 //! - **Stickers**: Recent, then "Sticker packs": a tile for each pack the user added, then Teams' own packs in Teams'
 //!   order with their headers ([`crate::stickers::teams`], for an account of Microsoft's cloud: an own server has
 //!   none), the first four, "See all" for every one; and "Add a sticker pack" (import a folder, a `.zip` file or chosen
-//!   files of pictures and Telegram stickers, [`crate::stickers::import`], or a Telegram pack from its link,
-//!   [`TelegramImport`], drawn in the picker's place until it starts or is cancelled). A pack's tile opens its stickers
-//!   (Teams' previews, read from Teams' sticker CDN with no credential and kept by the engine); a pack the user added
-//!   has "More options" to rename or remove it. A search lists the user's stickers whose label or pack has its words,
-//!   then Teams' stickers as Teams finds them (by name or keyword). How an import goes (its progress, what it added and
-//!   skipped, why it failed) shows here until it is closed.
+//!   files of pictures and Telegram stickers, [`crate::stickers::import`], or a Telegram or a Signal pack from its
+//!   link, [`TelegramImport`], [`SignalImport`], drawn in the picker's place until it starts or is cancelled). A pack's
+//!   tile opens its stickers (Teams' previews, read from Teams' sticker CDN with no credential and kept by the engine);
+//!   a pack the user added has "More options" to rename or remove it. A search lists the user's stickers whose label or
+//!   pack has its words, then Teams' stickers as Teams finds them (by name or keyword). How an import goes (its
+//!   progress, what it added and skipped, why it failed) shows here until it is closed.
 //!
 //! A pick only tells ([`FunPickerEvent`]): the box puts an emoji in its text, and a sticker in the box as a picture: one
 //! of the user's packs is sent to the media service at once, and one of Teams' is named by its address on Teams'
@@ -41,6 +41,7 @@ use crate::icons::{Glyph, selected_by};
 use crate::inline::{PictureSource, PictureState};
 use crate::reaction_picker::{ReactionPicker, ReactionPickerEvent, Section};
 use crate::reactions;
+use crate::signal_import::{SignalImport, SignalImportEvent};
 use crate::stickers::teams;
 use crate::stickers::{ImportKind, ImportState, Shelf, StickerRef, Thumb};
 use crate::telegram_import::{TelegramImport, TelegramImportEvent};
@@ -135,6 +136,7 @@ pub enum Item {
     ImportArchive,
     ImportFiles,
     ImportTelegram,
+    ImportSignal,
     Back,
     PackMenu,
     Rename,
@@ -164,6 +166,7 @@ impl Item {
             Self::ImportArchive => "sticker-import-zip".to_owned(),
             Self::ImportFiles => "sticker-import-files".to_owned(),
             Self::ImportTelegram => "sticker-import-telegram".to_owned(),
+            Self::ImportSignal => "sticker-import-signal".to_owned(),
             Self::Back => "sticker-back".to_owned(),
             Self::PackMenu => "sticker-pack-menu".to_owned(),
             Self::Rename => "sticker-pack-rename".to_owned(),
@@ -219,7 +222,12 @@ impl Line {
             Self::Cells { items, .. } | Self::Packs(items) | Self::Import(items) => items.clone(),
             Self::Menu(item) => vec![item.clone()],
             Self::Back => vec![Item::Back],
-            Self::Empty => vec![Item::ImportFolder, Item::ImportArchive, Item::ImportTelegram],
+            Self::Empty => vec![
+                Item::ImportFolder,
+                Item::ImportArchive,
+                Item::ImportTelegram,
+                Item::ImportSignal,
+            ],
             Self::Renaming => vec![Item::SaveName, Item::CancelName],
             Self::Removing(_) => vec![Item::ConfirmRemove, Item::CancelRemove],
             Self::Note(_) => Vec::new(),
@@ -271,6 +279,8 @@ pub struct FunPicker {
     problem: Option<SharedString>,
     /// "Import a Telegram sticker pack", open in the picker's place.
     telegram: Option<(Entity<TelegramImport>, Subscription)>,
+    /// "Import a Signal sticker pack", open in the picker's place.
+    signal: Option<(Entity<SignalImport>, Subscription)>,
     /// The item drawn with the keyboard's ring, and whether the tabs have the focus, as this frame draws them.
     ring: Option<Item>,
     tabs_ringed: bool,
@@ -333,6 +343,7 @@ impl FunPicker {
             renaming: None,
             problem: None,
             telegram: None,
+            signal: None,
             ring: None,
             tabs_ringed: false,
             _subscriptions: subscriptions,
@@ -480,6 +491,29 @@ impl FunPicker {
         cx.notify();
     }
 
+    /// The "Import a Signal sticker pack" panel, while it is open.
+    #[must_use]
+    pub fn signal_import(&self) -> Option<&Entity<SignalImport>> {
+        self.signal.as_ref().map(|(panel, _)| panel)
+    }
+
+    /// Opens "Import a Signal sticker pack" in the picker's place.
+    pub fn open_signal_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.panel = Panel::None;
+        let panel = cx.new(|cx| SignalImport::new(window, cx));
+        let events = cx.subscribe_in(&panel, window, |this, _, event: &SignalImportEvent, window, cx| {
+            this.signal = None;
+            if let SignalImportEvent::Start(link) = event {
+                this.show_stickers(StickerView::Home, window, cx);
+                this.shelf.update(cx, |shelf, cx| shelf.import_signal(link.clone(), cx));
+            }
+            this.search.update(cx, |search, cx| search.focus(window, cx));
+            cx.notify();
+        });
+        self.signal = Some((panel, events));
+        cx.notify();
+    }
+
     /// Imports the chosen `files` into the shelf (as the add-a-pack menu's chooser does).
     pub fn import_files(&mut self, files: Vec<PathBuf>, cx: &mut Context<Self>) {
         self.panel = Panel::None;
@@ -571,6 +605,7 @@ impl FunPicker {
             Item::ImportArchive => Self::choose_import(ImportKind::Archive, cx),
             Item::ImportFiles => Self::choose_files(cx),
             Item::ImportTelegram => self.open_telegram_import(window, cx),
+            Item::ImportSignal => self.open_signal_import(window, cx),
             Item::Back => {
                 let back = match &self.view {
                     StickerView::Pack { from_packs: true, .. } | StickerView::TeamsPack { from_packs: true, .. } => {
@@ -1058,6 +1093,7 @@ impl FunPicker {
             lines.push(Line::Menu(Item::ImportArchive));
             lines.push(Line::Menu(Item::ImportFiles));
             lines.push(Line::Menu(Item::ImportTelegram));
+            lines.push(Line::Menu(Item::ImportSignal));
         }
         let teams_packs = teams::catalog().packs().iter().filter(|_| self.teams);
         let packs: Vec<Item> = held
@@ -1394,6 +1430,7 @@ impl FunPicker {
             Item::ImportArchive => (Glyph::FILE_ARCHIVE, "Import a .zip file of pictures", false),
             Item::ImportFiles => (Glyph::FILE_IMAGE, "Import picture or sticker files", false),
             Item::ImportTelegram => (Glyph::LINK, "Import a Telegram sticker pack", false),
+            Item::ImportSignal => (Glyph::LINK, "Import a Signal sticker pack", false),
             Item::Rename => (Glyph::PENCIL, "Rename", false),
             _ => (Glyph::TRASH, "Remove", true),
         };
@@ -1502,6 +1539,7 @@ impl FunPicker {
         let folder = self.button(&Item::ImportFolder, "Import a folder", true, palette, cx);
         let archive = self.button(&Item::ImportArchive, "Import a .zip file", false, palette, cx);
         let telegram = self.button(&Item::ImportTelegram, "Import a Telegram pack", false, palette, cx);
+        let signal = self.button(&Item::ImportSignal, "Import a Signal pack", false, palette, cx);
         div()
             .debug_selector(|| "sticker-packs-empty".to_owned())
             .pt_6()
@@ -1534,7 +1572,7 @@ impl FunPicker {
                     .child("Add your own: a folder or a .zip file of PNG, WebP or GIF pictures or Telegram stickers."),
             )
             .child(div().pt_1().flex().gap_2().child(folder).child(archive))
-            .child(telegram)
+            .child(div().flex().gap_2().child(telegram).child(signal))
             .into_any_element()
     }
 
@@ -1764,8 +1802,13 @@ impl Render for FunPicker {
         let palette = theme::current(cx);
         self.ring = self.current(window, cx);
         self.tabs_ringed = self.tabs_focus.is_focused(window);
-        if let Some((panel, _)) = &self.telegram {
-            return Self::frame(palette, cx).child(panel.clone());
+        if let Some(panel) = self
+            .telegram
+            .as_ref()
+            .map(|(panel, _)| panel.clone().into_any_element())
+            .or_else(|| self.signal.as_ref().map(|(panel, _)| panel.clone().into_any_element()))
+        {
+            return Self::frame(palette, cx).child(panel);
         }
         let content = if self.tab == Tab::Emoji {
             div().h(px(CONTENT_HEIGHT)).child(self.emoji.clone()).into_any_element()

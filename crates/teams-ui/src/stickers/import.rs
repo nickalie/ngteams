@@ -14,8 +14,8 @@
 //!   clear: the edge stays hard in Teams Light and Dark, with no matte of one theme's colour.
 //! - **What is skipped**, and why, is told file by file ([`Skipped`]); the others are imported. A pack with no picture
 //!   is not made.
-//! - Other sources (a Telegram pack's link, [`super::telegram`]) give their files through [`Source`] and are made the
-//!   same way.
+//! - Other sources (a Telegram or a Signal pack's link, [`super::telegram`], [`super::signal`]) give their files
+//!   through [`Source`] and are made the same way.
 //!
 //! An import builds a hidden directory and renames it into place, so a pack is there whole or not at all.
 
@@ -97,6 +97,8 @@ pub enum Skip {
     TooManyFrames,
     #[error("can't be read")]
     Unreadable,
+    #[error("failed Signal's integrity check")]
+    Tampered,
     #[error("is past the {MAX_STICKERS} stickers a pack holds")]
     PackFull,
 }
@@ -145,6 +147,16 @@ pub enum ImportError {
     TelegramDown,
     #[error("Telegram's answer can't be read. Try again later.")]
     TelegramFailed,
+    #[error("That isn't a link to a Signal sticker pack. It looks like signal.art/addstickers/#pack_id=…&pack_key=…")]
+    SignalBadLink,
+    #[error("Signal has no sticker pack at that link.")]
+    SignalNoSuchPack,
+    #[error("That pack can't be opened with the key in its link. Check that you copied the whole link.")]
+    SignalBadKey,
+    #[error("Signal can't be reached. Check your connection and try again.")]
+    SignalDown,
+    #[error("Signal's answer can't be read. Try again later.")]
+    SignalFailed,
 }
 
 /// How far an import is: `done` of `total` files read.
@@ -161,7 +173,7 @@ pub struct Imported {
     pub skipped: Vec<Skipped>,
 }
 
-/// Where an import's files come from: a folder, an archive, chosen files or a Telegram pack.
+/// Where an import's files come from: a folder, an archive, chosen files, or a Telegram or a Signal pack.
 pub trait Source {
     /// The pack's name it suggests.
     fn name(&self) -> String;
@@ -180,7 +192,8 @@ pub trait Source {
     /// The bytes of file `index`, at most [`MAX_FILE`].
     ///
     /// # Errors
-    /// It is too large or can't be read, or (a Telegram pack's) it is a video or couldn't be downloaded.
+    /// It is too large or can't be read, or (a sticker service's pack) it is a video, couldn't be downloaded or
+    /// failed its check.
     fn read(&mut self, index: usize) -> Result<Vec<u8>, Skip>;
     /// Why the source can give no more files, after a read that it stopped on; the import then keeps nothing.
     fn stopped(&mut self) -> Option<ImportError> {

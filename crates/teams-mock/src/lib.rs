@@ -116,6 +116,7 @@ pub mod mixer;
 mod peers;
 mod reads;
 mod roster;
+pub mod signal;
 mod startup;
 mod team_apps;
 mod team_pages;

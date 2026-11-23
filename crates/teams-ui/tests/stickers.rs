@@ -1,6 +1,6 @@
 //! The sticker store and the import of a folder, a `.zip` or chosen files of pictures and Telegram stickers, and of a
-//! Telegram pack's link against the mock Bot API (`teams_ui::stickers`): every picture is made here, in the test; the
-//! one file read from the repo is the synthetic, marked Lottie animation of `tests/fixtures/telegram/`.
+//! Telegram or a Signal pack's link against the mock Bot API or the mock CDN (`teams_ui::stickers`): every picture,
+//! pack id and key is made here, in the test; the one file read from the repo is the synthetic, marked Lottie animation of `tests/fixtures/telegram/`.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -18,6 +18,7 @@ use teams_ui::stickers::import::{
     self, Archive, Files, Folder, ImportError, ImportKind, KEPT_SIDE, MAX_FILE, MAX_FRAMES, MAX_TOTAL, Progress,
     SHOWN_SIDE, Skip, Source,
 };
+use teams_ui::stickers::signal::{self, SignalCdns};
 use teams_ui::stickers::store::{self, MAX_STICKERS, StickerRef};
 use teams_ui::stickers::telegram::{self, BotApis, BotToken};
 use zip::write::{SimpleFileOptions, ZipWriter};
@@ -1015,4 +1016,229 @@ fn a_telegram_link_names_its_pack_in_each_form() {
     ] {
         assert_eq!(telegram::set_name(link), None, "{link}");
     }
+}
+
+// --- a Signal pack from its link ---
+
+use teams_mock::signal::{self as cdn, MockPack, SYNTHETIC_PACK_ID, SignalCdnMock};
+
+/// A mock pack: a still PNG, an animated PNG and a still WebP.
+fn signal_cats() -> MockPack {
+    let sticker = |emoji: &str, content_type: &str, bytes: Vec<u8>| cdn::MockSticker {
+        emoji: emoji.to_owned(),
+        content_type: content_type.to_owned(),
+        bytes,
+    };
+    MockPack::synthetic(
+        "Made-up Signal cats",
+        vec![
+            sticker(
+                "\u{1f638}",
+                "image/png",
+                still(512, 512, [200, 10, 10], ImageFormat::Png),
+            ),
+            sticker("\u{1f63a}", "image/apng", animated_png(512, 3)),
+            sticker(
+                "\u{1f639}",
+                "image/webp",
+                still(512, 512, [10, 10, 200], ImageFormat::WebP),
+            ),
+        ],
+    )
+}
+
+/// The CDN's client made for `mock`.
+fn cdns(mock: &SignalCdnMock) -> SignalCdns {
+    let origin = mock.origin();
+    SignalCdns::new(std::sync::Arc::new(move || {
+        teams_core::signal::SignalCdn::with_mock_origin(&origin)
+    }))
+}
+
+fn empty(dir: &Path) -> bool {
+    std::fs::read_dir(dir).map_or(true, |mut dir| dir.next().is_none())
+}
+
+#[test]
+fn a_signal_link_imports_its_pack_through_the_mock_cdn() {
+    let mock = SignalCdnMock::start(vec![signal_cats()]).unwrap();
+    let stickers = tempfile::tempdir().unwrap();
+    let mut told = Vec::new();
+    let imported = signal::import_link(&signal_cats().link(), &cdns(&mock), stickers.path(), &mut |progress| {
+        told.push(progress);
+    })
+    .unwrap();
+    assert_eq!(imported.pack.name, "Made-up Signal cats");
+    assert!(imported.skipped.is_empty(), "{:?}", imported.skipped);
+    let made: Vec<(&str, &str, (u32, u32))> = imported
+        .pack
+        .stickers
+        .iter()
+        .map(|sticker| (sticker.file.as_str(), sticker.label.as_str(), sticker.size))
+        .collect();
+    let shown = (SHOWN_SIDE, SHOWN_SIDE);
+    assert_eq!(
+        made,
+        [
+            ("001.png", "\u{1f638}", shown),
+            ("002.gif", "\u{1f63a}", shown),
+            ("003.png", "\u{1f639}", shown),
+        ],
+        "PNG and WebP still, the APNG a GIF; each called by its emoji"
+    );
+    let gif = std::fs::read(stickers.path().join(&imported.pack.id).join("002.gif")).unwrap();
+    let frames = image::AnimationDecoder::into_frames(image::codecs::gif::GifDecoder::new(Cursor::new(gif)).unwrap());
+    assert_eq!(frames.count(), 3, "the APNG's frames, as a GIF");
+    assert_eq!(told.last(), Some(&Progress { done: 3, total: 3 }));
+    let targets: Vec<String> = mock.requests().into_iter().map(|request| request.target).collect();
+    assert_eq!(
+        targets,
+        [
+            format!("/stickers/{SYNTHETIC_PACK_ID}/manifest.proto"),
+            format!("/stickers/{SYNTHETIC_PACK_ID}/full/0"),
+            format!("/stickers/{SYNTHETIC_PACK_ID}/full/1"),
+            format!("/stickers/{SYNTHETIC_PACK_ID}/full/2"),
+        ]
+    );
+    assert!(mock.requests().iter().all(|request| !request.credential));
+
+    let again = format!(
+        "sgnl://addstickers/?pack_id={SYNTHETIC_PACK_ID}&pack_key={}",
+        signal_cats().key
+    );
+    let imported = signal::import_link(&again, &cdns(&mock), stickers.path(), &mut no_progress()).unwrap();
+    assert_eq!(imported.pack.name, "Made-up Signal cats (2)", "the app's link form too");
+}
+
+#[test]
+fn a_signal_link_s_failures_each_say_what_to_do() {
+    let mock = SignalCdnMock::start(vec![signal_cats()]).unwrap();
+    let stickers = tempfile::tempdir().unwrap();
+    let import = |link: &str, cdns: &SignalCdns| signal::import_link(link, cdns, stickers.path(), &mut no_progress());
+    let link = signal_cats().link();
+
+    for bad in [
+        "https://example.test/addstickers/#pack_id=1&pack_key=2",
+        "t.me/addstickers/SyntheticCats",
+        &link[..link.len() - 1],
+    ] {
+        assert_eq!(
+            import(bad, &cdns(&mock)).unwrap_err(),
+            ImportError::SignalBadLink,
+            "{bad}"
+        );
+    }
+    assert!(mock.requests().is_empty(), "nothing is sent for a bad link");
+
+    let unknown = link.replace(SYNTHETIC_PACK_ID, "0123456789abcdef0123456789abcdef");
+    assert_eq!(
+        import(&unknown, &cdns(&mock)).unwrap_err(),
+        ImportError::SignalNoSuchPack
+    );
+    let wrong_key = format!(
+        "https://signal.art/addstickers/#pack_id={SYNTHETIC_PACK_ID}&pack_key={}",
+        "ab".repeat(32)
+    );
+    assert_eq!(import(&wrong_key, &cdns(&mock)).unwrap_err(), ImportError::SignalBadKey);
+    mock.fault(cdn::MockFault::TamperedManifest);
+    assert_eq!(
+        import(&link, &cdns(&mock)).unwrap_err(),
+        ImportError::SignalBadKey,
+        "a bad HMAC"
+    );
+    mock.fault(cdn::MockFault::Broken);
+    assert_eq!(import(&link, &cdns(&mock)).unwrap_err(), ImportError::SignalFailed);
+    mock.fault(cdn::MockFault::RedirectTo("https://example.test/".to_owned()));
+    assert_eq!(
+        import(&link, &cdns(&mock)).unwrap_err(),
+        ImportError::SignalFailed,
+        "no redirect followed"
+    );
+
+    let dead = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let dead = SignalCdns::new(std::sync::Arc::new(move || {
+        teams_core::signal::SignalCdn::with_mock_origin(&format!("http://{dead}"))
+    }));
+    assert_eq!(import(&link, &dead).unwrap_err(), ImportError::SignalDown, "a dead CDN");
+    let unmade = SignalCdns::new(std::sync::Arc::new(|| {
+        teams_core::signal::SignalCdn::with_mock_origin("https://example.test/")
+    }));
+    assert_eq!(import(&link, &unmade).unwrap_err(), ImportError::SignalDown);
+    assert!(empty(stickers.path()), "no pack is made");
+
+    for (error, words) in [
+        (
+            ImportError::SignalBadLink,
+            "That isn't a link to a Signal sticker pack. It looks like signal.art/addstickers/#pack_id=\u{2026}&pack_key=\u{2026}",
+        ),
+        (
+            ImportError::SignalNoSuchPack,
+            "Signal has no sticker pack at that link.",
+        ),
+        (
+            ImportError::SignalBadKey,
+            "That pack can't be opened with the key in its link. Check that you copied the whole link.",
+        ),
+        (
+            ImportError::SignalDown,
+            "Signal can't be reached. Check your connection and try again.",
+        ),
+        (
+            ImportError::SignalFailed,
+            "Signal's answer can't be read. Try again later.",
+        ),
+    ] {
+        assert_eq!(error.to_string(), words);
+    }
+}
+
+#[test]
+fn a_signal_sticker_that_fails_its_check_is_skipped_and_a_lost_cdn_keeps_nothing() {
+    let link = signal_cats().link();
+    let mock = SignalCdnMock::start(vec![signal_cats()]).unwrap();
+    let stickers = tempfile::tempdir().unwrap();
+    for (fault, why) in [
+        (cdn::MockFault::TamperedSticker(1), Skip::Tampered),
+        (cdn::MockFault::MissingSticker(1), Skip::NotDownloaded),
+    ] {
+        mock.fault(fault.clone());
+        let imported = signal::import_link(&link, &cdns(&mock), stickers.path(), &mut no_progress()).unwrap();
+        assert_eq!(imported.pack.stickers.len(), 2, "{fault:?}");
+        assert_eq!(
+            imported.skipped,
+            [import::Skipped {
+                name: "Sticker 2 \u{1f63a}".to_owned(),
+                why
+            }],
+            "{fault:?}"
+        );
+    }
+    assert_eq!(Skip::Tampered.to_string(), "failed Signal's integrity check");
+    assert_eq!(Skip::NotDownloaded.to_string(), "couldn't be downloaded");
+
+    let mock = SignalCdnMock::start(vec![signal_cats()]).unwrap();
+    mock.fault(cdn::MockFault::DroppedFrom(1));
+    let lost = tempfile::tempdir().unwrap();
+    assert_eq!(
+        signal::import_link(&link, &cdns(&mock), lost.path(), &mut no_progress()).unwrap_err(),
+        ImportError::SignalDown
+    );
+    assert!(empty(lost.path()), "no partial pack");
+    assert_eq!(mock.requests().len(), 3, "nothing asked after the CDN is lost");
+
+    let mut only_text = signal_cats();
+    for sticker in &mut only_text.stickers {
+        sticker.bytes = b"not a picture".to_vec();
+        sticker.emoji = String::new();
+    }
+    let mock = SignalCdnMock::start(vec![only_text]).unwrap();
+    let failed = signal::import_link(&link, &cdns(&mock), lost.path(), &mut no_progress());
+    let Err(ImportError::NoStickers(skipped)) = failed else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(skipped[0].name, "Sticker 1", "no emoji: the sticker's place");
+    assert!(signal::is_pack_link(&link) && !signal::is_pack_link("signal.art"));
 }

@@ -77,3 +77,97 @@ requests. The token is kept in the system keyring (a lab alias and the read-only
 
 What is not known from a live run: the agents' host has no bot token, so the requests above are checked against a
 local mock that follows the Bot API's documentation (`teams_mock::telegram`), not against Telegram itself.
+
+## A Signal pack from its link
+
+Signal keeps each sticker pack encrypted on its CDN. The pack's link holds the pack's id and the key that decrypts it.
+Anyone with the link can read the pack. No Signal account, credential or cookie is necessary.
+
+### The link
+
+| Form | Example |
+| --- | --- |
+| web | `https://signal.art/addstickers/#pack_id=<id>&pack_key=<key>` |
+| app | `sgnl://addstickers/?pack_id=<id>&pack_key=<key>` |
+
+- `pack_id` is 16 bytes as 32 hex digits. `pack_key` is 32 bytes as 64 hex digits.
+- On `signal.art`, the parameters are in the fragment (after `#`). Thus a browser does not send them to `signal.art`.
+- The import takes the link with or without `https://`, in either order of the parameters, and with hex digits of
+  either case. It refuses another host or path, a parameter that is missing or given two times, and an id or a key of
+  another length or with a character that is not a hex digit. The import sends nothing for a link that it refuses.
+- The key never leaves the app. Only the id goes into the CDN's paths.
+
+### The requests
+
+The CDN is `https://cdn-ca.signal.org`. A public CA signs its certificate. `cdn.signal.org` serves the same paths with
+a certificate of Signal's own CA, so the app does not use it. Rows are in
+[endpoints.md](endpoints.md#signals-sticker-cdn-cdn-casignalorg).
+
+1. `GET /stickers/<pack_id>/manifest.proto`: the pack's manifest, encrypted.
+2. For each sticker of the manifest: `GET /stickers/<pack_id>/full/<sticker id>`: the sticker's picture, encrypted.
+
+| Answer | Means | The import says |
+| --- | --- | --- |
+| 200 | the blob | (decrypts it) |
+| 403 | no pack (or no sticker) of that id: the CDN gives 403, not 404, for a path that it does not hold | Signal has no sticker pack at that link. A missing sticker is skipped. |
+| a redirect or another status | not expected | Signal's answer can't be read. Try again later. |
+| no connection or no answer in 60 s | the CDN is not reachable | Signal can't be reached. Check your connection and try again. |
+
+The client is `https` only. It follows no redirect, uses no proxy, tries each request one time, and sends no
+credential and no Teams or own-server token. It reads a manifest of at most 1 MB and a sticker of at most 10 MB.
+Nothing logs these requests.
+
+### The keys and the blobs
+
+- **Keys**: HKDF-SHA256 of the 32-byte pack key, with a salt of 32 zero bytes and the info `Sticker Pack`, gives 64
+  bytes. Bytes 0 to 31 are the AES-256 key. Bytes 32 to 63 are the HMAC-SHA256 key.
+- **A blob** (the manifest, each sticker) is the IV (16 bytes), then the AES-256-CBC ciphertext with PKCS#7 padding,
+  then the HMAC-SHA256 of the IV and the ciphertext (32 bytes).
+- The app examines the HMAC first, in constant time. It decrypts a blob only when its HMAC is correct.
+  - A manifest that fails the HMAC means that the key in the link is wrong (or the blob changed): "That pack can't
+    be opened with the key in its link. Check that you copied the whole link." Nothing is kept.
+  - A sticker that fails the HMAC is skipped: "failed Signal's integrity check".
+
+### The manifest
+
+The manifest is a protobuf message:
+
+```
+Pack {
+  title    = 1  (string)
+  author   = 2  (string)
+  cover    = 3  (Sticker)
+  stickers = 4  (repeated Sticker)
+}
+Sticker {
+  id          = 1  (uint32)
+  emoji       = 2  (string)
+  contentType = 3  (string: "image/webp", "image/png", "image/apng", or empty in an older pack)
+}
+```
+
+The import passes over fields that it does not know. It refuses a known field of the wrong wire type, a string that is
+not UTF-8 and a message that ends too early. It keeps each sticker id one time, and at most 200 stickers (the most
+that Signal lets a pack hold).
+
+### What the import makes
+
+- The pack's title names the imported pack. Each sticker's emoji is its label.
+- The import tells a picture by its first bytes, not by `contentType`. A PNG or a WebP becomes a still sticker (a
+  PNG). An APNG becomes an animated sticker (a GIF), with its frames and their times. The import does the same as
+  for a file, with the same limits.
+- If the CDN stops in the middle of a pack (no connection, no answer), the import stops and keeps no part of the pack.
+- The cover is a sticker of the pack. The import reads it from the manifest, but does not ask for it a second time.
+
+### What a live run showed
+
+Task 652 read one public pack, "Bandit the Cat" (from `signal.art`), with no account, on 2026-11-23:
+
+- The manifest and all 24 stickers came back from `cdn-ca.signal.org` with a 200, with no credential. Each HMAC was
+  correct, and each sticker decrypted to a still picture. The import kept 24 PNG stickers, each labelled with its
+  emoji, and skipped none.
+- A pack id that the CDN does not hold got a 403. The app says "Signal has no sticker pack at that link."
+- The run did not read an animated (APNG) pack. The APNG path is tested on a synthetic pack only.
+
+The tests use synthetic packs on a local mock CDN (`teams_mock::signal`), which encrypts each blob with its own
+implementation of the steps above. No byte of a real pack is in the repository.

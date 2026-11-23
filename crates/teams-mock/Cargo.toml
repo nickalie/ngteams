@@ -13,6 +13,12 @@ license.workspace = true
 media = ["dep:teams-media", "dep:thiserror"]
 
 [dependencies]
+# a Signal sticker pack served as Signal's CDN serves it (`signal.rs`): encrypted with keys from its pack key
+aes.workspace = true
+cbc.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
+sha2.workspace = true
 # an incoming call's invitation carries its payload (`gp`) as base64 JSON
 base64.workspace = true
 # a call controller's deliveries are gzip'd (in base64)

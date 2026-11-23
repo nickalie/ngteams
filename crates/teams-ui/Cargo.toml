@@ -102,7 +102,8 @@ unicode-bidi.workspace = true
 # chat service and its Trouter reached through the test-support mock origins
 teams-mock.workspace = true
 teams-proto = { workspace = true, features = ["test-support"] }
-# the sticker import's Bot API client pointed at the mock Bot API (`BotApi::with_mock_origin`)
+# the sticker import's Bot API and Signal CDN clients pointed at their mocks (`BotApi::with_mock_origin`,
+# `SignalCdn::with_mock_origin`)
 teams-core = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
 # the push channel's events the fake engine hands the bridge; the mock's Trouter for compose's two-account test
