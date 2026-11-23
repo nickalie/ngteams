@@ -2750,9 +2750,11 @@ impl ChatView {
     /// anything after the list) gives the keys to the list itself, its one stop; Escape in the list closes a
     /// confirmation.
     fn keys_to_the_list(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let in_the_list = event.context_stack.iter().any(|context| context.contains(CONTEXT));
+        let in_context = |name| event.context_stack.iter().any(|context| context.contains(name));
+        let in_the_list = in_context(CONTEXT);
         let back = event.keystroke.key == "tab" && event.keystroke.modifiers.shift;
-        if back && !in_the_list && self.on_a_control_in_the_list(window, cx) {
+        // a message's menu gives the keys back where they were when it opened, a control in the list too
+        if back && !in_the_list && !in_context(menu_keys::CONTEXT) && self.on_a_control_in_the_list(window, cx) {
             self.focus_messages(window, cx);
         }
         // a popup in a card (a time's list) takes its Escape before the list does

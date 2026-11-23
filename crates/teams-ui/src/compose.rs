@@ -775,6 +775,8 @@ pub struct Compose {
     rem: Pixels,
     /// The menu of tools that is open: More options or "+" ([`menus`]).
     menu: Option<menus::ToolMenu>,
+    /// The holders of the menus' buttons ([`menus::Triggers`]).
+    triggers: menus::Triggers,
     /// The customize list, while it is open ([`customize`]).
     customize: Option<crate::customize_list::CustomizeList>,
     /// Where the button that holds "Customize toolbar" was last drawn, for the list to open by.
@@ -933,6 +935,7 @@ impl Compose {
             box_at: Rc::default(),
             rem: px(f32::from(theme::FONT_SIZE)),
             menu: None,
+            triggers: menus::Triggers::new(cx),
             customize: None,
             customize_at: Rc::default(),
             emoji_on_press: false,

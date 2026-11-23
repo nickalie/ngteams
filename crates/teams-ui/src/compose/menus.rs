@@ -14,7 +14,7 @@
 
 use gpui::{
     AnyElement, App, Context, DismissEvent, Entity, FocusHandle, Focusable as _, InteractiveElement as _, IntoElement,
-    ParentElement as _, SharedString, Styled as _, Subscription, Window, div, px,
+    MouseButton, ParentElement as _, SharedString, Styled as _, Subscription, Window, div, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::kbd::Kbd;
@@ -182,6 +182,29 @@ fn anchor_home(fit: &Fit, tool: Tool) -> Option<MenuKind> {
         Some(plus_home(fit))
     } else {
         None
+    }
+}
+
+/// The holders of the menus' buttons. A click on a button does not give it the keys, thus Tab in a menu that a click
+/// opened goes on from its button's holder, which is in the row but no stop of Tab's order.
+pub(super) struct Triggers {
+    more: FocusHandle,
+    plus: FocusHandle,
+}
+
+impl Triggers {
+    pub(super) fn new(cx: &mut App) -> Self {
+        Self {
+            more: cx.focus_handle().tab_stop(false),
+            plus: cx.focus_handle().tab_stop(false),
+        }
+    }
+
+    fn of(&self, kind: MenuKind) -> &FocusHandle {
+        match kind {
+            MenuKind::More => &self.more,
+            MenuKind::Plus => &self.plus,
+        }
     }
 }
 
@@ -411,11 +434,12 @@ impl Compose {
         cx.notify();
     }
 
-    /// Tab or Shift+Tab in the open menu: it closes, and the keyboard goes on as from the tool it opened from, else
-    /// to the text.
+    /// Tab or Shift+Tab in the open menu: it closes, and the keyboard goes on as from the tool it opened from, else as
+    /// from its button, else to the text.
     fn tab_from_menu(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.menu.take() else { return };
-        if !self.tools.leave_from(menu.back_to, forward, window, cx) {
+        let from = menu.back_to.or_else(|| Some(self.triggers.of(menu.kind).clone()));
+        if !self.tools.leave_from(from, forward, window, cx) {
             self.focus(window, cx);
         }
         cx.notify();
@@ -485,6 +509,8 @@ impl Compose {
                     .children(menu.clone())
             });
         selected_by(kind.selector(), popover)
+            .track_focus(self.triggers.of(kind))
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
             .relative()
             .children(self.anchors(kind, fit, cx))
             .into_any_element()
