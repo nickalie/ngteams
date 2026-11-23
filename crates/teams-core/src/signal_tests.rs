@@ -335,6 +335,11 @@ fn the_client_s_failures_are_categories() {
             Err(SignalError::BadAnswer),
             Err(SignalError::BadAnswer),
         ),
+        (
+            MockFault::NotFound,
+            Err(SignalError::BadAnswer),
+            Err(SignalError::BadAnswer),
+        ),
     ] {
         mock.fault(fault.clone());
         assert_eq!(cdn.manifest(&link).map(|_| ()), manifest, "{fault:?}");

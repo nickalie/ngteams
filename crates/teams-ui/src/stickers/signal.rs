@@ -7,8 +7,8 @@
 //! - **The pack**: its title names it; each sticker's emoji is its label. A still sticker (PNG, WebP) is kept as a PNG,
 //!   an animated one (APNG) as a GIF, as a file's are ([`super::import`]).
 //! - **What stops it**: a link that names no pack, a key that doesn't open the manifest, or a CDN that can't be
-//!   reached or gives an unexpected answer (a 5xx); then nothing is kept. A sticker that fails its integrity check, or that the CDN doesn't hold, is skipped
-//!   and said to be one.
+//!   reached or gives an unexpected answer (a redirect, or a status other than 200 or 403); then nothing is kept. A
+//!   sticker that fails its integrity check, or that the CDN doesn't hold (403), is skipped and said to be one.
 
 use std::sync::Arc;
 
