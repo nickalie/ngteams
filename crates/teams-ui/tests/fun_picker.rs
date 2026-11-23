@@ -992,6 +992,45 @@ fn send_waits_for_a_teams_sticker_still_read() {
     assert!(html.contains("Clippy_HelloThere.gif"), "{html}");
 }
 
+#[test]
+fn discard_drops_a_teams_sticker_still_read() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["Clippy_HelloThere"]);
+    let (view, cx) = chat_window(&rig, &place);
+    pick_held_teams_sticker(&rig, &view, "Clippy_HelloThere", cx);
+    let compose = compose(&view, cx);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.discard(window, cx)));
+    release_held_pictures(&rig);
+    draw(cx);
+    assert!(
+        !drawn(cx, "editor-picture-1"),
+        "the discarded sticker stays out of the box"
+    );
+    cx.simulate_input("hi");
+    keys(cx, "enter");
+    assert_eq!(sent(&rig).len(), 1, "Send does not wait for the discarded sticker");
+}
+
+#[test]
+fn a_teams_sticker_read_late_keeps_the_text_selected_meanwhile() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["Clippy_HelloThere"]);
+    let (view, cx) = chat_window(&rig, &place);
+    cx.simulate_input("keep me");
+    pick_held_teams_sticker(&rig, &view, "Clippy_HelloThere", cx);
+    keys(cx, "ctrl-a");
+    release_held_pictures(&rig);
+    draw(cx);
+    assert!(drawn(cx, "editor-picture-1"));
+    let compose = compose(&view, cx);
+    assert!(
+        cx.update(|_, cx| compose.read(cx).value(cx)).contains("keep me"),
+        "the selection stays as text"
+    );
+}
+
 /// Picks Teams' sticker `id` in `view`'s box while the engine holds its read.
 fn pick_held_teams_sticker(rig: &Rig, view: &Entity<ChatView>, id: &str, cx: &mut VisualTestContext) {
     keys(cx, "ctrl-.");

@@ -231,7 +231,17 @@ impl Editor {
 
     /// Puts `picture` in the box at the cursor, in place of the selection, and tells the owner to send it (one of Teams'
     /// stickers is there already); its id.
-    pub fn insert_picture(&mut self, mut picture: Picture, cx: &mut Context<Self>) -> u64 {
+    pub fn insert_picture(&mut self, picture: Picture, cx: &mut Context<Self>) -> u64 {
+        self.place_picture(picture, true, cx)
+    }
+
+    /// Puts `picture` in the box after the selection, which stays as text: a picture that arrives late must not
+    /// replace what the user selected since; its id.
+    pub fn insert_picture_after_selection(&mut self, picture: Picture, cx: &mut Context<Self>) -> u64 {
+        self.place_picture(picture, false, cx)
+    }
+
+    fn place_picture(&mut self, mut picture: Picture, replace: bool, cx: &mut Context<Self>) -> u64 {
         self.next_picture += 1;
         let id = self.next_picture;
         let hosted = matches!(picture.state, PictureState::Hosted(_));
@@ -241,7 +251,7 @@ impl Editor {
         self.pictures.insert(id, picture);
         self.edit(Step::Other, cx, move |doc, selection| {
             let (start, end) = selection.range();
-            let at = doc.delete(start, end);
+            let at = if replace { doc.delete(start, end) } else { end };
             Selection::caret(doc.insert_fragment(at, vec![Block::new(Kind::Picture(id), 0, Vec::new())]))
         });
         if !hosted {

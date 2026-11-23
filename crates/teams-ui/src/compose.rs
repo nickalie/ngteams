@@ -1235,6 +1235,7 @@ impl Compose {
         self.clear_recycle_failed();
         self.editor.update(cx, super::editor::Editor::clear);
         self.routes.refused.clear();
+        self.routes.stickers.clear();
         if self.mode != Mode::New {
             self.cancel(window, cx);
         }
@@ -2042,6 +2043,14 @@ impl Compose {
         self.fit_pictures(cx);
     }
 
+    /// Puts `picture`, which came after a wait, after the selection: the user may have selected text since.
+    fn put_late_picture(&mut self, picture: editor::pictures::Picture, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.insert_picture_after_selection(picture, cx);
+        });
+        self.fit_pictures(cx);
+    }
+
     /// Puts one of Teams' stickers in the box once its picture is read from Teams' sticker CDN (no credential): the
     /// message names it at its address there, as Teams' box does, and nothing is sent to the media service. It goes
     /// first in Recent only once it is in the box. A draft that moves to another box takes the read with it.
@@ -2082,7 +2091,7 @@ impl Compose {
                 match picture {
                     Some(picture) if this.takes_picture(cx) => {
                         packs.update(cx, |packs, cx| packs.record_recent(&sticker, cx));
-                        this.put_picture(picture, cx);
+                        this.put_late_picture(picture, cx);
                     }
                     Some(_) => {}
                     None => {
