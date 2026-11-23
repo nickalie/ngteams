@@ -1102,6 +1102,12 @@ fn a_refused_edit_does_not_come_back_over_a_teams_sticker_still_read() {
     release_held_pictures(&rig);
     draw(cx);
     assert!(drawn(cx, "editor-picture-1"), "the sticker stays in the new message");
+    assert_eq!(
+        cx.update(|_, cx| compose.read(cx).mode().clone()),
+        Mode::New,
+        "the refused edit does not come back over the sticker"
+    );
+    assert!(!cx.update(|_, cx| compose.read(cx).value(cx)).contains("edited"));
 }
 
 #[test]
@@ -1297,12 +1303,10 @@ fn an_own_server_account_sees_only_the_user_s_packs() {
     assert_eq!(cx.update(|_, cx| compose.read(cx).problem().cloned()), None);
 }
 
-#[test]
-fn a_refused_edit_comes_back_once_the_teams_sticker_read_fails() {
-    let place = Setup::new();
-    let rig = teams_rig();
-    let (view, cx) = chat_window(&rig, &place);
-    let compose = compose(&view, cx);
+/// Sends an edit of message 1 with the text "edited" that the engine refuses, and picks Teams' sticker while the
+/// send is on its way, with its read held: the refused edit is held back by the read.
+fn refuse_an_edit_while_a_teams_sticker_is_read(rig: &Rig, view: &Entity<ChatView>, cx: &mut VisualTestContext) {
+    let compose = compose(view, cx);
     let loaded = Loaded {
         doc: Doc::default(),
         quotes: Vec::new(),
@@ -1310,7 +1314,7 @@ fn a_refused_edit_comes_back_once_the_teams_sticker_read_fails() {
     cx.update(|window, cx| compose.update(cx, |compose, cx| compose.edit("1".to_owned(), loaded, window, cx)));
     cx.simulate_input("edited");
     keys(cx, "ctrl-.");
-    let picker = picker(&view, cx).unwrap();
+    let picker = picker(view, cx).unwrap();
     rig.core.write_errors.lock().unwrap().push_back(EngineError::Stopped);
     *rig.core.hold_pictures.lock().unwrap() = true;
     cx.update(|window, cx| {
@@ -1321,6 +1325,15 @@ fn a_refused_edit_comes_back_once_the_teams_sticker_read_fails() {
     });
     draw(cx);
     assert_eq!(cx.update(|_, cx| compose.read(cx).mode().clone()), Mode::New);
+}
+
+#[test]
+fn a_refused_edit_comes_back_once_the_teams_sticker_read_fails() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    let compose = compose(&view, cx);
+    refuse_an_edit_while_a_teams_sticker_is_read(&rig, &view, cx);
     release_held_pictures(&rig);
     draw(cx);
     assert!(!drawn(cx, "editor-picture-1"), "the sticker could not be read");
@@ -1333,4 +1346,50 @@ fn a_refused_edit_comes_back_once_the_teams_sticker_read_fails() {
         "the refused edit comes back to the empty box"
     );
     assert_eq!(cx.update(|_, cx| compose.read(cx).value(cx)), "edited");
+}
+
+#[test]
+fn discard_drops_a_refused_edit_held_back_by_a_teams_sticker_read() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    let compose = compose(&view, cx);
+    refuse_an_edit_while_a_teams_sticker_is_read(&rig, &view, cx);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.discard(window, cx)));
+    release_held_pictures(&rig);
+    draw(cx);
+    assert_eq!(
+        cx.update(|_, cx| compose.read(cx).mode().clone()),
+        Mode::New,
+        "the discarded edit does not come back"
+    );
+    assert_eq!(cx.update(|_, cx| compose.read(cx).value(cx)), "");
+}
+
+#[test]
+fn a_refused_edit_held_back_goes_with_its_draft_to_another_box() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    let (other_view, other_cx) = chat_window(&rig, &place);
+    let (compose, other) = (compose(&view, cx), self::compose(&other_view, other_cx));
+    refuse_an_edit_while_a_teams_sticker_is_read(&rig, &view, cx);
+    cx.update(|_, cx| compose.update(cx, |compose, cx| compose.hand_draft_to(&other, cx)));
+    release_held_pictures(&rig);
+    draw(cx);
+    draw(other_cx);
+    assert_eq!(
+        cx.update(|_, cx| compose.read(cx).value(cx)),
+        "",
+        "the box the draft left"
+    );
+    assert_eq!(
+        other_cx.update(|_, cx| other.read(cx).mode().clone()),
+        Mode::Edit {
+            message_id: "1".to_owned(),
+            quotes: Vec::new(),
+        },
+        "the refused edit comes back in the box that holds the draft"
+    );
+    assert_eq!(other_cx.update(|_, cx| other.read(cx).value(cx)), "edited");
 }

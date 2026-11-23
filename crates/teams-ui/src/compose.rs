@@ -688,8 +688,9 @@ struct Routes {
     /// Reads of Teams' stickers picked, from Teams' sticker CDN: Send waits for them, and each goes in the box that
     /// holds the draft once read.
     stickers: Vec<Route<()>>,
-    /// A refused send held back only by the sticker reads: it comes back once the last read puts no sticker in the box.
-    refused: Option<(Draft, Option<Moved>)>,
+    /// Refused sends held back only by the sticker reads, oldest first: they come back once the last read puts no
+    /// sticker in the box, or before a refused send with files that comes back at once.
+    refused: Vec<(Draft, Option<Moved>)>,
 }
 
 /// What a compose box is made of.
@@ -1065,10 +1066,13 @@ impl Compose {
         let mode = std::mem::replace(&mut self.mode, Mode::New);
         let mut routes = std::mem::take(&mut self.routes);
         // a refused send held back takes its pictures along, as a send does that moves with a draft
-        let refused = routes.refused.take().map(|(draft, moved)| {
-            let pictures = moved.unwrap_or_else(|| self.pictures_of(&draft.doc, cx));
-            (draft, Some(pictures))
-        });
+        let refused: Vec<_> = std::mem::take(&mut routes.refused)
+            .into_iter()
+            .map(|(draft, moved)| {
+                let pictures = moved.unwrap_or_else(|| self.pictures_of(&draft.doc, cx));
+                (draft, Some(pictures))
+            })
+            .collect();
         let sending_files = std::mem::take(&mut self.sending_files);
         let bots = self.bots.clone();
         self.editor.update(cx, |editor, cx| editor.set_doc(Doc::default(), cx));
@@ -1099,9 +1103,7 @@ impl Compose {
                 route.borrow_mut().0 = to.clone();
                 other.routes.stickers.push(route);
             }
-            if other.routes.refused.is_none() {
-                other.routes.refused = refused;
-            }
+            other.routes.refused.extend(refused);
             other.sending_files += sending_files;
             if other.mode == Mode::New {
                 other.mode = mode;
@@ -1117,7 +1119,7 @@ impl Compose {
     }
 
     /// The pictures of the blocks of `doc`, by their ids in the editor of this box.
-    fn pictures_of(&self, doc: &Doc, cx: &App) -> Vec<(u64, editor::pictures::Picture)> {
+    fn pictures_of(&self, doc: &Doc, cx: &App) -> Moved {
         let editor = self.editor.read(cx);
         doc.blocks
             .iter()
@@ -1231,6 +1233,7 @@ impl Compose {
         self.copy_notice = false;
         self.clear_recycle_failed();
         self.editor.update(cx, super::editor::Editor::clear);
+        self.routes.refused.clear();
         if self.mode != Mode::New {
             self.cancel(window, cx);
         }
@@ -1395,7 +1398,7 @@ impl Compose {
             self.editor.update(cx, |editor, cx| editor.set_doc(Doc::default(), cx));
             self.routes.stickers.clear();
         }
-        self.routes.refused = None;
+        self.routes.refused.clear();
         // the reply or the edit being translated is called off with it: nothing of it is sent
         self.drop_translation_of(&self.mode.clone(), cx);
         self.mode = Mode::New;
@@ -1627,12 +1630,28 @@ impl Compose {
     /// started since. With `moved` (the send moved here with a draft: the pictures of the draft, by their ids in the
     /// box that sent it), the text given back comes after the text that the box holds and its pictures get ids of this
     /// box, else it comes before it. The files given back always get ids of this box.
-    fn give_back(
-        &mut self,
-        mut draft: Draft,
-        moved: Option<Vec<(u64, editor::pictures::Picture)>>,
-        cx: &mut Context<Self>,
-    ) {
+    /// A refused send without files waits while a sticker read is pending ([`Routes::refused`]).
+    fn give_back(&mut self, mut draft: Draft, moved: Option<Moved>, cx: &mut Context<Self>) {
+        if self.keeps_out(&mut draft, cx) {
+            return cx.notify();
+        }
+        if draft.attachments.is_empty() && !self.routes.stickers.is_empty() {
+            self.routes.refused.push((draft, moved));
+            return cx.notify();
+        }
+        self.give_back_held(cx);
+        self.restore(draft, moved, cx);
+    }
+
+    /// The refused sends held back come back in the order they were refused.
+    fn give_back_held(&mut self, cx: &mut Context<Self>) {
+        for (draft, moved) in std::mem::take(&mut self.routes.refused) {
+            self.restore(draft, moved, cx);
+        }
+    }
+
+    /// Takes the cards of a refused send back, and tells whether the rest of it stays out of the box.
+    fn keeps_out(&mut self, draft: &mut Draft, cx: &App) -> bool {
         // files attached since stay beside the text given back (a translated send's text left the box once it went),
         // but never beside an edit, which carries no files
         let edit_beside_files = matches!(draft.mode, Mode::Edit { .. }) && !self.attachments.is_empty();
@@ -1642,11 +1661,12 @@ impl Compose {
         cards.append(&mut self.apps.cards);
         self.apps.cards = cards;
         let changed = !self.editor.read(cx).is_empty() || self.mode != Mode::New;
-        if draft.attachments.is_empty() && (changed || edit_beside_files) {
-            return cx.notify();
-        }
-        if draft.attachments.is_empty() && !self.routes.stickers.is_empty() {
-            self.routes.refused.get_or_insert((draft, moved));
+        draft.attachments.is_empty() && (changed || edit_beside_files)
+    }
+
+    /// Puts a refused send back in the box, as [`Compose::give_back`] says.
+    fn restore(&mut self, mut draft: Draft, moved: Option<Moved>, cx: &mut Context<Self>) {
+        if self.keeps_out(&mut draft, cx) {
             return cx.notify();
         }
         let held = !self.editor.read(cx).is_empty();
@@ -1693,7 +1713,7 @@ impl Compose {
         self.attachments.clear();
         self.copy_notice = false;
         self.apps.cards.clear();
-        self.routes.refused = None;
+        self.routes.refused.clear();
         self.picker = None;
         self.problem = None;
         if self.expanded {
@@ -2064,10 +2084,8 @@ impl Compose {
                         this.show_problem("That sticker can't be read. Check your connection, then try again.", cx);
                     }
                 }
-                if this.routes.stickers.is_empty()
-                    && let Some((draft, moved)) = this.routes.refused.take()
-                {
-                    this.give_back(draft, moved, cx);
+                if this.routes.stickers.is_empty() {
+                    this.give_back_held(cx);
                 }
             });
         })
