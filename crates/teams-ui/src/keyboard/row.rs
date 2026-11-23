@@ -157,10 +157,15 @@ impl Row {
     }
 
     /// Tab or Shift+Tab in something of the row's own (a menu it opened): the first stop past the row's end, as from
-    /// `control`, or from the control the keys were last on. False when neither is in the row now.
-    pub fn leave_from(&self, control: Option<FocusHandle>, forward: bool, window: &mut Window, cx: &mut App) -> bool {
-        let last = self.0.last.borrow().clone();
-        let Some(control) = control.or(last).filter(|control| self.holds(control, window)) else {
+    /// the first of `controls` that is in the row now. False when none is.
+    pub fn leave_from(
+        &self,
+        controls: impl IntoIterator<Item = FocusHandle>,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let Some(control) = controls.into_iter().find(|control| self.holds(control, window)) else {
             return false;
         };
         control.focus(window, cx);

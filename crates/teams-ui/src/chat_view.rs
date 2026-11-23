@@ -4726,9 +4726,9 @@ impl ChatView {
         )
         .with_size(Size::Size(px(BAR_BUTTON)))
         .selected(open)
-        .on_click(cx.listener(move |this, _, _, cx| {
+        .on_click(cx.listener(move |this, _, window, cx| {
             cx.stop_propagation();
-            this.toggle_options(&message, cx);
+            this.toggle_options_by_mouse(&message, window, cx);
         }));
         selected_by("message-more", button)
             .relative()

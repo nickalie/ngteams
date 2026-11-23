@@ -1582,6 +1582,33 @@ fn shift_tab_in_a_message_s_menu_gives_the_keys_back_to_the_card_s_input() {
 }
 
 #[test]
+fn tab_out_of_a_clicked_message_menu_gives_the_keys_back_to_the_card_s_input() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    press(cx, "enter");
+    let input = focused(cx);
+    draw(cx);
+    let message = cx.debug_bounds("message-700").expect("the card's message");
+    cx.simulate_mouse_move(message.center(), None, Modifiers::none());
+    click(cx, "message-more");
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_some()),
+        "the click opens the message's menu"
+    );
+    for _ in 0..40 {
+        if view.read_with(cx, |view, _| view.options().is_none()) {
+            break;
+        }
+        press(cx, "tab");
+    }
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_none()),
+        "Tab in the menu closes it"
+    );
+    assert_eq!(focused(cx), input, "and gives the keys back to the card's input");
+}
+
+#[test]
 fn tab_in_a_clicked_tool_s_menu_goes_on_from_its_button() {
     let rig = Rig::start();
     let (compose, cx) = rooted_chat(&rig, 900.0);
@@ -1602,6 +1629,7 @@ fn tab_in_a_clicked_tool_s_menu_goes_on_from_its_button() {
         !box_focused(&compose, cx),
         "Tab goes past the tools, not back to the text"
     );
+    assert!(!tools_focused(&compose, cx), "Tab leaves the tools, not stays on \"+\"");
     press(cx, "shift-tab");
     press(cx, "tab");
     assert_eq!(focused(cx), after, "the stop after the tools, as Tab from \"+\"");

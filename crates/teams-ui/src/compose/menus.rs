@@ -438,7 +438,7 @@ impl Compose {
     /// from its button, else to the text.
     fn tab_from_menu(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.menu.take() else { return };
-        let from = menu.back_to.or_else(|| Some(self.triggers.of(menu.kind).clone()));
+        let from = menu.back_to.into_iter().chain([self.triggers.of(menu.kind).clone()]);
         if !self.tools.leave_from(from, forward, window, cx) {
             self.focus(window, cx);
         }
