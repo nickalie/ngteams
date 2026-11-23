@@ -15,13 +15,13 @@
 //!   finds them (by name or keyword). How an import goes (its progress, what it added and skipped, why it failed)
 //!   shows here until it is closed.
 //!
-//! A pick only tells ([`FunPickerEvent`]): the box puts an emoji in its text, and a sticker in the box as a picture
-//! (sent to the media service at once, then with the message, as Teams' box sends a sticker). A box that takes no
-//! picture offers no sticker. The picker is reached by the keyboard as by the pointer: its search field has the focus
-//! as it opens; Up from there reaches the tabs (Left and Right choose one), Down the items of All and Stickers (the
-//! arrows move among them, Enter or Space picks one, Up from the first row goes back to the field); on Emoji, the
-//! keyboard picks by a search and Enter, as in the emoji picker it shows; Ctrl+Tab and Ctrl+Shift+Tab change the tab
-//! from anywhere in it; Escape or a click outside closes it.
+//! A pick only tells ([`FunPickerEvent`]): the box puts an emoji in its text, and a sticker in the box as a picture: one
+//! of the user's packs is sent to the media service at once, and one of Teams' is named by its address on Teams'
+//! sticker CDN, with nothing sent. A box that takes no picture offers no sticker. The picker is reached by the keyboard
+//! as by the pointer: its search field has the focus as it opens; Up from there reaches the tabs (Left and Right choose
+//! one), Down the items of All and Stickers (the arrows move among them, Enter or Space picks one, Up from the first row
+//! goes back to the field); on Emoji, the keyboard picks by a search and Enter, as in the emoji picker it shows;
+//! Ctrl+Tab and Ctrl+Shift+Tab change the tab from anywhere in it; Escape or a click outside closes it.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -656,6 +656,7 @@ impl FunPicker {
             .recent()
             .iter()
             .filter(|sticker| self.teams || !sticker.is_teams())
+            .take(crate::stickers::store::RECENT)
             .cloned()
             .collect()
     }
@@ -927,17 +928,13 @@ impl FunPicker {
         lines
     }
 
-    /// One of Teams' packs: its name, then its stickers.
+    /// One of Teams' packs: its stickers, with no title, as Teams shows one.
     fn teams_pack_lines(&self, lines: &mut Vec<Line>, id: &str) {
         let catalog = teams::catalog();
         let Some(pack) = catalog.pack(id).filter(|_| self.teams) else {
             lines.push(Line::Note("That sticker pack isn't there anymore.".into()));
             return;
         };
-        lines.push(Line::Heading {
-            title: pack.name.clone().into(),
-            actions: Vec::new(),
-        });
         let stickers: Vec<StickerRef> = catalog
             .stickers_of(&pack.id)
             .into_iter()

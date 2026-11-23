@@ -99,6 +99,9 @@ pub struct FakeCore {
     pub animations_3d: Mutex<HashMap<(String, u16), Strip>>,
     /// Messages' pictures by their `src`; any other is answered `None`.
     pub pictures: Mutex<HashMap<String, PictureBytes>>,
+    /// While set, a read of a message's picture is held, unanswered, in `held_pictures` with its `src`.
+    pub hold_pictures: Mutex<bool>,
+    pub held_pictures: Mutex<Vec<(String, Answer<Option<PictureBytes>>)>>,
     /// The app definitions `app_definition` answers, by `teamsAppId`; any other has none.
     pub app_definitions: Mutex<HashMap<String, teams_proto::AppDefinition>>,
     /// App tiles by their URL; any other is answered `None`.
@@ -1165,6 +1168,12 @@ impl Core for FakeCore {
     }
 
     fn message_picture(&self, src: String) -> Reply<Option<PictureBytes>> {
+        if *locked(&self.hold_pictures) {
+            locked(&self.asked).push("message_picture");
+            let (answer, reply) = Reply::later();
+            locked(&self.held_pictures).push((src, answer));
+            return reply;
+        }
         self.answer("message_picture", || locked(&self.pictures).get(&src).cloned())
     }
 

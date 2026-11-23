@@ -916,6 +916,45 @@ fn a_teams_sticker_that_cannot_be_read_says_so() {
         cx.update(|_, cx| compose.read(cx).problem().cloned()),
         Some("That sticker can't be read. Check your connection, then try again.".into())
     );
+    assert!(
+        teams_ui::stickers::store::recent(&place.stickers).is_empty(),
+        "a sticker that never reached the box isn't Recent"
+    );
+}
+
+#[test]
+fn send_waits_for_a_teams_sticker_still_read() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["Clippy_HelloThere"]);
+    let (view, cx) = chat_window(&rig, &place);
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    *rig.core.hold_pictures.lock().unwrap() = true;
+    cx.update(|window, cx| {
+        picker.update(cx, |picker, cx| {
+            picker.activate(&teams("Clippy_HelloThere"), window, cx);
+        });
+    });
+    draw(cx);
+    cx.simulate_input("hi");
+    keys(cx, "enter");
+    assert!(sent(&rig).is_empty(), "Send waits for the sticker");
+    let compose = compose(&view, cx);
+    assert_eq!(
+        cx.update(|_, cx| compose.read(cx).problem().cloned()),
+        Some("Wait for your pictures to upload, or retry or remove a failed one.".into())
+    );
+    *rig.core.hold_pictures.lock().unwrap() = false;
+    let held = std::mem::take(&mut *rig.core.held_pictures.lock().unwrap());
+    for (src, answer) in held {
+        answer.send(Ok(rig.core.pictures.lock().unwrap().get(&src).cloned()));
+    }
+    draw(cx);
+    assert!(drawn(cx, "editor-picture-1"));
+    keys(cx, "enter");
+    let html = sent(&rig).pop().unwrap().html().to_owned();
+    assert!(html.contains("Clippy_HelloThere.gif"), "{html}");
 }
 
 #[test]
@@ -1018,8 +1057,12 @@ fn the_keyboard_opens_a_teams_pack_and_picks_its_sticker() {
 #[test]
 fn an_own_server_account_sees_only_the_user_s_packs() {
     let place = Setup::new().with_cats();
-    teams_ui::stickers::store::record_recent(&place.stickers, &StickerRef::teams("Clippy_HelloThere")).unwrap();
     teams_ui::stickers::store::record_recent(&place.stickers, &sticker("lab-cats", "002.png")).unwrap();
+    // a work account's eight Teams stickers after it keep the user's own in this account's Recent
+    let catalog = teams_ui::stickers::teams::catalog();
+    for held in catalog.stickers_of("Clippy").into_iter().take(8) {
+        teams_ui::stickers::store::record_recent(&place.stickers, &StickerRef::teams(&held.id)).unwrap();
+    }
     let rig = new_rig();
     let (view, cx) = chat_window(&rig, &place);
     keys(cx, "ctrl-.");
@@ -1053,7 +1096,9 @@ fn an_own_server_account_sees_only_the_user_s_packs() {
         Vec::<Vec<Item>>::new(),
         "the search finds none of Teams'"
     );
-    // a Teams sticker asked for anyway goes nowhere
+    // a Teams sticker asked for anyway goes nowhere: its picture isn't even read
+    teams_pictures(&rig, &["Clippy_HelloThere"]);
+    rig.core.asked.lock().unwrap().clear();
     cx.update(|window, cx| {
         picker.update(cx, |picker, cx| {
             picker.activate(&teams("Clippy_HelloThere"), window, cx);
@@ -1062,4 +1107,7 @@ fn an_own_server_account_sees_only_the_user_s_packs() {
     draw(cx);
     assert!(!drawn(cx, "editor-picture-1"));
     assert!(sent(&rig).is_empty());
+    assert!(!rig.core.asked.lock().unwrap().contains(&"message_picture"));
+    let compose = compose(&view, cx);
+    assert_eq!(cx.update(|_, cx| compose.read(cx).problem().cloned()), None);
 }

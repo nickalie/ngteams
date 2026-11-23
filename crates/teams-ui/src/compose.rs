@@ -748,6 +748,8 @@ pub struct Compose {
     draft_translation: draft_translation::DraftTranslation,
     /// The emoji picker, while it is open.
     emoji: Option<(Entity<FunPicker>, Subscription)>,
+    /// Teams' stickers picked whose pictures are still read from Teams' sticker CDN: Send waits for them.
+    stickers_read: usize,
     /// Where the emoji button was last drawn, for the picker to open by.
     emoji_at: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Where the box was last drawn: a narrow one can stack ([`fit`]).
@@ -909,6 +911,7 @@ impl Compose {
             correction,
             draft_translation: draft_translation::DraftTranslation::new(),
             emoji: None,
+            stickers_read: 0,
             emoji_at: Rc::default(),
             box_at: Rc::default(),
             rem: px(f32::from(theme::FONT_SIZE)),
@@ -1404,7 +1407,7 @@ impl Compose {
         if !self.files_ready() {
             return self.show_problem("Wait for your files to upload, or retry or remove a failed file.", cx);
         }
-        if !self.editor.read(cx).pictures_ready() {
+        if !self.editor.read(cx).pictures_ready() || self.stickers_read > 0 {
             return self.show_problem("Wait for your pictures to upload, or retry or remove a failed one.", cx);
         }
         let doc = self.editor.read(cx).doc().clone();
@@ -1957,25 +1960,27 @@ impl Compose {
         let Some(picture) = picture else {
             return self.show_problem("That sticker can't be read. Import its pack again.", cx);
         };
-        if self.read_only.is_some() || !self.editor.read(cx).takes_pictures() {
-            return;
+        if self.takes_picture(cx) {
+            packs.update(cx, |packs, cx| packs.record_recent(sticker, cx));
+            self.put_picture(picture, cx);
         }
-        if !self.editor.read(cx).takes_picture_here() {
-            return self.show_problem("A sticker can't go in a code block.", cx);
-        }
-        packs.update(cx, |packs, cx| packs.record_recent(sticker, cx));
-        self.put_picture(picture, cx);
     }
 
-    /// Puts `picture` in the box, unless the box takes no picture there.
-    fn put_picture(&mut self, picture: editor::pictures::Picture, cx: &mut Context<Self>) {
+    /// Whether the box takes a picture at the cursor; in a code block, it says why not.
+    fn takes_picture(&mut self, cx: &mut Context<Self>) -> bool {
         if self.read_only.is_some() || !self.editor.read(cx).takes_pictures() {
-            return;
+            return false;
         }
         // as a paste, a picture doesn't split a code block
         if !self.editor.read(cx).takes_picture_here() {
-            return self.show_problem("A sticker can't go in a code block.", cx);
+            self.show_problem("A sticker can't go in a code block.", cx);
+            return false;
         }
+        true
+    }
+
+    /// Puts `picture` in the box at the cursor.
+    fn put_picture(&mut self, picture: editor::pictures::Picture, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
             editor.insert_picture(picture, cx);
         });
@@ -1983,7 +1988,8 @@ impl Compose {
     }
 
     /// Puts one of Teams' stickers in the box once its picture is read from Teams' sticker CDN (no credential): the
-    /// message names it at its address there, as Teams' box does, and nothing is sent to the media service.
+    /// message names it at its address there, as Teams' box does, and nothing is sent to the media service. It goes
+    /// first in Recent only once it is in the box.
     fn put_teams_sticker(
         &mut self,
         sticker: &crate::stickers::StickerRef,
@@ -1994,27 +2000,33 @@ impl Compose {
         let Some(held) = catalog.sticker(&sticker.file) else {
             return self.show_problem("That sticker can't be read.", cx);
         };
-        if self.read_only.is_some()
-            || !self.editor.read(cx).takes_pictures()
-            || !self.core.capabilities().teams_stickers
-        {
+        if !self.core.capabilities().teams_stickers || !self.takes_picture(cx) {
             return;
         }
-        if !self.editor.read(cx).takes_picture_here() {
-            return self.show_problem("A sticker can't go in a code block.", cx);
-        }
-        packs.update(cx, |packs, cx| packs.record_recent(sticker, cx));
         let (src, label) = (catalog.picture(held), held.name.clone());
+        let (sticker, packs) = (sticker.clone(), packs.clone());
         let reply = self.core.message_picture(src.clone());
+        self.stickers_read += 1;
+        cx.notify();
         cx.spawn(async move |this, cx| {
             let picture = reply
                 .await
                 .ok()
                 .flatten()
                 .and_then(|bytes| editor::pictures::Picture::teams_sticker((*bytes).clone(), &src, &label));
-            let _ = this.update(cx, |this, cx| match picture {
-                Some(picture) => this.put_picture(picture, cx),
-                None => this.show_problem("That sticker can't be read. Check your connection, then try again.", cx),
+            let _ = this.update(cx, |this, cx| {
+                this.stickers_read = this.stickers_read.saturating_sub(1);
+                cx.notify();
+                match picture {
+                    Some(picture) if this.takes_picture(cx) => {
+                        packs.update(cx, |packs, cx| packs.record_recent(&sticker, cx));
+                        this.put_picture(picture, cx);
+                    }
+                    Some(_) => {}
+                    None => {
+                        this.show_problem("That sticker can't be read. Check your connection, then try again.", cx);
+                    }
+                }
             });
         })
         .detach();
@@ -2130,7 +2142,8 @@ impl Compose {
         let empty = (self.editor.read(cx).is_blank()
             && (self.editing() || (self.attachments.is_empty() && self.apps.cards.is_empty())))
             || !self.files_ready()
-            || !self.editor.read(cx).pictures_ready();
+            || !self.editor.read(cx).pictures_ready()
+            || self.stickers_read > 0;
         let tip = match (matches!(self.mode, Mode::Edit { .. }), self.expanded) {
             (true, false) => "Save (Enter)",
             (true, true) => concat!("Save (", ctrl!(), "+Enter)"),

@@ -747,7 +747,7 @@ Drama's "hey", Broccoli's wave, Bee's "hi", Word Art's "hello" and Animalopolis'
 with the date of the script), never the script. It shows Teams' packs after the user's own in the Stickers tab, for
 an account of Microsoft's cloud only (an own server has none). It reads the previews and the headers with
 `StickerPreview` ([endpoints.md](endpoints.md#teams-sticker-cdn-teamspubliconecdnstaticmicrosoft)). A pick reads the
-sticker's picture, puts it in the box, and Send posts the captured form with its address (`Sticker::of_teams`), with
+sticker's picture (Send waits for it), puts it in the box, and Send posts the captured form with its address (`Sticker::of_teams`), with
 nothing sent to AMS. A sticker with a caption is sent as its picture with its own words, and a meme as its picture
 with no words: the caption editor is not built yet.
 

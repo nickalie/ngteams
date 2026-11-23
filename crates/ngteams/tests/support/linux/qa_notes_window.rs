@@ -2031,6 +2031,7 @@ fn compose_state(compose: &Entity<Compose>, window: &Window, cx: &App) -> Value 
             let state = match picture.state {
                 PictureState::Sending => "sending",
                 PictureState::Sent(_) => "sent",
+                PictureState::Hosted(_) => "hosted",
                 PictureState::Failed(_) => "failed",
             };
             json!({"sticker": picture.sticker.as_ref().map(ToString::to_string), "state": state})

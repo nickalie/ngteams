@@ -1020,9 +1020,10 @@ fn opens_by_button_and_keys(user: &mut User<'_>) -> SandboxResult {
     }
     user.click(TAB_STICKERS)?;
     let state = user.until("the Stickers tab", |state| picker(state)["tab"] == "Stickers")?;
-    if !has_item(&state, "sticker-import-folder") || !has_item(&state, "sticker-import-zip") {
+    // a Microsoft account has Teams' packs, so its Stickers tab with no pack of the user's is not empty
+    if !has_item(&state, "sticker-pack-add") || !has_item(&state, "teams-pack-popular") {
         faults.push(format!(
-            "no import buttons on an empty Stickers tab: {:?}",
+            "no Add a sticker pack and Teams' packs on a Stickers tab with no pack of the user's: {:?}",
             rows(&state)
         ));
     }
@@ -1044,17 +1045,26 @@ impl User<'_> {
 
     /// The user picks `source` to import from the Stickers tab.
     fn start_import(&mut self, source: &Path, archive: bool) -> SandboxResult {
-        let state = self.open_stickers_by_keys()?;
+        self.open_stickers_by_keys()?;
         self.world.chooser.clear();
-        if !has_item(&state, "sticker-import-folder") {
-            self.key_pick("sticker-pack-add")?;
-        }
+        self.open_import_menu()?;
         self.world.chooser.queue(Answer::Pick(source.to_owned()));
         self.key_pick(if archive {
             "sticker-import-zip"
         } else {
             "sticker-import-folder"
         })
+    }
+
+    /// The import actions shown: by "Add a sticker pack" when the tab has packs (Teams' too), it has no other.
+    fn open_import_menu(&mut self) -> SandboxResult {
+        if !has_item(&self.state()?, "sticker-import-folder") {
+            self.key_pick("sticker-pack-add")?;
+            self.until("the Add a sticker pack menu", |state| {
+                has_item(state, "sticker-import-folder")
+            })?;
+        }
+        Ok(())
     }
 
     /// The states seen while the import ran, and the state at its end.
@@ -1082,6 +1092,7 @@ impl User<'_> {
     /// While an import runs, the user asks for a second one (the spare folder): the faults in how the app refuses it.
     fn second_import(&mut self) -> SandboxResult<Vec<String>> {
         self.until("the import runs", |state| state["shelf"]["import"]["running"] == true)?;
+        self.open_import_menu()?;
         self.world.chooser.queue(Answer::Pick(self.world.sources.spare.clone()));
         self.key_pick("sticker-import-folder")?;
         let state = self.until_in("the second import refused, or the first ended", IMPORT_WAIT, |state| {
@@ -2423,6 +2434,7 @@ fn compose_state(compose: &Entity<Compose>, window: &Window, cx: &App) -> Value 
             let state = match picture.state {
                 PictureState::Sending => "sending",
                 PictureState::Sent(_) => "sent",
+                PictureState::Hosted(_) => "hosted",
                 PictureState::Failed(_) => "failed",
             };
             json!({

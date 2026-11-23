@@ -290,3 +290,38 @@ async fn a_still_sticker_is_kept_only_as_its_file_s_format() {
     let picture = read.read_answer(&client.read(&read).await.unwrap()).unwrap();
     assert_eq!(picture.format, PastedFormat::Jpeg);
 }
+
+#[test]
+fn the_addresses_built_are_the_ones_read() {
+    let picture = StickerPicture::src("madeup-250x250", Some("en-us"), "MadeUp_Hi.gif");
+    assert_eq!(picture, SRC);
+    assert_eq!(
+        StickerPicture::of(&picture)
+            .map(|read| read.folder().to_owned())
+            .as_deref(),
+        Some("madeup-250x250")
+    );
+    let unlocalized = StickerPicture::src("madeup-500x500", None, "MadeUp_Hi.png");
+    assert_eq!(
+        StickerPicture::of(&unlocalized).and_then(|read| read.locale().map(str::to_owned)),
+        None
+    );
+    assert!(StickerPicture::of(&unlocalized).is_some());
+
+    let preview = StickerPreview::src("en-us", "MadeUp", "MadeUp_Hi.png");
+    assert_eq!(
+        preview,
+        format!(
+            "https://{STICKERS_HOST}/evergreen-assets/funstuff/stickers/en-us/assets/MadeUp/Preview/MadeUp_Hi.png?v=5"
+        )
+    );
+    assert_eq!(
+        StickerPreview::of(&preview).map(|read| read.path()).as_deref(),
+        Some("stickers/en-us/assets/MadeUp/Preview/MadeUp_Hi.png")
+    );
+    let meme = StickerPreview::meme_src("MadeUp_Meme.png");
+    assert_eq!(
+        StickerPreview::of(&meme).map(|read| read.path()).as_deref(),
+        Some("meme/assets/Preview/MadeUp_Meme.png")
+    );
+}

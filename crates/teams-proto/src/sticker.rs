@@ -18,6 +18,9 @@ use crate::read::Read;
 /// The host Teams' web client reads its stickers from ([`Service::Stickers`]).
 pub const STICKERS_HOST: &str = "teams.public.onecdn.static.microsoft";
 
+/// The version Teams' web client asks its sticker files at (`stickerUrlConfig.cdnVersion`), as `?v=5`.
+const CDN_VERSION: u32 = 5;
+
 /// The other host of Teams' public `evergreen-assets`, which serves the same sticker files.
 const STATICS_HOST: &str = "statics.teams.cdn.office.net";
 
@@ -70,6 +73,17 @@ impl StickerPicture {
             locale: locale.map(str::to_owned),
             file: file.to_owned(),
         })
+    }
+
+    /// The address on [`STICKERS_HOST`] of `file` in pack folder `folder` (`clippy-250x250`), drawn for `locale` when
+    /// given, as Teams' box names it in a message.
+    #[must_use]
+    pub fn src(folder: &str, locale: Option<&str>, file: &str) -> String {
+        let mut path = STICKERS_PATH.to_vec();
+        path.push(folder);
+        path.extend(locale);
+        path.push(file);
+        cdn_src(&path)
     }
 
     /// The pack's folder (`clippy-250x250`).
@@ -135,6 +149,22 @@ impl StickerPreview {
         })
     }
 
+    /// The address on [`STICKERS_HOST`] of the preview `file` of pack `pack`, drawn for `locale`.
+    #[must_use]
+    pub fn src(locale: &str, pack: &str, file: &str) -> String {
+        let mut path = PREVIEWS_PATH.to_vec();
+        path.extend(["stickers", locale, "assets", pack, "Preview", file]);
+        cdn_src(&path)
+    }
+
+    /// The address on [`STICKERS_HOST`] of the preview `file` of the Meme pack, which is drawn for no locale.
+    #[must_use]
+    pub fn meme_src(file: &str) -> String {
+        let mut path = PREVIEWS_PATH.to_vec();
+        path.extend(["meme", "assets", "Preview", file]);
+        cdn_src(&path)
+    }
+
     /// Its path under `evergreen-assets/funstuff/` (`stickers/en-us/assets/Clippy/Preview/Clippy_HelloThere.png`).
     #[must_use]
     pub fn path(&self) -> String {
@@ -156,6 +186,11 @@ impl Read for StickerPreview {
     fn endpoint(&self) -> Endpoint {
         Endpoint::new(self.segments.iter().map(String::as_str))
     }
+}
+
+/// The address of `path` on [`STICKERS_HOST`], at Teams' version of its files.
+fn cdn_src(path: &[&str]) -> String {
+    format!("https://{STICKERS_HOST}/{}?v={CDN_VERSION}", path.join("/"))
 }
 
 /// The decoded path segments of `src` when it is a plain `https` URL on either host of Teams' public assets.

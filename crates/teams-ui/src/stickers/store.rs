@@ -30,6 +30,9 @@ pub const MANIFEST: &str = "pack.toml";
 pub const RECENT_FILE: &str = "recent.toml";
 /// The stickers Recent holds: two rows of four, as Teams' Stickers tab shows.
 pub const RECENT: usize = 8;
+/// The stickers [`RECENT_FILE`] keeps: more than Recent shows, as each account's picker shows only the ones it can
+/// send, and all accounts share the file.
+pub const RECENT_KEPT: usize = 4 * RECENT;
 /// The longest pack name, in characters.
 pub const MAX_NAME: usize = 64;
 /// The longest sticker label, in characters.
@@ -337,7 +340,7 @@ pub fn recent(dir: &Path) -> Vec<StickerRef> {
         }
     }
     recent.retain(|sticker| sticker.is_teams() || path_of(dir, sticker).is_some());
-    recent.truncate(RECENT);
+    recent.truncate(RECENT_KEPT);
     recent
 }
 
@@ -349,7 +352,7 @@ pub fn record_recent(dir: &Path, sticker: &StickerRef) -> Result<Vec<StickerRef>
     let mut recent = recent(dir);
     recent.retain(|held| held != sticker);
     recent.insert(0, sticker.clone());
-    recent.truncate(RECENT);
+    recent.truncate(RECENT_KEPT);
     write_recent(dir, &recent)?;
     Ok(recent)
 }

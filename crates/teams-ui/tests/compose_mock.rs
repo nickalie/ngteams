@@ -390,7 +390,7 @@ impl Walk {
         self.b_gets_the_sticker(object, &stickers);
     }
 
-    /// Until the one picture in a's box is sent to the media service.
+    /// Until the one picture in a's box is ready to send: sent to the media service, or one of Teams' stickers read.
     fn until_the_sticker_is_sent(&mut self, compose: &Entity<Compose>) {
         let start = Instant::now();
         loop {
@@ -404,7 +404,15 @@ impl Walk {
                     .map(|picture| picture.state.clone());
                 (shown.len(), state)
             });
-            if shown == 1 && matches!(state, Some(teams_ui::editor::pictures::PictureState::Sent(_))) {
+            if shown == 1
+                && matches!(
+                    state,
+                    Some(
+                        teams_ui::editor::pictures::PictureState::Sent(_)
+                            | teams_ui::editor::pictures::PictureState::Hosted(_)
+                    )
+                )
+            {
                 break;
             }
             assert!(

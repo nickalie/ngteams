@@ -42,6 +42,8 @@ pub enum PictureState {
     Sending,
     /// Sent: the media service's object it is in.
     Sent(String),
+    /// One of Teams' own stickers, never sent: its address on Teams' sticker CDN.
+    Hosted(String),
     /// Not sent, and why; Retry sends it again.
     Failed(SharedString),
 }
@@ -59,8 +61,6 @@ pub struct Picture {
     pub state: PictureState,
     /// The label of a sticker; `None` for a picture.
     pub sticker: Option<SharedString>,
-    /// Where one of Teams' own stickers is on Teams' sticker CDN: it is not sent.
-    pub hosted: Option<String>,
 }
 
 impl std::fmt::Debug for Picture {
@@ -71,7 +71,6 @@ impl std::fmt::Debug for Picture {
             .field("given", &self.given)
             .field("state", &self.state)
             .field("sticker", &self.sticker)
-            .field("hosted", &self.hosted)
             .finish_non_exhaustive()
     }
 }
@@ -102,7 +101,6 @@ impl Picture {
             given,
             state: PictureState::Sending,
             sticker: None,
-            hosted: None,
         })
     }
 
@@ -121,7 +119,7 @@ impl Picture {
     pub fn teams_sticker(bytes: teams_proto::PastedPicture, src: &str, label: &str) -> Option<Self> {
         teams_proto::StickerPicture::of(src)?;
         let mut picture = Self::sticker(bytes, crate::stickers::teams::SHOWN, label)?;
-        picture.hosted = Some(src.to_owned());
+        picture.state = PictureState::Hosted(src.to_owned());
         Some(picture)
     }
 
@@ -236,15 +234,17 @@ impl Editor {
     pub fn insert_picture(&mut self, mut picture: Picture, cx: &mut Context<Self>) -> u64 {
         self.next_picture += 1;
         let id = self.next_picture;
-        let hosted = picture.hosted.clone();
-        picture.state = hosted.clone().map_or(PictureState::Sending, PictureState::Sent);
+        let hosted = matches!(picture.state, PictureState::Hosted(_));
+        if !hosted {
+            picture.state = PictureState::Sending;
+        }
         self.pictures.insert(id, picture);
         self.edit(Step::Other, cx, move |doc, selection| {
             let (start, end) = selection.range();
             let at = doc.delete(start, end);
             Selection::caret(doc.insert_fragment(at, vec![Block::new(Kind::Picture(id), 0, Vec::new())]))
         });
-        if hosted.is_none() {
+        if !hosted {
             cx.emit(EditorEvent::Picture(id));
         }
         id
@@ -320,7 +320,7 @@ impl Editor {
         self.shown_pictures().into_iter().all(|id| {
             self.pictures
                 .get(&id)
-                .is_some_and(|picture| matches!(picture.state, PictureState::Sent(_)))
+                .is_some_and(|picture| matches!(picture.state, PictureState::Sent(_) | PictureState::Hosted(_)))
         })
     }
 
@@ -328,14 +328,15 @@ impl Editor {
     #[must_use]
     pub fn picture_node(&self, id: u64) -> Option<teams_proto::chat::Node> {
         let picture = self.pictures.get(&id)?;
-        let PictureState::Sent(object) = &picture.state else {
-            return None;
+        let object = match &picture.state {
+            PictureState::Sent(object) => object,
+            PictureState::Hosted(src) => {
+                let label = picture.sticker.as_deref().unwrap_or_default();
+                return teams_proto::chat::Sticker::of_teams(src, picture.given, label)
+                    .map(teams_proto::chat::Node::Sticker);
+            }
+            PictureState::Sending | PictureState::Failed(_) => return None,
         };
-        if let Some(src) = &picture.hosted {
-            let label = picture.sticker.as_deref().unwrap_or_default();
-            return teams_proto::chat::Sticker::of_teams(src, picture.given, label)
-                .map(teams_proto::chat::Node::Sticker);
-        }
         let image = teams_proto::sent_picture(object, picture.given)?;
         Some(match &picture.sticker {
             Some(label) => teams_proto::chat::Node::Sticker(teams_proto::chat::Sticker {
@@ -470,7 +471,7 @@ impl Editor {
     fn picture_status(id: u64, state: &PictureState, palette: Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
         let pill = || div().px_2().py_0p5().rounded_md().bg(rgb(palette.surface)).text_xs();
         match state {
-            PictureState::Sent(_) => None,
+            PictureState::Sent(_) | PictureState::Hosted(_) => None,
             PictureState::Sending => Some(
                 pill()
                     .text_color(rgb(palette.brand))

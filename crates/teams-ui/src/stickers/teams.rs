@@ -14,16 +14,13 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use teams_proto::STICKERS_HOST;
+use teams_proto::{StickerPicture, StickerPreview};
 
 /// Our copy of Teams' sticker list.
 const TABLE: &str = include_str!("teams_catalog.txt");
 
 /// The pack whose stickers are the [`Catalog::popular`] list, not stickers of its own.
 pub const POPULAR: &str = "Popular";
-
-/// The version Teams' web client asks its sticker files at (`stickerUrlConfig.cdnVersion`).
-const CDN_VERSION: u32 = 5;
 
 /// The locale the pictures are read in: the one every pack has.
 const LOCALE: &str = "en-us";
@@ -210,12 +207,9 @@ impl Catalog {
             .pack_of(sticker)
             .map_or((false, false), |pack| (pack.localized, pack.meme));
         let size = if meme { "500x500" } else { "250x250" };
-        let locale = if localized { format!("/{LOCALE}") } else { String::new() };
+        let folder = format!("{}-{size}", sticker.pack.to_lowercase());
         let file = sticker.template.as_deref().unwrap_or(&sticker.file);
-        format!(
-            "https://{STICKERS_HOST}/evergreen-assets/stickerassets/{}-{size}{locale}/{file}?v={CDN_VERSION}",
-            sticker.pack.to_lowercase()
-        )
+        StickerPicture::src(&folder, localized.then_some(LOCALE), file)
     }
 }
 
@@ -227,10 +221,9 @@ fn given(field: &str) -> Option<&str> {
 /// The address of a preview `file` of pack `pack`: `…/funstuff/stickers/<locale>/assets/<pack>/Preview/<file>?v=5`,
 /// or `…/funstuff/meme/assets/Preview/<file>?v=5` for the Meme pack.
 fn preview_src(pack: &str, meme: bool, file: &str) -> String {
-    let base = format!("https://{STICKERS_HOST}/evergreen-assets/funstuff");
     if meme {
-        format!("{base}/meme/assets/Preview/{file}?v={CDN_VERSION}")
+        StickerPreview::meme_src(file)
     } else {
-        format!("{base}/stickers/{LOCALE}/assets/{pack}/Preview/{file}?v={CDN_VERSION}")
+        StickerPreview::src(LOCALE, pack, file)
     }
 }
