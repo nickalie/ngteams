@@ -508,8 +508,8 @@ and expanded formatting mode uses Ctrl+Enter to send. A meeting chat's header ha
 Recap plays the meeting's recordings with their transcripts (search, download), as a recording's "View recap" opens
 it, and its More options downloads a recording the account may download
 ([docs/protocol/recap.md](protocol/recap.md)). Its AI summary is made on this computer when asked for, laid out
-as Fathom's call summaries (purpose, key takeaways, topics with their moments, next steps with owners, open
-questions), by Claude Code or the Codex CLI with any model it takes (by default Claude Sonnet or GPT-6.1-Terra;
+as Fathom's call summaries (purpose, key takeaways, topics, next steps with owners, open questions; a click on a
+point plays the recording from there), by Claude Code or the Codex CLI with any model it takes (by default Claude Sonnet or GPT-6.1-Terra;
 Settings → Calls → Meeting recaps, the same tool-and-model control as the captions'): the transcript then goes to that
 tool and its provider. Each AI setting can also pick an AI provider that the app asks with an API key: the Anthropic
 API, the OpenAI API, or an OpenAI-compatible server at its own base URL (`crates/teams-ui/src/local_ai/providers.rs`,

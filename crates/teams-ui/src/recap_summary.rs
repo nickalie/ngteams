@@ -291,7 +291,8 @@ pub fn instructions() -> String {
      gives it (\"\" when nobody was named), text what they will do and by when if that was said. [] when there are \
      none.\n\
      - questions: important questions raised and left open; [] when there are none.\n\
-     - Each at is the [time] of the line the point comes from, copied exactly.\n\
+     - Each at is the [time] of the line the point comes from, copied exactly. Put a time only in an at, never in \
+     purpose, takeaways, a title or a text.\n\
      Write in the language most of the meeting was held in. Name people rather than \"the speaker\". Be specific and \
      brief, and never add what wasn't said: a short meeting gets a short summary.\n"
         .to_owned()
@@ -386,9 +387,9 @@ pub fn parse(answer: &str, end: u64) -> Option<Summary> {
     (!empty).then_some(summary)
 }
 
-/// A line of the summary as kept: one line, trimmed, capped.
+/// A line of the summary as kept: one line, trimmed, capped, without a `[time]` the tool put before it.
 fn line(text: &str) -> String {
-    let joined: String = text
+    let joined: String = untimed(text)
         .chars()
         .map(|character| if character.is_control() { ' ' } else { character })
         .collect();
@@ -398,6 +399,15 @@ fn line(text: &str) -> String {
         kept.push('…');
     }
     kept
+}
+
+/// `text` without a leading `[time]`: the time of a point shows nowhere.
+fn untimed(text: &str) -> &str {
+    let rest = text.trim_start();
+    rest.strip_prefix('[')
+        .and_then(|inner| inner.split_once(']'))
+        .filter(|(stamp, _)| read_stamp(&Value::from(*stamp)).is_some())
+        .map_or(text, |(_, words)| words)
 }
 
 /// The summary as Markdown, for the clipboard: the meeting's name and day, then each section.

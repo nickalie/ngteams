@@ -772,6 +772,11 @@ fn heading(words: &'static str, key: &'static str) -> AnyElement {
 
 /// A takeaway: a bullet, then its words.
 fn dot(words: String, palette: Palette) -> AnyElement {
+    row(div().child(words), palette).into_any_element()
+}
+
+/// A bulleted row: the bullet, then `words` in the rest of the width.
+fn row(words: gpui::Div, palette: Palette) -> gpui::Div {
     div()
         .pt_1()
         .flex()
@@ -785,8 +790,7 @@ fn dot(words: String, palette: Palette) -> AnyElement {
                 .text_color(rgb(palette.muted_foreground))
                 .child("•"),
         )
-        .child(div().flex_1().min_w_0().child(words))
-        .into_any_element()
+        .child(words.flex_1().min_w_0())
 }
 
 /// A point: a bullet, then its words; a point with a moment plays the recording from there when clicked.
@@ -797,26 +801,14 @@ fn bullet(
     palette: Palette,
     cx: &mut Context<RecapView>,
 ) -> AnyElement {
-    let row = div()
-        .pt_1()
-        .flex()
-        .items_start()
-        .gap_2()
-        .text_sm()
-        .child(
-            div()
-                .flex_none()
-                .w(px(12.0))
-                .text_color(rgb(palette.muted_foreground))
-                .child("•"),
-        )
-        .child(words.flex_1().min_w_0());
     let Some(at) = at else {
-        return row.into_any_element();
+        return row(words, palette).into_any_element();
     };
     let index = *moments;
     *moments += 1;
-    row.id(SharedString::from(format!("recap-summary-at-{index}")))
+    let words = words.debug_selector(move || format!("recap-summary-at-{index}-words"));
+    row(words, palette)
+        .id(SharedString::from(format!("recap-summary-at-{index}")))
         .debug_selector(move || format!("recap-summary-at-{index}"))
         .rounded_sm()
         .cursor_pointer()

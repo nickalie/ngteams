@@ -99,9 +99,7 @@ fn the_ai_summary_is_made_on_this_computer_played_from_copied_and_sent_after_a_p
         assert!(drawn(cx, selector), "{selector} drawn");
     }
     assert!(!drawn(cx, "recap-summary-questions"), "none raised");
-    // no time shows: a point with a moment is its whole row, not a time beside its words
-    let row = cx.debug_bounds("recap-summary-at-0").unwrap();
-    assert!(row.size.width > gpui::px(200.0), "{row:?}");
+    no_time_beside_the_first_point(cx);
     // a point clicked: the recording plays from its moment
     click(cx, "recap-summary-at-0");
     assert!(drawn(cx, "video-player-recap-0"));
@@ -125,6 +123,18 @@ fn the_ai_summary_is_made_on_this_computer_played_from_copied_and_sent_after_a_p
     draw(cx);
     assert!(!drawn(cx, "recap-summary-send"));
     assert!(drawn(cx, "recap-summary-copy"));
+}
+
+/// No time shows at the first point with a moment: its row is the whole width, only its bullet beside its words.
+fn no_time_beside_the_first_point(cx: &mut VisualTestContext) {
+    let row = cx.debug_bounds("recap-summary-at-0").unwrap();
+    let words = cx.debug_bounds("recap-summary-at-0-words").unwrap();
+    assert!(row.size.width > gpui::px(200.0), "{row:?}");
+    assert_eq!(words.right(), row.right(), "nothing after the words: {row:?} {words:?}");
+    assert!(
+        words.left() - row.left() <= gpui::px(24.0),
+        "only the bullet before the words: {row:?} {words:?}"
+    );
 }
 
 /// The summary shown: copied as Markdown, then sent to the meeting's chat only once its preview's Send is clicked.

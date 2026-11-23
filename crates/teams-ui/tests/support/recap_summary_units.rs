@@ -28,13 +28,13 @@ fn answer() -> Value {
         "purpose": "Plan the synthetic launch.",
         "takeaways": ["The synthetic report is due Friday.", {"text": "Launch owner still open."}],
         "topics": [{"title": "Report", "points": [
-            {"text": "Bo sends the report.", "at": "1:15"},
+            {"text": "[1:15] Bo sends the report.", "at": "1:15"},
             {"text": "Out of range.", "at": "59:00"},
             "A point without a time."
         ]}],
         "next_steps": [{"owner": "Bo Lab", "text": "Send the synthetic report by Friday.", "at": "[01:15]"},
                        {"owner": "", "text": "Pick a launch owner.", "at": 140}],
-        "questions": [{"text": "Who owns the synthetic launch?", "at": "2:20"}]
+        "questions": [{"text": "[00:02:20]Who owns the synthetic launch?", "at": "2:20"}]
     })
 }
 
@@ -127,6 +127,19 @@ fn the_answer_is_read_leniently_and_its_times_kept_within_the_recording() {
     assert!(purpose.starts_with("a b c") && purpose.ends_with('…') && purpose.len() < 700);
 }
 
+#[test]
+fn a_time_the_tool_writes_in_the_text_is_dropped() {
+    let summary = parse(&answer().to_string(), 140).unwrap();
+    assert_eq!(summary.topics[0].points[0].text, "Bo sends the report.");
+    assert_eq!(summary.questions[0].text, "Who owns the synthetic launch?");
+    let bracketed = json!({"purpose": "[Draft] plan the launch."}).to_string();
+    assert_eq!(
+        parse(&bracketed, 0).unwrap().purpose,
+        "[Draft] plan the launch.",
+        "only a time is dropped"
+    );
+}
+
 fn made() -> Made {
     Made {
         summary: parse(&answer().to_string(), 140).unwrap(),
@@ -183,6 +196,7 @@ fn the_tool_is_asked_to_write_simplified_technical_english() {
     for prompt in [instructions(), notes_instructions()] {
         assert!(prompt.ends_with(STE_RULES), "{prompt}");
     }
+    assert!(instructions().contains("Put a time only in an at"));
     for rule in [
         "ASD-STE100",
         "20 words",
