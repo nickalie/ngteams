@@ -241,7 +241,7 @@ impl Compose {
             backend,
             target,
             model: choice.model.clone(),
-            context: self.correction_context(cx),
+            context: self.chat_context(cx),
             draft: encoded,
             limits: self.correction.limits,
         });
@@ -262,8 +262,9 @@ impl Compose {
         cx.notify();
     }
 
-    /// What the tool reads around the draft: the chat's recent messages, and the message it replies to.
-    fn correction_context(&self, cx: &App) -> Vec<Said> {
+    /// What a correction or a draft's translation reads around the draft: the chat's recent messages, and the message it
+    /// replies to.
+    pub(super) fn chat_context(&self, cx: &App) -> Vec<Said> {
         let mut context = self
             .translated
             .model

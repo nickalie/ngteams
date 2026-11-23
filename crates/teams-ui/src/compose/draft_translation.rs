@@ -189,6 +189,7 @@ impl Compose {
                 target,
                 model: choice.model.clone(),
                 language: language.clone(),
+                context: self.chat_context(cx),
                 draft: encoded,
                 limits: self.draft_translation.limits,
             },

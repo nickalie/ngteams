@@ -566,8 +566,10 @@ or its "Stop translating" row or button cancel too); a failure keeps the draft a
 tool installed it offers the settings. The "Translation language" row opens a searchable list of common languages, and
 any other language can be typed. The language is one setting for every box and account in the app, kept across restarts;
 it and the tool are in Settings → General → Message translation ("Translate my messages into") (the tool: Automatic, which is Claude Code when
-installed and else Codex, or either one; by default Claude Sonnet or GPT-6.1-Terra). Only the draft's words and the
-language go to the tool and its provider, never the chat, names or tokens (`crates/teams-ui/src/draft_translate.rs`).
+installed and else Codex, or either one; by default Claude Sonnet or GPT-6.1-Terra). The draft's words, the
+language and the chat's recent messages with their writers' names (and the quoted message of a reply) go to the tool
+and its provider, as for Correct, so that names, terms and tone come out right; the tool translates only the draft.
+Tokens never go (`crates/teams-ui/src/draft_translate.rs`).
 This language is apart from the one a message's "Translate" shows it in (Settings → General → Chat translation,
 "Translate messages into this language"), so a user can read in one language and write in another. A settings file
 of an earlier build, with one language, gives it to both.

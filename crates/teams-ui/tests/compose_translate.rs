@@ -1,7 +1,8 @@
 //! A draft translated in its box, as the compose box of a chat or a channel does it, on GPUI's test context over the
 //! fake engine (`common`) and a fake translating engine (synthetic messages only; no AI tool ever runs): the
 //! translation in place as one edit Ctrl+Z takes back, the draft's mentions and line breaks kept, the language one
-//! setting every box shares, progress and cancel, and failures that keep the draft.
+//! setting every box shares, the chat's recent messages and a reply's quote as context, progress and cancel, and
+//! failures that keep the draft.
 
 #![cfg(test)]
 
@@ -17,9 +18,10 @@ use std::time::Duration;
 use common::{LAB_B, Rig};
 use gpui::{AppContext as _, Entity, Modifiers, TestAppContext, VisualTestContext, px, size};
 use teams_core::Action;
+use teams_store::Message;
 use teams_ui::ViewTrace;
 use teams_ui::chat_view::ChatView;
-use teams_ui::compose::{Compose, DraftTranslationStatus, Editor, Writes};
+use teams_ui::compose::{Compose, DraftTranslationStatus, Editor, Quoted, Writes};
 use teams_ui::draft_translate::menu::Row;
 use teams_ui::draft_translate::{self, Engine, Limits, Session};
 use teams_ui::local_ai::{AiChoice, Backend, Failure, Launch, ToolChoice, Tools};
@@ -219,10 +221,60 @@ fn translate_replaces_the_draft_as_one_edit_and_undo_brings_it_back() {
     assert_eq!(
         fake.asked(),
         vec!["<language>English</language>\n<message>\n<x0>hello there</x0>\n</message>".to_owned()],
-        "only the language and the draft go to the tool"
+        "a chat with no messages gives only the language and the draft"
     );
     cx.update(|_, cx| compose.update(cx, |compose, cx| compose.editor().update(cx, Editor::undo)));
     assert_eq!(value(&compose, cx), "hello there");
+}
+
+fn message(id: &str, at: i64, text: &str) -> Message {
+    Message {
+        conversation_id: AB.to_owned(),
+        id: id.to_owned(),
+        version: at,
+        client_message_id: None,
+        sender: Some(LAB_B.to_owned()),
+        sender_name: Some("Lab Bee".to_owned()),
+        message_type: "Text".to_owned(),
+        content: text.to_owned(),
+        properties: None,
+        arrival_time: at,
+        compose_time: Some(at),
+        edit_time: None,
+        delete_time: None,
+    }
+}
+
+#[test]
+fn the_chats_recent_messages_and_a_replys_quote_go_before_the_draft() {
+    let rig = Rig::start();
+    let fake = Fake::install(&rig);
+    rig.cx.update(teams_ui::window::init);
+    rig.cx.update(teams_ui::chat_view::init);
+    rig.core.messages.lock().unwrap().insert(
+        AB.to_owned(),
+        vec![
+            message("1001", 1_000, "The Quuxify build passed"),
+            message("1002", 2_000, "Can you ship it?"),
+        ],
+    );
+    let (view, cx) = open_chat(&rig, AB, &settings(&rig));
+    until(cx, |cx| view.read_with(cx, |view, _| !view.items().is_empty()));
+    let compose = compose_of(&view, cx);
+    let quoted = Quoted::of(&message("1002", 2_000, "Can you ship it?"), "Lab Bee").unwrap();
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.reply_to(quoted, window, cx)));
+    type_in(&compose, cx, "hello yes");
+    translate(&compose, cx);
+    until(cx, |cx| value(&compose, cx) == "hallo yes");
+    assert_eq!(
+        fake.asked(),
+        vec![
+            "<language>English</language>\n<context>\nLab Bee: The Quuxify build passed\nLab Bee: Can you ship it?\n\
+             Lab Bee: Can you ship it?\n</context>\n<message>\n<x0>hello yes</x0>\n</message>"
+                .to_owned()
+        ],
+        "the chat's messages oldest first, then the quote, then the draft"
+    );
 }
 
 #[test]

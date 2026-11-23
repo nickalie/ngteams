@@ -4,10 +4,13 @@
 //!
 //! - **Only when asked**: the compose box's Translate ([`crate::compose`]) starts one, and its result replaces the
 //!   draft as one edit, so Ctrl+Z brings the draft as written back.
-//! - **Only the draft's words and the language go to the tool**: no chat, history, names or tokens. The draft keeps
-//!   its shape ([`crate::message_correct::draft`]): only the words of its text blocks go, between numbered markers;
-//!   mentions, links that show their own address, inline code, line breaks, blocks of code and pictures never do, and
-//!   an answer that doesn't keep every marker is not used.
+//! - **The draft's words, the language and the chat's context go to the tool**: the chat's recent messages with their
+//!   writers' names, oldest first, and the message a reply quotes, as a correction sends them
+//!   ([`crate::message_correct`]), so that names, terms, tone and short replies come out right; no tokens. The tool
+//!   translates only the draft. The draft keeps its shape ([`crate::message_correct::draft`]): only the words of its
+//!   text blocks go, between numbered markers; mentions, links that show their own address, inline code, line breaks,
+//!   blocks of code and pictures never do, and an answer that doesn't keep every marker, or adds text outside them, is
+//!   not used.
 //! - **Behind [`Engine`]**: the app's is the local tool ([`LocalTools`]); the box's tests and the tour put a fake in
 //!   its place ([`set_engine`]), and the local one's own tests run a made-up CLI, so no test runs a real tool.
 //! - **One run per request** ([`Translating`]), on a thread of its own, each wait on the tool bounded ([`Limits`]).
@@ -24,6 +27,7 @@ use std::time::Duration;
 
 use gpui::{App, Global};
 
+use crate::chat_translate::prompt::Said;
 use crate::editor::doc::Doc;
 use crate::local_ai::{Backend, Failure, Launch, Model, Target, Tool, Work};
 use crate::message_correct::draft::Encoded;
@@ -37,8 +41,9 @@ pub const DEFAULT_LANGUAGE: &str = "English";
 pub const MAX_LANGUAGE: usize = 60;
 
 /// The settings' description of where a draft goes.
-pub const SETTINGS_NOTE: &str = "When you translate a message you are writing, its text and the language go to this \
-                                 tool on your computer and its provider; nothing else of the chat does.";
+pub const SETTINGS_NOTE: &str = "When you translate a message you are writing, its text, the language and the chat's \
+                                 recent messages, with the names of their writers, go to this tool on your computer and \
+                                 its provider.";
 
 /// The languages the picker lists: every language captions and chats are translated into, and more that many people
 /// write in. Any other is typed.
@@ -204,6 +209,8 @@ pub struct Request {
     pub model: Model,
     /// The language's name, as the settings keep it.
     pub language: String,
+    /// The chat's recent messages, oldest first, and the message a reply quotes.
+    pub context: Vec<Said>,
     pub draft: Encoded,
     pub limits: Limits,
 }
@@ -338,7 +345,7 @@ fn translate(request: &Request, engine: &dyn Engine, stop: &AtomicBool, out: &as
 fn ask(session: &mut dyn Session, request: &Request, stop: &AtomicBool) -> Outcome {
     // the first answer also waits for the tool to start
     let wait = request.limits.answer + request.limits.start;
-    let message = prompt::request(&request.language, &request.draft.text);
+    let message = prompt::request(&request.language, &request.context, &request.draft.text);
     if let Some(doc) = read(&session.ask(&message, wait, stop)?, &request.draft) {
         return Ok(doc);
     }

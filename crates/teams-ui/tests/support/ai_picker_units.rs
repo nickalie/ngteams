@@ -19,8 +19,8 @@ fn an_api_providers_note_names_all_that_its_requests_carry() {
     );
     assert_eq!(
         api_note(Work::Draft, "QA Anthropic"),
-        "When you translate a message you are writing, its text and the language go to QA Anthropic with your API \
-         key; nothing else of the chat does. The model runs on its server."
+        "When you translate a message you are writing, its text, the language and the chat's recent messages, with \
+         the names of their writers, go to QA Anthropic with your API key. The model runs on its server."
     );
     assert_eq!(
         api_note(Work::Captions, "QA Anthropic"),
