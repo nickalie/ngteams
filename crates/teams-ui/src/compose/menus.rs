@@ -419,16 +419,17 @@ impl Compose {
     }
 
     /// The open menu closed: by its button (`to_text`: Escape, a press outside it) or by the menu itself (a row
-    /// taken, Escape). The keyboard goes back to the tool it was on when the menu opened while the keyboard is still in
-    /// the menu, or in the text where the menu itself puts it (except after a row that sends it to the text). Else it
-    /// goes to the text if `to_text`: a press or a row that sent the keyboard elsewhere keeps it there.
+    /// taken, Escape). The keyboard goes back to the tool it was on when the menu opened, while that tool is still on
+    /// the row and the keyboard is still in the menu, or in the text where the menu itself puts it (except after a row
+    /// that sends it to the text). Else it goes to the text if `to_text` or if it is still in the menu: a press or a
+    /// row that sent the keyboard elsewhere keeps it there.
     fn menu_closed(&mut self, to_text: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.menu.take() else { return };
-        let keys_near = menu.menu.focus_handle(cx).contains_focused(window, cx)
-            || (!to_text && self.editor.read(cx).focus.is_focused(window));
+        let keys_in_menu = menu.menu.focus_handle(cx).contains_focused(window, cx);
+        let keys_near = keys_in_menu || (!to_text && self.editor.read(cx).focus.is_focused(window));
         match menu.back_to {
-            Some(tool) if keys_near => tool.focus(window, cx),
-            _ if to_text => self.focus(window, cx),
+            Some(tool) if keys_near && self.tools.holds(&tool, window) => tool.focus(window, cx),
+            _ if to_text || keys_in_menu => self.focus(window, cx),
             _ => {}
         }
         cx.notify();

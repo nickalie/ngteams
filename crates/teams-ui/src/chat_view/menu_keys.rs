@@ -97,9 +97,9 @@ impl MenuKeys {
     }
 
     /// Where the focus goes back to from a popup that a row of the menu opens: where the menu's keys go back to when
-    /// the keys opened it, else where the focus is now.
+    /// the keys opened it or are in it now, else where the focus is now.
     pub(super) fn focus_return(&self, window: &Window, cx: &App) -> keyboard::Return {
-        if self.keyed {
+        if self.keyed || self.has_focus(window, cx) {
             return self.back.clone();
         }
         let back = keyboard::Return::default();
@@ -127,6 +127,11 @@ impl MenuKeys {
         if let Some(at) = slots.iter().position(|slot| slot.contains_focused(window, cx)) {
             scroll.scroll_to_item(at);
         }
+    }
+
+    /// Whether the keys are in the menu or in the list beside it.
+    fn has_focus(&self, window: &Window, cx: &App) -> bool {
+        self.menu.contains_focused(window, cx) || self.side.contains_focused(window, cx)
     }
 
     fn opened_by(&self, window: &Window) -> Option<SideList> {
@@ -213,10 +218,10 @@ impl ChatView {
     }
 
     /// "More options" on a message's hover bar clicked: its menu opens or closes, and the keys go back to where they
-    /// are now when they close it.
+    /// are now when they close it, or, while they are still in the menu that closed, to where they went back from it.
     pub(super) fn toggle_options_by_mouse(&mut self, message: &str, window: &Window, cx: &mut Context<Self>) {
         self.toggle_options(message, cx);
-        if self.options.is_some() {
+        if self.options.is_some() && !self.menu_keys.has_focus(window, cx) {
             self.menu_keys.back.keep(window, cx);
         }
     }

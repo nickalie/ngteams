@@ -1635,6 +1635,112 @@ fn tab_in_a_clicked_tool_s_menu_goes_on_from_its_button() {
     assert_eq!(focused(cx), after, "the stop after the tools, as Tab from \"+\"");
 }
 
+/// The a–b chat at a width where Attach and More options are both on the row: the keys on Attach, More options opened
+/// by a click, then the box narrower, Attach in More options now.
+fn more_opened_on_attach_then_attach_moved_into_it(rig: &Rig) -> (Entity<Compose>, &'static mut VisualTestContext) {
+    let (compose, cx) = rooted_chat(rig, 270.0);
+    type_in(&compose, cx, "draft");
+    press(cx, "tab");
+    press(cx, "right");
+    press(cx, "right");
+    let attach = focused(cx);
+    click(cx, "compose-more");
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        Some(MenuKind::More)
+    );
+    cx.simulate_resize(size(px(210.0), px(640.0)));
+    draw(cx);
+    let row = compose.read_with(cx, Compose::row_tools);
+    assert_eq!(
+        row,
+        ["compose-format", "compose-emoji"],
+        "Attach is in More options now"
+    );
+    assert!(shown(cx, "compose-more"));
+    assert_ne!(focused(cx), attach, "the keys are in the menu");
+    (compose, cx)
+}
+
+#[test]
+fn tab_in_a_menu_whose_tool_left_the_row_goes_on_from_its_button() {
+    let rig = Rig::start();
+    let (compose, cx) = more_opened_on_attach_then_attach_moved_into_it(&rig);
+    press(cx, "tab");
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        None,
+        "Tab closes the menu"
+    );
+    assert!(
+        !box_focused(&compose, cx),
+        "Tab goes past the tools, not back to the text"
+    );
+    assert!(!tools_focused(&compose, cx), "Tab leaves the tools");
+}
+
+#[test]
+fn escape_in_a_menu_whose_tool_left_the_row_gives_the_text_the_keys() {
+    let rig = Rig::start();
+    let (compose, cx) = more_opened_on_attach_then_attach_moved_into_it(&rig);
+    press(cx, "escape");
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        None,
+        "Escape closes the menu"
+    );
+    assert!(
+        box_focused(&compose, cx),
+        "the text has the keys, as Attach is gone from the row"
+    );
+}
+
+/// The Tabs from the card's input into the menu that a click on "More options" opened, and from there out of it.
+fn tabs_out_of_a_clicked_menu(view: &Entity<ChatView>, cx: &mut VisualTestContext) -> usize {
+    open_the_card_s_menu_by_a_click(view, cx);
+    for tabs in 1..=40 {
+        press(cx, "tab");
+        if view.read_with(cx, |view, _| view.options().is_none()) {
+            return tabs;
+        }
+    }
+    panic!("Tab in the menu closes it");
+}
+
+fn open_the_card_s_menu_by_a_click(view: &Entity<ChatView>, cx: &mut VisualTestContext) {
+    draw(cx);
+    let message = cx.debug_bounds("message-700").expect("the card's message");
+    cx.simulate_mouse_move(message.center(), None, Modifiers::none());
+    click(cx, "message-more");
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_some()),
+        "the click opens the message's menu"
+    );
+}
+
+#[test]
+fn escape_in_customize_chosen_by_the_keys_in_a_clicked_menu_gives_the_keys_back_to_the_card_s_input() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    press(cx, "enter");
+    let input = focused(cx);
+    let tabs = tabs_out_of_a_clicked_menu(&view, cx);
+    assert_eq!(focused(cx), input);
+    open_the_card_s_menu_by_a_click(&view, cx);
+    for _ in 1..tabs {
+        press(cx, "tab");
+    }
+    press(cx, "end");
+    key_click(cx);
+    assert!(
+        cx.update(|_, cx| view.read(cx).bar_customize_open()),
+        "Customize from the keys opens its list"
+    );
+    press(cx, "escape");
+    assert!(!cx.update(|_, cx| view.read(cx).bar_customize_open()));
+    assert_eq!(focused(cx), input, "Escape gives the keys back to the card's input");
+}
+
 #[test]
 fn enter_held_after_a_time_is_clicked_open_does_not_send_the_draft() {
     let rig = Rig::start();
