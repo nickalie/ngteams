@@ -1669,6 +1669,117 @@ fn the_telegram_panel_is_reached_by_the_keyboard() {
     assert!(picker_open(&view, cx), "the picker stays open");
 }
 
+/// The Telegram panel opened with a token kept, the link field focused.
+fn panel_with_kept_token() -> (
+    Entity<ChatView>,
+    Entity<FunPicker>,
+    Entity<TelegramImport>,
+    &'static mut VisualTestContext,
+) {
+    let place = Setup::new();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    let _mock = telegram_mock(cx);
+    cx.update(|_, cx| {
+        BotToken::of(cx)
+            .put(&teams_auth::secrets::Secret::new(SYNTHETIC_BOT_TOKEN.to_owned()))
+            .unwrap();
+    });
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    click(cx, "fun-tab-stickers");
+    cx.update(|window, cx| picker.update(cx, |picker, cx| picker.open_telegram_import(window, cx)));
+    draw(cx);
+    let panel = telegram_panel(&picker, cx);
+    assert_eq!(
+        cx.update(|_, cx| panel.read(cx).token_state().clone()),
+        TokenState::Saved
+    );
+    (view, picker, panel, cx)
+}
+
+fn focused_press(panel: &Entity<TelegramImport>, cx: &mut VisualTestContext) -> Option<telegram_import::Press> {
+    cx.update(|window, cx| panel.read(cx).focused_press(window))
+}
+
+fn token_focused(panel: &Entity<TelegramImport>, cx: &mut VisualTestContext) -> bool {
+    cx.update(|window, cx| panel.read(cx).token_focused(window, cx))
+}
+
+#[test]
+fn after_remove_by_the_keyboard_the_focus_stays_in_the_telegram_panel() {
+    use telegram_import::Press;
+    let (view, picker, panel, cx) = panel_with_kept_token();
+    keys(cx, "tab tab");
+    assert_eq!(focused_press(&panel, cx), Some(Press::Remove));
+    keys(cx, "enter");
+    assert_eq!(
+        cx.update(|_, cx| panel.read(cx).token_state().clone()),
+        TokenState::None
+    );
+    assert!(
+        token_focused(&panel, cx),
+        "the token field that shows now has the focus"
+    );
+    keys(cx, "escape");
+    assert!(cx.update(|_, cx| picker.read(cx).telegram_import().is_none()));
+    assert!(picker_open(&view, cx), "Escape goes back to the picker");
+}
+
+#[test]
+fn keep_it_by_the_pointer_keeps_the_focus_in_the_telegram_panel() {
+    use telegram_import::Press;
+    let (_view, _picker, panel, cx) = panel_with_kept_token();
+    click(cx, "telegram-import-replace");
+    assert!(token_focused(&panel, cx));
+    click(cx, "telegram-import-replace");
+    assert!(!drawn(cx, "telegram-import-token"), "Keep it hides the field");
+    assert_eq!(focused_press(&panel, cx), Some(Press::Replace));
+}
+
+#[test]
+fn the_telegram_panel_s_tab_order_is_its_drawn_order() {
+    use telegram_import::Press;
+    let (_view, _picker, panel, cx) = panel_with_kept_token();
+    keys(cx, "tab enter");
+    assert!(token_focused(&panel, cx), "Replace focuses the field");
+    // the field is drawn under Keep it and Remove
+    keys(cx, "shift-tab");
+    assert_eq!(focused_press(&panel, cx), Some(Press::Remove));
+    keys(cx, "shift-tab");
+    assert_eq!(focused_press(&panel, cx), Some(Press::Replace));
+    keys(cx, "tab tab");
+    assert!(token_focused(&panel, cx));
+    keys(cx, "tab");
+    assert_eq!(focused_press(&panel, cx), Some(Press::Start));
+}
+
+#[test]
+fn the_import_button_s_focus_ring_is_outside_its_brand_fill() {
+    use telegram_import::Press;
+    let (_view, _picker, panel, cx) = panel_with_kept_token();
+    assert!(!drawn(cx, "telegram-import-start-ring"));
+    // link, Replace, Remove, Import
+    keys(cx, "tab tab tab");
+    assert_eq!(focused_press(&panel, cx), Some(Press::Start));
+    let button = cx.debug_bounds("telegram-import-start").expect("Import is drawn");
+    let ring = cx
+        .debug_bounds("telegram-import-start-ring")
+        .expect("a ring is drawn round Import");
+    assert!(
+        ring.origin.x < button.origin.x
+            && ring.origin.y < button.origin.y
+            && ring.bottom_right().x > button.bottom_right().x
+            && ring.bottom_right().y > button.bottom_right().y,
+        "the ring {ring:?} is outside the button {button:?}"
+    );
+    keys(cx, "tab");
+    assert!(
+        !drawn(cx, "telegram-import-start-ring"),
+        "only while Import has the focus"
+    );
+}
+
 fn picker_open(view: &Entity<ChatView>, cx: &mut VisualTestContext) -> bool {
     picker(view, cx).is_some()
 }

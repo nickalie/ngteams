@@ -8,9 +8,11 @@
 //!   `@BotFather`'s form, then kept in the keyring ([`BotToken`], off the UI thread) before the import starts.
 //! - **Import** (or Enter in a field) tells the picker the link ([`TelegramImportEvent::Start`]); the picker's import
 //!   line shows the progress and what was skipped. **Cancel** (or Escape) goes back to the picker.
-//! - **Reach**: the link field has the focus when it opens; Tab and Shift+Tab go through the fields and the buttons,
-//!   and Enter or Space presses a button.
+//! - **Reach**: the link field has the focus when it opens; Tab and Shift+Tab go through the fields and the buttons in
+//!   the order they are drawn, and Enter or Space presses a button. A button that goes away under the keyboard leaves
+//!   the focus on what shows in its place.
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _,
@@ -45,15 +47,6 @@ pub const NOT_KEPT: &str = "The bot token can't be saved in this computer's keyr
 /// What it says when the keyring can't be read.
 pub const NOT_READ: &str = "The bot token can't be read from this computer's keyring.";
 
-/// Tab's order in the panel: the back arrow, the fields, the token's actions, then the buttons.
-const TAB_BACK: isize = 0;
-const TAB_LINK: isize = 1;
-const TAB_TOKEN: isize = 2;
-const TAB_REPLACE: isize = 3;
-const TAB_REMOVE: isize = 4;
-const TAB_START: isize = 5;
-const TAB_CANCEL: isize = 6;
-
 /// A button of the panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Press {
@@ -66,16 +59,6 @@ pub enum Press {
 
 impl Press {
     const ALL: [Self; 5] = [Self::Back, Self::Replace, Self::Remove, Self::Start, Self::Cancel];
-
-    fn tab(self) -> isize {
-        match self {
-            Self::Back => TAB_BACK,
-            Self::Replace => TAB_REPLACE,
-            Self::Remove => TAB_REMOVE,
-            Self::Start => TAB_START,
-            Self::Cancel => TAB_CANCEL,
-        }
-    }
 
     /// Its test selector.
     #[must_use]
@@ -178,7 +161,8 @@ impl TelegramImport {
             focus: cx.focus_handle(),
             buttons: Press::ALL
                 .iter()
-                .map(|press| (*press, cx.focus_handle().tab_index(press.tab()).tab_stop(true)))
+                // no tab index: stops of one index go in the drawn order, and the kit's fields take none
+                .map(|press| (*press, cx.focus_handle().tab_stop(true)))
                 .collect(),
             _subscriptions: subscriptions,
         };
@@ -205,6 +189,11 @@ impl TelegramImport {
     /// Whether the focus is in the panel.
     pub fn holds_focus(&self, window: &Window, cx: &gpui::App) -> bool {
         self.focus.contains_focused(window, cx)
+    }
+
+    /// Whether the token field has the focus.
+    pub fn token_focused(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.token.read(cx).focus_handle(cx).is_focused(window)
     }
 
     /// Puts `link` in the link field (as typed or pasted).
@@ -260,11 +249,11 @@ impl TelegramImport {
             return;
         }
         self.token.update(cx, |field, cx| field.set_value("", window, cx));
-        self.keep(Some(Secret::new(typed)), Some(link), cx);
+        self.keep(Some(Secret::new(typed)), Some(link), window, cx);
     }
 
     /// Keeps `token` in the keyring (or forgets the kept one), off the UI thread; then tells the picker `link`.
-    fn keep(&mut self, token: Option<Secret>, link: Option<String>, cx: &mut Context<Self>) {
+    fn keep(&mut self, token: Option<Secret>, link: Option<String>, window: &Window, cx: &mut Context<Self>) {
         self.busy = true;
         self.problem = None;
         cx.notify();
@@ -276,19 +265,23 @@ impl TelegramImport {
                 None => tokens.delete(),
             }
         });
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let done = work.await;
-            let _ = this.update(cx, |this, cx| this.kept(done.is_ok(), saved, link, cx));
+            let _ = this.update_in(cx, |this, window, cx| this.kept(done.is_ok(), saved, link, window, cx));
         })
         .detach();
     }
 
     /// The keyring kept (or forgot) the token when `done`; then the picker is told `link`.
-    fn kept(&mut self, done: bool, saved: bool, link: Option<String>, cx: &mut Context<Self>) {
+    fn kept(&mut self, done: bool, saved: bool, link: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.busy = false;
         if done {
             self.state = if saved { TokenState::Saved } else { TokenState::None };
             self.replacing = false;
+            // Replace and Remove go with the kept token: the keyboard stays in the panel, on the field drawn there now
+            if !saved && matches!(self.focused_press(window), Some(Press::Replace | Press::Remove)) {
+                self.token.update(cx, |field, cx| field.focus(window, cx));
+            }
             if let Some(link) = link {
                 cx.emit(TelegramImportEvent::Start(link));
             }
@@ -310,14 +303,16 @@ impl TelegramImport {
         self.problem = None;
         if self.replacing {
             self.token.update(cx, |field, cx| field.focus(window, cx));
+        } else if self.token_focused(window, cx) {
+            self.focus_of(Press::Replace).focus(window, cx);
         }
         cx.notify();
     }
 
     /// Remove pressed: the kept token forgotten.
-    pub fn remove(&mut self, cx: &mut Context<Self>) {
+    pub fn remove(&mut self, window: &Window, cx: &mut Context<Self>) {
         if !self.busy {
-            self.keep(None, None, cx);
+            self.keep(None, None, window, cx);
         }
     }
 
@@ -333,7 +328,7 @@ impl TelegramImport {
         match press {
             Press::Back | Press::Cancel => Self::cancel(cx),
             Press::Replace => self.replace(window, cx),
-            Press::Remove => self.remove(cx),
+            Press::Remove => self.remove(window, cx),
             Press::Start => self.start(window, cx),
         }
     }
@@ -347,7 +342,8 @@ impl TelegramImport {
     }
 
     /// The button whose focus the keyboard is on.
-    fn focused_press(&self, window: &Window) -> Option<Press> {
+    #[must_use]
+    pub fn focused_press(&self, window: &Window) -> Option<Press> {
         self.buttons
             .iter()
             .find(|(_, focus)| focus.is_focused(window))
@@ -423,7 +419,7 @@ impl TelegramImport {
                 .child(
                     div()
                         .debug_selector(|| "telegram-import-token".to_owned())
-                        .child(Input::new(&self.token).with_size(Size::Small).tab_index(TAB_TOKEN)),
+                        .child(Input::new(&self.token).with_size(Size::Small)),
                 )
                 .child(
                     div()
@@ -445,6 +441,8 @@ impl TelegramImport {
     }
 
     /// A button: the brand's colour when `primary`, outlined otherwise, with the keyboard's ring while it has the focus.
+    /// A brand ring on the brand's fill can't be seen, so a primary button's ring is outside it, past a gap, as Teams
+    /// draws it.
     fn button(
         &self,
         press: Press,
@@ -462,17 +460,17 @@ impl TelegramImport {
             (false, false) => (palette.surface, palette.muted_foreground),
         };
         let focus = self.focus_of(press);
-        let ring = if focus.is_focused(window) {
-            rgb(palette.brand).into()
-        } else if primary {
-            gpui::transparent_black()
-        } else {
-            rgb(palette.border).into()
+        let focused = focus.is_focused(window);
+        let ring = match (primary, focused) {
+            (true, _) => gpui::transparent_black(),
+            (false, true) => rgb(palette.brand).into(),
+            (false, false) => rgb(palette.border).into(),
         };
         let element = div()
             .id(press.selector())
             .debug_selector(move || press.selector().to_owned())
             .track_focus(&focus)
+            .relative()
             .flex_none()
             .px_3()
             .py_1()
@@ -482,7 +480,8 @@ impl TelegramImport {
             .text_sm()
             .bg(rgb(background))
             .text_color(rgb(foreground))
-            .child(text);
+            .child(text)
+            .when(primary && focused, |element| element.child(outer_ring(press, palette)));
         if enabled {
             element
                 .cursor_pointer()
@@ -521,6 +520,22 @@ impl TelegramImport {
     }
 }
 
+/// The ring of a focused primary button: outside its edge, past a gap of the panel's surface.
+fn outer_ring(press: Press, palette: Palette) -> gpui::Div {
+    // from the padding box: past the button's 2px border, a 2px gap, then the 2px ring
+    let out = px(-6.0);
+    div()
+        .debug_selector(move || format!("{}-ring", press.selector()))
+        .absolute()
+        .top(out)
+        .left(out)
+        .right(out)
+        .bottom(out)
+        .rounded(px(10.0))
+        .border_2()
+        .border_color(rgb(palette.brand))
+}
+
 fn label(text: &'static str, palette: Palette) -> gpui::Div {
     div()
         .text_sm()
@@ -546,7 +561,7 @@ impl Render for TelegramImport {
         let link = div().flex().flex_col().gap_1().child(label("Link", palette)).child(
             div()
                 .debug_selector(|| "telegram-import-link".to_owned())
-                .child(Input::new(&self.link).with_size(Size::Small).tab_index(TAB_LINK)),
+                .child(Input::new(&self.link).with_size(Size::Small)),
         );
         let token = self.token_part(palette, window, cx);
         let problem = self.problem.clone().map(|problem| {

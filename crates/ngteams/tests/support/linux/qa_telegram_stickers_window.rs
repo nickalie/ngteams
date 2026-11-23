@@ -1747,7 +1747,10 @@ fn token_never_drawn(user: &mut User<'_>) -> SandboxResult {
     let mut shots = Vec::new();
     for (field, name) in [("token", "mask"), ("link", "plain")] {
         if field == "link" {
-            user.press("shift+tab")?;
+            // from the token field, past Remove and "Keep it", drawn above it
+            for _ in 0..3 {
+                user.press("shift+tab")?;
+            }
         }
         for (index, token) in [MASK_ONE, MASK_TWO].into_iter().enumerate() {
             user.retype(token)?;
@@ -1791,8 +1794,9 @@ fn token_replace_keep_remove(user: &mut User<'_>) -> SandboxResult {
         faults.push(format!("Replace forgot the token: {}", panel(&state)));
     }
     user.image("panel-replacing")?;
-    // the token field has the focus: Tab to "Keep it", Space
-    user.press("tab")?;
+    // the token field has the focus; it is drawn under "Keep it" and Remove: Shift+Tab twice to "Keep it", Space
+    user.press("shift+tab")?;
+    user.press("shift+tab")?;
     user.press("space")?;
     let state = user.until("Keep it hid the field", |state| panel(state)["asks_token"] == false)?;
     if panel(&state)["token_state"] != "Saved" || user.kept_token()? != "mock" {
@@ -2022,9 +2026,14 @@ fn no_regression_and_themes(user: &mut User<'_>) -> SandboxResult {
         user.until("Replace showed the token field", |state| {
             panel(state)["asks_token"] == true
         })?;
-        user.press("shift+tab")?;
+        // the link is three stops up from the token field, past Remove and "Keep it"
+        for _ in 0..3 {
+            user.press("shift+tab")?;
+        }
         user.retype(GOOD_LINK)?;
-        user.press("tab")?;
+        for _ in 0..3 {
+            user.press("tab")?;
+        }
         let said = user.submit(Some(MALFORMED_TOKEN), "a malformed token")?;
         if said.as_deref() != Some(telegram_import::BAD_TOKEN) {
             faults.push(format!("{theme}: a malformed token gives {said:?}"));
