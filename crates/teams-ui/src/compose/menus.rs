@@ -28,6 +28,7 @@ use crate::chat_view::measured;
 use crate::draft_translate::menu;
 use crate::editor;
 use crate::icons::{Glyph, icon_button, selected_by};
+use crate::keyboard;
 
 /// The row that opens the customize list.
 pub const CUSTOMIZE: &str = "Customize toolbar";
@@ -410,6 +411,16 @@ impl Compose {
         cx.notify();
     }
 
+    /// Tab or Shift+Tab in the open menu: it closes, and the keyboard goes on as from the tool it opened from, else
+    /// to the text.
+    fn tab_from_menu(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.menu.take() else { return };
+        if !self.tools.leave_from(menu.back_to, forward, window, cx) {
+            self.focus(window, cx);
+        }
+        cx.notify();
+    }
+
     /// Closes the open menu of tools, the keyboard back in the text.
     pub fn close_more(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.menu.take().is_some() {
@@ -432,7 +443,7 @@ impl Compose {
 
     /// The button of the menu `kind` on the box's row: a menu of its rows, each with its icon, its key and its state.
     /// Escape closes it and gives the keyboard back to the tool it was on when the menu opened, or to the text when
-    /// it was on no tool. What a row of it opens (the language menu, the emoji picker, apps) opens by this button.
+    /// it was on no tool; Tab and Shift+Tab close it and go on as from that tool. What a row of it opens (the language menu, the emoji picker, apps) opens by this button.
     pub(super) fn menu_button(&self, kind: MenuKind, fit: &Fit, cx: &mut Context<Self>) -> AnyElement {
         let open = self.menu_open() == Some(kind);
         let menu = self
@@ -441,6 +452,7 @@ impl Compose {
             .filter(|menu| menu.kind == kind)
             .map(|menu| menu.menu.clone());
         let compose = cx.entity().downgrade();
+        let weak = compose.clone();
         let (glyph, tip) = kind.face();
         let button = icon_button(kind.selector(), glyph, tip).with_size(Size::Size(px(TOOL)));
         let popover = Popover::new(kind.popover())
@@ -459,8 +471,17 @@ impl Compose {
                 });
             })
             .content(move |_, _, _| {
+                let tab = |forward| {
+                    let compose = weak.clone();
+                    move |window: &mut Window, cx: &mut App| {
+                        let _ = compose.update(cx, |this, cx| this.tab_from_menu(forward, window, cx));
+                    }
+                };
+                let (out, back) = (tab(true), tab(false));
                 div()
                     .debug_selector(move || kind.menu_selector().to_owned())
+                    .on_action(move |_: &keyboard::row::Out, window, cx| out(window, cx))
+                    .on_action(move |_: &keyboard::row::Back, window, cx| back(window, cx))
                     .children(menu.clone())
             });
         selected_by(kind.selector(), popover)

@@ -1,7 +1,7 @@
 //! A card's time input, as Teams' time picker draws it: a text box that takes a typed time, and the half hours of the
 //! day under its chevron. A workflow's run dialog and a bot's card use it.
 use chrono::NaiveTime;
-use gpui::{App, Entity, InteractiveElement as _, ParentElement as _, SharedString, div, px};
+use gpui::{App, Entity, Focusable as _, InteractiveElement as _, ParentElement as _, SharedString, Window, div, px};
 use gpui_component::button::ButtonVariants as _;
 use gpui_component::input::{Input as TextInput, InputState};
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
@@ -69,6 +69,7 @@ pub(crate) fn time_field(
                                 })
                                 .on_click(move |_, window, cx| {
                                     target.update(cx, |state, cx| state.set_value(words.clone(), window, cx));
+                                    keys_to_the_chevron(&target, window, cx);
                                     on_pick(cx);
                                 }),
                             );
@@ -79,6 +80,13 @@ pub(crate) fn time_field(
             .key_context(CHOICE_CONTEXT),
         ),
     )
+}
+
+/// A chosen time gives the keys to the chevron, the stop after the field, also when a click opened the list: then the
+/// repeats of the Enter that chose it go to no control that had the keys before.
+fn keys_to_the_chevron(field: &Entity<InputState>, window: &mut Window, cx: &mut App) {
+    field.read(cx).focus_handle(cx).focus(window, cx);
+    window.focus_next(cx);
 }
 
 #[cfg(test)]

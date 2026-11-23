@@ -1502,3 +1502,95 @@ fn enter_held_after_a_time_is_chosen_does_not_open_the_times_again() {
         "the held Enter's repeats do not open the times again"
     );
 }
+
+#[test]
+fn escape_held_in_the_card_s_input_stops_at_the_list() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    press(cx, "enter");
+    assert!(!list_focused(&view, cx), "Enter goes to the card's input");
+    press(cx, "escape");
+    hold(cx, "escape");
+    assert!(
+        list_focused(&view, cx),
+        "the repeats of a held Escape leave the keys on the list"
+    );
+    assert_eq!(
+        view.read_with(cx, |view, _| view.selected().map(str::to_owned))
+            .as_deref(),
+        Some("700"),
+        "and keep the selection"
+    );
+}
+
+#[test]
+fn tab_in_a_tool_s_menu_closes_it_and_leaves_the_tools() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    press(cx, "tab");
+    press(cx, "end");
+    let plus = focused(cx);
+    press(cx, "tab");
+    let after = focused(cx);
+    press(cx, "shift-tab");
+    assert_eq!(focused(cx), plus);
+    press(cx, "enter");
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        Some(MenuKind::Plus)
+    );
+    press(cx, "tab");
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        None,
+        "Tab closes the menu"
+    );
+    assert_eq!(focused(cx), after, "and goes on as Tab from \"+\"");
+    press(cx, "shift-tab");
+    press(cx, "enter");
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        Some(MenuKind::Plus)
+    );
+    press(cx, "shift-tab");
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        None,
+        "Shift+Tab closes the menu"
+    );
+    assert!(box_focused(&compose, cx), "and goes back as Shift+Tab from \"+\"");
+}
+
+#[test]
+fn enter_held_after_a_time_is_clicked_open_does_not_send_the_draft() {
+    let rig = Rig::start();
+    let card = card_message_of(
+        "700",
+        &serde_json::json!({
+            "type": "AdaptiveCard",
+            "body": [{"type": "Input.Time", "id": "at"}],
+            "actions": [{"type": "Action.Submit", "title": "Send"}]
+        }),
+    );
+    let (view, cx) = card_selected(&rig, card);
+    let compose = view.read_with(cx, |view, _| view.compose().clone());
+    focus_box(&compose, cx);
+    type_in(&compose, cx, "draft");
+    click(cx, "card-700-c0-in-at-times");
+    assert!(
+        shown(cx, "card-700-c0-in-at-times-1200AM"),
+        "a click on the chevron opens the times"
+    );
+    press(cx, "down");
+    press(cx, "enter");
+    assert!(
+        !shown(cx, "card-700-c0-in-at-times-1200AM"),
+        "Enter chooses a time and closes the times"
+    );
+    hold(cx, "enter");
+    assert_eq!(
+        compose.read_with(cx, |compose, cx| compose.editor().read(cx).text()),
+        "draft",
+        "the held Enter's repeats do not send the draft"
+    );
+}

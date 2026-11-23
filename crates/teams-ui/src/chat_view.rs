@@ -1619,7 +1619,7 @@ impl ChatView {
         let presence = cx.observe(&models.presence, |_: &mut Self, _, cx| cx.notify());
         let keys = cx.observe_keystrokes(|this: &mut Self, event, window, cx| this.keys_to_the_list(event, window, cx));
         let this = cx.weak_entity();
-        // before the bindings: a held Enter's or Space's repeats reach no binding of the list or of a control in it
+        // before the bindings: the repeats of a held Enter, Space or Escape reach no binding in the list
         let held = cx.intercept_keystrokes(move |event, window, cx| {
             let drop = this.read_with(cx, |this, cx| this.held_press(event, window, cx));
             if matches!(drop, Ok(true)) {
@@ -2694,15 +2694,18 @@ impl ChatView {
         }
     }
 
-    /// A held Enter or Space in the list: only a new push acts (it may have moved the keys to a control, which its
-    /// repeats must not press), except in a card's text field, where a held key types again (not on a time's chevron).
+    /// A held Enter, Space or Escape in the list: only a new push acts (it may have moved the keys to a control, which
+    /// its repeats must not press, or out of a card's field, past which they must not go on to the box), except Enter
+    /// and Space in a card's text field, where a held key types again (not on a time's chevron).
     fn held_press(&self, event: &KeystrokeEvent, window: &Window, cx: &App) -> bool {
         let in_context = |name| event.context_stack.iter().any(|context| context.contains(name));
         let in_text = in_context(crate::card_view::TEXT_CONTEXT) && !in_context(crate::time_picker::CHOICE_CONTEXT);
-        event.is_held
-            && matches!(event.keystroke.key.as_str(), "enter" | "space")
-            && self.focus.handle.contains_focused(window, cx)
-            && !in_text
+        let repeated = match event.keystroke.key.as_str() {
+            "enter" | "space" => !in_text,
+            "escape" => !event.keystroke.modifiers.modified(),
+            _ => false,
+        };
+        event.is_held && repeated && self.focus.handle.contains_focused(window, cx)
     }
 
     fn on_a_control_in_the_list(&self, window: &Window, cx: &App) -> bool {

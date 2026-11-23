@@ -8,7 +8,7 @@
 //! keeps the control itself, not its place in the row: the keys can come to a control in other ways (the window's own
 //! Tab from a place that is not [`Row::before`], a menu that gives them back), and each draw notes where they are. The
 //! row's keys act only while a control of the row itself has the keys: in a menu that a control of it opened, the
-//! menu's own keys stay.
+//! menu's own keys stay, and the owner of the menu closes it on Tab and Shift+Tab ([`Row::leave_from`]).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -154,6 +154,18 @@ impl Row {
         element
             .key_context(AFTER)
             .on_action(move |_: &EnterBehind, window, cx| this.enter(false, window, cx))
+    }
+
+    /// Tab or Shift+Tab in something of the row's own (a menu it opened): the first stop past the row's end, as from
+    /// `control`, or from the control the keys were last on. False when neither is in the row now.
+    pub fn leave_from(&self, control: Option<FocusHandle>, forward: bool, window: &mut Window, cx: &mut App) -> bool {
+        let last = self.0.last.borrow().clone();
+        let Some(control) = control.or(last).filter(|control| self.holds(control, window)) else {
+            return false;
+        };
+        control.focus(window, cx);
+        self.leave(forward, window, cx);
+        true
     }
 
     /// Whether the keys are on a control of the row itself, not in something of its own (a menu) inside it.
