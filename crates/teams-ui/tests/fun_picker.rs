@@ -1978,8 +1978,8 @@ fn the_signal_panel_is_reached_by_the_keyboard() {
         drawn(cx, "sticker-import-signal"),
         "the empty state offers a Signal pack"
     );
-    // the empty state's buttons are the first row: Down, Right twice, Enter opens the panel
-    keys(cx, "down right right enter");
+    // the empty state's buttons are the first row: Down, Right three times, Enter opens the panel
+    keys(cx, "down right right right enter");
     let panel = signal_panel(&picker, cx);
     cx.simulate_input("not a link");
     keys(cx, "enter");

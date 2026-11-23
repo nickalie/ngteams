@@ -599,6 +599,7 @@ impl FunPicker {
                     Panel::Menu
                 };
                 self.renaming = None;
+                self.reveal_menu(cx);
                 cx.notify();
             }
             Item::ImportFolder => Self::choose_import(ImportKind::Folder, cx),
@@ -885,6 +886,13 @@ impl FunPicker {
         self.show(tabs[next], cx);
         if self.items_focus.is_focused(window) {
             self.search.update(cx, |search, cx| search.focus(window, cx));
+        }
+    }
+
+    /// Scrolls an opened menu's last row into view, so that none of its rows is hidden below the list.
+    fn reveal_menu(&self, cx: &App) {
+        if let Some(index) = self.lines(cx).iter().rposition(|line| matches!(line, Line::Menu(_))) {
+            self.scroll.scroll_to_item(index);
         }
     }
 
