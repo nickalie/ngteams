@@ -1429,6 +1429,48 @@ fn escape_in_the_card_s_input_closes_the_delete_s_confirmation() {
 }
 
 #[test]
+fn escape_in_the_box_keeps_the_delete_s_confirmation() {
+    let rig = Rig::start();
+    let (view, cx) = deleting_beside_a_card(&rig, card_message("700"));
+    let compose = view.read_with(cx, |view, _| view.compose().clone());
+    focus_box(&compose, cx);
+    press(cx, "escape");
+    assert!(
+        view.read_with(cx, |view, _| view.deleting().is_some()),
+        "Escape outside the list keeps the confirmation"
+    );
+}
+
+#[test]
+fn escape_in_another_view_s_list_keeps_the_delete_s_confirmation() {
+    let rig = Rig::start();
+    let (view, cx) = deleting_beside_a_card(&rig, card_message("700"));
+    let (other, _, other_cx) = rooted_view(&rig, Settings::default(), 900.0);
+    other_cx.update(|window, cx| other.read(cx).focus_handle().clone().focus(window, cx));
+    draw(other_cx);
+    assert!(list_focused(&other, other_cx), "the keys are in the other view's list");
+    press(other_cx, "escape");
+    draw(cx);
+    assert!(
+        view.read_with(cx, |view, _| view.deleting().is_some()),
+        "Escape in another view's list keeps this view's confirmation"
+    );
+}
+
+#[test]
+fn shift_escape_in_the_list_keeps_the_delete_s_confirmation() {
+    let rig = Rig::start();
+    let (view, cx) = deleting_beside_a_card(&rig, card_message("700"));
+    cx.update(|window, cx| view.read(cx).focus_handle().clone().focus(window, cx));
+    draw(cx);
+    press(cx, "shift-escape");
+    assert!(
+        view.read_with(cx, |view, _| view.deleting().is_some()),
+        "only a plain Escape closes the confirmation"
+    );
+}
+
+#[test]
 fn enter_held_after_a_time_is_chosen_does_not_open_the_times_again() {
     let rig = Rig::start();
     let card = card_message_of(

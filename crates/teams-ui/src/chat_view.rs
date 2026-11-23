@@ -2682,8 +2682,13 @@ impl ChatView {
             return;
         }
         for _ in 0..MOST_STEPS {
+            let before = window.focused(cx);
             window.focus_next(cx);
-            if !self.focus.handle.contains_focused(window, cx) {
+            let after = window.focused(cx);
+            if !self.focus.handle.contains_focused(window, cx)
+                || after == before
+                || self.focus.handle.is_focused(window)
+            {
                 return;
             }
         }
@@ -2748,8 +2753,11 @@ impl ChatView {
             self.focus_messages(window, cx);
         }
         // a popup in a card (a time's list) takes its Escape before the list does
-        if event.keystroke.key == "escape"
+        let escape = event.keystroke.key == "escape" && !event.keystroke.modifiers.modified();
+        // the observer sees every view's keys: only an Escape in this view's own list closes its confirmation
+        if escape
             && in_the_list
+            && self.focus.handle.contains_focused(window, cx)
             && (self.deleting.take().is_some() | self.resending.take().is_some())
         {
             cx.notify();
