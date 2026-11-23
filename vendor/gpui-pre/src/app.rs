@@ -3487,6 +3487,9 @@ pub struct KeystrokeEvent {
 
     /// The context stack at the time
     pub context_stack: Vec<KeyContext>,
+
+    /// Whether the keystroke is a key-repeat of a held key
+    pub is_held: bool,
 }
 
 struct NullHttpClient;

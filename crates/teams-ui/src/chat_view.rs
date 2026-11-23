@@ -113,10 +113,10 @@ use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeZone, Utc};
 use gpui::ClipboardItem;
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Bounds, Context, ElementId, Entity, EventEmitter, FocusHandle,
-    FollowMode, Global, InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, KeystrokeEvent, ListAlignment,
-    ListOffset, ListState, MouseButton, ParentElement as _, Pixels, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity, Window, actions, anchored, canvas,
-    deferred, div, list, px, relative, rems, rgb,
+    FollowMode, Global, InteractiveElement as _, IntoElement, KeyBinding, KeystrokeEvent, ListAlignment, ListOffset,
+    ListState, MouseButton, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, Task, WeakEntity, Window, actions, anchored, canvas, deferred, div, list, px, relative,
+    rems, rgb,
 };
 use gpui_component::Selectable as _;
 use gpui_component::button::{Button, ButtonRounded, ButtonVariants as _};
@@ -1254,7 +1254,7 @@ pub struct ChatView {
     quote: QuoteJump,
     /// The models' changes, the compose box's events, the window's activation, the presence model's changes and the
     /// keys that bring Shift+Tab into the list.
-    _subscriptions: [Subscription; 5],
+    _subscriptions: [Subscription; 6],
 }
 
 /// The list's focus: a stop of Tab's order, as Teams' list is, so Shift+Tab from the box comes to it.
@@ -1584,7 +1584,7 @@ impl ChatView {
         compose: &Entity<Compose>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> [Subscription; 5] {
+    ) -> [Subscription; 6] {
         let observing = cx.observe(&models.chats, |this: &mut Self, chats, cx| {
             let at = {
                 let chats = chats.read(cx);
@@ -1618,7 +1618,16 @@ impl ChatView {
         // a presence the engine told: the senders' badges are drawn again from the model
         let presence = cx.observe(&models.presence, |_: &mut Self, _, cx| cx.notify());
         let keys = cx.observe_keystrokes(|this: &mut Self, event, window, cx| this.keys_to_the_list(event, window, cx));
-        [observing, compose_events, activation, presence, keys]
+        let this = cx.weak_entity();
+        // before the bindings: a held key's repeats reach no binding of the list or of a control in it
+        let held = cx.intercept_keystrokes(move |event, window, cx| {
+            let drop = this.read_with(cx, |this, cx| this.held_press(event, window, cx));
+            if matches!(drop, Ok(true)) {
+                window.prevent_default();
+                cx.stop_propagation();
+            }
+        });
+        [observing, compose_events, activation, presence, keys, held]
     }
 
     /// The compose box under the messages.
@@ -2588,10 +2597,15 @@ impl ChatView {
         })
     }
 
-    /// Escape in the list: what is open closes first (the quick reactions, a confirmation), then the selection, then
-    /// the focus goes back to the compose box.
+    /// Escape in the list: on a control in the list, the list takes the keys back; else what is open closes first (the
+    /// quick reactions, a confirmation), then the selection, then the focus goes back to the compose box.
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.more = None;
+        if self.on_a_control_in_the_list(window, cx) {
+            self.reactors.unfocus();
+            self.focus_messages(window, cx);
+            return;
+        }
         let open = self.reacting.take().is_some()
             | self.deleting.take().is_some()
             | self.resending.take().is_some()
@@ -2600,8 +2614,6 @@ impl ChatView {
             | self.text_selection.clear();
         if open {
             cx.notify();
-        } else if self.on_a_control_in_the_list(window, cx) {
-            self.focus_messages(window, cx);
         } else if self.selected.is_some() {
             self.select(None, cx);
         } else {
@@ -2649,9 +2661,6 @@ impl ChatView {
             .key_context(CONTEXT)
             .track_focus(&self.focus.handle)
             .on_action(cx.listener(|this, _: &PastMessages, window, cx| this.past_messages(window, cx)))
-            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                this.hold_enter_back(event, window, cx);
-            }))
             // a click in the messages leaves the focus where it is (the compose box, as in Teams): the list takes it
             // only from the keyboard (Escape in the box) and from the actions that need its keys
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default());
@@ -2683,11 +2692,16 @@ impl ChatView {
         }
     }
 
-    /// Enter held on the list repeats onto the control that it went to: only a new push may press that control.
-    fn hold_enter_back(&self, event: &KeyDownEvent, window: &mut Window, cx: &App) {
-        if event.is_held && event.keystroke.key == "enter" && self.on_a_control_in_the_list(window, cx) {
-            window.prevent_default();
-        }
+    /// A held Enter or Space in the list: only a new push acts (it may have moved the keys to a control, which its
+    /// repeats must not press), except in a card's text field, where a held key types again.
+    fn held_press(&self, event: &KeystrokeEvent, window: &Window, cx: &App) -> bool {
+        event.is_held
+            && matches!(event.keystroke.key.as_str(), "enter" | "space")
+            && self.focus.handle.contains_focused(window, cx)
+            && !event
+                .context_stack
+                .iter()
+                .any(|context| context.contains(crate::card_view::TEXT_CONTEXT))
     }
 
     fn on_a_control_in_the_list(&self, window: &Window, cx: &App) -> bool {

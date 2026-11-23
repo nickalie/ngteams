@@ -1259,3 +1259,77 @@ fn enter_held_on_the_selected_card_does_not_press_its_button() {
         "a new push of Enter presses the button"
     );
 }
+
+fn hold(cx: &mut VisualTestContext, key: &str) {
+    for _ in 0..3 {
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap(),
+            is_held: true,
+            prefer_character_input: false,
+        });
+        draw(cx);
+    }
+}
+
+#[test]
+fn enter_held_on_the_list_does_not_go_into_the_selected_message() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    hold(cx, "enter");
+    assert!(
+        list_focused(&view, cx),
+        "the repeats of a held Enter leave the keys on the list"
+    );
+    press(cx, "enter");
+    assert!(!list_focused(&view, cx), "a new push of Enter goes into the message");
+}
+
+#[test]
+fn a_held_key_types_again_in_the_card_s_text() {
+    let rig = Rig::start();
+    let card = card_message_of(
+        "700",
+        &serde_json::json!({
+            "type": "AdaptiveCard",
+            "body": [{"type": "Input.Text", "id": "said", "isMultiline": true}],
+            "actions": [{"type": "Action.Submit", "title": "Send"}]
+        }),
+    );
+    let (view, cx) = card_selected(&rig, card);
+    press(cx, "enter");
+    assert!(!list_focused(&view, cx), "Enter goes to the card's text");
+    cx.simulate_input("a");
+    press(cx, "enter");
+    hold(cx, "enter");
+    cx.simulate_input("b");
+    click(cx, "card-700-c0a0");
+    let asks = rig.core.bot_asks.lock().unwrap().clone();
+    assert!(
+        matches!(&asks[..], [ask] if matches!(&ask.kind, teams_proto::InvokeKind::Submit(sent)
+            if sent.data == serde_json::json!({"said": "a\n\n\n\nb"}))),
+        "each repeat of the held Enter is a new line: {asks:?}"
+    );
+}
+
+#[test]
+fn escape_in_the_card_s_input_with_a_pill_under_the_keys_goes_to_the_list_at_once() {
+    let rig = Rig::start();
+    rig.core.reactions.lock().unwrap().insert(
+        "700".to_owned(),
+        vec![teams_store::Reaction {
+            key: "like".to_owned(),
+            user: "8:orgid:00000000-0000-4000-8000-00000000000b".to_owned(),
+            time: 1_700_000_000_000,
+        }],
+    );
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    press(cx, "right");
+    assert!(
+        view.read_with(cx, |view, _| view.reaction_focus().is_some()),
+        "Right puts the pill under the keys"
+    );
+    press(cx, "enter");
+    assert!(!list_focused(&view, cx), "Enter goes to the card's input");
+    press(cx, "escape");
+    assert!(list_focused(&view, cx), "one Escape gives the keys back to the list");
+}

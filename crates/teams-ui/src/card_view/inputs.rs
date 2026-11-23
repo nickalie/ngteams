@@ -312,7 +312,7 @@ fn face_of(face: String, faint: bool, palette: Palette) -> gpui::Div {
 /// `control`, the field of text `state`, with the keys going to its text after any press on it.
 fn keys_to<T: Focusable>(control: gpui::Div, state: &Entity<T>, off: bool) -> gpui::Div {
     let state = state.clone();
-    control.when(!off, |control| {
+    control.key_context(super::TEXT_CONTEXT).when(!off, |control| {
         control.on_mouse_down(MouseButton::Left, move |_, window, cx| {
             // a press beside the text focuses the kit's frame, which shows the ring but takes no text
             let focus = state.read(cx).focus_handle(cx);

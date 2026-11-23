@@ -385,3 +385,29 @@ fn space_on_a_control_of_the_selected_message_is_that_control_s_not_the_pill_s()
         "Space presses the control"
     );
 }
+
+#[test]
+fn space_held_on_a_pill_reacts_once() {
+    let rig = varied_chat();
+    let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    cx.update(|window, cx| view.read(cx).focus_handle().clone().focus(window, cx));
+    view.update(cx, |view, cx| view.select(Some("101".to_owned()), cx));
+    draw(cx);
+    press(cx, "right");
+    assert_eq!(focus(&view, cx).as_deref(), Some("like"));
+    press(cx, "space");
+    assert_eq!(rig.core.actions.lock().unwrap().len(), 1, "a push of Space reacts");
+    for _ in 0..3 {
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke::parse("space").unwrap(),
+            is_held: true,
+            prefer_character_input: false,
+        });
+        draw(cx);
+    }
+    assert_eq!(
+        rig.core.actions.lock().unwrap().len(),
+        1,
+        "the repeats of a held Space write nothing"
+    );
+}

@@ -61,8 +61,11 @@ use crate::inline::{PictureSource, PictureState, picture};
 use crate::rich_text::{self, Mentions, Rendered, tint};
 use crate::theme::{self, Palette};
 
-/// The key context of a card's input: what types there is its text, never a key of the view around the card.
+/// The key context of a card's input: what types there is its text, never a key of the view around the card, except
+/// Escape, which gives the keys back to the list.
 pub const INPUT_CONTEXT: &str = "BotCardInput";
+/// The key context of a card's text field (in [`INPUT_CONTEXT`]): a held key types again there.
+pub const TEXT_CONTEXT: &str = "BotCardText";
 /// The widest a card is drawn, px: Teams' card in a chat and in a channel.
 pub const CARD_WIDTH: f32 = 448.0;
 /// A card's padding, px (Teams' host config `spacing.padding`).
