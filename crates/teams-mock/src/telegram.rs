@@ -58,6 +58,10 @@ pub enum MockFault {
     RevokedFrom(usize),
     /// Each request: a `302 Found` to `location`.
     RedirectTo(String),
+    /// From the `n`th `getFile` (from 0) on: the connection closes with no answer.
+    DroppedFrom(usize),
+    /// From the `n`th file download (from 0) on: the connection closes after half of the file.
+    CutFrom(usize),
 }
 
 /// The mock Bot API, served while it lives.
@@ -131,17 +135,21 @@ fn serve(stream: TcpStream, sets: &[MockSet], seen: &Mutex<Vec<MockRequest>>, fa
         authorization |= header.to_ascii_lowercase().starts_with("authorization:");
     }
     let target = first.split_whitespace().nth(1).unwrap_or_default().to_owned();
-    let files_asked = {
+    let (files_asked, downloads) = {
         let mut seen = seen.lock().unwrap_or_else(PoisonError::into_inner);
         seen.push(MockRequest {
             target: target.clone(),
             authorization,
         });
-        seen.iter()
-            .filter(|request| request.target.contains("/getFile?"))
-            .count()
+        let count = |part: &str| seen.iter().filter(|request| request.target.contains(part)).count();
+        (count("/getFile?"), count("/file/bot"))
     };
     let fault = fault.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    let sent = match &fault {
+        Some(MockFault::DroppedFrom(from)) if target.contains("/getFile?") && files_asked > *from => return,
+        Some(MockFault::CutFrom(from)) if target.starts_with("/file/bot") && downloads > *from => 2,
+        _ => 1,
+    };
     let (status, kind, body, location) = faulted(&target, fault, files_asked).unwrap_or_else(|| {
         let (status, kind, body) = answer(&target, sets);
         (status, kind, body, String::new())
@@ -152,9 +160,11 @@ fn serve(stream: TcpStream, sets: &[MockSet], seen: &Mutex<Vec<MockRequest>>, fa
         body.len()
     );
     let _ = stream.write_all(head.as_bytes());
-    let _ = stream.write_all(&body);
+    let _ = stream.write_all(body.get(..body.len() / sent).unwrap_or_default());
     let _ = stream.flush();
-    let _ = reader.read(&mut [0; 1]);
+    if sent == 1 {
+        let _ = reader.read(&mut [0; 1]);
+    }
 }
 
 type Faulted = (&'static str, &'static str, Vec<u8>, String);

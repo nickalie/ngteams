@@ -285,7 +285,8 @@ fn url_of(origin: &str) -> Result<reqwest::Url, BotError> {
 fn category(error: &reqwest::Error) -> BotError {
     if error.is_timeout() {
         BotError::TimedOut
-    } else if error.is_connect() {
+    } else if error.is_connect() || error.is_request() {
+        // A connection that opens and then drops is lost as much as one that never opens.
         BotError::Unreachable
     } else {
         BotError::BadAnswer
@@ -301,7 +302,14 @@ async fn read_capped(mut response: reqwest::Response, most: usize) -> Result<Vec
         return Err(BotError::TooLarge);
     }
     let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|error| category(&error))? {
+    // `chunk` gives each failure to read the body as a decode error: the connection is lost, or timed out.
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        if error.is_timeout() {
+            BotError::TimedOut
+        } else {
+            BotError::Unreachable
+        }
+    })? {
         if body.len() + chunk.len() > most {
             return Err(BotError::TooLarge);
         }

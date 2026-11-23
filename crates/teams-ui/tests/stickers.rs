@@ -881,6 +881,8 @@ fn a_telegram_failure_in_the_middle_of_a_pack_keeps_nothing_and_asks_no_more() {
     for (fault, error, asked) in [
         (MockFault::RateLimitedFrom(1), ImportError::TelegramBusy, 4),
         (MockFault::RevokedFrom(0), ImportError::BadToken, 2),
+        (MockFault::DroppedFrom(1), ImportError::TelegramDown, 4),
+        (MockFault::CutFrom(0), ImportError::TelegramDown, 3),
     ] {
         let mock = BotApiMock::start(vec![mock_cats()]).unwrap();
         mock.fault(fault.clone());
