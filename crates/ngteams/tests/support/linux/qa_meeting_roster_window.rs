@@ -8,21 +8,22 @@
 //! - **Alone** (`meeting_alone`): a meeting of a and ten invitees (b and nine made-up people). Its call runs on the
 //!   mock with nobody in it; a joins it from the meeting chat's header Join and the pre-join's Join now. The app knows
 //!   the meeting chat only from its chat list (no `ThreadUpdate` comes), and has its invitees from it. The call has
-//!   no other participant and the invitees do not stand in for them; the window's title names no invitee; People shows
+//!   no other participant and the invitees do not stand in for them; the window's title is the meeting's subject; People shows
 //!   one row in its first section (a) and ten in its second ("Others invited (10)"). Shots of the stage and of People.
 //! - **b joins, then leaves** (`b_joins_then_leaves`): b's tile and row come (two rows, then nine), then go (one, ten).
 //! - **Not people** (`not_people`): the account's own entry under its MRI in upper case with two endpoints and the
-//!   camera on, and a nameless app (`28:`) that only listens: neither is a participant, People stays 1 + 10.
+//!   camera on, and a nameless app (`28:`) that only listens: neither is a participant, People stays 1 + 10. An
+//!   invitee who joins after them shows that the app applied both entries.
 //! - **The lobby** (`lobby`): an invitee waits in the lobby: People shows the lobby's row, a, and nine invited.
-//! - **No Request to join in a meeting** (`invited_hover`): the pointer on an invited row shows no button, and nothing
-//!   goes to the calling service.
+//! - **No Request to join in a meeting** (`invited_hover`): the pointer on an invited row shows no button, and a click
+//!   on it sends no `add`.
 //! - **Keyboard** (`keyboard`): Tab reaches each heading and row of People in the drawn order, Shift+Tab goes back the
 //!   same way (the child names the row the keyboard is on); Enter folds "Others invited", Space unfolds it, and the
 //!   other way round.
 //! - **Themes** (`themes`): People and the stage alone in Teams Light and Teams Dark, and People with the keyboard
 //!   on the "Others invited" heading and on its first row (the focus ring) in each.
 //! - **No regression**: a 1:1 call to b and a group call to b and c, before an answer, name the chat's people
-//!   (`one_to_one_ringing`, `group_ringing`); in a's group call that b joined after the ring, "People added to the
+//!   (`one_to_one_ringing`, `group_ringing`), and People lists b and c under a; in a's group call that b joined after the ring, "People added to the
 //!   chat" shows c, and Request to join, on hover, sends exactly one `add`, for c (`group_request_to_join`).
 //!
 //! `QA798_EVIDENCE` names a directory that gets the screenshots and the results too. `QA798_ONLY` runs only the named
@@ -991,17 +992,16 @@ fn header_join(image: &RgbImage) -> Option<(i32, i32)> {
     .map(Rect::center)
 }
 
-/// No invitee's name (nor b's) in `text`.
-fn names_no_invitee(text: &str) -> SandboxResult {
-    for name in std::iter::once("Lab B").chain(INVITEES.iter().map(|(_, name)| *name)) {
-        ensure(!text.contains(name), || format!("{text:?} names the invitee {name}"))?;
-    }
-    Ok(())
+/// The meeting's title is its subject: the chat's name, not the roster's or the invitees' names.
+fn subject_title(text: &str) -> SandboxResult {
+    ensure(text == SUBJECT, || {
+        format!("the title is {text:?}, not the meeting's subject")
+    })
 }
 
 // --- the checks ---
 
-/// a joins the meeting alone: no participant, no stand-in; the title names no invitee; People: a, then ten invited.
+/// a joins the meeting alone: no participant, no stand-in; the title is the subject; People: a, then ten invited.
 fn meeting_alone(user: &mut User<'_>) -> SandboxResult {
     join_the_meeting(user)?;
     let state = user.until("the call's state", |state| state["call"]["status"] == "connected")?;
@@ -1016,7 +1016,7 @@ fn meeting_alone(user: &mut User<'_>) -> SandboxResult {
     })?;
     let title = user.call_title()?;
     say(&format!("  the call window's title: {title:?}"));
-    names_no_invitee(&title)?;
+    subject_title(&title)?;
     thread::sleep(SETTLE);
     user.park()?;
     user.shot("alone-stage-light")?;
@@ -1063,7 +1063,7 @@ fn b_joins_then_leaves(user: &mut User<'_>) -> SandboxResult {
     user.shot("b-left-people")?;
     let title = user.call_title()?;
     say(&format!("  the title after b left: {title:?}"));
-    names_no_invitee(&title)
+    subject_title(&title)
 }
 
 /// The account's own entry in upper case with two endpoints and the camera on, and a nameless listening app: nobody
@@ -1091,16 +1091,22 @@ fn not_people(user: &mut User<'_>) -> SandboxResult {
     ensure(user.mock.tell_roster_entry(&meeting.call, RECORDER, recorder), || {
         "the recorder's entry was not told".to_owned()
     })?;
-    thread::sleep(SETTLE * 3);
-    let state = user.state()?;
-    say(&format!("  the call: {}", state["call"]));
-    ensure(User::participants(&state).is_empty(), || {
-        format!("someone besides a is in the call: {}", state["call"])
+    // the roster comes in order: once the marker is in, the app has applied the two entries before it
+    let (marker, name) = INVITEES[1];
+    ensure(user.mock.join_made_up(&meeting.call, &[(marker, name)]), || {
+        "the marker did not join on the mock".to_owned()
     })?;
-    user.until_rows("after the own entry and the recorder", &[1, 10])?;
+    let state = user.until_participants("only the marker in the call", &[marker])?;
+    say(&format!("  the call: {}", state["call"]));
+    user.until_rows("the marker in, not the own entry or the recorder", &[2, 9])?;
     user.shot("not-people")?;
+    ensure(user.mock.leave_made_up(&meeting.call, marker), || {
+        "the marker did not leave on the mock".to_owned()
+    })?;
+    user.until_participants("the marker gone", &[])?;
+    user.until_rows("after the marker left", &[1, 10])?;
     let title = user.call_title()?;
-    names_no_invitee(&title)?;
+    subject_title(&title)?;
     ensure(!title.contains("bot-a") && !title.contains("Unknown"), || {
         format!("the title names a or someone unknown: {title:?}")
     })
@@ -1190,12 +1196,30 @@ fn people_focus(user: &mut User<'_>) -> SandboxResult<Option<String>> {
     Ok((answer != "none").then_some(answer))
 }
 
+/// The focus once it moved off `before`, or `before` if it stays there for a while: a read right after a press may
+/// come before the app has handled it.
+fn people_focus_after(user: &mut User<'_>, before: Option<String>) -> SandboxResult<Option<String>> {
+    let deadline = Instant::now() + STEP * 4;
+    loop {
+        let now = people_focus(user)?;
+        if now != before {
+            return Ok(now);
+        }
+        if Instant::now() > deadline {
+            return Ok(before);
+        }
+        thread::sleep(POLL);
+    }
+}
+
 /// The People headings and rows `key` reaches, in order, until `count` of them (a shot of each).
 fn people_stops(user: &mut User<'_>, key: &str, count: usize) -> SandboxResult<Vec<String>> {
     let mut reached: Vec<String> = Vec::new();
+    let mut seen = people_focus(user)?;
     for step in 1..=40 {
         user.press(key)?;
-        if let Some(stop) = people_focus(user)?
+        seen = people_focus_after(user, seen)?;
+        if let Some(stop) = seen.clone()
             && reached.last() != Some(&stop)
         {
             say(&format!("  {key} {step}: {stop}"));
@@ -1314,7 +1338,7 @@ fn one_to_one_ringing(user: &mut User<'_>) -> SandboxResult {
     outcome
 }
 
-/// a calls the a–b–c chat; while b and c ring, the call names them and People lists them.
+/// a calls the a–b–c chat; while b and c ring, the call names them and People lists a, b and c.
 fn group_ringing(user: &mut User<'_>) -> SandboxResult {
     user.open_chat(ABC_CHAT)?;
     user.ctl.request(
@@ -1340,12 +1364,14 @@ fn group_ringing(user: &mut User<'_>) -> SandboxResult {
             format!("the title names not b and c: {title:?}")
         })
     });
-    let opened = outcome.and_then(|()| user.open_people());
-    if opened.is_ok() {
+    let listed = outcome
+        .and_then(|()| user.open_people())
+        .and_then(|()| user.until_rows("a, b and c while b and c ring", &[3]).map(drop));
+    if listed.is_ok() {
         user.shot("group-ringing-people")?;
     }
     user.hang_up()?;
-    opened
+    listed
 }
 
 /// a calls the a–b–c chat; the ring times out and b joins the call: "People added to the chat" lists c, and its
