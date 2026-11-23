@@ -390,6 +390,112 @@ impl Walk {
         self.b_gets_the_sticker(object, &stickers);
     }
 
+    /// a imports a Telegram pack from its link (the mock Bot API) in the picker, then sends its animated sticker: b gets
+    /// Teams' sticker element around the media object, and the media service got the GIF the `.tgs` was made.
+    fn an_animated_telegram_sticker_from_its_link(&mut self) {
+        use std::io::Write as _;
+        use teams_mock::telegram::{BotApiMock, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN};
+        use teams_ui::fun_picker::Item;
+        use teams_ui::stickers::telegram::{BotApis, BotToken};
+        use teams_ui::stickers::{ImportState, Shelf, StickerRef};
+
+        let json = include_str!("../../../tests/fixtures/telegram/synthetic-sticker.json");
+        let mut tgs = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        tgs.write_all(json.as_bytes()).unwrap();
+        let bot = BotApiMock::start(vec![MockSet {
+            name: "SyntheticCats".to_owned(),
+            title: "Synthetic cats".to_owned(),
+            stickers: vec![MockSticker {
+                kind: MockKind::Animated,
+                emoji: "\u{1f638}".to_owned(),
+                bytes: tgs.finish().unwrap(),
+            }],
+        }])
+        .unwrap();
+        let origin = bot.origin();
+        self.cx.update(|_, cx| {
+            cx.set_global(BotApis::new(Arc::new(move |token| {
+                teams_core::telegram::BotApi::with_mock_origin(token, &origin)
+            })));
+            let tokens = BotToken::default();
+            tokens.put(&Secret::new(SYNTHETIC_BOT_TOKEN)).unwrap();
+            cx.set_global(tokens);
+        });
+
+        focus_compose(&self.view, self.cx);
+        let compose = compose(&self.view, self.cx);
+        self.cx
+            .update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_emoji(window, cx)));
+        let picker = self
+            .cx
+            .update(|_, cx| compose.read(cx).emoji_picker().cloned())
+            .expect("the picker is open");
+        self.cx
+            .update(|window, cx| picker.update(cx, |picker, cx| picker.open_telegram_import(window, cx)));
+        self.cx.run_until_parked();
+        let panel = self
+            .cx
+            .update(|_, cx| picker.read(cx).telegram_import().cloned())
+            .unwrap();
+        self.cx.update(|window, cx| {
+            panel.update(cx, |panel, cx| {
+                panel.set_link("https://t.me/addstickers/SyntheticCats", window, cx);
+                panel.start(window, cx);
+            });
+        });
+        let stickers = self.settings.path().join("stickers");
+        let held = self.cx.update(|_, cx| Shelf::of(Some(stickers.clone()), cx));
+        let start = Instant::now();
+        while !matches!(
+            self.cx.update(|_, cx| held.read(cx).import_state().cloned()),
+            Some(ImportState::Done(_))
+        ) {
+            assert!(start.elapsed() < WAIT, "the pack wasn't imported");
+            self.cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let sticker = StickerRef {
+            pack: "synthetic-cats".to_owned(),
+            file: "001.gif".to_owned(),
+        };
+        self.cx.update(|window, cx| {
+            picker.update(cx, |picker, cx| picker.activate(&Item::Sticker(sticker), window, cx));
+        });
+        self.until_the_sticker_is_sent(&compose);
+        self.b_gets_the_animated_sticker(&stickers);
+    }
+
+    /// a presses Enter: b gets the sticker called by its emoji, and the media service got the GIF made from the `.tgs`.
+    fn b_gets_the_animated_sticker(&mut self, stickers: &std::path::Path) {
+        self.cx.simulate_keystrokes("enter");
+        let (_, posted) = self.b.message(self.cx);
+        let text = teams_proto::chat::parse_html(&posted.content);
+        let got = text
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                teams_proto::chat::Node::Sticker(sticker) => Some(sticker.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("b got a sticker: {}", posted.content));
+        assert_eq!(got.label.as_deref(), Some("\u{1f638}"));
+        assert_eq!(got.image.size, Some((180, 180)));
+        let gif = std::fs::read(stickers.join("synthetic-cats/001.gif")).unwrap();
+        let uploaded = self
+            .lab
+            .runtime
+            .block_on(self.lab.mock.received_requests())
+            .into_iter()
+            .filter(|request| request.method.as_str() == "PUT" && request.url.path().ends_with("/content/imgpsh"))
+            .last()
+            .expect("its picture went to the media service");
+        assert_eq!(uploaded.body, gif, "the GIF made from the .tgs");
+        let frames = image::AnimationDecoder::into_frames(
+            image::codecs::gif::GifDecoder::new(std::io::Cursor::new(gif)).unwrap(),
+        );
+        assert_eq!(frames.count(), 30, "an animated sticker");
+    }
+
     /// Until the one picture in a's box is ready to send: sent to the media service, or one of Teams' stickers read.
     fn until_the_sticker_is_sent(&mut self, compose: &Entity<Compose>) {
         let start = Instant::now();
@@ -832,5 +938,6 @@ fn each_write_from_a_s_view_reaches_b_through_the_mock() {
     walk.a_reaction_and_a_delete(&theirs, &posted);
     walk.a_sticker_from_the_picker();
     walk.a_teams_sticker_from_the_picker();
+    walk.an_animated_telegram_sticker_from_its_link();
     walk.stop();
 }

@@ -188,6 +188,7 @@ pub mod team_dialogs;
 pub mod team_menu;
 pub mod teams_list;
 pub mod teams_page;
+pub mod telegram_import;
 pub mod theme;
 mod time_picker;
 pub mod trace;

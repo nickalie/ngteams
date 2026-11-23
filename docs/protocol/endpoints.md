@@ -535,6 +535,20 @@ without a key. Each answer streams as server-sent events.
 | `POST` | `https://api.openai.com/v1/chat/completions`, `<base URL>/chat/completions` (bearer key, if any) | asks a model, the conversation so far with it; the answer streams | `ai_api::Api::ask` | [development.md](../development.md) | native on a loopback mock only; own server: not served (not Teams: the AI API that the user gave a key for) |
 | `GET` | `https://api.openai.com/v1/models`, `<base URL>/models` | the models the key or the server offers | `ai_api::Api::models` | [development.md](../development.md) | native on a loopback mock only; own server: not served (not Teams: the AI API that the user gave a key for) |
 
+## Telegram's Bot API with the user's bot token (`api.telegram.org`)
+
+Not Teams: the sticker picker's "Import a Telegram sticker pack" reads a pack through Telegram's Bot API with a bot
+token that the user gets from @BotFather and types in the picker. The requests are `teams_core::telegram`'s, outside
+the Teams transport: `https` only, no proxy, no redirect, no retry, and no Teams or own-server token goes there. The
+token is only in the path (`bot<token>`), as the Bot API takes it, and stays in the system keyring. Nothing logs these
+requests. The formats are in [stickers.md](stickers.md).
+
+| Method | Path | What it does | Native | Notes · task | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| `GET` | `https://api.telegram.org/bot<token>/getStickerSet?name=` | a pack: its title, and each sticker's file id, emoji and kind (still, animated, video) | `telegram::BotApi::sticker_set` | [stickers.md](stickers.md#a-pack-from-its-link-the-bot-api) · 651 | native on a loopback mock only (`teams_mock::telegram`); no live run (no bot token on the agents' host); own server: not served (not Teams) |
+| `GET` | `https://api.telegram.org/bot<token>/getFile?file_id=` | a sticker's file path and size | `telegram::BotApi::file` | [stickers.md](stickers.md#a-pack-from-its-link-the-bot-api) · 651 | native on a loopback mock only; own server: not served (not Teams) |
+| `GET` | `https://api.telegram.org/file/bot<token>/<file_path>` | the sticker's file: `.webp`, `.tgs` or `.webm` (a video sticker is never asked for) | `telegram::BotApi::file` | [stickers.md](stickers.md#a-pack-from-its-link-the-bot-api) · 651 | native on a loopback mock only; own server: not served (not Teams) |
+
 ## App tiles (`res.cdn.office.net`, `statics.teams.cdn.office.net`)
 
 Microsoft's public CDN holds each app's tile, which an app definition names in `largeImageUrl`. The native transport reads it with no account credential, on `Service::AppPictures` (`https://res.cdn.office.net/teamsappdata/`) or `Service::StaticAppPictures` (`https://statics.teams.cdn.office.net/`, its `app-assets/` and `evergreen-assets/apps/` folders only). An own-server account's tiles are on its own origin under `/teamsappdata/`, read on `Service::AppPictures` with no token ([apps.md](apps.md#own-servers)).

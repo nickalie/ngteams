@@ -11,7 +11,8 @@
 //! video's card (empty, its "More actions", two recipients and a message, the format bar and emoji picker, shared, and
 //! Copy link's "Link created"); a message of lines, small
 //! pictures and a block of code, in Teams Dark and Light; stickers alone with no bubble, in Teams Dark and Light, and
-//! one of Teams' own picked and sent; Teams' sticker packs in the picker, one opened and a search; a
+//! one of Teams' own picked and sent; Teams' sticker packs in the picker, one opened and a search; the picker's
+//! "Import a Telegram sticker pack" with no token (Light, then Tab to its token field) and with one kept (Dark); a
 //! picture opened in the picture viewer, fitted and zoomed;
 //! the 12-hour time format and a chat's times on it; a group chat's presence; the "Chats" section's See more, what it
 //! brings and a chat opened from below the rows shown; New message, its To: line's suggestions, the chat two people
@@ -200,7 +201,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 359 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 362 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -395,6 +396,23 @@ const STEPS: [Step; 5 + 359 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
             picker.show_stickers(teams_ui::fun_picker::StickerView::Home, window, cx);
             picker.search_for("hello", window, cx);
         });
+    }),
+    // "Import a Telegram sticker pack" in the picker's place: the link, and no bot token kept yet
+    ("chat-fun-telegram-import", |shell, window, cx| {
+        // the sandbox's keyring has no open collection: the token is kept in the memory, as a lab alias keeps it
+        cx.set_global(teams_ui::stickers::telegram::BotToken::default());
+        with_fun_picker(shell, window, cx, FunPicker::open_telegram_import);
+    }),
+    // the keyboard in it: a link typed, then Tab to the token's field, with how to get a token under it
+    ("chat-fun-telegram-keys", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, window, cx| {
+            if let Some(panel) = picker.telegram_import().cloned() {
+                panel.update(cx, |panel, cx| {
+                    panel.set_link("t.me/addstickers/MadeUpCats", window, cx);
+                });
+            }
+        });
+        press(window, cx, "tab");
     }),
     // a sticker picked: in the box at its size, sent to the media service at once
     ("chat-sticker-in-box", |shell, window, cx| {
@@ -1452,6 +1470,12 @@ const STEPS: [Step; 5 + 359 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
         with_fun_picker(shell, window, cx, |picker, window, cx| {
             picker.activate(&FunItem::TeamsPack("OfficeDrama".to_owned()), window, cx);
         });
+    }),
+    // the Telegram panel with a bot token kept (in the lab's memory): it says so, with Replace and Remove
+    ("chat-dark-fun-telegram-import", |shell, window, cx| {
+        let made_up = teams_auth::secrets::Secret::new("123456789:MADE_UP_tour_token_not_real_0000000");
+        let _ = teams_ui::stickers::telegram::BotToken::of(cx).put(&made_up);
+        with_fun_picker(shell, window, cx, FunPicker::open_telegram_import);
     }),
     // b's pasted picture with an emoticon in its text, b's wave alone, c's GIF from the GIF picker, b's link with its
     // preview card and b's phone screenshot alone in its square frame (`seed_pictures`), in Teams Dark

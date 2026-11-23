@@ -8,12 +8,13 @@
 //! - **Emoji**: the emoji picker ([`ReactionPicker::embedded`]), searched from this field.
 //! - **Stickers**: Recent, then "Sticker packs": a tile for each pack the user added, then Teams' own packs in Teams'
 //!   order with their headers ([`crate::stickers::teams`], for an account of Microsoft's cloud: an own server has
-//!   none), the first four, "See all" for every one; and "Add a sticker pack" (import a folder or a `.zip` file of
-//!   pictures, [`crate::stickers::import`]). A pack's tile opens its stickers (Teams' previews, read from Teams'
-//!   sticker CDN with no credential and kept by the engine); a pack the user added has "More options" to rename or
-//!   remove it. A search lists the user's stickers whose label or pack has its words, then Teams' stickers as Teams
-//!   finds them (by name or keyword). How an import goes (its progress, what it added and skipped, why it failed)
-//!   shows here until it is closed.
+//!   none), the first four, "See all" for every one; and "Add a sticker pack" (import a folder, a `.zip` file or chosen
+//!   files of pictures and Telegram stickers, [`crate::stickers::import`], or a Telegram pack from its link,
+//!   [`TelegramImport`], drawn in the picker's place until it starts or is cancelled). A pack's tile opens its stickers
+//!   (Teams' previews, read from Teams' sticker CDN with no credential and kept by the engine); a pack the user added
+//!   has "More options" to rename or remove it. A search lists the user's stickers whose label or pack has its words,
+//!   then Teams' stickers as Teams finds them (by name or keyword). How an import goes (its progress, what it added and
+//!   skipped, why it failed) shows here until it is closed.
 //!
 //! A pick only tells ([`FunPickerEvent`]): the box puts an emoji in its text, and a sticker in the box as a picture: one
 //! of the user's packs is sent to the media service at once, and one of Teams' is named by its address on Teams'
@@ -42,6 +43,7 @@ use crate::reaction_picker::{ReactionPicker, ReactionPickerEvent, Section};
 use crate::reactions;
 use crate::stickers::teams;
 use crate::stickers::{ImportKind, ImportState, Shelf, StickerRef, Thumb};
+use crate::telegram_import::{TelegramImport, TelegramImportEvent};
 use crate::theme::{self, Palette};
 
 /// The picker's width, px: the emoji picker's.
@@ -131,6 +133,8 @@ pub enum Item {
     AddPack,
     ImportFolder,
     ImportArchive,
+    ImportFiles,
+    ImportTelegram,
     Back,
     PackMenu,
     Rename,
@@ -158,6 +162,8 @@ impl Item {
             Self::AddPack => "sticker-pack-add".to_owned(),
             Self::ImportFolder => "sticker-import-folder".to_owned(),
             Self::ImportArchive => "sticker-import-zip".to_owned(),
+            Self::ImportFiles => "sticker-import-files".to_owned(),
+            Self::ImportTelegram => "sticker-import-telegram".to_owned(),
             Self::Back => "sticker-back".to_owned(),
             Self::PackMenu => "sticker-pack-menu".to_owned(),
             Self::Rename => "sticker-pack-rename".to_owned(),
@@ -213,7 +219,7 @@ impl Line {
             Self::Cells { items, .. } | Self::Packs(items) | Self::Import(items) => items.clone(),
             Self::Menu(item) => vec![item.clone()],
             Self::Back => vec![Item::Back],
-            Self::Empty => vec![Item::ImportFolder, Item::ImportArchive],
+            Self::Empty => vec![Item::ImportFolder, Item::ImportArchive, Item::ImportTelegram],
             Self::Renaming => vec![Item::SaveName, Item::CancelName],
             Self::Removing(_) => vec![Item::ConfirmRemove, Item::CancelRemove],
             Self::Note(_) => Vec::new(),
@@ -263,6 +269,8 @@ pub struct FunPicker {
     renaming: Option<(Entity<InputState>, Subscription)>,
     /// What went wrong with the last rename or removal.
     problem: Option<SharedString>,
+    /// "Import a Telegram sticker pack", open in the picker's place.
+    telegram: Option<(Entity<TelegramImport>, Subscription)>,
     /// The item drawn with the keyboard's ring, and whether the tabs have the focus, as this frame draws them.
     ring: Option<Item>,
     tabs_ringed: bool,
@@ -324,6 +332,7 @@ impl FunPicker {
             panel: Panel::None,
             renaming: None,
             problem: None,
+            telegram: None,
             ring: None,
             tabs_ringed: false,
             _subscriptions: subscriptions,
@@ -448,6 +457,54 @@ impl FunPicker {
         cx.notify();
     }
 
+    /// The "Import a Telegram sticker pack" panel, while it is open.
+    #[must_use]
+    pub fn telegram_import(&self) -> Option<&Entity<TelegramImport>> {
+        self.telegram.as_ref().map(|(panel, _)| panel)
+    }
+
+    /// Opens "Import a Telegram sticker pack" in the picker's place.
+    pub fn open_telegram_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.panel = Panel::None;
+        let panel = cx.new(|cx| TelegramImport::new(window, cx));
+        let events = cx.subscribe_in(&panel, window, |this, _, event: &TelegramImportEvent, window, cx| {
+            this.telegram = None;
+            if let TelegramImportEvent::Start(link) = event {
+                this.show_stickers(StickerView::Home, window, cx);
+                this.shelf.update(cx, |shelf, cx| shelf.import_link(link.clone(), cx));
+            }
+            this.search.update(cx, |search, cx| search.focus(window, cx));
+            cx.notify();
+        });
+        self.telegram = Some((panel, events));
+        cx.notify();
+    }
+
+    /// Imports the chosen `files` into the shelf (as the add-a-pack menu's chooser does).
+    pub fn import_files(&mut self, files: Vec<PathBuf>, cx: &mut Context<Self>) {
+        self.panel = Panel::None;
+        self.shelf.update(cx, |shelf, cx| shelf.import_files(files, cx));
+        cx.notify();
+    }
+
+    /// The user picks picture and sticker files to import.
+    fn choose_files(cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Import".into()),
+            ..PathPromptOptions::default()
+        });
+        cx.spawn(async move |this, cx| {
+            let files = picked.await.ok().and_then(Result::ok).flatten().unwrap_or_default();
+            if !files.is_empty() {
+                let _ = this.update(cx, |this, cx| this.import_files(files, cx));
+            }
+        })
+        .detach();
+    }
+
     /// The user picks a folder or a `.zip` file to import.
     fn choose_import(kind: ImportKind, cx: &mut Context<Self>) {
         let picked = cx.prompt_for_paths(PathPromptOptions {
@@ -512,6 +569,8 @@ impl FunPicker {
             }
             Item::ImportFolder => Self::choose_import(ImportKind::Folder, cx),
             Item::ImportArchive => Self::choose_import(ImportKind::Archive, cx),
+            Item::ImportFiles => Self::choose_files(cx),
+            Item::ImportTelegram => self.open_telegram_import(window, cx),
             Item::Back => {
                 let back = match &self.view {
                     StickerView::Pack { from_packs: true, .. } | StickerView::TeamsPack { from_packs: true, .. } => {
@@ -993,6 +1052,8 @@ impl FunPicker {
         if self.panel == Panel::Menu {
             lines.push(Line::Menu(Item::ImportFolder));
             lines.push(Line::Menu(Item::ImportArchive));
+            lines.push(Line::Menu(Item::ImportFiles));
+            lines.push(Line::Menu(Item::ImportTelegram));
         }
         let teams_packs = teams::catalog().packs().iter().filter(|_| self.teams);
         let packs: Vec<Item> = held
@@ -1327,6 +1388,8 @@ impl FunPicker {
         let (glyph, text, danger) = match item {
             Item::ImportFolder => (Glyph::FOLDER, "Import a folder of pictures", false),
             Item::ImportArchive => (Glyph::FILE_ARCHIVE, "Import a .zip file of pictures", false),
+            Item::ImportFiles => (Glyph::FILE_IMAGE, "Import picture or sticker files", false),
+            Item::ImportTelegram => (Glyph::LINK, "Import a Telegram sticker pack", false),
             Item::Rename => (Glyph::PENCIL, "Rename", false),
             _ => (Glyph::TRASH, "Remove", true),
         };
@@ -1434,6 +1497,7 @@ impl FunPicker {
     fn empty(&mut self, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
         let folder = self.button(&Item::ImportFolder, "Import a folder", true, palette, cx);
         let archive = self.button(&Item::ImportArchive, "Import a .zip file", false, palette, cx);
+        let telegram = self.button(&Item::ImportTelegram, "Import a Telegram pack", false, palette, cx);
         div()
             .debug_selector(|| "sticker-packs-empty".to_owned())
             .pt_6()
@@ -1463,9 +1527,10 @@ impl FunPicker {
                     .text_center()
                     .text_sm()
                     .text_color(rgb(palette.muted_foreground))
-                    .child("Add your own: a folder or a .zip file of PNG, WebP or GIF pictures."),
+                    .child("Add your own: a folder or a .zip file of PNG, WebP or GIF pictures or Telegram stickers."),
             )
             .child(div().pt_1().flex().gap_2().child(folder).child(archive))
+            .child(telegram)
             .into_any_element()
     }
 
@@ -1670,11 +1735,34 @@ fn summary(headline: String, skipped: &[crate::stickers::Skipped], palette: Pale
     lines
 }
 
+impl FunPicker {
+    /// The picker's raised surface, with nothing in it yet.
+    fn frame(palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
+        div()
+            .debug_selector(|| "compose-emoji-picker".to_owned())
+            .occlude()
+            .w(px(WIDTH))
+            .p(px(PADDING))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .rounded_lg()
+            .border_1()
+            .border_color(rgb(palette.border))
+            .bg(rgb(palette.surface))
+            .shadow_lg()
+            .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(FunPickerEvent::Dismissed)))
+    }
+}
+
 impl Render for FunPicker {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = theme::current(cx);
         self.ring = self.current(window, cx);
         self.tabs_ringed = self.tabs_focus.is_focused(window);
+        if let Some((panel, _)) = &self.telegram {
+            return Self::frame(palette, cx).child(panel.clone());
+        }
         let content = if self.tab == Tab::Emoji {
             div().h(px(CONTENT_HEIGHT)).child(self.emoji.clone()).into_any_element()
         } else {
@@ -1694,20 +1782,7 @@ impl Render for FunPicker {
                 .children(drawn)
                 .into_any_element()
         };
-        div()
-            .debug_selector(|| "compose-emoji-picker".to_owned())
-            .occlude()
-            .w(px(WIDTH))
-            .p(px(PADDING))
-            .flex()
-            .flex_col()
-            .gap_2()
-            .rounded_lg()
-            .border_1()
-            .border_color(rgb(palette.border))
-            .bg(rgb(palette.surface))
-            .shadow_lg()
-            .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(FunPickerEvent::Dismissed)))
+        Self::frame(palette, cx)
             .child(self.tab_strip(palette, cx))
             .child(
                 div().debug_selector(|| "fun-search".to_owned()).child(

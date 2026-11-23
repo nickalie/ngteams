@@ -1,5 +1,6 @@
-//! The sticker store and the import of a folder or a `.zip` of pictures (`teams_ui::stickers`): every picture is made
-//! here, in the test; nothing is read from the repo.
+//! The sticker store and the import of a folder, a `.zip` or chosen files of pictures and Telegram stickers, and of a
+//! Telegram pack's link against the mock Bot API (`teams_ui::stickers`): every picture is made here, in the test; the
+//! one file read from the repo is the synthetic, marked Lottie animation of `tests/fixtures/telegram/`.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -9,11 +10,16 @@ use std::path::Path;
 
 use image::codecs::gif::{GifEncoder, Repeat};
 use image::{Delay, Frame, ImageFormat, Rgba, RgbaImage};
+use std::sync::Arc;
+
+use teams_auth::secrets::Secret;
+use teams_mock::telegram::{BotApiMock, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN};
 use teams_ui::stickers::import::{
-    self, Archive, Folder, ImportError, ImportKind, KEPT_SIDE, MAX_FILE, MAX_FRAMES, MAX_TOTAL, Progress, SHOWN_SIDE,
-    Skip, Source,
+    self, Archive, Files, Folder, ImportError, ImportKind, KEPT_SIDE, MAX_FILE, MAX_FRAMES, MAX_TOTAL, Progress,
+    SHOWN_SIDE, Skip, Source,
 };
 use teams_ui::stickers::store::{self, MAX_STICKERS, StickerRef};
+use teams_ui::stickers::telegram::{self, BotApis, BotToken};
 use zip::write::{SimpleFileOptions, ZipWriter};
 
 /// A made-up still picture, `width` by `height`, in `format`: a square of `colour` on a clear ground.
@@ -223,8 +229,8 @@ fn a_folder_of_mixed_files_imports_its_pictures_and_says_what_it_skipped() {
         skipped,
         [
             "broken.png can't be read",
-            "notes.txt isn't a PNG, WebP or GIF picture",
-            "photo.jpg isn't a PNG, WebP or GIF picture",
+            "notes.txt isn't a PNG, WebP or GIF picture or a Telegram sticker",
+            "photo.jpg isn't a PNG, WebP or GIF picture or a Telegram sticker",
         ]
     );
     assert_eq!(
@@ -696,4 +702,289 @@ fn an_import_stops_at_its_total_and_keeps_nothing() {
         std::fs::read_dir(stickers.path()).unwrap().next().is_none(),
         "no pack is made"
     );
+}
+
+// --- Telegram ---
+
+/// The synthetic, marked animation of the fixtures, gzipped as a `.tgs` is.
+fn synthetic_tgs() -> Vec<u8> {
+    let json = include_str!("../../../tests/fixtures/telegram/synthetic-sticker.json");
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(json.as_bytes()).unwrap();
+    encoder.finish().unwrap()
+}
+
+/// The first bytes of a Matroska file, as a `.webm` video sticker starts.
+fn webm() -> Vec<u8> {
+    vec![0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 0x01]
+}
+
+/// What a Telegram import made: still and animated stickers, the video skipped.
+fn telegram_pack_made(imported: &import::Imported, stickers: &Path, video: &str) {
+    let files: Vec<&str> = imported
+        .pack
+        .stickers
+        .iter()
+        .map(|sticker| sticker.file.as_str())
+        .collect();
+    assert_eq!(files, ["001.gif", "002.png"], "the .tgs animated, the .webp still");
+    let gif = std::fs::read(stickers.join(&imported.pack.id).join("001.gif")).unwrap();
+    assert_eq!(
+        teams_proto::PastedFormat::sniff(&gif),
+        Some(teams_proto::PastedFormat::Gif)
+    );
+    assert_eq!(imported.pack.stickers[0].size, (SHOWN_SIDE, SHOWN_SIDE));
+    assert_eq!(
+        imported.skipped,
+        [import::Skipped {
+            name: video.to_owned(),
+            why: Skip::Video
+        }]
+    );
+    assert_eq!(
+        imported.skipped[0].to_string(),
+        format!("{video} is a video sticker, which can't be imported yet")
+    );
+}
+
+#[test]
+fn telegram_files_import_one_by_one_from_a_folder_and_from_a_zip() {
+    let files = [
+        ("hello.tgs", synthetic_tgs()),
+        ("wave.webp", still(512, 512, [10, 200, 10], ImageFormat::WebP)),
+        ("party.webm", webm()),
+    ];
+    let source = tempfile::tempdir().unwrap();
+    let pack = source.path().join("Telegram cats");
+    folder(&pack, &files);
+    let stickers = source.path().join("stickers");
+
+    let imported = import::import(&pack, ImportKind::Folder, &stickers, &mut no_progress()).unwrap();
+    telegram_pack_made(&imported, &stickers, "party.webm");
+    assert_eq!(imported.pack.stickers[0].label, "Hello");
+
+    let zip = source.path().join("Zipped cats.zip");
+    archive(&zip, &files);
+    let imported = import::import(&zip, ImportKind::Archive, &stickers, &mut no_progress()).unwrap();
+    telegram_pack_made(&imported, &stickers, "party.webm");
+    assert_eq!(imported.pack.name, "Zipped cats");
+
+    let chosen = vec![
+        pack.join("wave.webp"),
+        pack.join("party.webm"),
+        pack.join("hello.tgs"),
+        pack.join("hello.tgs"),
+    ];
+    let mut one_by_one = Files::new(chosen);
+    assert_eq!((one_by_one.name(), one_by_one.len()), ("Telegram cats".to_owned(), 3));
+    assert_eq!(one_by_one.read(7).unwrap_err(), Skip::Unreadable);
+    let imported = import::import_from(&mut one_by_one, &stickers, &mut no_progress()).unwrap();
+    telegram_pack_made(&imported, &stickers, "party.webm");
+    assert_eq!(imported.pack.name, "Telegram cats (2)");
+}
+
+/// A mock pack: a still, an animated and a video sticker.
+fn mock_cats() -> MockSet {
+    MockSet {
+        name: "SyntheticCats".to_owned(),
+        title: "Synthetic cats".to_owned(),
+        stickers: vec![
+            MockSticker {
+                kind: MockKind::Animated,
+                emoji: "\u{1f638}".to_owned(),
+                bytes: synthetic_tgs(),
+            },
+            MockSticker {
+                kind: MockKind::Still,
+                emoji: "\u{1f63a}".to_owned(),
+                bytes: still(512, 512, [200, 10, 10], ImageFormat::WebP),
+            },
+            MockSticker {
+                kind: MockKind::Video,
+                emoji: "\u{1f639}".to_owned(),
+                bytes: webm(),
+            },
+        ],
+    }
+}
+
+/// The app's token (in the memory) holding `token`, and the Bot API made for the mock.
+fn bot(mock: &BotApiMock, token: Option<&str>) -> (BotToken, BotApis) {
+    let tokens = BotToken::default();
+    if let Some(token) = token {
+        tokens.put(&Secret::new(token)).unwrap();
+    }
+    let origin = mock.origin();
+    let apis = BotApis::new(Arc::new(move |token| {
+        teams_core::telegram::BotApi::with_mock_origin(token, &origin)
+    }));
+    (tokens, apis)
+}
+
+#[test]
+fn a_telegram_link_imports_its_pack_through_the_mock_bot_api() {
+    let log_dir = tempfile::tempdir().unwrap();
+    let log = teams_log::install(&teams_log::Config {
+        dir: log_dir.path().to_owned(),
+        setting: teams_log::Level::Debug,
+        env: None,
+        rotation: teams_log::Rotation::default(),
+    })
+    .unwrap();
+    let mock = BotApiMock::start(vec![mock_cats()]).unwrap();
+    let (tokens, apis) = bot(&mock, Some(SYNTHETIC_BOT_TOKEN));
+    let stickers = tempfile::tempdir().unwrap();
+    let mut told = Vec::new();
+    let imported = telegram::import_link(
+        "https://t.me/addstickers/SyntheticCats",
+        &tokens,
+        &apis,
+        stickers.path(),
+        &mut |progress| told.push(progress),
+    )
+    .unwrap();
+    assert_eq!(imported.pack.name, "Synthetic cats");
+    telegram_pack_made(&imported, stickers.path(), "Sticker 3 \u{1f639}");
+    let labels: Vec<&str> = imported
+        .pack
+        .stickers
+        .iter()
+        .map(|sticker| sticker.label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        ["\u{1f638}", "\u{1f63a}"],
+        "each sticker is called by its emoji"
+    );
+    assert_eq!(told.last(), Some(&Progress { done: 3, total: 3 }));
+
+    let targets: Vec<String> = mock.requests().into_iter().map(|request| request.target).collect();
+    assert_eq!(
+        targets.len(),
+        5,
+        "the pack, then two files' paths and bytes; the video not asked: {targets:?}"
+    );
+    assert!(targets.iter().all(|target| !target.contains("__2")), "{targets:?}");
+    assert!(mock.requests().iter().all(|request| !request.authorization));
+
+    assert!(log.flush_written());
+    let mut text = String::new();
+    for entry in std::fs::read_dir(log_dir.path()).unwrap() {
+        text.push_str(&String::from_utf8_lossy(&std::fs::read(entry.unwrap().path()).unwrap()));
+    }
+    assert!(!text.contains(SYNTHETIC_BOT_TOKEN), "the token is in no log line");
+    assert!(!text.contains("SYNTHETIC_bot_token"), "nor a part of it");
+}
+
+#[test]
+fn a_telegram_link_s_failures_each_say_what_to_do() {
+    let mock = BotApiMock::start(vec![mock_cats()]).unwrap();
+    let stickers = tempfile::tempdir().unwrap();
+    let import = |link: &str, token: Option<&str>| {
+        let (tokens, apis) = bot(&mock, token);
+        telegram::import_link(link, &tokens, &apis, stickers.path(), &mut no_progress())
+    };
+    assert_eq!(
+        import("t.me/addstickers/NoSuchPack", Some(SYNTHETIC_BOT_TOKEN)).unwrap_err(),
+        ImportError::NoSuchPack
+    );
+    let wrong = "123456789:SYNTHETIC_wrong_token_made_up_0000";
+    assert_eq!(
+        import("tg://addstickers?set=SyntheticCats", Some(wrong)).unwrap_err(),
+        ImportError::BadToken
+    );
+    assert_eq!(
+        import("tg://addstickers?set=SyntheticCats", Some("not a token")).unwrap_err(),
+        ImportError::BadToken
+    );
+    let asked = mock.requests().len();
+    assert_eq!(
+        import("t.me/addstickers/SyntheticCats", None).unwrap_err(),
+        ImportError::NoToken
+    );
+    assert_eq!(
+        import("https://example.test/addstickers/x", Some(SYNTHETIC_BOT_TOKEN)).unwrap_err(),
+        ImportError::BadLink
+    );
+    assert_eq!(
+        mock.requests().len(),
+        asked,
+        "nothing is sent without a token or a link"
+    );
+    assert_eq!(
+        ImportError::BadToken.to_string(),
+        "Telegram refused the bot token. Check it, or replace it."
+    );
+    assert!(std::fs::read_dir(stickers.path()).map_or(true, |mut dir| dir.next().is_none()));
+
+    let only_video = MockSet {
+        name: "OnlyVideo".to_owned(),
+        title: "Only video".to_owned(),
+        stickers: vec![MockSticker {
+            kind: MockKind::Video,
+            emoji: "\u{1f3ac}".to_owned(),
+            bytes: webm(),
+        }],
+    };
+    let mock = BotApiMock::start(vec![only_video]).unwrap();
+    let (tokens, apis) = bot(&mock, Some(SYNTHETIC_BOT_TOKEN));
+    let failed = telegram::import_link(
+        "t.me/addstickers/OnlyVideo",
+        &tokens,
+        &apis,
+        stickers.path(),
+        &mut no_progress(),
+    );
+    let Err(ImportError::NoStickers(skipped)) = failed else {
+        panic!("{failed:?}");
+    };
+    assert_eq!(skipped[0].why, Skip::Video);
+
+    let dead = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let apis = BotApis::new(Arc::new(move |token| {
+        teams_core::telegram::BotApi::with_mock_origin(token, &format!("http://{dead}"))
+    }));
+    assert_eq!(
+        telegram::import_link(
+            "t.me/addstickers/SyntheticCats",
+            &tokens,
+            &apis,
+            stickers.path(),
+            &mut no_progress()
+        )
+        .unwrap_err(),
+        ImportError::TelegramDown
+    );
+}
+
+#[test]
+fn a_telegram_link_names_its_pack_in_each_form() {
+    for link in [
+        "https://t.me/addstickers/SyntheticCats",
+        "http://www.t.me/addstickers/SyntheticCats/",
+        "t.me/addstickers/SyntheticCats?startapp=1",
+        "  https://telegram.me/addstickers/SyntheticCats#top  ",
+        "HTTPS://T.ME/addstickers/SyntheticCats",
+        "https://t.me/addemoji/SyntheticCats",
+        "tg://addstickers?set=SyntheticCats",
+        "tg://addemoji?foo=1&set=SyntheticCats",
+        "SyntheticCats",
+    ] {
+        assert_eq!(telegram::set_name(link).as_deref(), Some("SyntheticCats"), "{link}");
+    }
+    for link in [
+        "",
+        "https://example.test/addstickers/SyntheticCats",
+        "https://t.me/joinchat/SyntheticCats",
+        "https://t.me/addstickers/",
+        "https://t.me/addstickers/bad name",
+        "tg://addstickers?name=SyntheticCats",
+        "tg://resolve?set=SyntheticCats",
+        "Synthetic Cats",
+    ] {
+        assert_eq!(telegram::set_name(link), None, "{link}");
+    }
 }

@@ -8,6 +8,10 @@ publish.workspace = true
 license.workspace = true
 
 [features]
+default = ["lottie"]
+# Telegram's animated stickers (`.tgs`) rendered for the sticker import; without it, a `.tgs` is skipped and said to be
+# one this build can't import
+lottie = ["dep:rasterlottie"]
 # Tests only, through dev-dependencies: hooks the app's UI tour reads (where a chat view last drew each sender's face,
 # `ChatView::face_bounds`). It also turns on teams-proto's test support, so ngteams refuses to run.
 test-support = ["teams-proto/test-support"]
@@ -74,6 +78,10 @@ tokio = { workspace = true, features = ["sync"] }
 toml.workspace = true
 # a sound pack the user imports as an archive (deflate only; entries read by name, never unpacked by their paths)
 zip.workspace = true
+# Telegram's animated stickers (`.tgs`) drawn to frames for the sticker import (`stickers::lottie`)
+rasterlottie = { workspace = true, optional = true }
+# a `.tgs` is a gzipped Lottie animation
+flate2.workspace = true
 
 [dev-dependencies]
 # a synthetic card message's Swift payload (`tests/chat_view/cards.rs`)
@@ -94,6 +102,8 @@ unicode-bidi.workspace = true
 # chat service and its Trouter reached through the test-support mock origins
 teams-mock.workspace = true
 teams-proto = { workspace = true, features = ["test-support"] }
+# the sticker import's Bot API client pointed at the mock Bot API (`BotApi::with_mock_origin`)
+teams-core = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
 # the push channel's events the fake engine hands the bridge; the mock's Trouter for compose's two-account test
 teams-trouter = { workspace = true, features = ["test-support"] }

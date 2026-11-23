@@ -1,9 +1,10 @@
 //! The compose box's picker (`teams_ui::fun_picker`) on GPUI's test context, over the fake engine (`common`): the tabs
-//! All, Emoji and Stickers, a sticker put in the box and sent as Teams sends one, the import of a folder from the
-//! picker, a pack renamed and removed, the keyboard's reach, and a box that offers no sticker; Teams' own packs for an
-//! account of Microsoft's cloud (their previews, a pick sent by its address, the search, the keyboard) and none for an
-//! own server's. The settings live in a directory of their own per test, beside the stickers. Every picture, name and
-//! id is made up, but for Teams' packs' names and ids.
+//! All, Emoji and Stickers, a sticker put in the box and sent as Teams sends one, the import of a folder, of chosen files
+//! and of a Telegram pack's link (against the mock Bot API) from the picker, a pack renamed and removed, the keyboard's
+//! reach, and a box that offers no sticker; Teams' own packs for an account of Microsoft's cloud (their previews, a
+//! pick sent by its address, the search, the keyboard) and none for an own server's. The settings live in a directory
+//! of their own per test, beside the stickers. Every picture, name and id is made up, but for Teams' packs' names and
+//! ids.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -20,6 +21,7 @@ use common::{LAB_A, LAB_B, Rig, Written};
 use gpui::{AppContext as _, Entity, Modifiers, VisualTestContext, px, size};
 use image::{ImageFormat, Rgba, RgbaImage};
 use teams_core::{Action, EngineError};
+use teams_mock::telegram::{BotApiMock, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN};
 use teams_proto::chat::MessageText;
 use teams_store::Member;
 use teams_ui::chat_view::ChatView;
@@ -29,7 +31,9 @@ use teams_ui::fun_picker::{FunPicker, Item, Place, StickerView, Tab};
 use teams_ui::settings::SettingsModel;
 use teams_ui::shell::Shell;
 use teams_ui::stickers::import::{self, ImportKind};
+use teams_ui::stickers::telegram::{BotApis, BotToken};
 use teams_ui::stickers::{Shelf, StickerRef};
+use teams_ui::telegram_import::{self, TelegramImport, TokenState};
 use teams_ui::{SettingsFile, ShellParts, ViewTrace};
 
 const AB: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-8000-00000000000b@unq.gbl.spaces";
@@ -1478,4 +1482,238 @@ fn a_refused_send_with_files_gives_back_the_sends_held_by_a_teams_sticker_read_f
         drawn(cx, "editor-picture-1"),
         "the sticker read lands after the sends given back"
     );
+}
+
+// --- a Telegram pack from its link ---
+
+/// The synthetic, marked animation of the fixtures, gzipped as a `.tgs` is.
+fn synthetic_tgs() -> Vec<u8> {
+    use std::io::Write as _;
+    let json = include_str!("../../../tests/fixtures/telegram/synthetic-sticker.json");
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(json.as_bytes()).unwrap();
+    encoder.finish().unwrap()
+}
+
+/// A mock Bot API holding a pack of an animated, a still and a video sticker, made the app's Bot API.
+fn telegram_mock(cx: &mut VisualTestContext) -> BotApiMock {
+    let mock = BotApiMock::start(vec![MockSet {
+        name: "SyntheticCats".to_owned(),
+        title: "Synthetic cats".to_owned(),
+        stickers: vec![
+            MockSticker {
+                kind: MockKind::Animated,
+                emoji: "\u{1f638}".to_owned(),
+                bytes: synthetic_tgs(),
+            },
+            MockSticker {
+                kind: MockKind::Still,
+                emoji: "\u{1f63a}".to_owned(),
+                bytes: picture(512, [200, 10, 10], ImageFormat::WebP),
+            },
+            MockSticker {
+                kind: MockKind::Video,
+                emoji: "\u{1f639}".to_owned(),
+                bytes: vec![0x1a, 0x45, 0xdf, 0xa3, 0x80],
+            },
+        ],
+    }])
+    .unwrap();
+    let origin = mock.origin();
+    cx.update(|_, cx| {
+        cx.set_global(BotApis::new(Arc::new(move |token| {
+            teams_core::telegram::BotApi::with_mock_origin(token, &origin)
+        })));
+        cx.set_global(BotToken::default());
+    });
+    mock
+}
+
+fn telegram_panel(picker: &Entity<FunPicker>, cx: &mut VisualTestContext) -> Entity<TelegramImport> {
+    cx.update(|_, cx| picker.read(cx).telegram_import().cloned())
+        .expect("the Telegram panel is open")
+}
+
+fn problem(panel: &Entity<TelegramImport>, cx: &mut VisualTestContext) -> Option<String> {
+    cx.update(|_, cx| panel.read(cx).problem().map(ToString::to_string))
+}
+
+#[test]
+fn a_telegram_pack_imports_from_its_link_and_the_token_is_kept_replaced_and_removed() {
+    let place = Setup::new();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    let mock = telegram_mock(cx);
+    click(cx, "compose-emoji");
+    let picker = picker(&view, cx).unwrap();
+    click(cx, "fun-tab-stickers");
+    click(cx, "sticker-import-telegram");
+    let panel = telegram_panel(&picker, cx);
+    assert!(
+        drawn(cx, "telegram-import") && !drawn(cx, "fun-tab-all"),
+        "the panel in the picker's place"
+    );
+    assert_eq!(
+        cx.update(|_, cx| panel.read(cx).token_state().clone()),
+        TokenState::None
+    );
+    assert!(drawn(cx, "telegram-import-token") && drawn(cx, "telegram-import-help"));
+    assert!(
+        cx.update(|window, cx| panel.read(cx).holds_focus(window, cx)),
+        "the link field has the focus"
+    );
+
+    cx.update(|window, cx| panel.update(cx, |panel, cx| panel.set_link("https://example.test/x", window, cx)));
+    click(cx, "telegram-import-start");
+    assert_eq!(problem(&panel, cx).as_deref(), Some(telegram_import::BAD_LINK));
+    cx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.set_link("t.me/addstickers/SyntheticCats", window, cx);
+        });
+    });
+    click(cx, "telegram-import-start");
+    assert_eq!(problem(&panel, cx).as_deref(), Some(telegram_import::NO_TOKEN));
+    cx.update(|window, cx| panel.update(cx, |panel, cx| panel.set_token("not a token", window, cx)));
+    click(cx, "telegram-import-start");
+    assert_eq!(problem(&panel, cx).as_deref(), Some(telegram_import::BAD_TOKEN));
+    assert!(drawn(cx, "telegram-import-problem"));
+    assert!(
+        mock.requests().is_empty(),
+        "nothing sent before the link and the token are good"
+    );
+
+    cx.update(|window, cx| panel.update(cx, |panel, cx| panel.set_token(SYNTHETIC_BOT_TOKEN, window, cx)));
+    click(cx, "telegram-import-start");
+    assert!(
+        cx.update(|_, cx| picker.read(cx).telegram_import().is_none()),
+        "the panel closed"
+    );
+    let shelf = cx.update(|_, cx| Shelf::of(Some(place.stickers.clone()), cx));
+    draw(cx);
+    let state = cx.update(|_, cx| shelf.read(cx).import_state().cloned());
+    let Some(teams_ui::stickers::ImportState::Done(imported)) = state else {
+        panic!("{state:?}");
+    };
+    assert_eq!(
+        (imported.pack.name.as_str(), imported.pack.stickers.len()),
+        ("Synthetic cats", 2)
+    );
+    assert_eq!(imported.skipped.len(), 1, "the video sticker");
+    assert!(drawn(cx, "sticker-import-summary"));
+    let kept = cx.update(|_, cx| BotToken::of(cx).get().unwrap().unwrap());
+    assert_eq!(kept.expose(), SYNTHETIC_BOT_TOKEN);
+
+    the_kept_token_is_replaced_kept_and_removed(&picker, cx);
+}
+
+/// With a token kept: the panel says so and hides it; Replace shows the field, "Keep it" hides it, Remove forgets it.
+fn the_kept_token_is_replaced_kept_and_removed(picker: &Entity<FunPicker>, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| picker.update(cx, |picker, cx| picker.open_telegram_import(window, cx)));
+    draw(cx);
+    let panel = telegram_panel(picker, cx);
+    assert_eq!(
+        cx.update(|_, cx| panel.read(cx).token_state().clone()),
+        TokenState::Saved
+    );
+    assert!(drawn(cx, "telegram-import-token-saved") && !drawn(cx, "telegram-import-token"));
+    click(cx, "telegram-import-replace");
+    assert!(drawn(cx, "telegram-import-token"), "Replace shows the field");
+    click(cx, "telegram-import-replace");
+    assert!(!drawn(cx, "telegram-import-token"), "Keep it hides it");
+    click(cx, "telegram-import-remove");
+    assert_eq!(
+        cx.update(|_, cx| panel.read(cx).token_state().clone()),
+        TokenState::None
+    );
+    assert!(cx.update(|_, cx| BotToken::of(cx).get().unwrap().is_none()));
+    assert!(drawn(cx, "telegram-import-token"), "the field again");
+    click(cx, "telegram-import-cancel");
+    assert!(cx.update(|_, cx| picker.read(cx).telegram_import().is_none()));
+    assert!(drawn(cx, "fun-tab-all"), "back to the picker");
+}
+
+#[test]
+fn the_telegram_panel_is_reached_by_the_keyboard() {
+    let place = Setup::new();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    let _mock = telegram_mock(cx);
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    click(cx, "fun-tab-stickers");
+    // the empty state's buttons are the first row: Down, Right twice, Enter opens the panel
+    keys(cx, "down right right enter");
+    let panel = telegram_panel(&picker, cx);
+    cx.simulate_input("t.me/addstickers/SyntheticCats");
+    // Tab to the token's field, Tab to Import, Enter presses it: no token yet
+    keys(cx, "tab");
+    cx.simulate_input("x");
+    keys(cx, "tab enter");
+    assert_eq!(problem(&panel, cx).as_deref(), Some(telegram_import::BAD_TOKEN));
+    // the focus goes back to the field the problem is in: the token typed, Enter imports
+    keys(cx, "backspace");
+    cx.simulate_input(SYNTHETIC_BOT_TOKEN);
+    keys(cx, "enter");
+    assert!(cx.update(|_, cx| picker.read(cx).telegram_import().is_none()));
+    let shelf = cx.update(|_, cx| Shelf::of(Some(place.stickers.clone()), cx));
+    draw(cx);
+    assert!(matches!(
+        cx.update(|_, cx| shelf.read(cx).import_state().cloned()),
+        Some(teams_ui::stickers::ImportState::Done(_))
+    ));
+    // Escape leaves the panel for the picker, not the picker
+    cx.update(|window, cx| picker.update(cx, |picker, cx| picker.open_telegram_import(window, cx)));
+    draw(cx);
+    keys(cx, "escape");
+    assert!(cx.update(|_, cx| picker.read(cx).telegram_import().is_none()));
+    assert!(picker_open(&view, cx), "the picker stays open");
+}
+
+fn picker_open(view: &Entity<ChatView>, cx: &mut VisualTestContext) -> bool {
+    picker(view, cx).is_some()
+}
+
+#[test]
+fn the_add_a_pack_menu_offers_files_and_a_telegram_pack() {
+    let place = Setup::new().with_cats();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    click(cx, "compose-emoji");
+    let picker = picker(&view, cx).unwrap();
+    click(cx, "fun-tab-stickers");
+    click(cx, "sticker-pack-add");
+    for item in [
+        "sticker-import-folder",
+        "sticker-import-zip",
+        "sticker-import-files",
+        "sticker-import-telegram",
+    ] {
+        assert!(drawn(cx, item), "{item}");
+    }
+    let dir = place.sources.path().join("Telegram files");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("hello.tgs"), synthetic_tgs()).unwrap();
+    std::fs::write(dir.join("wave.webp"), picture(64, [1, 2, 3], ImageFormat::WebP)).unwrap();
+    cx.update(|_, cx| {
+        picker.update(cx, |picker, cx| {
+            picker.import_files(vec![dir.join("hello.tgs"), dir.join("wave.webp")], cx);
+        });
+    });
+    draw(cx);
+    let shelf = cx.update(|_, cx| Shelf::of(Some(place.stickers.clone()), cx));
+    let state = cx.update(|_, cx| shelf.read(cx).import_state().cloned());
+    let Some(teams_ui::stickers::ImportState::Done(imported)) = state else {
+        panic!("{state:?}");
+    };
+    assert_eq!(imported.pack.name, "Telegram files");
+    let files: Vec<&str> = imported
+        .pack
+        .stickers
+        .iter()
+        .map(|sticker| sticker.file.as_str())
+        .collect();
+    assert_eq!(files, ["001.gif", "002.png"]);
+    click(cx, "sticker-pack-add");
+    click(cx, "sticker-import-telegram");
+    assert!(cx.update(|_, cx| picker.read(cx).telegram_import().is_some()));
 }

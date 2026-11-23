@@ -1,6 +1,7 @@
 //! The user's sticker packs: one store for all the app's accounts ([`store`], beside the settings file), the import
-//! of a folder or a `.zip` of pictures as a pack ([`import`]), and the [`Shelf`] the compose box's picker shows them
-//! from.
+//! of a folder, a `.zip` or chosen files of pictures as a pack ([`import`], Telegram's animated stickers through
+//! [`lottie`]), the import of a Telegram pack from its link ([`telegram`]), and the [`Shelf`] the compose box's picker
+//! shows them from.
 //!
 //! The shelf reads the store once, then keeps it in step with what the app does to it: an import (run on a background
 //! thread, its progress and its outcome kept on the shelf, so the picker shows them when it opens again), a rename, a
@@ -8,8 +9,10 @@
 //! it is first drawn. A shelf with no directory (settings kept in memory) holds nothing and imports nothing.
 
 pub mod import;
+pub mod lottie;
 pub mod store;
 pub mod teams;
+pub mod telegram;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -20,6 +23,9 @@ use teams_proto::PastedPicture;
 
 pub use import::{ImportError, ImportKind, Imported, Progress, Skip, Skipped};
 pub use store::{Pack, Sticker, StickerRef, StoreError, TEAMS_PACK};
+
+/// An import's work, run on a background thread into the stickers directory.
+type Job = Box<dyn FnOnce(&Path, &mut dyn FnMut(Progress)) -> Result<Imported, ImportError> + Send>;
 
 /// How the last import stands, while the shelf keeps it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +168,33 @@ impl Shelf {
     /// Imports the folder or archive at `source` as a new pack, on a background thread; one import at a time
     /// (a second one is refused, [`Self::refused`]).
     pub fn import(&mut self, source: PathBuf, kind: ImportKind, cx: &mut Context<Self>) {
+        self.run(
+            Box::new(move |dir, progress| import::import(&source, kind, dir, progress)),
+            cx,
+        );
+    }
+
+    /// Imports the chosen `files` as a new pack, as [`Self::import`] does.
+    pub fn import_files(&mut self, files: Vec<PathBuf>, cx: &mut Context<Self>) {
+        self.run(
+            Box::new(move |dir, progress| import::import_from(&mut import::Files::new(files), dir, progress)),
+            cx,
+        );
+    }
+
+    /// Imports the Telegram pack `link` names as a new pack, with the app's bot token ([`telegram::BotToken`]), as
+    /// [`Self::import`] does.
+    pub fn import_link(&mut self, link: String, cx: &mut Context<Self>) {
+        let tokens = telegram::BotToken::of(cx);
+        let apis = telegram::BotApis::of(cx);
+        self.run(
+            Box::new(move |dir, progress| telegram::import_link(&link, &tokens, &apis, dir, progress)),
+            cx,
+        );
+    }
+
+    /// Runs `job` into the shelf's directory on a background thread, one at a time.
+    fn run(&mut self, job: Job, cx: &mut Context<Self>) {
         let Some(dir) = self.dir.clone() else {
             self.import = Some(ImportState::Failed(ImportError::Storage));
             cx.notify();
@@ -177,7 +210,7 @@ impl Shelf {
         cx.notify();
         let (tell, told) = async_channel::unbounded();
         let work = cx.background_spawn(async move {
-            import::import(&source, kind, &dir, &mut |progress| {
+            job(&dir, &mut |progress| {
                 let _ = tell.try_send(progress);
             })
         });

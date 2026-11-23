@@ -217,6 +217,9 @@ oo7 = { version = "0.6.0", default-features = false, features = ["async-std", "n
 pipewire = { version = "0.10.1", features = ["v0_3_49"] }
 # the Public Suffix List, compiled in: which dotted part of a display name ends in a real top-level domain
 psl = "2.1.243"
+# Telegram's animated stickers (`.tgs`, a Lottie animation) rendered to frames (teams-ui's sticker import): pure Rust on
+# tiny-skia, no native library; MIT OR Apache-2.0
+rasterlottie = { version = "0.3.0", default-features = false }
 rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs"] }
 regex = "1.13.1"
 # a series' occurrences from its recurrence rule (ngteams-server's calendar)

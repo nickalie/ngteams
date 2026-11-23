@@ -118,6 +118,7 @@ mod roster;
 mod startup;
 mod team_apps;
 mod team_pages;
+pub mod telegram;
 mod trouter;
 mod ups;
 mod world;

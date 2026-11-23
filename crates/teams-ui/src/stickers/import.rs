@@ -1,6 +1,7 @@
-//! Imports a folder or a `.zip` of pictures as a sticker pack: each PNG, WebP or GIF file becomes a sticker, still or
-//! animated, made ready to send. A still sticker is kept (and sent) as a PNG, an animated one (an animated GIF, WebP
-//! or PNG) as a GIF, which every Teams client plays.
+//! Imports a folder, a `.zip` or chosen files of pictures as a sticker pack: each PNG, WebP or GIF file, and each
+//! Telegram animated sticker (`.tgs`, [`super::lottie`]), becomes a sticker, still or animated, made ready to send. A
+//! still sticker is kept (and sent) as a PNG, an animated one (an animated GIF, WebP or PNG, or a `.tgs`) as a GIF,
+//! which every Teams client plays. A Telegram video sticker (`.webm`) is skipped and said to be one.
 //!
 //! - **What is read**: the files in the folder and its folders (at most [`MAX_DEPTH`] deep, no symbolic link), or the
 //!   archive's files, in the order of their names. Hidden files and folders (and a Mac archive's `__MACOSX`) are passed
@@ -13,7 +14,8 @@
 //!   clear: the edge stays hard in Teams Light and Dark, with no matte of one theme's colour.
 //! - **What is skipped**, and why, is told file by file ([`Skipped`]); the others are imported. A pack with no picture
 //!   is not made.
-//! - Other sources (a sticker service's pack) give their files through [`Source`] and are made the same way.
+//! - Other sources (a Telegram pack's link, [`super::telegram`]) give their files through [`Source`] and are made the
+//!   same way.
 //!
 //! An import builds a hidden directory and renames it into place, so a pack is there whole or not at all.
 
@@ -75,8 +77,16 @@ pub enum ImportKind {
 /// Why a file wasn't made a sticker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Skip {
-    #[error("isn't a PNG, WebP or GIF picture")]
+    #[error("isn't a PNG, WebP or GIF picture or a Telegram sticker")]
     NotPicture,
+    #[error("is a video sticker, which can't be imported yet")]
+    Video,
+    #[error("is an animated Telegram sticker, which this build of the app can't import")]
+    NoRenderer,
+    #[error("uses an animation feature that can't be imported")]
+    Unsupported,
+    #[error("couldn't be downloaded")]
+    NotDownloaded,
     #[error("is larger than 10 MB")]
     TooLarge,
     #[error("is larger than 8 MB as a sticker")]
@@ -111,7 +121,7 @@ pub enum ImportError {
     NoFolder,
     #[error("That file can't be read as a .zip archive of up to 200 MB and 1000 files.")]
     BadArchive,
-    #[error("No PNG, WebP or GIF picture there could be made a sticker.")]
+    #[error("No PNG, WebP or GIF picture or Telegram sticker there could be made a sticker.")]
     NoStickers(Vec<Skipped>),
     #[error("Those pictures are larger than 256 MB together.")]
     TooMuch,
@@ -119,6 +129,22 @@ pub enum ImportError {
     TooManyPacks,
     #[error("The stickers can't be saved on this computer.")]
     Storage,
+    #[error("That isn't a link to a Telegram sticker pack. It looks like t.me/addstickers/…")]
+    BadLink,
+    #[error("Add a Telegram bot token first.")]
+    NoToken,
+    #[error("The Telegram bot token can't be read from this computer's keyring.")]
+    TokenUnreadable,
+    #[error("Telegram refused the bot token. Check it, or replace it.")]
+    BadToken,
+    #[error("Telegram has no sticker pack at that link.")]
+    NoSuchPack,
+    #[error("Telegram asks to wait. Try again in a minute.")]
+    TelegramBusy,
+    #[error("Telegram can't be reached. Check your connection and try again.")]
+    TelegramDown,
+    #[error("Telegram's answer can't be read. Try again later.")]
+    TelegramFailed,
 }
 
 /// How far an import is: `done` of `total` files read.
@@ -147,6 +173,10 @@ pub trait Source {
     }
     /// The name of file `index` (its last part), as a skip names it and its label is made from it.
     fn file_name(&self, index: usize) -> String;
+    /// The label of file `index`'s sticker, when the source knows a better one than its file's name gives.
+    fn label(&self, _index: usize) -> Option<String> {
+        None
+    }
     /// The bytes of file `index`, at most [`MAX_FILE`].
     ///
     /// # Errors
@@ -238,24 +268,73 @@ impl Source for Folder {
     }
 
     fn file_name(&self, index: usize) -> String {
-        self.files
-            .get(index)
-            .and_then(|path| path.file_name())
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default()
+        file_name_of(self.files.get(index))
     }
 
     fn read(&mut self, index: usize) -> Result<Vec<u8>, Skip> {
-        let path = self.files.get(index).ok_or(Skip::Unreadable)?;
-        let metadata = fs::symlink_metadata(path).map_err(|_| Skip::Unreadable)?;
-        if !metadata.is_file() {
-            return Err(Skip::Unreadable);
-        }
-        if metadata.len() > MAX_FILE {
-            return Err(Skip::TooLarge);
-        }
-        read_limited(File::open(path).map_err(|_| Skip::Unreadable)?)
+        read_file(self.files.get(index).ok_or(Skip::Unreadable)?)
     }
+}
+
+/// Files the user chose, one by one.
+pub struct Files {
+    name: String,
+    files: Vec<PathBuf>,
+}
+
+impl Files {
+    /// `files` (at most [`MAX_ENTRIES`]), as a pack named after the folder of the first.
+    #[must_use]
+    pub fn new(mut files: Vec<PathBuf>) -> Self {
+        files.sort();
+        files.dedup();
+        files.truncate(MAX_ENTRIES);
+        let name = files
+            .first()
+            .and_then(|file| file.parent())
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_owned();
+        Self { name, files }
+    }
+}
+
+impl Source for Files {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn len(&self) -> usize {
+        self.files.len()
+    }
+
+    fn file_name(&self, index: usize) -> String {
+        file_name_of(self.files.get(index))
+    }
+
+    fn read(&mut self, index: usize) -> Result<Vec<u8>, Skip> {
+        read_file(self.files.get(index).ok_or(Skip::Unreadable)?)
+    }
+}
+
+/// The last part of `path`, or nothing.
+fn file_name_of(path: Option<&PathBuf>) -> String {
+    path.and_then(|path| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// The bytes of the plain file at `path` (not a link), at most [`MAX_FILE`].
+fn read_file(path: &Path) -> Result<Vec<u8>, Skip> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| Skip::Unreadable)?;
+    if !metadata.is_file() {
+        return Err(Skip::Unreadable);
+    }
+    if metadata.len() > MAX_FILE {
+        return Err(Skip::TooLarge);
+    }
+    read_limited(File::open(path).map_err(|_| Skip::Unreadable)?)
 }
 
 /// An archive's files.
@@ -431,8 +510,21 @@ fn still(decoder: impl ImageDecoder) -> Result<Frames, Skip> {
     })
 }
 
-/// The frames of a PNG (an animated one's too), WebP or GIF picture.
+/// Whether `bytes` are a Matroska (`.webm`) file: a Telegram video sticker.
+fn is_video(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0x1a, 0x45, 0xdf, 0xa3])
+}
+
+/// The frames of a PNG (an animated one's too), WebP or GIF picture, or of a Telegram animated sticker.
 fn frames(bytes: &[u8]) -> Result<Frames, Skip> {
+    if super::lottie::is_tgs(bytes) {
+        return Ok(Frames {
+            frames: super::lottie::frames(bytes, super::lottie::renderer())?,
+        });
+    }
+    if is_video(bytes) {
+        return Err(Skip::Video);
+    }
     let format = PastedFormat::sniff(bytes).ok_or(Skip::NotPicture)?;
     let skip = |error: image::ImageError| decode_skip(&error);
     match format {
@@ -641,9 +733,13 @@ pub fn import_from(
         match outcome {
             Ok(converted) => {
                 let extension = if converted.animated { "gif" } else { "png" };
+                let label = source
+                    .label(index)
+                    .and_then(|label| store::clean_name(&label, MAX_LABEL))
+                    .unwrap_or_else(|| label_of(&name));
                 let sticker = Sticker {
                     file: format!("{:03}.{extension}", made.len() + 1),
-                    label: label_of(&name),
+                    label,
                     size: converted.shown,
                 };
                 made.push((sticker, converted));
