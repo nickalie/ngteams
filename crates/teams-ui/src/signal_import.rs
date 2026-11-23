@@ -8,6 +8,7 @@
 //! - **Reach**: the link field has the focus when it opens; Tab and Shift+Tab go through the back arrow, the field
 //!   and the buttons, and Enter or Space presses a button.
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement as _,
     IntoElement, ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
@@ -18,6 +19,7 @@ use gpui_component::{Sizable as _, Size};
 
 use crate::icons::Glyph;
 use crate::stickers::signal::is_pack_link;
+use crate::telegram_import::outer_ring;
 use crate::theme::{self, Palette};
 
 /// The panel's title.
@@ -30,12 +32,6 @@ pub const HELP: &str = "Paste the link of a sticker pack from signal.art or from
 /// What it says of a link that names no pack.
 pub const BAD_LINK: &str = "That isn't a link to a Signal sticker pack. It looks like signal.art/addstickers/#pack_id=\u{2026}&pack_key=\u{2026}";
 
-/// Tab's order in the panel: the back arrow, the field, then the buttons.
-const TAB_BACK: isize = 0;
-const TAB_LINK: isize = 1;
-const TAB_START: isize = 2;
-const TAB_CANCEL: isize = 3;
-
 /// A button of the panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Press {
@@ -46,14 +42,6 @@ pub enum Press {
 
 impl Press {
     const ALL: [Self; 3] = [Self::Back, Self::Start, Self::Cancel];
-
-    fn tab(self) -> isize {
-        match self {
-            Self::Back => TAB_BACK,
-            Self::Start => TAB_START,
-            Self::Cancel => TAB_CANCEL,
-        }
-    }
 
     /// Its test selector.
     #[must_use]
@@ -120,7 +108,7 @@ impl SignalImport {
             focus: cx.focus_handle(),
             buttons: Press::ALL
                 .iter()
-                .map(|press| (*press, cx.focus_handle().tab_index(press.tab()).tab_stop(true)))
+                .map(|press| (*press, cx.focus_handle().tab_stop(true)))
                 .collect(),
             _subscriptions: subscriptions,
         }
@@ -205,6 +193,7 @@ impl SignalImport {
     }
 
     /// A button: the brand's colour when `primary`, outlined otherwise, with the keyboard's ring while it has the focus.
+    /// A primary button's ring is outside its fill, as the Telegram panel's is.
     fn button(
         &self,
         press: Press,
@@ -220,20 +209,17 @@ impl SignalImport {
             (palette.surface, palette.foreground)
         };
         let focus = self.focus_of(press);
-        // the brand's ring would vanish on the brand's own fill
-        let ring = if focus.is_focused(window) && primary {
-            rgb(palette.foreground).into()
-        } else if focus.is_focused(window) {
-            rgb(palette.brand).into()
-        } else if primary {
-            gpui::transparent_black()
-        } else {
-            rgb(palette.border).into()
+        let focused = focus.is_focused(window);
+        let ring = match (primary, focused) {
+            (true, _) => gpui::transparent_black(),
+            (false, true) => rgb(palette.brand).into(),
+            (false, false) => rgb(palette.border).into(),
         };
         div()
             .id(press.selector())
             .debug_selector(move || press.selector().to_owned())
             .track_focus(&focus)
+            .relative()
             .flex_none()
             .px_3()
             .py_1()
@@ -246,6 +232,9 @@ impl SignalImport {
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, window, cx| this.press(press, window, cx)))
             .child(text)
+            .when(primary && focused, |element| {
+                element.child(outer_ring(press.selector(), palette))
+            })
     }
 
     fn back(&self, palette: Palette, window: &Window, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
@@ -305,7 +294,7 @@ impl Render for SignalImport {
             .child(
                 div()
                     .debug_selector(|| "signal-import-link".to_owned())
-                    .child(Input::new(&self.link).with_size(Size::Small).tab_index(TAB_LINK)),
+                    .child(Input::new(&self.link).with_size(Size::Small)),
             )
             .child(
                 div()

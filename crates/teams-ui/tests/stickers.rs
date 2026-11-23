@@ -1219,15 +1219,21 @@ fn a_signal_sticker_that_fails_its_check_is_skipped_and_a_lost_cdn_keeps_nothing
     assert_eq!(Skip::Tampered.to_string(), "failed Signal's integrity check");
     assert_eq!(Skip::NotDownloaded.to_string(), "couldn't be downloaded");
 
-    let mock = SignalCdnMock::start(vec![signal_cats()]).unwrap();
-    mock.fault(cdn::MockFault::DroppedFrom(1));
     let lost = tempfile::tempdir().unwrap();
-    assert_eq!(
-        signal::import_link(&link, &cdns(&mock), lost.path(), &mut no_progress()).unwrap_err(),
-        ImportError::SignalDown
-    );
-    assert!(empty(lost.path()), "no partial pack");
-    assert_eq!(mock.requests().len(), 3, "nothing asked after the CDN is lost");
+    for (fault, error) in [
+        (cdn::MockFault::DroppedFrom(1), ImportError::SignalDown),
+        (cdn::MockFault::BrokenFrom(1), ImportError::SignalFailed),
+    ] {
+        let mock = SignalCdnMock::start(vec![signal_cats()]).unwrap();
+        mock.fault(fault.clone());
+        assert_eq!(
+            signal::import_link(&link, &cdns(&mock), lost.path(), &mut no_progress()).unwrap_err(),
+            error,
+            "{fault:?}"
+        );
+        assert!(empty(lost.path()), "{fault:?}: no partial pack");
+        assert_eq!(mock.requests().len(), 3, "{fault:?}: nothing asked after the CDN fails");
+    }
 
     let mut only_text = signal_cats();
     for sticker in &mut only_text.stickers {

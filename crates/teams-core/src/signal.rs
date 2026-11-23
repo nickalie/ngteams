@@ -197,18 +197,6 @@ impl PackKeys {
         Self { cipher, mac }
     }
 
-    /// The AES key.
-    #[must_use]
-    pub fn cipher_key(&self) -> &[u8; 32] {
-        &self.cipher
-    }
-
-    /// The HMAC key.
-    #[must_use]
-    pub fn mac_key(&self) -> &[u8; 32] {
-        &self.mac
-    }
-
     /// The plain bytes of `blob` (see the module docs): its HMAC checked first, then decrypted.
     ///
     /// # Errors
@@ -426,7 +414,7 @@ impl SignalCdn {
     /// The manifest of the pack `link` names, decrypted.
     ///
     /// # Errors
-    /// See [`SignalError`]; [`SignalError::NoSuchPack`] when the CDN answers 403 or 404.
+    /// See [`SignalError`]; [`SignalError::NoSuchPack`] when the CDN answers 403.
     pub fn manifest(&self, link: &PackLink) -> Result<Manifest, SignalError> {
         let url = format!("{}/stickers/{}/manifest.proto", self.origin, link.id());
         let blob = self.fetch(&url, MAX_MANIFEST + IV_LEN + BLOCK_LEN + MAC_LEN)?;
@@ -452,7 +440,7 @@ impl SignalCdn {
             let response = self.http.get(url).send().await.map_err(|error| category(&error))?;
             match response.status().as_u16() {
                 200 => read_capped(response, most).await,
-                403 | 404 => Err(SignalError::NoSuchPack),
+                403 => Err(SignalError::NoSuchPack),
                 _ => Err(SignalError::BadAnswer),
             }
         })

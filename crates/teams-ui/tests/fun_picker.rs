@@ -1992,7 +1992,17 @@ fn the_signal_panel_is_reached_by_the_keyboard() {
     );
     keys(cx, "ctrl-a backspace");
     cx.simulate_input(&signal_link());
-    keys(cx, "tab tab shift-tab enter");
+    assert!(!drawn(cx, "signal-import-start-ring"));
+    keys(cx, "tab tab shift-tab");
+    let import = cx.debug_bounds("signal-import-start").expect("Import is drawn");
+    let outline = cx
+        .debug_bounds("signal-import-start-ring")
+        .expect("a ring is drawn round Import");
+    assert!(
+        outline.origin.x < import.origin.x && outline.bottom_right().x > import.bottom_right().x,
+        "the ring {outline:?} is outside the button {import:?}"
+    );
+    keys(cx, "enter");
     assert!(
         cx.update(|_, cx| picker.read(cx).signal_import().is_none()),
         "Enter on Import starts it"

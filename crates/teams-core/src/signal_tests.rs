@@ -27,8 +27,8 @@ fn unhex(hex: &str) -> Vec<u8> {
 #[test]
 fn the_keys_are_hkdf_of_the_pack_key_as_signal_derives_them() {
     let keys = PackKeys::derive(&KEY);
-    assert_eq!(keys.cipher_key().as_slice(), unhex(AES_KEY));
-    assert_eq!(keys.mac_key().as_slice(), unhex(MAC_KEY));
+    assert_eq!(keys.cipher.as_slice(), unhex(AES_KEY));
+    assert_eq!(keys.mac.as_slice(), unhex(MAC_KEY));
     assert_eq!(format!("{keys:?}"), "PackKeys(<keys>)", "never printed");
 }
 
@@ -66,7 +66,7 @@ fn a_blob_with_a_good_mac_and_bad_padding_is_refused() {
     // the last block's padding comes out of the block before it
     let last = body.len() - 17;
     body[last] ^= 0x55;
-    let mut mac = Hmac::<Sha256>::new_from_slice(keys.mac_key()).unwrap();
+    let mut mac = Hmac::<Sha256>::new_from_slice(&keys.mac).unwrap();
     mac.update(&body);
     body.extend_from_slice(&mac.finalize().into_bytes());
     assert_eq!(keys.decrypt(&body), Err(SignalError::BadBlob));
@@ -366,9 +366,11 @@ fn only_a_loopback_mock_or_signal_s_https_cdn_is_asked() {
     let cdn = SignalCdn::new().unwrap();
     assert_eq!(cdn.origin, CDN_ORIGIN);
     // an `http` origin is refused before anything is sent
+    let mock = SignalCdnMock::start(vec![mock_pack()]).unwrap();
     let plain = SignalCdn {
-        origin: "http://127.0.0.1:9".to_owned(),
+        origin: mock.origin(),
         ..cdn
     };
-    assert!(plain.manifest(&mock_link()).is_err());
+    assert_eq!(plain.manifest(&mock_link()), Err(SignalError::BadAnswer));
+    assert!(mock.requests().is_empty());
 }

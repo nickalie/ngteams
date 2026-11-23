@@ -7,7 +7,7 @@
 //! - **The pack**: its title names it; each sticker's emoji is its label. A still sticker (PNG, WebP) is kept as a PNG,
 //!   an animated one (APNG) as a GIF, as a file's are ([`super::import`]).
 //! - **What stops it**: a link that names no pack, a key that doesn't open the manifest, or a CDN that can't be
-//!   reached; then nothing is kept. A sticker that fails its integrity check, or that the CDN doesn't hold, is skipped
+//!   reached or gives an unexpected answer (a 5xx); then nothing is kept. A sticker that fails its integrity check, or that the CDN doesn't hold, is skipped
 //!   and said to be one.
 
 use std::sync::Arc;
@@ -68,7 +68,7 @@ struct Linked {
     cdn: SignalCdn,
     link: PackLink,
     manifest: Manifest,
-    /// The failure that ends the import: the CDN can't be reached.
+    /// The failure that ends the import: the CDN can't be reached or gives an unexpected answer.
     stopped: Option<ImportError>,
 }
 
@@ -106,11 +106,11 @@ impl Source for Linked {
         self.cdn.sticker(&self.link, id, most).map_err(|error| match error {
             SignalError::TooLarge => Skip::TooLarge,
             SignalError::BadMac | SignalError::BadBlob => Skip::Tampered,
-            SignalError::TimedOut | SignalError::Unreachable => {
+            SignalError::TimedOut | SignalError::Unreachable | SignalError::BadAnswer => {
                 self.stopped = Some(failed(error));
                 Skip::NotDownloaded
             }
-            SignalError::NoSuchPack | SignalError::BadManifest | SignalError::BadAnswer => Skip::NotDownloaded,
+            SignalError::NoSuchPack | SignalError::BadManifest => Skip::NotDownloaded,
         })
     }
 

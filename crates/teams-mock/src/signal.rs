@@ -90,6 +90,8 @@ pub enum MockFault {
     RedirectTo(String),
     /// Each request: `500 Internal Server Error`.
     Broken,
+    /// From the `n`th sticker download (from 0) on: `503 Service Unavailable`.
+    BrokenFrom(usize),
 }
 
 /// The mock CDN, served while it lives.
@@ -184,6 +186,9 @@ fn serve(stream: TcpStream, packs: &[MockPack], seen: &Mutex<Vec<MockRequest>>, 
     let (status, body, location) = match fault {
         Some(MockFault::RedirectTo(location)) => ("302 Found", Vec::new(), format!("Location: {location}\r\n")),
         Some(MockFault::Broken) => ("500 Internal Server Error", Vec::new(), String::new()),
+        Some(MockFault::BrokenFrom(from)) if target.contains("/full/") && downloads > from => {
+            ("503 Service Unavailable", Vec::new(), String::new())
+        }
         fault => {
             let (status, body) = answer(&target, packs, fault.as_ref());
             (status, body, String::new())

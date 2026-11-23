@@ -156,7 +156,8 @@ that Signal lets a pack hold).
 - The import tells a picture by its first bytes, not by `contentType`. A PNG or a WebP becomes a still sticker (a
   PNG). An APNG becomes an animated sticker (a GIF), with its frames and their times. The import does the same as
   for a file, with the same limits.
-- If the CDN stops in the middle of a pack (no connection, no answer), the import stops and keeps no part of the pack.
+- If the CDN stops in the middle of a pack (no connection, no answer, or an unexpected status such as a 5xx), the
+  import stops and keeps no part of the pack.
 - The cover is a sticker of the pack. The import reads it from the manifest, but does not ask for it a second time.
 
 ### What a live run showed

@@ -481,7 +481,9 @@ impl TelegramImport {
             .bg(rgb(background))
             .text_color(rgb(foreground))
             .child(text)
-            .when(primary && focused, |element| element.child(outer_ring(press, palette)));
+            .when(primary && focused, |element| {
+                element.child(outer_ring(press.selector(), palette))
+            });
         if enabled {
             element
                 .cursor_pointer()
@@ -521,11 +523,11 @@ impl TelegramImport {
 }
 
 /// The ring of a focused primary button: outside its edge, past a gap of the panel's surface.
-fn outer_ring(press: Press, palette: Palette) -> gpui::Div {
+pub(crate) fn outer_ring(selector: &'static str, palette: Palette) -> gpui::Div {
     // from the padding box: past the button's 2px border, a 2px gap, then the 2px ring
     let out = px(-6.0);
     div()
-        .debug_selector(move || format!("{}-ring", press.selector()))
+        .debug_selector(move || format!("{selector}-ring"))
         .absolute()
         .top(out)
         .left(out)
