@@ -1126,9 +1126,11 @@ impl User<'_> {
         }
     }
 
-    /// While an import runs, the user asks for a second one (the spare folder): the faults in how the app refuses it.
-    fn second_import(&mut self) -> SandboxResult<Vec<String>> {
-        self.until("the import runs", |state| state["shelf"]["import"]["running"] == true)?;
+    /// While an import runs, the user asks for a second one (the spare folder): the progress line seen before it,
+    /// and the faults in how the app refuses it.
+    fn second_import(&mut self) -> SandboxResult<(Value, Vec<String>)> {
+        let progress = self.until("the import runs", |state| state["shelf"]["import"]["running"] == true)?;
+        let progress = progress["shelf"]["import"].clone();
         self.open_import_menu()?;
         self.world.chooser.queue(Answer::Pick(self.world.sources.spare.clone()));
         self.key_pick("sticker-import-folder")?;
@@ -1137,13 +1139,14 @@ impl User<'_> {
             import["refused"] == true || import["running"] != true
         })?;
         if state["shelf"]["import"]["refused"] != true {
-            return Ok(vec![format!(
+            let fault = format!(
                 "the second import was not refused while the first ran: {}",
                 state["shelf"]
-            )]);
+            );
+            return Ok((progress, vec![fault]));
         }
         self.image("import-busy")?;
-        Ok(Vec::new())
+        Ok((progress, Vec::new()))
     }
 }
 
@@ -1189,8 +1192,10 @@ fn import_folder(user: &mut User<'_>) -> SandboxResult {
     user.open(AB_CHAT)?;
     let source = user.world.sources.zorblets.clone();
     user.start_import(&source, false)?;
-    let mut faults = user.second_import()?;
-    let (running, state) = user.finish_import("import-folder")?;
+    let (progress, mut faults) = user.second_import()?;
+    // A fast import can end before `finish_import` polls: the progress line that `second_import` waited for counts.
+    let (mut running, state) = user.finish_import("import-folder")?;
+    running.insert(0, progress);
     user.image("import-folder-summary")?;
     faults.extend(spare_faults(&state));
     faults.extend(summary_faults(&state));
