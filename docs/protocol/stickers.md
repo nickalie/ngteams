@@ -167,6 +167,8 @@ Task 652 read one public pack, "Bandit the Cat" (from `signal.art`), with no acc
   correct, and each sticker decrypted to a still picture. The import kept 24 PNG stickers, each labelled with its
   emoji, and skipped none.
 - A pack id that the CDN does not hold got a 403. The app says "Signal has no sticker pack at that link."
+- The same pack with one hex digit of its key changed: the manifest came back, but its HMAC was wrong. The app says
+  "That pack can't be opened with the key in its link. Check that you copied the whole link."
 - The run did not read an animated (APNG) pack. The APNG path is tested on a synthetic pack only.
 
 The tests use synthetic packs on a local mock CDN (`teams_mock::signal`), which encrypts each blob with its own
