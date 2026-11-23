@@ -9,7 +9,8 @@
 //!   animation, at most [`MAX_FPS`] frames a second: a GIF's frame time is in hundredths of a second, and browsers slow
 //!   a faster frame down. Each frame's time is cut from the animation's own clock, so the whole loop keeps its length.
 //! - **What is read is capped**: the unpacked animation at [`MAX_JSON`], its canvas at
-//!   [`super::import::MAX_SOURCE_SIDE`], its frames at [`super::import::MAX_FRAMES`].
+//!   [`super::import::MAX_SOURCE_SIDE`], its frames at [`super::import::MAX_FRAMES`], and what `rasterlottie` is given
+//!   to draw by the bounds of `lottie_bounds.rs`.
 
 use std::io::Read as _;
 
@@ -143,6 +144,10 @@ pub fn frames(bytes: &[u8], renderer: Option<&dyn Renderer>) -> Result<Vec<(Rgba
 }
 
 #[cfg(feature = "lottie")]
+#[path = "lottie_bounds.rs"]
+mod bounds;
+
+#[cfg(feature = "lottie")]
 mod raster {
     //! The `rasterlottie` renderer.
 
@@ -173,6 +178,7 @@ mod raster {
             let size = (animation.width, animation.height);
             let rate = f64::from(animation.frame_rate);
             let span = (f64::from(animation.in_point), f64::from(animation.out_point));
+            super::bounds::check(&animation)?;
             let prepared = rasterlottie::Renderer::default()
                 .prepare(&animation)
                 .map_err(|error| skip(&error))?;
