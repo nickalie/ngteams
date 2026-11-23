@@ -269,12 +269,12 @@ fn a_matte_source_counts_for_each_layer_it_cuts() {
         "heavy",
         &json!([shape_layer(&json!([ellipse(), repeater(&copies)]))])
     )]);
-    let cut = |users: usize| {
-        let mut source = precomp("heavy");
+    let cut = |id: &str| {
+        let mut source = precomp(id);
         source["ind"] = json!(1);
         source["td"] = json!(1);
         let mut layers = vec![source];
-        layers.extend((0..users).map(|index| {
+        layers.extend((0..60).map(|index| {
             let mut user = null_layer(index + 2, None);
             user["tt"] = json!(1);
             user["tp"] = json!(1);
@@ -282,8 +282,8 @@ fn a_matte_source_counts_for_each_layer_it_cuts() {
         }));
         animation(&Value::Array(layers), &heavy)
     };
-    assert_eq!(checked(&cut(30)), Ok(()));
-    assert_eq!(checked(&cut(200)), Err(Skip::Unsupported));
+    assert_eq!(checked(&cut("missing")), Ok(()));
+    assert_eq!(checked(&cut("heavy")), Err(Skip::Unsupported));
 }
 
 #[test]
@@ -378,7 +378,7 @@ fn each_keyframe_counts_as_work() {
             json!({ "ty": "fl", "nm": "fill", "c": keyframed(times, &|at| json!({ "t": at, "s": [1, 0, 0, 1] })) });
         fan_out(100, &shape_layer(&json!([fill])), 0)
     };
-    assert_eq!(checked(&coloured(10)), Ok(()));
+    assert_eq!(checked(&coloured(2)), Ok(()));
     assert_eq!(checked(&coloured(100)), Err(Skip::Unsupported));
     let trimmed = |times: usize| {
         let trim = json!({ "ty": "tm", "nm": "trim", "e": keyframed(times, &|at| json!({ "t": at, "s": [50] })) });
@@ -398,6 +398,69 @@ fn a_dashed_stroke_counts_as_dash_work() {
     assert_eq!(checked(&fan_out(30, &stroke(&json!([])), 0)), Ok(()));
     assert_eq!(checked(&fan_out(4, &stroke(&dashed), 0)), Ok(()));
     assert_eq!(checked(&fan_out(30, &stroke(&dashed), 0)), Err(Skip::Unsupported));
+    let grouped = |dashes: &Value| {
+        let stroke = json!({ "ty": "st", "nm": "line", "c": { "a": 0, "k": [0, 0, 0, 1] }, "w": { "a": 0, "k": 1 }, "d": dashes });
+        let group = json!({ "ty": "gr", "nm": "group", "it": vec![ellipse(); 30] });
+        animation(&json!([shape_layer(&json!([group, stroke]))]), &json!([]))
+    };
+    assert_eq!(checked(&grouped(&json!([]))), Ok(()));
+    assert_eq!(checked(&grouped(&dashed)), Err(Skip::Unsupported));
+}
+
+#[test]
+fn a_layer_with_effects_counts_its_surface_and_each_choke_its_window() {
+    let with = |effects: Value| {
+        let mut layer = null_layer(1, None);
+        layer["ef"] = effects;
+        layer
+    };
+    let off = with(json!([{ "en": 0 }]));
+    assert_eq!(checked(&fan_out(20, &null_layer(1, None), 0)), Ok(()));
+    assert_eq!(checked(&fan_out(10, &off, 0)), Ok(()));
+    assert_eq!(checked(&fan_out(20, &off, 0)), Err(Skip::Unsupported));
+    let choker = |amount: f64| {
+        let layer = with(json!([{ "mn": "ADBE Simple Choker", "ef": [
+            { "mn": "ADBE Simple Choker-0001", "v": { "a": 0, "k": 1 } },
+            { "mn": "ADBE Simple Choker-0002", "v": { "a": 0, "k": amount } },
+        ] }]));
+        animation(&json!([layer]), &json!([]))
+    };
+    assert_eq!(checked(&choker(1.0)), Ok(()));
+    assert_eq!(checked(&choker(-1.0)), Ok(()));
+    assert_eq!(checked(&choker(1000.0)), Err(Skip::Unsupported));
+}
+
+#[test]
+fn each_number_of_a_keyframe_counts_as_work() {
+    let coloured = |numbers: usize| {
+        let start = Value::Array(vec![json!(1); numbers]);
+        let fill = json!({ "ty": "fl", "nm": "fill", "c": keyframed(2, &|at| json!({ "t": at, "s": start })) });
+        fan_out(10, &shape_layer(&json!([fill])), 0)
+    };
+    assert_eq!(checked(&coloured(4)), Ok(()));
+    assert_eq!(checked(&coloured(10_000)), Err(Skip::Unsupported));
+    let eased = |numbers: usize| {
+        let handle = Value::Array(vec![json!(0.5); numbers]);
+        let mut layer = null_layer(1, None);
+        layer["ks"] =
+            json!({ "o": keyframed(2, &|at| json!({ "t": at, "s": [100], "o": { "x": handle, "y": [0] } })) });
+        animation(&json!([layer]), &json!([]))
+    };
+    assert_eq!(checked(&eased(1)), Ok(()));
+    assert_eq!(checked(&eased(200_000)), Err(Skip::Unsupported));
+}
+
+#[test]
+fn a_parent_transform_counts_for_each_layer_under_it() {
+    let family = |parent_of_each: Option<usize>| {
+        let mut parent = null_layer(1, None);
+        parent["ks"] = json!({ "o": keyframed(300, &|at| json!({ "t": at, "s": [100] })) });
+        let mut layers = vec![parent];
+        layers.extend((2..=MAX_LAYERS).map(|index| null_layer(index, parent_of_each)));
+        animation(&Value::Array(layers), &json!([]))
+    };
+    assert_eq!(checked(&family(None)), Ok(()));
+    assert_eq!(checked(&family(Some(1))), Err(Skip::Unsupported));
 }
 
 #[test]
@@ -412,6 +475,12 @@ fn each_path_vertex_counts_as_work() {
     };
     assert_eq!(checked(&fan_out(100, &animated(1), 0)), Ok(()));
     assert_eq!(checked(&fan_out(100, &animated(10), 0)), Err(Skip::Unsupported));
+    let still = |times: usize| {
+        let path = keyframed(times, &|at| json!({ "t": at, "s": [path_of(0)] }));
+        shape_layer(&json!([{ "ty": "sh", "nm": "p", "ks": path }]))
+    };
+    assert_eq!(checked(&fan_out(100, &still(1), 0)), Ok(()));
+    assert_eq!(checked(&fan_out(100, &still(100), 0)), Err(Skip::Unsupported));
 }
 
 #[test]
