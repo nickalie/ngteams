@@ -7977,6 +7977,7 @@ dependencies = [
  "clap",
  "diesel-async",
  "embed-resource",
+ "flate2",
  "gpui-pre",
  "gpui-pre-platform",
  "image",
