@@ -10,7 +10,7 @@
 //!   a faster frame down. Each frame's time is cut from the animation's own clock, so the whole loop keeps its length.
 //! - **What is read is capped**: the unpacked animation at [`MAX_JSON`], its canvas at
 //!   [`super::import::MAX_SOURCE_SIDE`], its frames at [`super::import::MAX_FRAMES`], and what `rasterlottie` is given
-//!   to draw by the bounds of `lottie_bounds.rs`.
+//!   to draw by the bounds of `lottie/bounds.rs`.
 
 use std::io::Read as _;
 
@@ -144,7 +144,6 @@ pub fn frames(bytes: &[u8], renderer: Option<&dyn Renderer>) -> Result<Vec<(Rgba
 }
 
 #[cfg(feature = "lottie")]
-#[path = "lottie_bounds.rs"]
 mod bounds;
 
 #[cfg(feature = "lottie")]
