@@ -295,14 +295,16 @@ fn copied_and_sent(rig: &Rig, cx: &mut VisualTestContext) {
         sent[0].1
     );
     assert!(sent[0].1.contains(&format!("<strong>Ada Lab</strong>: {LONG_POINT}")));
-    for shown in [copied.as_str(), sent[0].1.as_str()] {
-        assert!(
-            !shown.contains("0:15") && !shown.contains("0:20") && !shown.contains("0:21"),
-            "a time in {shown}"
-        );
-    }
+    assert_no_time(&copied);
+    assert_no_time(&sent[0].1);
     assert!(!drawn(cx, "recap-summary-preview"));
     assert!(drawn(cx, "recap-note"));
+}
+
+fn assert_no_time(shown: &str) {
+    for at in ["0:15", "0:18", "0:20", "0:21", "0:22"] {
+        assert!(!shown.contains(at), "{at} in {shown}");
+    }
 }
 
 #[test]
