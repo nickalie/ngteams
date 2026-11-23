@@ -46,7 +46,7 @@ fn fake_summary() -> String {
     serde_json::to_string(&summary.to_string()).unwrap()
 }
 
-fn script(dir: &Path, body: &str) -> PathBuf {
+pub(super) fn script(dir: &Path, body: &str) -> PathBuf {
     fake_tool::write(dir, "claude", body)
 }
 
@@ -60,12 +60,12 @@ fn fake_claude(dir: &Path) -> PathBuf {
     script(dir, &body)
 }
 
-fn installed(rig: &Rig, tools: Tools) {
+pub(super) fn installed(rig: &Rig, tools: Tools) {
     rig.cx.update(|cx| cx.set_global(tools));
 }
 
 /// Draws until `selector` is drawn (the tool answers on a thread of its own), failing after a while.
-fn wait_for(cx: &mut VisualTestContext, selector: &'static str) {
+pub(super) fn wait_for(cx: &mut VisualTestContext, selector: &'static str) {
     for _ in 0..1000 {
         draw(cx);
         if cx.debug_bounds(selector).is_some() {
@@ -76,7 +76,7 @@ fn wait_for(cx: &mut VisualTestContext, selector: &'static str) {
     panic!("{selector} never drawn");
 }
 
-fn drawn(cx: &mut VisualTestContext, selector: &'static str) -> bool {
+pub(super) fn drawn(cx: &mut VisualTestContext, selector: &'static str) -> bool {
     cx.debug_bounds(selector).is_some()
 }
 
@@ -86,7 +86,7 @@ fn state(words: &str) -> &'static str {
 }
 
 /// The messages the view sent: their chat and HTML.
-fn sent(rig: &Rig) -> Vec<(String, String)> {
+pub(super) fn sent(rig: &Rig) -> Vec<(String, String)> {
     locked(&rig.core.actions)
         .iter()
         .filter_map(|action| match action {
