@@ -47,7 +47,8 @@ use teams_auth::token::TokenError;
 use teams_core::Outbox;
 use teams_core::engine::{self, EngineHandle, EngineOptions, Parts, Push};
 use teams_mock::{
-    AB_CHAT, ABC_CHAT, AMS_BASE, CHAT_BASE, CSA_BASE, ChatServiceMock, LAB_A, LAB_B, LAB_C, TEAM_CHANNEL,
+    AB_CHAT, ABC_CHAT, AMS_BASE, CHAT_BASE, CSA_BASE, ChatServiceMock, LAB_A, LAB_B, LAB_C, MIDDLE_TIER_BASE,
+    TEAM_CHANNEL,
 };
 use teams_proto::{Author, Client as ChatClient, Credentials, HttpTransport, Mri};
 use teams_store::Store;
@@ -76,6 +77,9 @@ use portal::Chooser;
 
 #[path = "qa_file_drop_qa706.rs"]
 mod qa706;
+
+#[path = "qa_file_drop_qa792.rs"]
+mod qa792;
 
 const CHILD_ENV: &str = "QA697_CHILD";
 const ONLY_ENV: &str = "QA697_ONLY";
@@ -204,9 +208,11 @@ fn parent() -> SandboxResult {
     let chooser = Chooser::start(sandbox.bus().address())?;
     let running = launch(&sandbox, &mock, trouter.origin(), dir.path())?;
     let mut user = User::new(&sandbox, &mock, &runtime, &chooser, running)?;
+    trouter.origin().clone_into(&mut user.trouter);
+    dir.path().clone_into(&mut user.dir);
     let mut passed = Vec::new();
     let mut failed = Vec::new();
-    for (name, check) in CHECKS.into_iter().chain(qa706::CHECKS) {
+    for (name, check) in CHECKS.into_iter().chain(qa706::CHECKS).chain(qa792::CHECKS) {
         if wanted(name) {
             user.run_check(name, check, &mut passed, &mut failed);
         }
@@ -240,13 +246,27 @@ fn report(passed: &[String], failed: &[(String, String)]) {
 
 /// Starts a's app on the mock, its store and settings in `dir`; once its window is drawn.
 fn launch(sandbox: &Sandbox, mock: &ChatServiceMock, trouter: &str, dir: &Path) -> SandboxResult<Running> {
-    let token = mock.token(LAB_A).ok_or("the mock's token")?;
+    launch_as(sandbox, mock, trouter, dir, "a")
+}
+
+/// Starts the app of lab account `who` (`a` or `b`) on the mock, its store and settings in `dir`; once its window is
+/// drawn.
+fn launch_as(
+    sandbox: &Sandbox,
+    mock: &ChatServiceMock,
+    trouter: &str,
+    dir: &Path,
+    who: &str,
+) -> SandboxResult<Running> {
+    let token = mock
+        .token(if who == "b" { LAB_B } else { LAB_A })
+        .ok_or("the mock's token")?;
     let dir_text = dir.to_string_lossy().into_owned();
     let child = sandbox.spawn(
         &std::env::current_exe()?,
         &[],
         &[
-            (CHILD_ENV, "a"),
+            (CHILD_ENV, who),
             (ORIGIN_ENV, &mock.origin()),
             (TROUTER_ENV, trouter),
             (TOKEN_ENV, &token),
@@ -398,6 +418,9 @@ struct User<'a> {
     files: u32,
     /// Where the window's left edge is on the screen (niri centres a narrow column).
     left: u32,
+    /// The mock Trouter's origin and the app's dir, to start the app again as another account.
+    trouter: String,
+    dir: PathBuf,
 }
 
 impl<'a> User<'a> {
@@ -419,6 +442,8 @@ impl<'a> User<'a> {
             marks: 0,
             files: 0,
             left: 0,
+            trouter: String::new(),
+            dir: PathBuf::new(),
         };
         user.park()?;
         thread::sleep(SETTLE);
@@ -1461,14 +1486,23 @@ fn env(name: &str) -> SandboxResult<String> {
     Ok(std::env::var(name).map_err(|_| format!("{name} isn't set"))?)
 }
 
-/// a's engine on the parent's mock, its store in `dir`.
+/// The engine of the child's account (a, or b) on the parent's mock, its store in `dir`.
 fn engine_on_the_mock(dir: &Path) -> SandboxResult<EngineHandle> {
+    let alias = child_alias();
+    let (me, name, other) = match alias {
+        Alias::B => (LAB_B, "bot-b@lab.example.test", (LAB_A, "Lab A")),
+        _ => (LAB_A, "bot-a@lab.example.test", (LAB_B, "Lab B")),
+    };
     let origin = env(ORIGIN_ENV)?;
     let tokens = Arc::new(Tokens {
         token: env(TOKEN_ENV)?,
         renewals: broadcast::channel(4).0,
     });
-    let http = || HttpTransport::with_mock_origin(Arc::clone(&tokens), CHAT_BASE, &origin);
+    // the app's transports name their account, which a file's upload and share check
+    let http = || {
+        HttpTransport::with_mock_origin(Arc::clone(&tokens), CHAT_BASE, &origin)
+            .map(|http| http.for_account(Mri::new(me)))
+    };
     let transport = Arc::new(http()?);
     let trouter = Trouter::with_mock_origin(Arc::clone(&transport), Arc::clone(&tokens), &env(TROUTER_ENV)?)?
         .with_options(Options {
@@ -1477,26 +1511,39 @@ fn engine_on_the_mock(dir: &Path) -> SandboxResult<EngineHandle> {
             backoff_jitter_percent: 0,
             ..Options::default()
         });
-    let author = Author::new(Mri::new(LAB_A), display_name("bot-a@lab.example.test"));
+    let author = Author::new(Mri::new(me), display_name(name));
     Ok(engine::start(Parts {
         calls: None,
-        store: Store::open(&support::store_file(dir, Alias::A))?,
-        client: Arc::new(ChatClient::new(http()?.with_ams(AMS_BASE)?.with_csa(CSA_BASE)?)),
+        store: Store::open(&support::store_file(dir, alias))?,
+        client: Arc::new(ChatClient::new(
+            http()?
+                .with_ams(AMS_BASE)?
+                .with_csa(CSA_BASE)?
+                .with_middle_tier(MIDDLE_TIER_BASE)?,
+        )),
         outbox: Outbox::new(transport, author),
         push: Some(Push::new(trouter)),
         options: EngineOptions::default(),
         known_names: vec![
-            (LAB_B.to_owned(), "Lab B".to_owned()),
+            (other.0.to_owned(), other.1.to_owned()),
             (LAB_C.to_owned(), "Lab C".to_owned()),
         ],
     })?)
+}
+
+fn child_alias() -> Alias {
+    if std::env::var(CHILD_ENV).as_deref() == Ok("b") {
+        Alias::B
+    } else {
+        Alias::A
+    }
 }
 
 fn child() -> SandboxResult {
     ngteams::read_only::window_allowed_here()?;
     let dir = PathBuf::from(env(DIR_ENV)?);
     let engine = engine_on_the_mock(&dir)?;
-    let first = support::started(Alias::A, engine)?;
+    let first = support::started(child_alias(), engine)?;
     let runner = support::runner(&dir)?;
     let settings = teams_ui::SettingsFile::new(dir.join("settings.toml"));
     let mut opened = settings.load().settings;
@@ -1709,8 +1756,28 @@ fn state_of(shell: &Entity<Shell>, window: &Window, cx: &App) -> Value {
                 channel.thread().map(|(_, thread)| view_state(thread)),
             )
         });
+    let cards: Vec<Value> = shell_ref
+        .chat()
+        .filter(|_| matches!(shell_ref.main(), Main::Chat(_)))
+        .map(|view| {
+            view.read(cx)
+                .message_items()
+                .filter(|item| !item.files.is_empty())
+                .map(|item| {
+                    json!({
+                        "own": item.own,
+                        "files": item.files.iter().map(|file| json!({
+                            "name": file.name,
+                            "object_url": file.object_url,
+                        })).collect::<Vec<_>>(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     json!({
         "main": main,
+        "cards": cards,
         "width": f32::from(window.viewport_size().width),
         "keyboard": window.last_input_was_keyboard(),
         "chat": chat,
@@ -1731,12 +1798,12 @@ fn box_state(compose: &Entity<Compose>, window: &Window, cx: &App) -> Value {
         .attachments()
         .iter()
         .map(|file| {
-            let state = match &file.state {
-                AttachmentState::Uploading => "uploading",
-                AttachmentState::Ready(_) => "ready",
-                AttachmentState::Failed(_) => "failed",
+            let (state, error) = match &file.state {
+                AttachmentState::Uploading => ("uploading", None),
+                AttachmentState::Ready(_) => ("ready", None),
+                AttachmentState::Failed(why) => ("failed", Some(why.to_string())),
             };
-            json!({"name": file.name.clone(), "state": state})
+            json!({"name": file.name.clone(), "state": state, "error": error})
         })
         .collect();
     json!({

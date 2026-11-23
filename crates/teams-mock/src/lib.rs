@@ -104,6 +104,7 @@ mod channel_files;
 mod channels;
 mod chatsvc;
 mod csa;
+mod drive;
 mod fixtures;
 mod front;
 mod loki;
@@ -135,6 +136,7 @@ pub use bots::{BotInvokeRecord, BotReply, bot_answer, extension_apps, extension_
 pub use calling::{ANSWERED_ELSEWHERE, CallPhase, Leg, MockCall, TIMED_OUT};
 pub use channel_files::{ChannelFile, SITE as CHANNEL_FILES_SITE};
 pub use channels::{ChannelWrite, NOT_ADDED};
+pub use drive::{DRIVE_HOST, DriveFile, DriveTwist};
 pub use fixtures::FixtureError;
 pub use front::Front;
 pub use loki::{LOKI_REGION, LokiCard};
@@ -1100,6 +1102,17 @@ impl ChatServiceMock {
     #[must_use]
     pub fn channel_files(&self) -> Vec<ChannelFile> {
         self.lock().channel_files.files.values().cloned().collect()
+    }
+
+    /// The files uploaded to the accounts' own drives, in the order made, and whom each is shared with (`drive.rs`).
+    #[must_use]
+    pub fn drive_files(&self) -> Vec<DriveFile> {
+        self.lock().drive.files.values().cloned().collect()
+    }
+
+    /// Changes the answer of the next upload to an account's own drive ([`DriveTwist`]); several queue in order.
+    pub fn twist_next_drive_upload(&self, twist: DriveTwist) {
+        self.lock().drive.twists.push_back(twist);
     }
 
     /// The channel writes the mock took, in order (`channels.rs`).

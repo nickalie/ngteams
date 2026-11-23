@@ -105,6 +105,8 @@ pub(crate) struct State {
     pub(crate) channels: crate::channels::Channels,
     /// The files of the channels' folders (`channel_files.rs`).
     pub(crate) channel_files: crate::channel_files::ChannelFiles,
+    /// Each account's own OneDrive (`drive.rs`).
+    pub(crate) drive: crate::drive::Drives,
     /// The calling service's calls and the deliveries waiting for calling endpoints (`calling.rs`).
     pub(crate) calling: crate::calling::Calling,
     /// The calling service's media, once a test turned it on (`peers.rs`).
@@ -258,6 +260,7 @@ impl State {
             availability: Vec::new(),
             channels: crate::channels::Channels::default(),
             channel_files: crate::channel_files::ChannelFiles::default(),
+            drive: crate::drive::Drives::default(),
             calling: crate::calling::Calling::default(),
             #[cfg(feature = "media")]
             peers: crate::peers::Peers::default(),

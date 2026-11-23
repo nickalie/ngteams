@@ -87,7 +87,7 @@ impl User<'_> {
     }
 
     /// Clicks Attach on the box `key` and picks `path` in the file chooser.
-    fn attach_by_button(&mut self, key: &str, path: &Path) -> SandboxResult {
+    pub(super) fn attach_by_button(&mut self, key: &str, path: &Path) -> SandboxResult {
         self.chooser.clear();
         self.chooser.queue(Answer::Pick(path.to_owned()));
         let state = self.state()?;
@@ -110,7 +110,7 @@ impl User<'_> {
     }
 
     /// The `POST`s of a message the mock got that hold `text`: the path and the body of each.
-    fn messages_with(&self, text: &str) -> Vec<(String, String)> {
+    pub(super) fn messages_with(&self, text: &str) -> Vec<(String, String)> {
         self.runtime
             .block_on(self.mock.received_requests())
             .iter()
@@ -137,7 +137,7 @@ impl User<'_> {
     }
 
     /// Both shots of the window, Teams Light and Teams Dark.
-    fn shots_light_and_dark(&mut self, name: &str) -> SandboxResult {
+    pub(super) fn shots_light_and_dark(&mut self, name: &str) -> SandboxResult {
         thread::sleep(SETTLE);
         self.shot(name)?;
         self.ask("theme-dark")?;

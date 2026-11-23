@@ -197,6 +197,9 @@ fn handle(state: &mut State, request: &Request) -> ResponseTemplate {
     if let Some(answer) = crate::channel_files::serve(state, request) {
         return answer;
     }
+    if let Some(answer) = crate::drive::serve(state, request) {
+        return answer;
+    }
     if let Some(answer) = crate::meeting_options::serve(state, request) {
         return answer;
     }
