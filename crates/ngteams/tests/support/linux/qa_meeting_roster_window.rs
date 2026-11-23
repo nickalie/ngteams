@@ -1,4 +1,4 @@
-//! QA of task 798 (round 1), in the UI sandbox: who a scheduled meeting shows as in it, and who as only invited, as
+//! QA of task 798 (rounds 1 and 2), in the UI sandbox: who a scheduled meeting shows as in it, and who as only invited, as
 //! a user meets it. The real app runs as a child in the sandbox, as lab account a on `teams-mock` (its chat service,
 //! its calling service, its Trouter and its group video). The parent drives it with the sandbox's pointer and keyboard,
 //! reads the call from the child (a file in the sandbox dir), the writes from the mock, and the People pane from
@@ -17,8 +17,10 @@
 //! - **No Request to join in a meeting** (`invited_hover`): the pointer on an invited row shows no button, and nothing
 //!   goes to the calling service.
 //! - **Keyboard** (`keyboard`): Tab reaches each heading and row of People in the drawn order, Shift+Tab goes back the
-//!   same way (the child names the row the keyboard is on); Enter folds "Others invited", Space unfolds it.
-//! - **Themes** (`themes`): People and the stage alone in Teams Light and Teams Dark.
+//!   same way (the child names the row the keyboard is on); Enter folds "Others invited", Space unfolds it, and the
+//!   other way round.
+//! - **Themes** (`themes`): People and the stage alone in Teams Light and Teams Dark, and People with the keyboard
+//!   on the "Others invited" heading and on its first row (the focus ring) in each.
 //! - **No regression**: a 1:1 call to b and a group call to b and c, before an answer, name the chat's people
 //!   (`one_to_one_ringing`, `group_ringing`); in a's group call that b joined after the ring, "People added to the
 //!   chat" shows c, and Request to join, on hover, sends exactly one `add`, for c (`group_request_to_join`).
@@ -1236,8 +1238,24 @@ fn keyboard(user: &mut User<'_>) -> SandboxResult {
     user.shot("keyboard-folded")?;
     user.press("space")?;
     user.until_rows("Others invited unfolded", &[1, 10])?;
+    // the other way round: Space folds it, Enter unfolds it
+    user.press("space")?;
+    user.until_rows("Others invited folded by Space", &[1])?;
+    user.press("enter")?;
+    user.until_rows("Others invited unfolded by Enter", &[1, 10])?;
     user.press("escape")?;
     Ok(())
+}
+
+/// Presses Tab until the keyboard is on the People heading or row `stop`.
+fn tab_to(user: &mut User<'_>, stop: &str) -> SandboxResult {
+    for _ in 0..40 {
+        user.press("tab")?;
+        if people_focus(user)?.as_deref() == Some(stop) {
+            return Ok(());
+        }
+    }
+    Err(format!("Tab did not reach {stop}").into())
 }
 
 /// People and the stage alone in Teams Light and Teams Dark.
@@ -1248,6 +1266,13 @@ fn themes(user: &mut User<'_>) -> SandboxResult {
         user.open_people()?;
         user.until_rows(&format!("People in {theme}"), &[1, 10])?;
         user.shot(&format!("theme-people-{theme}"))?;
+        tab_to(user, "call-roster-section-others")?;
+        thread::sleep(SETTLE);
+        user.shot(&format!("theme-focus-heading-{theme}"))?;
+        tab_to(user, "call-roster-added-0")?;
+        thread::sleep(SETTLE);
+        user.shot(&format!("theme-focus-row-{theme}"))?;
+        user.press("escape")?;
         user.toggle_people(false)?;
         user.park()?;
         thread::sleep(SETTLE);
