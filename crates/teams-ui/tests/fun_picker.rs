@@ -19,7 +19,7 @@ use std::sync::Arc;
 use common::{LAB_A, LAB_B, Rig, Written};
 use gpui::{AppContext as _, Entity, Modifiers, VisualTestContext, px, size};
 use image::{ImageFormat, Rgba, RgbaImage};
-use teams_core::Action;
+use teams_core::{Action, EngineError};
 use teams_proto::chat::MessageText;
 use teams_store::Member;
 use teams_ui::chat_view::ChatView;
@@ -1068,6 +1068,40 @@ fn an_edit_called_off_drops_the_teams_sticker_it_still_reads() {
         teams_ui::stickers::store::recent(&place.stickers).is_empty(),
         "a sticker that never reached the box isn't Recent"
     );
+}
+
+#[test]
+fn a_refused_edit_does_not_come_back_over_a_teams_sticker_still_read() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    teams_pictures(&rig, &["Clippy_HelloThere"]);
+    let (view, cx) = chat_window(&rig, &place);
+    let compose = compose(&view, cx);
+    let loaded = Loaded {
+        doc: Doc::default(),
+        quotes: Vec::new(),
+    };
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.edit("1".to_owned(), loaded, window, cx)));
+    cx.simulate_input("edited");
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    rig.core.write_errors.lock().unwrap().push_back(EngineError::Stopped);
+    *rig.core.hold_pictures.lock().unwrap() = true;
+    cx.update(|window, cx| {
+        compose.update(cx, |compose, cx| compose.send(window, cx));
+        picker.update(cx, |picker, cx| {
+            picker.activate(&teams("Clippy_HelloThere"), window, cx)
+        });
+    });
+    draw(cx);
+    assert_eq!(
+        cx.update(|_, cx| compose.read(cx).mode().clone()),
+        Mode::New,
+        "the refused edit stays out of a box that reads a new sticker"
+    );
+    release_held_pictures(&rig);
+    draw(cx);
+    assert!(drawn(cx, "editor-picture-1"), "the sticker stays in the new message");
 }
 
 #[test]

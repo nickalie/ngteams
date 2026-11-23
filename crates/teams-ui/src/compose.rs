@@ -1628,9 +1628,8 @@ impl Compose {
         cards.retain(|card| !self.apps.cards.contains(card));
         cards.append(&mut self.apps.cards);
         self.apps.cards = cards;
-        if draft.attachments.is_empty()
-            && (!self.editor.read(cx).is_empty() || self.mode != Mode::New || edit_beside_files)
-        {
+        let changed = !self.editor.read(cx).is_empty() || !self.routes.stickers.is_empty() || self.mode != Mode::New;
+        if draft.attachments.is_empty() && (changed || edit_beside_files) {
             return cx.notify();
         }
         let held = !self.editor.read(cx).is_empty();
