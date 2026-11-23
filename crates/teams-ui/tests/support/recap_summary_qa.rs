@@ -245,9 +245,34 @@ fn qa_regenerate_asks_the_tool_for_simplified_technical_english_and_shows_the_re
     assert!(spoken(cx, 2), "the new next step plays from 0:20");
 }
 
-/// Tab moves the focus from the summary pane's tab to the points; Enter on a point plays its moment.
+/// Tab moves the focus from the summary pane's tab to the points; Enter on a point plays its moment. Each Tab count
+/// runs in a new window: Enter on a control before the points (Copy, Regenerate) changes the pane.
 #[test]
 fn qa_tab_reaches_each_point_and_enter_plays_its_moment() {
+    let mut played = Vec::new();
+    for tabs in 1..=12 {
+        if let Some(line) = tab_and_enter(tabs) {
+            played.push((tabs, line));
+        }
+        // more Tab presses leave the recap, where Enter opens other pages
+        if played.len() == 3 {
+            break;
+        }
+    }
+    assert!(
+        played.len() >= 3,
+        "Tab and Enter reach the three points with a moment; Enter played after these Tab counts: {played:?}"
+    );
+    assert!(
+        played.iter().any(|(_, line)| line.starts_with("recap-paragraph-1-"))
+            && played.iter().any(|(_, line)| line.starts_with("recap-paragraph-2-")),
+        "each point plays its own moment: {played:?}"
+    );
+}
+
+/// In a new window on the stored summary, its pill clicked: `tabs` Tab presses and Enter; the transcript line a point
+/// played, if one did (Enter on a pill shows the transcript without one).
+fn tab_and_enter(tabs: usize) -> Option<&'static str> {
     let rig = transcribed_rig();
     let dir = tempfile::tempdir().unwrap();
     // Enter on Regenerate starts this stub, never a real tool.
@@ -260,20 +285,12 @@ fn qa_tab_reaches_each_point_and_enter_plays_its_moment() {
         teams_ui::recap_summary::keep(&fixtures::transcript_location("ITEM9"), &stored(), None, cx);
     });
     summary_pane(cx);
-    let mut played = Vec::new();
-    for tabs in 1..=30 {
-        show_summary(cx);
-        for _ in 0..tabs {
-            cx.simulate_keystrokes("tab");
-        }
-        press(cx, "enter");
-        draw(cx);
-        if drawn(cx, "recap-pane-transcript shown") {
-            played.push(tabs);
-        }
+    click(cx, "recap-pane-summary shown");
+    for _ in 0..tabs {
+        press(cx, "tab");
     }
-    assert!(
-        played.len() >= 3,
-        "Tab and Enter reach the three points with a moment; Enter played after these Tab counts: {played:?}"
-    );
+    press(cx, "enter");
+    ["recap-paragraph-1-0 spoken", "recap-paragraph-2-0 spoken"]
+        .into_iter()
+        .find(|line| drawn(cx, line))
 }

@@ -192,6 +192,12 @@ pub struct RecapView {
     /// Each part's summary followed, by its key ([`crate::recap_summary::cache_key`]).
     summaries: HashMap<String, (Entity<RecapSummary>, Subscription)>,
     summary_scroll: ScrollHandle,
+    /// The focus of the pane pills and the summary points, which the view moves itself.
+    keys: keyboard::Handles,
+    /// Each summary point's row in the summary pane, by its moment's index, as last drawn.
+    point_rows: Vec<usize>,
+    /// The summary point last scrolled into view when it took the focus.
+    revealed: Option<usize>,
     sending: Option<Post>,
     /// The chat's calls' captions saved on this computer, as last read, and Teams' own parts they were merged with.
     local: local::Local,
@@ -242,6 +248,9 @@ impl RecapView {
             pane: None,
             summaries: HashMap::new(),
             summary_scroll: ScrollHandle::new(),
+            keys: keyboard::Handles::default(),
+            point_rows: Vec::new(),
+            revealed: None,
             sending: None,
             local: local::Local::follow(cx),
         };
@@ -1319,40 +1328,20 @@ impl RecapView {
                 .part()
                 .is_some_and(|part| part.recording.is_some() || part.is_unread_transcript());
         let shown = self.pane(cx);
-        let pill = |pane: Pane, label: &'static str, key: &'static str, cx: &mut Context<Self>| {
-            let chosen = shown == pane;
-            let id = SharedString::from(format!("recap-pane-{key}"));
-            let pill = div()
-                .id(id.clone())
-                .debug_selector(move || format!("recap-pane-{key}{}", if chosen { " shown" } else { "" }))
-                .h(px(32.0))
-                .px_3()
-                .flex()
-                .items_center()
-                .gap_1p5()
-                .rounded_full()
-                .border_1()
-                .cursor_pointer()
-                .border_color(rgb(if chosen { palette.brand } else { palette.border }))
-                .bg(rgb(if chosen { palette.selected } else { palette.surface }))
-                .text_sm()
-                .text_color(rgb(if chosen { palette.brand } else { palette.foreground }))
-                .when(chosen, |pill| pill.font_weight(FontWeight::SEMIBOLD))
-                .when(pane == Pane::AiSummary, |pill| {
-                    pill.child(Glyph::SPARKLES.icon().size(px(14.0)))
-                })
-                .child(label)
-                .on_click(cx.listener(move |this, _, _, cx| this.show_pane(pane, cx)));
-            keyboard::stop(id, pill, palette)
-        };
         let ai = crate::local_ai::enabled(cx);
-        let mut pills = div().flex_none().flex().gap_2().px_4().pt_4().pb_2();
-        if ai {
-            pills = pills.child(pill(Pane::AiSummary, "AI summary", "summary", cx));
-        }
-        if offers_transcript {
-            pills = pills.child(pill(Pane::Transcript, "Transcript", "transcript", cx));
-        }
+        let order: Vec<Pane> = [(ai, Pane::AiSummary), (offers_transcript, Pane::Transcript)]
+            .into_iter()
+            .filter_map(|(drawn, pane)| drawn.then_some(pane))
+            .collect();
+        let pills = div()
+            .flex_none()
+            .flex()
+            .gap_2()
+            .px_4()
+            .pt_4()
+            .pb_2()
+            .children(order.iter().map(|pane| self.pill(*pane, shown, &order, palette, cx)));
+        self.reveal_point(window, cx);
         let body = match shown {
             Pane::Transcript if has_transcript => self.transcript_pane(window, palette, cx),
             Pane::Transcript if offers_transcript || !ai => {

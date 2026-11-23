@@ -7,9 +7,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Local};
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, ClipboardItem, Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _, div, px, rgb,
+    AnyElement, App, ClipboardItem, Context, Entity, FontWeight, InteractiveElement as _, IntoElement, KeyDownEvent,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px, rgb,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{Disableable as _, Sizable as _};
@@ -84,6 +85,83 @@ impl RecapView {
     pub fn show_pane(&mut self, pane: Pane, cx: &mut Context<Self>) {
         self.pane = Some(pane);
         cx.notify();
+    }
+
+    /// The pill that shows `pane`, one of the drawn `order`: a tab list's tab, as Teams' are, so only the shown one is a
+    /// tab stop and the arrows move to the others.
+    pub(super) fn pill(
+        &self,
+        pane: Pane,
+        shown: Pane,
+        order: &[Pane],
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> keyboard::Stop {
+        let chosen = shown == pane;
+        let key = pill_key(pane);
+        let element = div()
+            .id(key)
+            .debug_selector(move || format!("{key}{}", if chosen { " shown" } else { "" }))
+            .h(px(32.0))
+            .px_3()
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .rounded_full()
+            .border_1()
+            .cursor_pointer()
+            .border_color(rgb(if chosen { palette.brand } else { palette.border }))
+            .bg(rgb(if chosen { palette.selected } else { palette.surface }))
+            .text_sm()
+            .text_color(rgb(if chosen { palette.brand } else { palette.foreground }))
+            .when(chosen, |pill| pill.font_weight(FontWeight::SEMIBOLD))
+            .when(pane == Pane::AiSummary, |pill| {
+                pill.child(Glyph::SPARKLES.icon().size(px(14.0)))
+            })
+            .child(match pane {
+                Pane::AiSummary => "AI summary",
+                Pane::Transcript => "Transcript",
+            })
+            .on_click(cx.listener(move |this, _, _, cx| this.show_pane(pane, cx)));
+        // a shown pane without a pill leaves the first pill the group's stop
+        let takes_tab = chosen || (!order.contains(&shown) && order.first() == Some(&pane));
+        let order = order.to_vec();
+        let element = element.on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+            this.pill_arrow(pane, &order, event, window, cx);
+        }));
+        keyboard::stop(key, element, palette)
+            .handle(&self.keys.get(key, cx))
+            .tab_stop(takes_tab)
+    }
+
+    /// An arrow key on `pane`'s pill: the pane it moves to shows, and its pill takes the focus.
+    fn pill_arrow(
+        &mut self,
+        pane: Pane,
+        order: &[Pane],
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let at = order.iter().position(|drawn| *drawn == pane).unwrap_or(0);
+        let Some(to) = keyboard::step(event, order.len(), at).and_then(|to| order.get(to).copied()) else {
+            return;
+        };
+        cx.stop_propagation();
+        self.show_pane(to, cx);
+        self.keys.get(pill_key(to), cx).focus(window, cx);
+    }
+
+    /// Scrolls the summary to the point that took the focus, once each time one takes it: Tab doesn't scroll by itself.
+    pub(super) fn reveal_point(&mut self, window: &Window, cx: &App) {
+        let focused = (0..self.point_rows.len()).find(|index| self.keys.get(&point_key(*index), cx).is_focused(window));
+        if focused == self.revealed {
+            return;
+        }
+        self.revealed = focused;
+        if let Some(row) = focused.and_then(|index| self.point_rows.get(index)) {
+            self.summary_scroll.scroll_to_item(*row);
+        }
     }
 
     /// The tool the settings pick for summaries.
@@ -225,13 +303,15 @@ impl RecapView {
     }
 
     /// A moment of the summary clicked: the recording plays from there; a part without one shows its transcript there.
-    pub fn seek_summary(&mut self, at: u64, cx: &mut Context<Self>) {
+    pub fn seek_summary(&mut self, at: u64, window: &mut Window, cx: &mut Context<Self>) {
         let at = Duration::from_secs(at);
         if self.part().is_some_and(|part| part.recording.is_some()) {
             self.play_from(at, cx);
             return;
         }
         self.pane = Some(Pane::Transcript);
+        // the point goes with the summary pane; the keyboard goes on from the pane shown
+        self.keys.get(pill_key(Pane::Transcript), cx).focus(window, cx);
         if let Some(transcript) = self.transcript() {
             let spoken = transcript.spoken_at(at).or_else(|| {
                 transcript
@@ -411,7 +491,8 @@ impl RecapView {
                     .child(about),
             )
             .children(actions);
-        let body = sections(&made.summary, made.sections, palette, cx);
+        let (body, point_rows) = sections(&made.summary, made.sections, &self.keys, palette, cx);
+        self.point_rows = point_rows;
         div()
             .flex_1()
             .min_h_0()
@@ -683,33 +764,40 @@ fn failed(failure: &Failure, palette: Palette, cx: &mut Context<RecapView>) -> A
 }
 
 /// The summary's sections, as Fathom lays them out.
+/// Also each point with a moment's row, by the moment's index.
 fn sections(
     summary: &recap_summary::Summary,
     count: usize,
+    keys: &keyboard::Handles,
     palette: Palette,
     cx: &mut Context<RecapView>,
-) -> Vec<AnyElement> {
-    let mut rows = vec![event_row(
-        "recap-summary-notice",
-        Glyph::INFO,
-        recap_summary::AI_NOTICE.to_owned(),
+) -> (Vec<AnyElement>, Vec<usize>) {
+    let mut body = Body {
+        rows: vec![event_row(
+            "recap-summary-notice",
+            Glyph::INFO,
+            recap_summary::AI_NOTICE.to_owned(),
+            palette,
+        )],
+        moments: Vec::new(),
+        keys,
         palette,
-    )];
-    let mut moments = 0_usize;
+    };
     if !summary.purpose.is_empty() {
-        rows.push(heading("Meeting purpose", "purpose"));
-        rows.push(div().text_sm().child(summary.purpose.clone()).into_any_element());
+        body.rows.push(heading("Meeting purpose", "purpose"));
+        body.rows
+            .push(div().text_sm().child(summary.purpose.clone()).into_any_element());
     }
     if !summary.takeaways.is_empty() {
-        rows.push(heading("Key takeaways", "takeaways"));
+        body.rows.push(heading("Key takeaways", "takeaways"));
         for takeaway in &summary.takeaways {
-            rows.push(dot(takeaway.clone(), palette));
+            body.rows.push(dot(takeaway.clone(), palette));
         }
     }
     if !summary.topics.is_empty() {
-        rows.push(heading("Topics", "topics"));
+        body.rows.push(heading("Topics", "topics"));
         for Topic { title, points } in &summary.topics {
-            rows.push(
+            body.rows.push(
                 div()
                     .pt_2()
                     .text_sm()
@@ -718,24 +806,24 @@ fn sections(
                     .into_any_element(),
             );
             for Point { text, at } in points {
-                rows.push(bullet(*at, &mut moments, None, text, palette, cx));
+                body.bullet(*at, None, text, cx);
             }
         }
     }
     if !summary.next_steps.is_empty() {
-        rows.push(heading("Next steps", "next-steps"));
+        body.rows.push(heading("Next steps", "next-steps"));
         for Step { owner, text, at } in &summary.next_steps {
-            rows.push(bullet(*at, &mut moments, owner.as_deref(), text, palette, cx));
+            body.bullet(*at, owner.as_deref(), text, cx);
         }
     }
     if !summary.questions.is_empty() {
-        rows.push(heading("Questions raised", "questions"));
+        body.rows.push(heading("Questions raised", "questions"));
         for Point { text, at } in &summary.questions {
-            rows.push(bullet(*at, &mut moments, None, text, palette, cx));
+            body.bullet(*at, None, text, cx);
         }
     }
     if count > 1 {
-        rows.push(
+        body.rows.push(
             div()
                 .debug_selector(|| "recap-summary-sections".to_owned())
                 .pt_4()
@@ -747,7 +835,15 @@ fn sections(
                 .into_any_element(),
         );
     }
-    rows
+    (body.rows, body.moments)
+}
+
+/// The summary's rows as they are made, and each point with a moment's row, by the moment's index.
+struct Body<'a> {
+    rows: Vec<AnyElement>,
+    moments: Vec<usize>,
+    keys: &'a keyboard::Handles,
+    palette: Palette,
 }
 
 /// A section's heading.
@@ -811,29 +907,42 @@ fn words(owner: Option<&str>, text: &str, moment: Option<usize>) -> gpui::Div {
     words.children(owner).child(text)
 }
 
-/// A point: a bullet, then its words; a point with a moment plays the recording from there when clicked.
-fn bullet(
-    at: Option<u64>,
-    moments: &mut usize,
-    owner: Option<&str>,
-    text: &str,
-    palette: Palette,
-    cx: &mut Context<RecapView>,
-) -> AnyElement {
-    let Some(at) = at else {
-        return row(words(owner, text, None), palette).into_any_element();
-    };
-    let index = *moments;
-    *moments += 1;
-    let words = words(owner, text, Some(index));
-    let key = SharedString::from(format!("recap-summary-at-{index}"));
-    let point = row(words, palette)
-        .id(key.clone())
-        .debug_selector(move || format!("recap-summary-at-{index}"))
-        .rounded_sm()
-        .cursor_pointer()
-        .hover(move |row| row.bg(rgb(palette.hover)))
-        .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new(PLAY_FROM_HERE).build(window, cx))
-        .on_click(cx.listener(move |this, _, _, cx| this.seek_summary(at, cx)));
-    keyboard::stop(key, point, palette).into_any_element()
+impl Body<'_> {
+    /// A point: a bullet, then its words; a point with a moment plays the recording from there when clicked, and the
+    /// keyboard reaches it.
+    fn bullet(&mut self, at: Option<u64>, owner: Option<&str>, text: &str, cx: &mut Context<RecapView>) {
+        let palette = self.palette;
+        let Some(at) = at else {
+            self.rows
+                .push(row(words(owner, text, None), palette).into_any_element());
+            return;
+        };
+        let index = self.moments.len();
+        self.moments.push(self.rows.len());
+        let words = words(owner, text, Some(index));
+        let key = point_key(index);
+        let point = row(words, palette)
+            .id(SharedString::from(key.clone()))
+            .debug_selector(move || format!("recap-summary-at-{index}"))
+            .rounded_sm()
+            .cursor_pointer()
+            .hover(move |row| row.bg(rgb(palette.hover)))
+            .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new(PLAY_FROM_HERE).build(window, cx))
+            .on_click(cx.listener(move |this, _, window, cx| this.seek_summary(at, window, cx)));
+        let point = keyboard::stop(SharedString::from(key.clone()), point, palette).handle(&self.keys.get(&key, cx));
+        self.rows.push(point.into_any_element());
+    }
+}
+
+/// The key of the point with the moment at `index`.
+fn point_key(index: usize) -> String {
+    format!("recap-summary-at-{index}")
+}
+
+/// The id of `pane`'s pill.
+fn pill_key(pane: Pane) -> &'static str {
+    match pane {
+        Pane::AiSummary => "recap-pane-summary",
+        Pane::Transcript => "recap-pane-transcript",
+    }
 }

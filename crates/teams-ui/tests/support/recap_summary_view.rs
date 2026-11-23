@@ -387,45 +387,50 @@ fn turning_ai_off_stops_a_summary_being_made_also_after_its_recap_closed() {
 
 /// The keyboard reaches each point with a moment in the drawn order after the pane's pills and buttons: Tab moves to
 /// the next one, Shift+Tab back, and Enter or Space plays its moment as a click does (the transcript shows at the line
-/// spoken then).
+/// spoken then). Each point's moment is in a line of its own, so each press shows which point it played.
 #[test]
 fn tab_and_shift_tab_move_through_the_points_and_enter_or_space_plays_one() {
     let first = (2..=10)
-        .find(|&tabs| pressed(tabs, "enter") == Some("recap-paragraph-1-0 spoken"))
+        .find(|&tabs| pressed(tabs, "enter") == Some(LINES[0]))
         .expect("Tab reaches the first point, and Enter plays it from 0:15");
     assert_eq!(
         pressed(first + 1, "space"),
-        Some("recap-paragraph-2-0 spoken"),
+        Some(LINES[1]),
         "the next Tab reaches the next point, 0:20"
     );
     assert_eq!(
+        pressed(first + 2, "enter"),
+        Some(LINES[2]),
+        "the next Tab reaches the question, 0:04"
+    );
+    assert_eq!(
         pressed(first + 2, "shift-tab enter"),
-        Some("recap-paragraph-2-0 spoken"),
+        Some(LINES[1]),
         "Shift+Tab from the last point goes back to the one before it"
     );
     assert_eq!(
         pressed(first + 1, "shift-tab space"),
-        Some("recap-paragraph-1-0 spoken"),
+        Some(LINES[0]),
         "Shift+Tab goes back to the first point"
     );
 }
 
-/// In a new window on the stored summary: its pill clicked (the focus on it), `tabs` Tab presses, then `then`; the
-/// transcript line played, if the transcript shows.
+/// The transcript lines the stored summary's points play, in the points' order: 0:15, 0:20, then the question's 0:04.
+const LINES: [&str; 3] = [
+    "recap-paragraph-1-0 spoken",
+    "recap-paragraph-2-0 spoken",
+    "recap-paragraph-0-0 spoken",
+];
+
+/// In a new window on the stored summary, its question moved to 0:04: its pill clicked (the focus on it), `tabs` Tab
+/// presses, then `then`; the transcript line played, if the transcript shows.
 fn pressed(tabs: usize, then: &str) -> Option<&'static str> {
-    let rig = super::summary_qa::transcribed_rig();
-    let dir = tempfile::tempdir().unwrap();
-    installed(
-        &rig,
-        Tools::with(vec![(Backend::Claude, script(dir.path(), "exit 1\n"))]),
-    );
-    let (_shell, cx) = kit_window(&rig, fixtures::TRANSCRIPT_ONLY);
-    cx.update(|_, cx| {
-        let location = fixtures::transcript_location("ITEM9");
-        teams_ui::recap_summary::keep(&location, &super::summary_qa::stored(), None, cx);
-    });
-    super::summary_qa::summary_pane(cx);
-    click(cx, "recap-pane-summary shown");
+    let (_shell, cx) = keyed_summary(None);
+    tabbed(cx, tabs, then)
+}
+
+/// `tabs` Tab presses, then `then`; the transcript line played, if the transcript shows.
+fn tabbed(cx: &mut VisualTestContext, tabs: usize, then: &str) -> Option<&'static str> {
     for _ in 0..tabs {
         press(cx, "tab");
     }
@@ -433,7 +438,99 @@ fn pressed(tabs: usize, then: &str) -> Option<&'static str> {
     if !drawn(cx, "recap-pane-transcript shown") {
         return None;
     }
-    ["recap-paragraph-1-0 spoken", "recap-paragraph-2-0 spoken"]
-        .into_iter()
-        .find(|line| drawn(cx, line))
+    LINES.into_iter().find(|line| drawn(cx, line))
+}
+
+/// The AI summary and Transcript pills are a tab list: only the shown pane's pill is a tab stop, so Tab goes from it
+/// into the pane, and the arrows show the other pane and move the focus to its pill.
+#[test]
+fn the_pills_take_one_tab_stop_and_the_arrows_switch_the_pane() {
+    let (_shell, cx) = keyed_summary(None);
+    press(cx, "right");
+    assert!(
+        drawn(cx, "recap-pane-transcript shown"),
+        "Right on the AI summary pill shows the transcript"
+    );
+    press(cx, "left");
+    assert!(
+        drawn(cx, "recap-pane-summary shown"),
+        "Left goes back to the AI summary"
+    );
+    press(cx, "end");
+    assert!(drawn(cx, "recap-pane-transcript shown"), "End goes to the last pill");
+    press(cx, "home tab enter");
+    assert!(
+        !drawn(cx, "recap-pane-transcript shown"),
+        "Tab from the AI summary pill goes into the pane, past the Transcript pill"
+    );
+}
+
+/// Enter on a point of a recap without a recording shows the transcript, and the focus goes to the Transcript pill (the
+/// point is drawn no more): Left from there goes back to the summary.
+#[test]
+fn a_point_played_without_a_recording_leaves_the_focus_on_the_transcript_pill() {
+    let first = (2..=10)
+        .find(|&tabs| pressed(tabs, "enter") == Some(LINES[0]))
+        .expect("Tab reaches the first point");
+    let (_shell, cx) = keyed_summary(None);
+    assert_eq!(tabbed(cx, first, "enter"), Some(LINES[0]));
+    press(cx, "left");
+    assert!(
+        drawn(cx, "recap-pane-summary shown"),
+        "the Transcript pill has the focus, so Left shows the summary"
+    );
+}
+
+/// In a window too short for the whole summary, a point that Tab reaches below the pane's fold scrolls into view, so
+/// its focus fill shows.
+#[test]
+fn a_point_tab_reaches_below_the_fold_scrolls_into_view() {
+    let first = (2..=10)
+        .find(|&tabs| pressed(tabs, "enter") == Some(LINES[0]))
+        .expect("Tab reaches the first point");
+    let (_shell, cx) = keyed_summary(Some(SHORT_WINDOW));
+    let pane = cx.debug_bounds("recap-summary").expect("the summary shows");
+    let last = cx.debug_bounds("recap-summary-at-2").expect("the question is laid out");
+    assert!(
+        last.bottom() > pane.bottom(),
+        "the question starts below the fold: {last:?} in {pane:?}"
+    );
+    for _ in 0..first + 2 {
+        press(cx, "tab");
+    }
+    let last = cx.debug_bounds("recap-summary-at-2").expect("the question is laid out");
+    assert!(
+        last.top() >= pane.top() && last.bottom() <= pane.bottom(),
+        "the focused question is in view: {last:?} in {pane:?}"
+    );
+    press(cx, "enter");
+    assert!(drawn(cx, LINES[2]), "Enter plays the point in view");
+}
+
+/// A window height that shows only the start of the summary.
+const SHORT_WINDOW: f32 = 420.0;
+
+/// A window on the stored summary, its question moved to 0:04, its pill clicked (the focus on it); `height` makes the
+/// window shorter.
+fn keyed_summary(height: Option<f32>) -> (Entity<Shell>, &'static mut VisualTestContext) {
+    let rig = super::summary_qa::transcribed_rig();
+    let dir = tempfile::tempdir().unwrap();
+    // Enter on Regenerate starts this stub, never a real tool.
+    installed(
+        &rig,
+        Tools::with(vec![(Backend::Claude, script(dir.path(), "exit 1\n"))]),
+    );
+    let (shell, cx) = kit_window(&rig, fixtures::TRANSCRIPT_ONLY);
+    if let Some(height) = height {
+        cx.simulate_resize(gpui::size(gpui::px(1600.0), gpui::px(height)));
+        draw(cx);
+    }
+    let mut made = super::summary_qa::stored();
+    made.summary.questions[0].at = Some(4);
+    cx.update(|_, cx| {
+        teams_ui::recap_summary::keep(&fixtures::transcript_location("ITEM9"), &made, None, cx);
+    });
+    super::summary_qa::summary_pane(cx);
+    click(cx, "recap-pane-summary shown");
+    (shell, cx)
 }
