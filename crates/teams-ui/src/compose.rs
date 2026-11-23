@@ -672,6 +672,9 @@ struct Draft {
 /// a picture is not sent two times and a refused send comes back to where the draft is.
 type Route<T> = Rc<RefCell<(WeakEntity<Compose>, T)>>;
 
+/// The pictures of a draft that moved to another box, by their ids in the box that sent it.
+type Moved = Vec<(u64, editor::pictures::Picture)>;
+
 /// The answers that a box waits for.
 #[derive(Default)]
 struct Routes {
@@ -685,6 +688,8 @@ struct Routes {
     /// Reads of Teams' stickers picked, from Teams' sticker CDN: Send waits for them, and each goes in the box that
     /// holds the draft once read.
     stickers: Vec<Route<()>>,
+    /// A refused send held back only by the sticker reads: it comes back once the last read puts no sticker in the box.
+    refused: Option<(Draft, Option<Moved>)>,
 }
 
 /// What a compose box is made of.
@@ -982,12 +987,12 @@ impl Compose {
 
     /// How making New message's chat went: on `Err`, the first message comes back to the box (unless something was
     /// typed in it since) with what went wrong over it; else it is let go.
-    pub fn started(&mut self, outcome: Result<(), SharedString>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn started(&mut self, outcome: Result<(), SharedString>, _: &mut Window, cx: &mut Context<Self>) {
         let Some(draft) = self.starting.take() else {
             return;
         };
         if let Err(problem) = outcome {
-            self.give_back(draft, None, window, cx);
+            self.give_back(draft, None, cx);
             self.show_problem(problem, cx);
         }
         cx.notify();
@@ -1059,6 +1064,11 @@ impl Compose {
         let files = std::mem::take(&mut self.attachments);
         let mode = std::mem::replace(&mut self.mode, Mode::New);
         let mut routes = std::mem::take(&mut self.routes);
+        // a refused send held back takes its pictures along, as a send does that moves with a draft
+        let refused = routes.refused.take().map(|(draft, moved)| {
+            let pictures = moved.unwrap_or_else(|| self.pictures_of(&draft.doc, cx));
+            (draft, Some(pictures))
+        });
         let sending_files = std::mem::take(&mut self.sending_files);
         let bots = self.bots.clone();
         self.editor.update(cx, |editor, cx| editor.set_doc(Doc::default(), cx));
@@ -1088,6 +1098,9 @@ impl Compose {
             for route in routes.stickers {
                 route.borrow_mut().0 = to.clone();
                 other.routes.stickers.push(route);
+            }
+            if other.routes.refused.is_none() {
+                other.routes.refused = refused;
             }
             other.sending_files += sending_files;
             if other.mode == Mode::New {
@@ -1382,6 +1395,7 @@ impl Compose {
             self.editor.update(cx, |editor, cx| editor.set_doc(Doc::default(), cx));
             self.routes.stickers.clear();
         }
+        self.routes.refused = None;
         // the reply or the edit being translated is called off with it: nothing of it is sent
         self.drop_translation_of(&self.mode.clone(), cx);
         self.mode = Mode::New;
@@ -1593,12 +1607,12 @@ impl Compose {
         cx.spawn_in(window, async move |_, cx| {
             let answer = reply.await;
             let (to, after) = route.borrow().clone();
-            let _ = to.update_in(cx, |this, window, cx| {
+            let _ = to.update_in(cx, |this, _, cx| {
                 this.routes.sends.retain(|held| !Rc::ptr_eq(held, &route));
                 this.sending_files = this.sending_files.saturating_sub(usize::from(files));
                 match answer {
                     Err(error) => {
-                        this.give_back(draft, after.then_some(pictures), window, cx);
+                        this.give_back(draft, after.then_some(pictures), cx);
                         this.show_problem(format!("Not sent: {error}"), cx);
                     }
                     Ok(row) => this.sent_post(row.client_message_id, post.as_ref(), cx),
@@ -1617,7 +1631,6 @@ impl Compose {
         &mut self,
         mut draft: Draft,
         moved: Option<Vec<(u64, editor::pictures::Picture)>>,
-        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // files attached since stay beside the text given back (a translated send's text left the box once it went),
@@ -1628,8 +1641,12 @@ impl Compose {
         cards.retain(|card| !self.apps.cards.contains(card));
         cards.append(&mut self.apps.cards);
         self.apps.cards = cards;
-        let changed = !self.editor.read(cx).is_empty() || !self.routes.stickers.is_empty() || self.mode != Mode::New;
+        let changed = !self.editor.read(cx).is_empty() || self.mode != Mode::New;
         if draft.attachments.is_empty() && (changed || edit_beside_files) {
+            return cx.notify();
+        }
+        if draft.attachments.is_empty() && !self.routes.stickers.is_empty() {
+            self.routes.refused.get_or_insert((draft, moved));
             return cx.notify();
         }
         let held = !self.editor.read(cx).is_empty();
@@ -1676,6 +1693,7 @@ impl Compose {
         self.attachments.clear();
         self.copy_notice = false;
         self.apps.cards.clear();
+        self.routes.refused = None;
         self.picker = None;
         self.problem = None;
         if self.expanded {
@@ -2045,6 +2063,11 @@ impl Compose {
                     None => {
                         this.show_problem("That sticker can't be read. Check your connection, then try again.", cx);
                     }
+                }
+                if this.routes.stickers.is_empty()
+                    && let Some((draft, moved)) = this.routes.refused.take()
+                {
+                    this.give_back(draft, moved, cx);
                 }
             });
         })

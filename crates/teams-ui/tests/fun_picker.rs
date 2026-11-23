@@ -1090,7 +1090,7 @@ fn a_refused_edit_does_not_come_back_over_a_teams_sticker_still_read() {
     cx.update(|window, cx| {
         compose.update(cx, |compose, cx| compose.send(window, cx));
         picker.update(cx, |picker, cx| {
-            picker.activate(&teams("Clippy_HelloThere"), window, cx)
+            picker.activate(&teams("Clippy_HelloThere"), window, cx);
         });
     });
     draw(cx);
@@ -1295,4 +1295,42 @@ fn an_own_server_account_sees_only_the_user_s_packs() {
     assert!(!rig.core.asked.lock().unwrap().contains(&"message_picture"));
     let compose = compose(&view, cx);
     assert_eq!(cx.update(|_, cx| compose.read(cx).problem().cloned()), None);
+}
+
+#[test]
+fn a_refused_edit_comes_back_once_the_teams_sticker_read_fails() {
+    let place = Setup::new();
+    let rig = teams_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    let compose = compose(&view, cx);
+    let loaded = Loaded {
+        doc: Doc::default(),
+        quotes: Vec::new(),
+    };
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.edit("1".to_owned(), loaded, window, cx)));
+    cx.simulate_input("edited");
+    keys(cx, "ctrl-.");
+    let picker = picker(&view, cx).unwrap();
+    rig.core.write_errors.lock().unwrap().push_back(EngineError::Stopped);
+    *rig.core.hold_pictures.lock().unwrap() = true;
+    cx.update(|window, cx| {
+        compose.update(cx, |compose, cx| compose.send(window, cx));
+        picker.update(cx, |picker, cx| {
+            picker.activate(&teams("Clippy_HelloThere"), window, cx);
+        });
+    });
+    draw(cx);
+    assert_eq!(cx.update(|_, cx| compose.read(cx).mode().clone()), Mode::New);
+    release_held_pictures(&rig);
+    draw(cx);
+    assert!(!drawn(cx, "editor-picture-1"), "the sticker could not be read");
+    assert_eq!(
+        cx.update(|_, cx| compose.read(cx).mode().clone()),
+        Mode::Edit {
+            message_id: "1".to_owned(),
+            quotes: Vec::new(),
+        },
+        "the refused edit comes back to the empty box"
+    );
+    assert_eq!(cx.update(|_, cx| compose.read(cx).value(cx)), "edited");
 }
