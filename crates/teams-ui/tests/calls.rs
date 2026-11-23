@@ -2884,6 +2884,84 @@ fn a_meeting_nobody_else_joined_shows_its_invitees_as_invited_not_in_it() {
     assert!(!drawn(stage, "call-roster-request-0"));
 }
 
+/// The People pane's row or heading the keyboard is on in the call window `stage`.
+fn people_focus(stage: &mut VisualTestContext) -> Option<String> {
+    stage.update(|window, cx| {
+        let root = window.root::<teams_ui::window::KitRoot>().flatten().unwrap();
+        let view = root.read(cx).view().clone();
+        view.downcast::<teams_ui::call_stage::CallStage>()
+            .unwrap()
+            .read(cx)
+            .people_focus(window)
+    })
+}
+
+/// `key` pressed and let go: a focused control takes Enter or Space as it is let go.
+fn press_and_release(stage: &mut VisualTestContext, key: &str) {
+    let keystroke = gpui::Keystroke::parse(key).unwrap();
+    stage.simulate_event(gpui::KeyDownEvent {
+        keystroke: keystroke.clone(),
+        is_held: false,
+        prefer_character_input: false,
+    });
+    stage.simulate_event(gpui::KeyUpEvent { keystroke });
+    draw(stage);
+}
+
+/// The People pane's rows and headings `key` reaches, in order, until it has reached `count` of them.
+fn people_stops(stage: &mut VisualTestContext, key: &str, count: usize) -> Vec<String> {
+    let mut reached: Vec<String> = Vec::new();
+    for _ in 0..40 {
+        stage.simulate_keystrokes(key);
+        draw(stage);
+        if let Some(stop) = people_focus(stage)
+            && reached.last() != Some(&stop)
+        {
+            reached.push(stop);
+        }
+        if reached.len() == count {
+            break;
+        }
+    }
+    reached
+}
+
+#[test]
+fn the_keyboard_reaches_each_people_heading_and_row_in_order_and_folds_a_section() {
+    let rig = calling();
+    invite_to_meeting(&rig);
+    let (trace, _) = trace();
+    let (_windows, stage) = in_meeting(&rig, &trace);
+    rig.send(Event::CallParticipants {
+        call: call(1),
+        view: view(&[(LAB_B, "Lab Bee", false, Some(1), false)], false),
+    });
+    rig.cx.run_until_parked();
+    click(stage, "call-roster");
+    let order = [
+        "call-roster-section-in",
+        "call-roster-self",
+        "call-roster-0",
+        "call-roster-section-others",
+        "call-roster-added-0",
+    ];
+    assert_eq!(people_stops(stage, "tab", order.len()), order);
+    let mut back = order.map(str::to_owned).to_vec();
+    back.reverse();
+    let mut reached = vec![people_focus(stage).unwrap()];
+    reached.extend(people_stops(stage, "shift-tab", order.len() - 1));
+    assert_eq!(reached, back, "Shift+Tab goes back the same way");
+
+    // Enter on a heading folds its section, Space unfolds it
+    press_and_release(stage, "enter");
+    assert!(!drawn(stage, "call-roster-self") && !drawn(stage, "call-roster-0"));
+    assert!(drawn(stage, "call-roster-added-0"), "only its own section folds");
+    press_and_release(stage, "space");
+    assert!(drawn(stage, "call-roster-self") && drawn(stage, "call-roster-0"));
+    click(stage, "call-roster-section-others");
+    assert!(!drawn(stage, "call-roster-added-0") && drawn(stage, "call-roster-section-others"));
+}
+
 #[test]
 fn whoever_waits_in_the_meetings_lobby_is_admitted_or_denied_from_the_stage() {
     let rig = calling();
@@ -5034,6 +5112,48 @@ fn people_added_to_the_chat_are_listed_with_request_to_join() {
     let row = stage.debug_bounds("call-roster-added-0").unwrap();
     stage.simulate_mouse_move(row.center(), None, Modifiers::none());
     click(stage, "call-roster-request-0");
+    assert_eq!(
+        actions(&rig).last(),
+        Some(&CallAction::Add {
+            call: call(1),
+            invitee: Mri::new(LAB_C),
+        })
+    );
+}
+
+#[test]
+fn request_to_join_shows_as_the_keyboard_reaches_its_row_and_enter_asks() {
+    let rig = calling();
+    let stage = group_call_up(&rig);
+    click(stage, "call-roster");
+    rig.send(Event::CallParticipants {
+        call: call(1),
+        view: view(&[(LAB_B, "Lab Bee", false, Some(1), false)], false),
+    });
+    rig.cx.run_until_parked();
+    let far = stage.debug_bounds("call-roster-pane").unwrap();
+    stage.simulate_mouse_move(
+        gpui::point(far.origin.x - gpui::px(200.0), far.center().y),
+        None,
+        Modifiers::none(),
+    );
+    let mut shown = false;
+    for _ in 0..40 {
+        stage.simulate_keystrokes("tab");
+        if drawn(stage, "call-roster-request-0") {
+            shown = true;
+            break;
+        }
+    }
+    assert!(shown, "Tab reaches the row, and its Request to join shows");
+    assert_eq!(people_focus(stage).as_deref(), Some("call-roster-added-0"));
+    stage.simulate_keystrokes("tab");
+    assert!(
+        drawn(stage, "call-roster-request-0"),
+        "it stays while the keyboard is on it"
+    );
+    press_and_release(stage, "enter");
+    rig.cx.run_until_parked();
     assert_eq!(
         actions(&rig).last(),
         Some(&CallAction::Add {

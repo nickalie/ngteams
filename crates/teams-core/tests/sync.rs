@@ -398,6 +398,25 @@ async fn a_conversation_the_store_does_not_know_is_read_as_a_thread_first() {
     assert!(c.store.conversation(ABC_CHAT).unwrap().unwrap().version > 0);
 }
 
+#[tokio::test]
+async fn a_meeting_chats_invitees_are_kept_from_the_list_and_from_a_delivery_that_names_it() {
+    const LISTED: &str = "19:meeting_synthetic-listed@thread.v2";
+    const NAMED: &str = "19:meeting_synthetic-named@thread.v2";
+    let mock = ChatServiceMock::start().await.unwrap();
+    assert!(mock.add_meeting_chat(LISTED, "Synthetic listed", &[LAB_A, LAB_B, LAB_C]));
+    let mut a = Account::of(&mock, LAB_A);
+    let report = a.catch_up.catch_up(&mut a.store).await.unwrap();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    let mris =
+        |a: &Account, id: &str| -> Vec<String> { a.store.members(id).unwrap().into_iter().map(|m| m.mri).collect() };
+    assert_eq!(mris(&a, LISTED), [LAB_A, LAB_B, LAB_C]);
+
+    assert!(mock.add_meeting_chat(NAMED, "Synthetic named", &[LAB_B, LAB_A]));
+    a.catch_up.sync_messages(&mut a.store, NAMED).await.unwrap();
+    assert!(a.store.conversation(NAMED).unwrap().unwrap().kind.is_meeting());
+    assert_eq!(mris(&a, NAMED), [LAB_A, LAB_B]);
+}
+
 // --- a gap ---
 
 #[tokio::test]
@@ -1507,14 +1526,14 @@ async fn a_listed_chats_topic_is_stored_as_its_name() {
         .with_priority(1)
         .mount(&server)
         .await;
-    Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path(format!(
-            "/api/chatsvc/amer/v1/threads/{BLANK}"
-        )))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": BLANK, "members": []})))
-        .with_priority(1)
-        .mount(&server)
-        .await;
+    for id in [BLANK, MEETING] {
+        Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(format!("/api/chatsvc/amer/v1/threads/{id}")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": id, "members": []})))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
     let mut a = plain_account(&server);
     a.store
         .replace_members(CHAT, 1, &[Member::new(LAB_A, None), Member::new(LAB_B, None)])

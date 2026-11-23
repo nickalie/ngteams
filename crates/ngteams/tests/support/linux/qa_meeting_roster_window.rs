@@ -6,7 +6,8 @@
 //! a heading tall splits its sections. Every name, id and text is made up.
 //!
 //! - **Alone** (`meeting_alone`): a meeting of a and ten invitees (b and nine made-up people). Its call runs on the
-//!   mock with nobody in it; a joins it from the meeting chat's header Join and the pre-join's Join now. The call has
+//!   mock with nobody in it; a joins it from the meeting chat's header Join and the pre-join's Join now. The app knows
+//!   the meeting chat only from its chat list (no `ThreadUpdate` comes), and has its invitees from it. The call has
 //!   no other participant and the invitees do not stand in for them; the window's title names no invitee; People shows
 //!   one row in its first section (a) and ten in its second ("Others invited (10)"). Shots of the stage and of People.
 //! - **b joins, then leaves** (`b_joins_then_leaves`): b's tile and row come (two rows, then nine), then go (one, ten).
@@ -15,7 +16,8 @@
 //! - **The lobby** (`lobby`): an invitee waits in the lobby: People shows the lobby's row, a, and nine invited.
 //! - **No Request to join in a meeting** (`invited_hover`): the pointer on an invited row shows no button, and nothing
 //!   goes to the calling service.
-//! - **Keyboard** (`keyboard`): Tab moves the focus through the People pane's controls (shots of each step).
+//! - **Keyboard** (`keyboard`): Tab reaches each heading and row of People in the drawn order, Shift+Tab goes back the
+//!   same way (the child names the row the keyboard is on); Enter folds "Others invited", Space unfolds it.
 //! - **Themes** (`themes`): People and the stage alone in Teams Light and Teams Dark.
 //! - **No regression**: a 1:1 call to b and a group call to b and c, before an answer, name the chat's people
 //!   (`one_to_one_ringing`, `group_ringing`); in a's group call that b joined after the ring, "People added to the
@@ -57,12 +59,13 @@ use teams_media::relay::RelayServer;
 use teams_media::session::SessionConfig;
 use teams_media::tone::Tone;
 use teams_mock::{
-    AB_CHAT, ABC_CHAT, AMS_BASE, CHAT_BASE, CSA_BASE, ChatEvent, ChatServiceMock, ECHO, EventKind, LAB_A, LAB_B, LAB_C,
-    MIDDLE_TIER_BASE, PRESENCE_BASE, PROVISIONING_BASE, TENANT, TIMED_OUT, USER_PROFILE_BASE,
+    AB_CHAT, ABC_CHAT, AMS_BASE, CHAT_BASE, CSA_BASE, ChatServiceMock, ECHO, LAB_A, LAB_B, LAB_C, MIDDLE_TIER_BASE,
+    PRESENCE_BASE, PROVISIONING_BASE, TENANT, TIMED_OUT, USER_PROFILE_BASE,
 };
 use teams_proto::{Author, Client as ChatClient, Credentials, HttpTransport, Mri};
 use teams_store::Store;
 use teams_trouter::{CallStack, Options, Trouter, TrouterCredentials};
+use teams_ui::call_stage::CallStage;
 use teams_ui::shell::{Main, Shell};
 use teams_ui::view::Root;
 use teams_ui::window::KitRoot;
@@ -896,7 +899,7 @@ fn join_the_meeting(user: &mut User<'_>) -> SandboxResult<MeetingCall> {
         .add_message(MEETING, (LAB_B, "Lab B"), "Event/Call", &start)
         .ok_or("no meeting chat on the mock")?;
     user.open_chat(MEETING)?;
-    read_meeting_people(user)?;
+    meeting_people_from_the_list(user)?;
     wait_until(WAIT, || {
         user.app
             .trace
@@ -938,30 +941,16 @@ fn join_the_meeting(user: &mut User<'_>) -> SandboxResult<MeetingCall> {
     Ok(meeting)
 }
 
-/// The service tells the meeting chat's change (its roster) as a `ThreadUpdate`: the app reads its people then.
-fn read_meeting_people(user: &mut User<'_>) -> SandboxResult {
-    say(&format!(
-        "  the members the app has before the update: {}",
-        user.members(MEETING)?
-    ));
-    // the service tells the meeting chat's change (its roster) as a `ThreadUpdate`: the app then reads its people
-    user.mock.queue_event(
-        LAB_A,
-        ChatEvent {
-            conversation: MEETING.to_owned(),
-            from: LAB_B.to_owned(),
-            kind: EventKind::ThreadUpdate,
-            resource: json!({"id": MEETING}),
-        },
-    );
+/// The app has the meeting chat's people from its chat list's sync, with no `ThreadUpdate` for it.
+fn meeting_people_from_the_list(user: &mut User<'_>) -> SandboxResult {
     wait_until(WAIT, || {
         user.members(MEETING)
             .ok()
             .filter(|members| members.matches("mri").count() >= 11)
     })
-    .ok_or("the app never read the meeting chat's people after its ThreadUpdate")?;
+    .ok_or("the app has not the meeting chat's people from its chat list")?;
     say(&format!(
-        "  the members the app has after the update: {}",
+        "  the members the app has from the list: {}",
         user.members(MEETING)?
     ));
     Ok(())
@@ -1180,32 +1169,75 @@ fn invited_hover(user: &mut User<'_>) -> SandboxResult {
     ensure(sent == 0, || format!("{sent} add sent from Others invited"))
 }
 
-/// Tab moves the focus through People's controls; Shift+Tab back. Each step's shot is kept.
+/// The People pane's headings and rows, as Tab reaches them while a is alone: the account, then ten invited.
+fn people_order() -> Vec<String> {
+    let mut order = [
+        "call-roster-section-in",
+        "call-roster-self",
+        "call-roster-section-others",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    order.extend((0..=INVITEES.len()).map(|index| format!("call-roster-added-{index}")));
+    order
+}
+
+/// The heading or row of People the keyboard is on, as the child names it.
+fn people_focus(user: &mut User<'_>) -> SandboxResult<Option<String>> {
+    let answer = user.ask("people-focus")?;
+    Ok((answer != "none").then_some(answer))
+}
+
+/// The People headings and rows `key` reaches, in order, until `count` of them (a shot of each).
+fn people_stops(user: &mut User<'_>, key: &str, count: usize) -> SandboxResult<Vec<String>> {
+    let mut reached: Vec<String> = Vec::new();
+    for step in 1..=40 {
+        user.press(key)?;
+        if let Some(stop) = people_focus(user)?
+            && reached.last() != Some(&stop)
+        {
+            say(&format!("  {key} {step}: {stop}"));
+            reached.push(stop);
+            if reached.len() <= 4 {
+                user.shot(&format!("keyboard-{}-{}", key.replace('+', "-"), reached.len()))?;
+            }
+        }
+        if reached.len() == count {
+            break;
+        }
+    }
+    Ok(reached)
+}
+
+/// Tab reaches each heading and row of People in the drawn order, Shift+Tab goes back the same way; Enter on a
+/// heading folds its section and Space unfolds it.
 fn keyboard(user: &mut User<'_>) -> SandboxResult {
     user.open_people()?;
     user.focus_other()?;
-    let pane = Rect {
-        y: user.window().y + TOOLBAR_BAND,
-        h: user.window().h - TOOLBAR_BAND,
-        ..user.pane()
-    };
-    let calm = user.screen()?;
-    let mut in_pane = 0;
-    for step in 1..=14 {
-        user.press("tab")?;
-        let now = user.screen_as_is()?;
-        let changed = pixels::changed_pixels(&calm, &now, pane);
-        say(&format!("  Tab {step}: {changed} px changed in People"));
-        if changed > 20 {
-            in_pane += 1;
-            user.shot(&format!("keyboard-tab-{step}"))?;
-        }
-    }
-    user.press("shift+tab")?;
-    user.shot("keyboard-shift-tab")?;
+    user.park()?;
+    let order = people_order();
+    let forward = people_stops(user, "tab", order.len())?;
+    ensure(forward == order, || format!("Tab reached {forward:?}, not {order:?}"))?;
+    let mut back = vec![people_focus(user)?.ok_or("the keyboard left People")?];
+    back.extend(people_stops(user, "shift+tab", order.len() - 1)?);
+    let mut reversed = order.clone();
+    reversed.reverse();
+    ensure(back == reversed, || {
+        format!("Shift+Tab reached {back:?}, not {reversed:?}")
+    })?;
+    // from the first heading, Tab to "Others invited": Enter folds it, Space unfolds it
+    let to_others = people_stops(user, "tab", 2)?;
+    ensure(
+        to_others.last().map(String::as_str) == Some("call-roster-section-others"),
+        || format!("Tab from the first heading reached {to_others:?}"),
+    )?;
+    user.press("enter")?;
+    user.until_rows("Others invited folded", &[1])?;
+    user.shot("keyboard-folded")?;
+    user.press("space")?;
+    user.until_rows("Others invited unfolded", &[1, 10])?;
     user.press("escape")?;
-    say(&format!("  Tab reached People on {in_pane} of 14 steps"));
-    ensure(in_pane > 0, || "Tab never moved the focus into People".to_owned())
+    Ok(())
 }
 
 /// People and the stage alone in Teams Light and Teams Dark.
@@ -1587,11 +1619,34 @@ fn answer(window: WindowHandle<KitRoot>, cx: &mut App) {
                 cx.update(app::quit);
                 return;
             }
-            let reply = cx.update(|cx| on_app(window, verb, cx));
+            let reply = cx.update(|cx| {
+                if verb == "people-focus" {
+                    people_focus_in(cx)
+                } else {
+                    on_app(window, verb, cx)
+                }
+            });
             say(&format!("re {seq} {}", reply.replace('\n', " ")));
         }
     })
     .detach();
+}
+
+/// The People pane's heading or row the keyboard is on in the call window (`none` when on none).
+fn people_focus_in(cx: &mut App) -> String {
+    cx.windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<KitRoot>())
+        .find_map(|window| {
+            window
+                .update(cx, |kit, window, cx| {
+                    let stage = kit.view().clone().downcast::<CallStage>().ok()?;
+                    stage.read(cx).people_focus(window)
+                })
+                .ok()
+                .flatten()
+        })
+        .unwrap_or_else(|| "none".to_owned())
 }
 
 fn on_app(window: WindowHandle<KitRoot>, verb: &str, cx: &mut App) -> String {

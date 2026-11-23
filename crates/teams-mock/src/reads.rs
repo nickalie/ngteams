@@ -274,6 +274,10 @@ pub(crate) fn thread_body(state: &State, conversation: &Conversation) -> Value {
     if meeting.is_string() {
         properties.insert("meeting".to_owned(), meeting.clone());
     }
+    // its thread type too, as the web client's read of a meeting's chat showed it (2026-11-23)
+    if conversation.is_meeting() {
+        properties.insert("threadType".to_owned(), json!("meeting"));
+    }
     let thread_type = &conversation.entry["threadProperties"]["threadType"];
     if conversation.kind == Kind::ReadOnly && thread_type.is_string() {
         properties.insert("threadType".to_owned(), thread_type.clone());

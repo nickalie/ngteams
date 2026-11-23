@@ -324,6 +324,8 @@ pub struct CallStage {
     /// The end closing by itself, while it is due.
     closing: Option<Task<()>>,
     focus: FocusHandle,
+    /// What the keyboard reaches in the People pane, and its folded sections.
+    people_keys: people_pane::PeopleKeys,
     ticking: Option<Task<()>>,
     _waking: Option<Task<()>>,
     _observing: [Subscription; 4],
@@ -391,9 +393,7 @@ impl CallStage {
         } = parts;
         let translation = cx.new(|cx| CaptionTranslation::new(settings.clone(), cx));
         let observing = Self::observing((&calls, &translation, &settings), cx);
-        let feed = calls.read(cx).video().cloned();
-        let waking = feed.as_ref().map(|feed| wake_on_frames(feed, cx));
-        let tiles = feed.map(|feed| Tiles::new(feed, Arc::clone(&trace)));
+        let (waking, tiles) = Self::video_tiles(&calls, &trace, cx);
         // profile changes before the stage asked about anyone change nothing it read
         let seen = shell.as_ref().map_or(0, |shell| shell.models.chats.read(cx).revision());
         let observing_shell = Self::observe_shell(shell.as_ref(), cx);
@@ -453,6 +453,7 @@ impl CallStage {
             end_shown: false,
             closing: None,
             focus: cx.focus_handle(),
+            people_keys: people_pane::PeopleKeys::default(),
             ticking: None,
             _waking: waking,
             _observing: observing,
@@ -461,6 +462,17 @@ impl CallStage {
         stage.read_own_name(cx);
         stage.changed(cx);
         stage
+    }
+
+    /// The call's video tiles, and the wake that draws the window again as their frames come; none without video.
+    fn video_tiles(
+        calls: &Entity<Calls>,
+        trace: &Arc<ViewTrace>,
+        cx: &mut Context<Self>,
+    ) -> (Option<Task<()>>, Option<Tiles>) {
+        let feed = calls.read(cx).video().cloned();
+        let waking = feed.as_ref().map(|feed| wake_on_frames(feed, cx));
+        (waking, feed.map(|feed| Tiles::new(feed, Arc::clone(trace))))
     }
 
     /// Reads the account's own name from its profile, once: People shows it in "You"'s place.
@@ -1034,7 +1046,7 @@ impl CallStage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.reactions.frame = live_reactions::Frame::default();
-        let body = self.body(call, title, palette, cx);
+        let body = self.body(call, title, palette, window, cx);
         if self.reactions.frame.shown && crate::motion::on(cx) {
             // the reactions move on the next frame; none once the last is gone
             window.request_animation_frame();
@@ -1049,12 +1061,13 @@ impl CallStage {
         (live, ended): (Option<&ActiveCall>, Option<&Ended>),
         title: &SharedString,
         palette: Palette,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if let Some(active) = live {
             let stage = self.stage(active, title, palette, cx);
             let stage = self.with_meeting(stage, active, palette, cx);
-            let roster = (self.pane == Pane::People).then(|| self.roster_pane(active, palette, cx));
+            let roster = (self.pane == Pane::People).then(|| self.roster_pane(active, palette, window, cx));
             let chat = self.chat_pane(active, palette, cx);
             let effects = self.effects_pane(active, palette, cx);
             let info = self.meeting_info_pane(active, title, palette, cx);

@@ -2,27 +2,70 @@
 //! copied), who waits in its lobby (Admit all, and Admit or Deny each), and who is in the call (the account first),
 //! each with whether they speak, their microphone muted and their hand raised, the organizer's Mute all beside them;
 //! then in a group call "People added to the chat", in a meeting "Others invited": its chat's members who aren't in
-//! it, in a group call each with Request to join as the pointer is on them (they are called into the call, as an add
-//! is). A meeting's chat members are its invitees: only the roster says who joined.
+//! it, in a group call each with Request to join as the pointer or the keyboard is on them (they are called into the
+//! call, as an add is). A meeting's chat members are its invitees: only the roster says who joined. The keyboard
+//! reaches each section's heading (Enter or Space folds the section) and each row, in the drawn order.
 use super::*;
+use crate::keyboard;
 use teams_core::LobbyPerson;
+
+/// A section of the People pane, which its heading folds and unfolds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Section {
+    Lobby,
+    InCall,
+    Others,
+}
+
+impl Section {
+    /// Its heading's selector, and the key of its focus handle.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Lobby => "call-roster-section-lobby",
+            Self::InCall => "call-roster-section-in",
+            Self::Others => "call-roster-section-others",
+        }
+    }
+}
+
+/// What the keyboard reaches in the People pane, as in Teams: each section's heading (Enter or Space folds it) and each
+/// row, in the order they are drawn.
+#[derive(Default)]
+pub(super) struct PeopleKeys {
+    handles: keyboard::Handles,
+    folded: Vec<Section>,
+}
+
+impl PeopleKeys {
+    fn folded(&self, section: Section) -> bool {
+        self.folded.contains(&section)
+    }
+}
 
 impl CallStage {
     /// The People pane.
-    pub(super) fn roster_pane(&self, active: &ActiveCall, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn roster_pane(
+        &self,
+        active: &ActiveCall,
+        palette: Palette,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let people = self.people.of(active.id);
         let me = self.core.me();
-        let mut rows = vec![self_row(
+        let own = self_row(
             active,
             (self.own_name.clone(), self.faces.picture(me)),
             self.hand_rank(me),
             palette,
-        )];
+        );
+        let mut rows = vec![self.person_stop("call-roster-self", own, palette, cx)];
         if active.people_stand_in() {
             rows.extend(people.iter().enumerate().map(|(index, (mri, name))| {
                 let row = format!("call-roster-{index}");
                 let face = faces::small_face(&self.faces, (&row, mri), name);
-                roster_row(row, (face, name.clone()), Signs::default(), palette)
+                let drawn = roster_row(row.clone(), (face, name.clone()), Signs::default(), palette);
+                self.person_stop(&row, drawn, palette, cx)
             }));
         } else {
             rows.extend(active.view.participants.iter().enumerate().map(|(index, participant)| {
@@ -37,7 +80,8 @@ impl CallStage {
                 };
                 let row = format!("call-roster-{index}");
                 let face = faces::small_face(&self.faces, (&row, &participant.mri), &name);
-                roster_row(row, (face, name), signs, palette)
+                let drawn = roster_row(row.clone(), (face, name), signs, palette);
+                self.person_stop(&row, drawn, palette, cx)
             }));
         }
         rows.extend(
@@ -60,7 +104,11 @@ impl CallStage {
         );
         let lobby = (!active.lobby.is_empty()).then(|| self.lobby_section(&active.lobby, palette, cx));
         let mute_all = self.mute_all_button(active, cx);
-        let added = self.added_section(active, palette, cx);
+        let in_call = self.section_heading(Section::InCall, heading, mute_all, palette, cx);
+        if self.people_keys.folded(Section::InCall) {
+            rows.clear();
+        }
+        let added = self.added_section(active, palette, window, cx);
         let more = self.roster_more(active, cx);
         let close = div().flex().items_center().gap_1().children(more).child(close);
         side_pane("call-roster-pane", "Participants", close, palette)
@@ -73,7 +121,7 @@ impl CallStage {
                     .min_h_0()
                     .overflow_y_scroll()
                     .children(lobby)
-                    .child(section_heading(heading, mute_all, palette))
+                    .child(in_call)
                     .children(rows)
                     .children(added),
             )
@@ -160,8 +208,10 @@ impl CallStage {
         } else {
             "Calling…"
         };
-        div()
-            .debug_selector(move || format!("call-roster-invited-{index}"))
+        let row = format!("call-roster-invited-{index}");
+        let selector = row.clone();
+        let drawn = div()
+            .debug_selector(move || selector)
             .h(px(48.0))
             .px_4()
             .flex()
@@ -184,15 +234,21 @@ impl CallStage {
                     .text_color(rgb(palette.muted_foreground))
                     .child(state),
             )
-            .children(again)
-            .into_any_element()
+            .children(again);
+        self.person_stop(&row, drawn, palette, cx)
     }
 
     /// "People added to the chat (n)" in a group call, "Others invited (n)" in a meeting: its chat's members who aren't
-    /// in it, waiting in its lobby or being called, each with its avatar and name, and in a group call Request to join
-    /// while the pointer is on it (not in the read-only mode). A meeting's has none: the engine can't add into a
-    /// meeting until a capture shows Teams' add (docs/backlog/meeting-add-rings-no-native-client.md).
-    fn added_section(&self, active: &ActiveCall, palette: Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// in it, waiting in its lobby or being called, each with its avatar and name, and in a group call Request to
+    /// join while the pointer or the keyboard is on it (not in the read-only mode). A meeting's has none: the engine
+    /// can't add into a meeting until a capture shows Teams' add (docs/backlog/meeting-add-rings-no-native-client.md).
+    fn added_section(
+        &self,
+        active: &ActiveCall,
+        palette: Palette,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let meeting = active.is_meeting();
         if !controls::group_or_meeting(active)
             || active.status != CallStatus::Connected
@@ -228,33 +284,43 @@ impl CallStage {
         } else {
             format!("People added to the chat ({})", out.len())
         };
+        let folded = self.people_keys.folded(Section::Others);
         let rows: Vec<AnyElement> = out
             .into_iter()
             .enumerate()
-            .map(|(index, (mri, name))| self.added_row(index, (mri, name), !meeting, palette, cx))
+            .filter(|_| !folded)
+            .map(|(index, person)| {
+                // Request to join shows as the pointer or the keyboard is on the row, as Teams shows it
+                let reached = self.hovered_added() == Some(index)
+                    || self
+                        .people_keys
+                        .handles
+                        .get(&added_key(index), cx)
+                        .contains_focused(window, cx);
+                self.added_row(index, person, !meeting && reached, palette, cx)
+            })
             .collect();
+        let heading = self.section_heading(Section::Others, heading, None, palette, cx);
         Some(
             div()
                 .debug_selector(|| "call-roster-added".to_owned())
                 .pt_2()
-                .child(section_heading(heading, None, palette))
+                .child(heading)
                 .children(rows)
                 .into_any_element(),
         )
     }
 
-    /// One of "People added to the chat": their avatar and name, and Request to join while the pointer is on them
-    /// (when `requests`).
+    /// One of "People added to the chat": their avatar and name, and Request to join (when `request`).
     fn added_row(
         &self,
         index: usize,
         (mri, name): (String, SharedString),
-        requests: bool,
+        request: bool,
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let hovered = self.hovered_added() == Some(index);
-        let request = (requests && hovered && !self.core.read_only()).then(|| {
+        let request = (request && !self.core.read_only()).then(|| {
             let ask = Ask::Add {
                 invitee: Mri::new(&mri),
                 name: name.to_string(),
@@ -269,9 +335,11 @@ impl CallStage {
                     .on_click(cx.listener(move |this, _, _, cx| this.ask(ask.clone(), cx))),
             )
         });
-        div()
-            .debug_selector(move || format!("call-roster-added-{index}"))
-            .id(SharedString::from(format!("call-roster-added-{index}")))
+        let row = added_key(index);
+        let selector = row.clone();
+        let drawn = div()
+            .id(SharedString::from(row.clone()))
+            .debug_selector(move || selector)
             .h(px(48.0))
             .px_4()
             .flex()
@@ -293,8 +361,8 @@ impl CallStage {
                     .text_color(rgb(palette.foreground))
                     .child(name),
             )
-            .children(request)
-            .into_any_element()
+            .children(request);
+        self.person_stop(&row, drawn, palette, cx)
     }
 
     /// Copy meeting link put the meeting's link on the clipboard: Share invite says so.
@@ -342,14 +410,17 @@ impl CallStage {
             .into_any_element()
         });
         let heading = format!("Waiting in lobby ({})", waiting.len());
+        let heading = self.section_heading(Section::Lobby, heading, admit_all, palette, cx);
+        let shown = !self.people_keys.folded(Section::Lobby);
         div()
             .debug_selector(|| "call-roster-lobby".to_owned())
             .pb_2()
-            .child(section_heading(heading, admit_all, palette))
+            .child(heading)
             .children(
                 waiting
                     .iter()
                     .enumerate()
+                    .filter(|_| shown)
                     .map(|(index, person)| self.lobby_row(index, person, palette, cx)),
             )
             .into_any_element()
@@ -383,8 +454,10 @@ impl CallStage {
         };
         let buttons =
             (!self.core.read_only()).then(|| div().flex().gap_1().child(decide(false, cx)).child(decide(true, cx)));
-        div()
-            .debug_selector(move || format!("call-roster-waiting-{index}"))
+        let row = format!("call-roster-waiting-{index}");
+        let selector = row.clone();
+        let drawn = div()
+            .debug_selector(move || selector)
             .h(px(44.0))
             .px_4()
             .flex()
@@ -403,9 +476,106 @@ impl CallStage {
                     .text_color(rgb(palette.foreground))
                     .child(name),
             )
-            .children(buttons)
+            .children(buttons);
+        self.person_stop(&row, drawn, palette, cx)
+    }
+
+    /// A row of the People pane as a tab stop keyed by its selector `key`, lit while the keyboard is on it.
+    fn person_stop(&self, key: &str, row: impl Into<Keyed>, palette: Palette, cx: &App) -> AnyElement {
+        let id = SharedString::from(key.to_owned());
+        let row = match row.into() {
+            Keyed::Plain(row) => row.id(id.clone()),
+            Keyed::Stateful(row) => row,
+        };
+        keyboard::stop(id, row, palette)
+            .handle(&self.people_keys.handles.get(key, cx))
             .into_any_element()
     }
+
+    /// A section's heading, as Teams draws it: a chevron and its title, which a click, Enter or Space folds or unfolds;
+    /// an action on its right.
+    fn section_heading(
+        &self,
+        section: Section,
+        text: String,
+        action: Option<AnyElement>,
+        palette: Palette,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let key = section.key();
+        let chevron = if self.people_keys.folded(section) {
+            Glyph::CHEVRON_RIGHT
+        } else {
+            Glyph::CHEVRON_DOWN
+        };
+        let toggle = div()
+            .id(key)
+            .debug_selector(move || key.to_owned())
+            .flex_1()
+            .min_w_0()
+            .h(px(28.0))
+            .px_2()
+            .flex()
+            .items_center()
+            .gap_2()
+            .rounded_md()
+            .cursor_pointer()
+            .text_xs()
+            .font_weight(gpui::FontWeight::SEMIBOLD)
+            .text_color(rgb(palette.muted_foreground))
+            .on_click(cx.listener(move |this, _, _, cx| this.fold_section(section, cx)))
+            .child(chevron.icon().size(px(12.0)))
+            .child(SharedString::from(text));
+        div()
+            .h(px(32.0))
+            .px_2()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .child(keyboard::stop(key, toggle, palette).handle(&self.people_keys.handles.get(key, cx)))
+            .children(action)
+    }
+
+    /// Folds `section` of the People pane, or unfolds it.
+    fn fold_section(&mut self, section: Section, cx: &mut Context<Self>) {
+        let folded = &mut self.people_keys.folded;
+        if let Some(at) = folded.iter().position(|kept| *kept == section) {
+            folded.remove(at);
+        } else {
+            folded.push(section);
+        }
+        cx.notify();
+    }
+
+    /// The key of the People pane's row or heading the keyboard is on, if any.
+    #[must_use]
+    pub fn people_focus(&self, window: &Window) -> Option<String> {
+        self.people_keys.handles.focused(window)
+    }
+}
+
+/// A row for [`CallStage::person_stop`]: one that keeps no state of its own yet, or one with its id (its hover).
+enum Keyed {
+    Plain(gpui::Div),
+    Stateful(gpui::Stateful<gpui::Div>),
+}
+
+impl From<gpui::Div> for Keyed {
+    fn from(row: gpui::Div) -> Self {
+        Self::Plain(row)
+    }
+}
+
+impl From<gpui::Stateful<gpui::Div>> for Keyed {
+    fn from(row: gpui::Stateful<gpui::Div>) -> Self {
+        Self::Stateful(row)
+    }
+}
+
+/// The selector of the row `index` of "People added to the chat" or "Others invited", and its focus key.
+fn added_key(index: usize) -> String {
+    format!("call-roster-added-{index}")
 }
 
 /// What a row of the People pane shows of its person: whether they speak or are muted, where their raised hand
@@ -446,24 +616,6 @@ pub(super) fn side_pane(
                 .child(div().text_lg().font_weight(gpui::FontWeight::SEMIBOLD).child(title))
                 .child(close),
         )
-}
-
-/// A section's heading in the People pane, with an action on its right.
-fn section_heading(text: String, action: Option<AnyElement>, palette: Palette) -> gpui::Div {
-    div()
-        .h(px(32.0))
-        .px_4()
-        .flex()
-        .items_center()
-        .justify_between()
-        .child(
-            div()
-                .text_xs()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(rgb(palette.muted_foreground))
-                .child(SharedString::from(text)),
-        )
-        .children(action)
 }
 
 /// The signs on the right of the row `row`: a raised hand with its place in the line (Teams' "1 ✋" chip, named
@@ -519,7 +671,7 @@ fn roster_row(
     (avatar, name): (gpui_component::avatar::Avatar, SharedString),
     shown: Signs,
     palette: Palette,
-) -> AnyElement {
+) -> gpui::Div {
     let selector = selector.into();
     let shown_signs = signs(&selector, shown, palette);
     div()
@@ -532,7 +684,6 @@ fn roster_row(
         .child(hand_ring(avatar, shown.hand.is_some(), palette))
         .child(name_and_role(name, shown.organizer, palette))
         .child(shown_signs)
-        .into_any_element()
 }
 
 /// A row's avatar, ringed in Teams' raised-hand gold while `raised`.
@@ -577,7 +728,7 @@ fn self_row(
     (name, picture): (Option<SharedString>, Option<&people::Picture>),
     rank: Option<usize>,
     palette: Palette,
-) -> AnyElement {
+) -> gpui::Div {
     let shown = Signs {
         speaking: active.view.speaking && !active.muted,
         muted: active.muted,
@@ -622,5 +773,4 @@ fn self_row(
         .child(hand_ring(mark, shown.hand.is_some(), palette))
         .child(name_and_role(name, shown.organizer, palette))
         .child(signs("call-roster-self", shown, palette))
-        .into_any_element()
 }

@@ -70,6 +70,12 @@ no member count. `GET v1/threads/<id>/consumptionhorizons` gives the members' re
 chat, `GET v1/users/ME/conversations/<id>`, answers 404 until the chat exists, and the client takes a 404 to mean the
 chat is one the user isn't in.
 
+A meeting's chat (`19:meeting_<id>@thread.v2`) is read with the same request. Seen live (2026-11-23, `meeting-steps`):
+as a joined its scheduled meeting, the web client sent `GET v1/threads/<meeting chat>?view=msnp24Equivalent`. The answer
+had `properties.threadType` `meeting`, a `members` array (each also with `meetingRole`) and a `rosterVersion`, as a
+group chat's has. The members are the meeting's invitees. The native client keeps them as it keeps a chat's: on sync,
+when the list shows a newer `rosterVersion`, and when a delivery names a meeting chat that the store does not know.
+
 ### A group chat's reads
 
 Seen live (M1 Task 8, 2026-10-20): the a–b–c group chat, created by a in the web client (`proto-lab run abc-chat`, its

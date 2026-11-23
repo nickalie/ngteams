@@ -1623,7 +1623,7 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
         };
         let added = store.upsert_conversation_at(&row, known_i64(&thread.version))?;
         self.conversation_changed(id, added);
-        if !thread.kind().is_read_only() {
+        if keeps_members(&thread.kind()) {
             self.store_members(store, &thread)?;
         }
         Ok(())
@@ -1706,9 +1706,9 @@ impl<C: Credentials, T: Transport<Error = HttpError>> CatchUp<C, T> {
 
     /// A chat's members, read as a thread when the list's `rosterVersion` is newer than the stored one, or there is
     /// none stored, or the list's can't be read (it may be newer). A list without one keeps the stored members.
-    /// Channels and the other conversations that are no chat keep none.
+    /// Channels and the other conversations that are no chat or meeting chat keep none.
     async fn refresh_members(&self, store: &mut Store, listed: &chat::Conversation) -> Result<(), CatchUpError> {
-        if listed.is_read_only() {
+        if !keeps_members(&listed.kind()) {
             return Ok(());
         }
         let newer = match (store.roster_version(&listed.id)?, listed.roster_version()) {
@@ -1783,6 +1783,12 @@ fn not_found(error: &CatchUpError) -> bool {
 /// push brought ([`Store::set_topic`]).
 fn thread_version(listed: &chat::Conversation) -> Option<i64> {
     known_i64(&listed.thread_version())
+}
+
+/// Whether the store keeps the members of a conversation of `kind`: a 1:1 or group chat's, and a meeting chat's (its
+/// invitees, whom the call window lists under "Others invited").
+fn keeps_members(kind: &chat::ConversationKind) -> bool {
+    !kind.is_read_only() || store_kind(kind).is_meeting()
 }
 
 /// A conversation of the list as the store keeps it, at `version`.

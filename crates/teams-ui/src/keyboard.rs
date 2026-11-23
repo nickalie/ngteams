@@ -156,6 +156,15 @@ impl Handles {
             .or_insert_with(|| cx.focus_handle())
             .clone()
     }
+
+    /// The key of the kept handle that has the focus, if any.
+    pub fn focused(&self, window: &Window) -> Option<String> {
+        self.0
+            .borrow()
+            .iter()
+            .find(|(_, handle)| handle.is_focused(window))
+            .map(|(key, _)| key.clone())
+    }
 }
 
 /// Where an arrow key moves in a group of `count` from `at` (Left and Up back, Right and Down on, wrapping; Home and End
