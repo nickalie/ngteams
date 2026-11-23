@@ -26,7 +26,7 @@ fn fake_summary() -> String {
             {"text": "Bo checked playback.", "at": "0:15"},
             {"text": LONG_POINT, "at": "0:18"}
         ]}],
-        "next_steps": [{"owner": "Ada Lab", "text": "Look at search next.", "at": "0:20"}],
+        "next_steps": [{"owner": "Ada Lab", "text": LONG_POINT, "at": "0:20"}],
         "questions": []
     });
     serde_json::to_string(&summary.to_string()).unwrap()
@@ -178,6 +178,28 @@ fn a_long_point_wraps(cx: &mut VisualTestContext) {
     );
     assert!(words.right() <= row.right(), "the words in its row: {row:?} {words:?}");
     assert!(text.size.height > gpui::px(30.0), "more than one line: {text:?}");
+    a_long_next_step_wraps_beside_its_owner(cx);
+}
+
+/// A long next step stays on its owner's line: its text starts beside the owner and wraps in the rest of its words.
+fn a_long_next_step_wraps_beside_its_owner(cx: &mut VisualTestContext) {
+    let words = cx.debug_bounds("recap-summary-at-2-words").unwrap();
+    let owner = cx.debug_bounds("recap-summary-at-2-owner").unwrap();
+    let text = cx.debug_bounds("recap-summary-at-2-text").unwrap();
+    assert_eq!(
+        text.top(),
+        owner.top(),
+        "the text on the owner's line: {owner:?} {text:?}"
+    );
+    assert!(
+        text.left() > owner.right(),
+        "the text after the owner: {owner:?} {text:?}"
+    );
+    assert!(
+        text.right() <= words.right(),
+        "the text in its words: {words:?} {text:?}"
+    );
+    assert!(text.size.height > gpui::px(30.0), "more than one line: {text:?}");
 }
 
 /// The summary shown: copied as Markdown, then sent to the meeting's chat only once its preview's Send is clicked.
@@ -189,7 +211,7 @@ fn copied_and_sent(rig: &Rig, cx: &mut VisualTestContext) {
         .unwrap();
     assert!(copied.contains("## Key takeaways\n\n- The video plays and the transcript follows it."));
     assert!(copied.contains("- Bo checked playback.\n"), "{copied}");
-    assert!(copied.contains("- **Ada Lab**: Look at search next.\n"), "{copied}");
+    assert!(copied.contains(&format!("- **Ada Lab**: {LONG_POINT}\n")), "{copied}");
     // Send to chat: previewed, sent only on Send
     click(cx, "recap-summary-send");
     assert!(drawn(cx, "recap-summary-preview"));
@@ -206,7 +228,7 @@ fn copied_and_sent(rig: &Rig, cx: &mut VisualTestContext) {
         "{}",
         sent[0].1
     );
-    assert!(sent[0].1.contains("<strong>Ada Lab</strong>: Look at search next."));
+    assert!(sent[0].1.contains(&format!("<strong>Ada Lab</strong>: {LONG_POINT}")));
     for shown in [copied.as_str(), sent[0].1.as_str()] {
         assert!(!shown.contains("0:15") && !shown.contains("0:20"), "a time in {shown}");
     }

@@ -786,14 +786,23 @@ fn row(words: gpui::Div, palette: Palette) -> gpui::Div {
 /// A point's words: its owner, if any, then its text, each as wide as it is drawn; `moment` names them for tests.
 fn words(owner: Option<&str>, text: &str, moment: Option<usize>) -> gpui::Div {
     let mut text = div().min_w_0().child(text.to_owned());
+    let mut owner = owner.map(|owner| {
+        div()
+            .flex_none()
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(format!("{owner}:"))
+    });
+    if owner.is_some() {
+        // A zero basis keeps a long text on the owner's line, wrapped in the width left beside it.
+        text = text.flex_1().flex_basis(px(0.0));
+    }
     let mut words = div().flex().flex_wrap().gap_x_1();
     if let Some(index) = moment {
         text = text.debug_selector(move || format!("recap-summary-at-{index}-text"));
+        owner = owner.map(|owner| owner.debug_selector(move || format!("recap-summary-at-{index}-owner")));
         words = words.debug_selector(move || format!("recap-summary-at-{index}-words"));
     }
-    words
-        .children(owner.map(|owner| div().font_weight(FontWeight::SEMIBOLD).child(format!("{owner}:"))))
-        .child(text)
+    words.children(owner).child(text)
 }
 
 /// A point: a bullet, then its words; a point with a moment plays the recording from there when clicked.
