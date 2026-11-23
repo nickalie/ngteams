@@ -8,7 +8,9 @@
 #                  filters (0003), so the account picture's chooser shows the picture files; a file manager's drag
 #                  put in mouse input mode (0004), so a drop after typed keys reaches the element under the pointer;
 #                  right-to-left and mixed text by the Unicode Bidirectional Algorithm, wrapped in text order and drawn
-#                  and hit-tested in visual order per row, with a paragraph direction in the text style (0005)
+#                  and hit-tested in visual order per row, with a paragraph direction in the text style (0005);
+#                  a keystroke event that tells if it is a held key's repeat (0006), so the chat list drops the
+#                  repeats of a held Enter or Space
 #   gpui-pre-wgpu  the renderer's side: dmabufs imported through wgpu-hal Vulkan and copied on the GPU, CPU pixels
 #                  uploaded into a texture kept per surface, by damaged rectangle (0001); and, our own, a weight or
 #                  style the family has no face of drawn anyway: a variable face at that weight, else synthesized (0002)

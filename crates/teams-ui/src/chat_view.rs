@@ -1252,8 +1252,8 @@ pub struct ChatView {
     seeking: Option<((i64, String), u32)>,
     /// Where a click on a reply's quote is going ([`ChatView::go_to_quoted`]).
     quote: QuoteJump,
-    /// The models' changes, the compose box's events, the window's activation, the presence model's changes and the
-    /// keys that bring Shift+Tab into the list.
+    /// The models' changes, the compose box's events, the window's activation, the presence model's changes, the
+    /// keys that bring Shift+Tab into the list, and the held Enter or Space that the list drops.
     _subscriptions: [Subscription; 6],
 }
 
@@ -1577,8 +1577,8 @@ impl ChatView {
         list
     }
 
-    /// What the view follows: the models (its chat's changes, typing, names, presence), its compose box's events and
-    /// the window's activation.
+    /// What the view follows: the models (its chat's changes, typing, names, presence), its compose box's events, the
+    /// window's activation, and the keystrokes that bring Shift+Tab into the list or that are a held Enter or Space.
     fn subscriptions(
         models: &Models,
         compose: &Entity<Compose>,
@@ -1619,7 +1619,7 @@ impl ChatView {
         let presence = cx.observe(&models.presence, |_: &mut Self, _, cx| cx.notify());
         let keys = cx.observe_keystrokes(|this: &mut Self, event, window, cx| this.keys_to_the_list(event, window, cx));
         let this = cx.weak_entity();
-        // before the bindings: a held key's repeats reach no binding of the list or of a control in it
+        // before the bindings: a held Enter's or Space's repeats reach no binding of the list or of a control in it
         let held = cx.intercept_keystrokes(move |event, window, cx| {
             let drop = this.read_with(cx, |this, cx| this.held_press(event, window, cx));
             if matches!(drop, Ok(true)) {
@@ -2597,22 +2597,19 @@ impl ChatView {
         })
     }
 
-    /// Escape in the list: on a control in the list, the list takes the keys back; else what is open closes first (the
-    /// quick reactions, a confirmation), then the selection, then the focus goes back to the compose box.
+    /// Escape in the list: what is open closes (the quick reactions, a confirmation); on a control in the list, the
+    /// list also takes the keys back; else, with nothing open, the selection goes, then the focus goes to the box.
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.more = None;
-        if self.on_a_control_in_the_list(window, cx) {
-            self.reactors.unfocus();
-            self.focus_messages(window, cx);
-            return;
-        }
         let open = self.reacting.take().is_some()
             | self.deleting.take().is_some()
             | self.resending.take().is_some()
             | self.options.take().is_some()
             | self.reactors.unfocus()
             | self.text_selection.clear();
-        if open {
+        if self.on_a_control_in_the_list(window, cx) {
+            self.focus_messages(window, cx);
+        } else if open {
             cx.notify();
         } else if self.selected.is_some() {
             self.select(None, cx);
@@ -2693,15 +2690,14 @@ impl ChatView {
     }
 
     /// A held Enter or Space in the list: only a new push acts (it may have moved the keys to a control, which its
-    /// repeats must not press), except in a card's text field, where a held key types again.
+    /// repeats must not press), except in a card's text field, where a held key types again (not on a time's chevron).
     fn held_press(&self, event: &KeystrokeEvent, window: &Window, cx: &App) -> bool {
+        let in_context = |name| event.context_stack.iter().any(|context| context.contains(name));
+        let in_text = in_context(crate::card_view::TEXT_CONTEXT) && !in_context(crate::time_picker::CHOICE_CONTEXT);
         event.is_held
             && matches!(event.keystroke.key.as_str(), "enter" | "space")
             && self.focus.handle.contains_focused(window, cx)
-            && !event
-                .context_stack
-                .iter()
-                .any(|context| context.contains(crate::card_view::TEXT_CONTEXT))
+            && !in_text
     }
 
     fn on_a_control_in_the_list(&self, window: &Window, cx: &App) -> bool {

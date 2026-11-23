@@ -9,6 +9,9 @@ use gpui_component::{Disableable as _, Sizable as _};
 
 use crate::icons::{Glyph, icon_button, selected_by};
 
+/// The key context of the chevron and its list of half hours: keys there are not the field's text.
+pub(crate) const CHOICE_CONTEXT: &str = "TimeChoice";
+
 /// How tall the list of half hours grows before it scrolls, px.
 const LIST_HEIGHT: f32 = 240.0;
 
@@ -47,31 +50,34 @@ pub(crate) fn time_field(
     let times = format!("{selector}-times");
     selected_by(
         selector.to_owned(),
-        TextInput::new(state).disabled(off).suffix(selected_by(
-            times.clone(),
-            icon_button(SharedString::from(times), Glyph::CHEVRON_DOWN, "Choose a time")
-                .ghost()
-                .xsmall()
-                .disabled(off)
-                .dropdown_menu(move |mut menu, _, _| {
-                    for half in 0..48_u32 {
-                        let shown = clock(half * 30);
-                        let (target, words, on_pick) = (target.clone(), shown.clone(), on_pick.clone());
-                        let row = format!("{rows}-{}", shown.replace([' ', ':'], ""));
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                let row = row.clone();
-                                div().debug_selector(move || row.clone()).child(shown.clone())
-                            })
-                            .on_click(move |_, window, cx| {
-                                target.update(cx, |state, cx| state.set_value(words.clone(), window, cx));
-                                on_pick(cx);
-                            }),
-                        );
-                    }
-                    menu.scrollable(true).max_h(px(LIST_HEIGHT))
-                }),
-        )),
+        TextInput::new(state).disabled(off).suffix(
+            selected_by(
+                times.clone(),
+                icon_button(SharedString::from(times), Glyph::CHEVRON_DOWN, "Choose a time")
+                    .ghost()
+                    .xsmall()
+                    .disabled(off)
+                    .dropdown_menu(move |mut menu, _, _| {
+                        for half in 0..48_u32 {
+                            let shown = clock(half * 30);
+                            let (target, words, on_pick) = (target.clone(), shown.clone(), on_pick.clone());
+                            let row = format!("{rows}-{}", shown.replace([' ', ':'], ""));
+                            menu = menu.item(
+                                PopupMenuItem::element(move |_, _| {
+                                    let row = row.clone();
+                                    div().debug_selector(move || row.clone()).child(shown.clone())
+                                })
+                                .on_click(move |_, window, cx| {
+                                    target.update(cx, |state, cx| state.set_value(words.clone(), window, cx));
+                                    on_pick(cx);
+                                }),
+                            );
+                        }
+                        menu.scrollable(true).max_h(px(LIST_HEIGHT))
+                    }),
+            )
+            .key_context(CHOICE_CONTEXT),
+        ),
     )
 }
 

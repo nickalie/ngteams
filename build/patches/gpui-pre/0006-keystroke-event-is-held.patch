@@ -1,0 +1,103 @@
+A keystroke's observers and interceptors are told if it is a held key's repeat: `KeystrokeEvent::is_held`, from the
+key-down's `is_held`. A view can then drop a held key's repeats before they reach a binding, so that one push of a
+key acts once (ngteams' chat list: a held Enter or Space presses no control twice). A replayed pending keystroke
+reports `false`.
+
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -3487,6 +3487,9 @@ pub struct KeystrokeEvent {
+ 
+     /// The context stack at the time
+     pub context_stack: Vec<KeyContext>,
++
++    /// Whether the keystroke is a key-repeat of a held key
++    pub is_held: bool,
+ }
+ 
+ struct NullHttpClient;
+--- a/src/window.rs
++++ b/src/window.rs
+@@ -2563,6 +2563,7 @@ impl Window {
+         input_preference: InputPreference,
+         action: Option<&dyn Action>,
+         context_stack: Vec<KeyContext>,
++        is_held: bool,
+         cx: &mut App,
+     ) {
+         cx.keystroke_observers.clone().retain(&(), move |callback| {
+@@ -2572,6 +2573,7 @@ impl Window {
+                     input_preference,
+                     action: action.map(|action| action.boxed_clone()),
+                     context_stack: context_stack.clone(),
++                    is_held,
+                 },
+                 self,
+                 cx,
+@@ -2584,6 +2586,7 @@ impl Window {
+         keystroke: &Keystroke,
+         input_preference: InputPreference,
+         context_stack: Vec<KeyContext>,
++        is_held: bool,
+         cx: &mut App,
+     ) {
+         cx.keystroke_interceptors
+@@ -2595,6 +2598,7 @@ impl Window {
+                         input_preference,
+                         action: None,
+                         context_stack: context_stack.clone(),
++                        is_held,
+                     },
+                     self,
+                     cx,
+@@ -6098,12 +6102,16 @@ impl Window {
+         };
+ 
+         let input_preference = self.input_preference(event, cx);
++        let is_held = event
++            .downcast_ref::<KeyDownEvent>()
++            .is_some_and(|key_down| key_down.is_held);
+ 
+         cx.propagate_event = true;
+         self.dispatch_keystroke_interceptors(
+             &keystroke,
+             input_preference,
+             self.context_stack(),
++            is_held,
+             cx,
+         );
+         if !cx.propagate_event {
+@@ -6183,6 +6191,7 @@ impl Window {
+                         input_preference,
+                         Some(binding.action.as_ref()),
+                         match_result.context_stack,
++                        is_held,
+                         cx,
+                     );
+                     self.pending_input_changed(cx);
+@@ -6260,7 +6269,17 @@ impl Window {
+         }
+ 
+         if let Some(keystroke) = recognized_keystroke {
+-            self.dispatch_keystroke_observers(keystroke, input_preference, None, context_stack, cx);
++            let is_held = event
++                .downcast_ref::<KeyDownEvent>()
++                .is_some_and(|key_down| key_down.is_held);
++            self.dispatch_keystroke_observers(
++                keystroke,
++                input_preference,
++                None,
++                context_stack,
++                is_held,
++                cx,
++            );
+         }
+     }
+ 
+@@ -6467,6 +6486,7 @@ impl Window {
+                         InputPreference::KeyBindings,
+                         Some(binding.action.as_ref()),
+                         Vec::default(),
++                        false,
+                         cx,
+                     );
+                     continue 'replay;

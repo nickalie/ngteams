@@ -1333,3 +1333,80 @@ fn escape_in_the_card_s_input_with_a_pill_under_the_keys_goes_to_the_list_at_onc
     press(cx, "escape");
     assert!(list_focused(&view, cx), "one Escape gives the keys back to the list");
 }
+
+#[test]
+fn escape_in_the_card_s_input_closes_the_delete_s_confirmation() {
+    let rig = Rig::start();
+    let mut messages = many(2);
+    messages.insert(1, card_message("700"));
+    let mut mine = many(1).remove(0);
+    mine.id = "701".to_owned();
+    mine.sender = Some(common::LAB_A.to_owned());
+    mine.arrival_time += 40_000;
+    messages.push(mine);
+    rig.core.messages.lock().unwrap().insert(AB.to_owned(), messages);
+    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
+    let (view, _, cx) = rooted_view(&rig, Settings::default(), 900.0);
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            view.act(teams_ui::chat_view::MessageAction::Delete, "701", window, cx);
+        });
+    });
+    draw(cx);
+    assert_eq!(
+        view.read_with(cx, |view, _| view.deleting().map(str::to_owned))
+            .as_deref(),
+        Some("701")
+    );
+    click(cx, "card-700-c0-in-said");
+    assert!(!list_focused(&view, cx), "the click puts the keys in the card's input");
+    press(cx, "escape");
+    assert!(list_focused(&view, cx), "Escape gives the keys back to the list");
+    assert!(
+        view.read_with(cx, |view, _| view.deleting().is_none()),
+        "and closes the confirmation"
+    );
+    press(cx, "enter");
+    assert!(
+        !rig.core
+            .actions
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|action| matches!(action, teams_core::Action::Delete { .. })),
+        "the next Enter deletes nothing"
+    );
+}
+
+#[test]
+fn enter_held_after_a_time_is_chosen_does_not_open_the_times_again() {
+    let rig = Rig::start();
+    let card = card_message_of(
+        "700",
+        &serde_json::json!({
+            "type": "AdaptiveCard",
+            "body": [{"type": "Input.Time", "id": "at"}],
+            "actions": [{"type": "Action.Submit", "title": "Send"}]
+        }),
+    );
+    let (view, cx) = card_selected(&rig, card);
+    press(cx, "enter");
+    assert!(!list_focused(&view, cx), "Enter goes to the card's time");
+    press(cx, "tab");
+    press(cx, "enter");
+    assert!(
+        shown(cx, "card-700-c0-in-at-times-1200AM"),
+        "Enter on the chevron opens the times"
+    );
+    press(cx, "down");
+    press(cx, "enter");
+    assert!(
+        !shown(cx, "card-700-c0-in-at-times-1200AM"),
+        "Enter chooses a time and closes the times"
+    );
+    hold(cx, "enter");
+    assert!(
+        !shown(cx, "card-700-c0-in-at-times-1200AM"),
+        "the held Enter's repeats do not open the times again"
+    );
+}
