@@ -2306,3 +2306,81 @@ fn enter_held_after_a_time_is_clicked_open_does_not_send_the_draft() {
         "the held Enter's repeats do not send the draft"
     );
 }
+
+#[test]
+fn escape_in_more_reactions_keeps_a_message_s_menu_open() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    press(cx, "a");
+    open_the_card_s_menu_by_a_click(&view, cx);
+    press(cx, "5");
+    draw(cx);
+    assert!(
+        view.read_with(cx, |view, _| view.more_reactions().is_some()),
+        "more reactions open"
+    );
+    press(cx, "escape");
+    assert!(
+        view.read_with(cx, |view, _| view.more_reactions().is_none()),
+        "Escape closes more reactions"
+    );
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_some()),
+        "one Escape closes only more reactions"
+    );
+}
+
+#[test]
+fn escape_held_after_shift_is_let_go_keeps_a_message_s_menu_open() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    press(cx, "shift-f10");
+    draw(cx);
+    press(cx, "shift-escape");
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_some()),
+        "Shift+Escape keeps the message's menu"
+    );
+    hold(cx, "escape");
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_some()),
+        "the plain repeats of that Escape keep the menu"
+    );
+    press(cx, "escape");
+    assert!(view.read_with(cx, |view, _| view.options().is_none()));
+}
+
+#[test]
+fn escape_in_a_message_s_menu_gives_the_keys_to_the_list_when_the_card_s_input_scrolled_out() {
+    let rig = Rig::start();
+    let mut messages = many(60);
+    messages.insert(59, card_message("700"));
+    rig.core.messages.lock().unwrap().insert(AB.to_owned(), messages);
+    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
+    let (view, _, cx) = rooted_view(&rig, Settings::default(), 900.0);
+    press(cx, "shift-tab");
+    press(cx, "up");
+    press(cx, "up");
+    press(cx, "enter");
+    assert!(!list_focused(&view, cx), "Enter goes to the card's input");
+    press(cx, "shift-f10");
+    let list = cx.debug_bounds("chat-messages").expect("the message list is drawn");
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: list.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(3_000.0))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    draw(cx);
+    assert!(cx.debug_bounds("message-700").is_none(), "the card scrolled out");
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_some()),
+        "the menu stays open"
+    );
+    press(cx, "escape");
+    assert!(view.read_with(cx, |view, _| view.options().is_none()));
+    assert!(
+        list_focused(&view, cx),
+        "the list takes the keys, not the input drawn no more"
+    );
+}

@@ -160,7 +160,7 @@ impl ChatView {
             self.toggle_options(&message, cx);
         }
         self.side_list = None;
-        self.menu_keys.back.keep(window, cx);
+        self.menu_keys.back.keep_in(&self.focus.handle, window, cx);
         self.menu_keys.keyed = true;
         self.menu_keys.due = Some(Due::Menu);
         cx.notify();
@@ -228,7 +228,7 @@ impl ChatView {
         }
         self.toggle_options(message, cx);
         if self.options.is_some() {
-            self.menu_keys.back.keep(window, cx);
+            self.menu_keys.back.keep_in(&self.focus.handle, window, cx);
         }
     }
 

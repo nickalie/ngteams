@@ -210,18 +210,36 @@ pub fn move_within(root: &FocusHandle, forward: bool, window: &mut Window, cx: &
 
 /// Where the focus was when a menu opened, given back when it closes.
 #[derive(Clone, Default)]
-pub struct Return(Rc<RefCell<Option<FocusHandle>>>);
+pub struct Return(Rc<RefCell<Option<Kept>>>);
+
+struct Kept {
+    handle: FocusHandle,
+    /// The area the handle was in when kept, which takes the focus when the handle is drawn in it no more.
+    area: Option<FocusHandle>,
+}
 
 impl Return {
     /// Keeps where the focus is now.
     pub fn keep(&self, window: &Window, cx: &App) {
-        *self.0.borrow_mut() = window.focused(cx);
+        *self.0.borrow_mut() = window.focused(cx).map(|handle| Kept { handle, area: None });
+    }
+
+    /// Keeps where the focus is now; when that is in `area` and is drawn there no more when given back (a row
+    /// scrolled out of a list), `area` takes the focus.
+    pub fn keep_in(&self, area: &FocusHandle, window: &Window, cx: &App) {
+        *self.0.borrow_mut() = window.focused(cx).map(|handle| Kept {
+            area: area.contains(&handle, window).then(|| area.clone()),
+            handle,
+        });
     }
 
     /// Gives the focus back to where it was kept, if anywhere.
     pub fn give_back(&self, window: &mut Window, cx: &mut App) {
-        if let Some(handle) = self.0.borrow_mut().take() {
-            handle.focus(window, cx);
+        let kept = self.0.borrow_mut().take();
+        let Some(Kept { handle, area }) = kept else { return };
+        match area {
+            Some(area) if !area.contains(&handle, window) => area.focus(window, cx),
+            _ => handle.focus(window, cx),
         }
     }
 }
