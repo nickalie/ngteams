@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use teams_ui::local_ai::{Backend, Tools};
+use teams_ui::recap_view::PLAY_FROM_HERE;
 
 use super::*;
 
@@ -125,10 +126,35 @@ fn the_ai_summary_is_made_on_this_computer_played_from_copied_and_sent_after_a_p
     assert!(drawn(cx, "recap-summary-copy"));
 }
 
-/// No time shows at the first point with a moment: its row is the whole width, only its bullet beside its words.
+/// No time shows at the first point with a moment: its row is the whole width, only its bullet beside its words, its
+/// text as wide as its own words drawn, and its tooltip without one.
 fn no_time_beside_the_first_point(cx: &mut VisualTestContext) {
     let row = cx.debug_bounds("recap-summary-at-0").unwrap();
     let words = cx.debug_bounds("recap-summary-at-0-words").unwrap();
+    let text = cx.debug_bounds("recap-summary-at-0-text").unwrap();
+    let drawn = cx.update(|window, _| {
+        let words = "Bo checked playback.";
+        let run = gpui::TextRun {
+            len: words.len(),
+            font: gpui::font(teams_ui::theme::SYSTEM_FONT),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        window
+            .text_system()
+            .shape_line(words.into(), gpui::px(14.0), &[run], None)
+            .width
+    });
+    assert!(
+        (text.size.width - drawn).abs() < gpui::px(1.0),
+        "only its words: {text:?} {drawn:?}"
+    );
+    assert!(
+        !PLAY_FROM_HERE.chars().any(|character| character.is_ascii_digit()),
+        "{PLAY_FROM_HERE}"
+    );
     assert!(row.size.width > gpui::px(200.0), "{row:?}");
     assert_eq!(words.right(), row.right(), "nothing after the words: {row:?} {words:?}");
     assert!(

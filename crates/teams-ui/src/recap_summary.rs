@@ -401,13 +401,44 @@ fn line(text: &str) -> String {
     kept
 }
 
-/// `text` without a leading `[time]`: the time of a point shows nowhere.
+/// `text` without a leading `[time]` or `[time–time]`: the time of a point shows nowhere.
 fn untimed(text: &str) -> &str {
     let rest = text.trim_start();
     rest.strip_prefix('[')
         .and_then(|inner| inner.split_once(']'))
-        .filter(|(stamp, _)| read_stamp(&Value::from(*stamp)).is_some())
+        .filter(|(times, _)| times.split(['-', '–']).all(is_stamp))
         .map_or(text, |(_, words)| words)
+}
+
+/// Whether `text` is a time exactly as a line writes it (`m:ss`, `h:mm:ss`), so that a ratio such as `16:9` is not.
+fn is_stamp(text: &str) -> bool {
+    let text = text.trim();
+    let parts: Vec<&str> = text.split(':').collect();
+    let digits = |part: &&str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    (2..=3).contains(&parts.len())
+        && parts.iter().all(digits)
+        && parts[1..].iter().all(|part| part.len() == 2)
+        && read_stamp(&Value::from(text)).is_some()
+}
+
+/// A summary an earlier build kept, read from its file's `bytes`, with no time in its words.
+fn read_kept(bytes: &[u8]) -> Option<Made> {
+    let mut made: Made = serde_json::from_slice(bytes).ok()?;
+    let summary = &mut made.summary;
+    let words = std::iter::once(&mut summary.purpose)
+        .chain(summary.takeaways.iter_mut())
+        .chain(summary.topics.iter_mut().flat_map(|topic| {
+            std::iter::once(&mut topic.title).chain(topic.points.iter_mut().map(|point| &mut point.text))
+        }))
+        .chain(summary.next_steps.iter_mut().map(|step| &mut step.text))
+        .chain(summary.questions.iter_mut().map(|point| &mut point.text));
+    for text in words {
+        let kept = untimed(text).trim();
+        if kept.len() < text.len() {
+            *text = kept.to_owned();
+        }
+    }
+    Some(made)
 }
 
 /// The summary as Markdown, for the clipboard: the meeting's name and day, then each section.
@@ -594,7 +625,7 @@ pub fn cached(key: &str, dir: Option<&Path>, cx: &mut App) -> Option<Made> {
     if file.metadata().ok()?.len() > MAX_FILE {
         return None;
     }
-    let made: Made = serde_json::from_slice(&std::fs::read(file).ok()?).ok()?;
+    let made = read_kept(&std::fs::read(file).ok()?)?;
     cx.default_global::<SummaryCache>()
         .memory
         .insert(key.to_owned(), made.clone());

@@ -41,7 +41,7 @@ pub const SENT: &str = "Sent the summary to the meeting chat.";
 /// The note once the summary was copied.
 pub const COPIED: &str = "Copied the summary.";
 /// The tooltip of a summary point that plays the recording from its moment.
-const PLAY_FROM_HERE: &str = "Play from here";
+pub const PLAY_FROM_HERE: &str = "Play from here";
 
 impl RecapView {
     /// The shown part's summary, kept by its recording (made when first asked for, followed while the view lives).
@@ -717,30 +717,20 @@ fn sections(
                     .into_any_element(),
             );
             for Point { text, at } in points {
-                rows.push(bullet(*at, &mut moments, div().child(text.clone()), palette, cx));
+                rows.push(bullet(*at, &mut moments, None, text, palette, cx));
             }
         }
     }
     if !summary.next_steps.is_empty() {
         rows.push(heading("Next steps", "next-steps"));
         for Step { owner, text, at } in &summary.next_steps {
-            let words = div()
-                .flex()
-                .flex_wrap()
-                .gap_x_1()
-                .children(
-                    owner
-                        .as_ref()
-                        .map(|owner| div().font_weight(FontWeight::SEMIBOLD).child(format!("{owner}:"))),
-                )
-                .child(text.clone());
-            rows.push(bullet(*at, &mut moments, words, palette, cx));
+            rows.push(bullet(*at, &mut moments, owner.as_deref(), text, palette, cx));
         }
     }
     if !summary.questions.is_empty() {
         rows.push(heading("Questions raised", "questions"));
         for Point { text, at } in &summary.questions {
-            rows.push(bullet(*at, &mut moments, div().child(text.clone()), palette, cx));
+            rows.push(bullet(*at, &mut moments, None, text, palette, cx));
         }
     }
     if count > 1 {
@@ -793,20 +783,34 @@ fn row(words: gpui::Div, palette: Palette) -> gpui::Div {
         .child(words.flex_1().min_w_0())
 }
 
+/// A point's words: its owner, if any, then its text, each as wide as it is drawn; `moment` names them for tests.
+fn words(owner: Option<&str>, text: &str, moment: Option<usize>) -> gpui::Div {
+    let mut text = div().child(text.to_owned());
+    let mut words = div().flex().flex_wrap().gap_x_1();
+    if let Some(index) = moment {
+        text = text.debug_selector(move || format!("recap-summary-at-{index}-text"));
+        words = words.debug_selector(move || format!("recap-summary-at-{index}-words"));
+    }
+    words
+        .children(owner.map(|owner| div().font_weight(FontWeight::SEMIBOLD).child(format!("{owner}:"))))
+        .child(text)
+}
+
 /// A point: a bullet, then its words; a point with a moment plays the recording from there when clicked.
 fn bullet(
     at: Option<u64>,
     moments: &mut usize,
-    words: gpui::Div,
+    owner: Option<&str>,
+    text: &str,
     palette: Palette,
     cx: &mut Context<RecapView>,
 ) -> AnyElement {
     let Some(at) = at else {
-        return row(words, palette).into_any_element();
+        return row(words(owner, text, None), palette).into_any_element();
     };
     let index = *moments;
     *moments += 1;
-    let words = words.debug_selector(move || format!("recap-summary-at-{index}-words"));
+    let words = words(owner, text, Some(index));
     row(words, palette)
         .id(SharedString::from(format!("recap-summary-at-{index}")))
         .debug_selector(move || format!("recap-summary-at-{index}"))

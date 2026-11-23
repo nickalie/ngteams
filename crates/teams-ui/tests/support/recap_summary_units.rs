@@ -138,6 +138,30 @@ fn a_time_the_tool_writes_in_the_text_is_dropped() {
         "[Draft] plan the launch.",
         "only a time is dropped"
     );
+    for (text, kept) in [
+        ("[16:9] screens stay.", "[16:9] screens stay."),
+        ("[1:5] stays.", "[1:5] stays."),
+        ("[1:15–2:20] Bo talks.", "Bo talks."),
+        ("[1:15-2:20] Bo talks.", "Bo talks."),
+        ("[1:02:03] Bo talks.", "Bo talks."),
+    ] {
+        let answer = json!({"purpose": text}).to_string();
+        assert_eq!(parse(&answer, 0).unwrap().purpose, kept, "{text}");
+    }
+}
+
+#[test]
+fn a_summary_kept_by_an_earlier_build_shows_no_time() {
+    let mut earlier = made();
+    earlier.summary.topics[0].points[0].text = "[1:15] Bo sends the report.".into();
+    earlier.summary.next_steps[0].text = " [1:15] Send the report.".into();
+    earlier.summary.takeaways[0] = "[16:9] screens stay.".into();
+    let read = read_kept(&serde_json::to_vec(&earlier).unwrap()).unwrap();
+    assert_eq!(read.summary.topics[0].points[0].text, "Bo sends the report.");
+    assert_eq!(read.summary.next_steps[0].text, "Send the report.");
+    assert_eq!(read.summary.takeaways[0], "[16:9] screens stay.");
+    assert_eq!(read_kept(&serde_json::to_vec(&made()).unwrap()).unwrap(), made());
+    assert_eq!(read_kept(b"not json"), None);
 }
 
 fn made() -> Made {

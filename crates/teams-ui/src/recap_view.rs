@@ -62,7 +62,7 @@ mod summary;
 mod transcribed;
 
 pub use local::{DELETE_ASK, DELETED, SAVED_NOTICE};
-pub use summary::{COPIED, EMPTY_TRANSCRIPT, NO_TEAMS_TRANSCRIPT, NO_TRANSCRIPT, SENT, SUMMARY_FAILED};
+pub use summary::{COPIED, EMPTY_TRANSCRIPT, NO_TEAMS_TRANSCRIPT, NO_TRANSCRIPT, PLAY_FROM_HERE, SENT, SUMMARY_FAILED};
 pub use transcribed::TRANSCRIBED_ONLY;
 
 use crate::bridge::Core;
