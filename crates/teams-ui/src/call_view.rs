@@ -211,10 +211,13 @@ pub(crate) fn names_in_call(active: &ActiveCall, people: &[(String, SharedString
         .map(|participant| {
             participant.name.clone().map_or_else(
                 || {
-                    people.iter().find(|(mri, _)| *mri == participant.mri).map_or_else(
-                        || SharedString::from(chat_list::unnamed(&participant.mri)),
-                        |(_, name)| name.clone(),
-                    )
+                    people
+                        .iter()
+                        .find(|(mri, _)| mri.eq_ignore_ascii_case(&participant.mri))
+                        .map_or_else(
+                            || SharedString::from(chat_list::unnamed(&participant.mri)),
+                            |(_, name)| name.clone(),
+                        )
                 },
                 SharedString::from,
             )

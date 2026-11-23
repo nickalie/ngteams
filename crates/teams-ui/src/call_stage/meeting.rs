@@ -102,18 +102,11 @@ pub fn attendance_list(people: &[(String, chrono::DateTime<chrono::Local>)]) -> 
 /// The name Teams gives the attendance list's file.
 pub const ATTENDANCE_FILE: &str = "meetingAttendanceList.csv";
 
-/// Whether `active` is a meeting's call: one gone into as a meeting, or one in a meeting's chat (an invitation into
-/// it).
-#[must_use]
-pub fn is_meeting(active: &ActiveCall) -> bool {
-    active.is_meeting()
-}
-
 impl CallStage {
     /// Whether the call takes the meeting's tools (Timer, Controls): a group call's or a meeting's that is up, never
     /// the test call's or in the read-only mode.
     pub(super) fn takes_meeting_tools(&self, active: &ActiveCall) -> bool {
-        let group = is_meeting(active)
+        let group = active.is_meeting()
             || active.view.participants.len() > 1
             || active
                 .chat
@@ -705,7 +698,7 @@ impl CallStage {
         };
         let group = self.takes_meeting_tools(&active);
         MoreTools {
-            meeting_info: is_meeting(&active) && active.status == CallStatus::Connected,
+            meeting_info: active.is_meeting() && active.status == CallStatus::Connected,
             timer: group,
             call_health: active.status == CallStatus::Connected,
             mute_notifications: group,
@@ -747,7 +740,7 @@ impl CallStage {
     /// People's "…" in a meeting: Download attendance list, and for its organizer Lock the meeting (Unlock the
     /// meeting while it is locked).
     pub(super) fn roster_more(&self, active: &ActiveCall, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !is_meeting(active) || active.status != CallStatus::Connected {
+        if !active.is_meeting() || active.status != CallStatus::Connected {
             return None;
         }
         let stage = cx.weak_entity();

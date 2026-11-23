@@ -1,9 +1,10 @@
 //! Who is in a call, as its roster updates tell it (`docs/protocol/calling.md`, "The roster"): each `rosterUpdate`
 //! delivered at the conversation's callback lists the participants that changed, each with a version that counts up;
 //! the call's participants are the ones whose latest entry is active and in the call, in the order they were first
-//! seen. The account's own entry is left out. A meeting's roster also lists who waits in its lobby (an endpoint with a
-//! `lobby` rather than a `call`): told apart, the account's own wait too. Nothing is sent for it: the roster is read only to show who is in the
-//! call, whose video goes where, and who speaks (independent of call admission).
+//! seen. The account's own entry is left out, and so is a service's (a nameless app that only listens). A meeting's
+//! roster also lists who waits in its lobby (an endpoint with a `lobby` rather than a `call`): told apart, the
+//! account's own wait too. Nothing is sent for it: the roster is read only to show who is in the call, whose video goes
+//! where, and who speaks (independent of call admission).
 
 use teams_proto::Mri;
 
@@ -123,7 +124,7 @@ impl Roster {
         let waiting: Vec<Participant> = self
             .entries
             .iter()
-            .filter(|entry| entry.in_lobby && !is_me(&entry.mri, me))
+            .filter(|entry| entry.in_lobby && !entry.service && !is_me(&entry.mri, me))
             .map(participant)
             .collect();
         let own = self.entries.iter().any(|entry| entry.in_lobby && is_me(&entry.mri, me));
@@ -152,7 +153,7 @@ impl Roster {
         let now: Vec<Participant> = self
             .entries
             .iter()
-            .filter(|entry| entry.active && !is_me(&entry.mri, me))
+            .filter(|entry| entry.active && !entry.service && !is_me(&entry.mri, me))
             .map(participant)
             .collect();
         if now == self.told {
@@ -164,7 +165,7 @@ impl Roster {
 }
 
 /// Whether `mri` is the account `me`: an MRI's object id is a GUID, which a roster may write in another case.
-fn is_me(mri: &Mri, me: &Mri) -> bool {
+pub(crate) fn is_me(mri: &Mri, me: &Mri) -> bool {
     mri.as_str().eq_ignore_ascii_case(me.as_str())
 }
 

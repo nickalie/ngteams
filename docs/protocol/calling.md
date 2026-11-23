@@ -349,7 +349,7 @@ that made it work, and `abc-call-mixed`'s captures, where the lab browser's data
   "In this meeting (n)" holds only who joined, and alone the account sees its own picture and "Waiting for others to
   join..." (seen 2026-11-23, `meeting-steps`: a alone in its scheduled meeting with b invited; in 2026-11-06's capture
   of a alone the roster listed only a's own entry). The native client lists the invitees without their answer (the
-  store keeps no member's `rsvpStatus`). The account's own entry is one per MRI, whatever endpoints it joined from;
+  store keeps no member's `rsvpStatus`) and without Request to join (no capture of a meeting's add yet). The account's own entry is one per MRI, whatever endpoints it joined from;
   the native client tells it by MRI with the object id's case ignored. A nameless app participant (`28:`) whose main
   audio only receives is a service (a recorder, captioner or transcriber, from a region the caption code may not
   list) and is no person.

@@ -385,6 +385,8 @@ pub(crate) struct RosterEntry {
     pub(crate) organizer: bool,
     /// When its endpoint in the call joined (`endpointJoinTime`).
     pub(crate) joined: Option<String>,
+    /// A service rather than a person ([`is_service`]): kept so that a newer entry still replaces it, never told.
+    pub(crate) service: bool,
 }
 
 /// The roster update `body`'s participants, each where it reads (an MRI and a version); `None` unless it is one.
@@ -470,9 +472,6 @@ fn roster_entry(mri: &str, entry: &Value) -> Option<RosterEntry> {
         .pointer("/details/displayName")
         .and_then(Value::as_str)
         .filter(|name| !name.is_empty());
-    if is_service(mri, name, stream("main-audio"), video.is_some_and(sends)) {
-        return None;
-    }
     let server_mute = server_mute(stream("main-audio"), endpoints);
     let state_active = entry.get("state").and_then(Value::as_str) == Some("active");
     let waiting = endpoints.is_some_and(|endpoints| {
@@ -514,6 +513,7 @@ fn roster_entry(mri: &str, entry: &Value) -> Option<RosterEntry> {
                 .find_map(|endpoint| endpoint.get("endpointJoinTime")?.as_str())
                 .map(str::to_owned)
         }),
+        service: is_service(mri, name, stream("main-audio"), video.is_some_and(sends)),
     })
 }
 

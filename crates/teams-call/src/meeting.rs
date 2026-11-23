@@ -179,7 +179,10 @@ impl Meeting {
     /// Takes the account's own entry of a roster update (`entries`, `me` the account): whether it is an attendee and
     /// whether the organizer muted it; whether the state changed.
     pub(crate) fn own(&mut self, entries: &[crate::read::RosterEntry], me: &Mri) -> bool {
-        let Some(entry) = entries.iter().find(|entry| &entry.mri == me && entry.active) else {
+        let Some(entry) = entries
+            .iter()
+            .find(|entry| crate::roster::is_me(&entry.mri, me) && entry.active)
+        else {
             return false;
         };
         if self.own_version.is_some_and(|told| told >= entry.version) {

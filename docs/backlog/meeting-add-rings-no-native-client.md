@@ -11,3 +11,8 @@ only the `202` of the host's add for this reason.
 To do: capture what Teams sends when a host adds someone to a meeting (the invitation shape, `meetingInfo`, the
 thread id). Make the server send that shape, and make the client's tracker and machine offer it as a ring into the
 meeting. Then add the ring and the answer to the e2e test.
+
+The native client's People pane also lists a meeting's invitees under "Others invited" without Request to join,
+because `Calling::add_person` (`crates/teams-core/src/calling/people.rs`) finds no group chat or far end for a meeting
+and refuses the add (`NotNow`). Once the add is captured and built, give those rows Request to join again
+(`added_row` in `crates/teams-ui/src/call_stage/people_pane.rs`), as browser Teams shows it.

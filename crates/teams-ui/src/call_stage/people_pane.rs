@@ -2,8 +2,8 @@
 //! copied), who waits in its lobby (Admit all, and Admit or Deny each), and who is in the call (the account first),
 //! each with whether they speak, their microphone muted and their hand raised, the organizer's Mute all beside them;
 //! then in a group call "People added to the chat", in a meeting "Others invited": its chat's members who aren't in
-//! it, each with Request to join as the pointer is on them (they are called into the call, as an add is). A meeting's
-//! chat members are its invitees: only the roster says who joined.
+//! it, in a group call each with Request to join as the pointer is on them (they are called into the call, as an add
+//! is). A meeting's chat members are its invitees: only the roster says who joined.
 use super::*;
 use teams_core::LobbyPerson;
 
@@ -47,7 +47,7 @@ impl CallStage {
                 .enumerate()
                 .map(|(index, invited)| self.invited_row(index, invited, palette, cx)),
         );
-        let heading = if active.kind == CallKind::Meeting {
+        let heading = if active.is_meeting() {
             format!("In this meeting ({})", rows.len())
         } else {
             format!("Currently in this call ({})", rows.len())
@@ -189,10 +189,11 @@ impl CallStage {
     }
 
     /// "People added to the chat (n)" in a group call, "Others invited (n)" in a meeting: its chat's members who aren't
-    /// in it, waiting in its lobby or being called, each with its avatar and name, and Request to join while the
-    /// pointer is on it (not in the read-only mode).
+    /// in it, waiting in its lobby or being called, each with its avatar and name, and in a group call Request to join
+    /// while the pointer is on it (not in the read-only mode). A meeting's has none: the engine can't add into a
+    /// meeting until a capture shows Teams' add (docs/backlog/meeting-add-rings-no-native-client.md).
     fn added_section(&self, active: &ActiveCall, palette: Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let meeting = meeting::is_meeting(active);
+        let meeting = active.is_meeting();
         if !controls::group_or_meeting(active)
             || active.status != CallStatus::Connected
             || (!meeting && active.view.participants.is_empty())
@@ -205,16 +206,17 @@ impl CallStage {
             .of(active.id)
             .iter()
             .filter(|(mri, _)| {
-                // an app in the chat is nobody to ask in
-                *mri != me
-                    && !Mri::new(mri.as_str()).is_bot()
+                // an app in the chat is nobody to ask in; a roster may write an MRI's GUID in another case
+                let same = |other: &str| other.eq_ignore_ascii_case(mri);
+                !same(&me)
+                    && !crate::bot_face::is_bot(mri)
                     && !active
                         .view
                         .participants
                         .iter()
-                        .any(|participant| participant.mri == *mri)
-                    && !active.invited.iter().any(|invited| invited.mri.as_str() == mri)
-                    && !active.lobby.iter().any(|person| person.mri.as_str() == mri)
+                        .any(|participant| same(&participant.mri))
+                    && !active.invited.iter().any(|invited| same(invited.mri.as_str()))
+                    && !active.lobby.iter().any(|person| same(person.mri.as_str()))
             })
             .cloned()
             .collect();
@@ -229,7 +231,7 @@ impl CallStage {
         let rows: Vec<AnyElement> = out
             .into_iter()
             .enumerate()
-            .map(|(index, (mri, name))| self.added_row(index, (mri, name), palette, cx))
+            .map(|(index, (mri, name))| self.added_row(index, (mri, name), !meeting, palette, cx))
             .collect();
         Some(
             div()
@@ -241,16 +243,18 @@ impl CallStage {
         )
     }
 
-    /// One of "People added to the chat": their avatar and name, and Request to join while the pointer is on them.
+    /// One of "People added to the chat": their avatar and name, and Request to join while the pointer is on them
+    /// (when `requests`).
     fn added_row(
         &self,
         index: usize,
         (mri, name): (String, SharedString),
+        requests: bool,
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let hovered = self.hovered_added() == Some(index);
-        let request = (hovered && !self.core.read_only()).then(|| {
+        let request = (requests && hovered && !self.core.read_only()).then(|| {
             let ask = Ask::Add {
                 invitee: Mri::new(&mri),
                 name: name.to_string(),

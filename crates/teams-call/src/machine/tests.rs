@@ -1113,6 +1113,49 @@ fn a_meeting_the_account_is_alone_in_tells_nobody_else_in_it() {
         .collect();
     assert_eq!(mris, [B]);
     assert!(participants[0].video_on);
+    // the organizer makes the account an attendee: the meeting state reads it from the upper-case entry too
+    let demoted = json!({"participants": {own: {"version": 5, "state": "active", "meetingRole": "attendee",
+        "details": {"displayName": "Lab A"}, "endpoints": {"e1": meeting_endpoint("sendrecv", "sendrecv")}}}});
+    calls.on_delivery(&delivery(&roster_path, &demoted), Observed::Nothing, now);
+    let told = events(&effects(&mut calls));
+    assert!(
+        told.iter().any(|event| matches!(event,
+            CallEvent::Meeting { call: of, state } if *of == call && state.attendee
+        )),
+        "{told:#?}"
+    );
+}
+
+#[test]
+fn a_nameless_app_first_seen_connecting_leaves_the_participants_once_it_only_listens() {
+    let now = Instant::now();
+    let bot = "28:00000000-0000-4000-8000-0000000000f9";
+    let connecting = json!({"type": "Delta", "participants": {
+        bot: {"version": 1, "state": "active", "endpoints": {"bot": {"call": {}}}},
+    }});
+    let (mut calls, call, told) = meeting_answered(connecting, now);
+    assert!(
+        told.iter().any(|event| matches!(event,
+            CallEvent::Participants { participants, .. } if participants.len() == 1
+        )),
+        "{told:#?}"
+    );
+    let roster_path = calls
+        .call
+        .as_ref()
+        .and_then(|call| call.path_of(Kind::Conversation, "rosterUpdate"))
+        .unwrap()
+        .to_owned();
+    let listening = json!({"participants": {bot: {"version": 2, "state": "active",
+        "endpoints": {"bot": meeting_endpoint("recvonly", "recvonly")}}}});
+    calls.on_delivery(&delivery(&roster_path, &listening), Observed::Nothing, now);
+    let after = events(&effects(&mut calls));
+    assert!(
+        after.iter().any(|event| matches!(event,
+            CallEvent::Participants { call: of, participants } if *of == call && participants.is_empty()
+        )),
+        "{after:#?}"
+    );
 }
 
 /// An invitation to `callee` from a in the group chat `chat`, its conversation `Conversation<n>`.

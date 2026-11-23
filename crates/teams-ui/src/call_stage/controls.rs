@@ -581,7 +581,7 @@ fn separator(palette: Palette) -> AnyElement {
 /// A group call's or a meeting's (not a 1:1 call's, nor the test call's): where Teams names the organizer and offers
 /// its controls.
 pub(super) fn group_or_meeting(active: &ActiveCall) -> bool {
-    let group = meeting::is_meeting(active)
+    let group = active.is_meeting()
         || active.view.participants.len() > 1
         || active
             .chat

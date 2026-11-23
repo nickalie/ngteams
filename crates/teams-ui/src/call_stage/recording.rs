@@ -298,7 +298,7 @@ impl CallStage {
         };
         let Some(active) = self.live(cx) else { return };
         let title = self.title(&active, cx);
-        let (title, organizer) = if meeting::is_meeting(&active) {
+        let (title, organizer) = if active.is_meeting() {
             (
                 title.to_string(),
                 active.organizer.then(|| self.own_name.clone()).flatten(),

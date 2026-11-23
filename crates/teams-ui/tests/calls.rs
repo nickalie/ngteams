@@ -2877,16 +2877,11 @@ fn a_meeting_nobody_else_joined_shows_its_invitees_as_invited_not_in_it() {
     assert!(!drawn(stage, "call-roster-1"));
     assert!(drawn(stage, "call-roster-added-0"));
     assert!(!drawn(stage, "call-roster-added-1"), "b joined");
+    // the engine can't add into a meeting yet: no Request to join that only fails
     let row = stage.debug_bounds("call-roster-added-0").unwrap();
     stage.simulate_mouse_move(row.center(), None, Modifiers::none());
-    click(stage, "call-roster-request-0");
-    assert_eq!(
-        actions(&rig).last(),
-        Some(&CallAction::Add {
-            call: call(1),
-            invitee: Mri::new(LAB_C),
-        })
-    );
+    draw(stage);
+    assert!(!drawn(stage, "call-roster-request-0"));
 }
 
 #[test]
