@@ -285,3 +285,86 @@ fn a_matte_source_counts_for_each_layer_it_cuts() {
     assert_eq!(checked(&cut(50)), Ok(()));
     assert_eq!(checked(&cut(200)), Err(Skip::Unsupported));
 }
+
+fn fan_out(times: usize, inner: &Value, filler: usize) -> Value {
+    let mut assets: Vec<Value> = (0..filler)
+        .map(|index| asset(&format!("f{index}"), &json!([])))
+        .collect();
+    assets.push(asset("q", &Value::Array(vec![precomp("e"); times])));
+    assets.push(asset("e", &json!([inner])));
+    animation(&Value::Array(vec![precomp("q"); times]), &Value::Array(assets))
+}
+
+fn path_of(vertices: usize) -> Value {
+    let points = Value::Array(vec![json!([0, 0]); vertices]);
+    json!({ "c": true, "v": points, "i": points, "o": points })
+}
+
+#[test]
+fn each_mask_counts_as_mask_work() {
+    let masked = |count: usize| {
+        let mut layer = null_layer(1, None);
+        layer["masksProperties"] = Value::Array(vec![json!({ "mode": "a", "pt": { "a": 0, "k": path_of(1) } }); count]);
+        animation(&json!([layer]), &json!([]))
+    };
+    assert_eq!(checked(&masked(3)), Ok(()));
+    assert_eq!(checked(&masked(300)), Err(Skip::Unsupported));
+    let mut once = null_layer(1, None);
+    once["masksProperties"] = json!([{ "mode": "a", "pt": { "a": 0, "k": path_of(1) } }]);
+    assert_eq!(checked(&fan_out(20, &once, 0)), Err(Skip::Unsupported));
+}
+
+#[test]
+fn the_animation_holds_at_most_max_layers_assets_and_each_lookup_counts() {
+    let empty = |count: usize| Value::Array((0..count).map(|index| asset(&index.to_string(), &json!([]))).collect());
+    assert_eq!(checked(&animation(&json!([]), &empty(MAX_LAYERS))), Ok(()));
+    assert_eq!(
+        checked(&animation(&json!([]), &empty(MAX_LAYERS + 1))),
+        Err(Skip::Unsupported)
+    );
+    let inner = null_layer(1, None);
+    assert_eq!(checked(&fan_out(200, &inner, 0)), Ok(()));
+    assert_eq!(checked(&fan_out(200, &inner, MAX_LAYERS - 2)), Err(Skip::Unsupported));
+    let missing = animation(&Value::Array(vec![precomp("missing"); MAX_LAYERS]), &empty(MAX_LAYERS));
+    assert_eq!(checked(&missing), Ok(()));
+}
+
+#[test]
+fn each_path_vertex_counts_as_work() {
+    let shape =
+        |vertices: usize| shape_layer(&json!([{ "ty": "sh", "nm": "p", "ks": { "a": 0, "k": path_of(vertices) } }]));
+    assert_eq!(checked(&fan_out(100, &shape(10), 0)), Ok(()));
+    assert_eq!(checked(&fan_out(100, &shape(100), 0)), Err(Skip::Unsupported));
+    let keyframed = shape_layer(&json!([{ "ty": "sh", "nm": "p", "ks": { "a": 1, "k": [
+        { "t": 0, "s": [path_of(1)] },
+        { "t": 30, "s": [path_of(100)] },
+    ] } }]));
+    assert_eq!(checked(&fan_out(100, &keyframed, 0)), Err(Skip::Unsupported));
+}
+
+#[test]
+fn a_value_out_of_f32_or_not_a_number_has_no_bound() {
+    let eased = |from: f64, to: f64, y: f64| {
+        json!({ "a": 1, "k": [
+            { "t": 0, "s": [from], "o": { "x": [0.5], "y": [y] }, "i": { "x": [0.5], "y": [1] } },
+            { "t": 30, "s": [to] },
+        ] })
+    };
+    let star = |points: Value| {
+        let star = json!({
+            "ty": "sr", "nm": "star", "sy": 1, "pt": points,
+            "p": { "a": 0, "k": [0, 0] }, "r": { "a": 0, "k": 0 },
+            "or": { "a": 0, "k": 10 }, "os": { "a": 0, "k": 0 },
+            "ir": { "a": 0, "k": 5 }, "is": { "a": 0, "k": 0 },
+        });
+        animation(&json!([shape_layer(&json!([star]))]), &json!([]))
+    };
+    assert_eq!(checked(&star(eased(0.0, 0.0, 1.0))), Ok(()));
+    assert_eq!(checked(&star(eased(0.0, 0.0, 1e308))), Err(Skip::Unsupported));
+    let offset = |offset: Value| {
+        let repeater = json!({ "ty": "rp", "nm": "repeater", "c": { "a": 0, "k": 1 }, "o": offset, "m": 1 });
+        animation(&json!([shape_layer(&json!([ellipse(), repeater]))]), &json!([]))
+    };
+    assert_eq!(checked(&offset(eased(0.0, 1e-37, 1e30))), Ok(()));
+    assert_eq!(checked(&offset(eased(0.0, 1e-37, 1e39))), Err(Skip::Unsupported));
+}
