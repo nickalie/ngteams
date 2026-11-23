@@ -2682,6 +2682,37 @@ fn an_answered_invitation_into_a_meeting_s_chat_offers_rejoin_never_call_back() 
     no_name_in(&written);
 }
 
+#[test]
+fn an_invitation_into_a_chat_the_list_has_as_a_meeting_s_never_offers_call_back() {
+    let rig = calling();
+    rig.core
+        .conversations
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .find(|chat| chat.id == TRIO)
+        .unwrap()
+        .kind = ConversationKind::Meeting;
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    let namer: teams_ui::call_window::AccountNamer =
+        std::rc::Rc::new(move |_: &str, chat: &str, cx: &gpui::App| shell.read(cx).list().read(cx).row(chat).cloned());
+    rig.cx
+        .update(|cx| windows.update(cx, |windows, _| windows.set_namer(namer)));
+    registered(&rig);
+    rig.send(Event::IncomingCall(invitation(4, Some(CALLER_NAME), Some(TRIO))));
+    click(cx, "call-answer");
+    status(&rig, 4, CallStatus::Connected);
+    let window = stage(&rig, &windows);
+    status(&rig, 4, CallStatus::Ended(hung_up_by(LAB_B, CALLER_NAME)));
+    assert!(drawn(window, "call-end"));
+    assert!(!drawn(window, "call-end-call-back"), "its invitees are never rung");
+    window.simulate_keystrokes("ctrl-shift-c");
+    window.run_until_parked();
+    assert!(asked(&rig, |action| matches!(action, CallAction::Call { .. })).is_empty());
+}
+
 // --- a meeting's pre-join ---
 
 const MEETING_CHAT: &str = "19:meeting_MadeUpMeeting0001@thread.v2";

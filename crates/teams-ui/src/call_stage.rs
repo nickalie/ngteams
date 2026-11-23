@@ -497,6 +497,12 @@ impl CallStage {
 
     /// The list's name of group chat `chat`, when its row is named by people's names or a topic: an unnamed one leaves
     /// the call its participants' names.
+    /// Whether the chat list has `chat` as a meeting's chat, though its id does not say so (the shell's rule).
+    fn listed_as_meeting(&self, chat: Option<&str>, cx: &App) -> bool {
+        chat.and_then(|chat| self.namer.as_ref().and_then(|namer| namer(chat, cx)))
+            .is_some_and(|row| row.kind == RowKind::Meeting)
+    }
+
     fn chat_name(&self, chat: &str, cx: &App) -> Option<SharedString> {
         let row = self.namer.as_ref().and_then(|namer| namer(chat, cx))?;
         row.named.then_some(row.name)
@@ -784,7 +790,7 @@ impl CallStage {
                 return None;
             }
         }
-        if ended.is_meeting() {
+        if ended.is_meeting() || self.listed_as_meeting(ended.chat.as_deref(), cx) {
             return None;
         }
         let chat = ended.call_back_chat(self.core.me())?;
