@@ -35,9 +35,12 @@ work, a keyframe one for each of its numbers (at least one), a static value one 
 surface of a track matte (two for the matted layer, one for its matte source) is 1000, a Simple Choker 1000 for each
 pixel of its window (a radius of 1 is nine pixels) in place of its 1000, each dash that a dashed stroke can draw 10,
 and each 100 assets the renderer looks through for a precomposition one. Only the first visible stroke of a shape list
-strokes it and the groups in it that have no visible stroke of their own. The dashes of a path are the longest it can
-be (its size, radii and roundness, or its control polygon) times the dash pairs over the shortest period that the
-dash and gap values can ease to. A layer also counts the transforms of its parents. Each precomposition, matte and copy counts each
+strokes it and the groups in it that have no visible stroke of their own. A gradient stroke that the renderer cannot
+decode (too few colour numbers) leaves the stroke of the list around it in use, so a gradient stroke counts the larger
+of its own dashes and that stroke's. The dashes of a path are the longest it can be (its size, radii and roundness,
+or the control polygon of its static shape or of its keyframe ends) times the dash pairs over the shortest period that
+the dash and gap values can ease to, plus one dash for each dash and gap entry, because the renderer walks the whole
+list on each path. A layer also counts the transforms of its parents. Each precomposition, matte and copy counts each
 time it is drawn. A number that is not finite as a 32-bit float has no bound.
 
 ## A pack from its link: the Bot API

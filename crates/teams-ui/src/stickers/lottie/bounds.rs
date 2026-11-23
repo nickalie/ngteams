@@ -17,7 +17,7 @@
 //! value, path vertices and polystar points (two each), the entries of a dash list, the transforms of a layer's
 //! ancestors, [`MASK_WORK`] for each mask, each layer with effects, each effect and each canvas-sized surface of a
 //! track matte, [`MASK_WORK`] for each pixel of a choke's window in place of the choke's pass, [`DASH_WORK`] for each
-//! dash a dashed stroke can draw (the longest each path can be times the dash pairs over the shortest period) and one
+//! dash a dashed stroke can draw (the longest each path can be times the dash pairs over the shortest period, and each entry of its list for each path) and one
 //! for each [`SCANS_PER_WORK`] assets looked through, with each precomposition, matte and copy counted. Values are
 //! bounded as the renderer reads them, in `f32`: a number that is not finite there has no bound.
 
@@ -145,7 +145,8 @@ impl<'a> Walk<'a> {
         let mut each = Vec::with_capacity(layers.len());
         let mut depth = 0;
         for layer in layers {
-            let mut work = 1.0 + own(layer) + ancestors(layer, layers, &positions) + shapes(&layer.shapes, 0.0)?;
+            let mut work =
+                1.0 + own(layer) + ancestors(layer, layers, &positions) + shapes(&layer.shapes, Dash::default())?;
             if layer.layer_type == LayerType::PRECOMP
                 && let Some(id) = layer.ref_id.as_deref()
             {
@@ -316,9 +317,27 @@ fn dash_entries(item: &ShapeItem) -> Option<&[Value]> {
     item.extra.get("d").and_then(Value::as_array).map(Vec::as_slice)
 }
 
-/// How many dashes a stroke draws for each unit of path length, 0 when it draws none. `tiny-skia` draws the length
-/// times the dash pairs over the period; the renderer doubles an odd list, which keeps that ratio.
-fn dashing(stroke: &ShapeItem) -> f64 {
+/// The dashes of a stroke: `tiny-skia` draws the length of each path times the dash pairs over the period, and walks
+/// the whole list on each path, even where it is longer than the path.
+#[derive(Clone, Copy, Default)]
+struct Dash {
+    /// The dashes for each unit of path length, 0 when the stroke draws none. The renderer doubles an odd list,
+    /// which keeps this ratio.
+    rate: f64,
+    /// The dashes and gaps of the list.
+    entries: f64,
+}
+
+impl Dash {
+    fn max(self, other: Self) -> Self {
+        Self {
+            rate: self.rate.max(other.rate),
+            entries: self.entries.max(other.entries),
+        }
+    }
+}
+
+fn dashing(stroke: &ShapeItem) -> Dash {
     let lengths: Vec<&Value> = dash_entries(stroke)
         .unwrap_or_default()
         .iter()
@@ -326,10 +345,14 @@ fn dashing(stroke: &ShapeItem) -> f64 {
         .map(|entry| entry.get("v").and_then(|value| value.get("k")).unwrap_or(&Value::Null))
         .collect();
     if lengths.iter().all(|k| reach(k) <= f64::from(f32::EPSILON)) {
-        return 0.0;
+        return Dash::default();
     }
     let period: f64 = lengths.iter().map(|k| least(k).max(0.0)).sum();
-    count(lengths.len()) / (2.0 * period)
+    let entries = count(lengths.len());
+    Dash {
+        rate: entries / (2.0 * period),
+        entries,
+    }
 }
 
 /// The longest path a shape item makes: a dashed stroke lays its dashes along it.
@@ -365,11 +388,20 @@ fn polygons(k: &Value) -> f64 {
     }
 }
 
-fn drawn(value: &Value) -> Vec<f64> {
-    match value {
-        Value::Object(fields) if fields.contains_key("v") => vec![polygon(fields)],
-        Value::Object(fields) => fields.values().flat_map(drawn).collect(),
-        Value::Array(items) => items.iter().flat_map(drawn).collect(),
+/// The control polygons of a path value where the renderer reads them: a static shape, or each keyframe's ends.
+fn drawn(k: &Value) -> Vec<f64> {
+    match k {
+        Value::Object(shape) => vec![polygon(shape)],
+        Value::Array(keyframes) => keyframes
+            .iter()
+            .flat_map(|keyframe| ["s", "e"].map(|key| keyframe.get(key)))
+            .flatten()
+            .flat_map(|end| match end {
+                Value::Object(shape) => vec![polygon(shape)],
+                Value::Array(shapes) => shapes.iter().filter_map(Value::as_object).map(polygon).collect(),
+                _ => Vec::new(),
+            })
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -444,18 +476,25 @@ fn nested(value: &Value) -> usize {
 
 /// The shapes and points `items` draw: a repeater repeats what comes before it in its list, so each one counts for
 /// all of them. The first visible stroke of a list strokes each path of it and of the groups with no visible stroke
-/// of their own, so a dashed one counts the dashes of each, `dashes` for each unit of length.
-fn shapes(items: &[ShapeItem], dashes: f64) -> Result<f64, Skip> {
+/// of their own, so a dashed one counts the dashes of each and its walk of the list. A gradient the renderer cannot
+/// decode leaves the stroke of the list around it, so a `gs` keeps that stroke's dashes when they are more.
+fn shapes(items: &[ShapeItem], dashes: Dash) -> Result<f64, Skip> {
     let dashes = items
         .iter()
         .find(|item| !item.hidden && matches!(item.item_type.as_str(), "st" | "gs"))
-        .map_or(dashes, dashing);
+        .map_or(dashes, |stroke| {
+            if stroke.item_type == "gs" {
+                dashing(stroke).max(dashes)
+            } else {
+                dashing(stroke)
+            }
+        });
     let mut work = 0.0;
     let mut repeat = 1.0;
     for item in items {
         work += 1.0 + animated(item) + shapes(&item.items, dashes)?;
-        if dashes > 0.0 && matches!(item.item_type.as_str(), "rc" | "el" | "sh" | "sr") {
-            work += DASH_WORK * dashes * outline(item);
+        if dashes.rate > 0.0 && matches!(item.item_type.as_str(), "rc" | "el" | "sh" | "sr") {
+            work += DASH_WORK * dashes.rate.mul_add(outline(item), dashes.entries);
         }
         match item.item_type.as_str() {
             "rp" => repeat *= copies(item)?,

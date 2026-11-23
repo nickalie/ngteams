@@ -492,17 +492,62 @@ fn a_polystar_and_a_path_count_their_length_for_dashes() {
     assert_eq!(checked(&star(1000.0, 0.0)), Err(Skip::Unsupported));
     assert_eq!(checked(&star(10.0, 100_000.0)), Err(Skip::Unsupported));
     let square = |side: f64| json!({ "c": true, "v": [[0, 0], [side, 0], [side, side], [0, side]], "i": [], "o": [] });
-    let path = |shape: Value| {
-        let path = json!({ "ty": "sh", "nm": "p", "ks": { "a": 0, "k": shape } });
+    let path = |ks: Value| {
+        let path = json!({ "ty": "sh", "nm": "p", "ks": ks });
         animation(&json!([shape_layer(&json!([path, stroke(&dash_of(0.1))]))]), &json!([]))
     };
-    assert_eq!(checked(&path(square(100.0))), Ok(()));
-    assert_eq!(checked(&path(square(10_000.0))), Err(Skip::Unsupported));
+    let still = |side: f64| json!({ "a": 0, "k": square(side) });
+    assert_eq!(checked(&path(still(100.0))), Ok(()));
+    assert_eq!(checked(&path(still(10_000.0))), Err(Skip::Unsupported));
     let moving = keyframed(
         2,
         &|at| json!({ "t": at, "s": [square(if at == 0 { 100.0 } else { 10_000.0 })] }),
     );
     assert_eq!(checked(&path(moving)), Err(Skip::Unsupported));
+    let keyed = keyframed(2, &|at| json!({ "t": at, "v": 0, "s": [square(10_000.0)] }));
+    assert_eq!(checked(&path(keyed)), Err(Skip::Unsupported));
+    let eased = |y: f64| {
+        keyframed(2, &|at| {
+            let mut keyframe = json!({ "t": at, "s": [square(100.0)] });
+            if at == 0 {
+                keyframe["o"] = json!({ "x": [0.5], "y": [y] });
+                keyframe["i"] = json!({ "x": [0.5], "y": [1] });
+            }
+            keyframe
+        })
+    };
+    assert_eq!(checked(&path(eased(0.0))), Ok(()));
+    assert_eq!(checked(&path(eased(-1000.0))), Err(Skip::Unsupported));
+}
+
+#[test]
+fn a_gradient_stroke_keeps_the_dashes_of_the_stroke_around_it() {
+    let inside = |first: Value| {
+        let group = json!({ "ty": "gr", "nm": "group", "it": [first, ellipse_of(600.0)] });
+        animation(
+            &json!([shape_layer(&json!([group, stroke(&dash_of(0.001))]))]),
+            &json!([]),
+        )
+    };
+    assert_eq!(checked(&inside(stroke(&json!([])))), Ok(()));
+    let short = json!({
+        "ty": "gs", "nm": "gradient", "t": 1, "g": { "p": 2, "k": { "a": 0, "k": [0, 1, 1, 1] } },
+        "s": { "a": 0, "k": [0, 0] }, "e": { "a": 0, "k": [1, 1] }, "w": { "a": 0, "k": 1 },
+    });
+    assert_eq!(checked(&inside(short)), Err(Skip::Unsupported));
+}
+
+#[test]
+fn a_dashed_path_counts_each_entry_of_its_list() {
+    let mut entries = vec![json!({ "n": "d", "v": { "a": 0, "k": 0 } }); 40];
+    entries.push(json!({ "n": "g", "v": { "a": 0, "k": 1_000_000 } }));
+    let walked = |paths: usize| {
+        let mut items = vec![ellipse(); paths];
+        items.push(stroke(&Value::Array(entries.clone())));
+        animation(&json!([shape_layer(&Value::Array(items))]), &json!([]))
+    };
+    assert_eq!(checked(&walked(100)), Ok(()));
+    assert_eq!(checked(&walked(1000)), Err(Skip::Unsupported));
 }
 
 #[test]
