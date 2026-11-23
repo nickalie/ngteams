@@ -140,14 +140,14 @@ reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-
 context = { "crates/proto-lab/src/action_targets.rs" = "624e25a8a896080702107574e179c0497fe4fbb4b892bf8fdbd0c1eb951b6168" }
 
 [unmapped_sources."crates/teams-proto/src/http/attachment_tests.rs"]
-sha256 = "fc4f64d121310a964744b565cd4d0efbd7874f3b5438692d6759a076cfd66c94"
+sha256 = "70c90196b3422c28949823cb7f4d5cc7a2dd8ce2d906a161135e4ea3ae22655a"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
-context = { "crates/teams-proto/src/http.rs" = "a5b16098a39d3406b55675be79cfe23fd9b850cc619a6911fb6eecd79c3e35ab" }
+context = { "crates/teams-proto/src/http.rs" = "3cabb2fd6ad3705ce19a89b1c7e42645a92a13f590b9fed88b1ad377e070de9d" }
 
 [unmapped_sources."crates/teams-proto/src/http/channel_file_tests.rs"]
 sha256 = "0d90f41aceaf36384734a9654fd09cc589e20ef0fe83bce2044dfbbedc10a8a5"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
-context = { "crates/teams-proto/src/http.rs" = "a5b16098a39d3406b55675be79cfe23fd9b850cc619a6911fb6eecd79c3e35ab" }
+context = { "crates/teams-proto/src/http.rs" = "3cabb2fd6ad3705ce19a89b1c7e42645a92a13f590b9fed88b1ad377e070de9d" }
 
 [unmapped_sources."crates/teams-proto/src/channel_file_tests.rs"]
 sha256 = "d49f399c038a06059fd2ed73f630d19bc306f9048c6dd219c0309cde1b8f2b44"
@@ -155,7 +155,7 @@ reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-
 context = { "crates/teams-proto/src/channel_file.rs" = "8f86804e641734aa5d865d314d7b53ecf3bcacfcbceb25fb6defe4144f4ebe8c" }
 
 [unmapped_sources."crates/teams-core/src/attachments_tests.rs"]
-sha256 = "e9fb9ecccffd784133908cd161177de85d845024b43b0aafb202896e92dd927d"
+sha256 = "7f813081d4486350b9859328be65185287e95ce2ebc8aedea937a504c2ebf237"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
 context = { "crates/teams-core/src/attachments.rs" = "908640dc09a4c335eb43b7f9b6dd215fbd1e3ad3d8042491eba266da329c4622" }
 
@@ -673,7 +673,7 @@ context = { "crates/teams-ui/src/meeting_reminder.rs" = "67b642fe7642178ef2aee01
 [unmapped_sources."crates/teams-proto/src/http/cloud_tests.rs"]
 sha256 = "5ac2530800da410d6459929bb5acf88521f5abc93ef795964589f788805904c8"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
-context = { "crates/teams-proto/src/http.rs" = "a5b16098a39d3406b55675be79cfe23fd9b850cc619a6911fb6eecd79c3e35ab" }
+context = { "crates/teams-proto/src/http.rs" = "3cabb2fd6ad3705ce19a89b1c7e42645a92a13f590b9fed88b1ad377e070de9d" }
 
 [unmapped_sources."crates/teams-sdp/src/lib.rs"]
 sha256 = "2dfe9b286b9ebca1a0c6c3ee22c751f4886f6f8bd7d397bc684c79a5eba33862"

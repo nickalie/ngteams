@@ -211,6 +211,32 @@ async fn a_group_share_uses_complete_current_people_and_does_not_grant_service_b
 }
 
 #[tokio::test]
+async fn an_office_file_whose_web_url_opens_it_in_the_browser_uploads_and_shares() {
+    let server = MockServer::start().await;
+    let (client, outbox) = native(&server);
+    mock_upload(&server).await;
+    let path = format!("{SITE}Documents/Microsoft%20Teams%20Chat%20Files/report.xlsx");
+    override_reply(
+        &server,
+        "PUT",
+        &format!("{DRIVE}/root:/Microsoft%20Teams%20Chat%20Files/report.xlsx:/content"),
+        ResponseTemplate::new(201).set_body_json(json!({"id":"ABC1","name":"report.xlsx","size":3,
+            "webUrl":format!("{SITE}_layouts/15/Doc.aspx?sourcedoc=%7B00000000-0000-4000-8000-000000000001%7D&file=report.xlsx&action=default&mobileredirect=true"),
+            "webDavUrl":path,"parentReference":{"driveId":"drive1"},
+            "sharepointIds":{"listItemUniqueId":"00000000-0000-4000-8000-000000000001"}})),
+    )
+    .await;
+    let temp = tempfile::tempdir().unwrap();
+    let local_file = temp.path().join("report.xlsx");
+    std::fs::write(&local_file, b"abc").unwrap();
+    let file = upload(&client, &outbox, local_file).await.unwrap();
+    assert_eq!(file.entry()["objectUrl"], path);
+    let chat = mock_recipients(&server, B, false).await;
+    mock_share(&server, B).await;
+    Uploads::new(client, outbox).share(&chat, &[file]).await.unwrap();
+}
+
+#[tokio::test]
 async fn incomplete_or_changed_recipient_evidence_never_creates_a_share() {
     for members in [
         json!({"members":[{"id":A},{"id":B}],"continuationToken":"more"}),

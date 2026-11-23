@@ -129,14 +129,16 @@ impl UploadedFile {
             channel: None,
         })
     }
-    /// The captured successful upload answer; links must remain in the site the upload went to.
+    /// The captured successful upload answer, its path from `webDavUrl` (else `webUrl`); links must remain in the
+    /// site the upload went to.
     #[must_use]
     pub fn from_upload(site: &DriveSite, body: &[u8]) -> Option<Self> {
         let body: Value = serde_json::from_slice(body).ok()?;
         let item = body.get("id")?.as_str()?;
         let guid = body.pointer("/sharepointIds/listItemUniqueId")?.as_str()?;
         let name = body.get("name")?.as_str()?;
-        let object_url = body.get("webUrl")?.as_str()?;
+        // an Office file's `webUrl` is its `Doc.aspx` viewer link; `webDavUrl` is the path Teams posts
+        let object_url = body.get("webDavUrl").or_else(|| body.get("webUrl"))?.as_str()?;
         if !crate::read::is_guid(guid)
             || item.is_empty()
             || !item.bytes().all(|byte| byte.is_ascii_alphanumeric())
@@ -469,6 +471,19 @@ mod tests {
         assert!(direct_file_grants(&json!({"value":[]}), OWNER).is_none());
     }
     #[test]
+    fn an_office_file_takes_its_path_from_webdavurl_not_the_doc_aspx_weburl() {
+        let site = DriveSite::from_web_url("https://madeup-my.sharepoint.com/personal/lab_a/").unwrap();
+        let path = format!("{}Documents/Microsoft%20Teams%20Chat%20Files/report.xlsx", site.base());
+        let body = json!({"id":"ABC1","name":"report.xlsx","size":10,"parentReference":{"driveId":"drive1"},
+            "webUrl":format!("{}_layouts/15/Doc.aspx?sourcedoc=%7B00000000-0000-4000-8000-000000000001%7D&file=report.xlsx&action=default&mobileredirect=true",site.base()),
+            "webDavUrl":path,"sharepointIds":{"listItemUniqueId":"00000000-0000-4000-8000-000000000001"}});
+        let file = UploadedFile::from_upload(&site, &serde_json::to_vec(&body).unwrap()).unwrap();
+        let entry = file.entry();
+        assert_eq!(entry["objectUrl"], path);
+        assert_eq!(entry["fileInfo"]["fileUrl"], path);
+        assert!(UploadedFile::from_entry(&entry).is_some());
+    }
+    #[test]
     fn file_entries_cannot_escape_the_upload_site_or_smuggle_a_sharing_link() {
         let site = DriveSite::from_web_url("https://madeup-my.sharepoint.com/personal/lab_a/").unwrap();
         let mut body = json!({"id":"ABC1","name":"demo.txt","size":10,"parentReference":{"driveId":"drive1"},"webUrl":format!("{}Documents/demo.txt",site.base()),"sharepointIds":{"listItemUniqueId":"00000000-0000-4000-8000-000000000001"}});
@@ -484,6 +499,13 @@ mod tests {
             body["webUrl"] = url.into();
             assert!(
                 UploadedFile::from_upload(&site, &serde_json::to_vec(&body).unwrap()).is_none(),
+                "{url}"
+            );
+            let mut office = body.clone();
+            office["webUrl"] = format!("{}_layouts/15/Doc.aspx?sourcedoc=x", site.base()).into();
+            office["webDavUrl"] = url.into();
+            assert!(
+                UploadedFile::from_upload(&site, &serde_json::to_vec(&office).unwrap()).is_none(),
                 "{url}"
             );
         }

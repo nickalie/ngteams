@@ -560,3 +560,15 @@ async fn own_drive_preflight(server: &MockServer) {
     )
     .await;
 }
+
+#[test]
+fn a_file_upload_gets_time_for_its_size_and_a_small_request_keeps_the_usual_limit() {
+    assert_eq!(super::request_timeout(0), super::REQUEST_TIMEOUT);
+    assert_eq!(super::request_timeout(4 * 1024), super::REQUEST_TIMEOUT);
+    let largest = usize::try_from(crate::MAX_ATTACHMENT_SIZE).unwrap();
+    assert_eq!(
+        super::request_timeout(largest),
+        super::REQUEST_TIMEOUT + std::time::Duration::from_secs(4000)
+    );
+    assert!(super::request_timeout(8 * 1024 * 1024) > std::time::Duration::from_secs(150));
+}

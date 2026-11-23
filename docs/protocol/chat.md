@@ -963,6 +963,17 @@ did not exist before this upload; its new contents inherit the drive root's gran
 until Send. Send first attempts `POST _api/v2.0/sites/root/items/<item GUID>/driveItem/invite`, body with `recipients`
 (one `email` per recipient) and `roles` containing `write`; the initial attempt was denied before any sharing.
 
+The `webUrl` of the 201 answer depends on the file type. For a file that Office opens in the browser (`xlsx`, `docx`,
+`pptx`), it is not the file's path. It is the Office viewer link `<site>_layouts/15/Doc.aspx?sourcedoc=%7B<GUID>%7D&file=<name>&action=default&mobileredirect=true`.
+For other files (`txt`, `md`, a video), it is the path. `webDavUrl`, which the `$select` asks for, is always the
+path: `<site>Documents/Microsoft%20Teams%20Chat%20Files/<name>`. A file entry that Teams posts has this path as its
+`objectUrl` and `fileUrl`. Thus the native client reads the path from `webDavUrl`, and from `webUrl` only when an
+answer has no `webDavUrl` (`UploadedFile::from_upload`). The same site and query checks apply to both.
+
+The content `PUT` carries the whole file. The transport gives a request with a body more time than its usual 30
+seconds: 30 seconds plus one second for each 64 KiB of the body. Thus a file of some MB on a slow link is not cut
+off and reported as an unknown outcome.
+
 The implicit body is unsafe in this tenant: a later reference attempt returned an anonymous edit link despite naming
 one specific recipient. That run is a fence breach; its evidence is preserved separately. The final chat post was
 forced-denied. The native uploader never uses that implicit request. The anonymous permission was revoked; a fresh owner read showed only the owner, and the old unauthenticated link returned “This link has been removed” without file contents. Native sharing requires explicit `requireSignIn:true` and

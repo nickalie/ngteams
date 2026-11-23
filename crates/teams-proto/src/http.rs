@@ -81,6 +81,16 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long one request may take, end to end.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The slowest upload a request's body is given time for, in bytes a second ([`request_timeout`]).
+pub const MIN_UPLOAD_RATE: u64 = 64 * 1024;
+
+/// How long a request with a body of `body` bytes may take: [`REQUEST_TIMEOUT`], and more for a long body, such as a
+/// file's content, at [`MIN_UPLOAD_RATE`].
+#[must_use]
+pub fn request_timeout(body: usize) -> Duration {
+    REQUEST_TIMEOUT + Duration::from_secs(body as u64 / MIN_UPLOAD_RATE)
+}
+
 /// How long one streamed read of a file may take, end to end ([`HttpTransport::file_stream`]): its body comes at the
 /// network's pace, which [`REQUEST_TIMEOUT`] would cut short; its reader gives up on a stalled one sooner.
 pub const STREAM_TIMEOUT: Duration = Duration::from_mins(10);
@@ -1199,7 +1209,7 @@ impl<C: Credentials> HttpTransport<C> {
         let started = Instant::now();
         let mut request = self.client.request(method.clone(), self.destination(url)).headers(map);
         if let Some(body) = body {
-            request = request.body(body);
+            request = request.timeout(request_timeout(body.len())).body(body);
         }
         let answered = match teams_auth::task::own_task(request.send()).await {
             Ok(answer) => {
