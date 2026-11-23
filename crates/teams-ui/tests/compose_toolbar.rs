@@ -2353,26 +2353,9 @@ fn escape_held_after_shift_is_let_go_keeps_a_message_s_menu_open() {
 #[test]
 fn escape_in_a_message_s_menu_gives_the_keys_to_the_list_when_the_card_s_input_scrolled_out() {
     let rig = Rig::start();
-    let mut messages = many(60);
-    messages.insert(59, card_message("700"));
-    rig.core.messages.lock().unwrap().insert(AB.to_owned(), messages);
-    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
-    let (view, _, cx) = rooted_view(&rig, Settings::default(), 900.0);
-    press(cx, "shift-tab");
-    press(cx, "up");
-    press(cx, "up");
-    press(cx, "enter");
-    assert!(!list_focused(&view, cx), "Enter goes to the card's input");
+    let (view, cx) = card_input_in_a_long_chat(&rig);
     press(cx, "shift-f10");
-    let list = cx.debug_bounds("chat-messages").expect("the message list is drawn");
-    cx.simulate_event(gpui::ScrollWheelEvent {
-        position: list.center(),
-        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(3_000.0))),
-        modifiers: Modifiers::none(),
-        touch_phase: gpui::TouchPhase::Moved,
-    });
-    draw(cx);
-    assert!(cx.debug_bounds("message-700").is_none(), "the card scrolled out");
+    scroll_the_card_out(cx);
     assert!(
         view.read_with(cx, |view, _| view.options().is_some()),
         "the menu stays open"
@@ -2383,4 +2366,118 @@ fn escape_in_a_message_s_menu_gives_the_keys_to_the_list_when_the_card_s_input_s
         list_focused(&view, cx),
         "the list takes the keys, not the input drawn no more"
     );
+}
+
+fn card_input_in_a_long_chat(rig: &Rig) -> (Entity<ChatView>, &'static mut VisualTestContext) {
+    let mut messages = many(60);
+    let mut card = card_message("700");
+    card.arrival_time = messages[58].arrival_time + 1;
+    messages.insert(59, card);
+    rig.core.messages.lock().unwrap().insert(AB.to_owned(), messages);
+    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
+    let (view, _, cx) = rooted_view(rig, Settings::default(), 900.0);
+    press(cx, "shift-tab");
+    press(cx, "up");
+    press(cx, "up");
+    assert_eq!(
+        view.read_with(cx, |view, _| view.selected().map(str::to_owned))
+            .as_deref(),
+        Some("700")
+    );
+    draw(cx);
+    assert!(cx.debug_bounds("message-700").is_some(), "the card is drawn");
+    press(cx, "enter");
+    assert!(!list_focused(&view, cx), "Enter goes to the card's input");
+    (view, cx)
+}
+
+fn scroll_the_card_out(cx: &mut VisualTestContext) {
+    let list = cx.debug_bounds("chat-messages").expect("the message list is drawn");
+    // near the list's top: a popup the card opened is not under the wheel
+    cx.simulate_event(gpui::ScrollWheelEvent {
+        position: gpui::point(list.center().x, list.origin.y + px(20.0)),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(3_000.0))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    draw(cx);
+    assert!(cx.debug_bounds("message-700").is_none(), "the card scrolled out");
+}
+
+#[test]
+fn escape_in_a_clicked_message_s_menu_gives_the_keys_to_the_list_when_the_card_s_input_scrolled_out() {
+    let rig = Rig::start();
+    let (view, cx) = card_input_in_a_long_chat(&rig);
+    let tabs = tabs_out_of_a_clicked_menu(&view, cx);
+    open_the_card_s_menu_by_a_click(&view, cx);
+    for _ in 1..tabs {
+        press(cx, "tab");
+    }
+    scroll_the_card_out(cx);
+    assert!(
+        view.read_with(cx, |view, _| view.options().is_some()),
+        "the menu stays open"
+    );
+    press(cx, "escape");
+    assert!(view.read_with(cx, |view, _| view.options().is_none()));
+    assert!(
+        list_focused(&view, cx),
+        "the list takes the keys, not the input drawn no more"
+    );
+}
+
+#[test]
+fn escape_in_customize_of_the_hover_bar_gives_the_keys_to_the_list_when_the_card_s_input_scrolled_out() {
+    let rig = Rig::start();
+    let (view, cx) = card_input_in_a_long_chat(&rig);
+    draw(cx);
+    let message = cx.debug_bounds("message-700").expect("the card's message");
+    cx.simulate_mouse_move(message.center(), None, Modifiers::none());
+    right_click(cx, "message-actions");
+    assert!(
+        cx.update(|_, cx| view.read(cx).bar_customize_open()),
+        "a right click on the hover bar opens Customize"
+    );
+    scroll_the_card_out(cx);
+    assert!(
+        cx.update(|_, cx| view.read(cx).bar_customize_open()),
+        "Customize stays open"
+    );
+    press(cx, "escape");
+    assert!(!cx.update(|_, cx| view.read(cx).bar_customize_open()));
+    assert!(
+        list_focused(&view, cx),
+        "the list takes the keys, not the input drawn no more"
+    );
+}
+
+#[test]
+fn escape_in_the_list_closes_a_message_s_menu_before_more_reactions() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    press(cx, "a");
+    open_the_card_s_menu_by_a_click(&view, cx);
+    press(cx, "5");
+    draw(cx);
+    assert!(
+        view.read_with(cx, |view, _| view.more_reactions().is_some()),
+        "more reactions open"
+    );
+    for _ in 0..40 {
+        if list_focused(&view, cx) {
+            break;
+        }
+        press(cx, "shift-tab");
+    }
+    assert!(list_focused(&view, cx), "Shift+Tab goes back to the list");
+    assert!(view.read_with(cx, |view, _| view.options().is_some()
+        && view.more_reactions().is_some()));
+    press(cx, "escape");
+    assert!(view.read_with(cx, |view, _| view.options().is_none()));
+    assert!(
+        view.read_with(cx, |view, _| view.more_reactions().is_some()),
+        "one Escape closes only the message's menu"
+    );
+    press(cx, "escape");
+    assert!(view.read_with(cx, |view, _| view.more_reactions().is_none()));
 }

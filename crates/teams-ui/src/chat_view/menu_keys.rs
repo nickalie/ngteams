@@ -97,13 +97,14 @@ impl MenuKeys {
     }
 
     /// Where the focus goes back to from a popup that a row of the menu opens: where the menu's keys go back to when
-    /// the keys opened it or are in it now, else where the focus is now.
-    pub(super) fn focus_return(&self, window: &Window, cx: &App) -> keyboard::Return {
+    /// the keys opened it or are in it now, else where the focus is now (`list` takes it when that is in `list` and
+    /// drawn there no more).
+    pub(super) fn focus_return(&self, list: &FocusHandle, window: &Window, cx: &App) -> keyboard::Return {
         if self.keyed || self.has_focus(window, cx) {
             return self.back.clone();
         }
         let back = keyboard::Return::default();
-        back.keep(window, cx);
+        back.keep_in(list, window, cx);
         back
     }
 

@@ -1216,11 +1216,11 @@ pub struct ChatView {
     menu_keys: menu_keys::MenuKeys,
     /// The list of the hover bar's buttons, while it is open ([`bar_customize`]).
     bar_customize: Option<bar_customize::BarCustomize>,
-    /// The last new push of a plain Escape was in the more-options menu or in the hover bar's list, or closed the
-    /// more-options menu.
+    /// The last new push of an Escape (with any modifiers) was in the more-options menu or in the hover bar's list, or
+    /// closed the more-options menu.
     escape_in_a_popup: Cell<bool>,
-    /// The last new push of a plain Escape was in the list: it may have moved the keys out, where its repeats must not
-    /// act.
+    /// The last new push of an Escape (with any modifiers) was in the list: it may have moved the keys out, where its
+    /// repeats must not act.
     escape_in_the_list: Cell<bool>,
     /// The account's workflows that run from a message, read each time a message's menu opens.
     workflows: Option<Entity<crate::workflow_run::menu::MessageWorkflows>>,
@@ -2619,7 +2619,6 @@ impl ChatView {
     /// confirmation). On a control in the list, the list also takes the keys back; else, with nothing open, the
     /// selection goes, then the focus goes to the box.
     fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.more = None;
         if self.options.is_some() {
             self.escape_closes_options(cx);
             if self.on_a_control_in_the_list(window, cx) {
@@ -2627,6 +2626,7 @@ impl ChatView {
             }
             return;
         }
+        self.more = None;
         let open = self.reacting.take().is_some()
             | self.deleting.take().is_some()
             | self.resending.take().is_some()

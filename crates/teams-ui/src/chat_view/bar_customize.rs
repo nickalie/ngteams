@@ -132,7 +132,7 @@ impl ChatView {
         }
         let back = match self.bar_customize.take() {
             Some(open) => open.back,
-            None => self.menu_keys.focus_return(window, cx),
+            None => self.menu_keys.focus_return(&self.focus.handle, window, cx),
         };
         // a right click on the open menu's own button is not a click outside it: the menu closes here
         self.options = None;
