@@ -19,6 +19,10 @@
 //! - **Rename and remove** a pack, with the confirmation; Recent loses the removed pack's sticker.
 //! - **New message** has no Stickers tab; **sizes**: Teams Light and Dark, font 14 to 24, 1280, 800 and 520 px.
 //! - **A restart** keeps the packs and Recent for a and b; **the read-only app** offers no emoji button.
+//! - **Teams' own packs** (task 654, `qa_sticker_picker_teams.rs`): All with no pack, the packs after the user's
+//!   with their pictures, a pack in 3 columns, a pick by the pointer and by the keyboard, b sees it, a PNG sticker
+//!   from another client, the search, a sticker that cannot be read, Recent after a restart, and a fourth run as an
+//!   own-server account.
 //!
 //! The checks run in order and build on each other (the imports first). `QA653_ONLY` (a comma list of check names)
 //! runs only those. `QA653_EVIDENCE` names a directory that gets the screenshots and the results too. Screenshots also
@@ -84,10 +88,14 @@ use portal::{Answer, Chooser};
 mod files;
 use files::{Rgb, Sources};
 
+#[path = "qa_sticker_picker_teams.rs"]
+mod teams;
+
 const CHILD_ENV: &str = "QA653_CHILD";
 const ONLY_ENV: &str = "QA653_ONLY";
 const EVIDENCE_ENV: &str = "QA653_EVIDENCE";
 const READ_ONLY_ENV: &str = "QA653_READ_ONLY";
+const OWN_SERVER_ENV: &str = "QA653_OWN_SERVER";
 const TRACE_FD_ENV: &str = "QA653_TRACE_FD";
 const ORIGIN_ENV: &str = "QA653_ORIGIN";
 const TROUTER_ENV: &str = "QA653_TROUTER";
@@ -196,8 +204,9 @@ fn wanted(name: &str) -> bool {
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
 /// The first run of the app.
-const FIRST: [Check; 14] = [
+const FIRST: [Check; 22] = [
     ("opens_by_button_and_keys", opens_by_button_and_keys),
+    ("teams_all_before_imports", teams::teams_all_before_imports),
     ("import_folder", import_folder),
     ("import_zip", import_zip),
     ("all_tab_and_see_all", all_tab_and_see_all),
@@ -210,14 +219,27 @@ const FIRST: [Check; 14] = [
     ("rename_and_remove", rename_and_remove),
     ("new_chat_no_stickers", new_chat_no_stickers),
     ("themes_fonts_narrow", themes_fonts_narrow),
+    ("teams_packs_listed", teams::teams_packs_listed),
+    ("teams_pointer_pick_and_send", teams::teams_pointer_pick_and_send),
+    ("teams_b_sees_sent", teams::teams_b_sees_sent),
+    ("teams_png_from_other_client", teams::teams_png_from_other_client),
+    ("teams_search_and_keys", teams::teams_search_and_keys),
+    ("teams_unreadable_sticker", teams::teams_unreadable_sticker),
+    ("teams_all_after_send", teams::teams_all_after_send),
     ("remember_before_restart", remember_before_restart),
 ];
 
 /// The second run of the app over the same settings and store.
-const RESTART: [Check; 1] = [("packs_after_restart", packs_after_restart)];
+const RESTART: [Check; 2] = [
+    ("packs_after_restart", packs_after_restart),
+    ("teams_recent_after_restart", teams::teams_recent_after_restart),
+];
 
 /// A third run, in the read-only mode.
 const READ_ONLY: [Check; 1] = [("read_only_no_emoji", read_only_no_emoji)];
+
+/// A fourth run, both accounts with an own server's capabilities (no Teams sticker packs).
+const OWN_SERVER: [Check; 1] = [("own_server_only_own_packs", teams::own_server_only_own_packs)];
 
 #[derive(Default)]
 struct Tally {
@@ -241,6 +263,8 @@ struct World<'a> {
     sources: &'a Sources,
     dir: &'a Path,
     trouter: &'a str,
+    /// The chat of a and b where b's other client sent a Teams PNG sticker.
+    teams_chat: &'a str,
 }
 
 fn parent() -> SandboxResult {
@@ -260,6 +284,7 @@ fn parent() -> SandboxResult {
         .build()?;
     let mock = runtime.block_on(ChatServiceMock::start())?;
     let chats = seed(&mock)?;
+    let teams_chat = teams::seed(&mock, &runtime)?;
     let trouter = mock.start_trouter()?;
     let chooser = Chooser::start(sandbox.bus().address())?;
     let sources = Sources::make()?;
@@ -273,6 +298,7 @@ fn parent() -> SandboxResult {
         sources: &sources,
         dir: dir.path(),
         trouter: trouter.origin(),
+        teams_chat: &teams_chat,
     };
     let tally = run_all(&world)?;
     drop(trouter);
@@ -283,16 +309,17 @@ fn run_all(world: &World<'_>) -> SandboxResult<Tally> {
     let mut tally = Tally::default();
     let mut quits = Vec::new();
     let mut before = None;
-    for (run, checks, read_only) in [
-        ("first", &FIRST[..], false),
-        ("restart", &RESTART[..], false),
-        ("read-only", &READ_ONLY[..], true),
+    for (run, checks, mode) in [
+        ("first", &FIRST[..], Mode::Normal),
+        ("restart", &RESTART[..], Mode::Normal),
+        ("read-only", &READ_ONLY[..], Mode::ReadOnly),
+        ("own-server", &OWN_SERVER[..], Mode::OwnServer),
     ] {
         if !checks.iter().any(|(name, _)| wanted(name)) {
             continue;
         }
         say(&format!("run {run}"));
-        let app = AppUnderTest::start(world, read_only)?;
+        let app = AppUnderTest::start(world, mode)?;
         let mut user = User::new(world, app)?;
         user.before_restart = before.take();
         for (name, check) in checks {
@@ -349,6 +376,15 @@ fn seed(mock: &ChatServiceMock) -> SandboxResult<Chats> {
     Ok(Chats { words, sizes })
 }
 
+/// How a run starts the app.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Normal,
+    ReadOnly,
+    /// Both accounts with an own server's capabilities.
+    OwnServer,
+}
+
 /// The child app in its sandbox: its process, its trace.
 struct AppUnderTest {
     running: Option<Running>,
@@ -356,7 +392,7 @@ struct AppUnderTest {
 }
 
 impl AppUnderTest {
-    fn start(world: &World<'_>, read_only: bool) -> SandboxResult<Self> {
+    fn start(world: &World<'_>, mode: Mode) -> SandboxResult<Self> {
         let (reader, writer) = io::pipe()?;
         let fd = writer.as_raw_fd().to_string();
         let mut tokens = Vec::new();
@@ -372,7 +408,8 @@ impl AppUnderTest {
             &[],
             &[
                 (CHILD_ENV, "1"),
-                (READ_ONLY_ENV, if read_only { "1" } else { "0" }),
+                (READ_ONLY_ENV, if mode == Mode::ReadOnly { "1" } else { "0" }),
+                (OWN_SERVER_ENV, if mode == Mode::OwnServer { "1" } else { "0" }),
                 (TRACE_FD_ENV, &fd),
                 (ORIGIN_ENV, &world.mock.origin()),
                 (TROUTER_ENV, world.trouter),
@@ -2120,6 +2157,7 @@ fn env(name: &str) -> SandboxResult<String> {
 /// The engine of `alias` (a or b) on the mock: its chats, its media service and its Trouter; no calls. In the
 /// read-only mode its writes are refused before sending.
 fn engine(alias: Alias, tokens: (String, String), dir: &Path, read_only: bool) -> SandboxResult<EngineHandle> {
+    let own_server = env(OWN_SERVER_ENV)? == "1";
     let mri = if alias == Alias::A { LAB_A } else { LAB_B };
     let tokens = Arc::new(Tokens {
         ic3: tokens.0,
@@ -2155,7 +2193,17 @@ fn engine(alias: Alias, tokens: (String, String), dir: &Path, read_only: bool) -
         client: Arc::new(ChatClient::new(client)),
         outbox: Outbox::new(transport, Author::new(Mri::new(mri), name)),
         push: Some(Push::new(trouter)),
-        options: EngineOptions::default(),
+        options: if own_server {
+            EngineOptions {
+                capabilities: teams_core::Capabilities::of(
+                    &teams_proto::Cloud::own("https://own.example.test").map_err(|_| "own origin")?,
+                    |_| true,
+                ),
+                ..EngineOptions::default()
+            }
+        } else {
+            EngineOptions::default()
+        },
         known_names: vec![
             (LAB_A.to_owned(), "Lab A".to_owned()),
             (LAB_B.to_owned(), "Lab B".to_owned()),

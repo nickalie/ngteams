@@ -231,7 +231,8 @@ name = "qa_stickers_window"
 harness = false
 
 [[test]]
-# QA of task 653: the picker's Stickers tab, the sticker packs the user imports, and a sticker sent from the picker
+# QA of tasks 653 and 654: the picker's Stickers tab, the sticker packs the user imports, Teams' own packs, and a
+# sticker sent from the picker
 name = "qa_sticker_picker_window"
 harness = false
 
