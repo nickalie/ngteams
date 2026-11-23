@@ -156,6 +156,8 @@ fn failed(error: BotError) -> ImportError {
 struct Linked {
     api: BotApi,
     set: StickerSet,
+    /// The failure that ends the import: Telegram refuses, asks to wait or can't be reached.
+    stopped: Option<ImportError>,
 }
 
 impl Linked {
@@ -196,8 +198,16 @@ impl Source for Linked {
         let most = usize::try_from(MAX_FILE).unwrap_or(usize::MAX);
         self.api.file(&sticker.file_id, most).map_err(|error| match error {
             BotError::TooLarge => Skip::TooLarge,
+            BotError::BadToken | BotError::RateLimited | BotError::TimedOut | BotError::Unreachable => {
+                self.stopped = Some(failed(error));
+                Skip::NotDownloaded
+            }
             _ => Skip::NotDownloaded,
         })
+    }
+
+    fn stopped(&mut self) -> Option<ImportError> {
+        self.stopped.take()
     }
 }
 
@@ -220,5 +230,13 @@ pub fn import_link(
         .ok_or(ImportError::NoToken)?;
     let api = apis.make(token).map_err(failed)?;
     let set = api.sticker_set(&name).map_err(failed)?;
-    import::import_from(&mut Linked { api, set }, dir, progress)
+    import::import_from(
+        &mut Linked {
+            api,
+            set,
+            stopped: None,
+        },
+        dir,
+        progress,
+    )
 }

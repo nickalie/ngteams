@@ -161,7 +161,7 @@ pub struct Imported {
     pub skipped: Vec<Skipped>,
 }
 
-/// Where an import's files come from: a folder, an archive, or later another source.
+/// Where an import's files come from: a folder, an archive, chosen files or a Telegram pack.
 pub trait Source {
     /// The pack's name it suggests.
     fn name(&self) -> String;
@@ -171,7 +171,7 @@ pub trait Source {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    /// The name of file `index` (its last part), as a skip names it and its label is made from it.
+    /// The name of file `index` (its last part), as a skip names it, and its label unless [`Self::label`] gives one.
     fn file_name(&self, index: usize) -> String;
     /// The label of file `index`'s sticker, when the source knows a better one than its file's name gives.
     fn label(&self, _index: usize) -> Option<String> {
@@ -180,8 +180,12 @@ pub trait Source {
     /// The bytes of file `index`, at most [`MAX_FILE`].
     ///
     /// # Errors
-    /// It is too large or can't be read.
+    /// It is too large or can't be read, or (a Telegram pack's) it is a video or couldn't be downloaded.
     fn read(&mut self, index: usize) -> Result<Vec<u8>, Skip>;
+    /// Why the source can give no more files, after a read that it stopped on; the import then keeps nothing.
+    fn stopped(&mut self) -> Option<ImportError> {
+        None
+    }
 }
 
 /// The last part of a `/`-separated name.
@@ -730,6 +734,9 @@ pub fn import_from(
                 Err(why) => Err(why),
             }
         };
+        if let Some(error) = source.stopped() {
+            return Err(error);
+        }
         match outcome {
             Ok(converted) => {
                 let extension = if converted.animated { "gif" } else { "png" };

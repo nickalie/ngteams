@@ -1,5 +1,5 @@
 use teams_auth::secrets::Secret;
-use teams_mock::telegram::{BotApiMock, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN};
+use teams_mock::telegram::{BotApiMock, MockFault, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN};
 
 use super::{BotApi, BotError, file_path_form, set_name_form, token_form};
 
@@ -81,7 +81,31 @@ fn a_dead_origin_is_unreachable() {
 }
 
 #[test]
-fn the_client_takes_only_https_and_only_a_token_of_its_form() {
+fn a_redirect_is_not_followed() {
+    let elsewhere = BotApiMock::start(vec![set()]).unwrap();
+    let mock = BotApiMock::start(vec![set()]).unwrap();
+    mock.fault(MockFault::RedirectTo(format!(
+        "{}/bot{SYNTHETIC_BOT_TOKEN}/getStickerSet?name=SyntheticCats",
+        elsewhere.origin()
+    )));
+    let api = api(&mock, SYNTHETIC_BOT_TOKEN);
+    assert_eq!(api.sticker_set("SyntheticCats"), Err(BotError::BadAnswer));
+    assert_eq!(api.file("SyntheticCats__0", 1024), Err(BotError::BadAnswer));
+    assert_eq!(mock.requests().len(), 2);
+    assert!(elsewhere.requests().is_empty(), "the redirect's target gets nothing");
+}
+
+#[test]
+fn telegram_s_client_sends_nothing_over_http() {
+    let mock = BotApiMock::start(vec![set()]).unwrap();
+    let api = BotApi::build(&mock.origin(), Secret::new(SYNTHETIC_BOT_TOKEN), true).unwrap();
+    assert!(api.sticker_set("SyntheticCats").is_err());
+    assert!(api.file("SyntheticCats__0", 1024).is_err());
+    assert!(mock.requests().is_empty(), "{:?}", mock.requests());
+}
+
+#[test]
+fn the_client_takes_only_a_token_of_its_form_and_the_mock_s_only_a_loopback_http_origin() {
     assert_eq!(BotApi::new(Secret::new("not a token")).err(), Some(BotError::TokenForm));
     let api = BotApi::new(Secret::new(SYNTHETIC_BOT_TOKEN)).unwrap();
     assert!(!format!("{api:?}").contains(SYNTHETIC_BOT_TOKEN));

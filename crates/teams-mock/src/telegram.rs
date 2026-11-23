@@ -49,10 +49,22 @@ pub struct MockRequest {
     pub authorization: bool,
 }
 
+/// A wrong answer the mock gives on purpose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MockFault {
+    /// From the `n`th `getFile` (from 0) on: 429 `Too Many Requests`.
+    RateLimitedFrom(usize),
+    /// From the `n`th `getFile` (from 0) on: 401 `Unauthorized`, as for a revoked token.
+    RevokedFrom(usize),
+    /// Each request: a `302 Found` to `location`.
+    RedirectTo(String),
+}
+
 /// The mock Bot API, served while it lives.
 pub struct BotApiMock {
     origin: String,
     requests: Arc<Mutex<Vec<MockRequest>>>,
+    fault: Arc<Mutex<Option<MockFault>>>,
 }
 
 impl BotApiMock {
@@ -64,18 +76,30 @@ impl BotApiMock {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let origin = format!("http://{}", listener.local_addr()?);
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let fault = Arc::new(Mutex::new(None));
         let seen = Arc::clone(&requests);
+        let faulty = Arc::clone(&fault);
         let sets = Arc::new(sets);
         thread::Builder::new().name("bot-api-mock".to_owned()).spawn(move || {
             for stream in listener.incoming().flatten() {
                 let sets = Arc::clone(&sets);
                 let seen = Arc::clone(&seen);
+                let faulty = Arc::clone(&faulty);
                 let _ = thread::Builder::new()
                     .name("bot-api-mock-request".to_owned())
-                    .spawn(move || serve(stream, &sets, &seen));
+                    .spawn(move || serve(stream, &sets, &seen, &faulty));
             }
         })?;
-        Ok(Self { origin, requests })
+        Ok(Self {
+            origin,
+            requests,
+            fault,
+        })
+    }
+
+    /// Gives `fault` from now on.
+    pub fn fault(&self, fault: MockFault) {
+        *self.fault.lock().unwrap_or_else(PoisonError::into_inner) = Some(fault);
     }
 
     /// The mock's origin, `http://127.0.0.1:<port>`.
@@ -91,7 +115,7 @@ impl BotApiMock {
     }
 }
 
-fn serve(stream: TcpStream, sets: &[MockSet], seen: &Mutex<Vec<MockRequest>>) {
+fn serve(stream: TcpStream, sets: &[MockSet], seen: &Mutex<Vec<MockRequest>>, fault: &Mutex<Option<MockFault>>) {
     let Ok(reader) = stream.try_clone() else { return };
     let mut reader = BufReader::new(reader);
     let mut first = String::new();
@@ -107,20 +131,54 @@ fn serve(stream: TcpStream, sets: &[MockSet], seen: &Mutex<Vec<MockRequest>>) {
         authorization |= header.to_ascii_lowercase().starts_with("authorization:");
     }
     let target = first.split_whitespace().nth(1).unwrap_or_default().to_owned();
-    seen.lock().unwrap_or_else(PoisonError::into_inner).push(MockRequest {
-        target: target.clone(),
-        authorization,
+    let files_asked = {
+        let mut seen = seen.lock().unwrap_or_else(PoisonError::into_inner);
+        seen.push(MockRequest {
+            target: target.clone(),
+            authorization,
+        });
+        seen.iter()
+            .filter(|request| request.target.contains("/getFile?"))
+            .count()
+    };
+    let fault = fault.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    let (status, kind, body, location) = faulted(&target, fault, files_asked).unwrap_or_else(|| {
+        let (status, kind, body) = answer(&target, sets);
+        (status, kind, body, String::new())
     });
-    let (status, kind, body) = answer(&target, sets);
     let mut stream = stream;
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\n{location}Connection: close\r\n\r\n",
         body.len()
     );
     let _ = stream.write_all(head.as_bytes());
     let _ = stream.write_all(&body);
     let _ = stream.flush();
     let _ = reader.read(&mut [0; 1]);
+}
+
+type Faulted = (&'static str, &'static str, Vec<u8>, String);
+
+/// The answer `fault` gives to `target`, the `files_asked`th `getFile` (from 1) if it is one.
+fn faulted(target: &str, fault: Option<MockFault>, files_asked: usize) -> Option<Faulted> {
+    let get_file = target.contains("/getFile?");
+    let with = |(status, kind, body): (&'static str, &'static str, Vec<u8>)| (status, kind, body, String::new());
+    match fault? {
+        MockFault::RateLimitedFrom(from) if get_file && files_asked > from => Some(with(json_answer(
+            "429 Too Many Requests",
+            &json!({ "ok": false, "error_code": 429, "description": "Too Many Requests: retry after 5", "parameters": { "retry_after": 5 } }),
+        ))),
+        MockFault::RevokedFrom(from) if get_file && files_asked > from => {
+            Some(with(json_answer("401 Unauthorized", &refused(401, "Unauthorized"))))
+        }
+        MockFault::RedirectTo(location) => Some((
+            "302 Found",
+            "text/plain",
+            Vec::new(),
+            format!("Location: {location}\r\n"),
+        )),
+        _ => None,
+    }
 }
 
 fn json_answer(status: &'static str, value: &Value) -> (&'static str, &'static str, Vec<u8>) {

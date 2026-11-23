@@ -13,7 +13,7 @@ use image::{Delay, Frame, ImageFormat, Rgba, RgbaImage};
 use std::sync::Arc;
 
 use teams_auth::secrets::Secret;
-use teams_mock::telegram::{BotApiMock, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN};
+use teams_mock::telegram::{BotApiMock, MockFault, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN};
 use teams_ui::stickers::import::{
     self, Archive, Files, Folder, ImportError, ImportKind, KEPT_SIDE, MAX_FILE, MAX_FRAMES, MAX_TOTAL, Progress,
     SHOWN_SIDE, Skip, Source,
@@ -874,6 +874,32 @@ fn a_telegram_link_imports_its_pack_through_the_mock_bot_api() {
     }
     assert!(!text.contains(SYNTHETIC_BOT_TOKEN), "the token is in no log line");
     assert!(!text.contains("SYNTHETIC_bot_token"), "nor a part of it");
+}
+
+#[test]
+fn a_telegram_failure_in_the_middle_of_a_pack_keeps_nothing_and_asks_no_more() {
+    for (fault, error, asked) in [
+        (MockFault::RateLimitedFrom(1), ImportError::TelegramBusy, 4),
+        (MockFault::RevokedFrom(0), ImportError::BadToken, 2),
+    ] {
+        let mock = BotApiMock::start(vec![mock_cats()]).unwrap();
+        mock.fault(fault.clone());
+        let (tokens, apis) = bot(&mock, Some(SYNTHETIC_BOT_TOKEN));
+        let stickers = tempfile::tempdir().unwrap();
+        let failed = telegram::import_link(
+            "t.me/addstickers/SyntheticCats",
+            &tokens,
+            &apis,
+            stickers.path(),
+            &mut no_progress(),
+        );
+        assert_eq!(failed.unwrap_err(), error, "{fault:?}");
+        assert!(
+            std::fs::read_dir(stickers.path()).map_or(true, |mut dir| dir.next().is_none()),
+            "{fault:?}: no partial pack"
+        );
+        assert_eq!(mock.requests().len(), asked, "{fault:?}: {:?}", mock.requests());
+    }
 }
 
 #[test]

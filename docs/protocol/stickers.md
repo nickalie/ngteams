@@ -52,6 +52,9 @@ A refusal is `{"ok": false, "error_code": <n>, "description": "..."}`:
 | 400 `Bad Request: STICKERSET_INVALID` | no pack of that name | Telegram has no sticker pack at that link. |
 | 429 | too many requests | Telegram asks to wait. Try again in a minute. |
 
+A refusal of the token, a 429, a timeout or a lost connection on a sticker's file ends the import, and no part of the
+pack is kept. A file that is too large or an answer that can't be read skips only that sticker.
+
 The pack's title names the imported pack, and each sticker's emoji is its label. The app sends the token only to
 `https://api.telegram.org`, only in the path. The client follows no redirect, uses no proxy, and logs none of these
 requests. The token is kept in the system keyring (a lab alias and the read-only mode keep it in memory only).
