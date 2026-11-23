@@ -254,6 +254,8 @@ pub(super) fn teams_packs_listed(user: &mut User<'_>) -> SandboxResult {
     if first_teams.is_none() || last_own.is_none_or(|own| first_teams.is_some_and(|teams| own > teams)) {
         faults.push(format!("the user's packs do not come before Teams' packs: {home:?}"));
     }
+    // with Recent, the packs are below it: the keyboard brings Teams' first pack into view
+    user.key_to("teams-pack-popular")?;
     let picture = user.image("teams-stickers-tab")?;
     let headers = blobs(&picture, HEADER, PICKER, 150).len();
     if headers == 0 {
