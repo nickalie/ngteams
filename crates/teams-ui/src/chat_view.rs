@@ -113,10 +113,10 @@ use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeZone, Utc};
 use gpui::ClipboardItem;
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Bounds, Context, ElementId, Entity, EventEmitter, FocusHandle,
-    FollowMode, Global, InteractiveElement as _, IntoElement, KeyBinding, KeystrokeEvent, ListAlignment, ListOffset,
-    ListState, MouseButton, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Task, WeakEntity, Window, actions, anchored, canvas, deferred, div, list, px, relative,
-    rems, rgb,
+    FollowMode, Global, InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, KeystrokeEvent, ListAlignment,
+    ListOffset, ListState, MouseButton, ParentElement as _, Pixels, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity, Window, actions, anchored, canvas,
+    deferred, div, list, px, relative, rems, rgb,
 };
 use gpui_component::Selectable as _;
 use gpui_component::button::{Button, ButtonRounded, ButtonVariants as _};
@@ -354,12 +354,12 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("space", reactors::PressReaction, context),
         KeyBinding::new("tab", PastMessages, context),
     ]);
-    // a bot card's input in the list takes its keys as text: the list's own keys are off there
+    // a bot card's input in the list takes its keys as text: the list's own keys are off there; Escape that the input
+    // does not use goes on to the list, which takes the keys back
     let input = Some(crate::card_view::INPUT_CONTEXT);
     cx.bind_keys(
         [
-            "up", "down", "r", "a", "e", "t", "u", "delete", "escape", "enter", "1", "2", "3", "4", "5", "right",
-            "left", "space",
+            "up", "down", "r", "a", "e", "t", "u", "delete", "enter", "1", "2", "3", "4", "5", "right", "left", "space",
         ]
         .map(|key| KeyBinding::new(key, gpui::NoAction, input)),
     );
@@ -2649,6 +2649,9 @@ impl ChatView {
             .key_context(CONTEXT)
             .track_focus(&self.focus.handle)
             .on_action(cx.listener(|this, _: &PastMessages, window, cx| this.past_messages(window, cx)))
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.hold_enter_back(event, window, cx);
+            }))
             // a click in the messages leaves the focus where it is (the compose box, as in Teams): the list takes it
             // only from the keyboard (Escape in the box) and from the actions that need its keys
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default());
@@ -2677,6 +2680,13 @@ impl ChatView {
             if !self.focus.handle.contains_focused(window, cx) {
                 return;
             }
+        }
+    }
+
+    /// Enter held on the list repeats onto the control that it went to: only a new push may press that control.
+    fn hold_enter_back(&self, event: &KeyDownEvent, window: &mut Window, cx: &App) {
+        if event.is_held && event.keystroke.key == "enter" && self.on_a_control_in_the_list(window, cx) {
+            window.prevent_default();
         }
     }
 

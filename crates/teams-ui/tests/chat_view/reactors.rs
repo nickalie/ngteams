@@ -354,3 +354,34 @@ fn the_card_asks_for_the_frames_that_show_it_by_its_pill_and_take_it_away() {
     assert!(bounds(cx, "reaction-like").is_none(), "the pill is out of the list");
     assert!(bounds(cx, "reactors-like").is_none(), "its card went with it");
 }
+
+#[test]
+fn space_on_a_control_of_the_selected_message_is_that_control_s_not_the_pill_s() {
+    let rig = varied_chat();
+    rig.core
+        .reactions
+        .lock()
+        .unwrap()
+        .insert("105".to_owned(), vec![super::reaction("like", LAB_B, super::NOON)]);
+    let (view, cx) = chat_window(&rig, Arc::new(ViewTrace::off()));
+    cx.update(|window, cx| view.read(cx).focus_handle().clone().focus(window, cx));
+    view.update(cx, |view, cx| view.select(Some("105".to_owned()), cx));
+    draw(cx);
+    press(cx, "right");
+    assert_eq!(focus(&view, cx).as_deref(), Some("like"));
+    press(cx, "enter");
+    press(cx, "space");
+    cx.simulate_event(gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse("space").unwrap(),
+    });
+    draw(cx);
+    assert!(
+        rig.core.actions.lock().unwrap().is_empty(),
+        "Space goes to the control, not to the pill under the keys"
+    );
+    assert_eq!(
+        cx.opened_url(),
+        Some(teams_proto::chat::web_chat_link(super::AB)),
+        "Space presses the control"
+    );
+}

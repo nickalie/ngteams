@@ -184,7 +184,14 @@ fn place(pill: Bounds<Pixels>, content: Pixels, high: Pixels) -> (bool, Pixels) 
 pub(super) fn reaction_keys(list: gpui::Div, cx: &mut Context<ChatView>) -> gpui::Div {
     list.on_action(cx.listener(|this, _: &NextReaction, _, cx| this.step_reaction(true, cx)))
         .on_action(cx.listener(|this, _: &PreviousReaction, _, cx| this.step_reaction(false, cx)))
-        .on_action(cx.listener(|this, _: &PressReaction, _, cx| this.press_reaction(cx)))
+        .on_action(cx.listener(|this, _: &PressReaction, window, cx| {
+            // Space on a control in the list presses that control
+            if this.focus.handle.is_focused(window) {
+                this.press_reaction(cx);
+            } else {
+                cx.propagate();
+            }
+        }))
 }
 
 impl ChatView {

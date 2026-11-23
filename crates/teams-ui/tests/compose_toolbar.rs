@@ -1113,12 +1113,19 @@ fn escape_in_the_emoji_picker_after_emoji_went_into_more_gives_the_text_the_keys
 
 /// The bot card message `id`: one text input and its Send.
 fn card_message(id: &str) -> teams_store::Message {
+    card_message_of(
+        id,
+        &serde_json::json!({
+            "type": "AdaptiveCard",
+            "body": [{"type": "Input.Text", "id": "said"}],
+            "actions": [{"type": "Action.Submit", "title": "Send"}]
+        }),
+    )
+}
+
+/// The bot card message `id` that shows `card`.
+fn card_message_of(id: &str, card: &serde_json::Value) -> teams_store::Message {
     use base64::Engine as _;
-    let card = serde_json::json!({
-        "type": "AdaptiveCard",
-        "body": [{"type": "Input.Text", "id": "said"}],
-        "actions": [{"type": "Action.Submit", "title": "Send"}]
-    });
     let activity = serde_json::json!({"type": "message/card", "attachments": [
         {"contentType": "application/vnd.microsoft.card.adaptive", "content": card}
     ]});
@@ -1175,4 +1182,80 @@ fn enter_on_the_selected_message_goes_to_its_controls_and_escape_comes_back() {
     );
     press(cx, "tab");
     assert!(box_focused(&compose, cx), "Tab from the list still passes its controls");
+}
+
+/// The a–b chat with the bot card message 700 of `card` selected from the keyboard, the list with the keys.
+fn card_selected(rig: &Rig, card: teams_store::Message) -> (Entity<ChatView>, &'static mut VisualTestContext) {
+    let mut messages = many(2);
+    messages.insert(1, card);
+    rig.core.messages.lock().unwrap().insert(AB.to_owned(), messages);
+    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
+    let (view, _, cx) = rooted_view(rig, Settings::default(), 900.0);
+    press(cx, "shift-tab");
+    press(cx, "up");
+    press(cx, "up");
+    assert_eq!(
+        view.read_with(cx, |view, _| view.selected().map(str::to_owned))
+            .as_deref(),
+        Some("700")
+    );
+    (view, cx)
+}
+
+#[test]
+fn escape_in_the_card_s_input_gives_the_keys_back_to_the_list() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    press(cx, "enter");
+    assert!(!list_focused(&view, cx), "Enter goes to the card's input");
+    cx.simulate_input("lunch");
+    draw(cx);
+    press(cx, "escape");
+    assert!(
+        list_focused(&view, cx),
+        "Escape in the input gives the keys back to the list"
+    );
+    assert_eq!(
+        view.read_with(cx, |view, _| view.selected().map(str::to_owned))
+            .as_deref(),
+        Some("700")
+    );
+}
+
+#[test]
+fn enter_held_on_the_selected_card_does_not_press_its_button() {
+    let rig = Rig::start();
+    let card = card_message_of(
+        "700",
+        &serde_json::json!({
+            "type": "AdaptiveCard",
+            "body": [{"type": "TextBlock", "text": "Ready?"}],
+            "actions": [{"type": "Action.Submit", "title": "Yes", "data": {"ok": true}}]
+        }),
+    );
+    let (view, cx) = card_selected(&rig, card);
+    press(cx, "enter");
+    assert!(!list_focused(&view, cx), "Enter goes to the card's button");
+    for _ in 0..3 {
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: gpui::Keystroke::parse("enter").unwrap(),
+            is_held: true,
+            prefer_character_input: false,
+        });
+        draw(cx);
+    }
+    cx.simulate_event(gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse("enter").unwrap(),
+    });
+    draw(cx);
+    assert!(
+        rig.core.bot_asks.lock().unwrap().is_empty(),
+        "the held Enter sends nothing"
+    );
+    key_click(cx);
+    assert_eq!(
+        rig.core.bot_asks.lock().unwrap().len(),
+        1,
+        "a new push of Enter presses the button"
+    );
 }
