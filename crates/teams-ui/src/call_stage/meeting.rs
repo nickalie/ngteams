@@ -422,7 +422,7 @@ impl CallStage {
 
     /// The name of `mri` in the call: the account's own, or a participant's as the call names them.
     pub(super) fn name_of(&self, active: &ActiveCall, mri: &Mri) -> SharedString {
-        if mri.as_str() == self.core.me() {
+        if mri.as_str().eq_ignore_ascii_case(self.core.me()) {
             return self.own_name.clone().unwrap_or_else(|| SharedString::from("You"));
         }
         let people = self.people.of(active.id);
@@ -430,7 +430,7 @@ impl CallStage {
             .view
             .participants
             .iter()
-            .find(|participant| participant.mri == mri.as_str())
+            .find(|participant| participant.mri.eq_ignore_ascii_case(mri.as_str()))
             .map_or_else(
                 || SharedString::from(SOMEONE),
                 |participant| participant_name(participant, people),

@@ -1265,7 +1265,7 @@ impl Calls {
                         !view
                             .participants
                             .iter()
-                            .any(|participant| participant.mri == invited.mri.as_str())
+                            .any(|participant| participant.mri.eq_ignore_ascii_case(invited.mri.as_str()))
                     });
                 }
             }

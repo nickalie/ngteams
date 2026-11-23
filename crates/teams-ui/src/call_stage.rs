@@ -1453,7 +1453,7 @@ fn participant_name(participant: &CallParticipant, people: &[(String, SharedStri
         .or_else(|| {
             people
                 .iter()
-                .find(|(mri, _)| *mri == participant.mri)
+                .find(|(mri, _)| mri.eq_ignore_ascii_case(&participant.mri))
                 .map(|(_, name)| name.clone())
         })
         .unwrap_or_else(|| SharedString::from(SOMEONE))
