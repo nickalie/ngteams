@@ -388,23 +388,121 @@ fn each_keyframe_counts_as_work() {
     assert_eq!(checked(&trimmed(100)), Err(Skip::Unsupported));
 }
 
+fn stroke(dashes: &Value) -> Value {
+    json!({ "ty": "st", "nm": "line", "c": { "a": 0, "k": [0, 0, 0, 1] }, "w": { "a": 0, "k": 1 }, "d": dashes })
+}
+
+fn dash_of(length: f64) -> Value {
+    json!([{ "n": "d", "v": { "a": 0, "k": length } }, { "n": "g", "v": { "a": 0, "k": length } }])
+}
+
+fn ellipse_of(size: f64) -> Value {
+    json!({ "ty": "el", "nm": "dot", "p": { "a": 0, "k": [0, 0] }, "s": { "a": 0, "k": [size, size] } })
+}
+
 #[test]
-fn a_dashed_stroke_counts_as_dash_work() {
-    let stroke = |dashes: &Value| {
-        let stroke = json!({ "ty": "st", "nm": "line", "c": { "a": 0, "k": [0, 0, 0, 1] }, "w": { "a": 0, "k": 1 }, "d": dashes });
-        shape_layer(&json!([ellipse(), stroke]))
+fn a_dashed_stroke_counts_its_dashes() {
+    let dashed = |dashes: &Value| shape_layer(&json!([ellipse(), stroke(dashes)]));
+    let fine = dash_of(0.1);
+    assert_eq!(checked(&fan_out(30, &dashed(&json!([])), 0)), Ok(()));
+    assert_eq!(checked(&fan_out(30, &dashed(&dash_of(10.0)), 0)), Ok(()));
+    assert_eq!(checked(&fan_out(4, &dashed(&fine), 0)), Ok(()));
+    assert_eq!(checked(&fan_out(30, &dashed(&fine), 0)), Err(Skip::Unsupported));
+    let tiny = |length: f64| {
+        animation(
+            &json!([shape_layer(&json!([ellipse_of(600.0), stroke(&dash_of(length))]))]),
+            &json!([]),
+        )
     };
-    let dashed = json!([{ "n": "d", "v": { "a": 0, "k": 1 } }, { "n": "g", "v": { "a": 0, "k": 1 } }]);
-    assert_eq!(checked(&fan_out(30, &stroke(&json!([])), 0)), Ok(()));
-    assert_eq!(checked(&fan_out(4, &stroke(&dashed), 0)), Ok(()));
-    assert_eq!(checked(&fan_out(30, &stroke(&dashed), 0)), Err(Skip::Unsupported));
+    assert_eq!(checked(&tiny(5.0)), Ok(()));
+    assert_eq!(checked(&tiny(0.001)), Err(Skip::Unsupported));
+    assert_eq!(checked(&tiny(0.0)), Ok(()));
     let grouped = |dashes: &Value| {
-        let stroke = json!({ "ty": "st", "nm": "line", "c": { "a": 0, "k": [0, 0, 0, 1] }, "w": { "a": 0, "k": 1 }, "d": dashes });
-        let group = json!({ "ty": "gr", "nm": "group", "it": vec![ellipse(); 30] });
-        animation(&json!([shape_layer(&json!([group, stroke]))]), &json!([]))
+        let group = json!({ "ty": "gr", "nm": "group", "it": vec![ellipse_of(80.0); 30] });
+        animation(&json!([shape_layer(&json!([group, stroke(dashes)]))]), &json!([]))
     };
     assert_eq!(checked(&grouped(&json!([]))), Ok(()));
-    assert_eq!(checked(&grouped(&dashed)), Err(Skip::Unsupported));
+    assert_eq!(checked(&grouped(&fine)), Err(Skip::Unsupported));
+}
+
+#[test]
+fn a_dash_that_eases_below_its_keyframes_counts_its_shortest_period() {
+    let eased = |y: f64| {
+        let length = json!({ "a": 1, "k": [
+            { "t": 0, "s": [10], "o": { "x": [0.5], "y": [y] }, "i": { "x": [0.5], "y": [1] } },
+            { "t": 30, "s": [20] },
+        ] });
+        let dashes = json!([{ "n": "d", "v": length }, { "n": "g", "v": length }]);
+        animation(
+            &json!([shape_layer(&json!([ellipse_of(600.0), stroke(&dashes)]))]),
+            &json!([]),
+        )
+    };
+    assert_eq!(checked(&eased(0.0)), Ok(()));
+    assert_eq!(checked(&eased(-0.999)), Err(Skip::Unsupported));
+}
+
+#[test]
+fn only_the_first_visible_stroke_of_a_list_dashes_it() {
+    let fine = dash_of(0.1);
+    let groups = |inner: &Value| {
+        let group = json!({ "ty": "gr", "nm": "group", "it": [ellipse_of(80.0), inner] });
+        let mut items = vec![group; 25];
+        items.push(stroke(&fine));
+        animation(&json!([shape_layer(&Value::Array(items))]), &json!([]))
+    };
+    assert_eq!(checked(&groups(&stroke(&json!([])))), Ok(()));
+    assert_eq!(
+        checked(&groups(&json!({ "ty": "fl", "nm": "fill" }))),
+        Err(Skip::Unsupported)
+    );
+    let after = |first: Value| {
+        let items = json!([ellipse_of(80.0), first, stroke(&fine)]);
+        fan_out(10, &shape_layer(&items), 0)
+    };
+    assert_eq!(checked(&after(stroke(&json!([])))), Ok(()));
+    let mut hidden = stroke(&json!([]));
+    hidden["hd"] = json!(true);
+    assert_eq!(checked(&after(hidden)), Err(Skip::Unsupported));
+}
+
+#[test]
+fn each_entry_of_a_dash_list_counts_as_work() {
+    let listed = |entries: usize| {
+        let mut line = stroke(&Value::Array(vec![json!({ "n": "o" }); entries]));
+        line["w"] = keyframed(2, &|at| json!({ "t": at, "s": [1] }));
+        fan_out(100, &shape_layer(&json!([line])), 0)
+    };
+    assert_eq!(checked(&listed(1)), Ok(()));
+    assert_eq!(checked(&listed(100)), Err(Skip::Unsupported));
+}
+
+#[test]
+fn a_polystar_and_a_path_count_their_length_for_dashes() {
+    let star = |radius: f64, roundness: f64| {
+        let star = json!({
+            "ty": "sr", "nm": "star", "sy": 1, "pt": { "a": 0, "k": 5 },
+            "p": { "a": 0, "k": [0, 0] }, "r": { "a": 0, "k": 0 },
+            "or": { "a": 0, "k": radius }, "os": { "a": 0, "k": roundness },
+            "ir": { "a": 0, "k": radius / 2.0 }, "is": { "a": 0, "k": 0 },
+        });
+        animation(&json!([shape_layer(&json!([star, stroke(&dash_of(0.1))]))]), &json!([]))
+    };
+    assert_eq!(checked(&star(10.0, 0.0)), Ok(()));
+    assert_eq!(checked(&star(1000.0, 0.0)), Err(Skip::Unsupported));
+    assert_eq!(checked(&star(10.0, 100_000.0)), Err(Skip::Unsupported));
+    let square = |side: f64| json!({ "c": true, "v": [[0, 0], [side, 0], [side, side], [0, side]], "i": [], "o": [] });
+    let path = |shape: Value| {
+        let path = json!({ "ty": "sh", "nm": "p", "ks": { "a": 0, "k": shape } });
+        animation(&json!([shape_layer(&json!([path, stroke(&dash_of(0.1))]))]), &json!([]))
+    };
+    assert_eq!(checked(&path(square(100.0))), Ok(()));
+    assert_eq!(checked(&path(square(10_000.0))), Err(Skip::Unsupported));
+    let moving = keyframed(
+        2,
+        &|at| json!({ "t": at, "s": [square(if at == 0 { 100.0 } else { 10_000.0 })] }),
+    );
+    assert_eq!(checked(&path(moving)), Err(Skip::Unsupported));
 }
 
 #[test]
@@ -428,6 +526,14 @@ fn a_layer_with_effects_counts_its_surface_and_each_choke_its_window() {
     assert_eq!(checked(&choker(1.0)), Ok(()));
     assert_eq!(checked(&choker(-1.0)), Ok(()));
     assert_eq!(checked(&choker(1000.0)), Err(Skip::Unsupported));
+    let fills = |count: usize| {
+        animation(
+            &json!([with(Value::Array(vec![json!({ "ty": 21, "mn": "ADBE Fill" }); count]))]),
+            &json!([]),
+        )
+    };
+    assert_eq!(checked(&fills(10)), Ok(()));
+    assert_eq!(checked(&fills(300)), Err(Skip::Unsupported));
 }
 
 #[test]
@@ -439,6 +545,18 @@ fn each_number_of_a_keyframe_counts_as_work() {
     };
     assert_eq!(checked(&coloured(4)), Ok(()));
     assert_eq!(checked(&coloured(10_000)), Err(Skip::Unsupported));
+    let still = |numbers: usize| {
+        let fill = json!({ "ty": "fl", "nm": "fill", "c": { "a": 0, "k": vec![1; numbers] } });
+        fan_out(10, &shape_layer(&json!([fill])), 0)
+    };
+    assert_eq!(checked(&still(4)), Ok(()));
+    assert_eq!(checked(&still(10_000)), Err(Skip::Unsupported));
+    let scalar = |count: usize| {
+        let fill = json!({ "ty": "fl", "nm": "fill", "o": { "a": 0, "k": 100 } });
+        fan_out(10, &shape_layer(&Value::Array(vec![fill; count])), 0)
+    };
+    assert_eq!(checked(&scalar(100)), Ok(()));
+    assert_eq!(checked(&scalar(1800)), Err(Skip::Unsupported));
     let eased = |numbers: usize| {
         let handle = Value::Array(vec![json!(0.5); numbers]);
         let mut layer = null_layer(1, None);

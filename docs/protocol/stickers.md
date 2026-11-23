@@ -29,12 +29,15 @@ An animation that uses a feature the renderer cannot draw is skipped with a reas
 renderer do too much is skipped as unsupported too: precompositions nested more than 16 deep or in a cycle, more than
 1000 layers in one layer list or 1000 assets, an asset id or a reference to one longer than 256 bytes, a parent chain
 longer than 16, an expression on a shape path, more than 1000 repeater copies (with the repeater's offset added) or
-polystar points, or more than 250,000 work in one frame. A layer, shape and path vertex is one work, a keyframe one
-for each of its numbers (at least one), a static value one for each number, a polystar point two (its outer and inner
-vertex). A mask, a layer with effects (disabled ones too) and each canvas-sized surface of a track matte (two for the
-matted layer, one for its matte source) is 1000, a Simple Choker 1000 for each pixel of its window (a radius of 1 is
-nine pixels), each path that a dashed stroke draws 10,000, and each 100 assets the renderer looks through for a
-precomposition one. A layer also counts the transforms of its parents. Each precomposition, matte and copy counts each
+polystar points, or more than 250,000 work in one frame. A layer, shape, path vertex and entry of a dash list is one
+work, a keyframe one for each of its numbers (at least one), a static value one for each number, a polystar point two
+(its outer and inner vertex). A mask, a layer with effects (disabled ones too), each effect and each canvas-sized
+surface of a track matte (two for the matted layer, one for its matte source) is 1000, a Simple Choker 1000 for each
+pixel of its window (a radius of 1 is nine pixels) in place of its 1000, each dash that a dashed stroke can draw 10,
+and each 100 assets the renderer looks through for a precomposition one. Only the first visible stroke of a shape list
+strokes it and the groups in it that have no visible stroke of their own. The dashes of a path are the longest it can
+be (its size, radii and roundness, or its control polygon) times the dash pairs over the shortest period that the
+dash and gap values can ease to. A layer also counts the transforms of its parents. Each precomposition, matte and copy counts each
 time it is drawn. A number that is not finite as a 32-bit float has no bound.
 
 ## A pack from its link: the Bot API
