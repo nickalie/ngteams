@@ -9,17 +9,23 @@ mod fake_tool;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use teams_ui::local_ai::{Backend, Tools};
-use teams_ui::recap_view::PLAY_FROM_HERE;
-
 use super::*;
+use teams_ui::local_ai::{Backend, Tools};
+
+/// A point longer than the pane is wide.
+const LONG_POINT: &str = "Ada said that the player must keep the place of the transcript when the window changes its size, \
+                          and Bo said that the search must find the words in each part of the recording, also in the \
+                          parts that the speaker said very fast or with a lot of noise behind the voice.";
 
 /// A made-up summary of the fixtures' transcript, as a JSON string the fake tool's answer carries.
 fn fake_summary() -> String {
     let summary = serde_json::json!({
         "purpose": "Review the made-up video player.",
         "takeaways": ["The video plays and the transcript follows it."],
-        "topics": [{"title": "Video player", "points": [{"text": "Bo checked playback.", "at": "0:15"}]}],
+        "topics": [{"title": "Video player", "points": [
+            {"text": "Bo checked playback.", "at": "0:15"},
+            {"text": LONG_POINT, "at": "0:18"}
+        ]}],
         "next_steps": [{"owner": "Ada Lab", "text": "Look at search next.", "at": "0:20"}],
         "questions": []
     });
@@ -126,8 +132,8 @@ fn the_ai_summary_is_made_on_this_computer_played_from_copied_and_sent_after_a_p
     assert!(drawn(cx, "recap-summary-copy"));
 }
 
-/// No time shows at the first point with a moment: its row is the whole width, only its bullet beside its words, its
-/// text as wide as its own words drawn, and its tooltip without one.
+/// No time shows at the first point with a moment: its row is the whole width, only its bullet beside its words, and
+/// its text starts its words and is as wide as its own words drawn.
 fn no_time_beside_the_first_point(cx: &mut VisualTestContext) {
     let row = cx.debug_bounds("recap-summary-at-0").unwrap();
     let words = cx.debug_bounds("recap-summary-at-0-words").unwrap();
@@ -151,16 +157,27 @@ fn no_time_beside_the_first_point(cx: &mut VisualTestContext) {
         (text.size.width - drawn).abs() < gpui::px(1.0),
         "only its words: {text:?} {drawn:?}"
     );
-    assert!(
-        !PLAY_FROM_HERE.chars().any(|character| character.is_ascii_digit()),
-        "{PLAY_FROM_HERE}"
-    );
+    assert_eq!(text.left(), words.left(), "nothing before the text: {words:?} {text:?}");
     assert!(row.size.width > gpui::px(200.0), "{row:?}");
     assert_eq!(words.right(), row.right(), "nothing after the words: {row:?} {words:?}");
     assert!(
         words.left() - row.left() <= gpui::px(24.0),
         "only the bullet before the words: {row:?} {words:?}"
     );
+    a_long_point_wraps(cx);
+}
+
+/// A point longer than the pane wraps in its row: its text stays in its words, on more than one line.
+fn a_long_point_wraps(cx: &mut VisualTestContext) {
+    let row = cx.debug_bounds("recap-summary-at-1").unwrap();
+    let words = cx.debug_bounds("recap-summary-at-1-words").unwrap();
+    let text = cx.debug_bounds("recap-summary-at-1-text").unwrap();
+    assert!(
+        text.right() <= words.right(),
+        "the text in its words: {words:?} {text:?}"
+    );
+    assert!(words.right() <= row.right(), "the words in its row: {row:?} {words:?}");
+    assert!(text.size.height > gpui::px(30.0), "more than one line: {text:?}");
 }
 
 /// The summary shown: copied as Markdown, then sent to the meeting's chat only once its preview's Send is clicked.

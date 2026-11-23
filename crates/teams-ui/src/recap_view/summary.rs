@@ -41,7 +41,7 @@ pub const SENT: &str = "Sent the summary to the meeting chat.";
 /// The note once the summary was copied.
 pub const COPIED: &str = "Copied the summary.";
 /// The tooltip of a summary point that plays the recording from its moment.
-pub const PLAY_FROM_HERE: &str = "Play from here";
+const PLAY_FROM_HERE: &str = "Play from here";
 
 impl RecapView {
     /// The shown part's summary, kept by its recording (made when first asked for, followed while the view lives).
@@ -785,7 +785,7 @@ fn row(words: gpui::Div, palette: Palette) -> gpui::Div {
 
 /// A point's words: its owner, if any, then its text, each as wide as it is drawn; `moment` names them for tests.
 fn words(owner: Option<&str>, text: &str, moment: Option<usize>) -> gpui::Div {
-    let mut text = div().child(text.to_owned());
+    let mut text = div().min_w_0().child(text.to_owned());
     let mut words = div().flex().flex_wrap().gap_x_1();
     if let Some(index) = moment {
         text = text.debug_selector(move || format!("recap-summary-at-{index}-text"));
