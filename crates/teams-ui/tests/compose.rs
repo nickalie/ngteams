@@ -2238,6 +2238,27 @@ fn escape_in_the_list_closes_a_clicked_menu_before_the_delete_s_confirmation() {
 }
 
 #[test]
+fn cancel_on_the_delete_s_confirmation_closes_it_and_keeps_the_selection() {
+    let mine = message(NOON, LAB_A, "<p>mine</p>");
+    let rig = rig_with(vec![mine.clone()]);
+    let (view, cx, _) = chat_window(&rig, no_receipts());
+    act(&view, cx, MessageAction::Delete, &mine.id);
+    assert!(cx.update(|_, cx| view.read(cx).deleting().is_some()));
+    click(cx, "confirm-cancel");
+    assert!(
+        cx.update(|_, cx| view.read(cx).deleting().is_none()),
+        "Cancel closes the confirmation"
+    );
+    assert!(cx.debug_bounds("confirmation").is_none());
+    assert_eq!(
+        cx.update(|_, cx| view.read(cx).selected().map(str::to_owned)),
+        Some(mine.id.clone()),
+        "Cancel keeps the selection"
+    );
+    assert!(rig.core.actions.lock().unwrap().is_empty(), "nothing is deleted");
+}
+
+#[test]
 fn moving_the_selection_closes_the_delete_s_confirmation_and_the_quick_reactions() {
     let older = message(NOON, LAB_A, "<p>older</p>");
     let newer = message(NOON + MINUTE, LAB_A, "<p>newer</p>");

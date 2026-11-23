@@ -1524,6 +1524,29 @@ fn escape_held_in_the_card_s_input_stops_at_the_list() {
 }
 
 #[test]
+fn escape_held_on_the_list_with_nothing_selected_stops_at_the_box() {
+    let rig = Rig::start();
+    let (view, compose, cx) = rooted_view(&rig, Settings::default(), 900.0);
+    let focus_the_list = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| view.read(cx).focus_handle().clone().focus(window, cx));
+        draw(cx);
+    };
+    focus_the_list(cx);
+    press(cx, "escape");
+    assert!(box_focused(&compose, cx), "Escape on the list gives the box the keys");
+    hold(cx, "escape");
+    assert!(
+        box_focused(&compose, cx),
+        "the repeats of a held Escape leave the keys in the box"
+    );
+    replying_in(&compose, cx);
+    focus_the_list(cx);
+    press(cx, "escape");
+    assert!(box_focused(&compose, cx));
+    held_escape_keeps_the_reply(&compose, cx);
+}
+
+#[test]
 fn tab_in_a_tool_s_menu_closes_it_and_leaves_the_tools() {
     let rig = Rig::start();
     let (compose, cx) = rooted_chat(&rig, 900.0);
@@ -1772,6 +1795,51 @@ fn escape_in_customize_chosen_by_the_keys_in_a_clicked_menu_gives_the_keys_back_
     press(cx, "escape");
     assert!(!cx.update(|_, cx| view.read(cx).bar_customize_open()));
     assert_eq!(focused(cx), input, "Escape gives the keys back to the card's input");
+}
+
+#[test]
+fn tab_and_shift_tab_in_customize_chosen_in_a_clicked_menu_close_it_and_give_the_keys_back_to_the_card_s_input() {
+    let rig = Rig::start();
+    let (view, cx) = card_selected(&rig, card_message("700"));
+    press(cx, "enter");
+    let input = focused(cx);
+    let tabs = tabs_out_of_a_clicked_menu(&view, cx);
+    for key in ["tab", "shift-tab"] {
+        open_the_card_s_menu_by_a_click(&view, cx);
+        for _ in 1..tabs {
+            press(cx, "tab");
+        }
+        press(cx, "end");
+        key_click(cx);
+        assert!(
+            cx.update(|_, cx| view.read(cx).bar_customize_open()),
+            "Customize from the keys opens its list"
+        );
+        press(cx, key);
+        assert!(
+            !cx.update(|_, cx| view.read(cx).bar_customize_open()),
+            "{key} closes the list"
+        );
+        assert_eq!(focused(cx), input, "{key} gives the keys back to the card's input");
+    }
+}
+
+#[test]
+fn tab_and_shift_tab_in_customize_toolbar_close_it_and_give_the_text_the_keys() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    for key in ["tab", "shift-tab"] {
+        focus_box(&compose, cx);
+        click(cx, "compose-apps");
+        click(cx, "compose-customize-row");
+        assert!(compose.read_with(cx, |compose, _| compose.customize_open()));
+        press(cx, key);
+        assert!(
+            !compose.read_with(cx, |compose, _| compose.customize_open()),
+            "{key} closes the list"
+        );
+        assert!(box_focused(&compose, cx), "{key} gives the text the keys");
+    }
 }
 
 /// The box replies to a made-up message, with the keys in it.

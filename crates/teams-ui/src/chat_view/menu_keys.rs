@@ -4,7 +4,7 @@
 //! its list, its first row under the keys; Left or Escape there closes the list and goes back to its row. Escape, Tab
 //! or Shift+Tab in the menu closes it. The focus goes back to where it was when the menu opened (the list, or a control
 //! in it such as a card's input) when the menu closes from the keys, or when a row picked from the keys or a press
-//! outside a menu the keys opened leaves it nowhere.
+//! outside a menu the keys opened or went into leaves it nowhere.
 //!
 //! The kit's root binds Tab and Shift+Tab, and a binding takes a key before any key listener hears it: the menu's own
 //! key context ([`CONTEXT`]) binds them to [`LeaveMenu`], which takes precedence over the root's.
@@ -256,8 +256,7 @@ impl ChatView {
 
     /// Moves the keys to where they are due once the menu (`drawn`) or its list is drawn (after the frame in which it
     /// is); when the menu is gone and the keys opened it or went into it, gives the focus back to where it was when the
-    /// menu opened if
-    /// nothing else took it.
+    /// menu opened if nothing else took it.
     pub(super) fn settle_menu_keys(&mut self, drawn: bool, window: &Window, cx: &mut App) {
         let keys = &mut self.menu_keys;
         if self.options.is_none() {
@@ -315,8 +314,8 @@ fn in_slots(slots: &mut Vec<FocusHandle>, entries: Vec<AnyElement>, cx: &App) ->
         .collect()
 }
 
-/// Gives the focus back to `back` when a menu the keys opened closed and left it on nothing, or on one of the menu's
-/// own handles (`held`), which outlive its rows.
+/// Gives the focus back to `back` when a menu the keys opened or went into closed and left it on nothing, or on one of
+/// the menu's own handles (`held`), which outlive its rows.
 fn give_back_if_lost(back: &keyboard::Return, held: &[FocusHandle], window: &mut Window, cx: &mut App) {
     let lost = window.focused(cx).is_none_or(|focused| held.contains(&focused));
     if lost {

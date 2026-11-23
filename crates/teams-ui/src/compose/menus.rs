@@ -491,10 +491,10 @@ impl Compose {
         if !event.is_held {
             let in_customize = self.customize.as_ref().is_some_and(|list| list.has_focus(window, cx));
             self.held_escape
-                .in_menu
+                .in_popup
                 .set(self.menu_has_focus(window, cx) || in_customize);
         }
-        event.is_held && self.held_escape.in_menu.get()
+        event.is_held && self.held_escape.in_popup.get()
     }
 
     /// Whether "More options" is open.
@@ -654,10 +654,11 @@ fn menu_row(row: &Row, text: &FocusHandle, window: &Window) -> PopupMenuItem {
     .disabled(row.disabled)
 }
 
-/// Drops the repeats of a held Escape whose first push closed the open menu of tools, before the bindings.
+/// Drops the repeats of a held Escape whose first push closed the open menu of tools or the customize list, before the
+/// bindings.
 pub(super) struct HeldEscape {
-    /// The last new push of a plain Escape was in the open menu of tools.
-    in_menu: Cell<bool>,
+    /// The last new push of a plain Escape was in the open menu of tools or in the customize list.
+    in_popup: Cell<bool>,
     _intercept: Subscription,
 }
 
@@ -672,7 +673,7 @@ impl HeldEscape {
             }
         });
         Self {
-            in_menu: Cell::new(false),
+            in_popup: Cell::new(false),
             _intercept: intercept,
         }
     }

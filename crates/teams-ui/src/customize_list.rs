@@ -5,7 +5,7 @@
 //!
 //! It is a list of its own, drawn as the kit's menus: the kit's menu selects its first item on the first Down and on
 //! Down from its last row, and the first item here is the list's title. Down selects the first row that can be taken,
-//! Up the last, and from the end each key goes round.
+//! Up the last, and from the end each key goes round. Escape, Tab or Shift+Tab closes the list, as Tab leaves a menu.
 
 use gpui::{
     AnyElement, App, Context, FocusHandle, InteractiveElement as _, IntoElement as _, KeyBinding, ParentElement as _,
@@ -18,7 +18,7 @@ use crate::icons::Glyph;
 use crate::theme::{self, Palette};
 
 /// The list's key context.
-const CONTEXT: &str = "CustomizeList";
+pub(crate) const CONTEXT: &str = "CustomizeList";
 
 actions!(
     compose,
@@ -48,6 +48,9 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("down", CustomizeDown, Some(CONTEXT)),
         KeyBinding::new("enter", CustomizeToggle, Some(CONTEXT)),
         KeyBinding::new("escape", CustomizeClose, Some(CONTEXT)),
+        // before the root's Tab: the keys must not leave a list that stays drawn
+        KeyBinding::new("tab", CustomizeClose, Some(CONTEXT)),
+        KeyBinding::new("shift-tab", CustomizeClose, Some(CONTEXT)),
     ]);
 }
 

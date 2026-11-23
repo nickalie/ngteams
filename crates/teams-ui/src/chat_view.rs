@@ -1216,8 +1216,12 @@ pub struct ChatView {
     menu_keys: menu_keys::MenuKeys,
     /// The list of the hover bar's buttons, while it is open ([`bar_customize`]).
     bar_customize: Option<bar_customize::BarCustomize>,
-    /// The last new push of a plain Escape was in the more-options menu or in the hover bar's list.
+    /// The last new push of a plain Escape was in the more-options menu or in the hover bar's list, or closed the
+    /// more-options menu.
     escape_in_a_popup: Cell<bool>,
+    /// The last new push of a plain Escape was in the list: it may have moved the keys out, where its repeats must not
+    /// act.
+    escape_in_the_list: Cell<bool>,
     /// The account's workflows that run from a message, read each time a message's menu opens.
     workflows: Option<Entity<crate::workflow_run::menu::MessageWorkflows>>,
     /// The message whose delete waits for its confirmation.
@@ -1443,6 +1447,7 @@ impl ChatView {
             options_at: Rc::default(),
             bar_customize: None,
             escape_in_a_popup: Cell::new(false),
+            escape_in_the_list: Cell::new(false),
             side_list: None,
             menu_keys: menu_keys::MenuKeys::new(cx),
             workflows: None,
@@ -2615,7 +2620,6 @@ impl ChatView {
         let open = self.reacting.take().is_some()
             | self.deleting.take().is_some()
             | self.resending.take().is_some()
-            | self.options.take().is_some()
             | self.reactors.unfocus()
             | self.text_selection.clear();
         if self.on_a_control_in_the_list(window, cx) {
@@ -2629,6 +2633,17 @@ impl ChatView {
             compose.update(cx, |compose, cx| compose.focus(window, cx));
             cx.notify();
         }
+    }
+
+    /// Cancel on a confirmation closes it, also with a more-options menu open; from a control in the list, the list
+    /// takes the keys.
+    fn cancel_confirmation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.deleting = None;
+        self.resending = None;
+        if self.on_a_control_in_the_list(window, cx) {
+            self.focus_messages(window, cx);
+        }
+        cx.notify();
     }
 
     /// Escape in the compose box with nothing to cancel there (no reply, edit or open picker; the box hands it on,
@@ -2707,14 +2722,17 @@ impl ChatView {
 
     /// A held Enter, Space or Escape in the list: only a new push acts (it may have moved the keys to a control, which
     /// its repeats must not press, or out of a card's field, past which they must not go on to the box), except Enter
-    /// and Space in a card's text field, where a held key types again (not on a time's chevron). A held Escape that
-    /// closed the more-options menu or the hover bar's list also acts once, wherever it gave the keys back to.
+    /// and Space in a card's text field, where a held key types again (not on a time's chevron). A held Escape whose
+    /// first push was in the list, the more-options menu or the hover bar's list also acts once, wherever the keys
+    /// went.
     fn held_press(&self, event: &KeystrokeEvent, window: &Window, cx: &App) -> bool {
         let in_context = |name| event.context_stack.iter().any(|context| context.contains(name));
         let in_text = in_context(crate::card_view::TEXT_CONTEXT) && !in_context(crate::time_picker::CHOICE_CONTEXT);
         let escape = event.keystroke.key == "escape" && !event.keystroke.modifiers.modified();
         if escape && !event.is_held {
             self.escape_in_a_popup.set(self.popup_has_focus(window, cx));
+            self.escape_in_the_list
+                .set(self.focus.handle.contains_focused(window, cx));
         }
         let repeated = match event.keystroke.key.as_str() {
             "enter" | "space" => !in_text,
@@ -2722,7 +2740,8 @@ impl ChatView {
         };
         event.is_held
             && repeated
-            && (self.focus.handle.contains_focused(window, cx) || (escape && self.escape_in_a_popup.get()))
+            && (self.focus.handle.contains_focused(window, cx)
+                || (escape && (self.escape_in_a_popup.get() || self.escape_in_the_list.get())))
     }
 
     /// Escape with a more-options menu open closes it; the held Escape's repeats then do nothing more.
@@ -2789,8 +2808,10 @@ impl ChatView {
         let in_context = |name| event.context_stack.iter().any(|context| context.contains(name));
         let in_the_list = in_context(CONTEXT);
         let back = event.keystroke.key == "tab" && event.keystroke.modifiers.shift;
-        // a message's menu gives the keys back where they were when it opened, a control in the list too
-        if back && !in_the_list && !in_context(menu_keys::CONTEXT) && self.on_a_control_in_the_list(window, cx) {
+        // a message's menu or a customize list gives the keys back where they were when it opened, a control in the
+        // list too
+        let from_a_popup = in_context(menu_keys::CONTEXT) || in_context(crate::customize_list::CONTEXT);
+        if back && !in_the_list && !from_a_popup && self.on_a_control_in_the_list(window, cx) {
             self.focus_messages(window, cx);
         }
         // a popup in a card (a time's list) takes its Escape before the list does
@@ -4519,7 +4540,7 @@ impl ChatView {
             .label("Cancel")
             .ghost()
             .with_size(Size::XSmall)
-            .on_click(cx.listener(|this, _, window, cx| this.escape(window, cx)));
+            .on_click(cx.listener(|this, _, window, cx| this.cancel_confirmation(window, cx)));
         Some(
             div()
                 .debug_selector(|| "confirmation".to_owned())

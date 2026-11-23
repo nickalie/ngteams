@@ -783,7 +783,7 @@ pub struct Compose {
     customize_at: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Whether the picker was open as the emoji button was pressed: its click then closes it.
     emoji_on_press: bool,
-    /// The repeats of a held Escape that closed the open menu of tools ([`menus`]).
+    /// The repeats of a held Escape that closed the open menu of tools or the customize list ([`menus`]).
     held_escape: menus::HeldEscape,
     _editor_events: Subscription,
     _bar_events: Subscription,
