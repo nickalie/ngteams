@@ -2452,6 +2452,46 @@ fn escape_in_customize_of_the_hover_bar_gives_the_keys_to_the_list_when_the_card
 }
 
 #[test]
+fn escape_in_customize_of_the_hover_bar_opened_from_more_reactions_gives_the_keys_to_the_list() {
+    let rig = Rig::start();
+    let mut messages = many(3);
+    messages[2].sender = Some(common::LAB_A.to_owned());
+    rig.core.messages.lock().unwrap().insert(AB.to_owned(), messages);
+    let (view, _, cx) = rooted_view(&rig, Settings::default(), 900.0);
+    press(cx, "shift-tab");
+    press(cx, "up");
+    press(cx, "up");
+    press(cx, "a");
+    press(cx, "5");
+    let picker = view
+        .read_with(cx, |view, _| view.more_reactions().cloned())
+        .expect("more reactions open");
+    assert!(
+        cx.update(|window, cx| picker.read(cx).holds_focus(window, cx)),
+        "its search field has the keys"
+    );
+    let mine = cx.debug_bounds("message-3").expect("the account's message");
+    cx.simulate_mouse_move(
+        gpui::point(mine.right() - px(20.0), mine.center().y),
+        None,
+        Modifiers::none(),
+    );
+    draw(cx);
+    right_click(cx, "message-actions");
+    assert!(
+        cx.update(|_, cx| view.read(cx).bar_customize_open()),
+        "a right click on the hover bar opens Customize"
+    );
+    assert!(view.read_with(cx, |view, _| view.more_reactions().is_none()));
+    press(cx, "escape");
+    assert!(!cx.update(|_, cx| view.read(cx).bar_customize_open()));
+    assert!(
+        list_focused(&view, cx),
+        "the list takes the keys, not the dismissed search field"
+    );
+}
+
+#[test]
 fn escape_in_the_list_closes_a_message_s_menu_before_more_reactions() {
     let rig = Rig::start();
     let (view, cx) = card_selected(&rig, card_message("700"));

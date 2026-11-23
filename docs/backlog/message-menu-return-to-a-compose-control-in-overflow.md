@@ -13,5 +13,5 @@ into the menu, the window becomes narrower and the button goes into the toolbar'
 to a handle that is not drawn, and they act from the window root until the focus moves again.
 
 To do: before `Return::give_back` gives the focus to a saved handle, make sure that the last frame drew it. Give a
-fallback for each area: the list for its rows, the compose editor for the compose box's controls. The review of task
-721 (round 16) found it.
+fallback for each area: the list for its rows, the compose editor for the compose box's controls. Review loop 781 of task
+721 found it (round 16, revmux run `26-after-rebase`).

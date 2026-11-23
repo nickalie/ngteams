@@ -130,9 +130,10 @@ impl ChatView {
         if self.core.read_only() {
             return;
         }
-        let back = match self.bar_customize.take() {
-            Some(open) => open.back,
-            None => self.menu_keys.focus_return(&self.focus.handle, window, cx),
+        let back = if let Some(open) = self.bar_customize.take() {
+            open.back
+        } else {
+            self.customize_return(window, cx)
         };
         // a right click on the open menu's own button is not a click outside it: the menu closes here
         self.options = None;
@@ -144,6 +145,18 @@ impl ChatView {
             back,
         });
         cx.notify();
+    }
+
+    /// Where the keys go back to when the list closes.
+    fn customize_return(&self, window: &mut Window, cx: &mut Context<Self>) -> keyboard::Return {
+        // the right click dismisses "more reactions": the keys must not go back to its search field
+        if self
+            .more_reactions()
+            .is_some_and(|picker| picker.read(cx).holds_focus(window, cx))
+        {
+            self.focus.handle.focus(window, cx);
+        }
+        self.menu_keys.focus_return(&self.focus.handle, window, cx)
     }
 
     /// Shows `item` on the account's hover bar, or hides it in "More options", as the list does.
