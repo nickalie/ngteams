@@ -390,9 +390,7 @@ fn turning_ai_off_stops_a_summary_being_made_also_after_its_recap_closed() {
 /// spoken then). Each point's moment is in a line of its own, so each press shows which point it played.
 #[test]
 fn tab_and_shift_tab_move_through_the_points_and_enter_or_space_plays_one() {
-    let first = (2..=10)
-        .find(|&tabs| pressed(tabs, "enter") == Some(LINES[0]))
-        .expect("Tab reaches the first point, and Enter plays it from 0:15");
+    let first = first_point_tabs();
     assert_eq!(
         pressed(first + 1, "space"),
         Some(LINES[1]),
@@ -415,12 +413,20 @@ fn tab_and_shift_tab_move_through_the_points_and_enter_or_space_plays_one() {
     );
 }
 
-/// The transcript lines the stored summary's points play, in the points' order: 0:15, 0:20, then the question's 0:04.
-const LINES: [&str; 3] = [
+/// The transcript lines the stored summary's points play, in the drawn order: 0:15, 0:20, then the question's 0:04. The
+/// drawn order is not the time order, so a Tab order by time fails.
+pub(super) const LINES: [&str; 3] = [
     "recap-paragraph-1-0 spoken",
     "recap-paragraph-2-0 spoken",
     "recap-paragraph-0-0 spoken",
 ];
+
+/// The Tab presses from the AI summary pill to the first point: the fewest after which Enter plays it from 0:15.
+fn first_point_tabs() -> usize {
+    (2..=10)
+        .find(|&tabs| pressed(tabs, "enter") == Some(LINES[0]))
+        .expect("Tab reaches the first point, and Enter plays it from 0:15")
+}
 
 /// In a new window on the stored summary, its question moved to 0:04: its pill clicked (the focus on it), `tabs` Tab
 /// presses, then `then`; the transcript line played, if the transcript shows.
@@ -469,9 +475,7 @@ fn the_pills_take_one_tab_stop_and_the_arrows_switch_the_pane() {
 /// point is drawn no more): Left from there goes back to the summary.
 #[test]
 fn a_point_played_without_a_recording_leaves_the_focus_on_the_transcript_pill() {
-    let first = (2..=10)
-        .find(|&tabs| pressed(tabs, "enter") == Some(LINES[0]))
-        .expect("Tab reaches the first point");
+    let first = first_point_tabs();
     let (_shell, _stub, cx) = keyed_summary(None);
     assert_eq!(tabbed(cx, first, "enter"), Some(LINES[0]));
     press(cx, "left");
@@ -485,9 +489,7 @@ fn a_point_played_without_a_recording_leaves_the_focus_on_the_transcript_pill() 
 /// its focus fill shows.
 #[test]
 fn a_point_tab_reaches_below_the_fold_scrolls_into_view() {
-    let first = (2..=10)
-        .find(|&tabs| pressed(tabs, "enter") == Some(LINES[0]))
-        .expect("Tab reaches the first point");
+    let first = first_point_tabs();
     let (_shell, _stub, cx) = keyed_summary(Some(SHORT_WINDOW));
     let pane = cx.debug_bounds("recap-summary").expect("the summary shows");
     let last = cx.debug_bounds("recap-summary-at-2").expect("the question is laid out");
@@ -512,7 +514,7 @@ const SHORT_WINDOW: f32 = 420.0;
 
 /// A window on the stored summary, its question moved to 0:04, its pill clicked (the focus on it); `height` makes the
 /// window shorter. Keep the returned directory while the window gets key presses: it holds the stub `claude`.
-fn keyed_summary(height: Option<f32>) -> (Entity<Shell>, tempfile::TempDir, &'static mut VisualTestContext) {
+pub(super) fn keyed_summary(height: Option<f32>) -> (Entity<Shell>, tempfile::TempDir, &'static mut VisualTestContext) {
     let rig = super::summary_qa::transcribed_rig();
     let dir = tempfile::tempdir().unwrap();
     // Enter on Regenerate starts this stub, never a real tool.

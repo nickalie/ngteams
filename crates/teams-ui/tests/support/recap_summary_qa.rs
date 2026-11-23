@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use super::summary::{drawn, installed, script, sent, wait_for};
+use super::summary::{LINES, drawn, installed, script, sent, wait_for};
 use super::*;
 use teams_ui::local_ai::{Backend, Tools};
 use teams_ui::recap_summary::{Made, Point, STE_RULES, Step, Summary, Topic};
@@ -245,11 +245,6 @@ fn qa_regenerate_asks_the_tool_for_simplified_technical_english_and_shows_the_re
     assert!(spoken(cx, 2), "the new next step plays from 0:20");
 }
 
-/// The transcript lines the keyed summary's points play, in the drawn order: the point at 0:15 (Bo's paragraph), the
-/// next step at 0:20 (Ada's last paragraph), the question moved to 0:04 (Ada's first line). The drawn order is not the
-/// time order, so a Tab order by time fails.
-const KEYED_LINES: [&str; 3] = ["recap-paragraph-1-0", "recap-paragraph-2-0", "recap-paragraph-0-0"];
-
 /// What a key press did: the transcript did not show, or it showed with the lines marked as spoken.
 #[derive(Debug, PartialEq, Eq)]
 enum Played {
@@ -274,7 +269,7 @@ fn qa_tab_reaches_each_point_and_enter_plays_its_moment() {
         if played != Played::Nothing {
             assert_eq!(
                 played,
-                Played::line(KEYED_LINES[0]),
+                Played::line(LINES[0]),
                 "the first stop that plays (after {tabs} Tab presses) is the first point, 0:15"
             );
             first = Some(tabs);
@@ -282,7 +277,7 @@ fn qa_tab_reaches_each_point_and_enter_plays_its_moment() {
         }
     }
     let first = first.expect("Tab reaches a point, and Enter plays it");
-    for (step, line) in KEYED_LINES.into_iter().enumerate() {
+    for (step, line) in LINES.into_iter().enumerate() {
         for key in ["enter", "space"] {
             assert_eq!(
                 keyed(first + step, key),
@@ -293,17 +288,17 @@ fn qa_tab_reaches_each_point_and_enter_plays_its_moment() {
         }
     }
     assert!(
-        !matches!(keyed(first + 3, "enter"), Played::Lines(lines) if lines.iter().any(|line| KEYED_LINES.contains(&line.as_str()))),
+        !matches!(keyed(first + 3, "enter"), Played::Lines(lines) if lines.iter().any(|line| LINES.contains(&line.as_str()))),
         "the last point is the last stop that plays a moment"
     );
     assert_eq!(
         keyed(first + 2, "shift-tab enter"),
-        Played::line(KEYED_LINES[1]),
+        Played::line(LINES[1]),
         "Shift+Tab from the question goes back to the next step"
     );
     assert_eq!(
         keyed(first + 2, "shift-tab shift-tab space"),
-        Played::line(KEYED_LINES[0]),
+        Played::line(LINES[0]),
         "two Shift+Tab presses from the question go back to the first point"
     );
     assert_eq!(
@@ -316,21 +311,7 @@ fn qa_tab_reaches_each_point_and_enter_plays_its_moment() {
 /// In a new window on the stored summary, its question moved to 0:04 and its pill clicked: `tabs` Tab presses (the
 /// summary pane stays shown), then `keys`; what the last key played.
 fn keyed(tabs: usize, keys: &str) -> Played {
-    let rig = transcribed_rig();
-    let dir = tempfile::tempdir().unwrap();
-    // Enter on Regenerate starts this stub, never a real tool.
-    installed(
-        &rig,
-        Tools::with(vec![(Backend::Claude, script(dir.path(), "exit 1\n"))]),
-    );
-    let (_shell, cx) = kit_window(&rig, fixtures::TRANSCRIPT_ONLY);
-    let mut made = stored();
-    made.summary.questions[0].at = Some(4);
-    cx.update(|_, cx| {
-        teams_ui::recap_summary::keep(&fixtures::transcript_location("ITEM9"), &made, None, cx);
-    });
-    summary_pane(cx);
-    click(cx, "recap-pane-summary shown");
+    let (_shell, _stub, cx) = super::summary::keyed_summary(None);
     for _ in 0..tabs {
         press(cx, "tab");
     }
@@ -344,7 +325,8 @@ fn keyed(tabs: usize, keys: &str) -> Played {
     }
     let lines = (0..4)
         .flat_map(|turn| (0..6).map(move |line| format!("recap-paragraph-{turn}-{line}")))
-        .filter(|line| drawn(cx, Box::leak(format!("{line} spoken").into_boxed_str())))
+        .map(|line| format!("{line} spoken"))
+        .filter(|line| drawn(cx, Box::leak(line.clone().into_boxed_str())))
         .collect();
     Played::Lines(lines)
 }
