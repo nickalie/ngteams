@@ -1871,6 +1871,34 @@ fn customize_toolbar_taken_from_plus_by_the_keys_gives_them_back_to_plus_when_it
     }
 }
 
+#[test]
+fn customize_toolbar_taken_from_the_apps_flyout_of_a_focused_plus_gives_the_keys_back_to_plus() {
+    let rig = Rig::start();
+    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
+    *rig.core.extension_apps.lock().unwrap() =
+        teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    for key in ["escape", "tab", "shift-tab"] {
+        focus_box(&compose, cx);
+        press(cx, "tab");
+        press(cx, "end");
+        let plus = focused(cx);
+        key_click(cx);
+        let flyout = compose
+            .read_with(cx, |compose, _| compose.apps_flyout().cloned())
+            .expect("the flyout opens");
+        flyout.update(cx, |_, cx| cx.emit(teams_ui::apps_flyout::FlyoutEvent::Customize));
+        draw(cx);
+        assert!(compose.read_with(cx, |compose, _| compose.customize_open()));
+        press(cx, key);
+        assert!(
+            !compose.read_with(cx, |compose, _| compose.customize_open()),
+            "{key} closes the list"
+        );
+        assert_eq!(focused(cx), plus, "{key} gives the keys back to \"+\"");
+    }
+}
+
 /// The box replies to a made-up message, with the keys in it.
 fn replying_in(compose: &Entity<Compose>, cx: &mut VisualTestContext) {
     let quoted = teams_ui::compose::Quoted {

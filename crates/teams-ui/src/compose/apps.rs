@@ -84,6 +84,7 @@ impl Compose {
         let rows = self.flyout_rows(cx);
         let actions = self.flyout_actions(&rows, window, cx);
         let flyout = cx.new(|cx| AppsFlyout::new(core, conversation, window, cx).with_actions(actions));
+        let back_to = self.tool_to_return_to();
         let events = cx.subscribe_in(
             &flyout,
             window,
@@ -95,7 +96,7 @@ impl Compose {
                     FlyoutEvent::GetMoreApps => cx.emit(ComposeEvent::ShowStore),
                     FlyoutEvent::Dialog(seed) => cx.emit(ComposeEvent::AppDialog(seed.clone())),
                     FlyoutEvent::Card(card) => this.add_app_card(card.as_ref().clone(), window, cx),
-                    FlyoutEvent::Customize => this.take(Item::Customize, window, cx),
+                    FlyoutEvent::Customize => this.customize_toolbar_back_to(back_to.clone(), window, cx),
                     FlyoutEvent::Action(at) => {
                         if let Some(row) = rows.get(*at) {
                             // the keyboard goes back to the text first; an action that opens a picker takes it after

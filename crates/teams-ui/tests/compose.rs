@@ -2335,6 +2335,63 @@ fn cancel_on_the_delete_s_confirmation_keeps_a_pending_resend_s_warning() {
 }
 
 #[test]
+fn send_again_on_a_warning_a_newer_write_made_out_of_date_closes_the_warning() {
+    let mine = message(NOON, LAB_A, "<p>mine</p>");
+    let rig = rig_with(vec![mine.clone()]);
+    *rig.core.unsettled.lock().unwrap() = vec![row(1, &edit_of(&mine, "one"), OutboxState::Failed)];
+    let (view, cx, _) = chat_window(&rig, no_receipts());
+    click(cx, "send-again-1");
+    assert_eq!(cx.update(|_, cx| view.read(cx).resending()), Some(1));
+    rig.send(Event::Outbox(row(2, &edit_of(&mine, "two"), OutboxState::Sent)));
+    draw(cx);
+    cx.update(|_, cx| view.update(cx, |view, cx| view.send_again(1, cx)));
+    draw(cx);
+    assert_eq!(cx.update(|_, cx| view.read(cx).resending()), None, "the warning closes");
+    assert!(cx.debug_bounds("confirmation").is_none());
+    assert!(rig.core.resent.lock().unwrap().is_empty(), "never sent again");
+}
+
+#[test]
+fn a_press_on_the_confirmation_s_question_keeps_the_keys_in_the_list() {
+    let mine = message(NOON, LAB_A, "<p>mine</p>");
+    let rig = rig_with(vec![mine.clone()]);
+    let (view, cx, _) = chat_window(&rig, no_receipts());
+    act(&view, cx, MessageAction::Delete, &mine.id);
+    assert_eq!(focused(&view, cx), (true, false));
+    let bar = cx.debug_bounds("confirmation").expect("the confirmation");
+    let question = gpui::point(bar.origin.x + px(24.0), bar.center().y);
+    cx.simulate_click(question, Modifiers::none());
+    draw(cx);
+    assert_eq!(focused(&view, cx), (true, false), "the list keeps the keys");
+    press(cx, "escape");
+    assert!(
+        cx.update(|_, cx| view.read(cx).deleting().is_none()),
+        "Escape in the list closes the confirmation"
+    );
+}
+
+#[test]
+fn escape_on_a_confirmation_button_closes_a_clicked_menu_then_the_confirmation() {
+    let mine = message(NOON, LAB_A, "<p>mine</p>");
+    let rig = rig_with(vec![mine.clone()]);
+    let (view, cx, _) = chat_window(&rig, no_receipts());
+    let open = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let view = view.read(cx);
+            (view.options().is_some(), view.deleting().is_some())
+        })
+    };
+    delete_asked_under_a_clicked_menu(&view, cx, &mine);
+    press(cx, "tab");
+    press(cx, "escape");
+    assert_eq!(open(cx), (false, true), "Escape closes the menu alone");
+    press(cx, "escape");
+    assert_eq!(open(cx), (false, false), "the next Escape closes the confirmation");
+    assert_eq!(focused(&view, cx), (true, false), "the list takes the keys");
+    assert!(rig.core.actions.lock().unwrap().is_empty(), "nothing is deleted");
+}
+
+#[test]
 fn moving_the_selection_closes_the_delete_s_confirmation_and_the_quick_reactions() {
     let older = message(NOON, LAB_A, "<p>older</p>");
     let newer = message(NOON + MINUTE, LAB_A, "<p>newer</p>");

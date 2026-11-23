@@ -42,6 +42,17 @@ impl Compose {
         self.open_customize_with(at, gpui::Anchor::BottomRight, window, cx);
     }
 
+    /// "Customize toolbar" from a tool's menu or flyout: the list gives the keys back to `back_to` when it closes.
+    pub(super) fn customize_toolbar_back_to(
+        &mut self,
+        back_to: Option<gpui::FocusHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.customize_toolbar(window, cx);
+        self.customize = self.customize.take().map(|list| list.back_to(back_to));
+    }
+
     fn open_customize_with(
         &mut self,
         at: Point<Pixels>,

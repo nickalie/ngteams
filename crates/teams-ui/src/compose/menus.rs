@@ -319,8 +319,7 @@ impl Compose {
             Item::Language => self.open_language_menu(window, cx),
             Item::Customize => {
                 let back_to = self.menu.as_ref().and_then(|menu| menu.back_to.clone());
-                self.customize_toolbar(window, cx);
-                self.customize = self.customize.take().map(|list| list.back_to(back_to));
+                self.customize_toolbar_back_to(back_to, window, cx);
             }
             Item::Loop => {}
         }
@@ -337,12 +336,17 @@ impl Compose {
         if rows.is_empty() {
             return;
         }
-        let back_to = match &self.menu {
-            Some(open) => open.back_to.clone(),
-            None => self.tools.drawn_on(),
-        };
+        let back_to = self.tool_to_return_to();
         self.menu = Some(self.tool_menu(kind, rows, back_to, window, cx));
         cx.notify();
+    }
+
+    /// The tool a popup opened now gives the keys back to: the open menu's own, else the tool the keys are on.
+    pub(super) fn tool_to_return_to(&self) -> Option<FocusHandle> {
+        match &self.menu {
+            Some(open) => open.back_to.clone(),
+            None => self.tools.drawn_on(),
+        }
     }
 
     /// Opens "More options".

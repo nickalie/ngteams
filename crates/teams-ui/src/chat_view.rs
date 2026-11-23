@@ -2594,7 +2594,11 @@ impl ChatView {
                 self.resending = None;
                 drop(self.core.resend(row));
             }
-            Some(Again::No) | None => {}
+            Some(Again::No) | None => {
+                if self.resending == Some(row) {
+                    self.resending = None;
+                }
+            }
         }
         cx.notify();
     }
@@ -2649,6 +2653,19 @@ impl ChatView {
             self.focus_messages(window, cx);
         }
         cx.notify();
+    }
+
+    /// Escape on a button of the confirmation: an open more-options menu closes first, alone; then the confirmation.
+    fn escape_on_the_confirmation(&mut self, event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() || event.is_held {
+            return;
+        }
+        cx.stop_propagation();
+        if self.options.is_some() {
+            self.escape_closes_options(cx);
+        } else {
+            self.cancel_confirmation(window, cx);
+        }
     }
 
     /// Whether the keys are on a control that closing a confirmation takes away, or on one in the list.
@@ -4561,6 +4578,9 @@ impl ChatView {
             div()
                 .debug_selector(|| "confirmation".to_owned())
                 .track_focus(&self.focus.confirmation)
+                // a press on the question keeps the keys where they were: the bar has no keys of its own
+                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                .on_key_down(cx.listener(Self::escape_on_the_confirmation))
                 .flex()
                 .items_center()
                 .gap_2()
