@@ -425,7 +425,7 @@ const LINES: [&str; 3] = [
 /// In a new window on the stored summary, its question moved to 0:04: its pill clicked (the focus on it), `tabs` Tab
 /// presses, then `then`; the transcript line played, if the transcript shows.
 fn pressed(tabs: usize, then: &str) -> Option<&'static str> {
-    let (_shell, cx) = keyed_summary(None);
+    let (_shell, _stub, cx) = keyed_summary(None);
     tabbed(cx, tabs, then)
 }
 
@@ -445,7 +445,7 @@ fn tabbed(cx: &mut VisualTestContext, tabs: usize, then: &str) -> Option<&'stati
 /// into the pane, and the arrows show the other pane and move the focus to its pill.
 #[test]
 fn the_pills_take_one_tab_stop_and_the_arrows_switch_the_pane() {
-    let (_shell, cx) = keyed_summary(None);
+    let (_shell, _stub, cx) = keyed_summary(None);
     press(cx, "right");
     assert!(
         drawn(cx, "recap-pane-transcript shown"),
@@ -472,7 +472,7 @@ fn a_point_played_without_a_recording_leaves_the_focus_on_the_transcript_pill() 
     let first = (2..=10)
         .find(|&tabs| pressed(tabs, "enter") == Some(LINES[0]))
         .expect("Tab reaches the first point");
-    let (_shell, cx) = keyed_summary(None);
+    let (_shell, _stub, cx) = keyed_summary(None);
     assert_eq!(tabbed(cx, first, "enter"), Some(LINES[0]));
     press(cx, "left");
     assert!(
@@ -488,7 +488,7 @@ fn a_point_tab_reaches_below_the_fold_scrolls_into_view() {
     let first = (2..=10)
         .find(|&tabs| pressed(tabs, "enter") == Some(LINES[0]))
         .expect("Tab reaches the first point");
-    let (_shell, cx) = keyed_summary(Some(SHORT_WINDOW));
+    let (_shell, _stub, cx) = keyed_summary(Some(SHORT_WINDOW));
     let pane = cx.debug_bounds("recap-summary").expect("the summary shows");
     let last = cx.debug_bounds("recap-summary-at-2").expect("the question is laid out");
     assert!(
@@ -511,8 +511,8 @@ fn a_point_tab_reaches_below_the_fold_scrolls_into_view() {
 const SHORT_WINDOW: f32 = 420.0;
 
 /// A window on the stored summary, its question moved to 0:04, its pill clicked (the focus on it); `height` makes the
-/// window shorter.
-fn keyed_summary(height: Option<f32>) -> (Entity<Shell>, &'static mut VisualTestContext) {
+/// window shorter. Keep the returned directory while the window gets key presses: it holds the stub `claude`.
+fn keyed_summary(height: Option<f32>) -> (Entity<Shell>, tempfile::TempDir, &'static mut VisualTestContext) {
     let rig = super::summary_qa::transcribed_rig();
     let dir = tempfile::tempdir().unwrap();
     // Enter on Regenerate starts this stub, never a real tool.
@@ -532,5 +532,5 @@ fn keyed_summary(height: Option<f32>) -> (Entity<Shell>, &'static mut VisualTest
     });
     super::summary_qa::summary_pane(cx);
     click(cx, "recap-pane-summary shown");
-    (shell, cx)
+    (shell, dir, cx)
 }
