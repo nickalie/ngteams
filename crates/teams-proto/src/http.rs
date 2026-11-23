@@ -78,7 +78,7 @@ pub const MAX_SEGMENT_BODY: usize = 32 * 1024 * 1024;
 /// How long connecting may take.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How long one request may take, end to end.
+/// How long one request without a long body may take, end to end; a request with a body gets [`request_timeout`].
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The slowest upload a request's body is given time for, in bytes a second ([`request_timeout`]).
@@ -89,6 +89,14 @@ pub const MIN_UPLOAD_RATE: u64 = 64 * 1024;
 #[must_use]
 pub fn request_timeout(body: usize) -> Duration {
     REQUEST_TIMEOUT + Duration::from_secs(body as u64 / MIN_UPLOAD_RATE)
+}
+
+/// `request` with `body`, if any, and the time [`request_timeout`] gives that body.
+fn with_body(request: reqwest::RequestBuilder, body: Option<Vec<u8>>) -> reqwest::RequestBuilder {
+    match body {
+        Some(body) => request.timeout(request_timeout(body.len())).body(body),
+        None => request,
+    }
 }
 
 /// How long one streamed read of a file may take, end to end ([`HttpTransport::file_stream`]): its body comes at the
@@ -1207,10 +1215,10 @@ impl<C: Credentials> HttpTransport<C> {
         let full = log_request(&method, url, &map, body.as_deref());
         let shown = format!("{method} {}{}", url.host_str().unwrap_or_default(), request_path(url));
         let started = Instant::now();
-        let mut request = self.client.request(method.clone(), self.destination(url)).headers(map);
-        if let Some(body) = body {
-            request = request.timeout(request_timeout(body.len())).body(body);
-        }
+        let request = with_body(
+            self.client.request(method.clone(), self.destination(url)).headers(map),
+            body,
+        );
         let answered = match teams_auth::task::own_task(request.send()).await {
             Ok(answer) => {
                 let limit = if self.cloud.contains(url) && url.path().starts_with("/ams/") {

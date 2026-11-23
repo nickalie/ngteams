@@ -1063,8 +1063,8 @@ The client sends a file the way it sends one to OneDrive, and the server keeps o
    - `GET drive/root:/Microsoft Teams Chat Files` (404 until the first upload) and its `:/permissions`, or
      `drive/root/permissions`: the owner's grant alone.
    - `PUT drive/root:/Microsoft Teams Chat Files/<name>:/content`: stores the body, streamed to the store, never
-     held whole. 201 with the item (`id`, `name`, `size`, `webUrl`, `parentReference.driveId`,
-     `sharepointIds.listItemUniqueId`). A name the drive already has gets a number (`notes 1.txt`). 413 over
+     held whole. 201 with the item (`id`, `name`, `size`, `webUrl` and `webDavUrl` (both the file's path),
+     `parentReference.driveId`, `sharepointIds.listItemUniqueId`). A name the drive already has gets a number (`notes 1.txt`). 413 over
      `media.max_file_bytes`, 507 over the quota. A new file is readable by its owner alone.
    - `POST sites/root/items/<item>/driveItem/invite`: shares the file with named accounts (`recipients` by
      `email`, which is the UPN). Only the direct form the client sends is taken: `requireSignIn: true` and

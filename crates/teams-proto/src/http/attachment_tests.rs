@@ -572,3 +572,17 @@ fn a_file_upload_gets_time_for_its_size_and_a_small_request_keeps_the_usual_limi
     );
     assert!(super::request_timeout(8 * 1024 * 1024) > std::time::Duration::from_secs(150));
 }
+
+#[test]
+fn a_request_with_a_body_carries_the_time_for_its_size_and_one_without_keeps_the_client_limit() {
+    let client = reqwest::Client::new();
+    let size = 8 * 1024 * 1024;
+    let upload = super::with_body(client.put("https://madeup.example.test/"), Some(vec![0; size]))
+        .build()
+        .unwrap();
+    assert_eq!(upload.timeout(), Some(&super::request_timeout(size)));
+    let read = super::with_body(client.get("https://madeup.example.test/"), None)
+        .build()
+        .unwrap();
+    assert_eq!(read.timeout(), None);
+}
