@@ -17,6 +17,9 @@ const LONG_POINT: &str = "Ada said that the player must keep the place of the tr
                           and Bo said that the search must find the words in each part of the recording, also in the \
                           parts that the speaker said very fast or with a lot of noise behind the voice.";
 
+/// An owner list nearly as wide as the pane.
+const LONG_OWNER: &str = "Ada Lab, Bo Lab, Cy Lab, Dee Lab";
+
 /// A made-up summary of the fixtures' transcript, as a JSON string the fake tool's answer carries.
 fn fake_summary() -> String {
     let summary = serde_json::json!({
@@ -26,7 +29,10 @@ fn fake_summary() -> String {
             {"text": "Bo checked playback.", "at": "0:15"},
             {"text": LONG_POINT, "at": "0:18"}
         ]}],
-        "next_steps": [{"owner": "Ada Lab", "text": LONG_POINT, "at": "0:20"}],
+        "next_steps": [
+            {"owner": "Ada Lab", "text": LONG_POINT, "at": "0:20"},
+            {"owner": LONG_OWNER, "text": "Check the search.", "at": "0:21"}
+        ],
         "questions": []
     });
     serde_json::to_string(&summary.to_string()).unwrap()
@@ -200,6 +206,27 @@ fn a_long_next_step_wraps_beside_its_owner(cx: &mut VisualTestContext) {
         "the text in its words: {words:?} {text:?}"
     );
     assert!(text.size.height > gpui::px(30.0), "more than one line: {text:?}");
+    a_wide_owner_puts_its_text_below(cx);
+}
+
+/// An owner that leaves only a narrow strip beside it puts its text on the next line, in the full width.
+fn a_wide_owner_puts_its_text_below(cx: &mut VisualTestContext) {
+    let words = cx.debug_bounds("recap-summary-at-3-words").unwrap();
+    let owner = cx.debug_bounds("recap-summary-at-3-owner").unwrap();
+    let text = cx.debug_bounds("recap-summary-at-3-text").unwrap();
+    assert!(
+        owner.right() <= words.right() && words.right() - owner.right() < gpui::px(160.0),
+        "the owner leaves a narrow strip: {words:?} {owner:?}"
+    );
+    assert!(
+        text.top() >= owner.bottom(),
+        "the text below the owner: {owner:?} {text:?}"
+    );
+    assert_eq!(
+        text.left(),
+        words.left(),
+        "the text in the full width: {words:?} {text:?}"
+    );
 }
 
 /// The summary shown: copied as Markdown, then sent to the meeting's chat only once its preview's Send is clicked.
@@ -230,7 +257,10 @@ fn copied_and_sent(rig: &Rig, cx: &mut VisualTestContext) {
     );
     assert!(sent[0].1.contains(&format!("<strong>Ada Lab</strong>: {LONG_POINT}")));
     for shown in [copied.as_str(), sent[0].1.as_str()] {
-        assert!(!shown.contains("0:15") && !shown.contains("0:20"), "a time in {shown}");
+        assert!(
+            !shown.contains("0:15") && !shown.contains("0:20") && !shown.contains("0:21"),
+            "a time in {shown}"
+        );
     }
     assert!(!drawn(cx, "recap-summary-preview"));
     assert!(drawn(cx, "recap-note"));

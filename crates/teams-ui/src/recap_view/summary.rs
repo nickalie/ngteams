@@ -783,7 +783,11 @@ fn row(words: gpui::Div, palette: Palette) -> gpui::Div {
         .child(words.flex_1().min_w_0())
 }
 
-/// A point's words: its owner, if any, then its text, each as wide as it is drawn; `moment` names them for tests.
+/// The narrowest text that still sits beside its owner.
+const TEXT_BESIDE_OWNER: f32 = 160.0;
+
+/// A point's words: its owner, if any, as wide as it is drawn, then its text in the rest of the line; `moment` names
+/// them for tests.
 fn words(owner: Option<&str>, text: &str, moment: Option<usize>) -> gpui::Div {
     let mut text = div().min_w_0().child(text.to_owned());
     let mut owner = owner.map(|owner| {
@@ -793,8 +797,8 @@ fn words(owner: Option<&str>, text: &str, moment: Option<usize>) -> gpui::Div {
             .child(format!("{owner}:"))
     });
     if owner.is_some() {
-        // A zero basis keeps a long text on the owner's line, wrapped in the width left beside it.
-        text = text.flex_1().flex_basis(px(0.0));
+        // A zero basis keeps a long text on the owner's line; the minimum moves it below a too-wide owner.
+        text = text.flex_1().flex_basis(px(0.0)).min_w(px(TEXT_BESIDE_OWNER));
     }
     let mut words = div().flex().flex_wrap().gap_x_1();
     if let Some(index) = moment {
