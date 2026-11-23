@@ -332,7 +332,7 @@ impl FakeTool {
 enum By {
     /// Ctrl+Shift+G, then Ctrl+Shift+G and Enter to take it.
     Key,
-    /// The Correct row of More options, its button reached by `n` Tabs from the text.
+    /// The Correct row of More options, its button the `n`th control of the tool row (Tab from the text, Home, Right).
     More(usize),
 }
 
@@ -592,17 +592,25 @@ impl<'a> User<'a> {
         Ok(state)
     }
 
-    /// Opens More options by its button (`tabs` Tabs from the text, then Enter) and takes its first row.
-    fn more_row(&mut self, tabs: usize) -> SandboxResult {
-        self.open_more(tabs)?;
+    /// From the text, the keys on the `nth` control of the tool row: Tab to the row, Home, then Right.
+    fn keys_on_tool(&mut self, nth: usize) -> SandboxResult {
+        self.press("tab")?;
+        self.press("home")?;
+        for _ in 1..nth {
+            self.press("right")?;
+        }
+        Ok(())
+    }
+
+    /// Opens More options by its button (the `nth` control of the tool row, then Enter) and takes its first row.
+    fn more_row(&mut self, nth: usize) -> SandboxResult {
+        self.open_more(nth)?;
         self.press("down")?;
         self.press("enter")
     }
 
-    fn open_more(&mut self, tabs: usize) -> SandboxResult<Value> {
-        for _ in 0..tabs {
-            self.press("tab")?;
-        }
+    fn open_more(&mut self, nth: usize) -> SandboxResult<Value> {
+        self.keys_on_tool(nth)?;
         self.press("enter")?;
         self.until("More options open", |state| state["box"]["more_open"] == true)
     }
@@ -611,7 +619,12 @@ impl<'a> User<'a> {
     fn take(&mut self, by: By) -> SandboxResult<Value> {
         match by {
             By::Key => self.press("ctrl+shift+g")?,
-            By::More(tabs) => self.more_row(tabs)?,
+            By::More(nth) => {
+                // the menu's Correct gave the keys back to More options: Shift+Tab takes them back to the text
+                self.press("shift+tab")?;
+                self.until("the text", |state| state["box"]["focused"] == true)?;
+                self.more_row(nth)?;
+            }
         }
         self.press("enter")?;
         self.until("the correction taken", |state| state["box"]["correction"] == "Idle")
@@ -1044,19 +1057,17 @@ fn more_options_row(user: &mut User<'_>) -> SandboxResult {
         }
     }
     let width = chosen.ok_or("the box never stacked")?;
-    // which Tab stop is More options
+    // which control of the tool row is More options: the row is one Tab stop, Right moves in it
     user.type_draft("probe")?;
     let mut tabs = None;
     for stops in 1..=7 {
         user.answer_ok("focus")?;
-        for _ in 0..stops {
-            user.press("tab")?;
-        }
+        user.keys_on_tool(stops)?;
         user.press("enter")?;
         let state = user.state()?;
         let found = state["box"]["more_open"] == true;
         say(&format!(
-            "  Tab x{stops}, Enter: more {} expanded {} text {:?}",
+            "  tool {stops}, Enter: more {} expanded {} text {:?}",
             state["box"]["more_open"],
             state["box"]["expanded"],
             text(&state)
@@ -1077,8 +1088,8 @@ fn more_options_row(user: &mut User<'_>) -> SandboxResult {
             user.type_draft("probe")?;
         }
     }
-    let tabs = tabs.ok_or("no Tab stop opens More options")?;
-    say(&format!("  More options at {width} px: Tab x{tabs}"));
+    let tabs = tabs.ok_or("no control of the tool row opens More options")?;
+    say(&format!("  More options at {width} px: tool {tabs}"));
     user.answer_ok("focus")?;
     user.press("ctrl+a")?;
     user.press("backspace")?;

@@ -1087,30 +1087,37 @@ fn odd_reply_attachment_font(user: &mut User<'_>) -> SandboxResult {
 
 fn keyboard_only(user: &mut User<'_>) -> SandboxResult {
     user.call_chat()?;
-    // from the text, Tab n times, then Enter: what each stop of the keyboard does
+    // from the text, Tab to the tool row, Home, Right n times, then Enter: what each control of the row does; then
+    // Tab twice, past the row, to Send
     let mut seen = Vec::new();
-    for tabs in 1..=8 {
+    for stop in 1..=7 {
         user.ask("call-reset")?;
         user.type_text("by keys")?;
-        for _ in 0..tabs {
+        user.press("tab")?;
+        if stop == 7 {
             user.press("tab")?;
+        } else {
+            user.press("home")?;
+            for _ in 1..stop {
+                user.press("right")?;
+            }
         }
-        user.settled_shot(&format!("call-chat-tab-{tabs}"))?;
+        user.settled_shot(&format!("call-chat-stop-{stop}"))?;
         user.press("enter")?;
         let state = user.state()?;
         let boxed = call_box(&state);
-        // the language is in More options: no stop of its own, so Enter on a stop never opens its menu
+        // the language is in More options: no control of its own, so Enter on a control never opens its menu
         ensure(boxed["language_open"] == false, || {
-            format!("stop {tabs} is a hidden one: Enter opened the language menu: {boxed}")
+            format!("stop {stop} is a hidden one: Enter opened the language menu: {boxed}")
         })?;
-        // the stops are Format, Emoji, Attach, "+", More options, then Send
-        if tabs == 6 {
+        // the row is Format, Emoji, Attach, "+" and More options, and Right stops at its end; the next Tab stop is Send
+        if stop == 7 {
             ensure(text_of(boxed).is_empty(), || {
-                format!("Enter on stop 6 did not send: {boxed}")
+                format!("Enter on the stop after the tool row did not send: {boxed}")
             })?;
         }
         seen.push(format!(
-            "tab x{tabs} then enter: text {:?} more {} language {} emoji {} expanded {} focused {}",
+            "stop {stop} then enter: text {:?} more {} language {} emoji {} expanded {} focused {}",
             text_of(boxed),
             boxed["more_open"],
             boxed["language_open"],

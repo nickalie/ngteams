@@ -773,6 +773,20 @@ fn staged(boxed: &Value) -> Vec<String> {
     names
 }
 
+/// `name` without the number the drive adds to a name it has already ("notes 1.txt" is "notes.txt").
+fn unnumbered(name: &str) -> String {
+    let (stem, extension) = name.rsplit_once('.').unwrap_or((name, ""));
+    let stem = stem
+        .rsplit_once(' ')
+        .filter(|(_, number)| !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit()))
+        .map_or(stem, |(before, _)| before);
+    if extension.is_empty() {
+        stem.to_owned()
+    } else {
+        format!("{stem}.{extension}")
+    }
+}
+
 fn text_of(boxed: &Value) -> String {
     boxed["text"].as_str().unwrap_or_default().trim().to_owned()
 }
@@ -832,10 +846,13 @@ impl User<'_> {
         self.until("the draft", |state| text_of(&state["chat"]).contains(text))
     }
 
-    /// The shown chat's box once it holds `names` (sorted).
+    /// The shown chat's box once it holds `names` (sorted), each maybe numbered by the account's drive, which an
+    /// earlier check gave the same name.
     fn staged_now(&mut self, names: &[String]) -> SandboxResult<Value> {
         self.until(&format!("{names:?} in the box"), |state| {
-            staged(&state["chat"]) == names
+            let mut shown: Vec<String> = staged(&state["chat"]).iter().map(|name| unnumbered(name)).collect();
+            shown.sort_unstable();
+            shown == names
         })
     }
 }

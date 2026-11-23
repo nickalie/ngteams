@@ -376,10 +376,12 @@ async fn the_people_asking_to_join_are_named() {
     let asking = requests.team_join_requests(GROUP).await.unwrap();
     let mris: Vec<_> = asking.iter().map(|member| member.mri.as_str()).collect();
     assert_eq!(mris, [LAB_B, LAB_C]);
+    let names: Vec<_> = asking.iter().map(|member| member.name.as_str()).collect();
+    assert_eq!(names, ["Lab B", "Lab C"]);
     assert!(asking.iter().all(|member| !member.owner && !member.guest));
 
     // someone whose profile isn't read is still listed, unnamed
-    let outsider = "8:orgid:00000000-0000-4000-8000-0000000000ff";
+    let outsider = "8:orgid:00000000-0000-4000-8000-0000000000fe";
     rig.mock
         .answer_next(
             "POST",

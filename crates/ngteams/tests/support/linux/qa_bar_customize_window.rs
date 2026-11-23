@@ -814,8 +814,7 @@ impl Walk<'_> {
             y1: COMPOSE.1 - 26,
         };
         let changed = changed_box(&load(before)?, &asked, region).unwrap_or(region);
-        let button =
-            pixels_box(&asked, changed, |pixel| near(pixel, BRAND, 24)).ok_or("no confirming Delete on the screen")?;
+        let button = button_box(&asked, changed).ok_or("no confirming Delete on the screen")?;
         let (x, y) = button.centre();
         self.run.click(x, y)?;
         self.run
@@ -1601,14 +1600,26 @@ fn separator_at(shot: &image::RgbImage, x: u32, y: u32) -> bool {
     near(at(shot, x, y), BORDER, 4) && at(shot, x, y - 1) == SURFACE && at(shot, x, y + 1) == SURFACE
 }
 
-/// The bounds of the pixels in `region` that `taken` takes.
-fn pixels_box(shot: &image::RgbImage, region: Rect, taken: impl Fn([u8; 3]) -> bool) -> Option<Rect> {
+/// The brand-coloured button in `region`: a row of the brand colour wider than a button is the bottom edge of the
+/// list's focus ring, which the question moves up into the region.
+fn button_box(shot: &image::RgbImage, region: Rect) -> Option<Rect> {
+    const WIDEST: u32 = 200;
     let mut bounds: Option<Rect> = None;
     for y in region.y0..region.y1.min(shot.height()) {
-        for x in region.x0..region.x1.min(shot.width()) {
-            if taken(at(shot, x, y)) {
-                bounds = Some(grow(bounds, x, y));
-            }
+        let row: Vec<u32> = (region.x0..region.x1.min(shot.width()))
+            .filter(|&x| near(at(shot, x, y), BRAND, 24))
+            .collect();
+        // the ring's edge, its corners above it: the button is under it
+        if row
+            .last()
+            .zip(row.first())
+            .is_some_and(|(last, first)| last - first > WIDEST)
+        {
+            bounds = None;
+            continue;
+        }
+        for x in row {
+            bounds = Some(grow(bounds, x, y));
         }
     }
     bounds

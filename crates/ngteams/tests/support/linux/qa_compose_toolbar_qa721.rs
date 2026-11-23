@@ -506,9 +506,12 @@ fn menu_keys(user: &mut User<'_>) -> SandboxResult {
     user.settled_shot("qa721-r1-customize-by-keys")?;
     user.press("escape")?;
     user.close_menus("chat")?;
-    user.press("tab")?;
-    user.until("Tab to the tools after the list", |state| {
+    // the list opened from the menu of "+": its Escape gives the keys back to "+"
+    let back = user.until("the keys back on + after the list", |state| {
         main_box(state)["tools_focused"] == true
+    })?;
+    ensure(keys_of(&back) == plus, || {
+        format!("Escape from Customize toolbar does not give the keys back to +: {back}")
     })?;
     user.press("home")?;
     let emoji = keys_of(&user.step("right")?);

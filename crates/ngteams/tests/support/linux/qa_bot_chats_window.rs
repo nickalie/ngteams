@@ -561,7 +561,12 @@ impl Walk<'_> {
             }
         };
         step(&format!("the group chat's picker offers {offered:?}"));
-        let wanted = vec!["b".to_owned(), ODD.to_owned(), POLLS.to_owned(), "Everyone".to_owned()];
+        let wanted = vec![
+            "Lab B".to_owned(),
+            ODD.to_owned(),
+            POLLS.to_owned(),
+            "Everyone".to_owned(),
+        ];
         expect(offered == wanted, || {
             format!("the group chat's picker offers {offered:?}, expected {wanted:?}")
         });
@@ -810,8 +815,8 @@ fn flag_off(sandbox: &Sandbox, runtime: &tokio::runtime::Runtime, service: &Serv
             .run
             .until_chat("the picker", |state| state["picker"]["loading"] == false)?;
         let offered = names(&state);
-        expect(offered == ["b", "Everyone"], || {
-            format!("with the bots hidden, the group chat's picker offers {offered:?}, expected [b, Everyone]")
+        expect(offered == ["Lab B", "Everyone"], || {
+            format!("with the bots hidden, the group chat's picker offers {offered:?}, expected [Lab B, Everyone]")
         });
         ctx.shots("off-picker")?;
         ctx.clear_box()?;

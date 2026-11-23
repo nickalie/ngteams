@@ -631,6 +631,9 @@ const fn share_slot(card: Rect) -> Rect {
     }
 }
 
+/// How far from its button a menu is looked for on the screen: more than a menu is wide or tall.
+const MENU_REACH: u32 = 280;
+
 /// The middle of row `row` of `rows` in a menu drawn as `menu`.
 const fn row_at(menu: Rect, row: u32, rows: u32) -> (u32, u32) {
     (
@@ -968,13 +971,26 @@ fn changed_in(before: &image::RgbImage, after: &image::RgbImage, region: Rect) -
         .count()
 }
 
-/// The bounds of the pixels that changed on the screen, but in `except`.
-fn changed_box(before: &image::RgbImage, after: &image::RgbImage, except: Rect) -> Option<Rect> {
+/// The bounds of the pixels that changed in `within`, but in `except`. A changed line across all of `within` is the
+/// edge of the message list's focus ring, which goes when a menu takes the keys: it is no part of the box.
+fn changed_box(before: &image::RgbImage, after: &image::RgbImage, within: Rect, except: Rect) -> Option<Rect> {
+    let x1 = within.x1.min(before.width()).min(after.width());
+    let y1 = within.y1.min(before.height()).min(after.height());
+    let changed = |x: u32, y: u32| {
+        let skipped = except.x0 <= x && x < except.x1 && except.y0 <= y && y < except.y1;
+        !skipped && !near(at(before, x, y), at(after, x, y), 8)
+    };
+    let across = |count: usize, length: u32| count * 10 >= length as usize * 9;
+    let line_columns: Vec<u32> = (within.x0..x1)
+        .filter(|&x| across((within.y0..y1).filter(|&y| changed(x, y)).count(), y1 - within.y0))
+        .collect();
+    let line_rows: Vec<u32> = (within.y0..y1)
+        .filter(|&y| across((within.x0..x1).filter(|&x| changed(x, y)).count(), x1 - within.x0))
+        .collect();
     let mut bounds: Option<Rect> = None;
-    for y in 0..before.height().min(after.height()) {
-        for x in 0..before.width().min(after.width()) {
-            let skipped = except.x0 <= x && x < except.x1 && except.y0 <= y && y < except.y1;
-            if skipped || near(at(before, x, y), at(after, x, y), 8) {
+    for y in (within.y0..y1).filter(|y| !line_rows.contains(y)) {
+        for x in (within.x0..x1).filter(|x| !line_columns.contains(x)) {
+            if !changed(x, y) {
                 continue;
             }
             bounds = Some(bounds.map_or(
@@ -1596,10 +1612,14 @@ impl AppRun {
             y1: button.1 + 1,
         }
         .grown(20);
-        // the pointer's rest on the title bar can show a tooltip too: only the box near the button is the menu
-        Ok(changed_box(&before, &after, around)
-            .filter(|menu| menu.height() > 20 && menu.width() > 60)
-            .filter(|menu| menu.y0 < button.1 + 300 && menu.y1 + 300 > button.1))
+        // the pointer's rest on the title bar can show a tooltip too, and the pointer on the message its bar above the
+        // card: the menu is the box near the button, under it where it fits, else over it
+        let reach = around.grown(MENU_REACH);
+        let under = Rect { y0: around.y0, ..reach };
+        let over = Rect { y1: around.y1, ..reach };
+        Ok([under, over].into_iter().find_map(|within| {
+            changed_box(&before, &after, within, around).filter(|menu| menu.height() > 20 && menu.width() > 60)
+        }))
     }
 
     /// The error, with the last screen and the app's stderr.
