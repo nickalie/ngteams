@@ -171,7 +171,11 @@ fn site(state: &mut State, caller: &str, request: &Request) -> Option<ResponseTe
         ("GET", path) if path == format!("{folder}:/permissions") => json(200, &json!({"value": [owner()]})),
         ("PUT", path) if path.starts_with(&format!("{folder}/")) && path.ends_with(":/content") => {
             let name = path[folder.len() + 1..path.len() - ":/content".len()].to_owned();
-            upload(state, caller, &name, request.body.len())
+            let rename = request
+                .url
+                .query_pairs()
+                .any(|(key, value)| key == "@name.conflictBehavior" && value == "rename");
+            upload(state, caller, &name, request.body.len(), rename)
         }
         ("GET", path) if path.starts_with("/sites/root/items/") && path.ends_with("/driveItem/permissions") => {
             let id = item_of(path, "/driveItem/permissions");
@@ -200,11 +204,25 @@ fn item_of(path: &str, end: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// The content `PUT` of `name` (still percent-encoded) by `caller`: the file kept, and SharePoint's 201.
-fn upload(state: &mut State, caller: &str, name: &str, size: usize) -> ResponseTemplate {
-    let name = percent_encoding::percent_decode_str(name)
+/// The content `PUT` of `name` (still percent-encoded) by `caller`: the file kept, and SharePoint's 201. With `rename`,
+/// a name already in the folder gets the next free number, as SharePoint gives it.
+fn upload(state: &mut State, caller: &str, name: &str, size: usize, rename: bool) -> ResponseTemplate {
+    let asked = percent_encoding::percent_decode_str(name)
         .decode_utf8_lossy()
         .into_owned();
+    let taken = |candidate: &str| {
+        state
+            .drive
+            .files
+            .values()
+            .any(|file| file.owner == caller && file.name.eq_ignore_ascii_case(candidate))
+    };
+    let mut name = asked.clone();
+    let mut number = 0;
+    while rename && taken(&name) {
+        number += 1;
+        name = numbered(&asked, number);
+    }
     let twist = state.drive.twists.pop_front();
     let id = format!("00000000-0000-4000-9000-{:012x}", state.drive.files.len() + 1);
     let base = format!("{DRIVE_HOST}/personal/{}/", personal(caller));
@@ -245,6 +263,14 @@ fn upload(state: &mut State, caller: &str, name: &str, size: usize) -> ResponseT
     }
 }
 
+/// `name` with `number` after its stem.
+fn numbered(name: &str, number: u32) -> String {
+    match name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => format!("{stem} {number}.{extension}"),
+        _ => format!("{name} {number}"),
+    }
+}
+
 /// `invite`: each recipient whose address is an account's gets write access.
 fn invite(state: &mut State, caller: &str, id: &str, body: &[u8]) -> ResponseTemplate {
     let body: Value = serde_json::from_slice(body).unwrap_or_default();
@@ -274,5 +300,17 @@ fn invite(state: &mut State, caller: &str, id: &str, body: &[u8]) -> ResponseTem
         }
         Some(_) => status(400),
         None => status(404),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::numbered;
+
+    #[test]
+    fn a_numbered_name_keeps_the_extension() {
+        assert_eq!(numbered("made-up report.docx", 1), "made-up report 1.docx");
+        assert_eq!(numbered("made-up notes", 2), "made-up notes 2");
+        assert_eq!(numbered(".profile", 1), ".profile 1");
     }
 }

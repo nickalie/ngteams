@@ -5,10 +5,11 @@
 //! - **Office files and others**: an .xlsx (Attach), a .docx, a .pptx, a .md and a .png (each dropped), one message
 //!   each. Each sends; the message names the file by its path (never `Doc.aspx`); the file is shared with b alone;
 //!   the card shows in a's chat with the file's name. Light and Dark shots of the sent Office card.
-//! - **The receiver**: b's app shows the five cards, and a click on a card opens the file's path.
+//! - **The receiver**: b's app shows the five cards, and a click on a card opens the file's path. When the first
+//!   check did not run before it, a sends the five files first.
 //! - **A slow upload**: a file of some MB whose upload answer comes after 45 s (past the old 30 s limit) sends.
 //! - **No answer**: an upload that never answers gives the timeout text after the file's limit; Retry uploads it again,
-//!   and it sends.
+//!   the drive gives the second upload a numbered name (the first one is on the drive), and it sends with that name.
 //! - **A bad path**: an upload answer whose `webDavUrl` is outside the upload site, or has a query: the card says the
 //!   file details couldn't be read; Send refuses with the user's words; no share and no message go.
 
@@ -230,20 +231,30 @@ fn png() -> Vec<u8> {
 
 /// An .xlsx with Attach, then a .docx, a .pptx, a .md and a .png dropped, each sent alone.
 fn office_files(user: &mut User<'_>) -> SandboxResult {
-    for (at, name) in SENT.iter().enumerate() {
-        let path = user.made_up_of(name, 4096)?;
-        user.send_one(&path, at == 0, WAIT)?;
-        if at == 0 {
-            thread::sleep(SETTLE);
-            user.shots_light_and_dark("qa792-sent-xlsx")?;
-        }
-    }
+    send_all(user, true)?;
     thread::sleep(SETTLE);
     user.shots_light_and_dark("qa792-sent-files")
 }
 
+/// a sends the five files of [`SENT`], with the shots of the first one when `shots`.
+fn send_all(user: &mut User<'_>, shots: bool) -> SandboxResult {
+    for (at, name) in SENT.iter().enumerate() {
+        let path = user.made_up_of(name, 4096)?;
+        user.send_one(&path, at == 0, WAIT)?;
+        if shots && at == 0 {
+            thread::sleep(SETTLE);
+            user.shots_light_and_dark("qa792-sent-xlsx")?;
+        }
+    }
+    Ok(())
+}
+
 /// b's app shows the five cards, and a click on each card on the screen opens that file's path.
 fn receiver(user: &mut User<'_>) -> SandboxResult {
+    if SENT.iter().any(|name| user.drive_file(name).is_err()) {
+        say("  the five files are not on the drive: a sends them first");
+        send_all(user, false)?;
+    }
     user.restart_as("b")?;
     let outcome = receiver_sees(user);
     user.restart_as("a")?;
@@ -357,6 +368,8 @@ fn slow_upload(user: &mut User<'_>) -> SandboxResult {
 /// A file of 2 MiB whose upload never answers: the timeout text after its limit, then Retry uploads it and it sends.
 fn no_answer_retry(user: &mut User<'_>) -> SandboxResult {
     const NAME: &str = "made-up unanswered report.docx";
+    // the unanswered upload is on the drive, so the drive renames the second one
+    const RENAMED: &str = "made-up unanswered report 1.docx";
     let path = user.made_up_of(NAME, MEDIUM)?;
     user.mock.twist_next_drive_upload(DriveTwist::Never);
     let started = Instant::now();
@@ -379,29 +392,39 @@ fn no_answer_retry(user: &mut User<'_>) -> SandboxResult {
     })?;
     thread::sleep(SETTLE);
     user.shots_light_and_dark("qa792-no-answer")?;
-    let puts = user.mock.drive_files().iter().filter(|file| file.name == NAME).count();
+    let uploads = user.mock.drive_files().len();
     let bounds = &state["chat"]["bounds"];
     let retry = user.on_screen((px(&bounds[0]) + RETRY_FROM_LEFT, px(&bounds[1]) + RETRY_FROM_TOP));
     user.input.move_to(retry.0, retry.1)?;
     thread::sleep(SETTLE);
     user.shot("qa792-retry-hover")?;
     user.click(retry)?;
+    // the box names an uploaded file by the drive's answer
     let state = user.until("the file after Retry", |state| {
-        file_state(&state["chat"], NAME) == "ready"
+        file_state(&state["chat"], RENAMED) == "ready"
     })?;
     ensure(
-        user.mock.drive_files().iter().filter(|file| file.name == NAME).count() == puts + 1,
-        || format!("Retry did not upload the file again: {:?}", user.mock.drive_files()),
+        user.mock.drive_files().len() == uploads + 1 && user.drive_file(RENAMED).is_ok(),
+        || {
+            format!(
+                "Retry did not upload the file again as {RENAMED}: {:?}",
+                user.mock.drive_files()
+            )
+        },
     )?;
     ensure(problem_of(&state["chat"]).is_empty(), || {
         format!("the box says {state}")
     })?;
     let line = user.type_and_send()?;
     let entries = user.sent_with(&line)?;
-    ensure(entries.first().is_some_and(|entry| entry["fileName"] == NAME), || {
-        format!("the message posts {entries:?}")
+    let posted = user.drive_file(RENAMED)?.path;
+    ensure(
+        entries.len() == 1 && entries[0]["fileName"] == RENAMED && entries[0]["objectUrl"] == posted.as_str(),
+        || format!("the message posts {entries:?}, not {RENAMED} at {posted}"),
+    )?;
+    user.until("the card after Retry", |state| {
+        card_of(state, RENAMED, true).is_some_and(|url| url == posted)
     })?;
-    user.until("the card after Retry", |state| card_of(state, NAME, true).is_some())?;
     Ok(())
 }
 

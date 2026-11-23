@@ -1115,6 +1115,11 @@ impl ChatServiceMock {
         self.lock().drive.twists.push_back(twist);
     }
 
+    /// Removes the upload twists that no upload took.
+    pub fn clear_drive_twists(&self) {
+        self.lock().drive.twists.clear();
+    }
+
     /// The channel writes the mock took, in order (`channels.rs`).
     #[must_use]
     pub fn channel_writes(&self) -> Vec<ChannelWrite> {

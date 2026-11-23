@@ -473,6 +473,8 @@ impl<'a> User<'a> {
         }
         // a drag left pressed would hold the next check's pointer
         let _ = self.input.button_up(keys::BTN_LEFT);
+        // a check that failed before its upload would give its twist to the next check's upload
+        self.mock.clear_drive_twists();
     }
 
     fn running(&self) -> SandboxResult<&Running> {
