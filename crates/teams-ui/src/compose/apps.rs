@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, AppContext as _, Context, FocusHandle, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Styled as _, Window, anchored, deferred, div, px,
+    AnyElement, App, AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
+    Styled as _, Window, anchored, deferred, div, px,
 };
 use gpui_component::kbd::Kbd;
 use gpui_component::{Selectable as _, Sizable as _};
@@ -93,8 +93,10 @@ impl Compose {
                 let rows = std::mem::take(&mut this.apps.rows);
                 match event {
                     FlyoutEvent::Close => {
-                        let keys_in_flyout = flyout.read(cx).has_keys(window, cx);
-                        this.keys_back_from_flyout(keys_in_flyout, back_to.as_ref(), window, cx);
+                        // a press elsewhere keeps the keys where they went
+                        if flyout.read(cx).holds_focus(window, cx) {
+                            this.keys_back(back_to.as_ref(), window, cx);
+                        }
                     }
                     FlyoutEvent::GetMoreApps => cx.emit(ComposeEvent::ShowStore),
                     FlyoutEvent::Dialog(seed) => cx.emit(ComposeEvent::AppDialog(seed.clone())),
@@ -116,22 +118,12 @@ impl Compose {
         cx.notify();
     }
 
-    /// The flyout closed from its own keys: they go back to the tool it opened from while that shows, else to the
-    /// text.
-    fn keys_back_from_flyout(
-        &mut self,
-        keys_in_flyout: bool,
-        back_to: Option<&FocusHandle>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !keys_in_flyout {
-            return;
-        }
-        match back_to {
-            Some(tool) if self.tools.holds(tool, window) => tool.focus(window, cx),
-            _ => self.focus(window, cx),
-        }
+    /// Whether the keys are in the open flyout.
+    pub(super) fn flyout_has_focus(&self, window: &Window, cx: &App) -> bool {
+        self.apps
+            .flyout
+            .as_ref()
+            .is_some_and(|(flyout, _)| flyout.read(cx).holds_focus(window, cx))
     }
 
     /// The rows of the hidden tools' actions that the flyout lists over its apps, as they are now.

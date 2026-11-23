@@ -490,8 +490,8 @@ impl Compose {
             .is_some_and(|open| open.menu.focus_handle(cx).contains_focused(window, cx))
     }
 
-    /// A held Escape whose first push was in the open menu of tools or in the customize list: only that push acts (it
-    /// closed the popup), so its repeats do not go on to cancel a reply or an edit.
+    /// A held Escape whose first push was in the open menu of tools, the customize list or the apps flyout: only that
+    /// push acts (it closed the popup), so its repeats do not go on to cancel a reply or an edit.
     fn held_escape_after_menu(&self, event: &KeystrokeEvent, window: &Window, cx: &App) -> bool {
         if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() {
             return false;
@@ -500,7 +500,7 @@ impl Compose {
             let in_customize = self.customize.as_ref().is_some_and(|list| list.has_focus(window, cx));
             self.held_escape
                 .in_popup
-                .set(self.menu_has_focus(window, cx) || in_customize);
+                .set(self.menu_has_focus(window, cx) || in_customize || self.flyout_has_focus(window, cx));
         }
         event.is_held && self.held_escape.in_popup.get()
     }
@@ -662,10 +662,10 @@ fn menu_row(row: &Row, text: &FocusHandle, window: &Window) -> PopupMenuItem {
     .disabled(row.disabled)
 }
 
-/// Drops the repeats of a held Escape whose first push closed the open menu of tools or the customize list, before the
-/// bindings.
+/// Drops the repeats of a held Escape whose first push closed the open menu of tools, the customize list or the apps
+/// flyout, before the bindings.
 pub(super) struct HeldEscape {
-    /// The last new push of a plain Escape was in the open menu of tools or in the customize list.
+    /// The last new push of a plain Escape was in the open menu of tools, the customize list or the apps flyout.
     in_popup: Cell<bool>,
     _intercept: Subscription,
 }

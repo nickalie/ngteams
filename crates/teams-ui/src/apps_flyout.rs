@@ -187,7 +187,7 @@ impl AppsFlyout {
 
     /// Whether the keys are in the flyout.
     #[must_use]
-    pub fn has_keys(&self, window: &Window, cx: &App) -> bool {
+    pub fn holds_focus(&self, window: &Window, cx: &App) -> bool {
         self.focus.contains_focused(window, cx)
     }
 

@@ -77,10 +77,7 @@ impl Compose {
     /// else in the text.
     pub fn close_customize(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(list) = self.customize.take() else { return };
-        match list.return_control() {
-            Some(tool) if self.tools.holds(tool, window) => tool.focus(window, cx),
-            _ => self.focus(window, cx),
-        }
+        self.keys_back(list.return_control(), window, cx);
         cx.notify();
     }
 

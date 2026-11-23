@@ -4582,17 +4582,17 @@ impl ChatView {
                 .debug_selector(|| "confirmation".to_owned())
                 .track_focus(&self.focus.confirmation)
                 // a press on the question keeps the keys where they were: the bar has no keys of its own
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| {
-                        window.prevent_default();
-                        if let Some(button) = this.focus.pressed_from_confirmation.take()
-                            && this.focus.handle.is_focused(window)
-                        {
-                            button.focus(window, cx);
-                        }
-                    }),
-                )
+                .on_any_mouse_down(cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                    window.prevent_default();
+                    if event.button != MouseButton::Left {
+                        return;
+                    }
+                    if let Some(button) = this.focus.pressed_from_confirmation.take()
+                        && this.focus.handle.is_focused(window)
+                    {
+                        button.focus(window, cx);
+                    }
+                }))
                 .on_key_down(cx.listener(Self::escape_on_the_confirmation))
                 .flex()
                 .items_center()

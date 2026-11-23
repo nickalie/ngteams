@@ -1328,6 +1328,14 @@ impl Compose {
         window.focus(&focus, cx);
     }
 
+    /// A popup that held the keys closed: they go back to `tool` while it is still on the row, else to the text.
+    fn keys_back(&mut self, tool: Option<&gpui::FocusHandle>, window: &mut Window, cx: &mut Context<Self>) {
+        match tool {
+            Some(tool) if self.tools.holds(tool, window) => tool.focus(window, cx),
+            _ => self.focus(window, cx),
+        }
+    }
+
     /// Whether the keys are in the box's tools: on one of them, or in a menu one of them opened.
     pub fn tools_focused(&self, window: &Window, cx: &App) -> bool {
         self.tools.has_focus(window, cx)
@@ -1986,10 +1994,8 @@ impl Compose {
                 // a click elsewhere keeps the focus where it went
                 let held = picker.read(cx).holds_focus(window, cx);
                 this.emoji = None;
-                match &back_to {
-                    Some(tool) if held && this.tools.holds(tool, window) => tool.focus(window, cx),
-                    _ if held => this.focus(window, cx),
-                    _ => {}
+                if held {
+                    this.keys_back(back_to.as_ref(), window, cx);
                 }
                 cx.notify();
             }
