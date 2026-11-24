@@ -634,7 +634,10 @@ fn ground_on_row(image: &RgbImage, square: Rect, own: bool, y: i32) -> Option<[u
 
 /// What is drawn behind a sticker: each clear point of its square ([`clear_points`]), its colour and the chat's
 /// ground on its row, where the two differ. Teams draws a sticker bare: no frame, tile or bubble behind its clear px.
-fn behind(image: &RgbImage, square: Rect, own: bool) -> Vec<((i32, i32), [u8; 3], [u8; 3])> {
+/// A point behind a sticker that is not the chat's ground: where, its colour, and the ground on its row.
+type Behind = ((i32, i32), [u8; 3], [u8; 3]);
+
+fn behind(image: &RgbImage, square: Rect, own: bool) -> Vec<Behind> {
     clear_points(square)
         .into_iter()
         .filter_map(|(x, y)| {
@@ -1044,10 +1047,10 @@ fn theirs_and_own(found: &[Found]) -> Option<(Found, Found)> {
 }
 
 /// Each of b's and a's stickers in `image`, at its size and with no bubble; b's left of a's.
-fn check_bare(image: &RgbImage, found: &[Found], width: i32, what: &str) -> SandboxResult<Vec<String>> {
+fn check_bare(image: &RgbImage, found: &[Found], width: i32, what: &str) -> Vec<String> {
     let mut faults = Vec::new();
     let Some((theirs, own)) = theirs_and_own(found) else {
-        return Ok(vec![format!("{what}: no sticker of b's left of one of a's: {found:?}")]);
+        return vec![format!("{what}: no sticker of b's left of one of a's: {found:?}")];
     };
     for (sticker, is_own) in [(theirs, false), (own, true)] {
         let who = if is_own { "a's" } else { "b's" };
@@ -1085,12 +1088,12 @@ fn check_bare(image: &RgbImage, found: &[Found], width: i32, what: &str) -> Sand
     if theirs.sticker.overlaps(own.sticker) {
         faults.push(format!("{what}: the stickers overlap"));
     }
-    Ok(faults)
+    faults
 }
 
 /// Each sticker that the chat shows whole (not scrolled under its header): at its size, with no bubble, inside the
 /// window. One at least.
-fn check_visible(image: &RgbImage, found: &[Found], width: i32, what: &str) -> SandboxResult<Vec<String>> {
+fn check_visible(image: &RgbImage, found: &[Found], width: i32, what: &str) -> Vec<String> {
     // the chat's header ends about 96 px down at every font size
     let whole: Vec<Found> = found
         .iter()
@@ -1104,7 +1107,7 @@ fn check_visible(image: &RgbImage, found: &[Found], width: i32, what: &str) -> S
         })
         .collect();
     if whole.is_empty() {
-        return Ok(vec![format!("{what}: no whole sticker on the screen: {found:?}")]);
+        return vec![format!("{what}: no whole sticker on the screen: {found:?}")];
     }
     let mut faults = Vec::new();
     for sticker in whole {
@@ -1153,7 +1156,7 @@ fn check_visible(image: &RgbImage, found: &[Found], width: i32, what: &str) -> S
             ));
         }
     }
-    Ok(faults)
+    faults
 }
 
 /// b's sticker and a's own in "Lab stickers": each alone, bare at 180 by 180, b's on the left under b's name and
@@ -1181,7 +1184,7 @@ fn bare_stickers(user: &mut User<'_>) -> SandboxResult {
     for theme in ["light", "dark"] {
         user.ask(&format!("theme-{theme}"))?;
         let (image, found) = user.stickers(&format!("bare-{theme}"), 2)?;
-        faults.extend(check_bare(&image, &found, 1280, theme)?);
+        faults.extend(check_bare(&image, &found, 1280, theme));
     }
     ensure(faults.is_empty(), || faults.join("; "))
 }
@@ -1602,7 +1605,7 @@ fn themes_fonts_narrow(user: &mut User<'_>) -> SandboxResult {
             user.ask(&format!("theme-{theme}"))?;
             let name = format!("size-{width}-font-{font}-{theme}");
             match user.stickers(&name, 1) {
-                Ok((image, found)) => faults.extend(check_visible(&image, &found, width, &name)?),
+                Ok((image, found)) => faults.extend(check_visible(&image, &found, width, &name)),
                 Err(error) => faults.push(format!("{name}: {error}")),
             }
         }
@@ -1661,7 +1664,7 @@ fn cached_after_restart(user: &mut User<'_>) -> SandboxResult {
     let chat = user.chats.stickers.clone();
     user.open(&chat, 3)?;
     let (image, found) = user.stickers("after-restart", 2)?;
-    let faults = check_bare(&image, &found, 1280, "after restart")?;
+    let faults = check_bare(&image, &found, 1280, "after restart");
     let reads = user.cdn_reads(HI);
     say(&format!(
         "  CDN reads of the sticker: {reads} (before the restart {:?})",
