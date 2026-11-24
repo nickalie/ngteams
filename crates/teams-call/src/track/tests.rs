@@ -234,6 +234,28 @@ fn unreadable_or_wrong_kind_invitations_stay_ignored() {
         Observed::Ignored
     );
 }
+#[test]
+fn a_meeting_s_request_to_join_is_offered_only_with_its_organizer_and_tenant() {
+    let (group, mut gp) = invitation(1, 5).unwrap();
+    let tracker = Tracker::new(Mri::new(LAB_B));
+    gp["groupChat"]["threadId"] = json!("19:meeting_MadeUpMeeting0001@thread.v2");
+    assert_eq!(
+        tracker.observe_delivery(&invitation_delivery(&group.path, 6, &gp)),
+        Observed::Ignored,
+        "a meeting's chat with no meeting named"
+    );
+    gp["callNotification"]["invitationData"] = json!({"meetingInfo": {"organizerId": GUID_A}});
+    assert_eq!(
+        tracker.observe_delivery(&invitation_delivery(&group.path, 7, &gp)),
+        Observed::Ignored,
+        "no tenant"
+    );
+    gp["callNotification"]["invitationData"]["meetingInfo"]["tenantId"] = json!(GUID_B);
+    assert_eq!(
+        tracker.observe_delivery(&invitation_delivery(&group.path, 8, &gp)),
+        Observed::Offered
+    );
+}
 /// `gp` encoded as an invitation's with `text` spliced into its call notification's opening, so a key can be named
 /// twice (a JSON value can't hold that).
 fn invitation_with_twice(path: &str, gp: &Value, text: &str) -> Delivery {

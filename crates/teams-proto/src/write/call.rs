@@ -685,6 +685,54 @@ impl AddToCall {
         })
     }
 
+    /// Someone the meeting invited asked into its call, as the web client's People pane does with Request to join (seen
+    /// 2026-11-24, `meeting-steps`): `from` the account, `to` the invitee with a fresh participant id, the meeting's
+    /// organizer and tenant as `participantInvitationData.invitationData.meetingInfo`, the meeting's chat
+    /// (`meeting_chat`) with no message, and the `addParticipantSuccess`/`addParticipantFailure` callbacks of `links`.
+    ///
+    /// # Errors
+    /// [`CallWriteError`] when the request isn't such an `add` in its captured shape: the invitee not a work account or
+    /// the account itself, the chat not a meeting's, an organizer or tenant that isn't a GUID, a link of another
+    /// operation.
+    pub fn to_meeting(
+        context: &CallContext,
+        link: &CallLink,
+        (from, invitee): (&CallParticipant, &Invitee),
+        (meeting_chat, meeting): (&str, &MeetingInfo),
+        links: &Links,
+    ) -> Result<Self, CallWriteError> {
+        if !invitee.mri.as_str().starts_with("8:orgid:")
+            || invitee.mri == from.mri
+            || !crate::is_meeting_chat_id(meeting_chat)
+            || !crate::ids::is_guid(&meeting.organizer_id)
+            || !crate::ids::is_guid(&meeting.tenant_id)
+            || links
+                .iter()
+                .any(|(name, _)| !["addParticipantSuccess", "addParticipantFailure"].contains(&name))
+        {
+            return Err(CallWriteError::Unmapped);
+        }
+        let body = json!({
+            "disableUnmute": false,
+            "participants": {"from": from.json(), "to": [invitee.json()]},
+            "participantInvitationData": {
+                "invitationData": {
+                    "meetingInfo": {"organizerId": meeting.organizer_id, "tenantId": meeting.tenant_id},
+                },
+            },
+            "replacementDetails": null,
+            "groupContext": null,
+            "groupChat": {"threadId": meeting_chat, "messageId": null},
+            "links": links.json(),
+        });
+        let built = operation(context, CallOperation::Add, link, Some(body))?;
+        Ok(Self {
+            invitee: invitee.mri.clone(),
+            url: link.url().clone(),
+            built,
+        })
+    }
+
     /// Who is invited.
     #[must_use]
     pub fn invitee(&self) -> &Mri {

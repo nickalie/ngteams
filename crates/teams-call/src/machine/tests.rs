@@ -1172,6 +1172,51 @@ fn group_invitation(callee: &str, chat: &str, n: u8) -> Value {
     json!({"evt": 109, "gp": base64::engine::general_purpose::STANDARD.encode(gp.to_string())})
 }
 
+#[test]
+fn a_meeting_s_request_to_join_rings_as_a_group_call_in_the_meeting_s_chat_and_is_answered_into_it() {
+    let now = Instant::now();
+    let chat = "19:meeting_MadeUpMeeting0001@thread.v2";
+    let mut asked = group_invitation(B, chat, 1);
+    let gp = base64::engine::general_purpose::STANDARD
+        .decode(asked["gp"].as_str().unwrap())
+        .unwrap();
+    let mut gp: Value = serde_json::from_slice(&gp).unwrap();
+    gp["callNotification"]["invitationData"] = json!({"meetingInfo": {
+        "organizerId": "00000000-0000-4000-8000-00000000000a", "tenantId": "00000000-0000-4000-8000-0000000000f1"}});
+    asked["gp"] = json!(base64::engine::general_purpose::STANDARD.encode(gp.to_string()));
+    let mut calls = Calls::new(identity(B));
+    calls.set_push_url(PUSH).unwrap();
+    calls.on_delivery(
+        &delivery("/v4/f/SyntheticEndpoint00000/", &asked),
+        Observed::Offered,
+        now,
+    );
+    let [(attach, "attach")] = sent(&effects(&mut calls))[..] else {
+        panic!()
+    };
+    let attached = json!({
+        "callInvitation": {"links": {"progress": cc("incoming", "progress"),
+            "acceptance": cc("incoming", "accept"), "callLeg": cc("incoming", "reject")}},
+        "additionalActionResponses": [{"url": conv(""), "output": {"links": {
+            "leave": conv("/leave"), "updateEndpointState": conv("/updateEndpointState"),
+            "addParticipantAndModality": conv("/add")}}}],
+    });
+    calls.on_outcome(attach, &ok(&attached), now);
+    let ringing = effects(&mut calls);
+    let [CallEvent::Incoming(incoming)] = &events(&ringing)[..] else {
+        panic!("{ringing:#?}");
+    };
+    assert_eq!(incoming.group_chat.as_deref(), Some(chat));
+    let call = incoming.call;
+    assert_eq!(calls.meeting_chat(call).as_deref(), Some(chat), "its organizer named");
+    calls.answer(call, media()).unwrap();
+    let [(state, "update_endpoint_state")] = sent(&effects(&mut calls))[..] else {
+        panic!()
+    };
+    calls.on_outcome(state, &ok(&json!({})), now);
+    assert_eq!(names(&effects(&mut calls)), ["accept"]);
+}
+
 /// b's machine with a's invitation offered (its `attach` answered): it rings here.
 fn offered_call(now: Instant) -> (Calls, CallId) {
     let (calls, call, _) = rung_call(now);

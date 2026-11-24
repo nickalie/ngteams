@@ -8,7 +8,7 @@ use url::Url;
 
 use super::json::strict_json;
 use super::{Callback, Controller, Delivery, Link, controller_path, parse_callback, proxy_link_in};
-use teams_proto::{CallOperation, Cloud, INVITATION_EVENTS, Mri, is_group_chat_id};
+use teams_proto::{CallOperation, Cloud, INVITATION_EVENTS, Mri, is_group_chat_id, is_meeting_chat_id};
 
 /// What an invitation delivery says, read: who calls whom, in which group chat, and its links.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -414,9 +414,10 @@ impl Offer {
 /// The invitation `delivery` is, read (see the module docs); `None` for any other delivery or an invitation that
 /// doesn't read: at an endpoint's root, `evt` an invitation's, `gp` base64 of a JSON object with a caller and a callee,
 /// an `attach` link and a conversation on the flight proxy, the leg's links all of one forked call, no call it
-/// replaces, no group context (a meeting), and the call's kind in a captured shape: a 1:1 call's (107) names no group
-/// chat and isn't multi-party (`conversationInvitation.isMultiParty` false); a group call's (109) is multi-party and
-/// names its group chat by a group chat's id, the only field naming its other participants.
+/// replaces, no group context (a channel's meeting), and the call's kind in a captured shape: a 1:1 call's (107) names
+/// no group chat and isn't multi-party (`conversationInvitation.isMultiParty` false); a group call's (109) is
+/// multi-party and names its group chat by a group chat's id, the only field naming its other participants, or a
+/// meeting's chat with the meeting's organizer and tenant (a meeting's Request to join).
 pub(crate) fn read_invitation_in(cloud: &Cloud, delivery: &Delivery) -> Option<Invitation> {
     if delivery.path.starts_with("/trouter/") == cloud.is_microsoft() {
         return None;
@@ -445,7 +446,7 @@ pub(crate) fn read_invitation_in(cloud: &Cloud, delivery: &Delivery) -> Option<I
     let controller = conversation_of(cloud, &gp)?;
     let group_chat = match gp.get("groupChat") {
         None | Some(Value::Null) => None,
-        Some(chat) => Some(text(chat, "/threadId").filter(|id| is_group_chat_id(id))?),
+        Some(chat) => Some(text(chat, "/threadId").filter(|id| is_group_chat_id(id) || meeting_ask(notification, id))?),
     };
     if !kind_fits(event, &gp, group_chat.is_some()) {
         return None;
@@ -567,6 +568,20 @@ fn kind_fits(event: u64, gp: &Value, names_chat: bool) -> bool {
         109 => names_chat && multi_party == Some(true),
         _ => false,
     }
+}
+
+/// Whether a group call's invitation naming the chat `id` is a meeting's Request to join (seen 2026-11-24): a meeting's
+/// chat, and the meeting's organizer and tenant in `callNotification.invitationData.meetingInfo`.
+fn meeting_ask(notification: &Value, id: &str) -> bool {
+    let named = |pointer: &str| {
+        notification
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .is_some_and(|text| !text.is_empty())
+    };
+    is_meeting_chat_id(id)
+        && named("/invitationData/meetingInfo/organizerId")
+        && named("/invitationData/meetingInfo/tenantId")
 }
 
 /// `path` when it is an endpoint's root: `/v4/f/<endpoint>/`, or `/trouter/v4/f/<endpoint>/` for Own.

@@ -211,8 +211,9 @@ pub enum CallEvent {
     /// The account's call on hold (`held`) or off it, as its Hold or Resume was taken (or, not taken, as it was).
     Held { call: CallId, held: bool },
     /// Someone the account added to its call wasn't brought in: the `add` wasn't taken, or its failure was delivered
-    /// (they didn't answer, or had no endpoint to ring). Teams shows them "No response".
-    AddFailed { call: CallId, who: Mri },
+    /// (they didn't answer, or had no endpoint to ring; `declined`, they declined the ring). Teams shows them "No
+    /// response", or "Declined".
+    AddFailed { call: CallId, who: Mri, declined: bool },
     /// The call is in the group chat `chat` from now on: a 1:1 call someone was added to (the account's `add` was
     /// taken, or a conversation update named it), a group call's from then on.
     GroupChat { call: CallId, chat: String },
@@ -561,6 +562,19 @@ impl Calls {
             .filter(|chat| teams_proto::is_group_chat_id(chat))
     }
 
+    /// The meeting chat `call` is in, while it is up and is a meeting's whose organizer and tenant are known (the
+    /// meeting it joined, or the invitation it answered, named them): where Request to join adds someone
+    /// ([`Self::add_to_meeting`]). `None` for any other call.
+    #[must_use]
+    pub fn meeting_chat(&self, call: CallId) -> Option<String> {
+        let current = self.call.as_ref().filter(|current| current.id == call)?;
+        current.meeting_info.as_ref()?;
+        current
+            .caption_thread
+            .clone()
+            .filter(|chat| teams_proto::is_meeting_chat_id(chat))
+    }
+
     /// The far end of the 1:1 call `call`, while it is up: the other member of its 1:1 chat. `None` for a group call, a
     /// meeting's, the test call, or another call.
     #[must_use]
@@ -627,6 +641,9 @@ impl Calls {
             Placement::Meeting { .. } | Placement::MeetingCode(_) | Placement::Channel { .. } => Side::Meeting,
         };
         let mut call = self.new_call(side, now)?;
+        if let Placement::Meeting { meeting, .. } = placement {
+            call.meeting_info = Some(meeting.clone());
+        }
         call.caption_thread = match placement {
             Placement::Chat {
                 group_chat: Some(chat), ..
@@ -684,6 +701,7 @@ impl Calls {
             posts_meetup: true,
         };
         let Some(call) = self.call.as_mut() else { return };
+        call.meeting_info.clone_from(&into.meeting);
         call.side = Side::Joined {
             chat: channel.clone(),
             conversation: conversation.clone(),
@@ -744,6 +762,7 @@ impl Calls {
         };
         let mut call = self.new_call(side, now)?;
         call.caption_thread = Some(channel.to_owned());
+        call.meeting_info = Some(meetup.meeting.clone());
         let into = build::JoinInto {
             chat: channel,
             message_id: Some(&meetup.message_id),
@@ -1212,6 +1231,25 @@ impl Calls {
         Ok(())
     }
 
+    /// The account asks `invitee` into its meeting's call, as Teams' Request to join on someone the meeting invited
+    /// (seen 2026-11-24): the conversation's `add` naming the meeting's chat and its organizer and tenant. The invitee
+    /// rings; one who doesn't come in is told ([`CallEvent::AddFailed`]).
+    ///
+    /// # Errors
+    /// [`CallError::NoSuchCall`] for another call, [`CallError::NotNow`] while it isn't up, isn't a meeting's whose
+    /// organizer is known ([`Self::meeting_chat`]) or names no `add` link, a write error for an invitee out of the
+    /// captured shape; nothing was sent.
+    pub fn add_to_meeting(&mut self, call: CallId, invitee: &Mri) -> Result<(), CallError> {
+        let chat = self.meeting_chat(call).ok_or(CallError::NotNow)?;
+        let current = up(&mut self.call, call)?;
+        let meeting = current.meeting_info.clone().ok_or(CallError::NotNow)?;
+        let link = current.conversation.add.clone().ok_or(CallError::NotNow)?;
+        let write = build::add_to_meeting(current, &link, invitee, (&chat, &meeting))?;
+        let id = self.out.send(current, Step::Invite, write);
+        current.invites.insert(id, (invitee.clone(), chat));
+        Ok(())
+    }
+
     /// The account transfers its 1:1 call's far end to `target`, as Teams' Transfer to an audio call does (seen
     /// 2026-11-06): the call leg's `transfer`. Once the far end took it (its `transferAcceptance` delivered) the account
     /// leaves the call; one not taken is told ([`CallEvent::TransferFailed`]) and the call stays as it was.
@@ -1568,7 +1606,11 @@ impl Calls {
             in_group_chat(call, &mut self.out, chat);
         } else {
             let id = call.id;
-            self.out.event(CallEvent::AddFailed { call: id, who });
+            self.out.event(CallEvent::AddFailed {
+                call: id,
+                who,
+                declined: false,
+            });
         }
     }
 
@@ -1659,6 +1701,9 @@ impl Calls {
         };
         let Some(call) = self.call.as_mut() else { return };
         call.conversation = conversation;
+        if call.meeting_info.is_none() && matches!(call.side, Side::Meeting) {
+            call.meeting_info = read::answered_meeting(body);
+        }
         self.meeting_answered(body);
         let Some(call) = self.call.as_mut() else { return };
         // a meeting's call that runs already: who is in it comes only with this answer (its updates tell changes)
@@ -1959,6 +2004,7 @@ impl Calls {
         if let Some(id) = invitation.callee_participant.clone() {
             me.participant_id = Some(id);
         }
+        let meeting_info = invitation.meeting.clone();
         let caption_thread = invitation
             .group_chat
             .clone()
@@ -1972,6 +2018,7 @@ impl Calls {
             now,
         );
         call.caption_thread = caption_thread;
+        call.meeting_info = meeting_info;
         let write = build::attach(&mut call, &self.identity)?;
         self.next_call += 1;
         self.receipt(delivery);
@@ -2036,11 +2083,15 @@ impl Calls {
     fn add_failed(&mut self, delivery: &Delivery) {
         let Some(call) = self.call.as_ref() else { return };
         let id = call.id;
-        for who in read::add_failed(&delivery.body)
+        for (who, declined) in read::add_failed(&delivery.body)
             .into_iter()
-            .filter(|who| who.as_str().starts_with("8:"))
+            .filter(|(who, _)| who.as_str().starts_with("8:"))
         {
-            self.out.event(CallEvent::AddFailed { call: id, who });
+            self.out.event(CallEvent::AddFailed {
+                call: id,
+                who,
+                declined,
+            });
         }
     }
 

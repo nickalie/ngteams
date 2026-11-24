@@ -349,6 +349,9 @@ pub(crate) struct Call {
     pub(crate) published: u64,
     /// What the meeting shares with everyone in it, as last told, and what its next changes name.
     pub(crate) meeting: crate::machine::Meeting,
+    /// The meeting's organizer and tenant, when the call is a meeting's that named them: what its Request to join
+    /// names.
+    pub(crate) meeting_info: Option<teams_proto::MeetingInfo>,
     /// The account's `screenSharerAttributes` told so far: each Share tells the next.
     pub(crate) screen_shares: u64,
 }
@@ -408,6 +411,7 @@ impl Call {
             endpoint_states: 1,
             published: 0,
             meeting: crate::machine::Meeting::default(),
+            meeting_info: None,
             screen_shares: 0,
         }
     }

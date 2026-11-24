@@ -138,6 +138,8 @@ pub struct Invited {
     pub name: String,
     /// They didn't come in (Teams' "No response", with its call-again).
     pub no_response: bool,
+    /// They declined the ring (Teams' "Declined", with its call-again).
+    pub declined: bool,
 }
 
 /// A live reaction someone in the call sent ([`teams_core::Event::CallReaction`]).
@@ -1344,7 +1346,7 @@ impl Calls {
                     active.chat = Some(chat.clone());
                 }
             }
-            Event::CallAddFailed { call, who } => {
+            Event::CallAddFailed { call, who, declined } => {
                 if let Some(invited) = self
                     .call
                     .as_mut()
@@ -1352,6 +1354,7 @@ impl Calls {
                     .and_then(|active| active.invited.iter_mut().find(|invited| invited.mri == *who))
                 {
                     invited.no_response = true;
+                    invited.declined = *declined;
                 }
             }
             Event::CallReaction {
@@ -1423,6 +1426,7 @@ impl Calls {
             mri: who,
             name,
             no_response: false,
+            declined: false,
         });
         cx.notify();
     }

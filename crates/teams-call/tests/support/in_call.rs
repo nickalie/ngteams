@@ -523,7 +523,11 @@ fn someone_added_goes_to_the_conversation_s_add_naming_the_group_chat_and_the_ca
     let failure = conversation_callback(&calls, "addParticipantFailure");
     let failed = json!({"participants": {C: {"code": 580, "phrase": "no callee endpoints"}}});
     calls.on_delivery(&delivery(&failure, &failed), Observed::Nothing, now);
-    assert!(events(&effects(&mut calls)).contains(&CallEvent::AddFailed { call, who: Mri::new(C) }));
+    assert!(events(&effects(&mut calls)).contains(&CallEvent::AddFailed {
+        call,
+        who: Mri::new(C),
+        declined: false
+    }));
 }
 
 #[test]
@@ -538,7 +542,11 @@ fn an_add_not_taken_tells_its_invitee_didn_t_come_in_and_ends_nothing() {
     };
     calls.on_outcome(id, &failed(), now);
     let told = effects(&mut calls);
-    assert!(events(&told).contains(&CallEvent::AddFailed { call, who: Mri::new(C) }));
+    assert!(events(&told).contains(&CallEvent::AddFailed {
+        call,
+        who: Mri::new(C),
+        declined: false
+    }));
     assert!(sent(&told).is_empty(), "the call goes on");
     assert_eq!(calls.group_chat(call), None);
 }
@@ -645,4 +653,112 @@ fn a_transfer_the_far_end_asked_for_is_taken_and_told_with_whom_to_call_then_the
             .any(|event| matches!(event, CallEvent::Ended { call: of, .. } if *of == call))
     );
     assert!(calls.current().is_none());
+}
+
+/// The made-up meeting a's meeting calls are in.
+const MEETING_CHAT: &str = "19:meeting_MadeUpMeeting0001@thread.v2";
+
+/// The made-up meeting's organizer (a) and tenant.
+fn meeting_info() -> teams_proto::MeetingInfo {
+    teams_proto::MeetingInfo {
+        organizer_id: "00000000-0000-4000-8000-00000000000a".to_owned(),
+        tenant_id: "00000000-0000-4000-8000-0000000000f1".to_owned(),
+    }
+}
+
+/// a in its meeting's call, its entry answered (`answer`) and its acceptance delivered: up.
+fn in_meeting(now: Instant, placement: &Placement, answer: &Value) -> (Calls, CallId) {
+    let mut calls = Calls::new(identity(A));
+    calls.set_push_url(PUSH).unwrap();
+    let call = calls.place(placement, media(), now).unwrap();
+    let placed = effects(&mut calls);
+    let (start, _) = sent(&placed)[0];
+    calls.on_outcome(start, &ok(answer), now);
+    let path = acceptance_path(&calls);
+    calls.on_delivery(&delivery(&path, &acceptance()), Observed::Acceptance, now);
+    let _ = effects(&mut calls);
+    (calls, call)
+}
+
+#[test]
+fn someone_a_meeting_invited_is_asked_in_naming_its_chat_and_organizer_and_their_decline_is_told() {
+    let now = Instant::now();
+    let placement = Placement::Meeting {
+        chat: MEETING_CHAT.to_owned(),
+        meeting: meeting_info(),
+    };
+    let (mut calls, call) = in_meeting(now, &placement, &conversation_answer());
+    assert_eq!(calls.meeting_chat(call).as_deref(), Some(MEETING_CHAT));
+    assert_eq!(calls.group_chat(call), None, "a meeting's chat is no group chat");
+    calls.add_to_meeting(call, &Mri::new(C)).unwrap();
+    let added = bodies(&effects(&mut calls));
+    let [(id, "add", body)] = &added[..] else {
+        panic!("{added:#?}");
+    };
+    assert_eq!(body["participants"]["to"][0]["id"], json!(C));
+    assert_eq!(body["groupChat"], json!({"threadId": MEETING_CHAT, "messageId": null}));
+    assert_eq!(
+        body["participantInvitationData"]["invitationData"]["meetingInfo"]["organizerId"],
+        json!("00000000-0000-4000-8000-00000000000a")
+    );
+    calls.on_outcome(*id, &ok(&json!({})), now);
+    let taken = events(&effects(&mut calls));
+    assert!(
+        !taken.iter().any(|event| matches!(event, CallEvent::GroupChat { .. })),
+        "the meeting's call stays in its chat: {taken:#?}"
+    );
+    // c declined the ring (as captured 2026-11-24)
+    let failure = conversation_callback(&calls, "addParticipantFailure");
+    let declined = json!({"participants": {C: {"code": 580, "subCode": 5208,
+        "callControllerTransactionEnd": {"code": 603, "subCode": 0}}}});
+    calls.on_delivery(&delivery(&failure, &declined), Observed::Nothing, now);
+    assert!(events(&effects(&mut calls)).contains(&CallEvent::AddFailed {
+        call,
+        who: Mri::new(C),
+        declined: true
+    }));
+    // never the account itself, and never into another call
+    assert!(calls.add_to_meeting(call, &Mri::new(A)).is_err());
+    let other = CallId(call.get() + 1);
+    assert!(matches!(
+        calls.add_to_meeting(other, &Mri::new(C)),
+        Err(CallError::NotNow)
+    ));
+    assert!(sent(&effects(&mut calls)).is_empty());
+}
+
+#[test]
+fn a_call_that_is_no_meeting_s_or_names_no_organizer_asks_nobody_into_a_meeting() {
+    let now = Instant::now();
+    let (mut calls, call) = up(now);
+    assert_eq!(calls.meeting_chat(call), None);
+    assert!(matches!(
+        calls.add_to_meeting(call, &Mri::new(C)),
+        Err(CallError::NotNow)
+    ));
+    // a meeting code's entry whose answer names no meeting: its organizer isn't known
+    let code = teams_proto::MeetingCode::typed("123456789012", "MadeUp").unwrap();
+    let (mut calls, call) = in_meeting(now, &Placement::MeetingCode(code), &conversation_answer());
+    assert_eq!(calls.meeting_chat(call), None);
+    assert!(matches!(
+        calls.add_to_meeting(call, &Mri::new(C)),
+        Err(CallError::NotNow)
+    ));
+    assert!(sent(&effects(&mut calls)).is_empty());
+}
+
+#[test]
+fn a_meeting_code_s_entry_takes_the_meeting_its_answer_names() {
+    let now = Instant::now();
+    let code = teams_proto::MeetingCode::typed("123456789012", "MadeUp").unwrap();
+    let mut answer = conversation_answer();
+    answer["meetingInfo"] = json!({"organizerId": "00000000-0000-4000-8000-00000000000a",
+        "tenantId": "00000000-0000-4000-8000-0000000000f1"});
+    let (calls, call) = in_meeting(now, &Placement::MeetingCode(code), &answer);
+    assert_eq!(
+        calls.call.as_ref().and_then(|call| call.meeting_info.clone()),
+        Some(meeting_info())
+    );
+    // its chat comes later, with the meeting's join link
+    assert_eq!(calls.meeting_chat(call), None);
 }

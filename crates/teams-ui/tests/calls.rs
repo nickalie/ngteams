@@ -3010,11 +3010,54 @@ fn a_meeting_nobody_else_joined_shows_its_invitees_as_invited_not_in_it() {
     assert!(!drawn(stage, "call-roster-1"));
     assert!(drawn(stage, "call-roster-added-0"));
     assert!(!drawn(stage, "call-roster-added-1"), "b joined");
-    // the engine can't add into a meeting yet: no Request to join that only fails
+}
+
+#[test]
+fn request_to_join_on_a_meeting_s_invitee_asks_once_and_their_decline_shows() {
+    let rig = calling();
+    invite_to_meeting(&rig);
+    let (trace, _) = trace();
+    let (_windows, stage) = in_meeting(&rig, &trace);
+    rig.send(Event::CallParticipants {
+        call: call(1),
+        view: view(&[(LAB_B, "Lab Bee", true, Some(1), false)], false),
+    });
+    rig.cx.run_until_parked();
+    click(stage, "call-roster");
+    assert!(drawn(stage, "call-roster-added-0"), "c is only invited");
+    // Request to join on c, as Teams shows it on the row's hover: one add for c, who is listed ringing in the meeting
+    assert!(
+        !drawn(stage, "call-roster-request-0"),
+        "only while the pointer is on it"
+    );
     let row = stage.debug_bounds("call-roster-added-0").unwrap();
     stage.simulate_mouse_move(row.center(), None, Modifiers::none());
     draw(stage);
-    assert!(!drawn(stage, "call-roster-request-0"));
+    click(stage, "call-roster-request-0");
+    let adds: Vec<_> = actions(&rig)
+        .into_iter()
+        .filter(|action| matches!(action, CallAction::Add { .. }))
+        .collect();
+    assert_eq!(
+        adds,
+        [CallAction::Add {
+            call: call(1),
+            invitee: Mri::new(LAB_C),
+        }]
+    );
+    assert!(drawn(stage, "call-roster-invited-0"), "Calling…");
+    assert!(!drawn(stage, "call-roster-added"), "nobody else is only invited");
+    // c declined: "Declined", with its call-again
+    rig.send(Event::CallAddFailed {
+        call: call(1),
+        who: Mri::new(LAB_C),
+        declined: true,
+    });
+    rig.cx.run_until_parked();
+    draw(stage);
+    let active = rig.cx.read(|cx| calls_of(&rig).read(cx).call().cloned()).unwrap();
+    assert!(active.invited[0].declined && active.invited[0].no_response);
+    assert!(drawn(stage, "call-roster-call-again-0"));
 }
 
 /// The People pane's row or heading the keyboard is on in the call window `stage`.
@@ -5043,6 +5086,7 @@ fn people_adds_someone_to_a_one_to_one_call_which_becomes_a_group_call_and_lists
     rig.send(Event::CallAddFailed {
         call: call(1),
         who: Mri::new(LAB_SEA),
+        declined: false,
     });
     rig.cx.run_until_parked();
     click(stage, "call-roster-call-again-0");

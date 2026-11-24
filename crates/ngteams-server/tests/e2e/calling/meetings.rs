@@ -830,7 +830,7 @@ async fn only_a_meetings_hosts_let_in_or_mute_and_an_unknown_meeting_is_none() {
         let mut ada = Person::new(&mixed, "Ada", A_TONE).await;
         let mut bert = Person::new(&mixed, "Bert", B_TONE).await;
         let dan = Person::new(&mixed, "Dan", C_TONE).await;
-        let cora = Person::new(&mixed, "Cora", C_TONE).await;
+        let mut cora = Person::new(&mixed, "Cora", C_TONE).await;
         let event = schedule(&ada, &[&bert, &cora]).await;
         let join = join_of(&event);
         let a_call = joined(&mut ada, &join).await;
@@ -857,11 +857,22 @@ async fn only_a_meetings_hosts_let_in_or_mute_and_an_unknown_meeting_is_none() {
         );
         let all = json!({"scope": "all", "muteParticipants": [], "mediaTypes": ["audio"]});
         assert_eq!(raw(&mixed, &bert, Method::POST, &at("mute"), &all).await, 403);
-        // an attendee rings nobody into the meeting: not even an invited member of its chat who hasn't joined; the
-        // organizer may (the native client doesn't take that ring yet:
-        // `docs/backlog/meeting-add-rings-no-native-client.md`)
+        // an attendee rings nobody into the meeting: not even an invited member of its chat who hasn't joined
         assert_eq!(raw(&mixed, &bert, Method::POST, &at("add"), &to(&cora)).await, 403);
-        assert_eq!(raw(&mixed, &ada, Method::POST, &at("add"), &to(&cora)).await, 202);
+        // the organizer's Request to join rings that member, who answers into the meeting
+        let chat = event.meeting_chat.clone().unwrap();
+        let asked = CallAction::Add {
+            call: a_call,
+            invitee: Mri::new(cora.engine.mri.clone()),
+        };
+        ada.engine.call(asked).await;
+        let ringing = cora.engine.incoming().await;
+        assert_eq!(ringing.group_chat.as_deref(), Some(chat.as_str()));
+        assert_eq!(ringing.caller.as_str(), ada.engine.mri);
+        let c_call = cora.engine.call(CallAction::Answer { call: ringing.call }).await;
+        cora.engine.status(c_call, &CallStatus::Connected).await;
+        mixed.connected(&calls[0].id, 3).await;
+        ada.engine.view(a_call, |view| view.participants.len() == 2).await;
         assert_eq!(raw(&mixed, &ada, Method::POST, &at("admit"), &json!({})).await, 400);
         // the organizer mutes one person by name (Teams' client offers only Mute all)
         let one = json!({"scope": "specified", "muteParticipants": [{"id": bert.engine.mri}], "mediaTypes": ["audio"]});
@@ -885,7 +896,6 @@ async fn only_a_meetings_hosts_let_in_or_mute_and_an_unknown_meeting_is_none() {
         assert_eq!(raw(&mixed, &dan, Method::POST, start, &no_chat).await, 501);
         // an invited attendee's hand-made start in the meeting's chat is no meeting of its own: neither a Meet now
         // nor a plain group call is made there
-        let chat = event.meeting_chat.clone().unwrap();
         let meet_now = json!({
             "participants": {"from": {"id": bert.engine.mri}, "to": []},
             "groupChat": {"threadId": chat, "messageId": "0"},
@@ -898,7 +908,7 @@ async fn only_a_meetings_hosts_let_in_or_mute_and_an_unknown_meeting_is_none() {
             .await
             .unwrap();
         assert_eq!(calls.len(), 1, "{calls:?}");
-        leave_all(&mut [&mut ada, &mut bert], &[a_call, b_call]).await;
+        leave_all(&mut [&mut cora, &mut ada, &mut bert], &[c_call, a_call, b_call]).await;
         shut_down(vec![ada, bert, cora, dan], mixed).await;
     }
 }

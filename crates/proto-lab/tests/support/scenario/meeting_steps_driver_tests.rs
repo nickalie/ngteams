@@ -97,6 +97,7 @@ async fn missing_mris_stop_before_navigation() {
         steps(
             &who,
             &mut session,
+            &mut [],
             &mut report,
             &temp.path().join("steps.sock"),
             options()
@@ -192,7 +193,7 @@ async fn isolated_control_child() {
         peer_upn: "peer@example.invalid",
     };
     let (result, client) = tokio::join!(
-        steps(&who, &mut session, &mut report, &socket, options()),
+        steps(&who, &mut session, &mut [], &mut report, &socket, options()),
         tokio::time::timeout(Duration::from_secs(30), client)
     );
     client.unwrap();

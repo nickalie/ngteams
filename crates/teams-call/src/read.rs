@@ -27,6 +27,8 @@ pub(crate) struct Invitation {
     /// which the web client names itself by (its progress, its answer, its endpoint state); the service keys the
     /// callee's endpoint state by it (seen 2026-11-06: a mute under another id never showed).
     pub(crate) callee_participant: Option<String>,
+    /// A meeting's invitation (Request to join): its organizer and tenant (`callNotification.invitationData.meetingInfo`).
+    pub(crate) meeting: Option<teams_proto::MeetingInfo>,
 }
 
 /// The invitation `body` is; `None` for any other body or one that doesn't read.
@@ -55,6 +57,18 @@ pub(crate) fn invitation_in(cloud: &teams_proto::Cloud, body: &[u8]) -> Option<I
         attach: link(cloud, notification, "/links/attach")?,
         offer: notification.get("mediaContent").and_then(media),
         callee_participant: text(notification, "/to/participantId").filter(|id| !id.is_empty()),
+        meeting: notification
+            .pointer("/invitationData/meetingInfo")
+            .and_then(meeting_info),
+    })
+}
+
+/// A `meetingInfo` object's organizer and tenant, when it names both.
+pub(crate) fn meeting_info(info: &Value) -> Option<teams_proto::MeetingInfo> {
+    let text = |name: &str| info.get(name).and_then(Value::as_str).filter(|text| !text.is_empty());
+    Some(teams_proto::MeetingInfo {
+        organizer_id: text("organizerId")?.to_owned(),
+        tenant_id: text("tenantId")?.to_owned(),
     })
 }
 
@@ -128,6 +142,12 @@ impl Conversation {
             mute: at("mute"),
         }
     }
+}
+
+/// The meeting a start's or a join's answer `body` names (`meetingInfo`): its organizer and tenant.
+pub(crate) fn answered_meeting(body: &[u8]) -> Option<teams_proto::MeetingInfo> {
+    let body: Value = serde_json::from_slice(body).ok()?;
+    meeting_info(body.get("meetingInfo")?)
 }
 
 /// The conversation a start's or a subscription's answer `body` opened: its `conversationController`.
@@ -1056,16 +1076,32 @@ mod tests {
 }
 
 /// Who an `add` failed to bring in, as its `addParticipantFailure` delivery names them (`{"participants": {<MRI>:
-/// {"code", "phrase", …}}, "participantInfos": […]}`, seen 2026-11-06 when the invitee had no endpoint to ring).
-pub(crate) fn add_failed(body: &[u8]) -> Vec<Mri> {
+/// {"code", "phrase", "callControllerTransactionEnd", …}}, "participantInfos": […]}`, seen 2026-11-06 when the invitee had
+/// no endpoint to ring), and whether each declined: their ring's end `603` (`callControllerTransactionEnd.code`, seen
+/// 2026-11-24 when the invitee declined a meeting's Request to join: Teams says "Declined").
+pub(crate) fn add_failed(body: &[u8]) -> Vec<(Mri, bool)> {
     let Ok(body) = serde_json::from_slice::<Value>(body) else {
         return Vec::new();
     };
     body.get("participants")
         .and_then(Value::as_object)
-        .map(|participants| participants.keys().map(Mri::new).collect())
+        .map(|participants| {
+            participants
+                .iter()
+                .map(|(mri, failure)| {
+                    let declined = failure
+                        .pointer("/callControllerTransactionEnd/code")
+                        .and_then(Value::as_u64)
+                        == Some(DECLINED);
+                    (Mri::new(mri), declined)
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
+
+/// The end code of a ring its callee declined.
+const DECLINED: u64 = 603;
 
 /// The group chat a conversation update names (`groupChat.threadId`): a 1:1 call's new group chat once someone was
 /// added to it (seen 2026-11-06, both ends told).

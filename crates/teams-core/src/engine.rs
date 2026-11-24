@@ -534,8 +534,8 @@ pub enum Event {
     /// ([`CallAction::Add`]) is a group call in the new chat of the three.
     CallGroupChat { call: CallId, chat: String },
     /// Someone added to the account's call didn't come in: the add wasn't taken, or they didn't answer (Teams' "No
-    /// response").
-    CallAddFailed { call: CallId, who: Mri },
+    /// response"), or they declined (`declined`, Teams' "Declined").
+    CallAddFailed { call: CallId, who: Mri, declined: bool },
     /// The account's transfer of its call ([`CallAction::Transfer`]) wasn't taken: the call stays as it was, held.
     CallTransferFailed { call: CallId },
     /// The far end transferred the account's call to `target` (`by` its name as the transfer gave it): the call is

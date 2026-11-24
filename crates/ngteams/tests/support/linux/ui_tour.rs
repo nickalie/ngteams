@@ -2527,6 +2527,7 @@ const STEPS: [Step; 5 + 365 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
             teams_core::Event::CallAddFailed {
                 call,
                 who: teams_proto::Mri::new(&person.mri),
+                declined: false,
             },
             cx,
         );

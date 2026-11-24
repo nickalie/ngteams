@@ -395,6 +395,24 @@ pub(crate) fn add_person(
     )?))
 }
 
+/// `invitee` asked into the meeting's call at the conversation's `add` `link`, the meeting's chat and its organizer
+/// named, its outcome told at new callbacks.
+pub(crate) fn add_to_meeting(
+    call: &mut Call,
+    link: &CallLink,
+    invitee_mri: &Mri,
+    (chat, meeting): (&str, &MeetingInfo),
+) -> Result<CallWrite, CallError> {
+    let links = call.links(Kind::Conversation, &["addParticipantSuccess", "addParticipantFailure"])?;
+    Ok(CallWrite::Add(AddToCall::to_meeting(
+        &call.context,
+        link,
+        (&call.me, &invitee(invitee_mri)?),
+        (chat, meeting),
+        &links,
+    )?))
+}
+
 /// The call's far end transferred to `target` at the call leg's `transfer` `link`, its acceptance and completion told
 /// at new callbacks.
 pub(crate) fn transfer(call: &mut Call, link: &CallLink, target: &Mri) -> Result<CallWrite, CallError> {

@@ -15,13 +15,15 @@
 //!   camera on, and a nameless app (`28:`) that only listens: neither is a participant, People stays 1 + 10. An
 //!   invitee who joins after them shows that the app applied both entries.
 //! - **The lobby** (`lobby`): an invitee waits in the lobby: People shows the lobby's row, a, and nine invited.
-//! - **No Request to join in a meeting** (`invited_hover`): the pointer on an invited row shows no button, and a click
-//!   on it sends no `add`.
 //! - **Keyboard** (`keyboard`): Tab reaches each heading and row of People in the drawn order, Shift+Tab goes back the
 //!   same way (the child names the row the keyboard is on); Enter folds "Others invited", Space unfolds it, and the
 //!   other way round.
 //! - **Themes** (`themes`): People and the stage alone in Teams Light and Teams Dark, and People with the keyboard
 //!   on the "Others invited" heading and on its first row (the focus ring) in each.
+//! - **Request to join in a meeting** (`invited_request`, task 810): the pointer on an invited row shows Request to
+//!   join, in Teams Light and Teams Dark (a shot of each); its click sends exactly one `add`, for that invitee, naming
+//!   the meeting's chat, and the invitee moves to "In this meeting" (Calling…, then No response: the mock has nothing
+//!   of theirs to ring).
 //! - **No regression**: a 1:1 call to b and a group call to b and c, before an answer, name the chat's people
 //!   (`one_to_one_ringing`, `group_ringing`), and People lists b and c under a; in a's group call that b joined after the ring, "People added to the
 //!   chat" shows c, and Request to join, on hover, sends exactly one `add`, for c (`group_request_to_join`).
@@ -186,9 +188,9 @@ const CHECKS: [Check; 10] = [
     ("b_joins_then_leaves", b_joins_then_leaves),
     ("not_people", not_people),
     ("lobby", lobby),
-    ("invited_hover", invited_hover),
     ("keyboard", keyboard),
     ("themes", themes),
+    ("invited_request", invited_request),
     ("one_to_one_ringing", one_to_one_ringing),
     ("group_ringing", group_ringing),
     ("group_request_to_join", group_request_to_join),
@@ -1141,40 +1143,71 @@ fn lobby(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// The pointer on each invited row: no button comes, and no `add` goes.
-fn invited_hover(user: &mut User<'_>) -> SandboxResult {
-    user.open_people()?;
-    let rows = user.until_rows("before the hover", &[1, 10])?;
-    let adds = user.sent("add");
-    let pane = user.pane();
-    for (index, avatar) in rows.avatars.iter().skip(1).enumerate() {
-        let calm = user.screen()?;
+/// Request to join on the first invited row, in Teams Dark and Teams Light: it shows on hover and sends one `add`.
+fn invited_request(user: &mut User<'_>) -> SandboxResult {
+    let meeting = user.meeting()?;
+    let mut button = None;
+    for theme in ["dark", "light"] {
+        user.set_theme(theme)?;
+        user.focus_other()?;
+        user.open_people()?;
+        let rows = user.until_rows(&format!("before the hover in {theme}"), &[1, 10])?;
+        let avatar = *rows.avatars.get(1).ok_or("no invited row")?;
+        let pane = user.pane();
         let row = Rect {
             x: pane.x + 80,
             y: avatar.y - 8,
             w: pane.w - 84,
             h: avatar.h + 16,
         };
-        user.hover((pane.x + 160, avatar.center().1))?;
+        let calm = user.screen()?;
+        user.hover((pane.x + 120, avatar.center().1))?;
         let hovered = user.screen_as_is()?;
-        if index == 0 {
-            user.shot("invited-hover")?;
-        }
-        let button = pixels::changes(&calm, &hovered, row)
+        user.shot(&format!("invited-hover-{theme}"))?;
+        // the button's label and outline: everything that came on the row's right
+        let shown = pixels::changes(&calm, &hovered, row)
             .into_iter()
             .map(|blob| blob.bounds)
             .reduce(Rect::union)
-            .filter(|bounds| bounds.w >= 40 && bounds.h >= 12);
-        ensure(button.is_none(), || {
-            format!("the pointer on invited row {index} shows a button at {button:?}")
-        })?;
-        // a click on the row does nothing either
-        user.click((pane.x + 160, avatar.center().1))?;
+            .filter(|bounds| bounds.w >= 40 && bounds.h >= 12)
+            .ok_or_else(|| format!("no Request to join on the first invited row in {theme}"))?;
+        say(&format!("  Request to join at {shown:?} in {theme}"));
+        button = Some(shown);
     }
+    let button = button.ok_or("no Request to join")?;
+    let adds = user.sent("add");
+    let added_before = added_to(user, &meeting.call).len();
+    user.click(button.center())?;
     user.park()?;
-    thread::sleep(SETTLE * 2);
+    wait_until(WAIT, || (user.sent("add") > adds).then_some(())).ok_or("Request to join sent no add")?;
+    user.until_rows("the invitee called", &[2, 9])?;
+    thread::sleep(SETTLE * 3);
+    user.shot("invited-requested")?;
     let sent = user.sent("add") - adds;
-    ensure(sent == 0, || format!("{sent} add sent from Others invited"))
+    let added = added_to(user, &meeting.call);
+    say(&format!("  adds sent: {sent}; added: {:?}", &added[added_before..]));
+    let invitees: Vec<&str> = std::iter::once(LAB_B)
+        .chain(INVITEES.iter().map(|(mri, _)| *mri))
+        .collect();
+    let outcome = ensure(sent == 1, || format!("{sent} adds for one Request to join")).and_then(|()| {
+        ensure(
+            matches!(&added[added_before..], [(who, chat)] if invitees.contains(&who.as_str()) && chat == MEETING),
+            || format!("added {added:?}"),
+        )
+    });
+    user.hang_up()?;
+    user.meeting = None;
+    outcome
+}
+
+/// Who the mock's call `call` had added, with the chat each `add` named.
+fn added_to(user: &User<'_>, call: &str) -> Vec<(String, String)> {
+    user.mock
+        .calls()
+        .into_iter()
+        .filter(|known| known.id == call)
+        .flat_map(|known| known.added)
+        .collect()
 }
 
 /// The People pane's headings and rows, as Tab reaches them while a is alone: the account, then ten invited.
@@ -1302,10 +1335,7 @@ fn themes(user: &mut User<'_>) -> SandboxResult {
         thread::sleep(SETTLE);
         user.shot(&format!("theme-stage-alone-{theme}"))?;
     }
-    user.set_theme("light")?;
-    user.hang_up()?;
-    user.meeting = None;
-    Ok(())
+    user.set_theme("light")
 }
 
 /// a calls b in their 1:1 chat; before b answers, the call names b.

@@ -2,8 +2,8 @@
 //! copied), who waits in its lobby (Admit all, and Admit or Deny each), and who is in the call (the account first),
 //! each with whether they speak, their microphone muted and their hand raised, the organizer's Mute all beside them;
 //! then in a group call "People added to the chat", in a meeting "Others invited": its chat's members who aren't in
-//! it, in a group call each with Request to join as the pointer or the keyboard is on them (they are called into the
-//! call, as an add is). A meeting's chat members are its invitees: only the roster says who joined. The keyboard
+//! it, each with Request to join as the pointer or the keyboard is on them (they are called into the call, as an add
+//! is: in a meeting, the add names the meeting's chat and organizer). A meeting's chat members are its invitees: only the roster says who joined. The keyboard
 //! reaches each section's heading (Enter or Space folds the section) and each row, in the drawn order.
 use super::*;
 use crate::keyboard;
@@ -182,7 +182,7 @@ impl CallStage {
     }
 
     /// Someone the account added who isn't in the call yet, as Teams lists them: ringing ("Calling…"), or "No response"
-    /// with its call-again once they didn't come in.
+    /// (or "Declined") with its call-again once they didn't come in.
     fn invited_row(
         &self,
         index: usize,
@@ -204,7 +204,9 @@ impl CallStage {
                     .on_click(cx.listener(move |this, _, _, cx| this.ask(ask.clone(), cx))),
             )
         });
-        let state = if invited.no_response {
+        let state = if invited.declined {
+            "Declined"
+        } else if invited.no_response {
             "No response"
         } else {
             "Calling…"
@@ -241,9 +243,8 @@ impl CallStage {
     }
 
     /// "People added to the chat (n)" in a group call, "Others invited (n)" in a meeting: its chat's members who aren't
-    /// in it, waiting in its lobby or being called, each with its avatar and name, and in a group call Request to
-    /// join while the pointer or the keyboard is on it (not in the read-only mode). A meeting's has none: the engine
-    /// can't add into a meeting until a capture shows Teams' add (docs/backlog/meeting-add-rings-no-native-client.md).
+    /// in it, waiting in its lobby or being called, each with its avatar and name, and Request to join while the
+    /// pointer or the keyboard is on it (not in the read-only mode).
     fn added_section(
         &self,
         active: &ActiveCall,
@@ -299,7 +300,7 @@ impl CallStage {
                         .handles
                         .get(&added_key(index), cx)
                         .contains_focused(window, cx);
-                self.added_row(index, person, !meeting && reached, palette, cx)
+                self.added_row(index, person, reached, palette, cx)
             })
             .collect();
         let heading = self.section_heading(Section::Others, heading, None, palette, cx);

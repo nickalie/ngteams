@@ -258,7 +258,7 @@ pub enum CallAction {
     Share { call: CallId, on: bool },
     /// `invitee` added to the call, as Teams' People pane adds someone (seen 2026-11-06): a 1:1 call first gets a new
     /// group chat of the three and becomes a group call in it ([`Event::CallGroupChat`]); a group call's own chat is
-    /// named. The invitee rings; one who doesn't come in is told ([`Event::CallAddFailed`]).
+    /// named; in a meeting, someone it invited is asked in (Request to join, seen 2026-11-24). The invitee rings; one who doesn't come in is told ([`Event::CallAddFailed`]).
     Add { call: CallId, invitee: Mri },
     /// The 1:1 call's far end transferred to `target`, as Teams' Transfer to an audio call (seen 2026-11-06): once the
     /// far end took it the account leaves the call; one not taken is told ([`Event::CallTransferFailed`]).
@@ -1001,9 +1001,9 @@ where
                 log::info!("call {}: in a group chat now", call.get());
                 self.emit(Event::CallGroupChat { call, chat });
             }
-            CallEvent::AddFailed { call, who } => {
+            CallEvent::AddFailed { call, who, declined } => {
                 log::info!("call {}: someone added didn't come in", call.get());
-                self.emit(Event::CallAddFailed { call, who });
+                self.emit(Event::CallAddFailed { call, who, declined });
             }
             CallEvent::TransferFailed { call } => {
                 log::info!("call {}: its transfer wasn't taken", call.get());

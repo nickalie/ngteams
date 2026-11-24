@@ -1386,6 +1386,23 @@ mod tests {
         assert_eq!(gp["groupChat"]["threadId"], "19:group@thread.v2");
         assert_eq!(gp["conversationInvitation"]["groupCallInitiator"], "8:orgid:a");
         assert_eq!(gp["conversationInvitation"]["isMultiParty"], true);
+        assert!(notification.get("invitationData").is_none(), "no meeting's");
+        // a meeting's (its host's Request to join) names the meeting's organizer and tenant, as Teams' does
+        let mut call = call;
+        call.meeting = Some(crate::calling::state::Meeting {
+            organizer: "organizer-id".to_owned(),
+            ..Default::default()
+        });
+        let invitation = wire::group_invitation(ORIGIN, &call, (Seat::CALLER, Seat(1)), ("tenant", "own"), &offer);
+        let gp = base64::engine::general_purpose::STANDARD
+            .decode(invitation["gp"].as_str().unwrap())
+            .unwrap();
+        let gp: Value = serde_json::from_slice(&gp).unwrap();
+        assert_eq!(
+            gp["callNotification"]["invitationData"],
+            json!({"meetingInfo": {"organizerId": "organizer-id", "tenantId": "tenant"}})
+        );
+        assert_eq!(gp["callNotification"]["conversationType"], "scheduledMeeting");
     }
 
     #[test]

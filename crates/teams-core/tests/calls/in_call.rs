@@ -208,7 +208,9 @@ async fn someone_added_to_a_one_to_one_call_makes_it_a_group_call_in_a_new_chat_
                 chat = Some(made.clone());
                 Some(())
             }
-            Event::CallAddFailed { call: of, who: failed } if *of == call => {
+            Event::CallAddFailed {
+                call: of, who: failed, ..
+            } if *of == call => {
                 who = Some(failed.clone());
                 Some(())
             }
@@ -256,7 +258,7 @@ async fn someone_added_whose_new_chat_is_refused_is_told_not_added() {
         .unwrap();
     let who = a
         .next(|event| match event {
-            Event::CallAddFailed { call: of, who } if *of == call => Some(who.clone()),
+            Event::CallAddFailed { call: of, who, .. } if *of == call => Some(who.clone()),
             _ => None,
         })
         .await;

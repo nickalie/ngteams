@@ -644,7 +644,18 @@ pub(crate) fn group_invitation(
         },
         "groupContext": null,
     });
-    json!({"evt": 109, "gp": base64::engine::general_purpose::STANDARD.encode(gp.to_string())})
+    json!({"evt": 109, "gp": base64::engine::general_purpose::STANDARD.encode(meeting_ask(gp, call, tenant).to_string())})
+}
+
+/// A meeting's invitation (its host's Request to join) names the meeting's organizer and tenant and its kind, as Teams
+/// sends it (`callNotification.invitationData.meetingInfo`, `conversationType` `scheduledMeeting`; seen 2026-11-24).
+fn meeting_ask(mut gp: Value, call: &Call, tenant: &str) -> Value {
+    if let Some(meeting) = call.meeting.as_ref() {
+        gp["callNotification"]["invitationData"] =
+            json!({"meetingInfo": {"organizerId": meeting.organizer, "tenantId": tenant}});
+        gp["callNotification"]["conversationType"] = json!("scheduledMeeting");
+    }
+    gp
 }
 
 /// The acceptance the media node gives the party at `seat` on its leg (a group call's caller, a joiner): its `answer`,

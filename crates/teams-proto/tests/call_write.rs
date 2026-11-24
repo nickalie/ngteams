@@ -1777,6 +1777,76 @@ fn a_person_added_to_a_call_goes_with_its_group_chat_and_no_invitation_data_as_c
 }
 
 #[test]
+fn an_invitee_asked_into_a_meeting_goes_with_the_meeting_s_chat_and_its_organizer_as_captured() {
+    let invitee = Invitee {
+        mri: Mri::new(LAB_B),
+        participant_id: Some("00000000-0000-4000-8000-0000000000e5".into()),
+    };
+    let links = Links::new()
+        .with(
+            "addParticipantSuccess",
+            callback(PUSH_A, "0a0a0a0a", "conversation", "addParticipantSuccess"),
+        )
+        .with(
+            "addParticipantFailure",
+            callback(PUSH_A, "0b0b0b0b", "conversation", "addParticipantFailure"),
+        );
+    let meeting = MeetingInfo {
+        organizer_id: "00000000-0000-4000-8000-00000000000a".into(),
+        tenant_id: "00000000-0000-4000-8000-0000000000aa".into(),
+    };
+    let at = link(&conv("Conv1", "add"));
+    let me = participant(LAB_A);
+    let add = AddToCall::to_meeting(&context(), &at, (&me, &invitee), (MEETING, &meeting), &links).unwrap();
+    let body = teams_proto::Request::body(&add).unwrap();
+    assert_eq!(
+        body["participants"]["to"],
+        json!([{"id": LAB_B, "participantId": "00000000-0000-4000-8000-0000000000e5"}])
+    );
+    assert_eq!(
+        body["participantInvitationData"],
+        json!({"invitationData": {"meetingInfo": {
+            "organizerId": "00000000-0000-4000-8000-00000000000a",
+            "tenantId": "00000000-0000-4000-8000-0000000000aa",
+        }}})
+    );
+    assert_eq!(body["groupChat"], json!({"threadId": MEETING, "messageId": null}));
+    assert_eq!(body["disableUnmute"], json!(false));
+    assert_eq!(add.invitee().as_str(), LAB_B);
+    // never the account itself, a bot, a group chat, a meeting not named by GUIDs, or another link
+    let self_invitee = Invitee {
+        mri: Mri::new(LAB_A),
+        participant_id: None,
+    };
+    let bot = Invitee {
+        mri: Mri::new(ECHO),
+        participant_id: None,
+    };
+    let unnamed = MeetingInfo {
+        organizer_id: "made-up".into(),
+        tenant_id: meeting.tenant_id.clone(),
+    };
+    let no_tenant = MeetingInfo {
+        organizer_id: meeting.organizer_id.clone(),
+        tenant_id: String::new(),
+    };
+    for (who, chat, info) in [
+        (&self_invitee, MEETING, &meeting),
+        (&bot, MEETING, &meeting),
+        (&invitee, GROUP, &meeting),
+        (&invitee, MEETING, &unnamed),
+        (&invitee, MEETING, &no_tenant),
+    ] {
+        assert!(matches!(
+            AddToCall::to_meeting(&context(), &at, (&me, who), (chat, info), &links),
+            Err(CallWriteError::Unmapped)
+        ));
+    }
+    let other = Links::new().with("acceptance", callback(PUSH_A, "0c0c0c0c", "call", "acceptance"));
+    assert!(AddToCall::to_meeting(&context(), &at, (&me, &invitee), (MEETING, &meeting), &other).is_err());
+}
+
+#[test]
 fn a_transfer_goes_at_the_leg_s_transfer_link_and_its_acceptance_at_the_delivered_link_as_captured() {
     let links = Links::new()
         .with(

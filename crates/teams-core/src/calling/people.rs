@@ -1,7 +1,9 @@
 //! Someone added to the account's call, as Teams' People pane adds them ("Invite someone", seen
 //! 2026-11-06): in a 1:1 call a new group chat of the three is made first (`POST v1/threads`, the outbox's typed
 //! [`CreateChat`], no topic), then the conversation's `add` names it and the call becomes a group call in it; in a
-//! group call the call's own chat is named at once. The chat's making is one write of its own beside the call's.
+//! group call the call's own chat is named at once. The chat's making is one write of its own beside the call's. In a
+//! meeting, Request to join on someone it invited is the same `add`, naming the meeting's chat and organizer (seen
+//! 2026-11-24).
 //!
 //! A transfer the far end asked for is taken by the machine (`teams-call`); the call to the transfer's target is placed
 //! here once the transferred call is over and its media gone, as any start is (its media set up first), as the web
@@ -62,10 +64,15 @@ where
         }
     }
 
-    /// `invitee` added to `call`: at once in a group call's chat; a 1:1 call's new group chat of the three made first.
+    /// `invitee` added to `call`: at once in a group call's chat or a meeting's (Request to join); a 1:1 call's new group
+    /// chat of the three made first.
     pub(super) fn add_person(&mut self, call: CallId, invitee: Mri) -> Result<CallId, CallActionError> {
         if let Some(chat) = self.calls.group_chat(call) {
             self.calls.add(call, &invitee, &chat)?;
+            return Ok(call);
+        }
+        if self.calls.meeting_chat(call).is_some() {
+            self.calls.add_to_meeting(call, &invitee)?;
             return Ok(call);
         }
         if self.making.is_some() {
@@ -100,7 +107,11 @@ where
             .and_then(|chat| self.calls.add(call, &invitee, &chat));
         if let Err(error) = added {
             log::warn!("call {}: someone couldn't be added: {error}", call.get());
-            self.emit(Event::CallAddFailed { call, who: invitee });
+            self.emit(Event::CallAddFailed {
+                call,
+                who: invitee,
+                declined: false,
+            });
         }
     }
 }

@@ -65,12 +65,12 @@ sha256 = "1953c54b6b47602a6c4d8a941a7ba70655c15579f95db023979670e9fdec6cd5"
 reason = "module declarations, re-exports and documentation only; no executable items"
 
 [unmapped_sources."crates/teams-call/src/machine/tests.rs"]
-sha256 = "d5c9cb6a6199c77c33b0fbf961d6fbe6c2db6e72f19ba2fe0d023174a8fff82f"
+sha256 = "b2fdc14e8ef69bc9e5762d7e7adc04ea73c23d28fcd89016911f390c85de2f33"
 reason = "unit-test module included only by machine.rs cfg(test); omitted by cargo-llvm-cov's test-file filter"
-context = { "crates/teams-call/src/machine.rs" = "a48732627b640512c0813cfa59137f7dd9e3b136f5247c737223252d497803f2" }
+context = { "crates/teams-call/src/machine.rs" = "d364bf990a598ffc3d10dbe7f0b50fcb8627b2a0c81e9457029b8c95e9b800eb" }
 
 [unmapped_sources."crates/teams-call/src/track/tests.rs"]
-sha256 = "8813e2f1798339f71226b396269e9233a704ab8e86de109e38e58b2a747f10a6"
+sha256 = "bafda1168b2d29490fbdd6389383d6859303a61de8264070ea13cda9889dd161"
 reason = "unit-test module included only by track.rs cfg(test); omitted by cargo-llvm-cov's test-file filter"
 context = { "crates/teams-call/src/track.rs" = "6d4e8692460da51c26997e85f500f4838d67f3cd02b004cba42203a53727eeb9" }
 
@@ -527,7 +527,7 @@ reason = "Unix-only lab command/scenario subtree, excluded by the cfg-selected m
 context = { "crates/proto-lab/src/lib.rs" = "8d3871c865c472e3b5bcd76d93027c67ff8e8b7d7bece89c91673280a166e3d8", "crates/proto-lab/src/main.rs" = "66c96952c1c552b94f1cc1938cc7f595f9b1e1967f7d5c8e5ef5f48f58a90f2d", "crates/proto-lab/src/commands.rs" = "eac1126557b554aae9c187daa89a44640a3a08fae132c60468def9156fd01f70", "crates/proto-lab/src/scenario/windows.rs" = "9a5966754730f2bd844f6ba5f094948287af7ab896b6030c33b2a104f16af126" }
 
 [unmapped_sources_windows."crates/proto-lab/src/scenario/meeting_steps.rs"]
-sha256 = "963f04ba2c9cd51d5687e002b42c836d526ff9bc0790c4b3b2f45b14b8b44a00"
+sha256 = "595742182f3017a6a8edec220fa11de136168f17328322b663e4510a782885a4"
 reason = "Unix-only lab command/scenario subtree, excluded by the cfg-selected module roots on Windows; remains in the Linux source inventory and coverage gate."
 context = { "crates/proto-lab/src/lib.rs" = "8d3871c865c472e3b5bcd76d93027c67ff8e8b7d7bece89c91673280a166e3d8", "crates/proto-lab/src/main.rs" = "66c96952c1c552b94f1cc1938cc7f595f9b1e1967f7d5c8e5ef5f48f58a90f2d", "crates/proto-lab/src/commands.rs" = "eac1126557b554aae9c187daa89a44640a3a08fae132c60468def9156fd01f70", "crates/proto-lab/src/scenario/windows.rs" = "9a5966754730f2bd844f6ba5f094948287af7ab896b6030c33b2a104f16af126" }
 

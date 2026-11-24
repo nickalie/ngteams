@@ -350,10 +350,45 @@ that made it work, and `abc-call-mixed`'s captures, where the lab browser's data
   join..." (seen 2026-11-23, `meeting-steps`: a alone in its scheduled meeting with b invited; in 2026-11-06's capture
   of a alone the roster listed only a's own entry). The native client has the invitees from the meeting chat's
   thread read on sync ([chat-service.md](chat-service.md#reading-a-chats-members)), and lists them without their
-  answer (the store keeps no member's `rsvpStatus`) and without Request to join (no capture of a meeting's add yet). The account's own entry is one per MRI, whatever endpoints it joined from;
+  answer (the store keeps no member's `rsvpStatus`) with Request to join ([below](#request-to-join-in-a-meeting)). The account's own entry is one per MRI, whatever endpoints it joined from;
   the native client tells it by MRI with the object id's case ignored. A nameless app participant (`28:`) whose main
   audio only receives is a service (a recorder, captioner or transcriber, from a region the caption code may not
   list) and is no person.
+
+## Request to join in a meeting
+
+Seen 2026-11-24 (`meeting-steps` with b's page loaded beside a's: a in its scheduled meeting, b invited and not in
+it). In People, the pointer on an invitee under "Others invited" shows **Request to join**. A click posts the
+conversation's `add` (`addParticipantAndModality`), as a group call's add does, but in a meeting's shape:
+`{"disableUnmute": false, "participants": {"from", "to": [{id, participantId}]}, "participantInvitationData":
+{"invitationData": {"meetingInfo": {"organizerId", "tenantId"}}}, "replacementDetails": null, "groupContext": null,
+"groupChat": {"threadId": <the meeting's chat>, "messageId": null}, "links": {"addParticipantSuccess",
+"addParticipantFailure"}}` (a fresh participant id each time). The person moves at once to "In this meeting (n)" with
+"Calling..." at the right, and the stage says "Calling...".
+
+The invitee gets a group call's invitation (`evt` 109) with these differences: `callNotification.invitationData:
+{"meetingInfo": {"organizerId", "tenantId"}}`, `callNotification.conversationType: "scheduledMeeting"`, `groupChat:
+{"threadId": <the meeting's chat>, "messageId": "0"}`, `meetingData: {"meetingCode"}`, and
+`meetingProperties.meetingLiveState`; the offer is the mixer's (`fromMixer`, `originator: "mcGvc"`). Browser Teams
+shows "<organizer> wants you to join <meeting title>" with Accept and Decline. The client attaches and reports ringing
+as for any invitation. Accept opens the meeting's pre-join; its Join now posts the conversation's
+`updateEndpointState`, then the `accept` at the incoming leg, in a group call's answer shape. The organizer is then
+told at `addParticipantSuccess` (`participants: [<MRI>]`, `participantInfos`), and the roster shows the invitee in
+the meeting.
+
+A decline is the leg's `reject` (`DELETE`, `callEnd` `603`). The organizer gets `addParticipantFailure`:
+`participants.<MRI>` with `code` `580`, `subCode` `5208`, "...since the user declined the call", and
+`callControllerTransactionEnd.code` `603`. Teams then shows "Declined" with a call-again button on the row; a short
+time after, the row goes back to "Others invited" with Request to join. When the invitee leaves after it joined, the
+row goes back to "Others invited" too.
+
+The native client does the same. Request to join on an "Others invited" row is `CallAction::Add`; in a meeting whose
+organizer and tenant the call knows (the meeting it joined named them, or the invitation it answered, or the entry's
+answer's `meetingInfo`), the engine posts `AddToCall::to_meeting`. It lists the invitee "Calling…", then "Declined"
+(`callControllerTransactionEnd.code` `603`) or "No response", with Call again. The call tracker offers an `evt` 109
+that names a meeting's chat only when its `invitationData.meetingInfo` names the organizer and the tenant; the client
+rings and answers it as a group call (`accept`), and the call is the meeting's. Its answer goes at once: it has no
+pre-join step between Accept and the `accept`. The own server sends this invitation shape for a meeting host's `add`.
 
 ## Joining a running call
 
