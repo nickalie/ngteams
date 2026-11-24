@@ -204,7 +204,7 @@ impl CallStage {
                     .on_click(cx.listener(move |this, _, _, cx| this.ask(ask.clone(), cx))),
             )
         });
-        let state = if invited.declined {
+        let state = if invited.declined.is_some() {
             "Declined"
         } else if invited.no_response {
             "No response"
@@ -288,6 +288,8 @@ impl CallStage {
             format!("People added to the chat ({})", out.len())
         };
         let folded = self.people_keys.folded(Section::Others);
+        // the engine adds into a meeting only in the meeting's own chat (a channel meeting's is the channel)
+        let addable = !meeting || active.chat.as_deref().is_some_and(teams_proto::is_meeting_chat_id);
         let rows: Vec<AnyElement> = out
             .into_iter()
             .enumerate()
@@ -300,7 +302,15 @@ impl CallStage {
                         .handles
                         .get(&added_key(index), cx)
                         .contains_focused(window, cx);
-                self.added_row(index, person, reached, palette, cx)
+                let passed = active
+                    .passed
+                    .iter()
+                    .any(|passed| passed.as_str().eq_ignore_ascii_case(&person.0));
+                let shows = AddedShows {
+                    request: reached && addable,
+                    passed,
+                };
+                self.added_row(index, person, shows, palette, cx)
             })
             .collect();
         let heading = self.section_heading(Section::Others, heading, None, palette, cx);
@@ -314,12 +324,12 @@ impl CallStage {
         )
     }
 
-    /// One of "People added to the chat": their avatar and name, and Request to join (when `request`).
+    /// One of "People added to the chat": their avatar and name, and what `shows` asks for.
     fn added_row(
         &self,
         index: usize,
         (mri, name): (String, SharedString),
-        request: bool,
+        AddedShows { request, passed }: AddedShows,
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -360,9 +370,19 @@ impl CallStage {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .truncate()
-                    .text_color(rgb(palette.foreground))
-                    .child(name),
+                    .flex()
+                    .flex_col()
+                    .child(div().truncate().text_color(rgb(palette.foreground)).child(name))
+                    .when(passed, |names| {
+                        names.child(
+                            div()
+                                .debug_selector(move || format!("call-roster-added-no-response-{index}"))
+                                .truncate()
+                                .text_xs()
+                                .text_color(rgb(palette.muted_foreground))
+                                .child("No response"),
+                        )
+                    }),
             )
             .children(request);
         self.person_stop(&row, drawn, palette, cx)
@@ -754,4 +774,13 @@ fn self_row(
         .child(hand_ring(mark, shown.hand.is_some(), palette))
         .child(name_and_role(name, shown.organizer, palette))
         .child(signs("call-roster-self", shown, palette))
+}
+
+/// What a row of "People added to the chat" or "Others invited" shows besides the person.
+#[derive(Clone, Copy)]
+struct AddedShows {
+    /// Request to join.
+    request: bool,
+    /// "No response" under the name: they declined being asked in.
+    passed: bool,
 }

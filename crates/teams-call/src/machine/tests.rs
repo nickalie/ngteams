@@ -1209,12 +1209,37 @@ fn a_meeting_s_request_to_join_rings_as_a_group_call_in_the_meeting_s_chat_and_i
     assert_eq!(incoming.group_chat.as_deref(), Some(chat));
     let call = incoming.call;
     assert_eq!(calls.meeting_chat(call).as_deref(), Some(chat), "its organizer named");
+    assert!(calls.joinable(chat), "a Rejoin goes in");
     calls.answer(call, media()).unwrap();
     let [(state, "update_endpoint_state")] = sent(&effects(&mut calls))[..] else {
         panic!()
     };
     calls.on_outcome(state, &ok(&json!({})), now);
     assert_eq!(names(&effects(&mut calls)), ["accept"]);
+    // gone, a Rejoin is the meeting's own join, with the organizer the invitation named
+    calls.hang_up(call, now).unwrap();
+    let left = effects(&mut calls);
+    for (id, _) in sent(&left) {
+        calls.on_outcome(id, &ok(&json!({})), now);
+    }
+    drop(effects(&mut calls));
+    assert_eq!(calls.current(), None);
+    let again = calls.join(chat, media(), now).unwrap();
+    let placed = effects(&mut calls);
+    let Some(Effect::Send { write, .. }) = placed.iter().find(|effect| matches!(effect, Effect::Send { .. })) else {
+        panic!("{placed:#?}");
+    };
+    let body = body_of(write);
+    assert_eq!(body["groupChat"]["threadId"], chat);
+    assert_eq!(
+        body["meetingInfo"]["organizerId"],
+        "00000000-0000-4000-8000-00000000000a"
+    );
+    assert_eq!(
+        calls.meeting_chat(again).as_deref(),
+        Some(chat),
+        "its Request to join names the meeting"
+    );
 }
 
 /// b's machine with a's invitation offered (its `attach` answered): it rings here.

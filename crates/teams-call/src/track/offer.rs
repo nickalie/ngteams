@@ -573,15 +573,11 @@ fn kind_fits(event: u64, gp: &Value, names_chat: bool) -> bool {
 /// Whether a group call's invitation naming the chat `id` is a meeting's Request to join (seen 2026-11-24): a meeting's
 /// chat, and the meeting's organizer and tenant in `callNotification.invitationData.meetingInfo`.
 fn meeting_ask(notification: &Value, id: &str) -> bool {
-    let named = |pointer: &str| {
-        notification
-            .pointer(pointer)
-            .and_then(Value::as_str)
-            .is_some_and(|text| !text.is_empty())
-    };
     is_meeting_chat_id(id)
-        && named("/invitationData/meetingInfo/organizerId")
-        && named("/invitationData/meetingInfo/tenantId")
+        && notification
+            .pointer("/invitationData/meetingInfo")
+            .and_then(crate::read::meeting_info)
+            .is_some()
 }
 
 /// `path` when it is an endpoint's root: `/v4/f/<endpoint>/`, or `/trouter/v4/f/<endpoint>/` for Own.

@@ -1186,12 +1186,10 @@ fn invited_request(user: &mut User<'_>) -> SandboxResult {
     let sent = user.sent("add") - adds;
     let added = added_to(user, &meeting.call);
     say(&format!("  adds sent: {sent}; added: {:?}", &added[added_before..]));
-    let invitees: Vec<&str> = std::iter::once(LAB_B)
-        .chain(INVITEES.iter().map(|(mri, _)| *mri))
-        .collect();
+    // the first invited row is the meeting chat's first member besides a (the mock lists them as added): b
     let outcome = ensure(sent == 1, || format!("{sent} adds for one Request to join")).and_then(|()| {
         ensure(
-            matches!(&added[added_before..], [(who, chat)] if invitees.contains(&who.as_str()) && chat == MEETING),
+            matches!(&added[added_before..], [(who, chat)] if who == LAB_B && chat == MEETING),
             || format!("added {added:?}"),
         )
     });

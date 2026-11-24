@@ -129,6 +129,9 @@ pub struct ActiveCall {
     /// Who the account added to the call and isn't in it yet ([`Ask::Add`]), in the order added: People lists them
     /// ringing, or "No response" once they didn't come in ([`teams_core::Event::CallAddFailed`]).
     pub invited: Vec<Invited>,
+    /// A meeting's invitees who declined its Request to join and, [`DECLINED_SHOWN`] after it, went back to "Others
+    /// invited", where Teams lists them with "No response".
+    pub passed: Vec<Mri>,
 }
 
 /// Someone the account added to its call, until the roster has them in it.
@@ -138,8 +141,8 @@ pub struct Invited {
     pub name: String,
     /// They didn't come in (Teams' "No response", with its call-again).
     pub no_response: bool,
-    /// They declined the ring (Teams' "Declined", with its call-again).
-    pub declined: bool,
+    /// When they declined the ring, on the app's clock (Teams' "Declined", with its call-again).
+    pub declined: Option<Instant>,
 }
 
 /// A live reaction someone in the call sent ([`teams_core::Event::CallReaction`]).
@@ -188,6 +191,10 @@ fn is_call_event(event: &Event) -> bool {
 /// How long a live reaction shows on its sender's tile, as Teams plays it there. A reaction that floats (its sender's
 /// tile is not on the stage) goes sooner, after the call stage's float time.
 pub const REACTION_SHOWN: Duration = Duration::from_millis(4_250);
+
+/// How long a meeting's invitee who declined stays "Declined" in "In this meeting" before going back to "Others
+/// invited" (Teams had moved the row back within 13 s of the decline).
+pub const DECLINED_SHOWN: Duration = Duration::from_secs(10);
 
 /// The most live reactions the stage shows at once.
 const REACTIONS_SHOWN: usize = 12;
@@ -1289,13 +1296,32 @@ impl Calls {
             | Event::CallSharing { .. }
             | Event::CallRemoteShare { .. }
             | Event::CallGroupChat { .. }
-            | Event::CallAddFailed { .. }
             | Event::CallReaction { .. } => self.in_call(event, cx.background_executor().now()),
+            Event::CallAddFailed { .. } => self.add_failed(event, cx),
             Event::CallTransferFailed { .. } | Event::CallTransferred { .. } => self.transfer_told(event),
             _ => return false,
         }
         cx.notify();
         true
+    }
+
+    /// Someone the account added didn't come in: a meeting's invitee who declined goes back to "Others invited" after
+    /// [`DECLINED_SHOWN`].
+    fn add_failed(&mut self, event: &Event, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        self.in_call(event, now);
+        if let Event::CallAddFailed {
+            call,
+            who,
+            declined: true,
+        } = event
+            && self
+                .call
+                .as_ref()
+                .is_some_and(|active| active.id == *call && active.is_meeting())
+        {
+            move_declined_back(*call, who.clone(), now, cx);
+        }
     }
 
     /// The account's own state in its call, or a live reaction sent in it (at `now`, on the app's clock).
@@ -1354,7 +1380,7 @@ impl Calls {
                     .and_then(|active| active.invited.iter_mut().find(|invited| invited.mri == *who))
                 {
                     invited.no_response = true;
-                    invited.declined = *declined;
+                    invited.declined = declined.then_some(now);
                 }
             }
             Event::CallReaction {
@@ -1422,11 +1448,12 @@ impl Calls {
             return;
         };
         active.invited.retain(|invited| invited.mri != who);
+        active.passed.retain(|passed| *passed != who);
         active.invited.push(Invited {
             mri: who,
             name,
             no_response: false,
-            declined: false,
+            declined: None,
         });
         cx.notify();
     }
@@ -1555,6 +1582,22 @@ impl Calls {
             sharing: false,
             remote_share: false,
             invited: Vec::new(),
+            passed: Vec::new(),
+        }
+    }
+
+    /// `who`, who declined `call` (a meeting's) at `at`, goes back to "Others invited" unless asked again since.
+    fn declined_shown(&mut self, call: CallId, who: &Mri, at: Instant, cx: &mut Context<Self>) {
+        let Some(active) = self.call.as_mut().filter(|active| active.id == call) else {
+            return;
+        };
+        let before = active.invited.len();
+        active
+            .invited
+            .retain(|invited| !(invited.mri == *who && invited.declined == Some(at)));
+        if active.invited.len() < before {
+            active.passed.push(who.clone());
+            cx.notify();
         }
     }
 
@@ -2116,6 +2159,15 @@ pub const START_TOLD_WITHIN: Duration = Duration::from_secs(teams_core::START_WI
 
 /// The asks that start or join a call, by their trace names.
 const START_ASKS: [&str; 5] = ["call", "test-call", "join", "join-meeting", "meet-now"];
+
+/// Moves `who`, who declined `call` at `at`, back to "Others invited" once [`DECLINED_SHOWN`] passed, as Teams does.
+fn move_declined_back(call: CallId, who: Mri, at: Instant, cx: &mut Context<Calls>) {
+    cx.spawn(async move |calls, cx: &mut AsyncApp| {
+        cx.background_executor().timer(DECLINED_SHOWN).await;
+        let _ = calls.update(cx, |calls, cx| calls.declined_shown(call, &who, at, cx));
+    })
+    .detach();
+}
 
 /// Gives up on the start or join `start` (its number) once [`START_TOLD_WITHIN`] passed with its call untold.
 fn give_up_untold(calls: WeakEntity<Calls>, trace: Arc<ViewTrace>, ask: Ask, start: u64, cx: &mut App) {

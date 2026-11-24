@@ -379,16 +379,20 @@ the meeting.
 A decline is the leg's `reject` (`DELETE`, `callEnd` `603`). The organizer gets `addParticipantFailure`:
 `participants.<MRI>` with `code` `580`, `subCode` `5208`, "...since the user declined the call", and
 `callControllerTransactionEnd.code` `603`. Teams then shows "Declined" with a call-again button on the row; a short
-time after, the row goes back to "Others invited" with Request to join. When the invitee leaves after it joined, the
+time after (3 s after the decline still "Declined", 13 s after back), the row goes back to "Others invited" with "No
+response" under the name and Request to join. When the invitee leaves after it joined, the
 row goes back to "Others invited" too.
 
 The native client does the same. Request to join on an "Others invited" row is `CallAction::Add`; in a meeting whose
 organizer and tenant the call knows (the meeting it joined named them, or the invitation it answered, or the entry's
 answer's `meetingInfo`), the engine posts `AddToCall::to_meeting`. It lists the invitee "Calling…", then "Declined"
-(`callControllerTransactionEnd.code` `603`) or "No response", with Call again. The call tracker offers an `evt` 109
+(`callControllerTransactionEnd.code` `603`) or "No response", with Call again; 10 s after a decline the row goes back
+to "Others invited" with "No response". The call tracker offers an `evt` 109
 that names a meeting's chat only when its `invitationData.meetingInfo` names the organizer and the tenant; the client
 rings and answers it as a group call (`accept`), and the call is the meeting's. Its answer goes at once: it has no
-pre-join step between Accept and the `accept`. The own server sends this invitation shape for a meeting host's `add`.
+pre-join step between Accept and the `accept`. A Rejoin after such a call is the meeting's own join, with the organizer and
+tenant the invitation named. For a meeting host's `add`, the own server's invitation adds `invitationData.meetingInfo` and `conversationType`
+`scheduledMeeting`; it sends no `meetingData` and keeps the group call's `meetingLiveState`.
 
 ## Joining a running call
 

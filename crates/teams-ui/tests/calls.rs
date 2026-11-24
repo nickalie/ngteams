@@ -3056,8 +3056,37 @@ fn request_to_join_on_a_meeting_s_invitee_asks_once_and_their_decline_shows() {
     rig.cx.run_until_parked();
     draw(stage);
     let active = rig.cx.read(|cx| calls_of(&rig).read(cx).call().cloned()).unwrap();
-    assert!(active.invited[0].declined && active.invited[0].no_response);
+    assert!(active.invited[0].declined.is_some() && active.invited[0].no_response);
     assert!(drawn(stage, "call-roster-call-again-0"));
+    declined_goes_back_to_others_invited(&rig, stage);
+}
+
+/// As Teams does, c's "Declined" row goes back to "Others invited" a short time after, with "No response" and
+/// Request to join; asked again, c is in the meeting's section again.
+fn declined_goes_back_to_others_invited(rig: &Rig, stage: &mut VisualTestContext) {
+    rig.cx.executor().advance_clock(teams_ui::calls::DECLINED_SHOWN / 2);
+    rig.cx.run_until_parked();
+    draw(stage);
+    assert!(drawn(stage, "call-roster-invited-0"), "still Declined");
+    rig.cx.executor().advance_clock(teams_ui::calls::DECLINED_SHOWN);
+    rig.cx.run_until_parked();
+    draw(stage);
+    assert!(!drawn(stage, "call-roster-invited-0"));
+    assert!(drawn(stage, "call-roster-added-0"));
+    assert!(drawn(stage, "call-roster-added-no-response-0"));
+    let row = stage.debug_bounds("call-roster-added-0").unwrap();
+    stage.simulate_mouse_move(row.center(), None, Modifiers::none());
+    draw(stage);
+    click(stage, "call-roster-request-0");
+    let adds = actions(rig)
+        .into_iter()
+        .filter(|action| matches!(action, CallAction::Add { .. }))
+        .count();
+    assert_eq!(adds, 2, "one add for each Request to join");
+    assert!(drawn(stage, "call-roster-invited-0"), "Calling… again");
+    assert!(!drawn(stage, "call-roster-added"));
+    let active = rig.cx.read(|cx| calls_of(rig).read(cx).call().cloned()).unwrap();
+    assert!(active.passed.is_empty());
 }
 
 /// The People pane's row or heading the keyboard is on in the call window `stage`.

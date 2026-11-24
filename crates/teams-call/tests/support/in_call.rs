@@ -722,7 +722,7 @@ fn someone_a_meeting_invited_is_asked_in_naming_its_chat_and_organizer_and_their
     let other = CallId(call.get() + 1);
     assert!(matches!(
         calls.add_to_meeting(other, &Mri::new(C)),
-        Err(CallError::NotNow)
+        Err(CallError::NoSuchCall)
     ));
     assert!(sent(&effects(&mut calls)).is_empty());
 }
@@ -736,15 +736,32 @@ fn a_call_that_is_no_meeting_s_or_names_no_organizer_asks_nobody_into_a_meeting(
         calls.add_to_meeting(call, &Mri::new(C)),
         Err(CallError::NotNow)
     ));
-    // a meeting code's entry whose answer names no meeting: its organizer isn't known
+    // a meeting code's entry whose answer links the meeting's chat but names no meeting: its organizer isn't known
     let code = teams_proto::MeetingCode::typed("123456789012", "MadeUp").unwrap();
-    let (mut calls, call) = in_meeting(now, &Placement::MeetingCode(code), &conversation_answer());
+    let (mut calls, call) = in_meeting(now, &Placement::MeetingCode(code), &answer_linking(MEETING_CHAT));
+    assert_eq!(
+        calls.call.as_ref().and_then(|call| call.caption_thread.as_deref()),
+        Some(MEETING_CHAT),
+        "the meeting's chat is known"
+    );
     assert_eq!(calls.meeting_chat(call), None);
     assert!(matches!(
         calls.add_to_meeting(call, &Mri::new(C)),
         Err(CallError::NotNow)
     ));
     assert!(sent(&effects(&mut calls)).is_empty());
+}
+
+/// A meeting code's entry answered with the meeting's details linking `chat`, as its join link names it.
+fn answer_linking(chat: &str) -> Value {
+    let reference = format!("https://teams.microsoft.com/l/meetup-join/{chat}/0");
+    let html = format!(
+        r#"<a id="meet_invite_block.action.join_link" href="https://teams.microsoft.com/meet/123456789012?p=MadeUp">Join</a><a id="meet_invite_block.action.join_link_compatibility" href="{reference}">System reference</a>"#
+    );
+    let invitation: String = url::form_urlencoded::byte_serialize(html.as_bytes()).collect();
+    let mut answer = conversation_answer();
+    answer["meetingDetails"] = json!({"invitation": invitation});
+    answer
 }
 
 #[test]

@@ -416,6 +416,16 @@ impl Call {
         }
     }
 
+    /// The meeting's chat and its organizer and tenant, when the call is in a meeting's chat that named both: where its
+    /// Request to join adds someone.
+    pub(crate) fn meeting_target(&self) -> Option<(String, teams_proto::MeetingInfo)> {
+        let chat = self
+            .caption_thread
+            .clone()
+            .filter(|chat| teams_proto::is_meeting_chat_id(chat))?;
+        Some((chat, self.meeting_info.clone()?))
+    }
+
     /// A new callback of this call.
     pub(crate) fn callback(&mut self, kind: Kind, name: &'static str) -> Result<String, getrandom::Error> {
         Ok(self.made(kind, name)?.url)

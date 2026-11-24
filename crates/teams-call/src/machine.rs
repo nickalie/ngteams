@@ -142,7 +142,7 @@ pub struct Incoming {
     pub caller: Mri,
     /// The caller's name as the invitation gives it (no profile lookup).
     pub caller_name: Option<String>,
-    /// The group chat of a group call.
+    /// The group chat of a group call, or the meeting's chat for a meeting's Request to join.
     pub group_chat: Option<String>,
     /// The caller's (or a group call's mixer's) offer.
     pub offer: Option<MediaContent>,
@@ -432,6 +432,8 @@ pub struct Calls {
     /// start named, [`Self::posted_running`]). An entry goes when its conversation's end is delivered, when a join to
     /// it fails, or when a newer invitation in the chat names another.
     running: BTreeMap<String, CallLink>,
+    /// The meetings a Request to join named, by their chat: a [`Self::join`] of that chat is the meeting's own join.
+    asked_into: BTreeMap<String, teams_proto::MeetingInfo>,
     /// The rosters of running calls an invitation's `attach` subscribed to, by their group chat: who is in the call,
     /// kept from the ring on (see [`Followed`]).
     followed: BTreeMap<String, Followed>,
@@ -468,6 +470,7 @@ impl Calls {
             agent: None,
             call: None,
             running: BTreeMap::new(),
+            asked_into: BTreeMap::new(),
             followed: BTreeMap::new(),
             next_call: 0,
             reserved: None,
@@ -568,11 +571,7 @@ impl Calls {
     #[must_use]
     pub fn meeting_chat(&self, call: CallId) -> Option<String> {
         let current = self.call.as_ref().filter(|current| current.id == call)?;
-        current.meeting_info.as_ref()?;
-        current
-            .caption_thread
-            .clone()
-            .filter(|chat| teams_proto::is_meeting_chat_id(chat))
+        current.meeting_target().map(|(chat, _)| chat)
     }
 
     /// The far end of the 1:1 call `call`, while it is up: the other member of its 1:1 chat. `None` for a group call, a
@@ -616,7 +615,7 @@ impl Calls {
     /// here it hears no more of the call) stays joinable until a join to it fails, which forgets it.
     #[must_use]
     pub fn joinable(&self, chat: &str) -> bool {
-        self.running.contains_key(chat)
+        self.running.contains_key(chat) || self.asked_into.contains_key(chat)
     }
 
     /// The group chat `chat`'s call runs at `conversation`, as the chat's own start message says (a group chat's
@@ -714,11 +713,19 @@ impl Calls {
         }
     }
 
-    /// The account joins the running call in the group chat `chat` (one an invitation named) with `offer`.
+    /// The account joins the running call in the group chat `chat` (one an invitation named) with `offer`; a meeting's
+    /// chat a Request to join named is the meeting's own join ([`Placement::Meeting`]).
     ///
     /// # Errors
     /// [`CallError`]; nothing was sent.
     pub fn join(&mut self, chat: &str, offer: MediaContent, now: Instant) -> Result<CallId, CallError> {
+        if let Some(meeting) = self.asked_into.get(chat).cloned() {
+            let placement = Placement::Meeting {
+                chat: chat.to_owned(),
+                meeting,
+            };
+            return self.place(&placement, offer, now);
+        }
         let conversation = self.running.get(chat).cloned().ok_or(CallError::NotJoinable)?;
         let side = Side::Joined {
             chat: chat.to_owned(),
@@ -1240,9 +1247,8 @@ impl Calls {
     /// organizer is known ([`Self::meeting_chat`]) or names no `add` link, a write error for an invitee out of the
     /// captured shape; nothing was sent.
     pub fn add_to_meeting(&mut self, call: CallId, invitee: &Mri) -> Result<(), CallError> {
-        let chat = self.meeting_chat(call).ok_or(CallError::NotNow)?;
         let current = up(&mut self.call, call)?;
-        let meeting = current.meeting_info.clone().ok_or(CallError::NotNow)?;
+        let (chat, meeting) = current.meeting_target().ok_or(CallError::NotNow)?;
         let link = current.conversation.add.clone().ok_or(CallError::NotNow)?;
         let write = build::add_to_meeting(current, &link, invitee, (&chat, &meeting))?;
         let id = self.out.send(current, Step::Invite, write);
@@ -1978,8 +1984,15 @@ impl Calls {
         if invitation.callee != self.identity.mri {
             return;
         }
-        if let Some(chat) = &invitation.group_chat {
-            self.running.insert(chat.clone(), invitation.conversation.clone());
+        // a meeting's Request to join rings in the meeting's chat: a join goes in as the meeting's own, as Teams' does
+        match (&invitation.group_chat, &invitation.meeting) {
+            (Some(chat), Some(meeting)) if teams_proto::is_meeting_chat_id(chat) => {
+                self.asked_into.insert(chat.clone(), meeting.clone());
+            }
+            (Some(chat), _) if teams_proto::is_group_chat_id(chat) => {
+                self.running.insert(chat.clone(), invitation.conversation.clone());
+            }
+            _ => {}
         }
         if let Some(call) = self.call.as_ref() {
             let again = call

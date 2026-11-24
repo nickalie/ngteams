@@ -338,7 +338,7 @@ pub struct IncomingCall {
     pub caller: Mri,
     /// The caller's name as the invitation gives it (no profile lookup).
     pub caller_name: Option<String>,
-    /// The group chat of a group call.
+    /// The group chat of a group call, or the meeting's chat for a meeting's Request to join.
     pub group_chat: Option<String>,
 }
 
