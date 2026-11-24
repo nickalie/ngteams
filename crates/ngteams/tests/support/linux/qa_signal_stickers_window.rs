@@ -10,7 +10,7 @@
 //!   sticker packs; its "Import a Signal pack" button opens the panel; the Telegram and the Signal panels are never
 //!   open together.
 //! - **The menu row** "Import a Signal pack"; a link pasted with Ctrl+V and Enter: the pack's title, its cover, each
-//!   sticker, the emoji labels (the tooltip), an animated sticker as a GIF that plays.
+//!   sticker, the emoji labels (the tooltip), an animated sticker as a GIF (the picker shows its first frame).
 //! - **Errors**: malformed links, an unknown pack (403), a wrong key, a tampered manifest, a tampered and a missing
 //!   sticker (skipped with the reason), a CDN that redirects, breaks, drops or cannot be reached (nothing kept).
 //! - **The CDN's requests**: no credential, no key, only the manifest and sticker paths. No key in the app's debug log
@@ -1506,10 +1506,6 @@ fn good_pack_shows(user: &mut User<'_>, id: &str) -> SandboxResult<Vec<String>> 
     if !seen(&found, "apng-1") && !seen(&found, "apng-2") {
         faults.push("the animated sticker does not show in the open pack".to_owned());
     }
-    let (one, two) = frames_seen(user, PICKER, "good-pack-plays")?;
-    say(&format!(
-        "  the animated sticker in the picker: frame one {one} shots, frame two {two} shots"
-    ));
     Ok(faults)
 }
 
@@ -1764,14 +1760,29 @@ fn cdn_faults_keep_nothing(user: &mut User<'_>) -> SandboxResult {
     let dirs_before = fs::read_dir(&stickers_dir).map_or(0, Iterator::count);
     let target = format!("{}/stickers/{}/manifest.proto", user.world.cdn.origin(), FAULTS_ID);
     let cases = [
-        ("redirect", Some(MockFault::RedirectTo(target)), UNREADABLE),
-        ("broken", Some(MockFault::Broken), UNREADABLE),
-        ("broken-midway", Some(MockFault::BrokenFrom(1)), UNREADABLE),
-        ("dropped-midway", Some(MockFault::DroppedFrom(2)), DOWN),
-        ("unreachable", None, DOWN),
+        ("redirect", UNREADABLE),
+        ("broken", UNREADABLE),
+        ("broken-midway", UNREADABLE),
+        ("dropped-midway", DOWN),
+        ("unreachable", DOWN),
     ];
-    for (name, fault, words) in cases {
+    for (name, words) in cases {
         let live_before = user.world.cdn.requests().len();
+        // the mock counts downloads from its start: a midway fault starts after this import's first stickers
+        let done = user
+            .world
+            .faulty
+            .requests()
+            .iter()
+            .filter(|request| request.target.contains("/full/"))
+            .count();
+        let fault = match name {
+            "redirect" => Some(MockFault::RedirectTo(target.clone())),
+            "broken" => Some(MockFault::Broken),
+            "broken-midway" => Some(MockFault::BrokenFrom(done + 1)),
+            "dropped-midway" => Some(MockFault::DroppedFrom(done + 2)),
+            _ => None,
+        };
         match fault {
             Some(fault) => {
                 user.world.faulty.fault(fault);
@@ -1901,7 +1912,7 @@ fn panel_keyboard(user: &mut User<'_>) -> SandboxResult {
 impl User<'_> {
     /// The media service answers the next picture send as a new object of its own, which then serves the bytes of the
     /// kept sticker `file` of pack `id`, as the service gives a sent picture back to b.
-    fn serve_upload(&mut self, id: &str, file: &str) -> SandboxResult {
+    fn serve_upload(&mut self, id: &str, file: &str) -> SandboxResult<(String, Vec<u8>)> {
         let bytes = fs::read(self.world.dir.join("stickers").join(id).join(file))?;
         let gif = Path::new(file)
             .extension()
@@ -1915,10 +1926,10 @@ impl User<'_> {
                 .await;
             mock.refuse_next("PUT", &format!("/v1/objects/{object}/content/imgpsh"), 201)
                 .await;
-            mock.serve_bytes(&format!("/v1/objects/{object}/views/imgo"), kind, bytes)
+            mock.serve_bytes(&format!("/v1/objects/{object}/views/imgo"), kind, bytes.clone())
                 .await;
         });
-        Ok(())
+        Ok((object, bytes))
     }
 }
 
@@ -1941,7 +1952,7 @@ fn send_one(user: &mut User<'_>, label: &str, faults: &mut Vec<String>) -> Sandb
         .to_owned();
     user.key_pick(&format!("sticker-pack-{id}"))?;
     user.until("the pack open", |state| shows_pack_stickers(state, &id))?;
-    user.serve_upload(&id, &file)?;
+    let (object, kept) = user.serve_upload(&id, &file)?;
     let number = file.split('.').next().unwrap_or_default();
     let before = user.sent_with("POST", "schema.skype.com/Sticker").len();
     user.key_pick(&format!("sticker-{id}-{number}"))?;
@@ -1960,6 +1971,17 @@ fn send_one(user: &mut User<'_>, label: &str, faults: &mut Vec<String>) -> Sandb
         (all.len() > before).then(|| all.last().cloned().unwrap_or_default())
     })
     .ok_or_else(|| format!("no sticker message {label} went to the chat service"))?;
+    let content = format!("/v1/objects/{object}/content/imgpsh");
+    let uploaded = user
+        .world
+        .runtime
+        .block_on(user.world.mock.received_requests())
+        .into_iter()
+        .find(|request| request.method.as_str() == "PUT" && request.url.path() == content)
+        .map(|request| request.body);
+    if uploaded.as_deref() != Some(kept.as_slice()) {
+        faults.push(format!("{label}: a did not upload the kept sticker's bytes"));
+    }
     user.switch("b")?;
     user.open(AB_CHAT)?;
     let state = user.until(&format!("a's Signal sticker {label} in b's chat"), |state| {
