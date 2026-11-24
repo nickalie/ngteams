@@ -294,7 +294,7 @@ The [full command list](docs/development.md#ngteamsctl) covers chats, calls, the
 - Your camera starts off, and only you can turn it on.
 - The update check asks GitHub for ngteams' latest release. It sends no account data and no sign-in, only the app's name and version.
 - With **Use AI features** off, no text goes to an AI tool or provider, and the app does not look for the tools.
-- If you turn on translation or AI summaries, or ask for a correction, that text goes to the tool you picked and its provider. Translating a chat, or one of its messages, also sends its earlier messages, its title and its members' names; a correction also sends the chat's recent messages. Translating the message you are writing sends only its words and the language.
+- If you turn on translation or AI summaries, or ask for a correction, that text goes to the tool you picked and its provider. Translating a chat, or one of its messages, also sends its earlier messages, its title and its members' names; a correction, or translating the message you are writing, also sends the chat's recent messages, their writers' names and the message a reply quotes.
 - Logs at the debug level contain message text, so don't post them publicly.
 
 ## Good to know

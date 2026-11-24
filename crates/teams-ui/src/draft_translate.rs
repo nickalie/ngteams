@@ -41,9 +41,9 @@ pub const DEFAULT_LANGUAGE: &str = "English";
 pub const MAX_LANGUAGE: usize = 60;
 
 /// The settings' description of where a draft goes.
-pub const SETTINGS_NOTE: &str = "When you translate a message you are writing, its text, the language and the chat's \
-                                 recent messages, with the names of their writers, go to this tool on your computer and \
-                                 its provider.";
+pub const SETTINGS_NOTE: &str = "When you translate a message you are writing, its text, the language, the chat's \
+                                 recent messages and the message a reply quotes, with the names of their writers, go \
+                                 to this tool on your computer and its provider.";
 
 /// The languages the picker lists: every language captions and chats are translated into, and more that many people
 /// write in. Any other is typed.

@@ -33,8 +33,9 @@ use prompt::Answer;
 pub const MAX_DRAFT: usize = crate::chat_translate::MAX_MESSAGE;
 
 /// The settings' description of where a draft goes.
-pub const SETTINGS_NOTE: &str = "When you ask for a correction, your message and the chat's recent messages, with the \
-                                 names of their writers, go to this tool on your computer and its provider.";
+pub const SETTINGS_NOTE: &str = "When you ask for a correction, your message, the chat's recent messages and the \
+                                 message a reply quotes, with the names of their writers, go to this tool on your \
+                                 computer and its provider.";
 
 /// How long the tool may take.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

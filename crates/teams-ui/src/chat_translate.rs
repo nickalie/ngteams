@@ -98,8 +98,9 @@ const CONTEXT_LINE: usize = 400;
 /// The longest a message replied to is, as a labelled context line (`[q1]`): what the reply answers, told whole
 /// within reason.
 const QUOTE_LINE: usize = 2000;
-/// The most lines and characters of the chat's latest messages a draft's correction is given
-/// ([`ChatTranslation::recent_context`]): it starts a process anew for each draft, so it is given less than a batch.
+/// The most lines and characters of the chat's latest messages a draft's correction and a draft's translation are
+/// given ([`ChatTranslation::recent_context`]): each starts a process anew for each draft, so it gets less than a
+/// batch.
 pub const CORRECTION_LINES: usize = 15;
 pub const CORRECTION_CHARS: usize = 3000;
 /// How many times a message the tool's answer left out is asked again before it shows as written for good (one held

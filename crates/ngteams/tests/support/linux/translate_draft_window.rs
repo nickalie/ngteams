@@ -18,8 +18,9 @@
 //! - **The language menu**: the language row of "+" opens it with the language chosen first; typing filters it,
 //!   Enter or a click picks one, any other language can be typed and is offered as "Use …"; Escape closes it.
 //! - **Translate** by its row in "+" and by Ctrl+Shift+Y in a chat's box, a reply, an edit, the channel's post box,
-//!   a thread's reply box and New message: the draft replaced in place, only the draft's words and the language sent,
-//!   Ctrl+Z bringing the draft back. Mentions, links, bold, emoji, line breaks and code stay as they were.
+//!   a thread's reply box and New message: the draft replaced in place, the language, the chat's recent messages as
+//!   context and then the draft's words sent, no ids or tokens, Ctrl+Z bringing the draft back. Mentions, links,
+//!   bold, emoji, line breaks and code stay as they were.
 //! - **Progress and cancel**: the line over the box while it runs; Cancel, Escape and the row again stop it, its
 //!   process ends and the draft stays. **Failure** keeps the draft and Try again translates it. An edit while it runs
 //!   drops the result; Translate again translates the new draft. Correct and Translate never run at once. An empty
@@ -873,29 +874,34 @@ fn last_question(tool: &FakeTool) -> SandboxResult<String> {
         .ok_or_else(|| "the tool was asked nothing".into())
 }
 
-/// The question carries only the language and the draft's words: no chat, names, ids or tokens.
-fn only_language_and_draft(question: &str, language: &str, words: &[&str]) -> SandboxResult {
-    if !question.contains(&format!("<language>{language}</language>")) {
+/// The question: the language, then the chat's `context` holding `seen`, then the message holding the draft's `words`
+/// and none of the chat's names or text; no ids or tokens anywhere.
+fn language_context_and_draft(question: &str, language: &str, seen: &str, words: &[&str]) -> SandboxResult {
+    let (head, message) = question
+        .split_once("<message>")
+        .ok_or_else(|| format!("the question has no message: {question}"))?;
+    if !head.contains(&format!("<language>{language}</language>")) {
         return Err(format!("the question doesn't name {language}: {question}").into());
     }
+    let context = head
+        .split_once("<context>")
+        .and_then(|(_, rest)| rest.split_once("</context>"))
+        .map(|(context, _)| context)
+        .ok_or_else(|| format!("the question has no context before its message: {question}"))?;
+    if !context.contains(seen) {
+        return Err(format!("the context lacks {seen:?}: {question}").into());
+    }
     for word in words {
-        if !question.contains(word) {
-            return Err(format!("the question lacks {word:?}: {question}").into());
+        if !message.contains(word) {
+            return Err(format!("the message lacks {word:?}: {question}").into());
         }
     }
-    for leak in [
-        AB_CHAT,
-        AC_CHAT,
-        LAB_A,
-        LAB_B,
-        LAB_C,
-        "Lab B",
-        "bot-a",
-        "Bearer",
-        "token",
-        LINK,
-        "cargo test",
-    ] {
+    for leak in ["Lab B", "bot-a", LINK, "cargo test", "<context>"] {
+        if message.contains(leak) {
+            return Err(format!("the message carries {leak:?}: {question}").into());
+        }
+    }
+    for leak in [AB_CHAT, AC_CHAT, LAB_A, LAB_B, LAB_C, "Bearer", "token"] {
         if question.contains(leak) {
             return Err(format!("the question carries {leak:?}: {question}").into());
         }
@@ -1111,7 +1117,12 @@ fn the_language_menu(user: &mut User) -> SandboxResult {
 fn translate_in_a_chat(user: &mut User) -> SandboxResult {
     let bar = user.toolbar(CONVERSATION)?;
     translates(user, "chat", Some(bar), (DRAFT, FRENCH))?;
-    only_language_and_draft(&last_question(user.tool)?, "French", &["hello", "team", "notes"])?;
+    language_context_and_draft(
+        &last_question(user.tool)?,
+        "French",
+        "cargo test",
+        &["hello", "team", "notes"],
+    )?;
     user.shots_in_both_themes("translated")?;
 
     // German again, by the menu's keys: Down to its row and Enter
@@ -1380,7 +1391,12 @@ fn a_reply_and_an_edit(user: &mut User) -> SandboxResult {
     let after = user.until("the edit translated", |state| {
         text(state, "chat").starts_with("hallo") && status(state, "chat") == "idle"
     })?;
-    only_language_and_draft(&last_question(user.tool)?, "German", &["hello", "please send"])?;
+    language_context_and_draft(
+        &last_question(user.tool)?,
+        "German",
+        "cargo test",
+        &["hello", "please send"],
+    )?;
     let translated = text(&after, "chat");
     if atoms(&after, "chat") != atoms(&before, "chat") || atoms(&after, "chat").len() < 3 {
         return Err(format!(
