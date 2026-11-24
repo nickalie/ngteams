@@ -138,6 +138,7 @@ impl Call {
         }
         party.status = Status::InCall;
         party.ring_due = None;
+        party.add_failure = None;
         party.joined = Some(wire::iso(at.now));
         Self::settle(party, out);
         self.reschedule();
@@ -146,7 +147,8 @@ impl Call {
         Ok(wire::accept_answer(at.origin, self, seat))
     }
 
-    /// A ringing party declines: its endpoints stop ringing and its leg goes; the call goes on for the others.
+    /// A ringing party declines: its endpoints stop ringing and its leg goes; the call goes on for the others. The
+    /// party's adder, if an add rang it, is told at its `addParticipantFailure` link.
     pub(crate) fn group_reject(&mut self, seat: Seat, body: &Value, at: At<'_>, out: &mut Out) -> Result<(), Refusal> {
         self.ringing(seat)?;
         let code = body.pointer("/callEnd/code").and_then(Value::as_i64).unwrap_or(603);
@@ -154,6 +156,9 @@ impl Call {
         for known in &party.endpoints {
             let end = wire::end(code, "CallEndReasonLocalUserInitiated", Some(&party.participant));
             out.call_back(at.origin, known.links.get("end").map(String::as_str), end);
+        }
+        if let Some(link) = party.add_failure.take() {
+            out.call_back(at.origin, Some(&link), wire::add_declined(party, code));
         }
         party.status = Status::Declined;
         Self::let_go(party, out);
@@ -232,6 +237,7 @@ impl Call {
 
     fn let_go(party: &mut Party, out: &mut Out) {
         party.ring_due = None;
+        party.add_failure = None;
         party.showing = Showing::default();
         party.presenting = false;
         party.hand = None;
@@ -818,6 +824,21 @@ mod tests {
             ),
             Err(Refusal::Bad)
         );
+    }
+
+    #[test]
+    fn an_added_party_s_decline_is_told_to_its_adder_as_captured() {
+        let (mut call, _) = started();
+        call.party_mut(Seat(2)).add_failure = Some(link("A", "addParticipantFailure"));
+        let mut out = Out::default();
+        call.reject(Seat(2), &json!({}), at(1_005_000), &mut out).unwrap();
+        assert_eq!(paths(&out), [("C", "end"), ("A", "addParticipantFailure")]);
+        let told = &out.deliveries[1].body["participants"]["8:orgid:c"];
+        assert_eq!((&told["code"], &told["subCode"]), (&json!(580), &json!(5208)));
+        assert_eq!(told["callControllerTransactionEnd"]["code"], 603);
+        assert_eq!(told["callControllerTransactionEnd"]["sender"]["participantId"], "p-c");
+        assert_eq!(out.deliveries[1].body["participantInfos"][0]["transactionEnd"], *told);
+        assert_eq!(call.party(Seat(2)).add_failure, None);
     }
 
     #[test]

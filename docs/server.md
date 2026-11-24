@@ -1340,7 +1340,8 @@ once.
   and answers as anyone else); one who still rings rings on as it is. Each ring of a party has its own invitation
   links (`…/forked/<call>/<seat>/i1/<ring>/…`), as the client takes an invitation equal to an earlier one for its
   redelivery; an earlier ring's link is `410`. Someone with no calling endpoint isn't
-  brought in, and the adder is told at its `addParticipantFailure` callback (`580` / `5205`); someone not in the
+  brought in, and the adder is told at its `addParticipantFailure` callback (`580` / `5205`); an added party that
+  declines is told there too (`580` / `5208`, `callControllerTransactionEnd` `603`); someone not in the
   chat is `403`. In a meeting's call only a host adds (an attendee's add is `403`), and someone who waits in its
   lobby is let in with `admit`, not added (`403`).
 - **Renegotiation** goes to the node, and its answer back to the party alone, at its `mediaAnswer` callback; the next

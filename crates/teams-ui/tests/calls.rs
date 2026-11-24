@@ -1806,6 +1806,22 @@ fn a_notification_says_who_calls_as_the_invitation_names_them() {
         (group.summary.as_str(), group.body.as_str(), group.conversation.as_str()),
         ("Someone is calling", "Incoming group call", TRIO)
     );
+    // a meeting's Request to join, in Teams' words
+    let asked = notice_of(&invitation(3, Some(CALLER_NAME), Some(MEETING_CHAT)));
+    assert_eq!(
+        (
+            asked.kind,
+            asked.summary.as_str(),
+            asked.body.as_str(),
+            asked.conversation.as_str()
+        ),
+        (
+            NoticeKind::Call,
+            "Bee Caller",
+            "wants you to join Meeting",
+            MEETING_CHAT
+        )
+    );
 }
 
 #[test]
@@ -3061,6 +3077,55 @@ fn request_to_join_on_a_meeting_s_invitee_asks_once_and_their_decline_shows() {
     assert!(active.invited[0].declined.is_some() && active.invited[0].no_response);
     assert!(drawn(stage, "call-roster-call-again-0"));
     declined_goes_back_to_others_invited(&rig, stage);
+}
+
+#[test]
+fn after_request_to_join_by_keyboard_the_focus_follows_the_person_and_a_second_enter_asks_nobody() {
+    let rig = calling();
+    invite_to_meeting(&rig);
+    let (trace, _) = trace();
+    let (_windows, stage) = in_meeting(&rig, &trace);
+    rig.send(Event::CallParticipants {
+        call: call(1),
+        view: view(&[], false),
+    });
+    rig.cx.run_until_parked();
+    click(stage, "call-roster");
+    assert!(drawn(stage, "call-roster-added-1"), "b and c are only invited");
+    let far = stage.debug_bounds("call-roster-pane").unwrap();
+    stage.simulate_mouse_move(
+        gpui::point(far.origin.x - gpui::px(200.0), far.center().y),
+        None,
+        Modifiers::none(),
+    );
+    for _ in 0..40 {
+        if people_focus(stage).as_deref() == Some("call-roster-added-0") {
+            break;
+        }
+        stage.simulate_keystrokes("tab");
+    }
+    assert_eq!(people_focus(stage).as_deref(), Some("call-roster-added-0"));
+    stage.simulate_keystrokes("tab");
+    press_and_release(stage, "enter");
+    rig.cx.run_until_parked();
+    draw(stage);
+    let adds = |rig: &Rig| {
+        actions(rig)
+            .into_iter()
+            .filter(|action| matches!(action, CallAction::Add { .. }))
+            .count()
+    };
+    assert_eq!(adds(&rig), 1);
+    assert!(
+        drawn(stage, "call-roster-invited-0"),
+        "the person moved to the meeting's section"
+    );
+    assert_eq!(people_focus(stage).as_deref(), Some("call-roster-invited-0"));
+    // the next person's Request to join has no focus: a second Enter asks nobody
+    assert!(!drawn(stage, "call-roster-request-0"));
+    press_and_release(stage, "enter");
+    rig.cx.run_until_parked();
+    assert_eq!(adds(&rig), 1);
 }
 
 #[test]

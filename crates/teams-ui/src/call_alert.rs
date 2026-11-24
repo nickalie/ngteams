@@ -11,9 +11,11 @@ use std::sync::Arc;
 
 use gpui::{AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription};
 use teams_core::{CallId, IncomingCall, Person};
+use teams_proto::is_meeting_chat_id;
 
 use crate::bridge::Core;
 use crate::calls::{self, Ask, Calls};
+use crate::meeting_alert::NO_TITLE;
 use crate::notify::{
     ANSWER_ACTION, BannerPicture, DECLINE_ACTION, DEFAULT_ACTION, Notice, NoticeKind, NotificationServer, SOMEONE,
 };
@@ -50,10 +52,21 @@ pub struct CallAlert {
 
 impl EventEmitter<CallAlertEvent> for CallAlert {}
 
-/// What an invitation's notification says: who calls, and whether it is a group call.
+/// What an invitation's notification says: who calls, and whether it is a group call. A meeting's Request to join
+/// says it in Teams' words, "<caller>" over "wants you to join <meeting>" (the title [`meeting_ask_body`] names once
+/// the notification is shown).
 #[must_use]
 pub fn notice_of(incoming: &IncomingCall) -> Notice {
     let caller = incoming.caller_name.as_deref().unwrap_or(SOMEONE);
+    if let Some(chat) = incoming.group_chat.as_deref().filter(|chat| is_meeting_chat_id(chat)) {
+        return Notice {
+            conversation: chat.to_owned(),
+            kind: NoticeKind::Call,
+            summary: caller.to_owned(),
+            body: meeting_ask_body(NO_TITLE),
+            picture: None,
+        };
+    }
     Notice {
         conversation: incoming.group_chat.clone().unwrap_or_default(),
         kind: NoticeKind::Call,
@@ -65,6 +78,12 @@ pub fn notice_of(incoming: &IncomingCall) -> Notice {
         },
         picture: None,
     }
+}
+
+/// The body of a meeting's Request to join, as Teams' toast says it.
+#[must_use]
+pub fn meeting_ask_body(title: &str) -> String {
+    format!("wants you to join {title}")
 }
 
 impl CallAlert {
@@ -170,7 +189,11 @@ impl CallAlert {
         let (call, mut notice) = (alerting.call, alerting.notice.clone());
         // the caller as stored: their picture is never waited for from the network
         let caller = self.core.person(alerting.caller.clone());
+        let core = Arc::clone(&self.core);
         cx.spawn(async move |this, cx: &mut AsyncApp| {
+            if notice.kind == NoticeKind::Call && is_meeting_chat_id(&notice.conversation) {
+                notice.body = meeting_ask_body(&crate::meeting_alert::chat_name(&*core, &notice.conversation).await);
+            }
             if let Ok(Person {
                 picture: Some(picture), ..
             }) = caller.await

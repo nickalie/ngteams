@@ -233,6 +233,7 @@ pub(crate) fn call_title(active: &ActiveCall, chat_name: impl Fn(&str) -> Shared
         CallKind::Incoming => {
             let caller = active.caller_name.clone().unwrap_or_else(|| SOMEONE.to_owned());
             match &active.chat {
+                Some(chat) if teams_proto::is_meeting_chat_id(chat) => chat_name(chat),
                 Some(chat) => format!("{caller} in {}", chat_name(chat)).into(),
                 None => caller.into(),
             }
@@ -520,16 +521,31 @@ impl CallBar {
         chat_name_in(&self.list, chat, cx)
     }
 
-    fn banner(&self, ringing: &IncomingCall, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
+    /// What the ring's banner says: who calls, and where. A meeting's Request to join says it in Teams' words.
+    fn banner_text(&self, ringing: &IncomingCall, answering: bool, cx: &App) -> SharedString {
         let caller = ringing.caller_name.clone().unwrap_or_else(|| SOMEONE.to_owned());
-        let model = self.calls.read(cx);
-        let answering = model.answering();
-        let text: SharedString = match (&ringing.group_chat, answering) {
+        let meeting = ringing
+            .group_chat
+            .as_deref()
+            .is_some_and(teams_proto::is_meeting_chat_id);
+        match (&ringing.group_chat, answering) {
+            (Some(chat), false) if meeting => format!("{caller} wants you to join {}", self.chat_name(chat, cx)).into(),
+            (Some(chat), true) if meeting => format!("Joining {}", self.chat_name(chat, cx)).into(),
             (Some(chat), false) => format!("{caller} is calling in {}", self.chat_name(chat, cx)).into(),
             (None, false) => format!("{caller} is calling").into(),
             (Some(chat), true) => format!("Answering {caller} in {}", self.chat_name(chat, cx)).into(),
             (None, true) => format!("Answering {caller}").into(),
-        };
+        }
+    }
+
+    fn banner(&self, ringing: &IncomingCall, palette: Palette, cx: &mut Context<Self>) -> AnyElement {
+        let model = self.calls.read(cx);
+        let answering = model.answering();
+        let text = self.banner_text(ringing, answering, cx);
+        let meeting = ringing
+            .group_chat
+            .as_deref()
+            .is_some_and(teams_proto::is_meeting_chat_id);
         // the answer waits for the devices (minutes on a first start) and the media: said here, as a start says it
         let status = answering.then(|| {
             div()
@@ -550,11 +566,16 @@ impl CallBar {
         } else {
             mark.children(crate::motion::ripple("call-banner-mark", palette.accent, 32.0, cx))
         };
+        let (glyph, answer_label) = if meeting {
+            (Glyph::VIDEO, "Accept")
+        } else {
+            (Glyph::PHONE, "Answer")
+        };
         let answer = (!answering).then(|| {
             control(
                 "call-answer",
-                Control::Labelled(Glyph::PHONE, "Answer"),
-                ("Answer", &AnswerCall),
+                Control::Labelled(glyph, answer_label),
+                (answer_label, &AnswerCall),
                 Look::Success,
                 cx,
                 |this, cx| this.ask(Ask::Answer, cx),

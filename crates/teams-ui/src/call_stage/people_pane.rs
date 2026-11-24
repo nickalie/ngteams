@@ -309,6 +309,7 @@ impl CallStage {
                 let shows = AddedShows {
                     request: reached && addable,
                     passed,
+                    moves_to: active.invited.len(),
                 };
                 self.added_row(index, person, shows, palette, cx)
             })
@@ -329,7 +330,11 @@ impl CallStage {
         &self,
         index: usize,
         (mri, name): (String, SharedString),
-        AddedShows { request, passed }: AddedShows,
+        AddedShows {
+            request,
+            passed,
+            moves_to,
+        }: AddedShows,
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -339,13 +344,21 @@ impl CallStage {
                 name: name.to_string(),
             };
             let id = format!("call-roster-request-{index}");
+            let moved = self
+                .people_keys
+                .handles
+                .get(&format!("call-roster-invited-{moves_to}"), cx);
             selected_by(
                 id.clone(),
                 Button::new(SharedString::from(id))
                     .outline()
                     .xsmall()
                     .label("Request to join")
-                    .on_click(cx.listener(move |this, _, _, cx| this.ask(ask.clone(), cx))),
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        // the keyboard follows the person to "In this meeting": a second Enter asks nobody else
+                        window.focus(&moved, cx);
+                        this.ask(ask.clone(), cx);
+                    })),
             )
         });
         let row = added_key(index);
@@ -783,4 +796,6 @@ struct AddedShows {
     request: bool,
     /// "No response" under the name: they declined being asked in.
     passed: bool,
+    /// The row of the people being called that the person moves to once asked: where the keyboard goes.
+    moves_to: usize,
 }

@@ -203,6 +203,9 @@ pub(crate) struct Party {
     /// How many times the service changed its mutes: the roster's `serverMuteVersion`.
     #[serde(default)]
     pub mute_version: u64,
+    /// While an add rings it: the adder's `addParticipantFailure` link, where its decline is told.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_failure: Option<String>,
 }
 
 /// A raised hand: the state the roster names it by, its rank among the hands raised (the first is 1), and what its

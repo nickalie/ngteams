@@ -1003,7 +1003,7 @@ async fn channel_muted(core: &dyn Core, channel: &str) -> bool {
 }
 
 /// The chat's name as the list shows it, else [`NO_TITLE`].
-async fn chat_name(core: &dyn Core, conversation: &str) -> String {
+pub(crate) async fn chat_name(core: &dyn Core, conversation: &str) -> String {
     let conversations = core
         .conversations(crate::chat_list::LIST_LIMIT)
         .await

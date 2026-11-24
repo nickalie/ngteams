@@ -723,6 +723,33 @@ pub(crate) fn add_failure(invitee: &str) -> Value {
     })
 }
 
+/// An added party declined its ring (`code`, a decline's 603), told at its adder's `addParticipantFailure` callback
+/// in the captured shape: 580/5208 with the decline's own end in `callControllerTransactionEnd`.
+pub(crate) fn add_declined(party: &Party, code: i64) -> Value {
+    let mri = party.mri();
+    let sender = json!({
+        "id": mri, "displayName": party.name, "endpointId": ZERO_ENDPOINT,
+        "participantId": party.participant.get("participantId"),
+    });
+    let failure = json!({
+        "code": 580, "subCode": 5208, "reason": "unknown",
+        "phrase": "Audio-video modality controller could not invite participant to this conversation since the user \
+            declined the call.",
+        "resultCategories": ["ExpectedError"],
+        "callControllerTransactionEnd": {
+            "code": code, "subCode": 0, "reason": "globalError", "phrase": "CallEndReasonLocalUserInitiated",
+            "resultCategories": ["Success"], "sender": sender,
+        },
+    });
+    json!({
+        "participants": {mri.clone(): failure.clone()},
+        "participantInfos": [{
+            "participant": {"id": mri, "endpointId": ZERO_ENDPOINT, "participantId": sender["participantId"]},
+            "transactionEnd": failure,
+        }],
+    })
+}
+
 /// `evt` of a delivery at a calling endpoint's root telling a meeting's member that its call started.
 pub(crate) const MEETING_STARTED: u64 = 128;
 

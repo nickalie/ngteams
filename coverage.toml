@@ -607,7 +607,7 @@ reason = "Linux-only WPE/GPUI sign-in source selected by the cfg(target_os = \"l
 context = { "crates/teams-signin/src/lib.rs" = "a7b946e05829938c67d8c83c2f95877bbe47a5351f68ba7e8bd036149f3132ab" }
 
 [unmapped_sources_windows."crates/teams-ui/src/notify/linux.rs"]
-sha256 = "e11d043bb9278f1d7deeebbf5691845cb357b43531d5295f78bca0fab9c498f4"
+sha256 = "0af80c5c508d5cad2a0fc3f1f0e8120ee06765c2c82eb225b269e098111acfd5"
 reason = "Linux-only freedesktop notification D-Bus transport; notify.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
 context = { "crates/teams-ui/src/lib.rs" = "38f5a687eb2ae5be960d8024ecf2de994e6d6395c5b16d368ba7e36f9de52670", "crates/teams-ui/src/notify.rs" = "970727ff4ed79caea0a6a53ab4d43be530c8a4d323858a6a9c7e5a180172ee13" }
 
@@ -663,7 +663,7 @@ reason = "macOS-only menu bar, Dock reopen and AppKit terminate routing; no Linu
 [unmapped_sources."crates/teams-ui/src/meeting_alert/tests.rs"]
 sha256 = "1957d1d18badb89aaccd1076d057c4f6894cf22ddf8701396753dc3cb1f2ed7f"
 reason = "unit-test module included only by meeting_alert.rs cfg(test); omitted by cargo-llvm-cov's test-file filter"
-context = { "crates/teams-ui/src/meeting_alert.rs" = "313cbe8b80a236f1c5c1db5545608dfaf457ed0325214b497e6fd63b03815d6d" }
+context = { "crates/teams-ui/src/meeting_alert.rs" = "ba7d64d573a04ac8a160ca938de348e90255f902458d7ed243b37c613d722fcb" }
 
 [unmapped_sources."crates/teams-ui/src/meeting_reminder/tests.rs"]
 sha256 = "7a7955ca3a4b8cce2c254bac771408a408d195007d02e6f4fa8ff5ebd76fe04d"

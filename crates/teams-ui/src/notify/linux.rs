@@ -82,6 +82,12 @@ impl NotificationServer for BusNotifications {
             notice.body.clone()
         };
         let call_notice = notice.kind == NoticeKind::Call;
+        // a meeting's Request to join is accepted, as Teams words it
+        let answer = if teams_proto::is_meeting_chat_id(&notice.conversation) {
+            "Accept"
+        } else {
+            "Answer"
+        };
         let meeting_notice = notice.kind == NoticeKind::Meeting;
         let reminder_notice = notice.kind == NoticeKind::Reminder;
         let channel = teams_proto::is_team_thread_id(&notice.conversation);
@@ -89,14 +95,7 @@ impl NotificationServer for BusNotifications {
         Box::pin(async move {
             // an incoming call's: Answer and Decline, critical, shown until it is closed (its ring ended)
             let (actions, mut hints, expires) = if call_notice {
-                let actions = vec![
-                    DEFAULT_ACTION,
-                    "Open",
-                    ANSWER_ACTION,
-                    "Answer",
-                    DECLINE_ACTION,
-                    "Decline",
-                ];
+                let actions = vec![DEFAULT_ACTION, "Open", ANSWER_ACTION, answer, DECLINE_ACTION, "Decline"];
                 let hints: HashMap<&str, Value<'_>> = HashMap::from([
                     ("urgency", Value::U8(2)),
                     ("desktop-entry", Value::from(desktop_entry.as_str())),

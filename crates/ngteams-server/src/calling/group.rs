@@ -505,7 +505,7 @@ pub(super) async fn add(app: &App, caller: &Caller, key: Key<'_>, body: &Value) 
         add_failed(app, &call, failure.as_deref(), invitee).await;
     } else {
         let account = super::ops::party(&user.id, &user.display_name, named);
-        ring_added(app, key, &call, (seat, &account), endpoints).await?;
+        ring_added(app, key, &call, (seat, &account, failure), endpoints).await?;
     }
     Ok(StatusCode::ACCEPTED.into_response())
 }
@@ -525,13 +525,13 @@ async fn add_failed(app: &App, call: &Call, failure: Option<&str>, invitee: &str
 }
 
 /// Seats `account` with a leg of its own, the node's offer to it, and rings it on `endpoints` with an invitation from
-/// its adder (the party at `adder`): the original caller added back must not be invited by itself, which its client
-/// ignores. One that still rings rings on as it is.
+/// its adder (the party at `adder`, whose `failure` link hears a decline): the original caller added back must not
+/// be invited by itself, which its client ignores. One that still rings rings on as it is.
 async fn ring_added(
     app: &App,
     key: Key<'_>,
     call: &Call,
-    (adder, account): (Seat, &Party),
+    (adder, account, failure): (Seat, &Party, Option<String>),
     endpoints: Vec<String>,
 ) -> Result<(), Failure> {
     let nodes = nodes(app)?;
@@ -553,6 +553,7 @@ async fn ring_added(
     let region = &app.config.region;
     let invitation = step_any(app, key, |call, at, out| {
         call.ring(reserved.seat, &leg, ring_due, out)?;
+        call.party_mut(reserved.seat).add_failure.clone_from(&failure);
         Ok(wire::group_invitation(
             at.origin,
             call,

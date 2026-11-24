@@ -389,10 +389,14 @@ answer's `meetingInfo`), the engine posts `AddToCall::to_meeting`. It lists the 
 (`callControllerTransactionEnd.code` `603`) or "No response", with Call again; 10 s after a decline the row goes back
 to "Others invited" with "No response". The call tracker offers an `evt` 109
 that names a meeting's chat only when its `invitationData.meetingInfo` names the organizer and the tenant; the client
-rings and answers it as a group call (`accept`), and the call is the meeting's. Its answer goes at once: it has no
+rings with Teams' words ("<caller> wants you to join <meeting>", Accept and Decline, in the banner and the desktop
+notification) and answers it as a group call (`accept`), and the call is the meeting's, titled with the meeting's name.
+After Request to join with the keyboard, the focus goes to the person's new row, so a second Enter asks nobody. Its answer goes at once: it has no
 pre-join step between Accept and the `accept`. A Rejoin after such a call is the meeting's own join, with the organizer and
 tenant the invitation named. For a meeting host's `add`, the own server's invitation adds `invitationData.meetingInfo` and `conversationType`
-`scheduledMeeting`; it sends no `meetingData` and keeps the group call's `meetingLiveState`.
+`scheduledMeeting`; it sends no `meetingData` and keeps the group call's `meetingLiveState`. When an added
+party declines, the own server tells the adder at its `addParticipantFailure` link in the captured shape (580/5208,
+`callControllerTransactionEnd` 603).
 
 ## Joining a running call
 

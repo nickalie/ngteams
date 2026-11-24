@@ -134,6 +134,18 @@ fn notifications_reach_the_server_on_the_bus_given_and_its_activations_come_back
         private.invoke_action(ringing, "answer").unwrap();
         let answered = tokio::time::timeout(WAIT, activations.next()).await.unwrap();
         assert_eq!(answered, Some((ringing, "answer".to_owned())));
+        // a meeting's Request to join is accepted, in Teams' words
+        let asked = Notice {
+            conversation: "19:meeting_MadeUpMeeting0001@thread.v2".to_owned(),
+            ..notice(NoticeKind::Call, "Bee", "wants you to join Made-up meeting")
+        };
+        let asked = server.show(&asked, 0).await.unwrap();
+        let got = private.notifications();
+        let asked = got.iter().find(|shown| shown.id == asked).unwrap();
+        assert_eq!(
+            asked.actions,
+            ["default", "Open", "answer", "Accept", "decline", "Decline"]
+        );
         assert!(private.notifications().iter().all(|shown| shown.image.is_none()));
 
         // a notice's picture: its pixels in the image-data hint, a call's too
