@@ -7,7 +7,8 @@
 //! so the tool's command line, its input and its process are the app's. It answers German and French from a small
 //! dictionary, logs every question it is asked, and holds or fails while the parent's files say so. Before the engine
 //! starts, a's own message in the a–b chat gets a mention, a link showing its address, a bold word, an emoji, inline
-//! code and a line break, to be edited.
+//! code and a line break, to be edited; the a–b–c chat gets a message of b, one of a, and one of b with text like the
+//! question's tags.
 //!
 //! The child opens views where a user's click on a list row would (a chat, the team's channel, a post's thread) and
 //! answers the parent's questions about the boxes through a file in the sandbox dir; everything else comes from the
@@ -25,6 +26,10 @@
 //!   process ends and the draft stays. **Failure** keeps the draft and Try again translates it. An edit while it runs
 //!   drops the result; Translate again translates the new draft. Correct and Translate never run at once. An empty
 //!   draft starts nothing; a draft of only a mention has no words to translate.
+//! - **The chat's context**, in the a–b–c chat: its three messages with their writers, escaped, before the draft; a
+//!   reply's quote of b's older message as the context's last line; Correct with the same context and no language.
+//!   An answer that translates the chat too, or drops the markers, is asked for again one time and then fails the same
+//!   way; the draft stays.
 //! - **One language for every box**: the a–c chat's box shows it too.
 //! - **After a restart**, without the tool on the `PATH`: the language is the one chosen; Translate says no tool is
 //!   installed, Open settings opens Settings → General, and once the tool is there Try again translates and lists the
@@ -925,7 +930,12 @@ fn language_context_and_draft(question: &str, language: &str, seen: &str, words:
             return Err(format!("the message carries {leak:?}: {question}").into());
         }
     }
-    for leak in [AB_CHAT, AC_CHAT, LAB_A, LAB_B, LAB_C, "Bearer", "token"] {
+    no_ids_or_tokens(question)
+}
+
+/// The question carries no chat's id, no user's id and no token.
+fn no_ids_or_tokens(question: &str) -> SandboxResult {
+    for leak in [AB_CHAT, AC_CHAT, ABC_CHAT, LAB_A, LAB_B, LAB_C, "Bearer", "token"] {
         if question.contains(leak) {
             return Err(format!("the question carries {leak:?}: {question}").into());
         }
@@ -1503,6 +1513,19 @@ fn in_order_once(question: &str) -> SandboxResult {
     Ok(())
 }
 
+/// Presses Up, one step at a time, until the message `id` is selected.
+fn select_up_to(user: &mut User, id: &str) -> SandboxResult {
+    for _ in 0..16 {
+        let before = user.state()?["selected"].clone();
+        user.key(keys::UP)?;
+        let after = user.until("Up moved the selection", |state| state["selected"] != before)?;
+        if after["selected"] == id {
+            return Ok(());
+        }
+    }
+    Err(format!("Up never selected {id}").into())
+}
+
 /// The a–b–c chat's lines as the tool gets them: b's, a's, then b's with the tags escaped.
 fn the_group_s_lines(lines: &[String]) -> SandboxResult {
     let a_s = lines.get(1).and_then(|line| line.split_once(": "));
@@ -1544,16 +1567,11 @@ fn the_chat_s_context(user: &mut User) -> SandboxResult {
     })?;
     user.shots_in_both_themes("context-translated")?;
 
-    // a reply to b's newest message: its quote is the context's last line
+    // a reply to b's older message: its quote is the context's last line
     clear_box(user, "chat")?;
     user.key(keys::ESC)?;
-    for _ in 0..16 {
-        user.key(keys::UP)?;
-        thread::sleep(POLL);
-        if user.state()?["replyable"] == true {
-            break;
-        }
-    }
+    let first = user.ask("group-first-id")?;
+    select_up_to(user, &first)?;
     user.type_text("r")?;
     user.until("replying in the a–b–c chat", |state| {
         state["boxes"]["chat"]["mode"] == "reply" && focused(state, "chat")
@@ -1566,9 +1584,11 @@ fn the_chat_s_context(user: &mut User) -> SandboxResult {
     })?;
     let question = last_question(user.tool)?;
     in_order_once(&question)?;
+    no_ids_or_tokens(&question)?;
     let reply_lines = context_lines(&question)?;
     the_group_s_lines(&reply_lines)?;
-    if reply_lines.len() != 4 || reply_lines[..3] != lines[..] || reply_lines[3] != GROUP_B_TAGS_ESCAPED {
+    let quote = format!("Lab B: {GROUP_B_FIRST}");
+    if reply_lines.len() != 4 || reply_lines[..3] != lines[..] || reply_lines[3] != quote {
         return Err(format!("the quote isn't the context's last line: {reply_lines:?}").into());
     }
     user.shots_in_both_themes("context-reply")?;
@@ -1588,6 +1608,7 @@ fn correct_gets_the_same_context(user: &mut User, lines: &[String]) -> SandboxRe
     user.until("correcting", |state| state["boxes"]["chat"]["correction"] == "Running")?;
     user.until("the tool asked to correct", |_| user_asked(user.tool, asked))?;
     let question = last_question(user.tool)?;
+    no_ids_or_tokens(&question)?;
     let correct_lines = context_lines(&question)?;
     user.key(keys::ESC)?;
     user.until("the correction cancelled", |state| {
@@ -1966,8 +1987,16 @@ struct MockLab {
     _mock: ChatServiceMock,
     _trouter: TrouterMock,
     dir: tempfile::TempDir,
-    /// a's own message's id.
+    ids: Ids,
+}
+
+/// The seeded messages' ids that the parent asks for.
+#[derive(Clone)]
+struct Ids {
+    /// a's own message in the a–b chat.
     own: String,
+    /// b's first message in the a–b–c chat.
+    group_first: String,
 }
 
 impl MockLab {
@@ -1979,7 +2008,7 @@ impl MockLab {
         let mock = runtime.block_on(ChatServiceMock::start())?;
         let trouter = mock.start_trouter()?;
         let own = seed_own(&mock)?;
-        seed_group(&mock)?;
+        let group_first = seed_group(&mock)?;
         let dir = tempfile::tempdir()?;
         let tokens = Arc::new(Tokens {
             token: mock.token(LAB_A).ok_or("the mock's token for a")?,
@@ -2021,7 +2050,7 @@ impl MockLab {
             _mock: mock,
             _trouter: trouter,
             dir,
-            own,
+            ids: Ids { own, group_first },
         };
         Ok((lab, engine))
     }
@@ -2045,17 +2074,20 @@ fn seed_own(mock: &ChatServiceMock) -> SandboxResult<String> {
     Ok(id)
 }
 
-/// The a–b–c chat's messages of b and a.
-fn seed_group(mock: &ChatServiceMock) -> SandboxResult {
+/// The a–b–c chat's messages of b and a; the id of b's first.
+fn seed_group(mock: &ChatServiceMock) -> SandboxResult<String> {
+    let mut ids = Vec::new();
     for (from, html) in [
         (LAB_B, format!("<p>{GROUP_B_FIRST}</p>")),
         (LAB_A, format!("<p>{GROUP_A}</p>")),
         (LAB_B, GROUP_B_TAGS.to_owned()),
     ] {
-        mock.post_as(from, ABC_CHAT, &html)
-            .ok_or("a post to the a–b–c chat refused")?;
+        ids.push(
+            mock.post_as(from, ABC_CHAT, &html)
+                .ok_or("a post to the a–b–c chat refused")?,
+        );
     }
-    Ok(())
+    ids.into_iter().next().ok_or_else(|| "no post in the a–b–c chat".into())
 }
 
 /// The child's `PATH` holds no tool but the made-up one.
@@ -2082,7 +2114,7 @@ fn child() -> SandboxResult {
     let runner = support::runner(lab.dir.path())?;
     let failed = Arc::new(Mutex::new(None));
     let failed_in_app = Arc::clone(&failed);
-    let own = lab.own.clone();
+    let ids = lab.ids.clone();
     let application = gpui_platform::linux(WindowingModes::WAYLAND).with_assets(teams_ui::AppAssets);
     application.run(move |cx: &mut App| {
         let launched = app::launch(
@@ -2105,7 +2137,7 @@ fn child() -> SandboxResult {
                 let _ = window.update(cx, |_, window, _| {
                     after_frames(window, 3, |_, _| say("ready"));
                 });
-                answer(window, own, cx);
+                answer(window, ids, cx);
             }
             Err(failed) => {
                 *failed_in_app.lock().unwrap_or_else(PoisonError::into_inner) = Some(failed.error);
@@ -2132,7 +2164,7 @@ fn after_frames(window: &Window, frames: usize, done: impl FnOnce(&mut Window, &
 }
 
 /// Answers the parent's questions as they come, until it asks to quit.
-fn answer(window: WindowHandle<KitRoot>, own: String, cx: &mut App) {
+fn answer(window: WindowHandle<KitRoot>, ids: Ids, cx: &mut App) {
     let Some(dir) = std::env::var_os(ui_sandbox::SANDBOX_ENV) else {
         say("no sandbox dir");
         return;
@@ -2152,7 +2184,8 @@ fn answer(window: WindowHandle<KitRoot>, own: String, cx: &mut App) {
                     cx.update(|cx| cx.quit());
                     return;
                 }
-                "own-id" => own.clone(),
+                "own-id" => ids.own.clone(),
+                "group-first-id" => ids.group_first.clone(),
                 _ => window
                     .update(cx, |kit, window, cx| {
                         let shell = kit
