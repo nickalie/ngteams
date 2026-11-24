@@ -4,7 +4,7 @@
 //! GIF here is made up in the test. Synthetic PNG/JPEG sources past `MAX_STILL_SIDE` are refused before scaling;
 //! accepted pictures retain their natural dimensions. Large screenshots decode for messages, the viewer and pastes,
 //! while sources exceeding the codec scratch or overlapping conversion/scaling allocation budget are refused. A picture
-//! is shaped as Teams sizes one (`inline::Shape`).
+//! is shaped as Teams sizes one (`inline::Shape`), in its frame; a sticker is drawn bare.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -473,6 +473,24 @@ fn a_sticker_in_a_narrow_room_is_scaled_down_whole_its_frame_square() {
     // a smaller one in its square frame keeps both in proportion
     let ((frame_w, frame_h), (image_w, image_h)) = sides(Shape::whole_in((100, 100), (100, 100), Some(gpui::px(92.0))));
     assert!((frame_w - frame_h).abs() < f32::EPSILON && image_w < frame_w && (image_w - image_h).abs() < f32::EPSILON);
+}
+
+#[test]
+fn a_sticker_is_drawn_bare_and_a_picture_in_its_frame() {
+    let border: gpui::Hsla = gpui::rgb(0x00e0_e0e0).into();
+    let picture = || {
+        inline::Picture::new(
+            "made-up-picture",
+            "https://made-up.invalid/sticker.png",
+            Some((180, 180)),
+            None,
+            border,
+            gpui::IntoElement::into_any_element(gpui::div()),
+        )
+    };
+    assert_eq!(picture().frame(), Some(border));
+    // Teams draws no square behind a sticker's clear px, in either theme
+    assert_eq!(picture().sticker().frame(), None);
 }
 
 #[test]

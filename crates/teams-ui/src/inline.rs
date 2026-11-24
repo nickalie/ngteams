@@ -14,8 +14,9 @@
 //!   line, never wider than the width there is. A tall one (twice as high as wide) or a small one (lower than
 //!   [`PICTURE_BOX`]) sits in a square frame of [`PICTURE_BOX`], fitted (a small one at its own size); any other one is
 //!   [`PICTURE_BOX`] high; a wide one (twice as wide as high) keeps its own size, at most [`WIDE_MAX_WIDTH`] wide and,
-//!   once larger than Teams' bounds, [`PICTURE_BOX`] high. A sticker in a narrower room is scaled down whole, its
-//!   frame with it ([`Picture::whole`]), so its square frame stays square. The empty frame stands in while it is read. One the engine
+//!   once larger than Teams' bounds, [`PICTURE_BOX`] high. A sticker ([`Picture::sticker`]) takes the same room but
+//!   is drawn bare, as Teams draws one: no frame, border or fill behind its clear px; in a narrower room it is scaled
+//!   down whole, so its square stays square. The empty frame (a sticker's: empty room) stands in while it is read. One the engine
 //!   has none of, or none can be asked of (no engine), is drawn as the message's fallback (its placeholder text). Once
 //!   shown, a click on it opens it in the picture viewer when its view opens pictures ([`Picture::opening`]:
 //!   `crate::picture_viewer`), a pointing hand over it; a press on it starts no text selection.
@@ -579,8 +580,8 @@ pub struct Picture {
     /// What a click on it does once it is shown (the picture viewer opened on it), and the element id (and test
     /// selector) of what takes the click.
     open: Option<(SharedString, OnOpen)>,
-    /// Scaled down whole in a narrow room, its frame with it ([`Shape::whole_in`]).
-    whole: bool,
+    /// A sticker's: scaled down whole in a narrow room ([`Shape::whole_in`]), and drawn bare, with no frame.
+    sticker: bool,
     child: Option<AnyElement>,
 }
 
@@ -605,16 +606,23 @@ impl Picture {
             frame,
             fallback: Some(fallback),
             open: None,
-            whole: false,
+            sticker: false,
             child: None,
         }
     }
 
-    /// In a room narrower than it, scaled down whole, its frame with it, as Teams scales a sticker ([`Shape::whole_in`]).
+    /// A sticker, as Teams draws one: on nothing (no frame, border or fill behind its clear px), and in a room
+    /// narrower than it, scaled down whole ([`Shape::whole_in`]).
     #[must_use]
-    pub fn whole(mut self) -> Self {
-        self.whole = true;
+    pub fn sticker(mut self) -> Self {
+        self.sticker = true;
         self
+    }
+
+    /// The colour of its frame's border and fill: none for a sticker's.
+    #[must_use]
+    pub fn frame(&self) -> Option<Hsla> {
+        (!self.sticker).then_some(self.frame)
     }
 
     /// It opened by `open` on a click once it is shown, a pointing hand over it; `id` names the element that takes the
@@ -679,7 +687,7 @@ impl Element for Picture {
             }
             PictureState::Shown(image, own) => (Some(image), self.given.unwrap_or(own), own),
         };
-        let whole = self.whole;
+        let whole = self.sticker;
         let layout = window.request_measured_layout(Style::default(), move |known, available, _, _| {
             Shape::in_room(given, own, room(known, available), whole).outer()
         });
@@ -704,8 +712,10 @@ impl Element for Picture {
             Laid::Measured(image, given, own) => {
                 // shaped for the width of its block, which a block or flex parent stretches to the width there is,
                 // and never taller than its block, should its block be lower
-                let shape =
-                    Shape::in_room(*given, *own, Some(bounds.size.width), self.whole).within_height(bounds.size.height);
+                let shape = Shape::in_room(*given, *own, Some(bounds.size.width), self.sticker)
+                    .within_height(bounds.size.height);
+                // within the frame's rounded corners, should it fill the frame; a sticker's own edge is its shape
+                let corner = if self.sticker { 0.0 } else { FRAME_RADIUS - FRAME_BORDER };
                 let drawn = image.as_ref().map(|image| {
                     // an id of its own: GPUI keeps a GIF's frame in the element's state; its size given outright, so
                     // the image's own aspect ratio sets nothing
@@ -713,18 +723,21 @@ impl Element for Picture {
                         .w(shape.image.width)
                         .h(shape.image.height)
                         .flex_none()
-                        // within the frame's rounded corners, should it fill the frame
-                        .rounded(px(FRAME_RADIUS - FRAME_BORDER))
+                        .rounded(px(corner))
                 });
                 let Size { width, height } = shape.outer();
-                let frame = div()
+                let framed = self.frame().map(|colour| {
+                    div()
+                        .border(px(FRAME_BORDER))
+                        .border_color(colour)
+                        .rounded(px(FRAME_RADIUS))
+                        .bg(colour)
+                });
+                let frame = framed
+                    .unwrap_or_else(div)
                     .debug_selector(|| "rich-picture-drawn".to_owned())
                     .w(width)
                     .h(height)
-                    .border(px(FRAME_BORDER))
-                    .border_color(self.frame)
-                    .rounded(px(FRAME_RADIUS))
-                    .bg(self.frame)
                     .overflow_hidden()
                     .flex()
                     .items_center()

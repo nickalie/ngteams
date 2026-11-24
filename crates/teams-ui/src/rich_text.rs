@@ -20,7 +20,7 @@
 //!   emoticons alone ([`Rendered::emoticons_only`]) is drawn as Teams draws one: large, playing, without its bubble. A
 //!   sticker (`Node::Sticker`: one of Teams' own on its sticker CDN, or a picture sent to the media service) is a
 //!   picture block marked as one ([`PictureBlock::sticker`]), its label the placeholder's words, and no click opens it
-//!   in the picture viewer, and in a narrow room it is scaled down whole, its frame with it; a message of a sticker
+//!   in the picture viewer, drawn bare (no frame), and in a narrow room scaled down whole; a message of a sticker
 //!   alone, the blank paragraphs around it left out ([`Rendered::sticker_alone`]), is drawn as Teams draws one: at its
 //!   size, without its bubble. A
 //!   list is [`Block::List`]: each item's blocks beside its marker (its number, or a bullet by how deep the list is
@@ -1361,7 +1361,7 @@ fn blocks(draw: &Draw<'_>, path: &mut Vec<usize>, blocks: &[Block]) -> Vec<AnyEl
         .collect()
 }
 
-/// A picture of the message's own, as Teams draws one: in its frame of the border colour, bounded by Teams' sizes and
+/// A picture of the message's own, as Teams draws one: in its frame of the border colour (a sticker bare), bounded by Teams' sizes and
 /// the bubble's width, its aspect ratio kept (`crate::inline`); its placeholder when it can't be shown. A click on it
 /// opens it in the picture viewer when the view opens pictures (its scope's [`Scope::open`]) and it isn't a sticker
 /// (Teams opens none), on the element (and test selector) `<id>-open-<path>`; a sticker has no such element.
@@ -1378,7 +1378,7 @@ fn picture_block(draw: &Draw<'_>, path: &[usize], picture: &PictureBlock) -> Any
         fallback,
     );
     if picture.sticker {
-        drawn = drawn.whole();
+        drawn = drawn.sticker();
     }
     // a click on it opens it in the picture viewer, when the view opens pictures (a sticker never)
     if let Some(open) = draw

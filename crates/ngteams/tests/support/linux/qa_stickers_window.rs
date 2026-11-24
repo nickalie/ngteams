@@ -6,7 +6,8 @@
 //! runs on the process's main thread).
 //!
 //! - **Bare stickers**: b's sticker (the service's read-back form) and a's own (the web client's sent form), each drawn
-//!   alone at 180 by 180 with no bubble, b's on the left with b's name and time, a's on the right; the GIF plays.
+//!   alone at 180 by 180 with no bubble or frame behind it (as Teams), b's on the left with b's name and time, a's on
+//!   the right; the GIF plays.
 //! - **A sticker beside text**: in the bubble under the text.
 //! - **A click** on a sticker opens no picture viewer. The hover bar and "More options" still work: a quick reaction,
 //!   Reply, Copy text. Edit is not offered on a's own sticker.
@@ -604,51 +605,39 @@ fn mouth_ink(image: &RgbImage, found: Found) -> usize {
     ink
 }
 
-/// How far the drawn sticker reaches from its square, along its row 10 px from its top and its column 10 px from its
-/// left: the run of px that are not `ground`, where `ground` is the chat's background beside it. A sticker drawn bare
-/// at its size runs about 180 px each way; a bubble or a scaled picture runs more or less.
-fn runs(image: &RgbImage, found: Found, ground: [u8; 3]) -> (i32, i32) {
-    let off = |x: i32, y: i32| pixel(image, x, y).is_some_and(|colour| !near(colour, ground, 6));
-    let (row, column) = (found.sticker.y + 10, found.sticker.x + 10);
-    let (mut left, mut right) = (column, column);
-    while off(left - 1, row) && left > found.sticker.x - 60 {
-        left -= 1;
+/// The points of a sticker's square, and just outside it, where the made-up sticker is clear: its corners and the
+/// middles of its sides, 4 px in, and the same 8 px out.
+fn clear_points(square: Rect) -> Vec<(i32, i32)> {
+    let mut points = Vec::new();
+    for inset in [4, -8] {
+        let (left, top) = (square.x + inset, square.y + inset);
+        let (right, bottom) = (square.right() - 1 - inset, square.bottom() - 1 - inset);
+        let (middle_x, middle_y) = (square.x + square.w / 2, square.y + square.h / 2);
+        points.extend([
+            (left, top),
+            (right, top),
+            (left, bottom),
+            (right, bottom),
+            (middle_x, top),
+            (middle_x, bottom),
+            (left, middle_y),
+            (right, middle_y),
+        ]);
     }
-    while off(right + 1, row) && right < found.sticker.right() + 60 {
-        right += 1;
-    }
-    let (mut top, mut bottom) = (row, row);
-    while off(column, top - 1) && top > found.sticker.y - 60 {
-        top -= 1;
-    }
-    while off(column, bottom + 1) && bottom < found.sticker.bottom() + 60 {
-        bottom += 1;
-    }
-    (right - left + 1, bottom - top + 1)
+    points
 }
 
-/// The size of the frame drawn behind a sticker (of any scale): the run of the frame's fill along the row under the
-/// face and along the column left of the face, where the made-up sticker is clear.
-fn frame_size(image: &RgbImage, found: Found) -> (u32, u32) {
-    let (x, y) = (found.face.x - 6, found.face.bottom() + 6);
-    let Some(fill) = pixel(image, x, y) else {
-        return (0, 0);
-    };
-    // a scaled picture's clear px are not all exactly the fill
-    let same = |x: i32, y: i32| pixel(image, x, y).is_some_and(|colour| near(colour, fill, 12));
-    let run = |step: (i32, i32), from: (i32, i32)| {
-        let mut at = from;
-        let mut count = 0u32;
-        while same(at.0 + step.0, at.1 + step.1) && count < 300 {
-            at = (at.0 + step.0, at.1 + step.1);
-            count += 1;
-        }
-        count
-    };
-    (
-        run((-1, 0), (x, y)) + run((1, 0), (x, y)) + 1,
-        run((0, -1), (x, y)) + run((0, 1), (x, y)) + 1,
-    )
+/// What is drawn behind a sticker: each clear point of its square ([`clear_points`]) that is not `ground`, the chat's
+/// background beside it. Teams draws a sticker bare: no frame, tile or bubble behind its clear px.
+fn behind(image: &RgbImage, square: Rect, ground: [u8; 3]) -> Vec<((i32, i32), [u8; 3])> {
+    clear_points(square)
+        .into_iter()
+        .filter_map(|(x, y)| {
+            pixel(image, x, y)
+                .filter(|colour| !near(*colour, ground, 6))
+                .map(|colour| ((x, y), colour))
+        })
+        .collect()
 }
 
 /// The user at the sandbox: the pointer, the keyboard, the screenshots, the control socket, and the child it asks
@@ -1064,10 +1053,10 @@ fn check_bare(image: &RgbImage, found: &[Found], width: i32, what: &str) -> Sand
             ));
         }
         let ground = ground_beside(image, sticker, is_own)?;
-        let (across, down) = runs(image, sticker, ground);
-        if !(176..=186).contains(&across) || !(176..=186).contains(&down) {
+        let drawn = behind(image, sticker.sticker, ground);
+        if !drawn.is_empty() {
             faults.push(format!(
-                "{what}: {who} sticker reaches {across}x{down} px from the chat's ground {ground:?}, not 180x180 bare"
+                "{what}: {who} sticker is not bare: {drawn:?} behind it, the chat's ground is {ground:?}"
             ));
         }
         if sticker.sticker.x < 0 || sticker.sticker.right() > width {
@@ -1121,11 +1110,15 @@ fn check_visible(image: &RgbImage, found: &[Found], width: i32, what: &str) -> S
             if !square || sticker.face.right() > width {
                 faults.push(format!("{what}: a face is {:?}: cut or not square", sticker.face));
             }
-            let (across, down) = frame_size(image, sticker);
-            if across.abs_diff(down) > 6 {
+            let own = sticker.face.x > width / 2;
+            let ground = ground_beside(image, sticker, own)?;
+            // the scaled sticker's clear px under its face and left of it
+            let (x, y) = (sticker.face.x - 6, sticker.face.bottom() + 6);
+            if let Some(here) = pixel(image, x, y)
+                && !near(here, ground, 12)
+            {
                 faults.push(format!(
-                    "{what}: the sticker's frame is {across}x{down} px around a {}x{} face, not square",
-                    sticker.face.w, sticker.face.h
+                    "{what}: {here:?} at ({x}, {y}) behind a scaled sticker, the ground is {ground:?}: a frame"
                 ));
             }
             continue;
@@ -1138,10 +1131,10 @@ fn check_visible(image: &RgbImage, found: &[Found], width: i32, what: &str) -> S
             ));
         }
         let ground = ground_beside(image, sticker, own)?;
-        let (across, down) = runs(image, sticker, ground);
-        if !(176..=186).contains(&across) || !(176..=186).contains(&down) {
+        let drawn = behind(image, sticker.sticker, ground);
+        if !drawn.is_empty() {
             faults.push(format!(
-                "{what}: a sticker at {:?} reaches {across}x{down} px from the ground {ground:?}, not 180x180 bare",
+                "{what}: a sticker at {:?} is not bare: {drawn:?} behind it, the ground is {ground:?}",
                 sticker.sticker
             ));
         }
@@ -1624,8 +1617,13 @@ fn call_chat_pane(user: &mut User<'_>) -> SandboxResult {
             Ok((image, found)) => {
                 let sticker = found[found.len() - 1];
                 let ground = ground_beside(&image, sticker, true)?;
-                let (across, down) = runs(&image, sticker, ground);
-                say(&format!("  {name}: {:?}, {across}x{down}", sticker.sticker));
+                let drawn = behind(&image, sticker.sticker, ground);
+                say(&format!("  {name}: {:?}, behind it {drawn:?}", sticker.sticker));
+                if !drawn.is_empty() {
+                    faults.push(format!(
+                        "{name}: the sticker is not bare: {drawn:?} on the ground {ground:?}"
+                    ));
+                }
                 if !(100..=124).contains(&sticker.face.w) {
                     faults.push(format!("{name}: the sticker is not at its size: {:?}", sticker.face));
                 }

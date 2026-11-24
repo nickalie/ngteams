@@ -1523,9 +1523,9 @@ fn whole(face: Rect) -> bool {
     face.w.abs_diff(face.h) <= 4
 }
 
-/// Whether the sticker `face`, on the left of the chat, is drawn at 180 px with no bubble: the app draws a sticker
-/// on its own square frame (as Teams does), about 180 px wide, and right outside that frame is the chat's ground,
-/// where a bubble has its own fill and padding.
+/// Whether the sticker `face`, on the left of the chat, is drawn at 180 px and bare, as Teams draws one: no frame,
+/// tile or bubble behind it. The made-up sticker is a disc on a clear square, so the chat's ground shows at the
+/// corners and the sides of its 180 px square, and right outside the square, where a bubble has its own fill.
 fn bare_faults(image: &RgbImage, face: Rect, what: &str) -> Vec<String> {
     let mut faults = Vec::new();
     if !(138..=162).contains(&face.w) || !(138..=162).contains(&face.h) {
@@ -1534,34 +1534,36 @@ fn bare_faults(image: &RgbImage, face: Rect, what: &str) -> Vec<String> {
             face.w, face.h
         ));
     }
-    let (_, cy) = face.centre();
-    let (Some(ground), Some(frame)) = (pixel(image, face.right() + 220, cy), pixel(image, face.x - 10, cy)) else {
+    let (cx, cy) = face.centre();
+    let Some(ground) = pixel(image, face.right() + 220, cy) else {
         return vec![format!("{what}: no ground beside the sticker")];
     };
-    let same = |x: i32| pixel(image, x, cy).is_some_and(|colour| near(colour, frame, 6));
-    // 10 px out from the face's fill: past its dark rim, inside the frame
-    let (mut left, mut right) = (face.x - 10, face.right() + 10);
-    while same(left - 1) && left > face.x - 60 {
-        left -= 1;
-    }
-    while same(right + 1) && right < face.right() + 60 {
-        right += 1;
-    }
-    let across = right - left + 1;
-    say(&format!(
-        "  {what}: frame {across} px, {frame:?} on the ground {ground:?}"
-    ));
-    if !(174..=186).contains(&across) {
-        faults.push(format!("{what}: the sticker's frame is {across} px across, not 180"));
-    }
-    for x in [left - 5, right + 5] {
-        if let Some(here) = pixel(image, x, cy)
-            && !near(here, ground, 8)
-        {
-            faults.push(format!(
-                "{what}: {here:?} at ({x}, {cy}) outside the frame, the ground is {ground:?}: a bubble"
-            ));
-        }
+    // inside the square past the disc (its corners and sides), then outside the square
+    let clear = [
+        (-84, -84),
+        (84, -84),
+        (-84, 84),
+        (84, 84),
+        (-84, 0),
+        (84, 0),
+        (0, 84),
+        (-100, 0),
+        (100, 0),
+    ];
+    let behind: Vec<((i32, i32), [u8; 3])> = clear
+        .into_iter()
+        .map(|(dx, dy)| (cx + dx, cy + dy))
+        .filter_map(|(x, y)| {
+            pixel(image, x, y)
+                .filter(|here| !near(*here, ground, 8))
+                .map(|here| ((x, y), here))
+        })
+        .collect();
+    say(&format!("  {what}: behind it {behind:?}, the ground {ground:?}"));
+    if !behind.is_empty() {
+        faults.push(format!(
+            "{what}: {behind:?} behind the sticker, the ground is {ground:?}: a frame or a bubble"
+        ));
     }
     faults
 }
