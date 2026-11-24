@@ -573,7 +573,7 @@ pub struct Picture {
     src: String,
     given: Option<(u32, u32)>,
     source: Option<PictureSource>,
-    /// Its frame's border and background, which is all that is drawn while it is read.
+    /// Its frame's border and background (none for a sticker), which is all that is drawn while it is read.
     frame: Hsla,
     /// Drawn when there is none.
     fallback: Option<AnyElement>,

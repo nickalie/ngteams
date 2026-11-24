@@ -133,6 +133,8 @@ const INK: [u8; 3] = [60, 40, 20];
 /// The sticker's size, and where its face's centre is in it.
 const STICKER: i32 = 180;
 const FACE_AT: (i32, i32) = (80, 100);
+/// The width of the face's fill (inside its rim) at full size: [`stickers_in`] measures the face by it.
+const FACE_SPAN: i32 = 111;
 
 pub(super) fn main() -> ExitCode {
     let outcome = match std::env::var(CHILD_ENV) {
@@ -632,11 +634,11 @@ fn ground_on_row(image: &RgbImage, square: Rect, own: bool, y: i32) -> Option<[u
     pixel(image, x, y)
 }
 
-/// What is drawn behind a sticker: each clear point of its square ([`clear_points`]), its colour and the chat's
-/// ground on its row, where the two differ. Teams draws a sticker bare: no frame, tile or bubble behind its clear px.
 /// A point behind a sticker that is not the chat's ground: where, its colour, and the ground on its row.
 type Behind = ((i32, i32), [u8; 3], [u8; 3]);
 
+/// What is drawn behind a sticker: each clear point of its square ([`clear_points`]), its colour and the chat's
+/// ground on its row, where the two differ. Teams draws a sticker bare: no frame, tile or bubble behind its clear px.
 fn behind(image: &RgbImage, square: Rect, own: bool) -> Vec<Behind> {
     clear_points(square)
         .into_iter()
@@ -1118,13 +1120,14 @@ fn check_visible(image: &RgbImage, found: &[Found], width: i32, what: &str) -> V
                 faults.push(format!("{what}: a face is {:?}: cut or not square", sticker.face));
             }
             let own = sticker.face.x > width / 2;
-            // the scaled sticker's clear px under its face and left of it, and the ground on that row just outside
-            // the scaled square (the face starts 20 of 180 px in, ends 40 px before the right), away from the bubbles
+            // the scaled sticker's clear px under its face and left of it, and the ground on that row 8 px outside
+            // the scaled square (the face starts 25 of 180 px in, ends 44 px before the right), away from the bubbles
             let (x, y) = (sticker.face.x - 6, sticker.face.bottom() + 6);
+            let scaled = |px: i32| px * sticker.face.w / FACE_SPAN;
             let out = if own {
-                sticker.face.x - 25
+                sticker.face.x - scaled(25) - 8
             } else {
-                sticker.face.right() + 40
+                sticker.face.right() + scaled(44) + 8
             };
             if let (Some(here), Some(ground)) = (pixel(image, x, y), pixel(image, out, y))
                 && !near(here, ground, 12)

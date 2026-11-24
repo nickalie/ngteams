@@ -662,8 +662,9 @@ attributes: `<p>&nbsp;</p>\r\n<img src="…" height="180" alt="…" width="180"
 itemtype="http://schema.skype.com/Sticker">\r\n<p>&nbsp;</p>`. Thus the `img`'s `itemtype` is the mark of a sticker
 that is read, and the `readonly` element is the mark of a sticker that is sent.
 
-**How Teams shows it.** The message has no bubble. The sticker shows at 180 by 180 in a frame with a thin border and
-round corners, under the sender and the time, as a pasted picture alone does. The GIF plays when the message comes,
+**How Teams shows it.** The message has no bubble. The sticker shows bare at 180 by 180 (Teams makes the fill and the
+border of an `img` of itemtype Sticker transparent), under the sender and the time. A pasted picture alone keeps its
+frame. The GIF plays when the message comes,
 then Teams shows its still preview (the `Preview/<name>.png` above) with a round play button over it. A click plays it
 (the button changes to pause). A click does not open the picture viewer.
 
