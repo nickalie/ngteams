@@ -781,6 +781,27 @@ fn near(a: [u8; 3], b: [u8; 3], tolerance: u8) -> bool {
     a.iter().zip(b).all(|(one, other)| one.abs_diff(other) <= tolerance)
 }
 
+/// A point beside a sticker that is not the chat's ground: where, its colour, and the ground on its row.
+type Behind = ((i32, i32), Rgb, Rgb);
+
+/// The points of a sticker's square right of its picture `blob` and just under it, where the picture is clear, that
+/// are not the chat's ground on their row (far right in the messages; the ground changes only from row to row).
+/// Teams draws a sticker bare: no frame, border or fill behind its clear px.
+fn not_bare(image: &RgbImage, blob: Rect) -> Vec<Behind> {
+    let ground_x = MESSAGES.right() - 80;
+    let (middle_x, middle_y) = (blob.x + blob.w / 2, blob.y + blob.h / 2);
+    let right = (4..=30).step_by(2).map(|out| (blob.right() + out, middle_y));
+    let under = (4..=12).step_by(2).map(|out| (middle_x, blob.bottom() + out));
+    right
+        .chain(under)
+        .filter_map(|(x, y)| {
+            let here = pixel(image, x, y)?;
+            let ground = pixel(image, ground_x, y)?;
+            (!near(here, ground, 6)).then_some(((x, y), here, ground))
+        })
+        .collect()
+}
+
 /// The tolerance of a face's colour: a GIF's palette moves it a little.
 const FACE_TOLERANCE: u8 = 18;
 
@@ -2004,10 +2025,27 @@ fn send_static_and_animated(user: &mut User<'_>) -> SandboxResult {
     let mut faults = Vec::new();
     send_one(user, COVER_EMOJI, &mut faults)?;
     thread::sleep(SETTLE);
-    let image = user.image("b-sees-static")?;
-    if blobs(&image, COVER, MESSAGES, 60).is_empty() {
-        faults.push("b does not see the static Signal sticker".to_owned());
+    for theme in ["light", "dark"] {
+        user.ask(&format!("theme-{theme}"))?;
+        let name = if theme == "light" {
+            "b-sees-static".to_owned()
+        } else {
+            format!("b-sees-static-{theme}")
+        };
+        let image = user.image(&name)?;
+        let Some(cover) = blobs(&image, COVER, MESSAGES, 60).into_iter().max_by_key(|blob| blob.y) else {
+            faults.push(format!("{theme}: b does not see the static Signal sticker"));
+            continue;
+        };
+        let drawn = not_bare(&image, cover);
+        say(&format!("  b, {theme}: the cover {cover:?}, behind it {drawn:?}"));
+        if !drawn.is_empty() {
+            faults.push(format!(
+                "{theme}: b's Signal sticker is not bare: (point, colour, the ground on its row) {drawn:?}"
+            ));
+        }
     }
+    user.ask("theme-light")?;
     send_one(user, ANIMATED_EMOJI, &mut faults)?;
     thread::sleep(SETTLE);
     for theme in ["light", "dark"] {

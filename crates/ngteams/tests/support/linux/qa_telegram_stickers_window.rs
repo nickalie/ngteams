@@ -764,6 +764,27 @@ fn near(a: [u8; 3], b: [u8; 3], tolerance: u8) -> bool {
     a.iter().zip(b).all(|(one, other)| one.abs_diff(other) <= tolerance)
 }
 
+/// A point beside a sticker that is not the chat's ground: where, its colour, and the ground on its row.
+type Behind = ((i32, i32), Rgb, Rgb);
+
+/// The points of a sticker's square right of its picture `blob` and just under it, where the picture is clear, that
+/// are not the chat's ground on their row (far right in the messages; the ground changes only from row to row).
+/// Teams draws a sticker bare: no frame, border or fill behind its clear px.
+fn not_bare(image: &RgbImage, blob: Rect) -> Vec<Behind> {
+    let ground_x = MESSAGES.right() - 80;
+    let (middle_x, middle_y) = (blob.x + blob.w / 2, blob.y + blob.h / 2);
+    let right = (4..=30).step_by(2).map(|out| (blob.right() + out, middle_y));
+    let under = (4..=12).step_by(2).map(|out| (middle_x, blob.bottom() + out));
+    right
+        .chain(under)
+        .filter_map(|(x, y)| {
+            let here = pixel(image, x, y)?;
+            let ground = pixel(image, ground_x, y)?;
+            (!near(here, ground, 6)).then_some(((x, y), here, ground))
+        })
+        .collect()
+}
+
 /// The tolerance of a face's colour: a GIF's palette moves it a little.
 const FACE_TOLERANCE: u8 = 18;
 
@@ -1991,12 +2012,31 @@ fn send_animated_b_sees_it_play(user: &mut User<'_>) -> SandboxResult {
     if !moved {
         faults.push("the animated Telegram sticker does not play for b".to_owned());
     }
+    faults.extend(bare_faults(user, "light")?);
     user.ask("theme-dark")?;
     let (moved, _) = plays(user, MESSAGES, "b-sees-telegram-sticker-dark")?;
     if !moved {
         faults.push("the animated Telegram sticker does not play for b in Teams Dark".to_owned());
     }
+    faults.extend(bare_faults(user, "dark")?);
     faults_to_result(&faults)
+}
+
+/// b's newest Telegram sticker (the lowest ball in the messages) in Teams `theme`: no frame or fill behind it.
+fn bare_faults(user: &mut User<'_>, theme: &str) -> SandboxResult<Vec<String>> {
+    let image = user.image(&format!("b-sees-telegram-bare-{theme}"))?;
+    let Some(ball) = blobs(&image, BALL, MESSAGES, 60).into_iter().max_by_key(|blob| blob.y) else {
+        return Ok(vec![format!("{theme}: b sees no Telegram sticker")]);
+    };
+    let drawn = not_bare(&image, ball);
+    say(&format!("  b, {theme}: the ball {ball:?}, behind it {drawn:?}"));
+    Ok(if drawn.is_empty() {
+        Vec::new()
+    } else {
+        vec![format!(
+            "{theme}: b's Telegram sticker is not bare: (point, colour, the ground on its row) {drawn:?}"
+        )]
+    })
 }
 
 /// After the panel: text typed in the box goes as a message, and the picker's Emoji tab still works. Teams Light and

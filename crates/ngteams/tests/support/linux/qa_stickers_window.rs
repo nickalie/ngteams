@@ -8,7 +8,10 @@
 //! - **Bare stickers**: b's sticker (the service's read-back form) and a's own (the web client's sent form), each drawn
 //!   alone at 180 by 180 with no bubble or frame behind it (as Teams), b's on the left with b's name and time, a's on
 //!   the right; the GIF plays.
-//! - **A sticker beside text**: in the bubble under the text.
+//! - **A sticker beside text**: in the bubble under the text, on the bubble's fill.
+//! - **Pictures keep their frame**: an ordinary picture and an animated GIF (both `AMSImage`) beside a sticker in one
+//!   chat each sit in their frame, the sticker bare; a click on the picture opens the picture viewer.
+//! - **Hover and keyboard focus** on a sticker bring back no frame behind it.
 //! - **A click** on a sticker opens no picture viewer. The hover bar and "More options" still work: a quick reaction,
 //!   Reply, Copy text. Edit is not offered on a's own sticker.
 //! - **A quoted sticker**: a's reply to b's sticker, sent and drawn.
@@ -124,6 +127,14 @@ const BROKEN: [(&str, &str); 4] = [
     ("MadeUp_Junk.gif", "A made-up sticker of junk"),
     ("MadeUp_Slow.gif", "A made-up sticker that is slow"),
 ];
+/// The media service's objects of b's made-up pictures beside a sticker, and their colours: a still picture and an
+/// animated GIF, each small, so each sits in a square frame of 180 px.
+const PICTURE_OBJECT: &str = "0-eus-d9-00000000000000000000000000000c49";
+const GIF_OBJECT: &str = "0-eus-d9-00000000000000000000000000000c4a";
+const PICTURE_COLOUR: [u8; 3] = [200, 40, 200];
+const GIF_COLOUR: [u8; 3] = [40, 200, 120];
+const PICTURE_SIDE: u32 = 60;
+
 /// Longer than the client waits for an answer (`teams_proto::http::REQUEST_TIMEOUT`, 30 s).
 const SLOW: Duration = Duration::from_secs(45);
 
@@ -204,10 +215,13 @@ fn as_sent(file: &str, label: &str) -> String {
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
 /// The first run of the app.
-const FIRST: [Check; 12] = [
+const FIRST: [Check; 15] = [
     ("bare_stickers", bare_stickers),
     ("gif_moves", gif_moves),
     ("beside_text", beside_text),
+    ("pictures_keep_frame", pictures_keep_frame),
+    ("picture_opens_viewer", picture_opens_viewer),
+    ("hover_and_focus_bare", hover_and_focus_bare),
     ("click_opens_no_viewer", click_opens_no_viewer),
     ("hover_bar_and_menu", hover_bar_and_menu),
     ("own_sticker_no_edit", own_sticker_no_edit),
@@ -233,6 +247,7 @@ struct Chats {
     stickers: String,
     words: String,
     broken: String,
+    pictures: String,
 }
 
 fn parent() -> SandboxResult {
@@ -301,8 +316,8 @@ fn parent() -> SandboxResult {
 }
 
 /// The mock's CDN and chats: "Lab stickers" (b's words, b's sticker, a's own), "Lab sticker words" (b's sticker under
-/// b's text in one message), "Lab broken stickers" (b's stickers the CDN fails), and b's sticker in the a–b–c chat (the
-/// group call's).
+/// b's text in one message), "Lab broken stickers" (b's stickers the CDN fails), "Lab sticker pictures" (b's picture,
+/// b's GIF picture, b's sticker), and b's sticker in the a–b–c chat (the group call's).
 fn seed(mock: &ChatServiceMock, runtime: &tokio::runtime::Runtime) -> SandboxResult<Chats> {
     let mut gif = Vec::new();
     write_made_up_sticker(&mut gif)?;
@@ -343,11 +358,67 @@ fn seed(mock: &ChatServiceMock, runtime: &tokio::runtime::Runtime) -> SandboxRes
     }
     mock.post_as(LAB_B, ABC_CHAT, &read_back(HI, HI_LABEL))
         .ok_or("b's sticker in the group refused")?;
+    let pictures = seed_pictures(mock, runtime)?;
     Ok(Chats {
         stickers,
         words,
         broken,
+        pictures,
     })
+}
+
+/// "Lab sticker pictures": b's still picture and b's animated GIF, each an `AMSImage` on the media service, then b's
+/// sticker.
+fn seed_pictures(mock: &ChatServiceMock, runtime: &tokio::runtime::Runtime) -> SandboxResult<String> {
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(
+        PICTURE_SIDE,
+        PICTURE_SIDE,
+        image::Rgba([PICTURE_COLOUR[0], PICTURE_COLOUR[1], PICTURE_COLOUR[2], 255]),
+    )
+    .write_to(&mut io::Cursor::new(&mut png), image::ImageFormat::Png)?;
+    let mut gif = Vec::new();
+    write_made_up_gif(&mut gif)?;
+    let chat = mock
+        .add_group("Lab sticker pictures", &[LAB_A, LAB_B])
+        .ok_or("no chat made")?;
+    for (object, scope, content_type, bytes) in [
+        (PICTURE_OBJECT, "png", "image/png", png),
+        (GIF_OBJECT, "gif", "image/gif", gif),
+    ] {
+        runtime.block_on(mock.serve_bytes(&format!("/v1/objects/{object}/views/imgo"), content_type, bytes));
+        let html = format!(
+            "<p><img src=\"https://us-api.asm.skype.com/v1/objects/{object}/views/imgo\" \
+             itemtype=\"http://schema.skype.com/AMSImage\" itemscope=\"{scope}\" width=\"{PICTURE_SIDE}\" \
+             height=\"{PICTURE_SIDE}\" alt=\"image\" id=\"x_{object}\" itemid=\"{object}\"></p>"
+        );
+        mock.post_as(LAB_B, &chat, &html).ok_or("b's picture refused")?;
+    }
+    mock.post_as(LAB_B, &chat, &read_back(HI, HI_LABEL))
+        .ok_or("b's sticker beside the pictures refused")?;
+    Ok(chat)
+}
+
+/// A made-up animated GIF picture, [`PICTURE_SIDE`] square: [`GIF_COLOUR`] with a dark bar that moves down over two
+/// frames.
+fn write_made_up_gif(out: &mut Vec<u8>) -> SandboxResult {
+    let mut encoder = image::codecs::gif::GifEncoder::new(out);
+    encoder.set_repeat(image::codecs::gif::Repeat::Infinite)?;
+    for at in 0u32..2 {
+        let mut frame = image::RgbaImage::from_pixel(
+            PICTURE_SIDE,
+            PICTURE_SIDE,
+            image::Rgba([GIF_COLOUR[0], GIF_COLOUR[1], GIF_COLOUR[2], 255]),
+        );
+        for y in (10 + at * 30)..(18 + at * 30) {
+            for x in 0..PICTURE_SIDE {
+                frame.put_pixel(x, y, image::Rgba([20, 30, 70, 255]));
+            }
+        }
+        let delay = image::Delay::from_numer_denom_ms(300, 1);
+        encoder.encode_frame(image::Frame::from_parts(frame, 0, 0, delay))?;
+    }
+    Ok(())
 }
 
 /// A made-up animated sticker, 180 by 180 on a clear ground: a yellow face whose mouth opens and closes over four
@@ -1252,9 +1323,199 @@ fn beside_text(user: &mut User<'_>) -> SandboxResult {
                 "{theme}: no bubble around the words and the sticker ({beside:?})"
             ));
         }
+        let off_fill = off_the_bubble(&image, sticker.sticker);
+        if !off_fill.is_empty() {
+            faults.push(format!(
+                "{theme}: the sticker is not on the bubble's fill: (point, colour, the fill on its row) {off_fill:?}"
+            ));
+        }
         if !(100..=124).contains(&sticker.face.w) {
             faults.push(format!("{theme}: the sticker is not at its size: {:?}", sticker.face));
         }
+    }
+    ensure(faults.is_empty(), || faults.join("; "))
+}
+
+/// The clear points inside a sticker's square in a bubble ([`clear_points`] but the two outside it) that are not the
+/// bubble's fill on their row (6 px right of the square, in the bubble's inset).
+fn off_the_bubble(image: &RgbImage, square: Rect) -> Vec<Behind> {
+    clear_points(square)
+        .into_iter()
+        .filter(|&(x, _)| x > square.x && x < square.right())
+        .filter_map(|(x, y)| {
+            let here = pixel(image, x, y)?;
+            let fill = pixel(image, square.right() + 6, y)?;
+            (!near(here, fill, 6)).then_some(((x, y), here, fill))
+        })
+        .collect()
+}
+
+/// The box around all of `colour`'s blobs of 300 px at least: a picture that a bar of another colour cuts.
+fn picture_at(image: &RgbImage, colour: [u8; 3]) -> Option<Rect> {
+    let all = blobs(image, colour, 300);
+    let x0 = all.iter().map(|one| one.x).min()?;
+    let y0 = all.iter().map(|one| one.y).min()?;
+    let x1 = all.iter().map(|one| one.right()).max()?;
+    let y1 = all.iter().map(|one| one.bottom()).max()?;
+    Some(Rect {
+        x: x0,
+        y: y0,
+        w: x1 - x0,
+        h: y1 - y0,
+    })
+}
+
+/// b's picture, b's GIF and b's sticker in "Lab sticker pictures", once all three show: the screenshot and where each is.
+fn pictures_shown(user: &mut User<'_>, name: &str) -> SandboxResult<(RgbImage, Rect, Rect, Found)> {
+    let start = Instant::now();
+    loop {
+        let image = user.image(name)?;
+        let picture = picture_at(&image, PICTURE_COLOUR);
+        let gif = picture_at(&image, GIF_COLOUR);
+        let sticker = stickers_in(&image).last().copied();
+        if let (Some(picture), Some(gif), Some(sticker)) = (picture, gif, sticker) {
+            return Ok((image, picture, gif, sticker));
+        }
+        if start.elapsed() > WAIT {
+            return Err(format!("{name}: the picture {picture:?}, the GIF {gif:?}, the sticker {sticker:?}").into());
+        }
+        thread::sleep(POLL);
+    }
+}
+
+/// The points of the frame around a small picture of b's (20 px out from it on each side) that are the chat's ground
+/// on their row: the frame is missing there. The frame fills the same colour all round.
+fn unframed(image: &RgbImage, picture: Rect, what: &str) -> Vec<String> {
+    let (middle_x, middle_y) = (picture.x + picture.w / 2, picture.y + picture.h / 2);
+    let points = [
+        (picture.x - 20, middle_y),
+        (picture.right() + 20, middle_y),
+        (middle_x, picture.y - 20),
+        (middle_x, picture.bottom() + 20),
+    ];
+    // right of the 180 px frame, wherever in it the picture sits
+    let ground_x = middle_x + 180 + 30;
+    let mut faults = Vec::new();
+    let mut fills = Vec::new();
+    for (x, y) in points {
+        let (Some(here), Some(ground)) = (pixel(image, x, y), pixel(image, ground_x, y)) else {
+            faults.push(format!("{what}: no px at ({x}, {y})"));
+            continue;
+        };
+        if near(here, ground, 6) {
+            faults.push(format!(
+                "{what}: no frame at ({x}, {y}): {here:?}, the ground on its row is {ground:?}"
+            ));
+        }
+        fills.push(here);
+    }
+    if fills.windows(2).any(|pair| !near(pair[0], pair[1], 6)) {
+        faults.push(format!("{what}: the frame is not one fill all round: {fills:?}"));
+    }
+    faults
+}
+
+/// "Lab sticker pictures": b's picture and b's animated GIF (both `AMSImage`) keep their frame, b's sticker in the same
+/// chat is bare; in Teams Light and Dark.
+fn pictures_keep_frame(user: &mut User<'_>) -> SandboxResult {
+    let chat = user.chats.pictures.clone();
+    let state = user.open(&chat, 3)?;
+    let mut faults = Vec::new();
+    let sticker = sticker_item(&state, false)?;
+    if sticker["bare"] != true {
+        faults.push(format!("b's sticker beside the pictures is not drawn bare: {sticker}"));
+    }
+    for theme in ["light", "dark"] {
+        user.ask(&format!("theme-{theme}"))?;
+        let (image, picture, gif, sticker) = pictures_shown(user, &format!("pictures-{theme}"))?;
+        say(&format!(
+            "  {theme}: the picture {picture:?}, the GIF {gif:?}, the sticker {:?}",
+            sticker.sticker
+        ));
+        faults.extend(unframed(&image, picture, &format!("{theme}: b's picture")));
+        faults.extend(unframed(&image, gif, &format!("{theme}: b's GIF")));
+        let drawn = behind(&image, sticker.sticker, false);
+        if !drawn.is_empty() {
+            faults.push(format!(
+                "{theme}: the sticker beside the pictures is not bare: (point, colour, the ground) {drawn:?}"
+            ));
+        }
+    }
+    ensure(faults.is_empty(), || faults.join("; "))
+}
+
+/// A click on b's picture opens the picture viewer; a click on b's sticker in the same chat does not.
+fn picture_opens_viewer(user: &mut User<'_>) -> SandboxResult {
+    let chat = user.chats.pictures.clone();
+    user.open(&chat, 3)?;
+    let (_, picture, _, sticker) = pictures_shown(user, "viewer-before")?;
+    let mut faults = Vec::new();
+    user.click(sticker.centre())?;
+    thread::sleep(Duration::from_millis(1500));
+    if user.state()?["viewer"] == true {
+        faults.push("a click on the sticker opened the picture viewer".to_owned());
+        user.ask("close-viewer")?;
+    }
+    user.click((picture.x + picture.w / 2, picture.y + picture.h / 2))?;
+    match user.until("the picture viewer", |state| state["viewer"] == true) {
+        Ok(_) => {
+            user.settled_shot("viewer-open")?;
+            user.ask("close-viewer")?;
+            user.until("the picture viewer closed", |state| state["viewer"] == false)?;
+            user.focus_window(user.main_window)?;
+        }
+        Err(error) => faults.push(format!("a click on b's picture: {error}")),
+    }
+    ensure(faults.is_empty(), || faults.join("; "))
+}
+
+/// The pointer over b's and over a's sticker, then the keyboard's selection on each (Escape in the box, Up): no frame
+/// comes back behind either; in Teams Light and Dark.
+fn hover_and_focus_bare(user: &mut User<'_>) -> SandboxResult {
+    let chat = user.chats.stickers.clone();
+    let state = user.open(&chat, 3)?;
+    let ids = [
+        id_of(&sticker_item(&state, false)?),
+        id_of(&sticker_item(&state, true)?),
+    ];
+    let mut faults = Vec::new();
+    for theme in ["light", "dark"] {
+        user.ask(&format!("theme-{theme}"))?;
+        let (_, found) = user.stickers(&format!("hover-start-{theme}"), 2)?;
+        let (theirs, own) = theirs_and_own(&found).ok_or("no sticker of b's and of a's")?;
+        for (sticker, is_own, who) in [(theirs, false, "b's"), (own, true, "a's")] {
+            user.point(sticker.centre())?;
+            let image = image::open(user.shot(&format!("hover-{}-{theme}", &who[..1]))?)?.to_rgb8();
+            let drawn = behind(&image, sticker.sticker, is_own);
+            if !drawn.is_empty() {
+                faults.push(format!(
+                    "{theme}: the pointer over {who} sticker draws behind it: (point, colour, the ground) {drawn:?}"
+                ));
+            }
+        }
+        user.park()?;
+        user.ask("focus-box")?;
+        user.press("escape")?;
+        // Up in the list selects the newest message first: a's sticker, then b's
+        for (id, sticker, is_own, who) in [(&ids[1], own, true, "a's"), (&ids[0], theirs, false, "b's")] {
+            user.press("up")?;
+            if let Err(error) = user.until(&format!("{who} sticker selected"), |state| {
+                state["chat"]["selected"] == id.as_str()
+            }) {
+                faults.push(format!("{theme}: {error}"));
+                continue;
+            }
+            let image = user.image(&format!("focus-{}-{theme}", &who[..1]))?;
+            let drawn = behind(&image, sticker.sticker, is_own);
+            if !drawn.is_empty() {
+                faults.push(format!(
+                    "{theme}: the keyboard's selection of {who} sticker draws behind it: (point, colour, the ground) \
+                     {drawn:?}"
+                ));
+            }
+        }
+        user.press("escape")?;
+        user.press("escape")?;
     }
     ensure(faults.is_empty(), || faults.join("; "))
 }
@@ -1926,6 +2187,10 @@ fn on_app(window: WindowHandle<KitRoot>, verb: &str, cx: &mut App) -> String {
         }
         "pictures" => return pictures(window, cx).to_string(),
         "call-show-chat" => return show_call_chat(cx),
+        "close-viewer" => {
+            teams_ui::picture_viewer::close(cx);
+            return "ok".to_owned();
+        }
         _ => {}
     }
     let Some(shell) = shell_of(window, cx) else {
