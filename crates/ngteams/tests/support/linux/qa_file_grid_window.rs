@@ -3,13 +3,16 @@
 //!
 //! The parent runs the mock (`teams-mock`). Lab account c posts messages with files to chats of its own with a, and
 //! the mock serves the videos' thumbnails and bytes (Graph's thumbnail list, the media host's picture, the file read by
-//! ranges). The parent runs a's app as a child in the sandbox with a control socket. It uses the app as a user does: it
-//! clicks with the sandbox's pointer and presses keys, and finds the cards on the screen by their borders. It reads the
-//! links the sandbox's URI opener got (it opens nothing), the sandbox's clipboard, and the views' rows from the child.
+//! ranges). The files' links are links for specific people (task 793): the mock's Graph answers their reads only when
+//! they redeem the link, as Graph does. The parent runs a's app as a child in the sandbox with a control socket. It
+//! uses the app as a user does: it clicks with the sandbox's pointer and presses keys, and finds the cards on the
+//! screen by their borders. It reads the links the sandbox's URI opener got (it opens nothing), the sandbox's
+//! clipboard, and the views' rows from the child.
 //!
 //! - **The grid**: one file, two videos, five and eight mixed files, and text over three files. Each shows cards, never
 //!   the line "This message has content that can't be shown here". At most two cards in a row, of equal width, 10 px
-//!   apart, inside the message's bubble; the eight files take four rows. Teams Light and Teams Dark.
+//!   apart, inside the message's bubble; the eight files take four rows; a file alone, one card two columns wide (task
+//!   793). Teams Light and Teams Dark.
 //! - **A narrow window**: one card in a row, none cut at the right; then wide again.
 //! - **A channel post with files and its thread** beside the posts.
 //! - **The actions**: a click on a name opens the file's link; a click on a video's picture plays it in the card, a
@@ -89,6 +92,9 @@ const NIRI_CONFIG: &str = "layout {\n    gaps 0\n    default-column-width { prop
 
 /// A card's size and the grid's gap, as Teams draws them (`teams_ui::files`).
 const CARD_WIDTH: u32 = 316;
+/// The card of a message's only file: two columns wide, its 16:9 picture under the header (`teams_ui::files`).
+const LONE_WIDTH: u32 = 2 * CARD_WIDTH;
+const LONE_HEIGHT: u32 = 460;
 const HEADER: u32 = 64;
 const GAP: u32 = 10;
 /// The thread pane's width beside a channel's posts.
@@ -316,8 +322,9 @@ fn check_sizes(cards: &[Rect], what: &str) {
     if most - least > 2 {
         note(format!("{what}: cards of unequal width {widths:?}"));
     }
-    if *most > CARD_WIDTH + 2 {
-        note(format!("{what}: a card {most} px wide, wider than Teams' {CARD_WIDTH}"));
+    let teams = if cards.len() == 1 { LONE_WIDTH } else { CARD_WIDTH };
+    if *most > teams + 2 {
+        note(format!("{what}: a card {most} px wide, wider than Teams' {teams}"));
     }
 }
 
@@ -866,8 +873,8 @@ fn cards_in(shot: &image::RgbImage, look: Look) -> Vec<Rect> {
             let Some(card) = card_from(shot, look, y, (from, to)) else {
                 continue;
             };
-            if (150..=CARD_WIDTH + 4).contains(&card.width())
-                && (200..=300).contains(&card.height())
+            if (150..=LONE_WIDTH + 4).contains(&card.width())
+                && (200..=LONE_HEIGHT).contains(&card.height())
                 && !found.iter().any(|known| known.overlaps(&card))
             {
                 found.push(card);
@@ -1116,9 +1123,10 @@ fn file_entry(file: &MadeUpFile, at: usize) -> Value {
     })
 }
 
+/// Its link, in the short form of a link for specific people Teams posts (task 793): Graph answers it only redeemed.
 fn share_url(file: &MadeUpFile) -> String {
     format!(
-        "https://contoso-my.sharepoint.com/:{}:/g/personal/made_up_user_contoso_test/{}",
+        "https://contoso-my.sharepoint.com/:{}:/p/made_up_user_contoso_test/{}",
         file.kind, file.share
     )
 }
@@ -1278,7 +1286,7 @@ fn serve_file(
         "height": 450, "width": 800,
         "url": format!("https://westus1-mediap.svc.ms{picture}?provider=spo&docid=made-up"),
     }}]});
-    runtime.block_on(mock.serve_bytes(
+    runtime.block_on(mock.serve_redeemed(
         &format!("/v1.0/shares/{token}/driveItem/thumbnails"),
         "application/json",
         list.to_string().into_bytes(),
@@ -1293,7 +1301,7 @@ fn serve_file(
         "size": MADE_UP_VIDEO.len(),
         "@microsoft.graph.downloadUrl": format!("https://contoso-my.sharepoint.com{download}?UniqueId=made-up-{at}"),
     });
-    runtime.block_on(mock.serve_bytes(
+    runtime.block_on(mock.serve_redeemed(
         &format!("/v1.0/shares/{token}/driveItem"),
         "application/json",
         item.to_string().into_bytes(),

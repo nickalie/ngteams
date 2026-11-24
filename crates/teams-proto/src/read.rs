@@ -26,6 +26,11 @@ use crate::endpoint::{Endpoint, Service};
 pub trait Read {
     fn service(&self) -> Service;
     fn endpoint(&self) -> Endpoint;
+
+    /// The fixed, non-credential headers it goes with (Graph's `Prefer`); none by default.
+    fn headers(&self) -> &'static [(&'static str, &'static str)] {
+        &[]
+    }
 }
 
 /// The `$select` of a Graph user read: the record's id and the name it shows, nothing else of the person's record.

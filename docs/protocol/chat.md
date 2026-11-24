@@ -1052,7 +1052,9 @@ its shape (two files, made-up names and links). No lab capture holds a received 
   `baseUrl`; `objectUrl` (as `fileUrl`); `openUrl` `null`; `state` `active`; `permissionScope` (`Anyone` for an
   anyone link); `filePreview` with an empty `previewUrl` and sizes `0` (a video has none); `sharepointIds` (`listId`,
   `listItemUniqueId`, `siteId`, `siteUrl`, `webId`, `driveId` `null`); `publication`; `site`. The message also carried
-  `properties.atp`, the protected links of the files.
+  `properties.atp`, the protected links of the files. A file sent from Teams on the web also carries
+  `chicletBreadcrumbs` (`{"sourceTeamName": "personal", "sourceChannelName": "<owner's alias>"}` for a OneDrive file,
+  lab capture 2026-11-24); the user's received entries had it `null`.
 - **The web client draws** each file as a card under the text, side by side: a header with the file type's icon, the
   name cut with an ellipsis, Share and "More options", then a picture of the file filling the card (a video's frame).
   A click opens the file at its sharing link (Stream's player for a video).
@@ -1061,10 +1063,13 @@ its shape (two files, made-up names and links). No lab capture holds a received 
   sharing link or object URL. A file with no such link is drawn by its name with no link and no preview, and is also
   kept as it came ("Several files in one message" below). Any other entry is kept as it came, and the message says it
   has content it can't show. It draws the card from the name, the extension and the
-  links, opens the sharing link in the browser on a click, offers "Open in browser", "Download" (the sharing link with
+  links (the line under the name is the entry's `chicletBreadcrumbs`, `<team> > <channel>`, as b's Teams drew
+  `personal > <owner's alias>` in the lab capture; else the path of the file's site), opens the sharing link in the
+  browser on a click, offers "Open in browser", "Download" (the sharing link with
   `download=1`) and "Copy link", and reads a video's or an image's picture from Graph by the sharing link
   ([graph.md](graph.md#a-shared-files-thumbnail)). A video is played in its card (by GStreamer),
-  its bytes read by ranges at the download link Graph hands out ([graph.md](graph.md#a-shared-files-content)). Share
+  its bytes read by ranges at the download link Graph hands out ([graph.md](graph.md#a-shared-files-content)); both
+  Graph reads redeem a link for specific people as Teams' read does ([graph.md](graph.md#a-link-for-specific-people)). Share
   offers only "Copy link": sharing with people from the app would be a contacting write.
 - **An image file** (seen in a received message, an image shared alone with no caption: the message's content empty)
   carries the same entry with `fileType` `jpg` and a `filePreview` naming a picture of it on AMS: `previewUrl`

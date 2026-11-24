@@ -17,7 +17,7 @@ use teams_proto::{
     GraphPicture, GraphUser, HttpError, HttpTransport, MAX_PICTURE, PictureFormat, Read, Refusal, Response, Service,
     is_thumbnail_link, object_id,
 };
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const GUID_A: &str = "0000000a-0000-4000-8000-00000000000a";
@@ -435,6 +435,65 @@ async fn a_thumbnail_is_listed_with_the_graph_token_and_its_picture_read_with_no
         Some("provider=spo&cs=made-up&docid=made-up&width=800")
     );
     assert_eq!(tokens.audiences(), vec![GRAPH_AUDIENCE.to_owned()]);
+}
+
+/// A link for specific people in the short form Teams posts (`/:v:/p/<owner>/<token>`), made up.
+const PEOPLE_SHARE: &str = "https://contoso-my.sharepoint.com/:v:/p/made_up_user_contoso_test/MadeUpPeopleLink0002";
+
+/// Graph's answer to a read of a specific-people link without `Prefer: redeemSharingLink` (the shape of the user's
+/// log, made up).
+fn link_refused() -> ResponseTemplate {
+    let refusal = serde_json::json!({"error": {
+        "code": "accessDenied",
+        "message": "The sharing link no longer exists, or you do not have permission to access it.",
+        "innerError": {"code": "SharesAccessDeniedVroomException"},
+    }});
+    ResponseTemplate::new(403).set_body_raw(refusal.to_string(), "application/json")
+}
+
+#[tokio::test]
+async fn a_specific_people_link_is_redeemed_as_teams_reads_it() {
+    let (server, tokens, client) = setup().await;
+    let thumbnails = FileThumbnails::of(PEOPLE_SHARE).unwrap();
+    let item = FileDownload::of(PEOPLE_SHARE).unwrap();
+    let large = "https://westus1-mediap.svc.ms/transform/thumbnail?provider=spo&cs=made-up&docid=made-up&width=800";
+    let link = "https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/_layouts/15/download.aspx\
+                ?UniqueId=made-up&tempauth=made-up";
+    let answer = serde_json::json!({"id": "made-up", "size": 10, "@microsoft.graph.downloadUrl": link});
+    for (address, body) in [
+        (
+            format!("/v1.0/shares/{}/driveItem/thumbnails", thumbnails.share()),
+            thumbnails_answer(large),
+        ),
+        (format!("/v1.0/shares/{}/driveItem", item.share()), answer.to_string()),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(address.clone()))
+            .and(header("prefer", "redeemSharingLink"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(address))
+            .respond_with(link_refused())
+            .mount(&server)
+            .await;
+    }
+    let listed = client
+        .read(&thumbnails)
+        .await
+        .expect("the thumbnails, the link redeemed");
+    assert!(thumbnails.read_answer(&listed).is_some());
+    let content = item.read_answer(&client.read(&item).await.expect("the item, the link redeemed"));
+    assert_eq!(content.map(|content| content.size), Some(10));
+    for request in server.received_requests().await.unwrap() {
+        assert_eq!(
+            request.headers.get("prefer").and_then(|value| value.to_str().ok()),
+            Some("redeemSharingLink")
+        );
+    }
+    assert!(tokens.audiences().iter().all(|audience| audience == GRAPH_AUDIENCE));
 }
 
 #[tokio::test]

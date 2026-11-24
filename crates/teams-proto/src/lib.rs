@@ -90,7 +90,8 @@ pub use client::{Client, Response, Transport};
 pub use emoticon::{EMOJI_3D_SIDES, MAX_ANIMATION, ReactionAnimation};
 pub use endpoint::{Endpoint, Method, Service};
 pub use file_content::{
-    FileContent, FileContentLink, FileDownload, FileRange, MAX_RANGE, MAX_STREAM, StreamStart, is_content_link,
+    FileContent, FileContentLink, FileDownload, FileRange, MAX_RANGE, MAX_STREAM, REDEEM_SHARING_LINK, StreamStart,
+    is_content_link,
 };
 pub use frame::{
     AcceptanceAcknowledgement, Authenticate, ConnectParams, DeliveryResponse, Disconnect, DroppedIndicator, FrameError,

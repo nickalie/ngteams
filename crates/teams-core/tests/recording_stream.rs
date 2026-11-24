@@ -133,6 +133,44 @@ async fn a_recording_streams_as_its_presentation_and_parts() {
 }
 
 #[tokio::test]
+async fn a_recording_its_recap_names_no_item_of_streams_by_its_item_on_graph() {
+    let rig = running_engine().await;
+    // the short link of a recording shared with its attendees, and its item as Graph answers a redeemed read of it
+    let link = "https://contoso-my.sharepoint.com/:v:/p/made_up_user_contoso_test/MadeUpRecording02";
+    let share = teams_proto::FileDownload::of(link).unwrap();
+    let item = serde_json::json!({"id": "ITEM1", "parentReference": {"driveId": "b!madeup"}, "size": 10});
+    Mock::given(method("GET"))
+        .and(path(format!("/v1.0/shares/{}/driveItem", share.share())))
+        .and(header("prefer", "redeemSharingLink"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(item.to_string(), "application/json"))
+        .up_to_n_times(1)
+        .mount(&rig.server)
+        .await;
+    manifest_answers(
+        &rig.server,
+        ResponseTemplate::new(200)
+            .insert_header("content-type", "application/dash+xml")
+            .set_body_string(MPD),
+    )
+    .await;
+    let presentation = rig.handle.recording_presentation(link, "", "").await.unwrap();
+    assert_eq!(presentation.duration_ms, 12_000);
+    // an item that names no drive can't be streamed
+    Mock::given(method("GET"))
+        .and(path(format!("/v1.0/shares/{}/driveItem", share.share())))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id": "ITEM1"}"#, "application/json"))
+        .mount(&rig.server)
+        .await;
+    let error = rig
+        .handle
+        .recording_presentation(link, "b!madeup", "")
+        .await
+        .unwrap_err();
+    assert!(matches!(error, EngineError::FileUnavailable), "{error:?}");
+    rig.handle.shutdown();
+}
+
+#[tokio::test]
 async fn a_recording_that_can_t_be_streamed_is_unavailable_and_a_failed_read_unread() {
     let rig = running_engine().await;
     // refused (an account that may not watch it), not an MPD, encrypted, then failed on the way

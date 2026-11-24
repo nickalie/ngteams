@@ -14,7 +14,7 @@
 //!
 //! No capture shows either read (the web client draws a file's card from SharePoint's own API, with a SharePoint
 //! token the native client doesn't ask for): they are our own reach, as Graph's reads of a person's name and picture
-//! are. A file Graph has no thumbnail of answers an empty list; a file the account can't read, 403 or 404: either is
+//! are. The list goes with `Prefer: redeemSharingLink`, as the file's item read does ([`crate::FileDownload`]). A file Graph has no thumbnail of answers an empty list; a file the account can't read, 403 or 404: either is
 //! no picture, and the card shows its placeholder.
 
 use std::fmt;
@@ -97,6 +97,11 @@ impl Read for FileThumbnails {
 
     fn endpoint(&self) -> Endpoint {
         Endpoint::new(["shares", self.share.as_str(), "driveItem", "thumbnails"])
+    }
+
+    /// Graph refuses a specific-people link to the people it names without it ([`crate::REDEEM_SHARING_LINK`]).
+    fn headers(&self) -> &'static [(&'static str, &'static str)] {
+        &crate::file_content::REDEEM_SHARING_LINK
     }
 }
 

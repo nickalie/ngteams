@@ -1587,6 +1587,11 @@ impl<C: Credentials> Transport for HttpTransport<C> {
     fn read<R: Read>(&self, request: &R) -> impl Future<Output = Result<Response, HttpError>> + Send {
         let service = request.service();
         let endpoint = request.endpoint();
+        let headers: Vec<(String, String)> = request
+            .headers()
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
         async move {
             if service == Service::Substrate {
                 return Err(HttpError::Refused(Refusal::Substrate));
@@ -1597,7 +1602,7 @@ impl<C: Credentials> Transport for HttpTransport<C> {
                 url: &url,
                 service,
                 body: None,
-                headers: &[],
+                headers: &headers,
                 range: None,
             };
             self.exchange(outgoing).await

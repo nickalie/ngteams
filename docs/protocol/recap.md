@@ -139,6 +139,25 @@ browser), the user's own account's debug log showing the download refused for an
   for an initialization segment, a `moof` (`tfhd` with the defaults, `tfdt`, `trun` of sizes) and its `mdat` for a
   media segment.
 
+### An attendee's view (lab, 2026-11-24)
+
+Lab account b opened the Recap tab of its 1:1 chat with a (`team-manage`), whose call recordings are in a's OneDrive,
+and played one. Teams read MCPS as above, then the recording's item on the tenant's root path
+(`https://<tenant>-my.sharepoint.com/_api/v2.1/drives/<drive>/items/<item>?$select=accessViewpoint,…`), Graph's
+`POST drives/<drive>/items/<item>/preview`, `xplatplugins.aspx` and `streamembed.aspx` on a's site, and the
+presentation on the root path, `…/_api/v2.1/drives/<drive>/items/<item>/content?format=dash` with `enablecdn: 1`,
+`prefer: noredirect` and `applymediaedits: true`, answered `application/dash+xml`. On Play, the embedded player read
+the media service's `transform/videomanifest?…&docid=<the item's signed address>&part=index&format=dash` (with the
+site's `X-SPOPacToken`), an MPD whose parts are on the site's `_api_cached/v2.1/…` and encrypted
+(`urn:mpeg:dash:sea:2012`), as with `enablecdn: 1` above. All of it worked for b, who isn't the recording's owner:
+the drive and item come from MCPS's `metadata`.
+
+A recap whose `metadata` names no drive or item can't be streamed by them. `ngteams` then reads the recording's item on
+Graph by its sharing link (`shares/u!<link>/driveItem`, `Prefer: redeemSharingLink`, as a shared file's,
+[graph.md](graph.md#a-link-for-specific-people)) and streams it by the item's `parentReference.driveId` and `id`. A
+recording's link in the short form of a link for specific people (`/:v:/p/<owner>/<token>`) names the same personal
+site as `/:v:/g/personal/<owner>/…`.
+
 ## A 1:1 or group call's recording
 
 Seen in a lab capture of 2026-11-06 (`team-manage` as lab account a, its 1:1 chat with lab account b holding three call

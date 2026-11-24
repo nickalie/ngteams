@@ -60,7 +60,7 @@ the form Microsoft documents. Like the person reads above, no capture or probe s
 reads, and a file the account can't read is just a card without its picture.
 
 - **The list**: `GET https://graph.microsoft.com/v1.0/shares/u!<sharing link>/driveItem/thumbnails` with the
-  account's Graph token, `<sharing link>` the message's `fileInfo.shareUrl` in base64url without padding (Graph's
+  account's Graph token and `Prefer: redeemSharingLink` ([below](#a-link-for-specific-people)), `<sharing link>` the message's `fileInfo.shareUrl` in base64url without padding (Graph's
   sharing token), only for an `https` link on a SharePoint host. The answer is documented as `value`, a list of
   thumbnail sets, each with an `id` and a `small`, `medium` and `large` thumbnail (`width`, `height`, `url`); an empty
   list for a file without one. The fixture `tests/fixtures/graph/thumbnails.json` is written from that documentation.
@@ -86,7 +86,7 @@ bytes through Graph's documented download link instead. No capture or probe show
 reach, and a file the account can't read says so in its card and offers the browser.
 
 - **The item**: `GET https://graph.microsoft.com/v1.0/shares/u!<sharing link>/driveItem` with the account's Graph
-  token, the sharing token as the thumbnails' (`teams_proto::FileDownload`). The answer is documented as the file's
+  token and `Prefer: redeemSharingLink`, the sharing token as the thumbnails' (`teams_proto::FileDownload`). The answer is documented as the file's
   `driveItem`; the native client reads its `size` and its `@microsoft.graph.downloadUrl`, "a URL that can be used to
   download this file's content", pre-authenticated (a `tempauth` in its query) and short-lived (about an hour). The
   link is taken only on a SharePoint host (`teams_proto::FileContentLink`).
@@ -113,6 +113,35 @@ reach, and a file the account can't read says so in its card and offers the brow
   came, alongside GStreamer's setup and type finding. The bytes reach the
   player only from the engine, and the player hands them to GStreamer's `playbin` through an `appsrc`: GStreamer reads
   nothing from the network itself.
+
+## A link for specific people
+
+Seen in a lab capture of 2026-11-24 (`team-manage`: lab account a sent b a video from its OneDrive in their 1:1 chat,
+then b opened the chat). A file a colleague shares in a chat often has a link that works only for the people it
+names: its short form is `https://<tenant>-my.sharepoint.com/:<kind>:/p/<owner>/<token>` (no `?email=`). Graph
+refuses such a link to the very people it names unless the read asks Graph to redeem it: `403` with "The sharing link
+no longer exists, or you do not have permission to access it.", an `@error.fixItUrl` to the site's
+`guestaccess.aspx?share=<token>` and `SharesAccessDeniedVroomException` (seen in the user's own log, a video from
+another person of the same tenant).
+
+- **What Teams sends**: the recipient's web client reads a received video's card with
+  `POST https://graph.microsoft.com/v1.0/shares/u!<sharing link>/driveItem/preview` and the header
+  `Prefer: redeemSharingLink`, the account's Graph token. The answer's `getUrl` is SharePoint's embed page of the item
+  (`<owner's site>/_layouts/15/embed.aspx?uniqueId=<item>&access_token=…`), which the card shows in a frame (Stream's
+  player). The sender's client sends the same read with the file's own address (`objectUrl`) as the sharing token.
+- **Thumbnails**: the web client reads the card's picture on the owner's site with its SharePoint token,
+  `GET <owner's site>/_api/v2.1/shares/u!<sharing link>/thumbnails/0/c960x540/content?prefer=noredirect,closestavailablesize`.
+- **When the message is sent**, the sender's web client also grants each person of the chat access to the file
+  (`POST <owner's site>/_api/v2.0/sites/root/items/<item>/driveItem/invite`, `{"recipients": [{"email"}], "roles":
+  ["write"]}`), whatever the link's kind.
+- **What `ngteams` does**: its two Graph reads of a shared file (the thumbnails and the item) go with
+  `Prefer: redeemSharingLink`, as Teams' read does (`teams_proto::REDEEM_SHARING_LINK`). The header asks Graph to
+  redeem the link for the account, as opening the link in a browser does; it gives nothing to anyone else. The
+  account's Graph token still goes only to Graph, and the bytes are read at the download link Graph hands out, with no
+  token, as above.
+- **Not seen**: the link-settings dialog ("People currently in this chat", "People you choose") didn't apply in the
+  headless browser, so the lab message has a link for anyone. b's read above is the same whatever the link's kind;
+  the refusal without the header is the user's log's.
 
 ## Where a name comes from
 

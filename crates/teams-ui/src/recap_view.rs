@@ -612,14 +612,12 @@ impl RecapView {
         let source = PictureSource::new(Arc::clone(&self.core));
         let id = format!("recap-{index}");
         let part = self.part()?;
-        let recording = part.drive_id.clone().zip(part.item_id.clone());
-        let player = cx.new(|cx| {
-            let player = VideoPlayer::new(id, file, source, cx).filling();
-            match recording {
-                Some((drive, item)) => player.streaming(Recording { drive, item }),
-                None => player,
-            }
-        });
+        // a recording its recap names no drive or item of is streamed by the ones its item on Graph names
+        let recording = Recording {
+            drive: part.drive_id.clone().unwrap_or_default(),
+            item: part.item_id.clone().unwrap_or_default(),
+        };
+        let player = cx.new(|cx| VideoPlayer::new(id, file, source, cx).filling().streaming(recording));
         let watched = cx.observe(&player, |this, player, cx| this.follow(&player, cx));
         self.players.insert(link, (player.clone(), watched));
         self.caption_players(cx);

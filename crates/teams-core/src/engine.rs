@@ -796,6 +796,8 @@ enum Request {
         teams_proto::RecordingManifest,
         Responder<Arc<teams_proto::Presentation>>,
     ),
+    /// A meeting recording's DASH presentation, by its sharing link: its item read on Graph first ([`crate::recap`]).
+    RecordingPresentationByLink(String, Responder<Arc<teams_proto::Presentation>>),
     /// When a meeting recording expires, by its item ([`crate::recap`]).
     RecordingExpiration(teams_proto::RecordingExpiration, Responder<Option<i64>>),
     /// A part of a meeting recording's presentation ([`crate::recap`]).
@@ -1963,7 +1965,14 @@ impl EngineRequests {
     /// recording by, its download blocked or not. [`EngineError::FileUnavailable`] when the account can't watch it or
     /// it can't be streamed (not processed yet, an answer the player can't play), [`EngineError::FileUnread`] when the
     /// read failed on the way.
+    ///
+    /// A recording whose recap names no drive or item (`drive` or `item` empty) is streamed by the ones its item on
+    /// Graph names, read by its sharing link first.
     pub fn recording_presentation(&self, link: &str, drive: &str, item: &str) -> Reply<Arc<teams_proto::Presentation>> {
+        if drive.is_empty() || item.is_empty() {
+            let link = link.to_owned();
+            return self.ask(|reply| Request::RecordingPresentationByLink(link, reply));
+        }
         let Some(manifest) = teams_proto::RecordingManifest::of(link, drive, item) else {
             return Reply::ready(Err(EngineError::FileUnavailable));
         };
@@ -2573,6 +2582,7 @@ where
             Request::MeetingTranscript(location, reply) => self.recaps.transcript(&location, reply),
             Request::TranscriptLanguage(location, reply) => self.recaps.language(&location, reply),
             Request::RecordingPresentation(manifest, reply) => self.recaps.presentation(manifest, reply),
+            Request::RecordingPresentationByLink(link, reply) => self.recaps.presentation_by_link(link, reply),
             Request::RecordingExpiration(read, reply) => self.recaps.expiration(read, reply),
             Request::RecordingSegment(part, reply) => self.recaps.segment(part, reply),
             Request::RecordingFile(file, reply) => self.recaps.file(file, reply),

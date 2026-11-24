@@ -131,7 +131,8 @@ impl ByteStream for EngineStream {
     }
 }
 
-/// A meeting recording, where it is: the drive and the item that hold it (a recap part's), streamed by them.
+/// A meeting recording, where it is: the drive and the item that hold it (a recap part's), streamed by them; both empty
+/// when the recap names neither (the engine finds them by the recording's sharing link).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recording {
     pub drive: String,

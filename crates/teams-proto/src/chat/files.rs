@@ -19,7 +19,8 @@
 //!   (also encoded twice), or one entry alone. Any other entry, and a `files` of another shape, is kept as it came
 //!   ([`SharedFiles::unread`]): a view says the message has content it can't show, never a guess at it, and still
 //!   draws the files it read.
-//! - **Location**: the card's second line is the path of the file's site (`personal > <owner>`, [`location_of`]).
+//! - **Location**: the card's second line is the entry's `chicletBreadcrumbs` (`sourceTeamName > sourceChannelName`,
+//!   `personal > <owner>` for a file of someone's OneDrive), else the path of the file's site ([`location_of`]).
 //!   Teams' card for a received file shows it under the name. An own server's site names its owner by the account's
 //!   id ([`SharedFile::site_owner`]); the view puts the owner's name in its place.
 
@@ -426,12 +427,32 @@ fn file_of(cloud: &crate::Cloud, entry: &Map<String, Value>) -> Option<SharedFil
 /// The longest location kept, in characters; a longer one is cut there.
 const MAX_LOCATION: usize = 200;
 
-/// Where an entry's file is kept, as Teams names it on the card: the path of its site (`fileInfo.siteUrl`, else
+/// Where an entry's file is kept, as Teams names it on the card: its `chicletBreadcrumbs` as Teams draws them
+/// (`sourceTeamName > sourceChannelName`, lab capture 2026-11-24), else the path of its site (`fileInfo.siteUrl`, else
 /// `baseUrl`, else `sharepointIds.siteUrl`; the first one with a path), each part decoded, joined by ` > `
-/// (`personal > <owner>`). An own server's site path starts with `sp`, which is not a part of it. `None` when no site
-/// link has a path.
+/// (`personal > <owner>`). An own server's site path starts with `sp`, which is not a part of it. `None` when neither
+/// names one.
 #[must_use]
 pub fn location_of(entry: &Map<String, Value>) -> Option<String> {
+    breadcrumbs(entry).or_else(|| site_location(entry))
+}
+
+/// The entry's `chicletBreadcrumbs`, its team's and channel's names joined by ` > ` (either alone when the other is
+/// empty); `None` when it has neither.
+fn breadcrumbs(entry: &Map<String, Value>) -> Option<String> {
+    let crumbs = entry.get("chicletBreadcrumbs")?.as_object()?;
+    let parts: Vec<String> = ["sourceTeamName", "sourceChannelName"]
+        .into_iter()
+        .filter_map(|key| crumbs.get(key)?.as_str())
+        .map(|part| part.chars().filter(|c| !c.is_control()).collect::<String>())
+        .filter(|part| !part.trim().is_empty())
+        .collect();
+    let location: String = parts.join(" > ").chars().take(MAX_LOCATION).collect();
+    (!location.is_empty()).then_some(location)
+}
+
+/// The path of the first site link of the entry that has one, as [`location_of`] names it.
+fn site_location(entry: &Map<String, Value>) -> Option<String> {
     let info = entry.get("fileInfo").and_then(Value::as_object);
     let ids = entry.get("sharepointIds").and_then(Value::as_object);
     [

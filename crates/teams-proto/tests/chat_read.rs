@@ -1961,6 +1961,26 @@ fn a_files_location_is_the_first_site_link_with_a_path() -> TestResult {
 }
 
 #[test]
+fn a_files_location_is_its_breadcrumbs_as_teams_draws_them() -> TestResult {
+    let mut entries = grid_entries()?;
+    // the breadcrumbs the web client posts (lab capture 2026-11-24), here made up and unlike the site's path
+    entries[0]["chicletBreadcrumbs"] = json!({"sourceTeamName": "Made-up team", "sourceChannelName": "General"});
+    entries[1]["chicletBreadcrumbs"] = json!({"sourceTeamName": "personal", "sourceChannelName": ""});
+    entries[2]["chicletBreadcrumbs"] = json!({"sourceTeamName": " ", "sourceChannelName": null});
+    let read = shared_files(Some(&Value::Array(entries[..3].to_vec())));
+    let locations: Vec<_> = read.files.iter().map(|file| file.location.as_deref()).collect();
+    assert_eq!(
+        locations,
+        [
+            Some("Made-up team > General"),
+            Some("personal"),
+            Some("personal > made_up_user_contoso_test"),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
 fn a_card_beside_five_files_leaves_every_file_read() -> TestResult {
     let mut read = fixture("files-grid.json")?["read_back"].clone();
     read["properties"]["cards"] = json!("[{\"made-up\":\"card\"}]");

@@ -594,6 +594,30 @@ impl ChatServiceMock {
             .await;
     }
 
+    /// [`Self::serve_bytes`] for a Graph read of a shared file, answered as Graph answers a link for specific people
+    /// (`docs/protocol/graph.md`, "A link for specific people"): `200` only to a read with `Prefer: redeemSharingLink`,
+    /// else `403` with Graph's refusal.
+    pub async fn serve_redeemed(&self, path: &str, content_type: &str, body: Vec<u8>) {
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path(path))
+            .and(wiremock::matchers::header("prefer", "redeemSharingLink"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, content_type))
+            .with_priority(1)
+            .mount(&self.server)
+            .await;
+        let refusal = serde_json::json!({"error": {
+            "code": "accessDenied",
+            "message": "The sharing link no longer exists, or you do not have permission to access it.",
+            "innerError": {"code": "SharesAccessDeniedVroomException"},
+        }});
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path(path))
+            .respond_with(ResponseTemplate::new(403).set_body_json(refusal))
+            .with_priority(2)
+            .mount(&self.server)
+            .await;
+    }
+
     /// Answers every `GET` of a path that starts with `prefix` with the bytes `draw` makes for that path, below the
     /// answers [`Self::serve_bytes`] mounts: a test's stand-in for a whole folder of a CDN (the pictures of Teams'
     /// sticker packs).

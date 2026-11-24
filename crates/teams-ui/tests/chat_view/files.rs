@@ -451,6 +451,33 @@ fn an_images_preview_is_drawn_in_place_of_its_card_at_teams_size() {
     assert!(bounds(cx, &format!("file-more-{ID}-0")).is_some());
 }
 
+/// A made-up video in another user's OneDrive, shared with a link for specific people.
+const LONE_SHARE: &str = "https://contoso-my.sharepoint.com/:v:/p/made_up_user_contoso_test/MadeUpToken01";
+const LONE_SITE: &str = "https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/";
+const LONE_OBJECT: &str =
+    "https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/Documents/Chat%20files/made-up%20clip.mp4";
+
+#[test]
+fn a_messages_only_file_has_a_card_as_wide_as_the_grid_its_location_whole() {
+    let entry = serde_json::json!({"@type": teams_proto::chat::FILE_TYPE, "fileName": "made-up clip.mp4",
+        "fileType": "mp4", "state": "active", "objectUrl": LONE_OBJECT, "fileInfo": {"shareUrl": LONE_SHARE, "siteUrl": LONE_SITE}});
+    let mut stored = message(ID, LAB_B, "<p>a short clip</p>", NOON);
+    stored.properties = Some(serde_json::json!({"files": Value::Array(vec![entry]).to_string()}).to_string());
+    let rig = rig_with(vec![stored]);
+    let (written_trace, _) = trace();
+    let (_view, cx) = chat_window(&rig, written_trace);
+    cx.simulate_resize(size(px(1100.0), px(900.0)));
+    let card = bounds(cx, &format!("file-card-{ID}-0")).expect("the card");
+    assert!(
+        (f32::from(card.size.width) - teams_ui::files::LONE_CARD_WIDTH).abs() < 1.0,
+        "{card:?}"
+    );
+    let player = bounds(cx, &format!("video-player-{ID}-0")).expect("the player");
+    assert!(sixteen_nine(player), "{player:?}");
+    let location = bounds(cx, &format!("file-location-{ID}-0")).expect("the location");
+    assert!(location.size.width > px(300.0), "{location:?}");
+}
+
 #[test]
 fn an_image_whose_preview_cant_be_had_is_drawn_as_its_card() {
     let rig = rig_with(vec![image_message()]);

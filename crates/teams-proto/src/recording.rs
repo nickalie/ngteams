@@ -217,20 +217,25 @@ pub fn read_expiration(body: &[u8]) -> Option<i64> {
     i64::try_from(at.unix_timestamp_nanos() / 1_000_000).ok()
 }
 
-/// The personal site of `link`: an address on it, or a sharing link to one of its files (`/:<kind>:/<g|r>/personal/…`).
+/// The personal site of `link`: an address on it, or a sharing link to one of its files (`/:<kind>:/<g|r>/personal/…`,
+/// or the short `/:<kind>:/p/<owner>/…` of a link for specific people).
 fn personal_site(link: &str) -> Option<DriveSite> {
     if let Some(site) = DriveSite::from_web_url(link) {
         return Some(site);
     }
     let url = Url::parse(link).ok()?;
     let segments: Vec<&str> = url.path_segments()?.collect();
-    match segments.as_slice() {
-        [kind, "g" | "r", "personal", owner, ..] if kind.len() == 3 && kind.starts_with(':') && kind.ends_with(':') => {
-            let host = url.host_str()?;
-            DriveSite::from_web_url(&format!("https://{host}/personal/{owner}/"))
-        }
-        _ => None,
-    }
+    let owner = match segments.as_slice() {
+        [kind, "g" | "r", "personal", owner, ..] | [kind, "p", owner, ..] if is_link_kind(kind) => owner,
+        _ => return None,
+    };
+    let host = url.host_str()?;
+    DriveSite::from_web_url(&format!("https://{host}/personal/{owner}/"))
+}
+
+/// A sharing link's kind segment: `:v:`, `:w:`, `:u:` and the like.
+fn is_link_kind(segment: &str) -> bool {
+    segment.len() == 3 && segment.starts_with(':') && segment.ends_with(':')
 }
 
 /// A part of a recording's presentation, at the transform service: read with no token of the account's (its address

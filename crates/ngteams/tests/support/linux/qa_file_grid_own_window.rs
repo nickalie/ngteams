@@ -95,6 +95,9 @@ const NIRI_CONFIG: &str = "layout {\n    gaps 0\n    default-column-width { prop
 
 /// A card's size and the grid's gap, as Teams draws them (`teams_ui::files`).
 const CARD_WIDTH: u32 = 316;
+/// The card of a message's only file: two columns wide, its 16:9 picture under the header (`teams_ui::files`).
+const LONE_WIDTH: u32 = 2 * CARD_WIDTH;
+const LONE_HEIGHT: u32 = 460;
 const HEADER: u32 = 64;
 const GAP: u32 = 10;
 
@@ -851,8 +854,9 @@ fn check_sizes(cards: &[Rect], what: &str) {
     if most - least > 2 {
         note(format!("{what}: cards of unequal width {widths:?}"));
     }
-    if *most > CARD_WIDTH + 2 {
-        note(format!("{what}: a card {most} px wide, wider than Teams' {CARD_WIDTH}"));
+    let teams = if cards.len() == 1 { LONE_WIDTH } else { CARD_WIDTH };
+    if *most > teams + 2 {
+        note(format!("{what}: a card {most} px wide, wider than Teams' {teams}"));
     }
 }
 
@@ -1081,8 +1085,8 @@ fn cards_in(shot: &image::RgbImage, look: Look) -> Vec<Rect> {
             let Some(card) = card_from(shot, look, y, (from, to)) else {
                 continue;
             };
-            if (150..=CARD_WIDTH + 4).contains(&card.width())
-                && (200..=320).contains(&card.height())
+            if (150..=LONE_WIDTH + 4).contains(&card.width())
+                && (200..=LONE_HEIGHT).contains(&card.height())
                 && !found.iter().any(|known| known.overlaps(&card))
             {
                 found.push(card);

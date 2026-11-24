@@ -53,6 +53,9 @@ const RETRY_FROM_TOP: u32 = 57;
 const SURFACE: [u8; 3] = [255, 255, 255];
 const BORDER: [u8; 3] = [224, 224, 224];
 const CARD_WIDTH: u32 = 316;
+/// The card of a message's only file: two columns wide, its 16:9 picture under the header (`teams_ui::files`).
+const LONE_WIDTH: u32 = 2 * CARD_WIDTH;
+const LONE_HEIGHT: u32 = 460;
 /// A place over the messages, for the wheel.
 const MESSAGES: (u32, u32) = (860, 300);
 const HEADER: u32 = 64;
@@ -297,8 +300,14 @@ fn receiver_sees(user: &mut User<'_>) -> SandboxResult {
         if opened.len() >= SENT.len() {
             break;
         }
-        // up first; at the top, down again to the cards between
-        let notches = if round == 0 || opened.len() > known { -16 } else { 6 };
+        // the newest card's header first, then up; at the top, down again to the cards between
+        let notches = if opened.is_empty() && cards.is_empty() {
+            -4
+        } else if round == 0 || opened.len() > known {
+            -16
+        } else {
+            6
+        };
         user.input.scroll(MESSAGES.0, MESSAGES.1, notches)?;
         user.park()?;
         thread::sleep(SETTLE);
@@ -504,7 +513,10 @@ fn cards_in(shot: &image::RgbImage) -> Vec<(u32, u32, u32, u32)> {
             let overlaps = |known: &(u32, u32, u32, u32)| {
                 card.0 < known.2 && known.0 < card.2 && card.1 < known.3 && known.1 < card.3
             };
-            if (150..=CARD_WIDTH + 4).contains(&width) && (60..=300).contains(&height) && !found.iter().any(overlaps) {
+            if (300..=LONE_WIDTH + 4).contains(&width)
+                && (40..=LONE_HEIGHT).contains(&height)
+                && !found.iter().any(overlaps)
+            {
                 found.push(card);
             }
         }

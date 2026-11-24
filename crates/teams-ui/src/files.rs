@@ -1,5 +1,6 @@
 //! The files a message carries, drawn as Teams draws them under the message's text: a grid of cards, two in a row at
-//! most ([`COLUMNS`]), one in a row when the bubble is narrow. The grid stays in the message's bubble.
+//! most ([`COLUMNS`]), one in a row when the bubble is narrow. A file alone has a card as wide as the grid
+//! ([`LONE_CARD_WIDTH`]), so its location shows in full. The grid stays in the message's bubble.
 //!
 //! - **A card** ([`FileCard`]): a header with the file type's icon (Teams' own for a video, a play mark in a white
 //!   box, and for a zip, a yellow folder: [`kind_icon`]; another type's in the colour Teams gives that type), the
@@ -55,8 +56,11 @@ use crate::rich_text::tint;
 use crate::theme::{self, Palette};
 use crate::video_player::{player_of, plays_inline};
 
-/// A card's width, as Teams draws one.
+/// A card's width in a grid of two or more files, as Teams draws one.
 pub const CARD_WIDTH: f32 = 316.0;
+
+/// The width of the card of a message's only file: the grid's two columns, as Teams draws it.
+pub const LONE_CARD_WIDTH: f32 = COLUMNS * CARD_WIDTH;
 
 /// A card's picture's width over its height, whatever the card's width: Teams' 16:9.
 pub const PICTURE_RATIO: f32 = 16.0 / 9.0;
@@ -222,12 +226,14 @@ pub fn file_cards(
         return None;
     }
     let message = message.to_owned();
+    let width = if files.len() == 1 { LONE_CARD_WIDTH } else { CARD_WIDTH };
     let cards = files.iter().enumerate().map(|(at, file)| FileCard {
         id: format!("{message}-{at}"),
         file: file.clone(),
         source: source.cloned(),
         share: share.cloned(),
         in_channel,
+        width,
         palette,
     });
     let cards: Vec<FileCard> = cards.collect();
@@ -253,6 +259,7 @@ pub struct FileCard {
     source: Option<PictureSource>,
     share: Option<ShareFile>,
     in_channel: bool,
+    width: f32,
     palette: Palette,
 }
 
@@ -271,7 +278,7 @@ impl RenderOnce for FileCard {
         let id = self.id.clone();
         div()
             .debug_selector(move || format!("file-card-{id}"))
-            .w(px(CARD_WIDTH))
+            .w(px(self.width))
             .max_w_full()
             .flex_none()
             .flex()

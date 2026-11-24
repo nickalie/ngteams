@@ -162,7 +162,13 @@ fn the_presentation_is_read_on_the_recording_s_personal_site() {
     );
     assert_eq!(manifest.site().audience(), "https://madeup-my.sharepoint.com");
     let on_site = "https://madeup-my.sharepoint.com/personal/lab_a/Documents/Recordings/x.mp4";
-    assert_eq!(RecordingManifest::of(on_site, "b!drive1", "ITEM1"), Some(manifest));
+    assert_eq!(
+        RecordingManifest::of(on_site, "b!drive1", "ITEM1"),
+        Some(manifest.clone())
+    );
+    // the short form of a link for specific people names its owner's site the same way
+    let for_people = "https://madeup-my.sharepoint.com/:v:/p/lab_a/MadeUpPeopleLink";
+    assert_eq!(RecordingManifest::of(for_people, "b!drive1", "ITEM1"), Some(manifest));
     for (link, drive, item) in [
         ("https://madeup.sharepoint.com/:v:/g/sites/team/x", "b!drive1", "ITEM1"),
         (
@@ -171,6 +177,9 @@ fn the_presentation_is_read_on_the_recording_s_personal_site() {
             "ITEM1",
         ),
         ("https://example.test/:v:/g/personal/lab_a/x", "b!drive1", "ITEM1"),
+        ("https://example.test/:v:/p/lab_a/x", "b!drive1", "ITEM1"),
+        ("https://madeup-my.sharepoint.com/:v:/p/", "b!drive1", "ITEM1"),
+        ("https://madeup-my.sharepoint.com/v/p/lab_a/x", "b!drive1", "ITEM1"),
         (SHARING_LINK, "b!drive/1", "ITEM1"),
         (SHARING_LINK, "b!drive1", "ITEM1?x"),
         (SHARING_LINK, "", "ITEM1"),

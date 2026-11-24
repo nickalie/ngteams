@@ -15,9 +15,10 @@
 //!   headers say ([`crate::HttpTransport::file_stream`]: the same `GET` with `Range`, its body handed on part by part
 //!   as it arrives, never held whole), what a playing video reads by.
 //!
-//! No capture shows either read (the web client plays a video through SharePoint's own media API with a SharePoint
-//! token the native client doesn't ask for): they are our own reach, as the thumbnails' are. A file the account can't
-//! read answers 403 or 404, and the card says it can't be played.
+//! Both Graph reads go with `Prefer: redeemSharingLink` ([`REDEEM_SHARING_LINK`]), as Teams sends its Graph read of a
+//! received file (lab capture 2026-11-24, `shares/u!<link>/driveItem/preview`): without it, Graph refuses a link for
+//! specific people to the very people it names ("The sharing link no longer exists, or you do not have permission to
+//! access it", 403). A file the account can't read answers 403 or 404, and the card says it can't be played.
 
 use std::fmt;
 
@@ -40,6 +41,9 @@ pub const MAX_RANGE: u32 = 2 * 1024 * 1024;
 /// The most bytes one streamed read asks for ([`crate::HttpTransport::file_stream`]): its body is handed on as it
 /// arrives, so this bounds only how long one answer runs.
 pub const MAX_STREAM: u64 = 64 * 1024 * 1024;
+
+/// The header Graph's reads of a shared file go with (see the module docs).
+pub const REDEEM_SHARING_LINK: [(&str, &str); 1] = [("Prefer", "redeemSharingLink")];
 
 /// `GET https://graph.microsoft.com/v1.0/shares/u!<link>/driveItem`: the item of the file a sharing link names, with
 /// its size and its download link. Its answer is read with [`FileDownload::read_answer`].
@@ -86,6 +90,16 @@ impl FileDownload {
             size,
         })
     }
+
+    /// The drive and the id of the item the answer is (`parentReference.driveId`, `id`), when both are plain ids (a
+    /// recording whose recap names neither is streamed by them); `None` for anything else.
+    #[must_use]
+    pub fn read_item_ids(answer: &Response) -> Option<(String, String)> {
+        let item: Value = serde_json::from_slice(answer.body()).ok()?;
+        let drive = item.get("parentReference")?.get("driveId")?.as_str()?;
+        let id = item.get("id")?.as_str()?;
+        Some((drive.to_owned(), id.to_owned()))
+    }
 }
 
 /// `Debug` leaves the link out.
@@ -102,6 +116,10 @@ impl Read for FileDownload {
 
     fn endpoint(&self) -> Endpoint {
         Endpoint::new(["shares", self.share.as_str(), "driveItem"])
+    }
+
+    fn headers(&self) -> &'static [(&'static str, &'static str)] {
+        &REDEEM_SHARING_LINK
     }
 }
 
