@@ -2650,6 +2650,8 @@ fn an_answered_invitation_into_a_meeting_s_chat_offers_rejoin_never_call_back() 
     click(cx, "call-answer");
     status(&rig, 4, CallStatus::Connected);
     let window = stage(&rig, &windows);
+    click(window, "call-roster");
+    assert!(!drawn(window, "call-invite"), "a meeting's call has no Invite someone");
     status(&rig, 4, CallStatus::Ended(hung_up_by(LAB_B, CALLER_NAME)));
     assert!(drawn(window, "call-end"));
     assert!(!drawn(window, "call-end-call-back"), "its invitees are never rung");
@@ -3061,6 +3063,44 @@ fn request_to_join_on_a_meeting_s_invitee_asks_once_and_their_decline_shows() {
     declined_goes_back_to_others_invited(&rig, stage);
 }
 
+#[test]
+fn a_channel_meeting_s_invitee_has_no_request_to_join() {
+    let rig = calling();
+    let channel = "19:MadeUpChannel0001@thread.tacv2";
+    rig.core.members.lock().unwrap().insert(
+        channel.to_owned(),
+        vec![Member::new(LAB_A, None), Member::new(LAB_C, None)],
+    );
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    let to_join = teams_ui::calls::MeetingToJoin::Chat {
+        chat: channel.to_owned(),
+        meeting: meeting_to_join().meeting().unwrap().clone(),
+        title: "Meeting in \"General\"".to_owned(),
+        post: None,
+    };
+    cx.update(|_, cx| shell.update(cx, |shell, cx| shell.open_prejoin(to_join, cx)));
+    let window = prejoin_window(&rig, &windows);
+    click(window, "prejoin-join");
+    status(&rig, 1, CallStatus::Joining);
+    status(&rig, 1, CallStatus::Connected);
+    let stage = stage(&rig, &windows);
+    rig.send(Event::CallParticipants {
+        call: call(1),
+        view: view(&[], false),
+    });
+    rig.cx.run_until_parked();
+    click(stage, "call-roster");
+    assert!(drawn(stage, "call-roster-added-0"), "c is only invited");
+    let row = stage.debug_bounds("call-roster-added-0").unwrap();
+    stage.simulate_mouse_move(row.center(), None, Modifiers::none());
+    draw(stage);
+    // the engine adds only into a meeting's own chat, never a channel's
+    assert!(!drawn(stage, "call-roster-request-0"));
+}
+
 /// As Teams does, c's "Declined" row goes back to "Others invited" a short time after, with "No response" and
 /// Request to join; asked again, c is in the meeting's section again.
 fn declined_goes_back_to_others_invited(rig: &Rig, stage: &mut VisualTestContext) {
@@ -3074,6 +3114,23 @@ fn declined_goes_back_to_others_invited(rig: &Rig, stage: &mut VisualTestContext
     assert!(!drawn(stage, "call-roster-invited-0"));
     assert!(drawn(stage, "call-roster-added-0"));
     assert!(drawn(stage, "call-roster-added-no-response-0"));
+    // c comes in by another way and leaves: listed invited again, with no old "No response"
+    for in_it in [true, false] {
+        let b = (LAB_B, "Lab Bee", true, Some(1), false);
+        let people: &[_] = if in_it {
+            &[b, (LAB_C, "Lab Cee", true, Some(2), false)]
+        } else {
+            &[b]
+        };
+        rig.send(Event::CallParticipants {
+            call: call(1),
+            view: view(people, false),
+        });
+        rig.cx.run_until_parked();
+    }
+    draw(stage);
+    assert!(drawn(stage, "call-roster-added-0"));
+    assert!(!drawn(stage, "call-roster-added-no-response-0"));
     let row = stage.debug_bounds("call-roster-added-0").unwrap();
     stage.simulate_mouse_move(row.center(), None, Modifiers::none());
     draw(stage);

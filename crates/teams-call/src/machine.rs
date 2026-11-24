@@ -433,6 +433,7 @@ pub struct Calls {
     /// it fails, or when a newer invitation in the chat names another.
     running: BTreeMap<String, CallLink>,
     /// The meetings a Request to join named, by their chat: a [`Self::join`] of that chat is the meeting's own join.
+    /// An entry stays for the run; a newer Request to join in the chat replaces it.
     asked_into: BTreeMap<String, teams_proto::MeetingInfo>,
     /// The rosters of running calls an invitation's `attach` subscribed to, by their group chat: who is in the call,
     /// kept from the ring on (see [`Followed`]).
@@ -612,7 +613,8 @@ impl Calls {
 
     /// Whether an invitation named a running call in `chat` that [`Self::join`] can join. It says what the machine
     /// was told, not that the call still runs: a call whose end the machine wasn't delivered (once the ring ended
-    /// here it hears no more of the call) stays joinable until a join to it fails, which forgets it.
+    /// here it hears no more of the call) stays joinable until a join to it fails, which forgets it. A meeting's chat
+    /// a Request to join named stays joinable for the run: its join is the meeting's own, open at any time.
     #[must_use]
     pub fn joinable(&self, chat: &str) -> bool {
         self.running.contains_key(chat) || self.asked_into.contains_key(chat)

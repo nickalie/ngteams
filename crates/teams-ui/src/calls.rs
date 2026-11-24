@@ -127,14 +127,16 @@ pub struct ActiveCall {
     /// The far end shares its screen, shown on the stage ([`teams_core::Event::CallRemoteShare`]).
     pub remote_share: bool,
     /// Who the account added to the call and isn't in it yet ([`Ask::Add`]), in the order added: People lists them
-    /// ringing, or "No response" once they didn't come in ([`teams_core::Event::CallAddFailed`]).
+    /// ringing, or "No response" once they didn't come in ([`teams_core::Event::CallAddFailed`]). A meeting's invitee
+    /// who declined leaves it for [`ActiveCall::passed`] after [`DECLINED_SHOWN`].
     pub invited: Vec<Invited>,
     /// A meeting's invitees who declined its Request to join and, [`DECLINED_SHOWN`] after it, went back to "Others
-    /// invited", where Teams lists them with "No response".
+    /// invited", where Teams lists them with "No response"; until they are asked again or the roster has them in it.
     pub passed: Vec<Mri>,
 }
 
-/// Someone the account added to its call, until the roster has them in it.
+/// Someone the account added to its call, until the roster has them in it or, a meeting's invitee who declined,
+/// until [`DECLINED_SHOWN`] moves them to [`ActiveCall::passed`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Invited {
     pub mri: Mri,
@@ -1059,7 +1061,8 @@ impl Calls {
     }
 
     /// Whether an invitation, or the chat's own stored call start ([`Calls::posted_running`]), named a running call in
-    /// the group chat `chat`, so a join can go there.
+    /// the group chat `chat`, so a join can go there; or `chat` is the meeting's chat a Request to join rang in, which
+    /// stays joinable for the run (its join is the meeting's own).
     #[must_use]
     pub fn joinable(&self, chat: &str) -> bool {
         self.running.contains(chat)
@@ -1276,12 +1279,13 @@ impl Calls {
                     active.check.saw(view);
                     active.view = view.clone();
                     // someone added is in the call now: no longer listed apart
-                    active.invited.retain(|invited| {
-                        !view
-                            .participants
+                    let joined = |mri: &Mri| {
+                        view.participants
                             .iter()
-                            .any(|participant| participant.mri.eq_ignore_ascii_case(invited.mri.as_str()))
-                    });
+                            .any(|participant| participant.mri.eq_ignore_ascii_case(mri.as_str()))
+                    };
+                    active.invited.retain(|invited| !joined(&invited.mri));
+                    active.passed.retain(|passed| !joined(passed));
                 }
             }
             Event::Lobby { call, waiting } => {

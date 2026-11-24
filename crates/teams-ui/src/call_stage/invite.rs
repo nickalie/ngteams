@@ -116,6 +116,7 @@ impl CallStage {
     /// never a meeting's, the test call, or in the read-only mode.
     pub(super) fn takes_add(&self, active: &ActiveCall) -> bool {
         matches!(active.kind, CallKind::Chat | CallKind::Incoming | CallKind::Join)
+            && !active.is_meeting()
             && active.status == CallStatus::Connected
             && !self.core.read_only()
     }
