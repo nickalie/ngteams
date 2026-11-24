@@ -12,6 +12,7 @@ mod history;
 mod meetings;
 mod mixer;
 mod qa_group_log;
+mod qa_meeting_request;
 mod raw;
 mod redelivery;
 mod relay;

@@ -134,7 +134,7 @@ use wiremock::{Match, Mock, MockServer, Request, Respond, ResponseTemplate};
 
 pub use apps::{AppPlace, PRE_CONSENTED};
 pub use bots::{BotInvokeRecord, BotReply, bot_answer, extension_apps, extension_apps_answer};
-pub use calling::{ANSWERED_ELSEWHERE, CallPhase, Leg, MockCall, TIMED_OUT};
+pub use calling::{ANSWERED_ELSEWHERE, AddOutcome, CallPhase, Leg, MockCall, TIMED_OUT};
 pub use channel_files::{ChannelFile, SITE as CHANNEL_FILES_SITE};
 pub use channels::{ChannelWrite, NOT_ADDED};
 pub use drive::{DRIVE_HOST, DriveFile, DriveTwist};
@@ -846,6 +846,32 @@ impl ChatServiceMock {
     pub fn ring_group(&self, from: &str, chat: &str, callees: &[&str]) -> String {
         let callees: Vec<String> = callees.iter().map(|callee| (*callee).to_owned()).collect();
         calling::ring(&mut self.lock(), from, &callees, Some(chat.to_owned()))
+    }
+
+    /// A caller the mock plays (`from`) asks `callees` into the meeting whose chat is `chat` (a meeting's Request to
+    /// join): a group call's ring that names the meeting's organizer and tenant (`meeting_info`, as
+    /// `callNotification.invitationData.meetingInfo`) and `conversationType` `scheduledMeeting`, as captured.
+    #[must_use = "the call's id names it"]
+    pub fn ring_meeting(&self, from: &str, chat: &str, callees: &[&str], meeting_info: Value) -> String {
+        let callees: Vec<String> = callees.iter().map(|callee| (*callee).to_owned()).collect();
+        calling::ring_in(
+            &mut self.lock(),
+            from,
+            &callees,
+            Some(chat.to_owned()),
+            Some(meeting_info),
+        )
+    }
+
+    /// From now on (`on`), an `add` of a person rings nobody and fails nobody: [`Self::tell_add`] ends it.
+    pub fn hold_adds(&self, on: bool) {
+        self.lock().calling.hold_adds = on;
+    }
+
+    /// The add of `invitee` held in call `id` ([`Self::hold_adds`]) ends as `outcome`. `false` without such an add.
+    #[must_use = "false says there was no such add"]
+    pub fn tell_add(&self, id: &str, invitee: &str, outcome: AddOutcome) -> bool {
+        calling::tell_add(&mut self.lock(), id, invitee, outcome)
     }
 
     /// Made-up people (`(mri, name)`, no client of their own, cameras off) are in group call `id`, as the service lists

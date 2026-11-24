@@ -121,6 +121,14 @@ pub struct MockCall {
     /// Each person an `add` brought into the call (a work account, not a service), with the group chat it named, in
     /// order.
     pub added: Vec<(String, String)>,
+    /// The body of each `add` on the call, in order.
+    pub add_bodies: Vec<Value>,
+    /// The adds of people [`Calling::hold_adds`] held: the invitee and its add's `addParticipantSuccess` and
+    /// `addParticipantFailure` callbacks, until a test tells its outcome ([`crate::ChatServiceMock::tell_add`]).
+    held_adds: Vec<(String, Option<String>, Option<String>)>,
+    /// The meeting a ring of the mock's names (`callNotification.invitationData.meetingInfo`), a meeting's Request to
+    /// join ([`crate::ChatServiceMock::ring_meeting`]).
+    meeting_info: Option<Value>,
     /// The call's caller transferred its far end: whom to, and the transferor's `transferAcceptance` callback.
     pub transferred: Option<(String, Option<String>)>,
     /// The `callInvitation.transferor` its start named: a transferred party's call to the transfer's target.
@@ -189,6 +197,9 @@ pub(crate) struct Calling {
     /// The host every flight proxy link the calling service hands out is on, in place of the main host
     /// ([`crate::ChatServiceMock::hand_out_call_links_on`]); the call start stays on the main host.
     pub(crate) links_host: Option<String>,
+    /// An `add` of a person rings nobody and fails nobody: a test tells its outcome
+    /// ([`crate::ChatServiceMock::hold_adds`]).
+    pub(crate) hold_adds: bool,
 }
 
 /// The skypetoken the mock takes as `mri`'s.
@@ -419,6 +430,9 @@ fn new_call(
         joined: Vec::new(),
         offer,
         added: Vec::new(),
+        add_bodies: Vec::new(),
+        held_adds: Vec::new(),
+        meeting_info: None,
         transferred: None,
         transferor: None,
         roster: Vec::new(),
@@ -546,6 +560,10 @@ fn invitation_of(state: &State, call: &MockCall, leg: u64, callee: &str) -> Valu
             gp["groupChat"]["threadId"] = json!(chat);
             gp["conversationInvitation"]["groupCallInitiator"] = json!(call.caller);
         }
+        if let Some(info) = &call.meeting_info {
+            gp["callNotification"]["invitationData"] = json!({"meetingInfo": info});
+            gp["callNotification"]["conversationType"] = json!("scheduledMeeting");
+        }
     })
 }
 
@@ -634,6 +652,9 @@ fn conversation_op(
         .iter()
         .position(|call| call.conversation == conversation)?;
     log(state, index, account, op);
+    if op == "add" {
+        state.calling.calls[index].add_bodies.push(body.clone());
+    }
     match op {
         // a group call's party leaves alone: the call ends once nobody is left
         "leave" if call_is_group(state, index) && state.calling.calls[index].phase == CallPhase::Connected => {
@@ -743,6 +764,16 @@ fn add_person(state: &mut State, index: usize, body: &Value) {
         .to_owned();
     if let Some(call) = state.calling.calls.get_mut(index) {
         call.added.push((invitee.clone(), chat));
+    }
+    if state.calling.hold_adds {
+        let link = |name: &str| {
+            body.pointer(&format!("/links/{name}"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        let held = (invitee, link("addParticipantSuccess"), link("addParticipantFailure"));
+        state.calling.calls[index].held_adds.push(held);
+        return;
     }
     if state.calling_endpoints(&invitee).is_empty() {
         let failure = body
@@ -1308,8 +1339,20 @@ fn forward_to_voicemail(state: &mut State, index: usize, callee: &str) {
 
 /// A caller the mock plays rings `to` (no client places it): the call's id.
 pub(crate) fn ring(state: &mut State, from: &str, to: &[String], group_chat: Option<String>) -> String {
+    ring_in(state, from, to, group_chat, None)
+}
+
+/// As [`ring`], the ring a meeting's Request to join when `meeting_info` names the meeting.
+pub(crate) fn ring_in(
+    state: &mut State,
+    from: &str,
+    to: &[String],
+    group_chat: Option<String>,
+    meeting_info: Option<Value>,
+) -> String {
     let one_to_one = group_chat.is_none();
     let index = new_call(state, from, to, group_chat, None, None);
+    state.calling.calls[index].meeting_info = meeting_info;
     let id = state.calling.calls[index].id.clone();
     if let (true, [callee]) = (one_to_one, to) {
         // with the media on, the caller's peer offers (a 1:1 invitation carries the caller's offer)
@@ -1426,4 +1469,42 @@ pub(crate) fn in_cloud(cloud: &teams_auth::cloud::Cloud, value: Value) -> Value 
         }
         other => other,
     }
+}
+
+/// How an `add` the mock held ended for its invitee ([`crate::ChatServiceMock::tell_add`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AddOutcome {
+    /// They answered: the adder is told the add's success, and the roster has them in the call.
+    Joined,
+    /// They declined the ring: the add's failure with the ring's end `603`, as captured (2026-11-24).
+    Declined,
+    /// Nobody answered: the add's failure with a ring's end that is not a decline (made up: `408`).
+    NoAnswer,
+}
+
+/// The add of `invitee` the mock held in call `id` ends as `outcome`. `false` without such a held add.
+pub(crate) fn tell_add(state: &mut State, id: &str, invitee: &str, outcome: AddOutcome) -> bool {
+    let Some(index) = state.calling.calls.iter().position(|call| call.id == id) else {
+        return false;
+    };
+    let held = &mut state.calling.calls[index].held_adds;
+    let Some(at) = held.iter().position(|(who, _, _)| who == invitee) else {
+        return false;
+    };
+    let (invitee, success, failure) = held.remove(at);
+    let end = match outcome {
+        AddOutcome::Joined => {
+            let body = json!({"participants": {invitee.as_str(): {"code": 200}}});
+            state.call_back(success.as_deref(), body);
+            let name = state.display_name(&invitee);
+            return crate::roster::made_up(state, index, &[(invitee, name)]);
+        }
+        AddOutcome::Declined => 603,
+        AddOutcome::NoAnswer => 408,
+    };
+    let body = json!({"participants": {invitee.as_str(): {"code": 580, "subCode": 5208,
+        "callControllerTransactionEnd": {"code": end, "subCode": 0}}},
+        "participantInfos": [{"participant": {"id": invitee}, "transactionEnd": {"code": 580}}]});
+    state.call_back(failure.as_deref(), body);
+    true
 }

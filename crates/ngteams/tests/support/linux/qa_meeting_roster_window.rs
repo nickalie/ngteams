@@ -28,6 +28,9 @@
 //!   (`one_to_one_ringing`, `group_ringing`), and People lists b and c under a; in a's group call that b joined after the ring, "People added to the
 //!   chat" shows c, and Request to join, on hover, sends exactly one `add`, for c (`group_request_to_join`).
 //!
+//! - **Request to join, task 810 QA round 1** (`request_states`, `request_keyboard`, `request_refusals`,
+//!   `invitee_ring`): see `qa_meeting_request.rs`.
+//!
 //! `QA798_EVIDENCE` names a directory that gets the screenshots and the results too. `QA798_ONLY` runs only the named
 //! checks (comma-separated; the meeting checks need `meeting_alone` first). Screenshots also go to
 //! `target/ui-shots/qa798-*.png`. Without weston 15, niri or `dbus-daemon` it says so and passes, unless
@@ -89,6 +92,8 @@ use support::{Alias, display_name};
 )]
 mod pixels;
 use pixels::Rect;
+#[path = "qa_meeting_request.rs"]
+mod request;
 
 const CHILD_ENV: &str = "QA798_CHILD";
 const EVIDENCE_ENV: &str = "QA798_EVIDENCE";
@@ -183,7 +188,7 @@ fn i32_of(value: u32) -> i32 {
 
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
-const CHECKS: [Check; 10] = [
+const CHECKS: [Check; 14] = [
     ("meeting_alone", meeting_alone),
     ("b_joins_then_leaves", b_joins_then_leaves),
     ("not_people", not_people),
@@ -191,6 +196,10 @@ const CHECKS: [Check; 10] = [
     ("keyboard", keyboard),
     ("themes", themes),
     ("invited_request", invited_request),
+    ("request_states", request::request_states),
+    ("request_keyboard", request::request_keyboard),
+    ("request_refusals", request::request_refusals),
+    ("invitee_ring", request::invitee_ring),
     ("one_to_one_ringing", one_to_one_ringing),
     ("group_ringing", group_ringing),
     ("group_request_to_join", group_request_to_join),
@@ -1791,6 +1800,14 @@ fn state_of(shell: &Entity<Shell>, cx: &App) -> Value {
             .collect();
         let lobby: Vec<&str> = call.lobby.iter().map(|person| person.mri.as_str()).collect();
         let invited: Vec<&str> = call.invited.iter().map(|invited| invited.mri.as_str()).collect();
+        let asked: Vec<Value> = call
+            .invited
+            .iter()
+            .map(|invited| {
+                json!({"mri": invited.mri.as_str(), "no_response": invited.no_response, "declined": invited.declined.is_some()})
+            })
+            .collect();
+        let passed: Vec<&str> = call.passed.iter().map(Mri::as_str).collect();
         json!({
             "title": call.title,
             "status": teams_ui::calls::status_name(&call.status),
@@ -1801,10 +1818,16 @@ fn state_of(shell: &Entity<Shell>, cx: &App) -> Value {
             "participants": participants,
             "lobby": lobby,
             "invited": invited,
+            "asked": asked,
+            "passed": passed,
         })
     });
+    let ringing = calls
+        .ringing()
+        .map(|ringing| json!({"caller": ringing.caller.as_str(), "chat": ringing.group_chat}));
     json!({
         "main": main,
+        "ringing": ringing,
         "prejoin": prejoin,
         "call": call,
     })
