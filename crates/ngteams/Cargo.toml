@@ -244,6 +244,11 @@ name = "qa_telegram_stickers_window"
 harness = false
 
 [[test]]
+# QA of task 652: Signal sticker packs from a link in the picker, in the app's window over the mock and its Signal CDN
+name = "qa_signal_stickers_window"
+harness = false
+
+[[test]]
 # QA of task 579: the AI notice and the "Use AI features" switch in the app's window over the mock
 name = "qa_ai_notice_window"
 harness = false
