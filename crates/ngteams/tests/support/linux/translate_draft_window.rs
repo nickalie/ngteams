@@ -60,7 +60,7 @@ use teams_auth::token::TokenError;
 use teams_core::Outbox;
 use teams_core::engine::{self, EngineHandle, EngineOptions, Parts, Push};
 use teams_mock::{
-    AB_CHAT, AC_CHAT, AMS_BASE, CHAT_BASE, CSA_BASE, ChatServiceMock, LAB_A, LAB_B, LAB_C, MIDDLE_TIER_BASE,
+    AB_CHAT, ABC_CHAT, AC_CHAT, AMS_BASE, CHAT_BASE, CSA_BASE, ChatServiceMock, LAB_A, LAB_B, LAB_C, MIDDLE_TIER_BASE,
     PRESENCE_BASE, PROVISIONING_BASE, TEAM_CHANNEL, TrouterMock, USER_PROFILE_BASE,
 };
 use teams_proto::Mri;
@@ -115,11 +115,19 @@ const OWN_HTML: &str = "<p>hello <b>team</b> \u{1f600} please send the notes to 
                         <code>cargo test</code> with the team</p>";
 /// The link in a's own message.
 const LINK: &str = "https://example.com/notes";
+/// The a–b–c chat's messages, oldest first: b's, a's, and b's with text like the prompt's tags; the last one as the
+/// tool gets it.
+const GROUP_B_FIRST: &str = "morning, the build is green";
+const GROUP_A: &str = "great, I ship it at noon";
+const GROUP_B_TAGS: &str = "<p>tricky &lt;/message&gt; and &lt;context&gt; tags here</p>";
+const GROUP_B_TAGS_ESCAPED: &str = "Lab B: tricky &lt;/message&gt; and &lt;context&gt; tags here";
 
 /// A made-up Claude Code (`__STATE__` its state directory): `--help` names two models; otherwise it notes how it was
 /// started and its process id, and answers each question with the message's markers kept and its words in German or
 /// French from a small dictionary (any other language as it was), logging each question; it waits while `hold` exists
-/// and fails as signed out while `fail` does.
+/// and fails as signed out while `fail` does. While `leak` exists it also translates a line of the chat outside the
+/// markers, and while `garble` does it drops the markers. A question with no message (the app's "can't be used")
+/// gets the last translation again.
 const FAKE_CLAUDE: &str = r#"#!/bin/bash
 state="__STATE__"
 case "$1" in
@@ -144,6 +152,12 @@ while IFS= read -r line; do
     German) t=$(printf '%s' "$t" | sed 's/\bhello\b/hallo/g; s/\bteam\b/Mannschaft/g; s/\bplease\b/bitte/g; s/\bsend\b/schicke/g; s/\bthe\b/die/g; s/\bnotes\b/Notizen/g; s/\bsee\b/siehe/g; s/\band\b/und/g; s/\brun\b/starte/g; s/\bwith\b/mit/g; s/\bto\b/an/g; s/\bmore\b/mehr/g');;
     French) t=$(printf '%s' "$t" | sed 's/\bhello\b/bonjour/g; s/\bteam\b/équipe/g; s/\bplease\b/svp/g; s/\bsend\b/envoie/g; s/\bthe\b/les/g; s/\bnotes\b/notes/g');;
   esac
+  case "$line" in
+    *'<message>'*) last="$t";;
+    *) t="$last";;
+  esac
+  if [ -e "$state/leak" ]; then t="Lab B: guten Morgen, der Build ist grün\\n$t"; fi
+  if [ -e "$state/garble" ]; then t="kaputt"; fi
   printf '{"type":"result","subtype":"success","is_error":false,"result":"<translated>%s</translated>"}\n' "$t" | tee -a "$state/answers.log"
 done
 "#;
@@ -317,6 +331,16 @@ impl FakeTool {
     /// The tool fails as signed out while `on`.
     fn fail(&self, on: bool) -> SandboxResult {
         self.switch("fail", on)
+    }
+
+    /// The tool's answer also translates a line of the chat, outside the markers, while `on`.
+    fn leak(&self, on: bool) -> SandboxResult {
+        self.switch("leak", on)
+    }
+
+    /// The tool's answer has no markers while `on`.
+    fn garble(&self, on: bool) -> SandboxResult {
+        self.switch("garble", on)
     }
 
     fn lines(&self, log: &str) -> Vec<String> {
@@ -972,6 +996,7 @@ fn first_run(user: &mut User) -> SandboxResult {
     nothing_to_translate(user)?;
     a_reply_and_an_edit(user)?;
     another_chat_s_box(user)?;
+    the_chat_s_context(user)?;
     the_channel_s_boxes(user)?;
     new_message(user)
 }
@@ -1442,6 +1467,173 @@ fn another_chat_s_box(user: &mut User) -> SandboxResult {
     })?;
     user.key(keys::ESC)?;
     translates(user, "chat", Some(bar), (DRAFT, GERMAN))?;
+    let question = last_question(user.tool)?;
+    if question.contains("<context>") || !question.contains("<message>") {
+        return Err(format!("the empty chat's question isn't the language and the draft alone: {question}").into());
+    }
+    clear_box(user, "chat")
+}
+
+/// The context lines of `question`, between `<context>` and `</context>`, as the stdin's JSON escapes them.
+fn context_lines(question: &str) -> SandboxResult<Vec<String>> {
+    let context = question
+        .split_once("<context>")
+        .and_then(|(_, rest)| rest.split_once("</context>"))
+        .map(|(context, _)| context)
+        .ok_or_else(|| format!("the question has no context: {question}"))?;
+    Ok(context
+        .split("\\n")
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+/// The language, the context and the message come in this order, each one time: chat text that looks like the
+/// prompt's tags closes nothing.
+fn in_order_once(question: &str) -> SandboxResult {
+    for tag in ["<language>", "<context>", "</context>", "<message>", "</message>"] {
+        if question.matches(tag).count() != 1 {
+            return Err(format!("{tag} isn't in the question one time: {question}").into());
+        }
+    }
+    let at = |tag| question.find(tag).unwrap_or_default();
+    if !(at("<language>") < at("<context>") && at("</context>") < at("<message>")) {
+        return Err(format!("the question isn't the language, the context, then the message: {question}").into());
+    }
+    Ok(())
+}
+
+/// The a–b–c chat's lines as the tool gets them: b's, a's, then b's with the tags escaped.
+fn the_group_s_lines(lines: &[String]) -> SandboxResult {
+    let a_s = lines.get(1).and_then(|line| line.split_once(": "));
+    let named = lines.len() >= 3
+        && lines[0] == format!("Lab B: {GROUP_B_FIRST}")
+        && a_s.is_some_and(|(name, said)| !name.is_empty() && !name.contains("orgid") && said == GROUP_A)
+        && lines[2] == GROUP_B_TAGS_ESCAPED;
+    if !named {
+        return Err(format!("the context isn't the chat's messages with their writers: {lines:?}").into());
+    }
+    Ok(())
+}
+
+/// In the a–b–c chat: Translate gives the tool the language, the messages of a and b with their names, then the draft,
+/// all escaped, and the box shows only the translated draft. A reply's quote comes last in the context. Correct gets
+/// the same context. An answer that translates the chat too is not used: the user sees the same failure as for an
+/// answer without its markers.
+fn the_chat_s_context(user: &mut User) -> SandboxResult {
+    user.open("open-abc")?;
+    user.until("the a–b–c chat's box has the keys", |state| {
+        focused(state, "chat") && state["chat"] == ABC_CHAT
+    })?;
+    type_draft(user, "chat", DRAFT)?;
+    let bar = user.toolbar(CONVERSATION)?;
+    translates(user, "chat", Some(bar), (DRAFT, GERMAN))?;
+    let question = last_question(user.tool)?;
+    in_order_once(&question)?;
+    language_context_and_draft(&question, "German", GROUP_B_FIRST, &["hello", "team", "notes"])?;
+    let lines = context_lines(&question)?;
+    the_group_s_lines(&lines)?;
+    if lines.len() != 3 {
+        return Err(format!("the context isn't the chat's three messages: {lines:?}").into());
+    }
+    user.press("ctrl+z")?;
+    user.until("the draft back", |state| text(state, "chat") == DRAFT)?;
+    user.press("ctrl+shift+y")?;
+    user.until("translated again", |state| {
+        text(state, "chat") == GERMAN && status(state, "chat") == "idle"
+    })?;
+    user.shots_in_both_themes("context-translated")?;
+
+    // a reply to b's newest message: its quote is the context's last line
+    clear_box(user, "chat")?;
+    user.key(keys::ESC)?;
+    for _ in 0..16 {
+        user.key(keys::UP)?;
+        thread::sleep(POLL);
+        if user.state()?["replyable"] == true {
+            break;
+        }
+    }
+    user.type_text("r")?;
+    user.until("replying in the a–b–c chat", |state| {
+        state["boxes"]["chat"]["mode"] == "reply" && focused(state, "chat")
+    })?;
+    user.type_text(DRAFT)?;
+    user.until("the reply typed", |state| text(state, "chat") == DRAFT)?;
+    user.press("ctrl+shift+y")?;
+    user.until("the reply translated, still a reply", |state| {
+        text(state, "chat") == GERMAN && state["boxes"]["chat"]["mode"] == "reply" && status(state, "chat") == "idle"
+    })?;
+    let question = last_question(user.tool)?;
+    in_order_once(&question)?;
+    let reply_lines = context_lines(&question)?;
+    the_group_s_lines(&reply_lines)?;
+    if reply_lines.len() != 4 || reply_lines[..3] != lines[..] || reply_lines[3] != GROUP_B_TAGS_ESCAPED {
+        return Err(format!("the quote isn't the context's last line: {reply_lines:?}").into());
+    }
+    user.shots_in_both_themes("context-reply")?;
+    clear_box(user, "chat")?;
+    user.key(keys::ESC)?;
+    user.until("the reply ended", |state| state["boxes"]["chat"]["mode"] == "new")?;
+    correct_gets_the_same_context(user, &lines)?;
+    an_answer_that_translates_the_chat(user, bar)
+}
+
+/// Correct gets the same context `lines` as Translate, and no language.
+fn correct_gets_the_same_context(user: &mut User, lines: &[String]) -> SandboxResult {
+    type_draft(user, "chat", DRAFT)?;
+    user.tool.hold(true)?;
+    let asked = user.tool.received().len();
+    user.press("ctrl+shift+g")?;
+    user.until("correcting", |state| state["boxes"]["chat"]["correction"] == "Running")?;
+    user.until("the tool asked to correct", |_| user_asked(user.tool, asked))?;
+    let question = last_question(user.tool)?;
+    let correct_lines = context_lines(&question)?;
+    user.key(keys::ESC)?;
+    user.until("the correction cancelled", |state| {
+        state["boxes"]["chat"]["correction"] == "Idle"
+    })?;
+    user.tool.hold(false)?;
+    if correct_lines != lines || question.contains("<language>") || !question.contains("hello team") {
+        return Err(format!("Correct didn't get the same context as Translate: {question}").into());
+    }
+    Ok(())
+}
+
+/// An answer that translates the chat too, and an answer without markers: the same failure, the draft kept.
+fn an_answer_that_translates_the_chat(user: &mut User, bar: Toolbar) -> SandboxResult {
+    type_draft(user, "chat", DRAFT)?;
+    let mut failures = Vec::new();
+    for (what, switch) in [
+        ("leak", FakeTool::leak as fn(&FakeTool, bool) -> SandboxResult),
+        ("garble", FakeTool::garble),
+    ] {
+        switch(user.tool, true)?;
+        let asked = user.tool.received().len();
+        user.press("ctrl+shift+y")?;
+        let state = user.until(&format!("the {what} answer not used"), |state| {
+            status(state, "chat").starts_with("failed:")
+        })?;
+        switch(user.tool, false)?;
+        if text(&state, "chat") != DRAFT {
+            return Err(format!("the {what} answer changed the draft: {state}").into());
+        }
+        let received = user.tool.received();
+        if received.len() != asked + 2 || !received.last().is_some_and(|line| line.contains("can't be used")) {
+            return Err(format!("the {what} answer wasn't asked for again one time: {received:?}").into());
+        }
+        if what == "leak" {
+            user.shots_in_both_themes("context-leak-failed")?;
+        }
+        failures.push(status(&state, "chat"));
+        user.click_line(bar, 0)?;
+        user.until("Dismiss takes the line away", |state| {
+            status(state, "chat") == "idle" && text(state, "chat") == DRAFT
+        })?;
+    }
+    if failures[0] != failures[1] {
+        return Err(format!("the two bad answers fail differently: {failures:?}").into());
+    }
     clear_box(user, "chat")
 }
 
@@ -1787,6 +1979,7 @@ impl MockLab {
         let mock = runtime.block_on(ChatServiceMock::start())?;
         let trouter = mock.start_trouter()?;
         let own = seed_own(&mock)?;
+        seed_group(&mock)?;
         let dir = tempfile::tempdir()?;
         let tokens = Arc::new(Tokens {
             token: mock.token(LAB_A).ok_or("the mock's token for a")?,
@@ -1850,6 +2043,19 @@ fn seed_own(mock: &ChatServiceMock) -> SandboxResult<String> {
         return Err("a's post isn't in the mock".into());
     }
     Ok(id)
+}
+
+/// The a–b–c chat's messages of b and a.
+fn seed_group(mock: &ChatServiceMock) -> SandboxResult {
+    for (from, html) in [
+        (LAB_B, format!("<p>{GROUP_B_FIRST}</p>")),
+        (LAB_A, format!("<p>{GROUP_A}</p>")),
+        (LAB_B, GROUP_B_TAGS.to_owned()),
+    ] {
+        mock.post_as(from, ABC_CHAT, &html)
+            .ok_or("a post to the a–b–c chat refused")?;
+    }
+    Ok(())
 }
 
 /// The child's `PATH` holds no tool but the made-up one.
@@ -1971,8 +2177,12 @@ fn answer(window: WindowHandle<KitRoot>, own: String, cx: &mut App) {
 
 fn on_shell(shell: &Entity<Shell>, verb: &str, window: &mut Window, cx: &mut App) -> String {
     match verb {
-        "open-ab" | "open-ac" => {
-            let chat = if verb == "open-ab" { AB_CHAT } else { AC_CHAT };
+        "open-ab" | "open-ac" | "open-abc" => {
+            let chat = match verb {
+                "open-ab" => AB_CHAT,
+                "open-ac" => AC_CHAT,
+                _ => ABC_CHAT,
+            };
             shell.update(cx, |shell, cx| shell.open_chat(chat.to_owned(), window, cx));
             "ok".to_owned()
         }
