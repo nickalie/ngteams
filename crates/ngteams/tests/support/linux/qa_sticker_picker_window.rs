@@ -1550,10 +1550,12 @@ fn bare_faults(image: &RgbImage, face: Rect, what: &str) -> Vec<String> {
         (-100, 0),
         (100, 0),
     ];
+    // the ground is a gradient: each point against the ground on its own row, right of the sticker
     let behind: Vec<((i32, i32), [u8; 3])> = clear
         .into_iter()
         .map(|(dx, dy)| (cx + dx, cy + dy))
         .filter_map(|(x, y)| {
+            let ground = pixel(image, face.right() + 220, y)?;
             pixel(image, x, y)
                 .filter(|here| !near(*here, ground, 8))
                 .map(|here| ((x, y), here))

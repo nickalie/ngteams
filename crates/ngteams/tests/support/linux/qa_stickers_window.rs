@@ -605,37 +605,42 @@ fn mouth_ink(image: &RgbImage, found: Found) -> usize {
     ink
 }
 
-/// The points of a sticker's square, and just outside it, where the made-up sticker is clear: its corners and the
-/// middles of its sides, 4 px in, and the same 8 px out.
+/// The points of a sticker's square where the made-up sticker is clear (its corners and the middles of its sides, 4
+/// px in) and beside it (8 px out on the left and the right; above and below are its neighbours).
 fn clear_points(square: Rect) -> Vec<(i32, i32)> {
-    let mut points = Vec::new();
-    for inset in [4, -8] {
-        let (left, top) = (square.x + inset, square.y + inset);
-        let (right, bottom) = (square.right() - 1 - inset, square.bottom() - 1 - inset);
-        let (middle_x, middle_y) = (square.x + square.w / 2, square.y + square.h / 2);
-        points.extend([
-            (left, top),
-            (right, top),
-            (left, bottom),
-            (right, bottom),
-            (middle_x, top),
-            (middle_x, bottom),
-            (left, middle_y),
-            (right, middle_y),
-        ]);
-    }
-    points
+    let (left, top) = (square.x + 4, square.y + 4);
+    let (right, bottom) = (square.right() - 5, square.bottom() - 5);
+    let (middle_x, middle_y) = (square.x + square.w / 2, square.y + square.h / 2);
+    vec![
+        (left, top),
+        (right, top),
+        (left, bottom),
+        (right, bottom),
+        (middle_x, top),
+        (middle_x, bottom),
+        (left, middle_y),
+        (right, middle_y),
+        (square.x - 8, middle_y),
+        (square.right() + 7, middle_y),
+    ]
 }
 
-/// What is drawn behind a sticker: each clear point of its square ([`clear_points`]) that is not `ground`, the chat's
-/// background beside it. Teams draws a sticker bare: no frame, tile or bubble behind its clear px.
-fn behind(image: &RgbImage, square: Rect, ground: [u8; 3]) -> Vec<((i32, i32), [u8; 3])> {
+/// The chat's ground on row `y`, beside a sticker: 30 px out from `square`, on the side away from the bubbles (left
+/// of one's own, right of another's). The ground is a gradient, so each row has its own.
+fn ground_on_row(image: &RgbImage, square: Rect, own: bool, y: i32) -> Option<[u8; 3]> {
+    let x = if own { square.x - 30 } else { square.right() + 30 };
+    pixel(image, x, y)
+}
+
+/// What is drawn behind a sticker: each clear point of its square ([`clear_points`]), its colour and the chat's
+/// ground on its row, where the two differ. Teams draws a sticker bare: no frame, tile or bubble behind its clear px.
+fn behind(image: &RgbImage, square: Rect, own: bool) -> Vec<((i32, i32), [u8; 3], [u8; 3])> {
     clear_points(square)
         .into_iter()
         .filter_map(|(x, y)| {
-            pixel(image, x, y)
-                .filter(|colour| !near(*colour, ground, 6))
-                .map(|colour| ((x, y), colour))
+            let here = pixel(image, x, y)?;
+            let ground = ground_on_row(image, square, own, y)?;
+            (!near(here, ground, 6)).then_some(((x, y), here, ground))
         })
         .collect()
 }
@@ -1052,11 +1057,10 @@ fn check_bare(image: &RgbImage, found: &[Found], width: i32, what: &str) -> Sand
                 sticker.face.w, sticker.face.h
             ));
         }
-        let ground = ground_beside(image, sticker, is_own)?;
-        let drawn = behind(image, sticker.sticker, ground);
+        let drawn = behind(image, sticker.sticker, is_own);
         if !drawn.is_empty() {
             faults.push(format!(
-                "{what}: {who} sticker is not bare: {drawn:?} behind it, the chat's ground is {ground:?}"
+                "{what}: {who} sticker is not bare: (point, colour, the ground on its row) {drawn:?}"
             ));
         }
         if sticker.sticker.x < 0 || sticker.sticker.right() > width {
@@ -1111,10 +1115,15 @@ fn check_visible(image: &RgbImage, found: &[Found], width: i32, what: &str) -> S
                 faults.push(format!("{what}: a face is {:?}: cut or not square", sticker.face));
             }
             let own = sticker.face.x > width / 2;
-            let ground = ground_beside(image, sticker, own)?;
-            // the scaled sticker's clear px under its face and left of it
+            // the scaled sticker's clear px under its face and left of it, and the ground on that row just outside
+            // the scaled square (the face starts 20 of 180 px in, ends 40 px before the right), away from the bubbles
             let (x, y) = (sticker.face.x - 6, sticker.face.bottom() + 6);
-            if let Some(here) = pixel(image, x, y)
+            let out = if own {
+                sticker.face.x - 25
+            } else {
+                sticker.face.right() + 40
+            };
+            if let (Some(here), Some(ground)) = (pixel(image, x, y), pixel(image, out, y))
                 && !near(here, ground, 12)
             {
                 faults.push(format!(
@@ -1130,11 +1139,10 @@ fn check_visible(image: &RgbImage, found: &[Found], width: i32, what: &str) -> S
                 sticker.face
             ));
         }
-        let ground = ground_beside(image, sticker, own)?;
-        let drawn = behind(image, sticker.sticker, ground);
+        let drawn = behind(image, sticker.sticker, own);
         if !drawn.is_empty() {
             faults.push(format!(
-                "{what}: a sticker at {:?} is not bare: {drawn:?} behind it, the ground is {ground:?}",
+                "{what}: a sticker at {:?} is not bare: (point, colour, the ground on its row) {drawn:?}",
                 sticker.sticker
             ));
         }
@@ -1616,12 +1624,11 @@ fn call_chat_pane(user: &mut User<'_>) -> SandboxResult {
         match user.stickers(&name, 1) {
             Ok((image, found)) => {
                 let sticker = found[found.len() - 1];
-                let ground = ground_beside(&image, sticker, true)?;
-                let drawn = behind(&image, sticker.sticker, ground);
+                let drawn = behind(&image, sticker.sticker, false);
                 say(&format!("  {name}: {:?}, behind it {drawn:?}", sticker.sticker));
                 if !drawn.is_empty() {
                     faults.push(format!(
-                        "{name}: the sticker is not bare: {drawn:?} on the ground {ground:?}"
+                        "{name}: the sticker is not bare: (point, colour, the ground) {drawn:?}"
                     ));
                 }
                 if !(100..=124).contains(&sticker.face.w) {
