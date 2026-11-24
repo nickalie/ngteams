@@ -39,6 +39,13 @@ use crate::local_ai::{
 use crate::settings::SettingsModel;
 use crate::theme;
 
+/// Where a translation's language button was drawn in the last frame: kept in a test build only
+/// ([`AiPicker::language_bounds`]).
+#[cfg(feature = "test-support")]
+type LanguagePlaced = Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>;
+#[cfg(not(feature = "test-support"))]
+type LanguagePlaced = ();
+
 /// What the picker of a work says, and its test selectors.
 struct Words {
     title: &'static str,
@@ -141,6 +148,8 @@ pub struct AiPicker {
     name_events: Option<Subscription>,
     /// A translation's language menu, made the first time it shows (it needs the window).
     language: Option<Entity<LanguageMenu>>,
+    #[cfg_attr(not(feature = "test-support"), expect(dead_code, reason = "a test build's hook"))]
+    language_at: LanguagePlaced,
 }
 
 impl AiPicker {
@@ -162,7 +171,22 @@ impl AiPicker {
             _observing: observing,
             name_events: None,
             language: None,
+            language_at: LanguagePlaced::default(),
         }
+    }
+
+    /// Where a translation's language button was drawn in the last frame, if it was: a window test clicks it there.
+    #[cfg(feature = "test-support")]
+    #[must_use]
+    pub fn language_bounds(&self) -> Option<gpui::Bounds<gpui::Pixels>> {
+        self.language_at.get()
+    }
+
+    /// `button`, its bounds recorded for [`Self::language_bounds`].
+    #[cfg(feature = "test-support")]
+    fn language_placed(&self, button: gpui::Div) -> gpui::Div {
+        let placed = Rc::clone(&self.language_at);
+        button.on_children_prepainted(move |children, _, _| placed.set(children.first().copied()))
     }
 
     /// The choice the settings hold.
@@ -288,16 +312,13 @@ impl AiPicker {
                             .text_color(gpui::rgb(palette.muted_foreground)),
                     ),
             );
+        let button = div().debug_selector(move || selector.to_owned());
+        #[cfg(feature = "test-support")]
+        let button = self.language_placed(button);
         row_with(
             translation.title().into(),
             Some(note.into()),
-            div().debug_selector(move || selector.to_owned()).child(menu::popover(
-                &language,
-                popover,
-                gpui::Anchor::TopRight,
-                face,
-                cx,
-            )),
+            button.child(menu::popover(&language, popover, gpui::Anchor::TopRight, face, cx)),
             palette,
         )
     }

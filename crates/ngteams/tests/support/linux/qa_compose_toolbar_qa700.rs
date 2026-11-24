@@ -19,6 +19,7 @@ use teams_mock::NOTES;
 use teams_ui::chat_translate::Mark;
 use teams_ui::chat_view::{Body, Item};
 use teams_ui::rich_text::Block;
+use teams_ui::shell::TITLE_HEIGHT;
 
 /// QA 700's checks of the first run, after the checks of task 584 and before the hide for the restart.
 pub(super) const FIRST: [Check; 7] = [
@@ -463,11 +464,6 @@ fn kept_after_restart(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// The language buttons of Settings > General, scrolled to its foot: the reading one at the top, the draft one in
-/// "Message translation".
-const GENERAL_READING: (i32, i32) = (1042, 62);
-const GENERAL_DRAFT: (i32, i32) = (1042, 553);
-
 /// Settings > General: the reading language Russian and the draft language English by their menus; b's message
 /// translates into Russian, the draft into English.
 fn two_languages(user: &mut User<'_>) -> SandboxResult {
@@ -477,14 +473,14 @@ fn two_languages(user: &mut User<'_>) -> SandboxResult {
     user.input.scroll(800, 450, 20)?;
     thread::sleep(SETTLE);
     user.shots_in_both_themes("qa700-general-foot")?;
-    user.click(GENERAL_DRAFT)?;
+    user.click_language("draft")?;
     thread::sleep(SETTLE);
     user.settled_shot("qa700-general-draft-menu")?;
     user.type_text("English")?;
     user.press("enter")?;
     user.until("the draft language English", |state| state["language"] == "English")?;
     user.press("escape")?;
-    user.click(GENERAL_READING)?;
+    user.click_language("reading")?;
     thread::sleep(SETTLE);
     user.settled_shot("qa700-general-reading-menu")?;
     user.type_text("Russian")?;
@@ -586,6 +582,32 @@ fn row_with<'s>(state: &'s Value, mark: &str) -> &'s Value {
 const NARROW_MORE: (i32, i32) = (396, 749);
 
 impl User<'_> {
+    /// A click on the middle of a language button of Settings > General (`draft` or `reading`), where the child says
+    /// that it was drawn (the notes above it change their length), after the page scrolls the button out from under
+    /// the title bar or up from the screen's foot.
+    fn click_language(&mut self, which: &str) -> SandboxResult {
+        #[expect(clippy::cast_possible_truncation, reason = "the title bar's 48 px")]
+        let top = TITLE_HEIGHT.round() as i32;
+        let bottom = i32::try_from(SCREEN.1)?;
+        for _ in 0..20 {
+            let reply = self.ask(&format!("language-at {which}"))?;
+            let at: Vec<i32> = reply.split(' ').filter_map(|part| part.parse().ok()).collect();
+            let [x, y, height] = at[..] else {
+                return Err(format!("no {which} language button: {reply}").into());
+            };
+            let steps = if y - height / 2 < top {
+                -1
+            } else if y + height / 2 > bottom {
+                1
+            } else {
+                return self.click((x, y));
+            };
+            self.input.scroll(800, 450, steps)?;
+            thread::sleep(SETTLE);
+        }
+        Err(format!("the {which} language button never came onto the page").into())
+    }
+
     /// Opens "More options" of the narrow main box by a click on its button.
     fn open_narrow_more(&mut self) -> SandboxResult {
         self.click(NARROW_MORE)?;
@@ -608,12 +630,36 @@ impl User<'_> {
 
 // --- the child ---
 
-/// A verb of QA 700: `settings general`.
+/// A verb of QA 700: `settings general`, or `language-at draft|reading` (the middle of that language button of
+/// Settings > General as last drawn and its height, `x y height`).
 pub(super) fn on_verb(shell: &Entity<Shell>, verb: &str, window: &mut Window, cx: &mut App) -> Option<String> {
-    (verb == "settings general").then(|| {
+    if verb == "settings general" {
         shell.update(cx, |shell, cx| shell.open_settings_page(Page::General, window, cx));
-        "ok".to_owned()
-    })
+        return Some("ok".to_owned());
+    }
+    let which = verb.strip_prefix("language-at ")?;
+    let view = shell.read(cx).settings_view().clone();
+    let picker = view.update(cx, |view, cx| match which {
+        "draft" => Some(view.message_translation_ai_picker(cx)),
+        "reading" => Some(view.chat_ai_picker(cx)),
+        _ => None,
+    });
+    let Some(picker) = picker else {
+        return Some(format!("no language {which}"));
+    };
+    Some(picker.read(cx).language_bounds().map_or_else(
+        || "not drawn".to_owned(),
+        |bounds| {
+            let middle = bounds.center();
+            let height = f32::from(bounds.size.height);
+            format!(
+                "{} {} {}",
+                f32::from(middle.x).round(),
+                f32::from(middle.y).round(),
+                height.round()
+            )
+        },
+    ))
 }
 
 /// The open chat's message rows (each its id, its words as shown and its translation mark) and the selected one.

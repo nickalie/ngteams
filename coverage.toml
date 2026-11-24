@@ -684,6 +684,11 @@ sha256 = "675e09d77311a62e5035ae65d537ae00e1a7218c76c5771ab4824510fcd26fb6"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
 context = { "crates/teams-core/src/telegram.rs" = "2c71c15bec0ff629a353972bc1eb87fdd346047ee69a5b93cee41f47122a6943" }
 
+[unmapped_sources."crates/teams-core/src/signal_tests.rs"]
+sha256 = "360d014e427c08803478634f3e98a12872d438cd232b833141280c198b6c90ea"
+reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
+context = { "crates/teams-core/src/signal.rs" = "69ac993a91a63f608bcc5d458f51324161db1761d96ae6f4fb08de1742aebe19" }
+
 [unmapped_sources."crates/teams-ui/src/stickers/lottie_tests.rs"]
 sha256 = "9ebcb6f1a808b11ba56b3aec0809c15e4314fa4dea22e70e4e417a370d285874"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
