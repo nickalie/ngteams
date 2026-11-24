@@ -67,6 +67,9 @@ const ALL_STICKERS_FOUND: usize = 8;
 const HOME_PACKS: usize = 4;
 /// The skipped files a summary names; "and N more" after.
 const SKIPPED_SHOWN: usize = 5;
+/// What the Stickers tab says the user can add when there is no pack.
+pub const NO_PACKS_HINT: &str = "Add your own: PNG, WebP or GIF pictures or Telegram stickers from a folder or a .zip \
+                                 file, or a Telegram or Signal sticker pack from its link.";
 
 /// What the picker tells.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -391,6 +394,15 @@ impl FunPicker {
             .map(Line::items)
             .filter(|items| !items.is_empty())
             .collect()
+    }
+
+    /// The words of the Stickers tab's no-pack state, if the tab shows it.
+    #[must_use]
+    pub fn no_packs_hint(&self, cx: &App) -> Option<&'static str> {
+        self.lines(cx)
+            .iter()
+            .any(|line| matches!(line, Line::Empty))
+            .then_some(NO_PACKS_HINT)
     }
 
     /// Whether the focus is in the picker.
@@ -1582,7 +1594,7 @@ impl FunPicker {
                     .text_center()
                     .text_sm()
                     .text_color(rgb(palette.muted_foreground))
-                    .child("Add your own: a folder or a .zip file of PNG, WebP or GIF pictures or Telegram stickers."),
+                    .child(NO_PACKS_HINT),
             )
             .child(div().pt_1().flex().gap_2().child(folder).child(archive))
             .child(div().flex().gap_2().child(telegram).child(signal))

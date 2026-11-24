@@ -6,8 +6,9 @@
 //! parent finds the stickers in the screenshots by their colours, and asks the child what the views hold through a
 //! file in the sandbox dir (`harness = false`: GPUI runs on the process's main thread).
 //!
-//! - **The empty state** (a first run with an own server's capabilities, so no Teams packs): its "Import a Signal
-//!   pack" button opens the panel; the Telegram and the Signal panels are never open together.
+//! - **The empty state** (a first run with an own server's capabilities, so no Teams packs): its words name Signal
+//!   sticker packs; its "Import a Signal pack" button opens the panel; the Telegram and the Signal panels are never
+//!   open together.
 //! - **The menu row** "Import a Signal pack"; a link pasted with Ctrl+V and Enter: the pack's title, its cover, each
 //!   sticker, the emoji labels (the tooltip), an animated sticker as a GIF that plays.
 //! - **Errors**: malformed links, an unknown pack (403), a wrong key, a tampered manifest, a tampered and a missing
@@ -1266,8 +1267,9 @@ fn pack_count(state: &Value) -> usize {
     state["shelf"]["packs"].as_array().map_or(0, Vec::len)
 }
 
-/// The empty state (no packs, no Teams packs): its Signal button opens the Signal panel with the focus in it, Escape
-/// goes back to the empty state; its Telegram button opens the Telegram panel and not the Signal one.
+/// The empty state (no packs, no Teams packs): its words name Signal sticker packs; its Signal button opens the Signal
+/// panel with the focus in it, Escape goes back to the empty state; its Telegram button opens the Telegram panel and
+/// not the Signal one.
 fn empty_state_opens_panel(user: &mut User<'_>) -> SandboxResult {
     let mut faults = Vec::new();
     let state = user.open_stickers_by_keys()?;
@@ -1287,7 +1289,16 @@ fn empty_state_opens_panel(user: &mut User<'_>) -> SandboxResult {
     if has_item(&state, "sticker-pack-add") {
         faults.push("the empty state shows the add-a-pack menu's button, not its own buttons".to_owned());
     }
+    let hint = state["picker"]["no_packs_hint"].as_str().unwrap_or_default();
+    if !hint.contains("Signal sticker pack") {
+        faults.push(format!(
+            "the empty state's words do not name Signal sticker packs: {hint:?}"
+        ));
+    }
     user.image("empty-state")?;
+    user.ask("theme-dark")?;
+    user.image("empty-state-dark")?;
+    user.ask("theme-light")?;
     user.key_pick("sticker-import-signal")?;
     let state = user.until("the Signal panel from the empty state", panel_open)?;
     if panel(&state)["focus"] != true {
@@ -2448,6 +2459,7 @@ fn picker_state(picker: &Entity<FunPicker>, window: &Window, cx: &App) -> Value 
         "current": picker.current(window, cx).map(|item| item.selector()),
         "rows": rows,
         "focus": picker.holds_focus(window, cx),
+        "no_packs_hint": picker.no_packs_hint(cx),
         "telegram": picker.telegram_import().map(|panel| telegram_state(panel, cx)),
         "signal": picker.signal_import().map(|panel| signal_state(panel, window, cx)),
     })

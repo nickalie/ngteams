@@ -27,7 +27,7 @@ use teams_store::Member;
 use teams_ui::chat_view::ChatView;
 use teams_ui::compose::{Compose, ComposeEvent, Loaded, Mode, STICKER_LOADING_FIRST};
 use teams_ui::editor::doc::Doc;
-use teams_ui::fun_picker::{FunPicker, Item, Place, StickerView, Tab};
+use teams_ui::fun_picker::{FunPicker, Item, NO_PACKS_HINT, Place, StickerView, Tab};
 use teams_ui::settings::SettingsModel;
 use teams_ui::shell::Shell;
 use teams_ui::stickers::import::{self, ImportKind};
@@ -223,6 +223,7 @@ fn the_picker_has_teams_tabs_and_see_all_opens_each() {
     assert_eq!(cx.update(|_, cx| picker.read(cx).tab()), Tab::Stickers);
     assert!(drawn(cx, "sticker-pack-lab-cats"), "the pack's tile");
     assert!(!drawn(cx, "sticker-packs-empty"));
+    assert_eq!(cx.update(|_, cx| picker.read(cx).no_packs_hint(cx)), None);
     click(cx, "sticker-packs-see-all");
     assert_eq!(
         cx.update(|_, cx| picker.read(cx).sticker_view().clone()),
@@ -506,6 +507,14 @@ fn a_folder_imported_from_the_picker_shows_its_progress_and_summary_then_its_pac
     );
     click(cx, "fun-tab-stickers");
     assert!(drawn(cx, "sticker-packs-empty"), "what to do with no pack");
+    let hint = cx.update(|_, cx| picker.read(cx).no_packs_hint(cx));
+    assert_eq!(hint, Some(NO_PACKS_HINT));
+    for source in ["folder", ".zip", "Telegram", "Signal sticker pack"] {
+        assert!(
+            NO_PACKS_HINT.contains(source),
+            "the hint names {source}: {NO_PACKS_HINT}"
+        );
+    }
     assert!(drawn(cx, "sticker-import-folder") && drawn(cx, "sticker-import-zip"));
 
     let folder = pack_folder(place.sources.path(), "Lab cats");
