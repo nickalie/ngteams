@@ -230,3 +230,9 @@ fn what_isnt_the_control_plane_tells_nothing() {
     );
     assert_eq!(plane.state(), McpState::Handshaking);
 }
+
+#[test]
+fn receive_limits_write_the_fmtp_of_their_line() {
+    assert_eq!(ReceiveLimits::HD.fmtp(), "max-fs=3600;max-mbps=108000;max-fps=3000");
+    assert_eq!(ReceiveLimits::SCREEN.fmtp(), "max-fs=8160;max-mbps=122400;max-fps=1500");
+}

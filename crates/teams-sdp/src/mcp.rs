@@ -261,6 +261,17 @@ impl ReceiveLimits {
         self.max_fs.saturating_mul(self.max_fps) / 100
     }
 
+    /// The limits as H.264's `a=fmtp` parameters, as the web client writes them in its SDP.
+    #[must_use]
+    pub fn fmtp(self) -> String {
+        format!(
+            "max-fs={};max-mbps={};max-fps={}",
+            self.max_fs,
+            self.max_mbps(),
+            self.max_fps
+        )
+    }
+
     fn json(self) -> Value {
         json!([{"max-fs": self.max_fs, "max-mbps": self.max_mbps(), "max-fps": self.max_fps}])
     }

@@ -110,7 +110,11 @@ impl Room {
         let size = self.sizes.get(&frame.source).copied();
         let mut wanted = false;
         for ((id, stream), slot) in &mut self.slots {
-            if id == from || slot.source() != Some(frame.source) || !slot.fits(size) {
+            if id == from || slot.source() != Some(frame.source) {
+                continue;
+            }
+            if !slot.fits(size) {
+                slot.hold();
                 continue;
             }
             let Some(leg) = self.legs.get_mut(id).filter(|leg| leg.seed.is_some()) else {

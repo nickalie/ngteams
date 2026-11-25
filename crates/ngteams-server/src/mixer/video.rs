@@ -141,14 +141,15 @@ impl Slot {
         self.max_fs = max_fs;
     }
 
-    /// Whether pictures of `size` macroblocks (none: not known) fit the line. One that doesn't makes the line wait for
-    /// a keyframe again, so it shows its source again only from one that fits.
-    pub(crate) fn fits(&mut self, size: Option<u32>) -> bool {
-        let fits = size.zip(self.max_fs).is_none_or(|(size, max_fs)| size <= max_fs);
-        if !fits {
-            self.waiting = self.source.is_some();
-        }
-        fits
+    /// Whether pictures of `size` macroblocks (none: not known) fit the line.
+    pub(crate) fn fits(&self, size: Option<u32>) -> bool {
+        size.zip(self.max_fs).is_none_or(|(size, max_fs)| size <= max_fs)
+    }
+
+    /// Makes the line wait for a keyframe again (after a picture that didn't fit), so it shows its source again only
+    /// from one that fits.
+    pub(crate) fn hold(&mut self) {
+        self.waiting = self.source.is_some();
     }
 
     /// The RTP time a frame of the source at `time` goes out at on this line at `now`; none while the line waits for a
@@ -270,6 +271,12 @@ mod tests {
         assert_eq!(slot.pass(true, 90_000, now), Some(90_000));
         // a 1080p screen on a line that asked for 720p: nothing, and the line waits for a keyframe that fits
         assert!(!slot.fits(Some(8160)));
+        assert_eq!(
+            slot.pass(false, 93_000, now),
+            Some(93_000),
+            "a check alone holds nothing"
+        );
+        slot.hold();
         assert_eq!(slot.pass(false, 93_000, now), None);
         slot.limit(Some(8160));
         assert!(slot.fits(Some(8160)));

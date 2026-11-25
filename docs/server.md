@@ -1287,7 +1287,8 @@ share at a time: a share that starts takes over the one going, whose stream the 
 sharer's client stops its share) and the others ask
 the node for it with source requests on the control plane (`sr`: a receiving line's stream id and the source to show,
 `-1` for none; each is answered `sr_res` `ok`, and one naming no receiving line of the party's changes nothing). The node writes each frame of a camera or a screen onto every line
-whose last request named it, from that source's next keyframe on (it asks the source for one by PLI, or FIR where
+whose last request named it and whose `max-fs` its pictures fit (the size read from the sequence parameter set of the
+source's keyframes; nothing is scaled), from that source's next keyframe on (it asks the source for one by PLI, or FIR where
 the line takes no PLI, at most every 300 ms per source), its RTP time going on from where the line was when it changes
 source. A receiver's PLI or FIR on a line is passed to the source it shows. No video goes to a party before it
 seeded its bandwidth (`applyChannelParameters`' `sendSideBWSeed`, in its start, answer, join or renegotiation, or on

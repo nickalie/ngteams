@@ -5,7 +5,7 @@
 /// The NAL unit type of a sequence parameter set.
 const SPS: u8 = 7;
 /// The profiles whose sequence parameter set names its chroma format and bit depths.
-const HIGH_PROFILES: [u8; 12] = [100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134];
+const HIGH_PROFILES: [u8; 14] = [100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135, 144];
 
 /// The macroblocks of each picture of the stream whose keyframe is `data` (Annex B: NAL units after start codes), from
 /// its first sequence parameter set; none when it carries none or one this reads no size of (a scaling matrix).
@@ -211,6 +211,7 @@ pub(crate) mod tests {
         assert_eq!(macroblocks(&keyframe(66, (1280, 720), 0)), Some(3600));
         assert_eq!(macroblocks(&keyframe(100, (640, 360), 1)), Some(920));
         assert_eq!(macroblocks(&keyframe(42, (2560, 1440), 2)), Some(14_400));
+        assert_eq!(macroblocks(&keyframe(135, (1920, 1080), 0)), Some(8160));
     }
 
     #[test]

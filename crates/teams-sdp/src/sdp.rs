@@ -56,6 +56,7 @@
 
 use std::fmt;
 
+use crate::mcp::ReceiveLimits;
 use crate::{SdpAnswer, SdpOffer};
 
 /// The content type of Teams' SDP dialect: every offer and answer the native client sends, and what the call
@@ -1514,17 +1515,9 @@ fn write_rtp_payload(section: &Section, (port, sharing): (&str, bool), role: Rol
     );
 }
 
-/// The largest picture we take on a video line, as the web client names its own on H.264's format (`max-fs` in 16 by 16
-/// macroblocks, `max-mbps` macroblocks a second, `max-fps` frames a second times 100): 1280 by 720 at 30 frames a
-/// second, what the native client decodes. The mixer refuses a group call's answer whose receiving lines name none:
-/// `410 SdpParsingFailure`, M3 Task 19.
-const H264_RECEIVE_LIMITS: &str = "max-fs=3600;max-mbps=108000;max-fps=3000";
-/// The largest picture we take on a sharing line, as the web client names it for a screen: 1920 by 1080 at 15 frames
-/// a second (a share comes as its sharer sends it, never scaled down to fit a smaller line).
-const H264_SCREEN_LIMITS: &str = "max-fs=8160;max-mbps=122400;max-fps=1500";
-
-/// An `a=fmtp` value of `section` with [`H264_RECEIVE_LIMITS`] (on a `sharing` line [`H264_SCREEN_LIMITS`]) added when
-/// it is H.264's on a video line that names none.
+/// An `a=fmtp` value of `section` with the line's [`ReceiveLimits`] (on a `sharing` line [`ReceiveLimits::SCREEN`])
+/// added when it is H.264's on a video line that names none. The mixer refuses a group call's answer whose receiving
+/// lines name none: `410 SdpParsingFailure`, M3 Task 19.
 fn with_receive_limits(section: &Section, value: &str, sharing: bool) -> String {
     let Some((pt, params)) = value.split_once(' ') else {
         return value.to_owned();
@@ -1536,12 +1529,7 @@ fn with_receive_limits(section: &Section, value: &str, sharing: bool) -> String 
     if section.kind != Kind::Video || !h264 || params.contains("max-fs=") {
         return value.to_owned();
     }
-    let limits = if sharing {
-        H264_SCREEN_LIMITS
-    } else {
-        H264_RECEIVE_LIMITS
-    };
-    format!("{pt} {params};{limits}")
+    format!("{pt} {params};{}", ReceiveLimits::of(sharing).fmtp())
 }
 
 /// A section's `a=rtcp-fb` lines as Teams writes them: a video line's once each for every payload type (`a=rtcp-fb:*

@@ -289,7 +289,8 @@ that made it work, and `abc-call-mixed`'s captures, where the lab browser's data
   a stream of its own (`a=x-ssrc-range` and its `a=ssrc`, drawn once per line for the call: nothing is sent on a
   receiving line, but one going both ways that names the placeholder stream `1` is refused with `410`
   `SdpParsingFailure`; only a line that really goes receive-only names `1`, no media stream) and the
-  largest picture it takes in its H.264 `fmtp` (`max-fs=3600;max-mbps=108000;max-fps=3000`). Which way a line
+  largest picture it takes in its H.264 `fmtp` (`max-fs=3600;max-mbps=108000;max-fps=3000` on the main and
+  receiving lines, `max-fs=8160;max-mbps=122400;max-fps=1500` on the sharing line, as in "The size of a share"). Which way a line
   really goes is told apart from the SDP, by the media descriptions. The mixer numbers H.264 `107` and its
   retransmissions `99` whatever the offer said, sends with the offer's numbers and takes only its own: a caller's
   video offered as `108` reached nobody, so the native client offers the mixer's numbers.
