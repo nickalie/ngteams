@@ -4,8 +4,7 @@ use image::{Rgba, RgbaImage};
 use std::sync::Mutex;
 
 use super::{
-    BOTTOM_HINT, Caption, Fitted, Fonts, MAX_CAPTION, Region, TOP_HINT, Words, breaks, decode, draw, fit, limited, png,
-    render, shown, split,
+    BOTTOM_HINT, Caption, Fitted, Fonts, Region, TOP_HINT, Words, breaks, decode, draw, fit, png, render, shown, split,
 };
 
 fn block(region: [u32; 4], words: &str) -> Caption {
@@ -337,32 +336,4 @@ fn a_captioned_sticker_is_shown_180_high() {
     assert_eq!(shown((334, 250)), (240, 180));
     assert_eq!(shown((250, 250)), (180, 180));
     assert_eq!(shown((0, 0)), (180, 180));
-}
-
-#[test]
-fn a_caption_keeps_its_first_150_characters_and_refuses_more_keys() {
-    let full = "a".repeat(MAX_CAPTION);
-    assert_eq!(limited("", &full, MAX_CAPTION), None, "150 fit");
-    // a key at the end, past the limit: refused, the cursor stays at the end
-    let typed = format!("{full}b");
-    assert_eq!(limited(&full, &typed, MAX_CAPTION), Some((full.clone(), MAX_CAPTION)));
-    // a key in the middle: refused, the text is not cut at its end
-    let full = format!("{}z", "a".repeat(MAX_CAPTION - 1));
-    let typed = format!("aaax{}", &full[3..]);
-    assert_eq!(limited(&full, &typed, MAX_CAPTION), Some((full.clone(), 3)));
-}
-
-#[test]
-fn a_paste_past_the_limit_keeps_what_fits() {
-    let old = "ab".repeat(70);
-    let new = format!("ab{}{}", "XY".repeat(10), &old[2..]);
-    let (kept, at) = limited(&old, &new, MAX_CAPTION).unwrap();
-    assert_eq!(kept, format!("abXYXYXYXYXY{}", &old[2..]));
-    assert_eq!(kept.chars().count(), MAX_CAPTION);
-    assert_eq!(at, 12);
-    // the limit counts characters, not bytes
-    let old = "é".repeat(149);
-    let (kept, at) = limited(&old, &format!("{old}éé"), MAX_CAPTION).unwrap();
-    assert_eq!(kept.chars().count(), 150);
-    assert_eq!(at, kept.len());
 }

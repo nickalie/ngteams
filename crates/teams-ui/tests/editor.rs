@@ -532,3 +532,67 @@ fn typing_right_after_a_load_is_a_step_of_its_own() {
     cx.simulate_keystrokes("ctrl-z");
     assert_eq!(doc_of(&host, cx).plain_text(), "", "the typing undone");
 }
+
+/// The editor of `host` held to `max` characters, holding `text` with the cursor at its end.
+fn limited_to(max: usize, text: &str, host: &Entity<Host>, cx: &mut VisualTestContext) -> Entity<Editor> {
+    let editor = editor_of(host, cx);
+    cx.update(|_, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_max_chars(Some(max));
+            editor.set_doc(Doc::new(vec![Block::paragraph(text)]), cx);
+        });
+    });
+    draw(cx);
+    editor
+}
+
+fn text_of(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> String {
+    cx.update(|_, cx| editor.read(cx).text())
+}
+
+#[test]
+fn a_limit_keeps_what_fits_and_refuses_the_keys_past_it() {
+    let (host, cx) = editor_window();
+    let editor = limited_to(10, "abcdefghi", &host, cx);
+    cx.simulate_input("jk");
+    assert_eq!(
+        text_of(&editor, cx),
+        "abcdefghij",
+        "of two keys, only the one that fits goes in"
+    );
+    cx.simulate_input("l");
+    assert_eq!(text_of(&editor, cx), "abcdefghij", "a key past the limit is refused");
+    // at the start, a key past the limit does not cut the end
+    cx.simulate_keystrokes("home");
+    cx.simulate_input("Z");
+    assert_eq!(text_of(&editor, cx), "abcdefghij");
+    // a new line counts as a character, and Enter past the limit is refused
+    cx.simulate_keystrokes("shift-enter");
+    assert_eq!(text_of(&editor, cx), "abcdefghij");
+    cx.simulate_keystrokes("end backspace backspace");
+    cx.simulate_input("XYZ");
+    assert_eq!(
+        text_of(&editor, cx),
+        "abcdefghXY",
+        "with room again, a key goes in where the cursor is"
+    );
+}
+
+#[test]
+fn a_paste_past_the_limit_keeps_what_fits_and_counts_characters() {
+    let (host, cx) = editor_window();
+    let editor = limited_to(6, "ab", &host, cx);
+    cx.update(|_, cx| editor.update(cx, |editor, cx| editor.paste_plain("éèêë-more", cx)));
+    assert_eq!(text_of(&editor, cx), "abéèêë", "four characters of eight bytes fit");
+    // a rich paste that does not fit is refused whole
+    cx.update(|_, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_doc(Doc::new(vec![Block::paragraph("abcd")]), cx);
+            editor.insert("e", cx);
+            editor.paste_doc(Doc::new(vec![Block::paragraph("xyz")]), cx);
+        });
+    });
+    assert_eq!(text_of(&editor, cx), "abcde");
+    cx.update(|_, cx| editor.update(cx, Editor::undo));
+    assert_eq!(text_of(&editor, cx), "abcd", "a refused edit leaves no step of undo");
+}

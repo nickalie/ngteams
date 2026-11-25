@@ -361,11 +361,11 @@ fn an_empty_caption_offers_no_done_and_space_on_cancel_closes() {
     draw(cx);
     let editor = editor(&picker, cx).unwrap();
     assert_eq!(typed(&editor, cx), ["NON SEQUITUR"]);
-    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.set_typed(&["   "], window, cx)));
+    cx.update(|_, cx| editor.update(cx, |editor, cx| editor.set_typed(&["   "], cx)));
     draw(cx);
     assert!(!can_finish(&editor, cx), "words only of spaces are none");
     // with no words, Tab from the field skips Done, which isn't offered, to Cancel; Space presses it
-    cx.update(|window, cx| editor.update(cx, |editor, cx| editor.set_typed(&[""], window, cx)));
+    cx.update(|_, cx| editor.update(cx, |editor, cx| editor.set_typed(&[""], cx)));
     draw(cx);
     keys(cx, "tab space");
     assert!(!editor_open(&picker, cx), "Space on Cancel closes it");

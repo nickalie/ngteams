@@ -24,12 +24,12 @@ use gpui::{
     InteractiveElement as _, IntoElement, ParentElement as _, Render, RenderImage, StatefulInteractiveElement as _,
     Styled as _, Subscription, WeakEntity, Window, div, img, px, rgb,
 };
-use gpui_component::input::{Input, InputEvent, InputState, RopeExt as _, Textarea, TextareaState};
-use gpui_component::{Sizable as _, Size};
 use image::RgbaImage;
 use teams_proto::PastedPicture;
 
 use crate::bridge::Core;
+use crate::editor::doc::{Block, Doc};
+use crate::editor::{Editor, EditorEvent, EnterMode};
 use crate::icons::Glyph;
 use crate::stickers::caption::{self, BOTTOM_HINT, CAPTION_HINT, Caption, MAX_CAPTION, MAX_MEME_LINE, TOP_HINT};
 use crate::stickers::teams;
@@ -41,6 +41,8 @@ pub const LOAD_FAILED: &str = "Failed to load image";
 /// The largest the picture is drawn, px.
 const PICTURE_WIDTH: f32 = 250.0;
 const PICTURE_HEIGHT: f32 = 207.0;
+/// The caption field's height, px: four lines, as Teams' box.
+const BLOCK_HEIGHT: f32 = 80.0;
 /// How long the fields stay unchanged before the picture is drawn again: fast typing draws only when it pauses.
 pub const SETTLE: Duration = Duration::from_millis(120);
 
@@ -111,10 +113,10 @@ impl Draft {
     }
 }
 
-/// The fields of a caption: one block, or a meme's two lines.
+/// The fields of a caption, the app's own editor as the compose box's: one block, or a meme's two lines.
 enum Fields {
-    Block(Entity<TextareaState>),
-    Meme(Entity<InputState>, Entity<InputState>),
+    Block(Entity<Editor>),
+    Meme(Entity<Editor>, Entity<Editor>),
 }
 
 /// How the template's read stands.
@@ -134,8 +136,6 @@ pub struct StickerEditor {
     caption: Caption,
     fields: Fields,
     template: Template,
-    /// The caption field's text as last kept, which the next edit is limited against.
-    block_text: String,
     /// The picture as last drawn, and its size.
     preview: Option<Preview>,
     /// The number of the last change asked to be drawn.
@@ -195,9 +195,7 @@ impl StickerEditor {
             let _ = this.update(cx, |this, cx| this.read(decoded, cx));
         })
         .detach();
-        let block_text = caption.first_text().concat();
         let editor = Self {
-            block_text,
             sticker: id,
             name,
             caption,
@@ -223,55 +221,27 @@ impl StickerEditor {
     fn fields(caption: &Caption, window: &mut Window, cx: &mut Context<Self>) -> (Fields, Vec<Subscription>) {
         if caption.is_meme() {
             let line = |hint: &'static str, window: &mut Window, cx: &mut Context<Self>| {
-                cx.new(|cx| {
-                    InputState::new(window, cx)
-                        .placeholder(hint)
-                        .validate(|text, _| text.chars().count() <= MAX_MEME_LINE)
-                })
+                cx.new(|cx| Editor::new(window, cx).placeholder(hint).max_chars(MAX_MEME_LINE))
             };
             let (top, bottom) = (line(TOP_HINT, window, cx), line(BOTTOM_HINT, window, cx));
-            let subscriptions = vec![Self::watch(&top, window, cx), Self::watch(&bottom, window, cx)];
+            let subscriptions = vec![Self::watch(&top, cx), Self::watch(&bottom, cx)];
             return (Fields::Meme(top, bottom), subscriptions);
         }
         let first = caption.first_text().concat();
         let block = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .placeholder(CAPTION_HINT)
-                .soft_wrap(true)
-                .auto_grow(4, 4)
-                .default_value(first)
+            let mut block = Editor::new(window, cx).placeholder(CAPTION_HINT).max_chars(MAX_CAPTION);
+            block.set_enter_mode(EnterMode::NewLine, cx);
+            block.set_heights(Some(px(BLOCK_HEIGHT)), Some(px(BLOCK_HEIGHT)), cx);
+            block.set_doc(plain(&first), cx);
+            block
         });
-        let subscriptions = vec![
-            cx.subscribe_in(&block, window, |this, block, event: &InputEvent, window, cx| {
-                if !matches!(event, InputEvent::Change) {
-                    return;
-                }
-                // the text box takes no limit of its own: an edit keeps only what fits, as Teams' maxLength does
-                let text = block.read(cx).value().to_string();
-                let kept = match caption::limited(&this.block_text, &text, MAX_CAPTION) {
-                    Some((kept, at)) => {
-                        block.update(cx, |block, cx| {
-                            block.set_value(kept.clone(), window, cx);
-                            let at = block.text().offset_to_position(at);
-                            block.set_cursor_position(at, window, cx);
-                        });
-                        kept
-                    }
-                    None => text,
-                };
-                if kept != this.block_text {
-                    this.block_text = kept;
-                    this.redraw(cx);
-                }
-            }),
-        ];
-        (Fields::Block(block), subscriptions)
+        (Fields::Block(block.clone()), vec![Self::watch(&block, cx)])
     }
 
-    /// Redraws the picture as a meme's line `field` changes.
-    fn watch(field: &Entity<InputState>, window: &mut Window, cx: &mut Context<Self>) -> Subscription {
-        cx.subscribe_in(field, window, |this, _, event: &InputEvent, _, cx| {
-            if matches!(event, InputEvent::Change) {
+    /// Redraws the picture as the field `field` changes.
+    fn watch(field: &Entity<Editor>, cx: &mut Context<Self>) -> Subscription {
+        cx.subscribe(field, |this, _, event: &EditorEvent, cx| {
+            if matches!(event, EditorEvent::Changed) {
                 this.redraw(cx);
             }
         })
@@ -279,8 +249,15 @@ impl StickerEditor {
 
     fn focus_first(&self, window: &mut Window, cx: &mut Context<Self>) {
         match &self.fields {
-            Fields::Block(block) => block.update(cx, |block, cx| block.focus(window, cx)),
-            Fields::Meme(top, _) => top.update(cx, |top, cx| top.focus(window, cx)),
+            Fields::Block(first) | Fields::Meme(first, _) => window.focus(&first.focus_handle(cx), cx),
+        }
+    }
+
+    /// The fields, in order.
+    fn editors(&self) -> Vec<&Entity<Editor>> {
+        match &self.fields {
+            Fields::Block(block) => vec![block],
+            Fields::Meme(top, bottom) => vec![top, bottom],
         }
     }
 
@@ -293,25 +270,19 @@ impl StickerEditor {
     /// What the fields hold, in order.
     #[must_use]
     pub fn typed(&self, cx: &gpui::App) -> Vec<String> {
-        match &self.fields {
-            Fields::Block(block) => vec![block.read(cx).value().to_string()],
-            Fields::Meme(top, bottom) => vec![top.read(cx).value().to_string(), bottom.read(cx).value().to_string()],
-        }
+        self.editors().iter().map(|field| field.read(cx).text()).collect()
     }
 
-    /// Puts `texts` in the fields, in order (as typed).
-    pub fn set_typed(&mut self, texts: &[&str], window: &mut Window, cx: &mut Context<Self>) {
-        let text = |at: usize| texts.get(at).copied().unwrap_or_default().to_owned();
-        match &self.fields {
-            Fields::Block(block) => {
-                let kept: String = text(0).chars().take(MAX_CAPTION).collect();
-                self.block_text.clone_from(&kept);
-                block.update(cx, |block, cx| block.set_value(kept, window, cx));
-            }
-            Fields::Meme(top, bottom) => {
-                top.update(cx, |top, cx| top.set_value(text(0), window, cx));
-                bottom.update(cx, |bottom, cx| bottom.set_value(text(1), window, cx));
-            }
+    /// Puts `texts` in the fields, in order (as typed), each kept to its limit.
+    pub fn set_typed(&mut self, texts: &[&str], cx: &mut Context<Self>) {
+        let most = if matches!(self.fields, Fields::Meme(..)) {
+            MAX_MEME_LINE
+        } else {
+            MAX_CAPTION
+        };
+        for (at, field) in self.editors().into_iter().enumerate() {
+            let text: String = texts.get(at).copied().unwrap_or_default().chars().take(most).collect();
+            field.update(cx, |field, cx| field.set_doc(plain(&text), cx));
         }
         self.redraw(cx);
     }
@@ -468,10 +439,7 @@ impl StickerEditor {
     /// The editor's stops in Tab's order: the back arrow, the search field, the fields, Done, Cancel.
     fn stops(&self, cx: &gpui::App) -> Vec<FocusHandle> {
         let mut stops = vec![self.focus_of(Press::Back), self.search.clone()];
-        match &self.fields {
-            Fields::Block(block) => stops.push(block.focus_handle(cx)),
-            Fields::Meme(top, bottom) => stops.extend([top.focus_handle(cx), bottom.focus_handle(cx)]),
-        }
+        stops.extend(self.editors().iter().map(|field| field.focus_handle(cx)));
         // a Done that isn't offered takes no focus, as a disabled button
         if self.can_finish(cx) {
             stops.push(self.focus_of(Press::Done));
@@ -494,6 +462,10 @@ impl StickerEditor {
         cx.notify();
     }
 
+    fn in_meme_line(&self, window: &Window, cx: &gpui::App) -> bool {
+        matches!(self.fields, Fields::Meme(..)) && self.editors().iter().any(|line| line.read(cx).is_focused(window))
+    }
+
     /// Handles `keystroke` while the focus is in the editor; whether it took it.
     fn key(&mut self, keystroke: &gpui::Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let modifiers = keystroke.modifiers;
@@ -502,10 +474,13 @@ impl StickerEditor {
             "tab" if modifiers.number_of_modifiers() == u8::from(modifiers.shift) => {
                 self.step_focus(!modifiers.shift, window, cx);
             }
-            "enter" | "space" if modifiers.number_of_modifiers() == 0 => match self.focused_press(window) {
-                Some(press) => self.press(press, cx),
-                None => return false,
-            },
+            "enter" | "space" if modifiers.number_of_modifiers() == 0 && self.focused_press(window).is_some() => {
+                if let Some(press) = self.focused_press(window) {
+                    self.press(press, cx);
+                }
+            }
+            // a meme's line is one line, as Teams' one-line field
+            "enter" if self.in_meme_line(window, cx) => {}
             _ => return false,
         }
         true
@@ -628,29 +603,32 @@ impl StickerEditor {
             .into_any_element()
     }
 
-    fn inputs(&self) -> AnyElement {
-        match &self.fields {
-            Fields::Block(block) => div()
-                .debug_selector(|| "sticker-editor-caption".to_owned())
-                .child(Textarea::new(block))
-                .into_any_element(),
-            Fields::Meme(top, bottom) => div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(
-                    div()
-                        .debug_selector(|| "sticker-editor-top".to_owned())
-                        .child(Input::new(top).with_size(Size::Small)),
-                )
-                .child(
-                    div()
-                        .debug_selector(|| "sticker-editor-bottom".to_owned())
-                        .child(Input::new(bottom).with_size(Size::Small)),
-                )
-                .into_any_element(),
-        }
+    /// The fields, each in a box as a text field draws it, the brand's colour round the focused one.
+    fn inputs(&self, palette: Palette, window: &Window, cx: &gpui::App) -> AnyElement {
+        let selectors: &[&'static str] = match self.fields {
+            Fields::Block(_) => &["sticker-editor-caption"],
+            Fields::Meme(..) => &["sticker-editor-top", "sticker-editor-bottom"],
+        };
+        let boxes = self.editors().into_iter().zip(selectors).map(|(field, selector)| {
+            let focused = field.read(cx).is_focused(window);
+            div()
+                .debug_selector(move || (*selector).to_owned())
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .border_1()
+                .border_color(rgb(if focused { palette.brand } else { palette.border }))
+                .bg(rgb(palette.surface))
+                .text_sm()
+                .child(field.clone())
+        });
+        div().flex().flex_col().gap_2().children(boxes).into_any_element()
     }
+}
+
+/// `text` as a document of plain paragraphs, one a line.
+fn plain(text: &str) -> Doc {
+    Doc::new(text.split('\n').map(Block::paragraph).collect())
 }
 
 impl Render for StickerEditor {
@@ -669,6 +647,8 @@ impl Render for StickerEditor {
             .flex_col()
             .gap_3()
             .child(self.picture(palette))
-            .when(!self.failed(), |editor| editor.child(self.inputs()).child(buttons))
+            .when(!self.failed(), |editor| {
+                editor.child(self.inputs(palette, window, cx)).child(buttons)
+            })
     }
 }

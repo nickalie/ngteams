@@ -146,6 +146,8 @@ pub struct Editor {
     /// The least height it keeps.
     min_height: Option<Pixels>,
     pub(crate) read_only: bool,
+    /// The most characters it holds (a line break is one), as a text field's `maxLength`.
+    max_chars: Option<usize>,
     /// The pictures put in the box, by id ([`pictures`]), kept while it lives so undo brings one back.
     pictures: HashMap<u64, pictures::Picture>,
     next_picture: u64,
@@ -197,6 +199,7 @@ impl Editor {
             max_height: None,
             min_height: None,
             read_only: false,
+            max_chars: None,
             pictures: HashMap::new(),
             next_picture: 0,
             takes_pictures: false,
@@ -215,6 +218,19 @@ impl Editor {
     pub fn set_placeholder(&mut self, placeholder: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.placeholder = placeholder.into();
         cx.notify();
+    }
+
+    /// It, holding at most `max` characters: of what is typed or pasted, only what fits goes in, and any other edit
+    /// past `max` is refused.
+    #[must_use]
+    pub fn max_chars(mut self, max: usize) -> Self {
+        self.max_chars = Some(max);
+        self
+    }
+
+    /// Holds at most `max` characters from now on (see [`Self::max_chars`]); `None`: no limit.
+    pub fn set_max_chars(&mut self, max: Option<usize>) {
+        self.max_chars = max;
     }
 
     /// Sets what Enter does.
@@ -381,6 +397,7 @@ impl Editor {
         if self.read_only {
             return;
         }
+        let limit = self.max_chars.map(|max| (max, self.doc.clone(), self.selection));
         let now = Instant::now();
         let continues = step == Step::Typing
             && self
@@ -395,9 +412,23 @@ impl Editor {
                 self.undo.remove(0);
             }
         }
-        self.redo.clear();
+        let last_step = self.last_step;
+        let redo = std::mem::take(&mut self.redo);
         self.last_step = Some((step, now));
         let selection = change(&mut self.doc, self.selection);
+        if let Some((max, doc, before)) = limit
+            && chars(&self.doc) > max.max(chars(&doc))
+        {
+            self.doc = doc;
+            self.selection = before;
+            self.last_step = last_step;
+            self.redo = redo;
+            if !continues {
+                self.undo.pop();
+            }
+            return;
+        }
+        self.redo.clear();
         self.selection = Selection {
             anchor: self.doc.clamp(selection.anchor, false),
             head: self.doc.clamp(selection.head, false),
@@ -438,14 +469,27 @@ impl Editor {
         if text.contains('\n') {
             return self.paste_plain(text, cx);
         }
+        let (start, end) = self.selection.range();
+        let text = self.fit(start, end, text);
+        if text.is_empty() {
+            return;
+        }
         let pending = self.pending.take();
-        let text = text.to_owned();
         self.edit(Step::Typing, cx, move |doc, selection| {
             let (start, end) = selection.range();
             let at = doc.delete(start, end);
             let attrs = pending.unwrap_or_else(|| doc.blocks[at.block].attrs_at(at.offset));
             Selection::caret(doc.insert_text(at, &text, attrs))
         });
+    }
+
+    /// Of `text` put between `start` and `end`, what fits in [`Self::max_chars`].
+    fn fit(&self, start: Pos, end: Pos, text: &str) -> String {
+        let Some(max) = self.max_chars else {
+            return text.to_owned();
+        };
+        let kept = chars(&self.doc) - self.doc.text_between(start, end).chars().count();
+        text.chars().take(max.saturating_sub(kept)).collect()
     }
 
     /// Deletes the selection; whether there was one.
@@ -957,6 +1001,8 @@ impl Editor {
     /// list; elsewhere a paragraph per line.
     pub fn paste_plain(&mut self, text: &str, cx: &mut Context<Self>) {
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        let (start, end) = self.selection.range();
+        let text = self.fit(start, end, &text);
         let kind = self.block_kind();
         if kind == Kind::Code || !text.contains('\n') {
             let attrs = self.pending.take();
@@ -1016,4 +1062,9 @@ fn set_kinds(doc: &mut Doc, range: Range<usize>, kind: Kind) {
         }
         index += 1;
     }
+}
+
+/// How many characters `doc` holds, a line break between two blocks as one.
+fn chars(doc: &Doc) -> usize {
+    doc.plain_text().chars().count()
 }

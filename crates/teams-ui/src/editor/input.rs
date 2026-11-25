@@ -112,7 +112,7 @@ impl Editor {
     /// Replaces between two places with `text` typed, its attributes those of the text before; the place after it.
     fn replace_between(&mut self, start: Pos, end: Pos, text: &str, cx: &mut Context<Self>) -> Pos {
         let pending = self.pending.take();
-        let text = text.replace('\n', " ");
+        let text = self.fit(start, end, &text.replace('\n', " "));
         let mut after = start;
         self.edit(Step::Typing, cx, |doc, _| {
             let at = doc.delete(start, end);

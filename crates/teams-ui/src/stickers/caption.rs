@@ -538,36 +538,6 @@ pub fn render(template: &RgbaImage, caption: &Caption, typed: &[String]) -> Opti
     png(&draw(template, caption, typed, shared()))
 }
 
-/// `new`, an edit of `old`, kept to `max` characters as a text field's `maxLength` keeps it: of what the edit put in,
-/// only what fits stays. `None` when `new` fits; else the kept text and the place after what stayed, in bytes.
-#[must_use]
-pub fn limited(old: &str, new: &str, max: usize) -> Option<(String, usize)> {
-    let length = new.chars().count();
-    if length <= max {
-        return None;
-    }
-    let start: usize = old
-        .chars()
-        .zip(new.chars())
-        .take_while(|(was, is)| was == is)
-        .map(|(was, _)| was.len_utf8())
-        .sum();
-    let end: usize = old[start..]
-        .chars()
-        .rev()
-        .zip(new[start..].chars().rev())
-        .take_while(|(was, is)| was == is)
-        .map(|(was, _)| was.len_utf8())
-        .sum();
-    let put = &new[start..new.len() - end];
-    let room = max.saturating_sub(length - put.chars().count());
-    let stays: String = put.chars().take(room).collect();
-    let kept: String = [&new[..start], &stays, &new[new.len() - end..]].concat();
-    let kept: String = kept.chars().take(max).collect();
-    let at = (start + stays.len()).min(kept.len());
-    Some((kept, at))
-}
-
 /// `image` as a PNG.
 #[must_use]
 pub fn png(image: &RgbaImage) -> Option<PastedPicture> {

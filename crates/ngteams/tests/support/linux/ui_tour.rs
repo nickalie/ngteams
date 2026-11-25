@@ -2327,10 +2327,9 @@ const STEPS: [Step; 5 + 374 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     }),
     // a long caption: more lines in smaller type, fitted to the sticker's speech bubble
     ("chat-sticker-editor-long", |shell, window, cx| {
-        with_sticker_editor(shell, window, cx, |editor, window, cx| {
+        with_sticker_editor(shell, window, cx, |editor, _, cx| {
             editor.set_typed(
                 &["Lab caption: the numbers look great and the whole team deserves a long weekend off"],
-                window,
                 cx,
             );
         });
@@ -2354,8 +2353,8 @@ const STEPS: [Step; 5 + 374 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
                 cx,
             );
         });
-        with_sticker_editor(shell, window, cx, |editor, window, cx| {
-            editor.set_typed(&["made up top", "and bottom"], window, cx);
+        with_sticker_editor(shell, window, cx, |editor, _, cx| {
+            editor.set_typed(&["made up top", "and bottom"], cx);
         });
     }),
     // "So cool" again in Teams Dark

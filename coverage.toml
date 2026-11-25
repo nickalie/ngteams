@@ -700,6 +700,6 @@ reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-
 context = { "crates/teams-ui/src/stickers/lottie/bounds.rs" = "f66b13085508191e5443b2cd70a6ef0d0dbf5ee3742cce3b887ceefe88ba8d95" }
 
 [unmapped_sources."crates/teams-ui/src/stickers/caption_tests.rs"]
-sha256 = "c02d9872c20ae694fe5656a3b7c6b16f8e0504ba33e1f96e4b0b11726a6cbd6c"
+sha256 = "ceff2cc3ca8298dc3a6cbb8ed65cf986f48ebd734d07cd300e4e9722dbb61b72"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
-context = { "crates/teams-ui/src/stickers/caption.rs" = "b4d4734ef887ace862f29d23f9aa4f1047dc0b9be90d14e02c6c81fd66f52770" }
+context = { "crates/teams-ui/src/stickers/caption.rs" = "933c2529beab64da0c7791675905c37b35512d2ee03bd7990f7a31d26d3a2451" }
