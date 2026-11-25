@@ -79,10 +79,10 @@ fn a_sticker_s_addresses_are_the_ones_teams_uses() {
         picture("Teamsquatch_BugSquash"),
         "https://teams.public.onecdn.static.microsoft/evergreen-assets/stickerassets/teamsquatch-250x250/Teamsquatch_BugSquash.png?v=5"
     );
-    // a meme is at the meme size
+    // a meme has only its template, at the meme size
     assert_eq!(
-        picture("grumpycat"),
-        "https://teams.public.onecdn.static.microsoft/evergreen-assets/stickerassets/meme-500x500/grumpycat.png?v=5"
+        catalog.template(catalog.sticker("grumpycat").unwrap()).unwrap(),
+        "https://teams.public.onecdn.static.microsoft/evergreen-assets/stickerassets/meme-500x500/grumpycat-template.png?v=5"
     );
     // as Teams' picker showed them: a preview of its own name, or of the sticker's file
     assert_eq!(

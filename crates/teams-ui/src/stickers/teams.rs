@@ -230,6 +230,7 @@ impl Catalog {
     }
 
     /// The address of `sticker`'s picture, as a message names it: `…/stickerassets/<pack>-<size>[/<locale>]/<file>?v=5`.
+    /// Only a sticker with no caption is sent by it; a meme has no such picture, only its [`Self::template`].
     #[must_use]
     pub fn picture(&self, sticker: &TeamsSticker) -> String {
         self.address(sticker, &sticker.file)

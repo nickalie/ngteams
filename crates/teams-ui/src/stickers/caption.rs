@@ -237,7 +237,7 @@ pub struct Fitted {
 }
 
 /// `text` fitted to `region` as Teams fits it (see the module docs); `measure` gives a text's width at [`BASE`] px.
-/// `None` when nothing in it has a width.
+/// `None` when nothing in it has a width, or its line spacing alone fills the region's height.
 pub fn fit(text: &str, region: Region, measure: &mut dyn FnMut(&str) -> f32) -> Option<Fitted> {
     let (width, height) = (region.width(), region.height());
     let mean = measure(SAMPLE) / count(SAMPLE.chars().count());

@@ -1795,6 +1795,7 @@ fn edit_mark(palette: Palette) -> gpui::Div {
         .child(Glyph::PENCIL.icon().size(px(10.0)).text_color(rgb(palette.background)))
 }
 
+/// A picture that can't be shown: the picture mark.
 fn broken(palette: Palette) -> AnyElement {
     Glyph::IMAGE
         .icon()
