@@ -137,11 +137,16 @@ fn both_themes(user: &mut User<'_>, name: &str) -> SandboxResult {
 
 /// A shot in Teams Light and Teams Dark, named `<name>-<theme>`, with the focus and the pointer where they are.
 fn themes_in_place(user: &mut User<'_>, name: &str) -> SandboxResult {
+    let focus = people_focus(user)?;
     for theme in ["light", "dark"] {
         user.set_theme(theme)?;
         user.shot(&format!("{name}-{theme}"))?;
     }
-    user.set_theme("light")
+    user.set_theme("light")?;
+    let still = people_focus(user)?;
+    ensure(still == focus, || {
+        format!("the theme change moved the keyboard from {focus:?} to {still:?}")
+    })
 }
 
 /// Waits until the state of `mri` in People holds `wanted`.
@@ -341,16 +346,21 @@ fn keyboard_request(user: &mut User<'_>) -> SandboxResult {
         format!("Enter asked {invitee:?}")
     })?;
     meeting_shaped(&body, &invitee)?;
+    let outcome = no_second_request(user, &meeting);
+    let _ = user.mock.tell_add(&meeting.call, &invitee, AddOutcome::NoAnswer);
+    user.press("escape")?;
+    outcome
+}
+
+/// A second Enter where the keyboard stays after the move must not ask the next person in.
+fn no_second_request(user: &mut User<'_>, meeting: &MeetingCall) -> SandboxResult {
     user.until_rows("the invitee under In this meeting", &[2, 9])?;
-    let focus = people_focus(user)?;
-    say(&format!("  the keyboard is on {focus:?} after the move"));
+    say(&format!(
+        "  the keyboard is on {:?} after the move",
+        people_focus(user)?
+    ));
     thread::sleep(SETTLE);
     themes_in_place(user, "request-keyboard-after")?;
-    let still = people_focus(user)?;
-    ensure(still == focus, || {
-        format!("the theme change moved the keyboard from {focus:?} to {still:?}")
-    })?;
-    // a second Enter where the keyboard stays must not ask the next person in
     let before = user.sent("add");
     let bodies = add_bodies(user, &meeting.call).len();
     user.press("enter")?;
@@ -362,12 +372,11 @@ fn keyboard_request(user: &mut User<'_>) -> SandboxResult {
         .collect();
     let second = user.sent("add") - before;
     say(&format!("  a second Enter sent {second} adds"));
-    user.shot("request-keyboard-second-enter")?;
-    let _ = user.mock.tell_add(&meeting.call, &invitee, AddOutcome::NoAnswer);
+    let shot = user.shot("request-keyboard-second-enter");
     for other in &again {
         let _ = user.mock.tell_add(&meeting.call, other, AddOutcome::NoAnswer);
     }
-    user.press("escape")?;
+    shot?;
     ensure(second == 0, || {
         format!(
             "after the request the keyboard sat on another person's Request to join: a second Enter asked {again:?}"
