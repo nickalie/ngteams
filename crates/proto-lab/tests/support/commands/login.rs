@@ -694,35 +694,51 @@ fn the_watch_keeps_only_the_error_and_aadsts_code_of_a_sign_in_redirect() {
 
 #[tokio::test]
 async fn a_timeout_names_the_sign_in_error_without_the_description() {
-    let dir = tempfile::tempdir().unwrap();
-    let accounts = accounts();
-    let status = StatusFile::new(dir.path(), Alias::A);
-    let mut page = page(json!({})).await;
-    let mut session = page.session(dir.path(), false);
-    let redirected = redirect(
-        AUTHORIZE,
-        "https://teams.cloud.microsoft/v2/authv2#error=login_required&error_description=AADSTS500341%3A+synthetic%40example.test+deleted",
-    );
-    page.send(&redirected.method, redirected.params.clone());
-    let run = Run {
-        upn: UPN,
-        credentials: accounts.for_alias(Alias::A, UPN).unwrap(),
-        status: &status,
-        options: LoginOptions {
-            timeout: Duration::from_millis(800),
-        },
-    };
-    let error = run
-        .until_loaded(&mut session, &mut SignIn::default())
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(&error, LoginError::SignInAnswer { answer, authz: None, .. } if answer == "login_required AADSTS500341")
-    );
-    let text = error.to_string();
-    assert!(
-        text.ends_with("answered login_required AADSTS500341 (no authz answer)"),
-        "{text}"
-    );
-    assert!(!text.contains("example.test"));
+    for (authz, said) in [(None, "no authz answer"), (Some(500), "authz answered 500")] {
+        let dir = tempfile::tempdir().unwrap();
+        let accounts = accounts();
+        let status = StatusFile::new(dir.path(), Alias::A);
+        let mut page = page(json!({})).await;
+        let mut session = page.session(dir.path(), false);
+        let redirected = redirect(
+            AUTHORIZE,
+            "https://teams.cloud.microsoft/v2/authv2#error=login_required&error_description=AADSTS500341%3A+synthetic%40example.test+deleted",
+        );
+        page.send(&redirected.method, redirected.params.clone());
+        if let Some(code) = authz {
+            page.send(
+                "Network.requestWillBeSent",
+                json!({"requestId":"synthetic-authz","request":{
+                    "method":"POST","url":"https://teams.microsoft.com/api/authsvc/v1.0/authz","headers":{}
+                }}),
+            );
+            page.send(
+                "Network.responseReceived",
+                json!({"requestId":"synthetic-authz","response":{"status":code}}),
+            );
+        }
+        let run = Run {
+            upn: UPN,
+            credentials: accounts.for_alias(Alias::A, UPN).unwrap(),
+            status: &status,
+            options: LoginOptions {
+                timeout: Duration::from_millis(800),
+            },
+        };
+        let error = run
+            .until_loaded(&mut session, &mut SignIn::default())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, LoginError::SignInAnswer { answer, authz: got, .. }
+                if answer == "login_required AADSTS500341" && *got == authz),
+            "{error:?}"
+        );
+        let text = error.to_string();
+        assert!(
+            text.ends_with(&format!("answered login_required AADSTS500341 ({said})")),
+            "{text}"
+        );
+        assert!(!text.contains("example.test"));
+    }
 }

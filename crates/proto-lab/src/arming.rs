@@ -421,12 +421,10 @@ fn attach(children: bool) -> Value {
 }
 async fn handle_events(cdp: Cdp, mut events: Events, shared: Arc<Shared>) {
     while let Some(event) = events.recv().await {
+        let attached = (event.method == "Target.attachedToTarget").then(|| attached_target(&event));
         // known before the tap: a watcher that subscribes later finds the target in its snapshot, not in its events
-        if event.method == "Target.attachedToTarget"
-            && let Some(id) = event.params["sessionId"].as_str()
-        {
-            let kind = TargetKind::from_type(event.params["targetInfo"]["type"].as_str().unwrap_or("?"));
-            shared.targets().attached.insert(SessionId::new(id), kind);
+        if let Some(Some(target)) = &attached {
+            shared.targets().attached.insert(target.session.clone(), target.kind.clone());
         }
         shared.tap(&event);
         if let Some(capture) = &shared.capture {
@@ -449,8 +447,9 @@ async fn handle_events(cdp: Cdp, mut events: Events, shared: Arc<Shared>) {
             "Target.attachedToTarget" => {
                 let cdp = cdp.clone();
                 let work = Working::start(&shared);
+                let target = attached.flatten();
                 tokio::spawn(async move {
-                    on_attached(&cdp, &work.0, &event).await;
+                    on_attached(&cdp, &work.0, target).await;
                 });
             }
             "Target.detachedFromTarget" => {
@@ -474,18 +473,16 @@ async fn handle_events(cdp: Cdp, mut events: Events, shared: Arc<Shared>) {
     }
     shared.changed.notify_waiters();
 }
-async fn on_attached(cdp: &Cdp, shared: &Shared, event: &Event) {
-    let target = if let (Some(id), Some(session)) = (
-        event.params["targetInfo"]["targetId"].as_str(),
-        event.params["sessionId"].as_str(),
-    ) {
-        ArmedTarget {
-            target_id: id.into(),
-            session: SessionId::new(session),
-            kind: TargetKind::from_type(event.params["targetInfo"]["type"].as_str().unwrap_or("?")),
-            parent: event.session_id.clone(),
-        }
-    } else {
+fn attached_target(event: &Event) -> Option<ArmedTarget> {
+    Some(ArmedTarget {
+        target_id: event.params["targetInfo"]["targetId"].as_str()?.into(),
+        session: SessionId::new(event.params["sessionId"].as_str()?),
+        kind: TargetKind::from_type(event.params["targetInfo"]["type"].as_str().unwrap_or("?")),
+        parent: event.session_id.clone(),
+    })
+}
+async fn on_attached(cdp: &Cdp, shared: &Shared, target: Option<ArmedTarget>) {
+    let Some(target) = target else {
         shared.targets().failures.push("malformed target attach event".into());
         shared.kill_browser();
         shared.changed.notify_waiters();

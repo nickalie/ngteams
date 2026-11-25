@@ -528,3 +528,36 @@ fn every_target_kind_has_its_cdp_name() {
         assert_eq!(TargetKind::from_type(name).name(), name);
     }
 }
+
+#[tokio::test]
+async fn the_session_driver_knows_a_worker_whose_setup_did_not_finish() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut page = page_with(false, false, |command, _| {
+        (command["sessionId"] == "synthetic-worker").then(|| Err("synthetic worker setup stops".into()))
+    })
+    .await;
+    let session = page.session(temp.path(), false);
+    page.sender()
+        .send(json!({"method":"Target.attachedToTarget","params":{
+            "sessionId":"synthetic-worker","targetInfo":{"type":"worker","targetId":"synthetic-worker-target"}
+        }}))
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while session.status().failures().is_empty() {
+        assert!(tokio::time::Instant::now() < deadline, "the worker setup did not stop");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let mut drive = session.driver();
+    page.sender()
+        .send(json!({"method":"Network.requestWillBeSent","sessionId":"synthetic-worker","params":{
+            "requestId":"from-worker","request":{"method":"GET","url":"https://teams.cloud.microsoft/api/chatsvc/synthetic","headers":{}}
+        }}))
+        .unwrap();
+    let seen = drive
+        .wait_for_seen("worker", "the worker request", 0, Duration::from_secs(5), |seen| {
+            seen.request_id == "from-worker"
+        })
+        .await
+        .unwrap();
+    assert_eq!(drive.origin(&seen), "worker");
+}
