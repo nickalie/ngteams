@@ -12,12 +12,14 @@
 //! - **restart** (a): the level chosen survives a restart, and the calls' control has it.
 //! - **other** (b, on the same settings file): b has Auto, and b's own choice leaves a's level as it was.
 //! - **call** (a, its microphone the sandbox's tone with the speaker's echo looped back): the mock's b calls a, and a
-//!   answers with the keyboard while the model loads. The far end hears a at each level, and the frames pass. The
-//!   call's audio menu shows the level; a click on a row changes it at once, and Settings shows the same level. The
-//!   echo of b's tone is logged, mute silences a, and the CPU of the app at High and Off is measured. Shots of the
-//!   audio menu in Teams Light and Dark.
-//! - **noise** (a, its microphone a made-up voice with bursts of noise from a file): the far end hears less noise at
-//!   High and Auto than at Off.
+//!   answers with the keyboard while the model loads; the first frame reaches the far end within a second of
+//!   connected. The call's audio menu changes the level at once, by its keys and by a click on a row, and the frames
+//!   keep passing at each level; the far end hears a's tone at Off. Settings shows the menu's level, and the menu
+//!   checks the level chosen in Settings. The echo of b's tone is logged, mute silences a, and the CPU of the app at
+//!   High and Off is measured. Shots of the audio menu in Teams Light and Dark.
+//! - **noise** (a, its microphone a made-up voice with bursts of noise from a file): Off keeps the file's voice and
+//!   noise, Low keeps the voice, and the far end hears less noise at High and Auto than at Off. DeepFilterNet also
+//!   removes the made-up voice, which is no speech to it, so the voice is not judged at High and Auto.
 //!
 //! `QA844_EVIDENCE` names a directory that gets the screenshots and the results too. `QA844_ONLY` runs only the
 //! named runs (comma-separated). Screenshots also go to `target/ui-shots/qa844-*.png`. Without weston 15, niri,
@@ -117,6 +119,21 @@ const ORDER: [&str; 4] = ["auto", "low", "high", "off"];
 const HEARD: f32 = 0.02;
 /// A tone quieter than this is not there.
 const QUIET: f32 = 0.005;
+/// The least frames the far end has from a in a [`HOLD`]: half of 20 ms packets.
+const HOLD_FRAMES: u64 = 125;
+/// The longest after connected that the far end may wait for a's first frame, though the model still loads.
+const FIRST_FRAME: Duration = Duration::from_secs(1);
+/// The most the call's audio menu reaches left of its button's right edge and down from its foot.
+const AUDIO_MENU_REACH: (u32, u32) = (320, 420);
+/// The tallest a highlighted row of the call's audio menu can be.
+const MAX_ROW_HEIGHT: u32 = 40;
+/// The x span of the check marks, from the audio menu's left edge (its shadow included), left of the rows' text.
+const CHECK_COLUMN: (u32, u32) = (8, 22);
+/// How far under Off a level may lower the made-up voice and still keep it, in dB.
+const VOICE_KEPT_DB: f32 = 6.0;
+/// How far under the microphone's file Off may hear the voice and the noise: the codec and the gain control move the
+/// level, but a suppressor takes more out.
+const OFF_SLACK_DB: f32 = 12.0;
 /// The widest a Tab stop's ring can be that is still a narrow menu button (the toolbar's tools are wider).
 const NARROW: u32 = 32;
 /// The call window's toolbar strip at its top.
@@ -288,6 +305,14 @@ fn runs(sandbox: &Sandbox, service: &Service, dir: &Path, noisy: &Path) -> Sandb
 /// The made-up voice (`teams_media::test_signal::voice`, a tone that moves and stops as voiced speech does) with
 /// bursts of white noise under it that come and go as keys or steps do, written to `path` at 48 kHz.
 fn write_noisy_voice(path: &Path) -> SandboxResult {
+    let mut writer = wav::WavWriter::create(path)?;
+    writer.write(&noisy_voice())?;
+    writer.finish()?;
+    Ok(())
+}
+
+/// The samples of [`write_noisy_voice`].
+fn noisy_voice() -> Vec<f32> {
     let frames = NOISY_SECONDS * 100;
     let mut near = voice(frames, 0.3);
     let mut noise = Noise::new(5);
@@ -296,10 +321,7 @@ fn write_noisy_voice(path: &Path) -> SandboxResult {
         let level = 0.12 * levels.next_sample().max(0.0);
         noise.add_to(burst, level);
     }
-    let mut writer = wav::WavWriter::create(path)?;
-    writer.write(&teams_media::test_signal::samples(&near))?;
-    writer.finish()?;
-    Ok(())
+    teams_media::test_signal::samples(&near)
 }
 
 /// A box on the screen.
@@ -519,6 +541,7 @@ impl Walk<'_> {
         let answered = Instant::now();
         self.run.press("ctrl+shift+s")?;
         self.run.in_call("connected")?;
+        let connected = Instant::now();
         step(&format!(
             "a answered, connected after {} ms",
             answered.elapsed().as_millis()
@@ -529,13 +552,22 @@ impl Walk<'_> {
                 .mock
                 .peer_stats(&id, LAB_A)
                 .filter(|stats| stats.received > 0)
-                .map(|stats| (stats.received, answered.elapsed()))
+                .map(|stats| (stats.received, answered.elapsed(), connected.elapsed()))
         });
         match first {
-            Some((frames, after)) => step(&format!(
-                "the far end had {frames} frames {} ms after the answer",
-                after.as_millis()
-            )),
+            Some((frames, after, since_connected)) => {
+                step(&format!(
+                    "the far end had {frames} frames {} ms after the answer, {} ms after connected",
+                    after.as_millis(),
+                    since_connected.as_millis()
+                ));
+                expect(since_connected <= FIRST_FRAME, || {
+                    format!(
+                        "the first frame came {} ms after connected",
+                        since_connected.as_millis()
+                    )
+                });
+            }
             None => note("the far end had no frame 5 s after the answer".to_owned()),
         }
         thread::sleep(SETTLE);
@@ -575,13 +607,18 @@ impl Walk<'_> {
         Err(format!("Tab reached no narrow menu button in the toolbar: {rings:?}").into())
     }
 
-    /// Opens the call's audio menu by a click on `button`; the menu's box.
+    /// Opens the call's audio menu by a click on `button`; the menu's box, within [`audio_menu_region`], away from the
+    /// call's clock and the stage, which change by themselves.
     fn open_audio_menu(&mut self, button: Rect, name: &str) -> SandboxResult<Rect> {
         let before = screen(self.sandbox, "qa844-call-before-menu.png")?;
         let (x, y) = button.center();
         self.run.click(x, y)?;
         thread::sleep(SETTLE);
-        let menu = self.menu_box(&before, name, 0)?;
+        let after = screen(self.sandbox, name)?;
+        let menu = changed_box(&before, &after, audio_menu_region(button)).ok_or("the audio menu did not open")?;
+        if menu.height() < 80 {
+            return Err(format!("no audio menu opened: only {menu:?} changed").into());
+        }
         keep(&self.sandbox.screenshot(name, false)?, name)?;
         Ok(menu)
     }
@@ -596,6 +633,31 @@ impl Walk<'_> {
         self.at_level(level, &format!("the call's audio menu, {level} by its keys"))
     }
 
+    /// The row of `level` in the audio menu open at `menu`, by the highlight its keys move to it: Up from the foot, as
+    /// [`Self::audio_menu_keys`] does. The menu shows no highlight before the first key.
+    fn audio_menu_row(&mut self, menu: Rect, level: &str) -> SandboxResult<Rect> {
+        let index = ORDER.iter().position(|key| *key == level).ok_or("no level")?;
+        let before = screen(self.sandbox, "qa844-call-menu-before-keys.png")?;
+        for _ in 0..=(ORDER.len() - index) {
+            self.run.press("Up")?;
+        }
+        let after = screen(self.sandbox, "qa844-call-menu-keys.png")?;
+        let row = changed_box(&before, &after, menu).ok_or("the keys highlighted no row")?;
+        if row.height() > MAX_ROW_HEIGHT {
+            return Err(format!("the highlight of {level} is not one row: {row:?}").into());
+        }
+        Ok(row)
+    }
+
+    /// Chooses `level` in the audio menu open at `menu` by a click on its row.
+    fn audio_menu_click(&mut self, menu: Rect, level: &str) -> SandboxResult<bool> {
+        let row = self.audio_menu_row(menu, level)?;
+        step(&format!("the audio menu's {level} row at {row:?}"));
+        let (x, y) = row.center();
+        self.run.click(x, y)?;
+        self.at_level(level, &format!("the call's audio menu, a click on {level}"))
+    }
+
     /// The far end's last [`JUDGED`] of a's tone and of the echo of b's, in the recording of call `id`.
     fn tones(&self, id: &str) -> SandboxResult<(f32, f32)> {
         let heard = self.heard(id)?;
@@ -608,27 +670,36 @@ impl Walk<'_> {
         let id = self.answered_call()?;
         let button = self.audio_button()?;
         step(&format!("the audio menu's button at {button:?}"));
-        self.open_audio_menu(button, "qa844-call-audio-menu-light.png")?;
-        // each level from the menu: it applies at once; the far end keeps hearing a
+        let mut menu = self.open_audio_menu(button, "qa844-call-audio-menu-light.png")?;
+        // each level from the menu: it applies at once; the frames keep passing to the far end
         let mut tones = Vec::new();
         for level in ["off", "low", "auto", "high"] {
             if level != "off" {
-                self.open_audio_menu(button, "qa844-call-audio-menu-reopen.png")?;
+                menu = self.open_audio_menu(button, "qa844-call-audio-menu-reopen.png")?;
             }
-            self.audio_menu_keys(level)?;
+            if level == "low" {
+                self.audio_menu_click(menu, level)?;
+            } else {
+                self.audio_menu_keys(level)?;
+            }
+            let before = self.frames(&id);
             thread::sleep(HOLD);
+            let frames = self.frames(&id);
             let (own, echo) = self.tones(&id)?;
-            let frames = self
-                .service
-                .mock
-                .peer_stats(&id, LAB_A)
-                .map_or(0, |stats| stats.received);
             step(&format!(
-                "at {level}: the far end hears a's 440 Hz at {own:.4}, the echo of its 880 Hz at {echo:.4}, {frames} frames"
+                "at {level}: the far end hears a's 440 Hz at {own:.4}, the echo of its 880 Hz at {echo:.4}, {} frames in the hold",
+                frames.saturating_sub(before)
             ));
             result(&format!(
-                "call level {level}: a {own:.4}, echo {echo:.4}, frames {frames}"
+                "call level {level}: a {own:.4}, echo {echo:.4}, frames {before} to {frames}"
             ));
+            expect(frames >= before + HOLD_FRAMES, || {
+                format!(
+                    "at {level} the far end had only {} frames in {} s",
+                    frames.saturating_sub(before),
+                    HOLD.as_secs()
+                )
+            });
             tones.push((level, own, echo));
         }
         // the echo of a steady tone is only logged: the canceller can't tell one period of it from the next, so it
@@ -652,6 +723,14 @@ impl Walk<'_> {
         Ok(())
     }
 
+    /// The frames the far end of call `id` has had from a.
+    fn frames(&self, id: &str) -> u64 {
+        self.service
+            .mock
+            .peer_stats(id, LAB_A)
+            .map_or(0, |stats| stats.received)
+    }
+
     /// The level from the call's menu shows in Settings; one chosen in Settings shows checked in the call's menu.
     fn settings_follow_the_call(&mut self, button: Rect) -> SandboxResult {
         let state = self.run.state()?;
@@ -661,7 +740,23 @@ impl Walk<'_> {
         let answer = self.run.question("settings-level low")?;
         expect(answer == "ok", || format!("the settings model refused Low: {answer}"));
         self.at_level("low", "Settings' Low during the call")?;
-        self.open_audio_menu(button, "qa844-call-audio-menu-low-light.png")?;
+        let name = "qa844-call-audio-menu-low-light.png";
+        let menu = self.open_audio_menu(button, name)?;
+        let open = screen(self.sandbox, name)?;
+        let low = self.audio_menu_row(menu, "low")?;
+        // the rows touch, so a row's height is the step to the next one
+        let checks: Vec<(&str, bool)> = ORDER
+            .iter()
+            .zip(-1_i64..)
+            .map(|(level, offset)| (*level, checked(&open, menu, low, offset)))
+            .collect();
+        step(&format!("the call's menu after Settings' Low: checked {checks:?}"));
+        expect(checks.iter().all(|(level, check)| *check == (*level == "low")), || {
+            format!("after Settings' Low the call's menu checks {checks:?}")
+        });
+        self.run.press("Escape")?;
+        thread::sleep(STEP);
+        self.open_audio_menu(button, "qa844-call-audio-menu-reopen.png")?;
         self.audio_menu_keys("high")?;
         Ok(())
     }
@@ -726,10 +821,16 @@ impl Walk<'_> {
             step(&format!("noise run at {level}: voice {voice:.4}, noise {noise:.4}"));
             levels.push((level, voice, noise));
         }
-        // Off is judged twice, first and last: the gain control moves the level between them
+        let source = noisy_voice();
+        let (source_voice, source_noise) = voice_and_noise(tail(&source, JUDGED)?);
+        step(&format!(
+            "the microphone's file: voice {source_voice:.4}, noise {source_noise:.4}"
+        ));
+        // Off is read twice, first and last: the gain control moves the level between them
         let off = levels[0].2.min(levels[4].2);
+        let off_voice = levels[0].1.min(levels[4].1);
         for (level, voice, noise) in &levels {
-            let lowered = 20.0 * (off / noise.max(1e-6)).log10();
+            let lowered = decibels_under(off, *noise);
             let line = format!("noise level {level}: voice {voice:.4}, noise {noise:.4}, {lowered:.1} dB under Off");
             step(&line);
             result(&line);
@@ -738,14 +839,52 @@ impl Walk<'_> {
                     format!("High lowers the noise only {lowered:.1} dB")
                 }),
                 "auto" => expect(lowered >= 6.0, || format!("Auto lowers the noise only {lowered:.1} dB")),
-                "off" => expect(lowered <= 0.0, || format!("Off lowers the noise {lowered:.1} dB")),
-                _ => {}
+                "low" => expect(decibels_under(off_voice, *voice) <= VOICE_KEPT_DB, || {
+                    format!("Low lowers the voice from {off_voice:.4} to {voice:.4}")
+                }),
+                _ => {
+                    let (voice_under, noise_under) = (
+                        decibels_under(source_voice, *voice),
+                        decibels_under(source_noise, *noise),
+                    );
+                    expect(voice_under <= OFF_SLACK_DB && noise_under <= OFF_SLACK_DB, || {
+                        format!(
+                            "Off is {voice_under:.1} dB under the file's voice, {noise_under:.1} dB under its noise"
+                        )
+                    });
+                }
             }
         }
         self.run.press("ctrl+shift+h")?;
         self.run.in_call("ended")?;
         Ok(())
     }
+}
+
+/// Where the call's audio menu opens: under its button, right-aligned with it.
+fn audio_menu_region(button: Rect) -> Rect {
+    Rect {
+        x0: button.x1.saturating_sub(AUDIO_MENU_REACH.0),
+        y0: button.y1,
+        x1: button.x1,
+        y1: button.y1 + AUDIO_MENU_REACH.1,
+    }
+}
+
+/// How many dB `level` is under `reference`.
+fn decibels_under(reference: f32, level: f32) -> f32 {
+    20.0 * (reference.max(1e-6) / level.max(1e-6)).log10()
+}
+
+/// Whether the audio menu open at `menu` in `shot` draws a check mark beside the row `offset` rows from `row`.
+fn checked(shot: &image::RgbImage, menu: Rect, row: Rect, offset: i64) -> bool {
+    let step = i64::from(row.height()) * offset;
+    let Ok(top) = u32::try_from(i64::from(row.y0) + step) else {
+        return false;
+    };
+    let background = at(shot, menu.x0 + CHECK_COLUMN.0 / 2, top + row.height() / 2);
+    (top + 4..top + row.height().saturating_sub(4))
+        .any(|y| (menu.x0 + CHECK_COLUMN.0..menu.x0 + CHECK_COLUMN.1).any(|x| !near(at(shot, x, y), background, 60)))
 }
 
 /// The last `stretch` of `samples`.

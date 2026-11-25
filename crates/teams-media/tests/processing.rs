@@ -2,8 +2,8 @@
 //! microphone after a delay and an attenuation, and is handed to the processing as the far end on the same frames;
 //! the echo is suppressed by a set margin, a near-end voice is kept while both talk, and noise under a voice is
 //! lowered. The signals are `teams_media::test_signal`'s (a steady tone is noise to the noise suppression), all
-//! synthetic. The echo, double-talk and steady-noise tests run the classic suppressor (Low); the levels' tests compare
-//! DeepFilterNet (High) with it on noise that comes and goes.
+//! synthetic. The echo test runs at each level; the double-talk and steady-noise tests run the classic suppressor (Low);
+//! the levels' tests compare DeepFilterNet (High) with it on noise that comes and goes.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -70,29 +70,12 @@ fn silence(frames: usize) -> Vec<AudioFrame> {
     vec![AudioFrame::silence(); frames]
 }
 
+/// The echo canceller stays at every level, Off (no noise suppression) and DeepFilterNet's too.
 #[test]
-fn the_echo_of_what_the_speaker_plays_is_suppressed_by_the_margin() {
-    // 100 ms, and the UI sandbox's loopback's 250 ms
-    for delay in [10, 25] {
-        let processing = classic();
-        let far = speech_like(1000, 7, FAR_PEAK);
-        let (heard, processed) = looped(&processing, &far, &silence(1000), delay);
-        let (echo, left) = (rms(&heard[CONVERGE..]), rms(&processed[CONVERGE..]));
-        let suppressed = -decibels(left, echo);
-        eprintln!("{delay}0 ms: the echo at {echo:.4} comes out at {left:.6}, {suppressed:.1} dB down");
-        assert!(echo > 0.02, "the microphone hears the echo: {echo}");
-        assert!(
-            suppressed >= ECHO_MARGIN_DB,
-            "{delay}0 ms: the echo is only {suppressed:.1} dB down"
-        );
-    }
-}
-
-/// QA of task 844: the echo canceller stays at every level, Off (no noise suppression) and DeepFilterNet's too.
-#[test]
-fn the_echo_is_suppressed_by_the_margin_at_each_level() {
+fn the_echo_of_what_the_speaker_plays_is_suppressed_by_the_margin_at_each_level() {
     DeepFilter::loaded(NO_LIMIT_DB).unwrap();
-    for level in [NoiseSuppression::Off, NoiseSuppression::Auto, NoiseSuppression::High] {
+    for level in NoiseSuppression::ALL {
+        // 100 ms, and the UI sandbox's loopback's 250 ms
         for delay in [10, 25] {
             let processing = AudioProcessing::with_noise(ProcessingConfig::CALL, NoiseControl::new(level)).unwrap();
             let far = speech_like(1000, 7, FAR_PEAK);
@@ -100,6 +83,7 @@ fn the_echo_is_suppressed_by_the_margin_at_each_level() {
             let (echo, left) = (rms(&heard[CONVERGE..]), rms(&processed[CONVERGE..]));
             let suppressed = -decibels(left, echo);
             eprintln!("{level:?}, {delay}0 ms: the echo at {echo:.4} comes out at {left:.6}, {suppressed:.1} dB down");
+            assert!(echo > 0.02, "the microphone hears the echo: {echo}");
             assert!(
                 suppressed >= ECHO_MARGIN_DB,
                 "{level:?}, {delay}0 ms: the echo is only {suppressed:.1} dB down"
