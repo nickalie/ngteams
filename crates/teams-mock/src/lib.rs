@@ -605,15 +605,44 @@ impl ChatServiceMock {
             .with_priority(1)
             .mount(&self.server)
             .await;
-        let refusal = serde_json::json!({"error": {
-            "code": "accessDenied",
-            "message": "The sharing link no longer exists, or you do not have permission to access it.",
-            "innerError": {"code": "SharesAccessDeniedVroomException"},
-        }});
         Mock::given(method("GET"))
             .and(wiremock::matchers::path(path))
-            .respond_with(ResponseTemplate::new(403).set_body_json(refusal))
+            .respond_with(ResponseTemplate::new(403).set_body_json(graph_share_refusal()))
             .with_priority(2)
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Answers every `GET` of exactly `path` with Graph's `403` refusal of a shared file, with or without
+    /// `Prefer: redeemSharingLink`: a link the account may not read at all.
+    pub async fn serve_refused(&self, path: &str) {
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path(path))
+            .respond_with(ResponseTemplate::new(403).set_body_json(graph_share_refusal()))
+            .with_priority(1)
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Answers every `GET` of exactly `path` with the bytes `draw` makes for its query, as `content_type`, `404` when it
+    /// makes none: a test's stand-in for a service whose answers differ only by query (the media transform service's
+    /// parts of a meeting recording).
+    pub async fn serve_bytes_by_query(
+        &self,
+        path: &str,
+        content_type: &str,
+        draw: impl Fn(&str) -> Option<Vec<u8>> + Send + Sync + 'static,
+    ) {
+        let content_type = content_type.to_owned();
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path(path))
+            .respond_with(
+                move |request: &Request| match draw(request.url.query().unwrap_or_default()) {
+                    Some(body) => ResponseTemplate::new(200).set_body_raw(body, &content_type),
+                    None => ResponseTemplate::new(404),
+                },
+            )
+            .with_priority(1)
             .mount(&self.server)
             .await;
     }
@@ -1227,4 +1256,13 @@ fn subscription_answer(body: &[u8], polling_only: &[String]) -> ResponseTemplate
         "removeStatuses": statuses("subscriptionsToRemove"),
     });
     ResponseTemplate::new(200).set_body_raw(answer.to_string(), "application/json")
+}
+
+/// Graph's refusal of a shared file's read (`docs/protocol/graph.md`, "A link for specific people").
+fn graph_share_refusal() -> serde_json::Value {
+    serde_json::json!({"error": {
+        "code": "accessDenied",
+        "message": "The sharing link no longer exists, or you do not have permission to access it.",
+        "innerError": {"code": "SharesAccessDeniedVroomException"},
+    }})
 }

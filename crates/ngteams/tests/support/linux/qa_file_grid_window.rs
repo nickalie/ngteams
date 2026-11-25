@@ -21,6 +21,8 @@
 //!   "Download", "Share" and "Copy link", no "Open in browser", as Teams on the web has them; Escape closes a menu.
 //! - **Odd shapes**, each beside good entries: a lone surrogate escape, an entry with no `@type`, an entry with no
 //!   SharePoint link, a list encoded twice.
+//! - **A video opened** (task 793, `qa_file_grid_video.rs`): a video alone, a link Graph refuses, the keyboard, and
+//!   the Recap tab of a meeting whose recap names no drive or item of its recording.
 //!
 //! Every name, id and text is made up. Screenshots go to `target/ui-shots/qa525-*.png`, and also to the directory
 //! `QA_FILE_GRID_EVIDENCE` names. Without weston 15, niri or `dbus-daemon` it says so and passes, unless
@@ -62,7 +64,10 @@ use ui_sandbox::{Running, Sandbox, SandboxOptions, SandboxResult, sandbox_or_ski
 
 #[path = "../window.rs"]
 mod support;
+#[path = "qa_file_grid_video.rs"]
+mod video;
 use support::{Alias, display_name};
+use video::{LONE_CLIP, MCPS_BASE, REFUSED};
 
 const CHILD_ENV: &str = "QA_FILE_GRID_CHILD";
 const TRACE_FD_ENV: &str = "QA_FILE_GRID_TRACE_FD";
@@ -181,7 +186,8 @@ fn walk(sandbox: &Sandbox, service: &Service, dir: &Path) -> SandboxResult {
         ctx.actions()?;
         ctx.odd_shapes()?;
         ctx.narrow()?;
-        ctx.thread()
+        ctx.thread()?;
+        ctx.videos_open()
     })();
     if let Err(error) = outcome {
         return Err(run.fail(sandbox, &*error));
@@ -1187,6 +1193,7 @@ struct Posted {
 
 struct Service {
     mock: ChatServiceMock,
+    runtime: tokio::runtime::Handle,
     trouter: TrouterMock,
     posted: Vec<Posted>,
     channel_post: String,
@@ -1197,7 +1204,7 @@ impl Service {
         let mock = runtime.block_on(ChatServiceMock::start())?;
         let trouter = mock.start_trouter()?;
         let text = "<p>Made-up note over three files: the walk, the plan and the pack.</p>";
-        let messages: [(&str, &str, &str, Value, usize); 9] = [
+        let messages: [(&str, &str, &str, Value, usize); 11] = [
             ("one", "Made-up one file", "", files_value(&[&DOC]), 1),
             ("two", "Made-up two videos", "", files_value(&[&CLIP_A, &CLIP_B]), 2),
             (
@@ -1219,6 +1226,8 @@ impl Service {
             ("no-type", "Made-up no type", "", no_type(), 3),
             ("no-link", "Made-up no link", "", no_link(), 3),
             ("twice", "Made-up twice encoded", "", twice(), 3),
+            ("lone-video", "Made-up lone video", "", files_value(&[&LONE_CLIP]), 1),
+            ("refused", "Made-up refused video", "", files_value(&[&REFUSED]), 1),
         ];
         let mut posted = Vec::new();
         for (key, topic, html, files, cards) in messages {
@@ -1227,12 +1236,15 @@ impl Service {
             posted.push(Posted { key, chat, id, cards });
         }
         let channel_post = channel_post(&mock)?;
-        for (at, file) in [&CLIP_A, &CLIP_B, &CLIP_C].into_iter().enumerate() {
+        for (at, file) in [&CLIP_A, &CLIP_B, &CLIP_C, &LONE_CLIP].into_iter().enumerate() {
             serve_file(&mock, runtime, file, at)?;
         }
+        video::serve_refused(&mock, runtime)?;
+        video::serve_recap(&mock, runtime)?;
         let _ = mock.take_events(LAB_A);
         Ok(Self {
             mock,
+            runtime: runtime.handle().clone(),
             trouter,
             posted,
             channel_post,
@@ -1750,7 +1762,9 @@ fn engine_on_the_mock(dir: &Path) -> SandboxResult<EngineHandle> {
     Ok(engine::start(Parts {
         calls: None,
         store: Store::open(&support::store_file(dir, Alias::A))?,
-        client: Arc::new(ChatClient::new(http()?.with_ams(AMS_BASE)?.with_csa(CSA_BASE)?)),
+        client: Arc::new(ChatClient::new(
+            http()?.with_ams(AMS_BASE)?.with_csa(CSA_BASE)?.with_mcps(MCPS_BASE)?,
+        )),
         outbox: Outbox::new(transport, author),
         push: Some(Push::new(trouter)),
         options: EngineOptions::default(),
@@ -1909,10 +1923,14 @@ fn on_shell(shell: &Entity<Shell>, verb: &str, window: &mut Window, cx: &mut App
         "players" => {
             let states: Vec<String> = teams_ui::video_player::players(cx)
                 .iter()
-                .map(|player| format!("{:?}", player.read(cx).state()))
+                .map(|player| {
+                    let player = player.read(cx);
+                    format!("{} {:?}", player.id(), player.state())
+                })
                 .collect();
             json!(states)
         }
+        "tab" => json!(format!("{:?}", shell.read(cx).chat_tab())),
         other => json!(format!("unknown {other}")),
     }
     .to_string()
