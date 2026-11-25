@@ -424,7 +424,10 @@ async fn handle_events(cdp: Cdp, mut events: Events, shared: Arc<Shared>) {
         let attached = (event.method == "Target.attachedToTarget").then(|| attached_target(&event));
         // known before the tap: a watcher that subscribes later finds the target in its snapshot, not in its events
         if let Some(Some(target)) = &attached {
-            shared.targets().attached.insert(target.session.clone(), target.kind.clone());
+            shared
+                .targets()
+                .attached
+                .insert(target.session.clone(), target.kind.clone());
         }
         shared.tap(&event);
         if let Some(capture) = &shared.capture {
