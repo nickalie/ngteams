@@ -29,7 +29,7 @@
 //! The asks are traced by the caller's trace (`call asked`, `call refused` with the ask and why), never with a name, and
 //! logged at `info` with the chat's id (the diagnostic log).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -816,6 +816,53 @@ struct CaptionPane {
     /// The calls' captions are saved ("Save live captions of every call", [`crate::call_transcript`]): they keep
     /// running while their pane is hidden.
     saving: bool,
+    /// The captions run for the call's live transcript (a transcription runs): they keep running while their pane is
+    /// hidden.
+    transcript: bool,
+}
+
+/// One utterance of the call's live transcript: its last final result, and when it was first heard (ms since the
+/// epoch).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpokenLine {
+    pub at: i64,
+    pub caption: teams_core::Caption,
+}
+
+/// The call's live transcript: each final utterance heard while a transcription runs, by its key
+/// ([`crate::call_transcript::utterance`]). The captions keep only their last lines; this keeps the whole call.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Spoken {
+    lines: Vec<SpokenLine>,
+    keys: Vec<String>,
+    /// When each utterance not final yet was first heard.
+    heard: HashMap<String, i64>,
+}
+
+impl Spoken {
+    fn hear(&mut self, call: CallId, captions: &[teams_core::Caption], now: i64) {
+        for caption in captions {
+            let key = crate::call_transcript::utterance(call, caption);
+            let at = *self.heard.entry(key.clone()).or_insert(now);
+            if !caption.final_result || caption.text.trim().is_empty() {
+                continue;
+            }
+            if let Some(line) = self
+                .keys
+                .iter()
+                .position(|known| *known == key)
+                .and_then(|index| self.lines.get_mut(index))
+            {
+                line.caption.clone_from(caption);
+            } else {
+                self.keys.push(key);
+                self.lines.push(SpokenLine {
+                    at,
+                    caption: caption.clone(),
+                });
+            }
+        }
+    }
 }
 
 /// The calls' model (see the module docs). A GPUI entity in [`crate::Models`].
@@ -825,6 +872,8 @@ pub struct Calls {
     captions: teams_core::CallCaptions,
     /// The caption pane as the user shows it, and whether the captions are saved.
     pane: CaptionPane,
+    /// The call's live transcript (empty once another call comes).
+    spoken: Spoken,
     /// The account's own start or stop of a recording in its call (empty once the call ends).
     recording: teams_core::CallRecording,
     echo: Option<Mri>,
@@ -897,7 +946,28 @@ impl Calls {
     /// it (captions that run for the saved transcript alone show nothing).
     #[must_use]
     pub fn captions_shown(&self) -> bool {
-        self.captions.phase != teams_core::CaptionPhase::Off && (self.pane.shown || !self.pane.saving)
+        self.captions.phase != teams_core::CaptionPhase::Off
+            && (self.pane.shown || !(self.pane.saving || self.pane.transcript))
+    }
+
+    /// The call's live transcript: each final utterance heard while a transcription ran, in the order first heard.
+    #[must_use]
+    pub fn spoken(&self) -> &[SpokenLine] {
+        &self.spoken.lines
+    }
+
+    /// Whether the captions run for the call's live transcript ([`Self::set_transcript_captions`]).
+    #[must_use]
+    pub fn transcript_captions(&self) -> bool {
+        self.pane.transcript
+    }
+
+    /// The captions run for the call's live transcript (`on`): hiding their pane leaves them running.
+    pub fn set_transcript_captions(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.pane.transcript != on {
+            self.pane.transcript = on;
+            cx.notify();
+        }
     }
 
     /// Whether the user showed the caption pane (Show live captions) in the call up.
@@ -940,7 +1010,7 @@ impl Calls {
             self.captions.phase,
             teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
         );
-        let local = running && (show || self.pane.saving);
+        let local = running && (show || self.pane.saving || self.pane.transcript);
         (!local).then_some(Ask::Captions(show))
     }
 
@@ -1250,7 +1320,11 @@ impl Calls {
                 }
             }
             Event::CallCaptions { call, captions } => {
-                if self.call.as_ref().is_some_and(|active| active.id == *call) {
+                if let Some(active) = self.call.as_ref().filter(|active| active.id == *call) {
+                    if active.meeting.transcribing.is_some() {
+                        let now = chrono::Utc::now().timestamp_millis();
+                        self.spoken.hear(*call, &captions.lines, now);
+                    }
                     self.captions = captions.clone();
                 }
             }
@@ -1496,6 +1570,8 @@ impl Calls {
         if self.call.as_ref().is_none_or(|active| active.id != call) {
             self.captions = teams_core::CallCaptions::default();
             self.pane.shown = false;
+            self.pane.transcript = false;
+            self.spoken = Spoken::default();
             self.recording = teams_core::CallRecording::default();
             self.call = Some(self.adopt(call));
             self.ended = None;
@@ -1522,6 +1598,7 @@ impl Calls {
         if let CallStatus::Ended(end) = status {
             self.captions = teams_core::CallCaptions::default();
             self.pane.shown = false;
+            self.pane.transcript = false;
             self.recording = teams_core::CallRecording::default();
             active.check.failed = matches!(end, End::Failed(_));
             // a refusal during the call was shown in its bar: how it ended is what is told now; but the start's own
@@ -2386,5 +2463,38 @@ mod tests {
         assert_eq!(duration_text(0), "0:00");
         assert_eq!(duration_text(75), "1:15");
         assert_eq!(duration_text(3_725), "1:02:05");
+    }
+
+    fn said(id: &str, speaker: &str, text: &str, final_result: bool, audio: u64) -> teams_core::Caption {
+        teams_core::Caption {
+            id: id.into(),
+            speaker: Some(speaker.into()),
+            display_name: Some(format!("Synthetic {speaker}")),
+            text: text.into(),
+            final_result,
+            spoken_language: "en-us".into(),
+            track_language: "en-us".into(),
+            audio_timestamp: audio,
+            duration: 10,
+        }
+    }
+
+    #[test]
+    fn the_transcript_keeps_each_final_utterance_from_when_it_was_first_heard() {
+        let call = CallId::for_tests(1);
+        let mut spoken = Spoken::default();
+        spoken.hear(call, &[said("1", "a", "Syn", false, 100)], 1_000);
+        assert!(spoken.lines.is_empty(), "a partial result waits");
+        spoken.hear(call, &[said("2", "a", "Synthetic one.", true, 100)], 2_000);
+        spoken.hear(call, &[said("3", "b", "Synthetic two.", true, 200)], 3_000);
+        // the captions dropped the first utterance: the transcript keeps it, and a later final result replaces words
+        spoken.hear(call, &[said("4", "b", "Synthetic two, again.", true, 200)], 4_000);
+        spoken.hear(call, &[said("5", "a", " ", true, 300)], 5_000);
+        let lines: Vec<(i64, &str)> = spoken
+            .lines
+            .iter()
+            .map(|line| (line.at, line.caption.text.as_str()))
+            .collect();
+        assert_eq!(lines, [(1_000, "Synthetic one."), (3_000, "Synthetic two, again.")]);
     }
 }

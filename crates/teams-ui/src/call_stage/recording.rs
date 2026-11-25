@@ -63,6 +63,8 @@ pub(super) struct TranscriptRow {
     /// Who started the transcription (the roster keeps naming them once it stopped).
     pub(super) by: Option<Mri>,
     pub(super) started: bool,
+    /// When the roster told it, ms since the epoch: where it goes among the transcript's lines.
+    pub(super) at: i64,
 }
 
 /// Record and transcribe's dialogs, notices and transcript in the call's window.
@@ -95,6 +97,8 @@ pub(super) struct RecordUi {
     pub(super) transcript: Vec<TranscriptRow>,
     /// The transcript's "Switch to live captions" bar was put away.
     pub(super) transcript_tip_closed: bool,
+    /// The transcript's scroll: it follows the newest line.
+    pub(super) transcript_scroll: gpui::ScrollHandle,
     /// The account's own start last confirmed: its notice shows while the start is pending ([`super::transcript`]).
     pub(super) pending: Option<super::transcript::Pending>,
     /// That notice was put away.

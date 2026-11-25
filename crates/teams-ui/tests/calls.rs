@@ -5154,6 +5154,88 @@ fn someone_else_s_transcription_is_stopped_after_asking_and_its_stop_is_told() {
     assert!(!drawn(stage, "call-transcript-pane"));
 }
 
+/// A final caption result of `speaker` (lab a or b) heard at `audio`.
+fn spoken(id: &str, speaker: &str, text: &str, audio: u64) -> teams_core::Caption {
+    teams_core::Caption {
+        id: id.into(),
+        speaker: Some(speaker.into()),
+        display_name: Some(if speaker == LAB_A { "Lab A" } else { "Lab B" }.into()),
+        text: text.into(),
+        final_result: true,
+        spoken_language: "en-us".into(),
+        track_language: "en-us".into(),
+        audio_timestamp: audio,
+        duration: 10,
+    }
+}
+
+fn captions_on(rig: &Rig, lines: Vec<teams_core::Caption>) {
+    rig.send(Event::CallCaptions {
+        call: call(1),
+        captions: teams_core::CallCaptions {
+            phase: teams_core::CaptionPhase::On,
+            spoken_language: "en-us".into(),
+            error: None,
+            lines,
+        },
+    });
+    rig.cx.run_until_parked();
+}
+
+#[test]
+fn the_transcript_shows_what_is_said_by_speaker_for_the_whole_call_while_a_transcription_runs() {
+    let rig = calling();
+    let stage = group_call_up(&rig);
+    meeting(&rig, transcribing_by(LAB_B, false));
+    assert_eq!(
+        actions(&rig).last(),
+        Some(&CallAction::Captions {
+            call: call(1),
+            enabled: true
+        }),
+        "the captions run for the transcript"
+    );
+    captions_on(&rig, vec![spoken("1", LAB_B, "Synthetic first words.", 100)]);
+    captions_on(
+        &rig,
+        vec![
+            spoken("1", LAB_B, "Synthetic first words.", 100),
+            spoken("2", LAB_B, "Synthetic second words.", 200),
+        ],
+    );
+    // the captions keep only their last lines: the transcript keeps every one
+    captions_on(&rig, vec![spoken("3", LAB_A, "Synthetic answer.", 300)]);
+    captions_on(&rig, vec![spoken("4", LAB_B, "Synthetic reply.", 400)]);
+    assert!(
+        !drawn(stage, "call-captions"),
+        "captions that run for the transcript don't show"
+    );
+    open_record_menu(stage, "call-transcript-toggle");
+    click(stage, "call-transcript-toggle");
+    assert!(drawn(stage, "call-transcript-pane"));
+    assert!(drawn(stage, "call-transcript-event"));
+    assert!(drawn(stage, "call-transcript-said"));
+    for turn in 1..=3 {
+        assert!(drawn(stage, &format!("call-transcript-turn-{turn}")), "turn {turn}");
+    }
+    assert!(!drawn(stage, "call-transcript-turn-4"), "one speaker's run is one turn");
+    let kept = rig.cx.read(|cx| rig.models.calls.read(cx).spoken().len());
+    assert_eq!(kept, 4);
+    // the transcription stops: the captions it ran stop with it
+    meeting(&rig, teams_core::MeetingState::default());
+    assert_eq!(
+        actions(&rig).last(),
+        Some(&CallAction::Captions {
+            call: call(1),
+            enabled: false
+        })
+    );
+    assert!(
+        drawn(stage, "call-transcript-turn-3"),
+        "the transcript keeps what was said"
+    );
+}
+
 #[test]
 fn a_recording_and_transcription_records_the_audio_alone_from_more_options() {
     let rig = calling();

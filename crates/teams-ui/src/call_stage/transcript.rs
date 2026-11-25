@@ -10,8 +10,12 @@
 //!   audio alone, the transcript's while it only transcribes.
 //! - **The Transcript pane** (Show transcript; it opens by itself for whoever started a transcription alone): its
 //!   translation's language and Close, a bar offering live captions instead ("Switch to live captions"), "AI-generated
-//!   content may be incorrect", and a row per start and stop of the transcription, as the roster told them. What is
-//!   said isn't shown: no capture showed the transcript's speech reaching the call (the live captions show it).
+//!   content may be incorrect", a row per start and stop of the transcription, as the roster told them, and what is
+//!   said: each speaker's turn (their initials, name and time from the transcription's start) over the final words of
+//!   each of their utterances, live as they come, for the whole call ([`crate::calls::Calls::spoken`]).
+//! - **What is said** comes from the call's live captions: no capture showed the transcript's own speech reaching the
+//!   call. While a transcription runs, the captions run for the transcript ([`Ask::RecordCaptions`]), their pane left
+//!   as the user has it, and stop with it unless the user shows them or the call's captions are saved.
 //! - **While the account's own start is pending** (the bot invited and told to start, 15 to 27 s in the lab): a
 //!   one-line notice, "Starting transcription…" or "Starting recording and transcription…" ([`Pending`]), with a
 //!   Close; a recording's mark left of the duration, greyed; and a spinner atop the open Transcript pane. A start that
@@ -20,7 +24,8 @@
 
 use super::recording::{Start, Stopped, TranscriptRow};
 use super::*;
-use crate::translate;
+use crate::calls::SpokenLine;
+use crate::translate::{self, CaptionTranslation};
 use teams_core::RecordingPhase;
 
 /// What the meeting's privacy policy link opens: Microsoft's privacy statement, as Teams links it when the
@@ -60,6 +65,7 @@ impl CallStage {
                 self.record.transcript.push(TranscriptRow {
                     by: by.clone(),
                     started: true,
+                    at: chrono::Utc::now().timestamp_millis(),
                 });
                 if !recording {
                     self.record.transcription_notice = Some(true);
@@ -71,7 +77,11 @@ impl CallStage {
                 }
             }
             (Some(teams_core::Transcription { by }), None) => {
-                self.record.transcript.push(TranscriptRow { by, started: false });
+                self.record.transcript.push(TranscriptRow {
+                    by,
+                    started: false,
+                    at: chrono::Utc::now().timestamp_millis(),
+                });
                 // with a recording, the recording's stop says it
                 if !recording && !was_recording {
                     self.record.transcription_notice = Some(false);
@@ -80,6 +90,32 @@ impl CallStage {
             _ => {}
         }
         self.record.transcribing_seen = transcribing;
+    }
+
+    /// The captions run while a transcription runs, for the transcript's words: asked once as it starts, and stopped as
+    /// it stops unless the user shows them or they are saved.
+    pub(super) fn hold_transcript_captions(&self, active: &ActiveCall, cx: &mut Context<Self>) {
+        let want = active.meeting.transcribing.is_some()
+            && active.status == CallStatus::Connected
+            && active.kind != CallKind::TestCall
+            && !self.core.read_only()
+            && self.core.capabilities().captions;
+        let calls = self.calls.read(cx);
+        if calls.transcript_captions() == want {
+            return;
+        }
+        let running = matches!(
+            calls.captions().phase,
+            teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
+        );
+        let kept = calls.caption_pane_asked() || calls.saving_captions();
+        self.calls
+            .update(cx, |calls, cx| calls.set_transcript_captions(want, cx));
+        if want && !running {
+            self.ask(Ask::RecordCaptions(true), cx);
+        } else if !want && running && !kept {
+            self.ask(Ask::RecordCaptions(false), cx);
+        }
     }
 
     /// Opens or closes the Transcript pane, as Show transcript and Hide transcript do.
@@ -206,19 +242,7 @@ impl CallStage {
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| this.show_transcript(false, cx))),
             ));
-        let rows = self.record.transcript.iter().map(|row| {
-            let who = row
-                .by
-                .as_ref()
-                .map_or_else(|| SharedString::from(SOMEONE), |mri| self.name_of(active, mri));
-            let what = if row.started { "started" } else { "stopped" };
-            transcript_line(
-                Glyph::RECORD,
-                SharedString::from(format!("{who} {what} transcription")),
-                palette,
-            )
-            .debug_selector(|| "call-transcript-event".to_owned())
-        });
+        let rows = self.transcript_rows(active, palette, cx);
         Some(
             people_pane::side_pane("call-transcript-pane", "Transcript", actions, palette)
                 .children((!self.record.transcript_tip_closed).then(|| Self::transcript_tip(palette, cx)))
@@ -228,6 +252,7 @@ impl CallStage {
                         .flex_1()
                         .min_h_0()
                         .overflow_y_scroll()
+                        .track_scroll(&self.record.transcript_scroll)
                         .px_4()
                         .py_2()
                         .flex()
@@ -254,6 +279,42 @@ impl CallStage {
                 )
                 .into_any_element(),
         )
+    }
+
+    /// The transcript's rows: each start and stop of the transcription, and each speaker's turn.
+    fn transcript_rows(&self, active: &ActiveCall, palette: Palette, cx: &App) -> Vec<AnyElement> {
+        let calls = self.calls.read(cx);
+        let entries = entries(&self.record.transcript, calls.spoken());
+        let start = self
+            .record
+            .transcript
+            .iter()
+            .find(|row| row.started)
+            .map(|row| row.at)
+            .or_else(|| calls.spoken().first().map(|line| line.at))
+            .unwrap_or_default();
+        let translation = self.translation.read(cx);
+        entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| match entry {
+                Entry::Event(row) => {
+                    let who = row
+                        .by
+                        .as_ref()
+                        .map_or_else(|| SharedString::from(SOMEONE), |mri| self.name_of(active, mri));
+                    let what = if row.started { "started" } else { "stopped" };
+                    transcript_line(
+                        Glyph::RECORD,
+                        SharedString::from(format!("{who} {what} transcription")),
+                        palette,
+                    )
+                    .debug_selector(|| "call-transcript-event".to_owned())
+                    .into_any_element()
+                }
+                Entry::Turn(lines) => turn(index, lines, start, translation, palette),
+            })
+            .collect()
     }
 
     /// The pane's bar offering live captions instead: Switch to live captions shows them and closes the pane.
@@ -440,6 +501,99 @@ impl CallStage {
     }
 }
 
+/// What the transcript lists, in the order it happened: a start or a stop of the transcription, or a speaker's turn
+/// (their utterances one after another, nothing else between).
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Entry<'a> {
+    Event(&'a TranscriptRow),
+    Turn(Vec<&'a SpokenLine>),
+}
+
+/// The transcript's entries: its starts and stops and what was said, by time (a start before the words of its
+/// moment), each run of one speaker's utterances one turn.
+pub(super) fn entries<'a>(events: &'a [TranscriptRow], spoken: &'a [SpokenLine]) -> Vec<Entry<'a>> {
+    let mut timed: Vec<(i64, bool, usize)> = events
+        .iter()
+        .enumerate()
+        .map(|(index, row)| (row.at, false, index))
+        .chain(spoken.iter().enumerate().map(|(index, line)| (line.at, true, index)))
+        .collect();
+    timed.sort_by_key(|(at, said, _)| (*at, *said));
+    let mut out: Vec<Entry<'a>> = Vec::new();
+    for (_, said, index) in timed {
+        if !said {
+            if let Some(row) = events.get(index) {
+                out.push(Entry::Event(row));
+            }
+            continue;
+        }
+        let Some(line) = spoken.get(index) else { continue };
+        match out.last_mut() {
+            Some(Entry::Turn(lines)) if lines.last().is_some_and(|last| same_speaker(last, line)) => lines.push(line),
+            _ => out.push(Entry::Turn(vec![line])),
+        }
+    }
+    out
+}
+
+/// Whether two utterances are the same speaker's: by their id, else by their name.
+fn same_speaker(one: &SpokenLine, other: &SpokenLine) -> bool {
+    match (&one.caption.speaker, &other.caption.speaker) {
+        (Some(one), Some(other)) => one == other,
+        (None, None) => one.caption.display_name == other.caption.display_name,
+        _ => false,
+    }
+}
+
+/// A speaker's turn: their initials, name and time from the transcription's `start` (ms), then each utterance's words
+/// (translated when the pane's translation has them).
+fn turn(
+    index: usize,
+    lines: &[&SpokenLine],
+    start: i64,
+    translation: &CaptionTranslation,
+    palette: Palette,
+) -> AnyElement {
+    let first = lines.first().map(|line| &line.caption);
+    let name = SharedString::from(
+        first
+            .and_then(|caption| caption.display_name.clone())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| "Speaker".to_owned()),
+    );
+    let since = lines.first().map_or(0, |line| line.at.saturating_sub(start));
+    let time = crate::video_player::clock(Duration::from_millis(u64::try_from(since).unwrap_or(0)));
+    let header = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(people::avatar(Some(&name), None, Size::Small).flex_none())
+        .child(div().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).child(name))
+        .child(div().text_xs().text_color(rgb(palette.muted_foreground)).child(time));
+    let said = lines.iter().map(|line| {
+        let text = match translation.shown(&line.caption) {
+            translate::Shown::Translated(text) | translate::Shown::Waiting(text) | translate::Shown::Spoken(text) => {
+                text
+            }
+        };
+        div()
+            .debug_selector(|| "call-transcript-said".to_owned())
+            .pl(px(32.0))
+            .text_sm()
+            .text_color(rgb(palette.foreground))
+            .child(SharedString::from(text.trim().to_owned()))
+    });
+    div()
+        .debug_selector(move || format!("call-transcript-turn-{index}"))
+        .pt_2()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(header)
+        .children(said)
+        .into_any_element()
+}
+
 /// A line of the transcript: its mark and its text.
 fn transcript_line(glyph: Glyph, text: SharedString, palette: Palette) -> gpui::Div {
     div()
@@ -493,5 +647,67 @@ pub(super) fn indicator(active: &ActiveCall, palette: Palette) -> Option<AnyElem
                 .into_any_element(),
         ),
         (None, None) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(at: i64, started: bool) -> TranscriptRow {
+        TranscriptRow { by: None, started, at }
+    }
+
+    fn line(at: i64, speaker: Option<&str>, name: &str) -> SpokenLine {
+        SpokenLine {
+            at,
+            caption: teams_core::Caption {
+                id: at.to_string(),
+                speaker: speaker.map(str::to_owned),
+                display_name: Some(name.to_owned()),
+                text: "Synthetic words.".to_owned(),
+                final_result: true,
+                spoken_language: "en-us".to_owned(),
+                track_language: "en-us".to_owned(),
+                audio_timestamp: 0,
+                duration: 0,
+            },
+        }
+    }
+
+    fn shape(entries: &[Entry<'_>]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|entry| match entry {
+                Entry::Event(row) => format!("event {}", row.started),
+                Entry::Turn(lines) => format!("turn {}", lines.len()),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn each_speaker_s_run_of_utterances_is_one_turn_between_the_transcription_s_events() {
+        let events = [row(10, true), row(90, false)];
+        let spoken = [
+            line(10, Some("a"), "A"),
+            line(20, Some("a"), "A"),
+            line(30, Some("b"), "B"),
+            line(40, None, "C"),
+            line(50, None, "C"),
+            line(60, Some("a"), "A"),
+            line(95, Some("a"), "A"),
+        ];
+        assert_eq!(
+            shape(&entries(&events, &spoken)),
+            [
+                "event true",
+                "turn 2",
+                "turn 1",
+                "turn 2",
+                "turn 1",
+                "event false",
+                "turn 1"
+            ]
+        );
     }
 }

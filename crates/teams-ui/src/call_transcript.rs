@@ -523,7 +523,7 @@ impl Recorder {
             calls.captions().phase,
             teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
         );
-        if still_up && !on && running && !calls.caption_pane_asked() {
+        if still_up && !on && running && !calls.caption_pane_asked() && !calls.transcript_captions() {
             calls::ask(&self.calls, &self.core, &self.trace, Ask::RecordCaptions(false), cx);
         }
         let Some(id) = saving.transcript else { return };

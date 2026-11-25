@@ -2816,6 +2816,7 @@ const STEPS: [Step; 5 + 374 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("call-group-transcribing", |shell, _, cx| {
         with_stage(cx, CallStage::close_record_dialog);
         transcription_state(shell, false, cx);
+        transcript_speech(shell, cx);
     }),
     // and in Teams Dark
     ("call-group-transcribing-dark", |shell, _, cx| {
@@ -3414,6 +3415,47 @@ fn transcription_state(shell: &Entity<Shell>, audio: bool, cx: &mut App) {
         },
         cx,
     );
+}
+
+/// What Lab Bee and Lab Sea said while the transcription ran, as the captions tell it: the transcript's turns.
+fn transcript_speech(shell: &Entity<Shell>, cx: &mut App) {
+    let said = [
+        (
+            LAB_B,
+            "Lab Bee",
+            "Good morning, everyone. Let's start with the release plan.",
+            100,
+        ),
+        (LAB_B, "Lab Bee", "The build is ready for review.", 200),
+        (LAB_C, "Lab Sea", "Thanks. I will check the call window today.", 300),
+        (LAB_B, "Lab Bee", "Great, then we land it tomorrow.", 400),
+    ];
+    let models = shell.read(cx).models().clone();
+    for (index, (speaker, name, text, audio)) in said.into_iter().enumerate() {
+        let line = teams_core::Caption {
+            id: format!("synthetic/{index}"),
+            speaker: Some(speaker.to_owned()),
+            display_name: Some(name.to_owned()),
+            text: text.to_owned(),
+            final_result: true,
+            spoken_language: "en-us".to_owned(),
+            track_language: "en-us".to_owned(),
+            audio_timestamp: audio,
+            duration: 10,
+        };
+        models.apply(
+            teams_core::Event::CallCaptions {
+                call: teams_core::CallId::for_tests(GROUP_CALL),
+                captions: teams_core::CallCaptions {
+                    phase: teams_core::CaptionPhase::On,
+                    spoken_language: "en-us".to_owned(),
+                    error: None,
+                    lines: vec![line],
+                },
+            },
+            cx,
+        );
+    }
 }
 
 /// What binds an attendee the organizer muted and kept from unmuting, its camera and presenting.

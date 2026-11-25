@@ -1108,7 +1108,9 @@ a alone). What each of Teams' remaining call controls sends:
   itself: its title with a translate button and Close, a bar "Follow the conversation better in real time by using live
   captions." with "Switch to live captions" (live captions instead of the pane) and a Close, then "AI-generated content
   may be incorrect" and a row per event, "<name> started transcription" and "<name> stopped transcription". Nobody spoke
-  in the run, so how the pane shows speech wasn't seen. Stop transcription asks "Stop transcription?" (Cancel, Stop)
+  in the run, so how the pane shows speech wasn't seen, nor where its speech comes from. The native client fills the
+  pane from the live captions (data ID 3): while a transcription runs, it starts them, keeps their pane hidden, and
+  shows each final utterance as a speaker's turn with the time from the start. Stop transcription asks "Stop transcription?" (Cancel, Stop)
   and posts `{"timestamp", "participantMri", "participantLegId", "action": "stop", "mode": "transcription",
   "processingModes": ["realTimeTranscript"], "participantSkypeToken": ""}`; "Transcription has stopped — If you change
   your mind, you can start it again anytime." shows to everyone.
