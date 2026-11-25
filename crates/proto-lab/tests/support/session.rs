@@ -101,6 +101,8 @@ fn only_exact_authz_and_service_endpoints_contribute_to_a_session() {
     assert!(matches!(Place::of("not a URL"), Place::Blank));
     assert!(matches!(Place::of("about:blank"), Place::Blank));
     assert!(is_service_read("https://teams.cloud.microsoft/api/csa/synthetic"));
+    assert!(is_service_read("https://teams.cloud.microsoft/api/mt/part/synthetic"));
+    assert!(!is_service_read("https://synthetic.example/api/mt/part/synthetic"));
 }
 
 #[tokio::test]
