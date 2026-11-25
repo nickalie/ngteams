@@ -407,19 +407,16 @@ fn is_authz(url: &str) -> bool {
     Url::parse(url).is_ok_and(|url| url.query().is_none() && url.fragment().is_none() && AUTHZ.contains(&url.as_str()))
 }
 
-/// Whether `url` is a read the web client makes only with a working session: the chat service, the chat service
-/// aggregator (CSA) or the middle tier on a Teams origin, `https://<teams origin>/api/{chatsvc,csa,mt}/…`. An account
-/// Teams refuses never gets that far (no skypetoken, no service tokens' use).
+/// Whether `url` is a read the web client makes only with a working session: the chat service or the chat service
+/// aggregator (CSA) on a Teams origin, `https://<teams origin>/api/{chatsvc,csa}/…`. An account Teams refuses never
+/// gets that far (no skypetoken, no service tokens' use).
 fn is_service_read(url: &str) -> bool {
     let Ok(url) = Url::parse(url) else {
         return false;
     };
     let origin = url.origin().ascii_serialization();
-    // since the build of 2026-11-25 the worker makes the chat and authz reads, which the page doesn't see
     TEAMS_ORIGINS.contains(&origin.as_str())
-        && ["/api/chatsvc/", "/api/csa/", "/api/mt/"]
-            .iter()
-            .any(|service| url.path().starts_with(service))
+        && (url.path().starts_with("/api/chatsvc/") || url.path().starts_with("/api/csa/"))
 }
 
 /// The identity in a request's `Authorization: Bearer` token, if it is a JWT with the claims.
