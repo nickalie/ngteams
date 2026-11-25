@@ -41,6 +41,9 @@ pub(super) struct PeopleKeys {
     /// The row a keyboard's Request to join moved the keyboard to, lit while the keyboard stays on it: a pointer that
     /// enters the window takes GPUI out of its keyboard mode, which alone lights a focused row.
     lit: Option<String>,
+    /// The person being called whose row the keyboard was on after the frame before: their place in that list, and
+    /// their MRI, as a row's key is its place and moves up when someone before them joins.
+    on_invitee: Option<(usize, String)>,
     /// The keys of the headings and rows drawn in this frame, in the drawn order.
     drawn: RefCell<Vec<String>>,
     /// The same of the frame before.
@@ -63,9 +66,21 @@ impl PeopleKeys {
 }
 
 impl CallStage {
-    /// Moves the keyboard to the row of the person a Request to join asked in, once the engine added them (see
-    /// [`Follow`]); a refused ask, or another call, ends the wait.
-    pub(super) fn follow_request(&mut self, active: Option<&ActiveCall>, window: &mut Window, cx: &mut Context<Self>) {
+    /// Before a frame, and before the pane is built: the People pane's keyboard place and light (see
+    /// [`Self::unlight_people`], [`Self::keep_invitee_place`], [`Self::follow_request`]).
+    pub(super) fn place_people_keys(
+        &mut self,
+        active: Option<&ActiveCall>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.unlight_people(window, cx);
+        self.keep_invitee_place(active, window, cx);
+        self.follow_request(active, window, cx);
+    }
+
+    /// Before a frame: drops the lit row once the keyboard has left it, so the pane must be built after it.
+    fn unlight_people(&mut self, window: &Window, cx: &App) {
         let keys = &mut self.people_keys;
         if keys
             .lit
@@ -74,6 +89,40 @@ impl CallStage {
         {
             keys.lit = None;
         }
+    }
+
+    /// Before a frame: keeps the keyboard, and the light, on the person being called whose row it was on when someone
+    /// called before them joins and their row moves up; when they are no longer called, their row is gone.
+    fn keep_invitee_place(&mut self, active: Option<&ActiveCall>, window: &mut Window, cx: &mut Context<Self>) {
+        let keys = &mut self.people_keys;
+        let Some((was, mri)) = keys.on_invitee.take() else {
+            return;
+        };
+        let old = invited_key(was);
+        if !keys.handles.get(&old, cx).is_focused(window) {
+            return;
+        }
+        let now = active.and_then(|active| {
+            active
+                .invited
+                .iter()
+                .position(|invited| invited.mri.as_str().eq_ignore_ascii_case(&mri))
+        });
+        let lit = keys.lit.as_deref() == Some(old.as_str());
+        if let Some(now) = now.filter(|now| *now != was) {
+            let key = invited_key(now);
+            window.focus(&keys.handles.get(&key, cx), cx);
+            if lit {
+                keys.lit = Some(key);
+            }
+        } else if now.is_none() && lit {
+            keys.lit = None;
+        }
+    }
+
+    /// Moves the keyboard to the row of the person a Request to join asked in, once the engine added them (see
+    /// [`Follow`]); a refused ask, or another call, ends the wait.
+    fn follow_request(&mut self, active: Option<&ActiveCall>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(follow) = &self.people_keys.follows else {
             return;
         };
@@ -90,25 +139,34 @@ impl CallStage {
             return;
         };
         self.people_keys.follows = None;
-        let key = format!("call-roster-invited-{index}");
+        let key = invited_key(index);
         window.focus(&self.people_keys.handles.get(&key, cx), cx);
         self.people_keys.lit = Some(key);
     }
 
     /// After a frame: when the heading or row the keyboard was on is drawn no more, the keyboard goes to its neighbour
     /// (see [`neighbour`]), as GPUI's Tab finds no next stop from a handle that is not drawn.
-    pub(super) fn keep_people_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// It also notes the person being called whose row the keyboard is on (see [`Self::keep_invitee_place`]).
+    pub(super) fn keep_people_focus(
+        &mut self,
+        active: Option<&ActiveCall>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let keys = &mut self.people_keys;
         let drawn = std::mem::take(keys.drawn.get_mut());
         let last = std::mem::replace(&mut keys.last, drawn);
-        let Some(gone) = keys.handles.focused(window) else {
-            return;
-        };
-        if let Some(next) = neighbour(&last, &keys.last, &gone) {
+        let focused = keys.handles.focused(window);
+        if let Some(next) = focused.as_deref().and_then(|gone| neighbour(&last, &keys.last, gone)) {
             let handle = keys.handles.get(next, cx);
             keys.lit = None;
             window.focus(&handle, cx);
         }
+        let place = keys.handles.focused(window).as_deref().and_then(invited_place);
+        keys.on_invitee = place.and_then(|place| {
+            let invited = active?.invited.get(place)?;
+            Some((place, invited.mri.as_str().to_owned()))
+        });
     }
 
     /// The People pane.
@@ -298,7 +356,7 @@ impl CallStage {
         } else {
             "Calling…"
         };
-        let row = format!("call-roster-invited-{index}");
+        let row = invited_key(index);
         let selector = row.clone();
         let drawn = div()
             .id(SharedString::from(row.clone()))
@@ -309,11 +367,7 @@ impl CallStage {
             .items_center()
             .gap_3()
             .child(hand_ring(
-                faces::small_face(
-                    &self.faces,
-                    (&format!("call-roster-invited-{index}"), invited.mri.as_str()),
-                    &name,
-                ),
+                faces::small_face(&self.faces, (&row, invited.mri.as_str()), &name),
                 false,
                 palette,
             ))
@@ -607,7 +661,12 @@ impl CallStage {
     fn person_stop(&self, key: &str, row: gpui::Stateful<gpui::Div>, palette: Palette, cx: &App) -> AnyElement {
         self.people_keys.drawn.borrow_mut().push(key.to_owned());
         let lit = self.people_keys.lit.as_deref() == Some(key);
-        let row = row.when(lit, |row| row.bg(rgb(palette.hover)));
+        let mark = format!("{key}-lit");
+        let row = row.when(lit, |row| {
+            row.relative()
+                .bg(rgb(palette.hover))
+                .child(div().absolute().inset_0().debug_selector(move || mark))
+        });
         keyboard::stop(SharedString::from(key.to_owned()), row, palette)
             .handle(&self.people_keys.handles.get(key, cx))
             .into_any_element()
@@ -697,6 +756,16 @@ fn neighbour<'a>(last: &'a [String], drawn: &'a [String], gone: &str) -> Option<
         .find(|key| drawn.contains(key))
         .or_else(|| drawn.first())
         .map(String::as_str)
+}
+
+/// The selector of the row `index` of the people being called, and its focus key.
+fn invited_key(index: usize) -> String {
+    format!("call-roster-invited-{index}")
+}
+
+/// The place in the people being called of the row `key`, if it is one of theirs.
+fn invited_place(key: &str) -> Option<usize> {
+    key.strip_prefix("call-roster-invited-")?.parse().ok()
 }
 
 /// The selector of the row `index` of "People added to the chat" or "Others invited", and its focus key.

@@ -3247,6 +3247,7 @@ fn the_row_the_keyboard_followed_stays_lit_and_when_it_goes_the_keyboard_goes_to
     );
     draw(stage);
     assert_eq!(people_lit(stage).as_deref(), Some("call-roster-invited-0"));
+    assert!(drawn(stage, "call-roster-invited-0-lit"), "the row is drawn lit");
     // b joins: their row of the people being called goes, and the keyboard goes to the next stop drawn
     rig.send(Event::CallParticipants {
         call: call(1),
@@ -3265,6 +3266,50 @@ fn the_row_the_keyboard_followed_stays_lit_and_when_it_goes_the_keyboard_goes_to
         Some("call-roster-0"),
         "b's row in the meeting"
     );
+}
+
+#[test]
+fn the_keyboard_and_the_light_stay_on_a_called_person_whose_row_moves_up() {
+    let rig = calling();
+    invite_to_meeting(&rig);
+    let (trace, _) = trace();
+    let (_windows, stage) = in_meeting(&rig, &trace);
+    rig.send(Event::CallParticipants {
+        call: call(1),
+        view: view(&[], false),
+    });
+    rig.cx.run_until_parked();
+    click(stage, "call-roster");
+    tab_to_first_request(stage);
+    press_and_release(stage, "enter");
+    rig.cx.run_until_parked();
+    draw(stage);
+    assert_eq!(people_focus(stage).as_deref(), Some("call-roster-invited-0"));
+    tab_to_first_request(stage);
+    press_and_release(stage, "enter");
+    rig.cx.run_until_parked();
+    draw(stage);
+    assert_eq!(people_focus(stage).as_deref(), Some("call-roster-invited-1"));
+    assert_eq!(people_lit(stage).as_deref(), Some("call-roster-invited-1"));
+    assert!(!drawn(stage, "call-roster-invited-0-lit"));
+    // b, called first, joins: c's row moves up, and the keyboard and the light go with it
+    rig.send(Event::CallParticipants {
+        call: call(1),
+        view: view(&[(LAB_B, "Lab Bee", true, Some(1), false)], false),
+    });
+    rig.cx.run_until_parked();
+    draw(stage);
+    assert!(!drawn(stage, "call-roster-invited-1"));
+    assert_eq!(people_focus(stage).as_deref(), Some("call-roster-invited-0"));
+    assert_eq!(people_lit(stage).as_deref(), Some("call-roster-invited-0"));
+    assert!(drawn(stage, "call-roster-invited-0-lit"));
+    // Tab off the row, which stays drawn: it is lit no more
+    stage.simulate_keystrokes("tab");
+    draw(stage);
+    assert_ne!(people_focus(stage).as_deref(), Some("call-roster-invited-0"));
+    assert!(drawn(stage, "call-roster-invited-0"));
+    assert_eq!(people_lit(stage), None);
+    assert!(!drawn(stage, "call-roster-invited-0-lit"));
 }
 
 /// Tabs to the first "Others invited" row, then to its Request to join.
