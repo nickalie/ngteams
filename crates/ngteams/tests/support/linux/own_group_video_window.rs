@@ -11,7 +11,8 @@
 //!
 //! - The gallery: b's and c's video tiles presented beside a's own; shots in Teams Light and Dark, the call window
 //!   1280 and 480 px wide.
-//! - b shares its screen: the share presented on a's stage; the same four shots.
+//! - b shares its screen at 1080p, as a desktop shares it: the share presented on a's stage; the same four shots.
+//!   a's app log (info, as the app installs it) tells the screen's source request and its first frame at 1920x1080.
 //! - b's Stop sharing: the share leaves a's stage.
 //! - Everyone hangs up; a's app quits.
 //!
@@ -42,8 +43,8 @@ use teams_core::engine::{Action, Event};
 use teams_core::{CallAction, CallFloor, CallId, CallMedia, CallStatus, Relay, VideoOutput};
 use teams_ctl::protocol::{CallRow, Request, Response, Toggle};
 use teams_ctl::{Client, Timeouts};
-use teams_media::devices::VideoSink;
-use teams_media::devices::file::{AudioInput, FileDevices, FrameCounter, Pacing, PatternCamera};
+use teams_media::devices::file::{AudioInput, FileDevices, FrameCounter, Pacing, PatternCamera, SCREEN as FILE_SCREEN};
+use teams_media::devices::{AudioSink, AudioSource, DeviceError, Devices, VideoSink, VideoSource};
 use teams_media::processing::ProcessingConfig;
 use teams_media::session::SessionConfig;
 use teams_media::tone::Tone;
@@ -110,8 +111,44 @@ const C_CAMERA: PatternCamera = PatternCamera {
     height: 360,
     fps: 15,
 };
+/// b's screen: a desktop's 1080p.
+const FULL_HD: PatternCamera = PatternCamera {
+    width: 1920,
+    height: 1080,
+    fps: 15,
+};
+/// What a's app log must tell of b's share, at info.
+const SHARE_LOG: [&str; 2] = [": screen ", "the first frame of a shared screen came: 1920x1080"];
 const fn tone(hz: f32) -> Tone {
     Tone { hz, amplitude: 0.3 }
+}
+
+/// The file devices, their screen the test pattern of `screen`'s shape.
+struct Screened {
+    files: FileDevices,
+    screen: PatternCamera,
+}
+
+impl Devices for Screened {
+    fn microphone(&self) -> Result<Box<dyn AudioSource>, DeviceError> {
+        self.files.microphone()
+    }
+
+    fn speaker(&self) -> Result<Box<dyn AudioSink>, DeviceError> {
+        self.files.speaker()
+    }
+
+    fn camera(&self) -> Result<Box<dyn VideoSource>, DeviceError> {
+        self.files.camera()
+    }
+
+    fn screen(&self) -> Result<Box<dyn VideoSource>, DeviceError> {
+        FileDevices {
+            camera: self.screen,
+            ..self.files.clone()
+        }
+        .camera()
+    }
 }
 /// Made-up members of the chat with no client of their own.
 const QUIET: [&str; 4] = [
@@ -173,14 +210,18 @@ fn own_account(
     Ok((account, engine))
 }
 
-/// A call's media on the file devices: `tone` in, nothing recorded, the test pattern of `camera`'s shape.
-fn media(tone: Tone, camera: PatternCamera, output: Arc<dyn VideoOutput>) -> CallMedia {
+/// A call's media on the file devices: `tone` in, nothing recorded, the test patterns of `camera`'s and `screen`'s
+/// shapes.
+fn media(tone: Tone, (camera, screen): (PatternCamera, PatternCamera), output: Arc<dyn VideoOutput>) -> CallMedia {
     CallMedia {
-        devices: Arc::new(FileDevices {
-            input: AudioInput::Tone(tone),
-            recording: None,
-            camera,
-            pacing: Pacing::RealTime,
+        devices: Arc::new(Screened {
+            files: FileDevices {
+                input: AudioInput::Tone(tone),
+                recording: None,
+                camera,
+                pacing: Pacing::RealTime,
+            },
+            screen,
         }),
         // as a shipped client's: an own server's account's media goes through the relay its server names
         relay: Relay::Teams,
@@ -220,10 +261,15 @@ impl Peer {
         dir: &Path,
         server: (&str, &str),
         (upn, name): (&str, &'static str),
-        look: (Tone, PatternCamera),
+        look: (Tone, PatternCamera, PatternCamera),
     ) -> SandboxResult<Self> {
         let shown = Counted::default();
-        let (account, engine) = own_account(dir, server, upn, media(look.0, look.1, Arc::new(shown.clone())))?;
+        let (account, engine) = own_account(
+            dir,
+            server,
+            upn,
+            media(look.0, (look.1, look.2), Arc::new(shown.clone())),
+        )?;
         let mri = account.mri().ok_or("no MRI")?.as_str().to_owned();
         Ok(Self {
             name,
@@ -327,8 +373,8 @@ fn parent() -> SandboxResult {
         .worker_threads(2)
         .enable_all()
         .build()?;
-    let mut b = Peer::start(&dir.path().join("b"), at, B, (tone(660.0), B_CAMERA))?;
-    let mut c = Peer::start(&dir.path().join("c"), at, C, (tone(880.0), C_CAMERA))?;
+    let mut b = Peer::start(&dir.path().join("b"), at, B, (tone(660.0), B_CAMERA, FULL_HD))?;
+    let mut c = Peer::start(&dir.path().join("c"), at, C, (tone(880.0), C_CAMERA, FILE_SCREEN))?;
     let mut app = AppUnderTest::start(&sandbox, at, dir.path())?;
     let a_mri = format!("8:orgid:{}", oids[0]);
     let outcome = Rig::new(&sandbox, &mut app, &runtime).and_then(|mut rig| {
@@ -349,6 +395,7 @@ fn parent() -> SandboxResult {
     }
     outcome?;
     app.quit(&sandbox)?;
+    share_logged(&dir.path().join("a").join(APP_LOG))?;
     say("ngteams own group video window: ok");
     Ok(())
 }
@@ -427,6 +474,44 @@ fn scenario(rig: &mut Rig<'_>, (b, c): (&mut Peer, &mut Peer), a_mri: &str, quie
     c.act(runtime, &CallAction::HangUp { call: c_call })?;
     let _ = b.act(runtime, &CallAction::HangUp { call });
     say(&format!("b {b_mri} and c {c_mri} hung up"));
+    Ok(())
+}
+
+/// `target/ui-shots/` and the evidence dir, if set.
+fn evidence_dirs() -> Vec<PathBuf> {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .parent()
+        .map_or_else(|| PathBuf::from("target"), Path::to_owned)
+        .join("ui-shots");
+    let mut dirs = vec![dir];
+    dirs.extend(std::env::var_os(EVIDENCE_ENV).map(PathBuf::from));
+    dirs
+}
+
+/// a's app log, in its dir under the parent's `a`.
+const APP_LOG: &str = "logs";
+
+/// a's app log tells each of [`SHARE_LOG`]: the lines go to the evidence too.
+fn share_logged(dir: &Path) -> SandboxResult {
+    let mut text = String::new();
+    for entry in fs::read_dir(dir)? {
+        text.push_str(&fs::read_to_string(entry?.path())?);
+    }
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| line.contains("source request") || line.contains("shared screen"))
+        .collect();
+    let told = lines.join("\n");
+    for dir in evidence_dirs() {
+        let _ = fs::create_dir_all(&dir);
+        let _ = fs::write(dir.join("own-group-video-share-log.txt"), &told);
+    }
+    say(&format!("a's app log of the share:\n{told}"));
+    for wanted in SHARE_LOG {
+        if !lines.iter().any(|line| line.contains(wanted)) {
+            return Err(format!("a's app log doesn't tell {wanted:?}: {told}").into());
+        }
+    }
     Ok(())
 }
 
@@ -605,13 +690,7 @@ impl<'a> Rig<'a> {
         thread::sleep(Duration::from_millis(300));
         self.shots += 1;
         let png = self.sandbox.screenshot(&format!("shot-{}.png", self.shots), true)?;
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR"))
-            .parent()
-            .map_or_else(|| PathBuf::from("target"), Path::to_owned)
-            .join("ui-shots");
-        let mut dirs = vec![dir];
-        dirs.extend(std::env::var_os(EVIDENCE_ENV).map(PathBuf::from));
-        for dir in dirs {
+        for dir in evidence_dirs() {
             fs::create_dir_all(&dir)?;
             fs::copy(&png, dir.join(format!("own-group-video-{name}.png")))?;
         }
@@ -735,13 +814,14 @@ fn child() -> SandboxResult {
     ngteams::read_only::window_allowed_here()?;
     let trace = teams_ui::ViewTrace::new(adopt_trace(env(TRACE_FD_ENV)?.parse()?)?);
     let dir = PathBuf::from(env(DIR_ENV)?);
+    let _diagnostics = app::install_log(dir.join(APP_LOG), teams_ui::settings::LogLevel::Info);
     let (origin, ca_file) = (env(ORIGIN_ENV)?, env(CA_ENV)?);
     let feed = VideoFeed::new();
     let (account, engine) = own_account(
         &dir.join("account"),
         (&origin, &ca_file),
         A.0,
-        media(tone(440.0), A_CAMERA, Arc::new(feed.clone())),
+        media(tone(440.0), (A_CAMERA, FILE_SCREEN), Arc::new(feed.clone())),
     )?;
     let first = ngteams::accounts::Started {
         account,
