@@ -1207,6 +1207,9 @@ fn a_meeting_s_request_to_join_rings_as_a_group_call_in_the_meeting_s_chat_and_i
         panic!("{ringing:#?}");
     };
     assert_eq!(incoming.group_chat.as_deref(), Some(chat));
+    let meeting = incoming.meeting.as_ref().expect("the ring names its meeting");
+    assert_eq!(meeting.organizer_id, "00000000-0000-4000-8000-00000000000a");
+    assert_eq!(meeting.tenant_id, "00000000-0000-4000-8000-0000000000f1");
     let call = incoming.call;
     assert_eq!(calls.meeting_chat(call).as_deref(), Some(chat), "its organizer named");
     assert!(calls.joinable(chat), "a Rejoin goes in");
@@ -1271,6 +1274,7 @@ fn rung_call(now: Instant) -> (Calls, CallId, WriteId) {
     let [CallEvent::Incoming(incoming)] = &events(&ringing)[..] else {
         panic!("{ringing:#?}");
     };
+    assert_eq!(incoming.meeting, None, "a call that is no meeting's names none");
     let [(progress, "progress")] = sent(&ringing)[..] else {
         panic!("{ringing:#?}");
     };

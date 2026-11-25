@@ -1801,7 +1801,9 @@ fn state_of(shell: &Entity<Shell>, cx: &App) -> Value {
         other => format!("{other:?}"),
     };
     let calls = shell_ref.models().calls.read(cx);
-    let prejoin = calls.prejoin().map(|prejoin| json!({"chat": prejoin.to_join.chat()}));
+    let prejoin = calls.prejoin().map(|prejoin| {
+        json!({"chat": prejoin.to_join.chat(), "title": prejoin.to_join.title(), "ring": prejoin.ring.is_some()})
+    });
     let call = calls.call().map(|call| {
         let participants: Vec<Value> = call
             .view

@@ -373,8 +373,10 @@ The invitee gets a group call's invitation (`evt` 109) with these differences: `
 {"threadId": <the meeting's chat>, "messageId": "0"}`, `meetingData: {"meetingCode"}`, and
 `meetingProperties.meetingLiveState`; the offer is the mixer's (`fromMixer`, `originator: "mcGvc"`). Browser Teams
 shows "<organizer> wants you to join <meeting title>" with Accept and Decline. The client attaches and reports ringing
-as for any invitation. Accept opens the meeting's pre-join; its Join now posts the conversation's
-`updateEndpointState`, then the `accept` at the incoming leg, in a group call's answer shape. The organizer is then
+as for any invitation. Accept opens the meeting's pre-join and sends nothing: the ring goes on (in the capture, Join
+now came about 35 s after the ring started). Its Join now posts the conversation's `updateEndpointState` (`isMuted`
+as the pre-join's microphone says), then the `accept` at the incoming leg, in a group call's answer shape. The
+captures do not show Cancel on that pre-join, nor a ring that ends while it shows. The organizer is then
 told at `addParticipantSuccess` (`participants: [<MRI>]`, `participantInfos`), and the roster shows the invitee in
 the meeting.
 
@@ -393,11 +395,15 @@ to "Others invited" with "No response". After Request to join with the keyboard,
 "Calling…" row once the engine lists them there, so a second Enter asks nobody. The call tracker offers an `evt` 109
 that names a meeting's chat only when its `invitationData.meetingInfo` names the organizer and the tenant; the client
 rings with Teams' words ("<caller> wants you to join <meeting>", Accept and Decline, in the banner and the desktop
-notification) and answers it as a group call (`accept`), and the call is the meeting's, titled with the meeting's name.
-The invitation's answer goes at once: it has no
-pre-join step between Accept and the `accept`. A Rejoin after such a call is the meeting's own join, with the organizer and
-tenant the invitation named. For a meeting host's `add`, the own server's invitation adds `invitationData.meetingInfo` and `conversationType`
-`scheduledMeeting`; it sends no `meetingData` and keeps the group call's `meetingLiveState`. When an added
+notification). Accept opens the meeting's pre-join with the meeting's name and sends nothing; the ring goes on, without
+its ringtone, notification or banner. Join now answers it as a group call (`accept`), and the call is the meeting's,
+titled with the meeting's name; the pre-join's microphone and camera follow once the call takes them. If the ring ends
+while the pre-join shows (it timed out, or the caller gave up), the pre-join stays, and Join now is the meeting's own
+join, with the organizer and tenant the invitation named. Cancel, or a close of the pre-join's window, sends nothing:
+the ring goes on, with its banner and ringtone, until it is answered, declined or ends. A Rejoin after such a call is
+the meeting's own join, with the organizer and tenant the invitation named. For a meeting host's `add`, the own
+server's invitation adds `invitationData.meetingInfo` and `conversationType` `scheduledMeeting`; it sends no
+`meetingData` and keeps the group call's `meetingLiveState`. When an added
 party declines, the own server tells the adder at its `addParticipantFailure` link in the captured shape (580/5208,
 `callControllerTransactionEnd` 603).
 

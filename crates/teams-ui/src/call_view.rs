@@ -6,7 +6,8 @@
 //!   invitation gives it, "Someone" without one; a group call's chat by its row's name), Answer in Teams' green and
 //!   Decline in its red. Once answered, until its call is told, it says "Answering" and "Preparing…" (devices still
 //!   being discovered) or "Connecting…", with Decline alone. The ringtone and the notification are the desktop's
-//!   ([`crate::call_alert`]).
+//!   ([`crate::call_alert`]). A meeting's Request to join says "Accept"; its Accept opens the meeting's pre-join, and
+//!   the banner is gone while the pre-join shows.
 //! - **The in-call strip** while a call is up or being set up, the way back to its window as Teams' call monitor is:
 //!   who it is with (a chat's members other than the account, by their names; an invitation's caller; the test
 //!   call's echo, "Echo", as a 1:1 call's other member), its state (calling, ringing, connecting, connected with its
@@ -375,7 +376,7 @@ impl CallBar {
             };
             self.trace.record(&TraceLine::new("calling", change));
         }
-        let ringing = model.ringing().cloned();
+        let ringing = model.ringing().filter(|_| !model.ring_in_prejoin()).cloned();
         let shown = model.call().map(|active| self.bar_of(active));
         let ended = model.ended().cloned();
         let answering = model.answering();
@@ -521,7 +522,7 @@ impl CallBar {
     #[must_use]
     pub fn said(&self, cx: &App) -> Option<(SharedString, Option<&'static str>)> {
         let model = self.calls.read(cx);
-        if let Some(ringing) = model.ringing() {
+        if let Some(ringing) = model.ringing().filter(|_| !model.ring_in_prejoin()) {
             let text = self.banner_text(ringing, model.answering(), cx);
             return Some((text, Some(answer_look(ringing).1)));
         }
@@ -941,7 +942,9 @@ impl Render for CallBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = theme::current(cx);
         let model = self.calls.read(cx);
-        let (shows, ringing, active) = (model.shows(), model.ringing().cloned(), model.call().cloned());
+        // a ring whose Accept opened its meeting's pre-join shows there, as Teams' toast goes on Accept
+        let ringing = model.ringing().filter(|_| !model.ring_in_prejoin()).cloned();
+        let (shows, active) = (model.shows(), model.call().cloned());
         let banner = ringing
             .filter(|_| shows)
             .map(|ringing| self.banner(&ringing, palette, cx));

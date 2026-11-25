@@ -473,3 +473,27 @@ async fn a_real_new_mixer_session_replaces_media_and_keeps_gallery_and_camera() 
     hang_up(&mut a, call_a).await;
     assert_eq!(lab.attempts(&answer_path).await, 1);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_meetings_request_to_join_rings_with_its_organizer_and_tenant_and_a_group_ring_with_none() {
+    let lab = Lab::start().await;
+    let mut b = lab.account(LAB_B, B_TONE).await;
+    let chat = "19:meeting_MadeUpRingCheck0001@thread.v2";
+    let organizer = LAB_A.trim_start_matches("8:orgid:");
+    let info = serde_json::json!({"organizerId": organizer, "tenantId": teams_mock::TENANT});
+    let asked = lab.mock.ring_meeting(LAB_A, chat, &[LAB_B], info);
+    let ringing = b.incoming().await;
+    assert_eq!(ringing.group_chat.as_deref(), Some(chat));
+    let meeting = ringing.meeting.clone().expect("the ring names its meeting");
+    assert_eq!(
+        (meeting.organizer_id.as_str(), meeting.tenant_id.as_str()),
+        (organizer, teams_mock::TENANT)
+    );
+    assert!(lab.mock.end_ring(&asked, 487, TIMED_OUT));
+    b.next(|event| matches!(event, Event::RingEnded { .. }).then_some(()))
+        .await;
+
+    let _group = lab.mock.ring_group(LAB_A, ABC_CHAT, &[LAB_B]);
+    let ringing = b.incoming().await;
+    assert_eq!((ringing.group_chat.as_deref(), ringing.meeting), (Some(ABC_CHAT), None));
+}

@@ -15,6 +15,9 @@
 //! - **A meeting's pre-join** ([`Prejoin`]): the calendar's Join opens it, and nothing goes out until its Join now
 //!   ([`join_now`]); what its switches say is the user's, and turns into the call's mute and camera once the call can
 //!   take them ([`Calls::next_choice`]).
+//! - **A meeting's Request to join** opens that meeting's pre-join on Accept, as Teams does, and nothing goes out
+//!   ([`Prejoin::ring`]). Its Join now answers the ring while it rings, and joins the meeting by its link after the
+//!   ring ended. Its Cancel lets the ring ring on until it ends (Teams' Cancel was not captured).
 //! - **The asks** ([`Ask`]): a call from a chat, the test call (the echo service's MRI the app gave), a join, a
 //!   meeting's join (started or not), the answer or the decline of the invitation that rings, a hang-up, mute or unmute, the camera on or off (off when a
 //!   call starts; a 1:1 call's video, M3 Task 18). Each is the user's: a button, a key, the switcher's command or the
@@ -771,6 +774,8 @@ pub struct Prejoin {
     pub joining: bool,
     /// What Join now does: go into the meeting, or start a new one in the channel `to_join.chat` (its Meet now).
     pub entry: PrejoinEntry,
+    /// The meeting's Request to join whose Accept opened it: its Join now answers that ring while it rings.
+    pub ring: Option<CallId>,
 }
 
 /// What a pre-join's Join now does.
@@ -949,6 +954,8 @@ pub struct Calls {
     /// The pre-join was cancelled after its Join now went: the meeting's call that comes of it is hung up as soon as
     /// it is told ([`Self::next_choice`]), and none of its choices is applied.
     taken_back: bool,
+    /// The meeting's Request to join that a pre-join's Join now answered: its call is the meeting's.
+    answers_meeting: Option<CallId>,
 }
 
 impl Calls {
@@ -1100,10 +1107,13 @@ impl Calls {
             .is_some_and(|ringing| self.answering == Some(ringing.call))
     }
 
-    /// The invitation to ring aloud and notify: the one that rings, unless it is being answered.
+    /// The invitation to ring aloud and notify: the one that rings, unless it is being answered or its Accept opened
+    /// its meeting's pre-join.
     #[must_use]
     pub fn alerting(&self) -> Option<&IncomingCall> {
-        self.ringing.as_ref().filter(|_| !self.answering())
+        self.ringing
+            .as_ref()
+            .filter(|_| !self.answering() && !self.ring_in_prejoin())
     }
 
     /// Whether the call devices are still being discovered, so a call waits before it goes.
@@ -1177,6 +1187,7 @@ impl Calls {
         self.prejoin = None;
         self.choices = None;
         self.taken_back = false;
+        self.answers_meeting = None;
         if let Some(active) = self.call.take() {
             self.ended = Some(Ended::of(active, End::HungUp));
             self.refused = None;
@@ -1236,8 +1247,70 @@ impl Calls {
             audio: PrejoinAudio::Computer,
             joining: false,
             entry: PrejoinEntry::Join,
+            ring: None,
         });
         cx.notify();
+    }
+
+    /// Whether Answer on the invitation that rings opens its meeting's pre-join rather than answering: it is a
+    /// meeting's Request to join that names its meeting, and its pre-join's Join now is not what answers.
+    #[must_use]
+    pub fn ring_opens_prejoin(&self) -> bool {
+        let Some(ringing) = self.ringing.as_ref() else {
+            return false;
+        };
+        let meeting_ring = ringing.meeting.is_some()
+            && ringing
+                .group_chat
+                .as_deref()
+                .is_some_and(teams_proto::is_meeting_chat_id);
+        let answers = self
+            .prejoin
+            .as_ref()
+            .is_some_and(|prejoin| prejoin.ring == Some(ringing.call) && prejoin.joining);
+        meeting_ring && !answers
+    }
+
+    /// Whether the invitation that rings shows as its meeting's pre-join (its Accept opened it): it rings on, silent.
+    #[must_use]
+    pub fn ring_in_prejoin(&self) -> bool {
+        self.ringing.as_ref().is_some_and(|ringing| {
+            self.prejoin
+                .as_ref()
+                .is_some_and(|prejoin| prejoin.ring == Some(ringing.call))
+        })
+    }
+
+    /// Accept on a meeting's Request to join: the meeting's pre-join, titled `title` until its name is read, its Join
+    /// now answering the ring. Nothing goes out. The ring it opened for, if it opened.
+    fn open_ring_prejoin(&mut self, title: &str, cx: &mut Context<Self>) -> Option<CallId> {
+        if self.ring_in_prejoin() {
+            return self.ringing.as_ref().map(|ringing| ringing.call);
+        }
+        let ringing = self.ringing.clone()?;
+        let to_join = MeetingToJoin::Chat {
+            chat: ringing.group_chat?,
+            meeting: ringing.meeting?,
+            title: title.to_owned(),
+            post: None,
+        };
+        self.open_prejoin(to_join, cx);
+        if let Some(prejoin) = &mut self.prejoin {
+            prejoin.ring = Some(ringing.call);
+        }
+        Some(ringing.call)
+    }
+
+    /// The meeting's name, read for the pre-join that Accept on the ring `ring` opened.
+    fn title_ring_prejoin(&mut self, ring: CallId, title: String, cx: &mut Context<Self>) {
+        if let Some(prejoin) = &mut self.prejoin
+            && prejoin.ring == Some(ring)
+            && let MeetingToJoin::Chat { title: current, .. } = &mut prejoin.to_join
+            && *current != title
+        {
+            *current = title;
+            cx.notify();
+        }
     }
 
     /// Shows the pre-join of a new meeting in the channel `to_join.chat` (its Meet now), as [`Self::open_prejoin`]
@@ -1297,9 +1370,21 @@ impl Calls {
             if prejoin.joining {
                 self.choices = None;
                 self.taken_back = true;
+            } else if prejoin.ring.is_some() {
+                self.answers_meeting = None;
             }
             self.refused = None;
             cx.notify();
+        }
+    }
+
+    /// The ring that Accept opened a pre-join for ended (timed out, or its caller gave up): the pre-join stays, and its
+    /// Join now joins the meeting by its link.
+    fn ring_ended_in_prejoin(&mut self, call: CallId) {
+        if let Some(prejoin) = self.prejoin.as_mut().filter(|prejoin| prejoin.ring == Some(call)) {
+            prejoin.ring = None;
+            prejoin.joining = false;
+            self.answers_meeting = None;
         }
     }
 
@@ -1372,6 +1457,7 @@ impl Calls {
                     self.answering = None;
                     self.rang_out = Some((*call, end.by.clone()));
                 }
+                self.ring_ended_in_prejoin(*call);
             }
             Event::CallCaptions { call, captions } => self.captions_told(*call, captions),
             Event::CallRecording { call, recording } => {
@@ -1684,9 +1770,14 @@ impl Calls {
     fn adopt(&mut self, call: CallId) -> ActiveCall {
         let invitation = self.ringing.take_if(|ringing| ringing.call == call);
         self.answering.take_if(|answering| *answering == call);
+        let from_prejoin = self.answers_meeting.take_if(|answered| *answered == call).is_some();
         let (kind, chat, caller, caller_name) = if let Some(incoming) = invitation {
             (
-                CallKind::Incoming,
+                if from_prejoin {
+                    CallKind::Meeting
+                } else {
+                    CallKind::Incoming
+                },
                 incoming.group_chat,
                 Some(incoming.caller),
                 incoming.caller_name,
@@ -1986,6 +2077,9 @@ impl Calls {
         if let Some(prejoin) = &mut self.prejoin {
             prejoin.joining = false;
         }
+        if *ask == Ask::Answer {
+            self.answers_meeting = None;
+        }
         if self.asked.is_none() {
             // no start or join is pending any more (the one a cancelled pre-join asked for was refused): there is no
             // call to hang up; a later ask refused as busy leaves the pending one to be hung up
@@ -2231,6 +2325,11 @@ pub fn ask_then(
         cx.defer(move |cx| then(Answered::Refused, cx));
         return;
     }
+    if ask == Ask::Answer && calls.read(cx).ring_opens_prejoin() {
+        accept_meeting_ring(calls, core, trace, cx);
+        cx.defer(move |cx| then(Answered::Taken, cx));
+        return;
+    }
     let mut asked = TraceLine::new("call", "asked").kind(ask.name());
     if let Some(chat) = ask.chat() {
         asked = asked.conversation(chat);
@@ -2290,6 +2389,36 @@ pub fn ask_then(
         // calls that are gone have nobody left to tell
         let _ = weak.update(cx, |calls, cx| calls.answered(&ask, start, &action, answer, cx));
         cx.update(|cx| then(answered, cx));
+    })
+    .detach();
+}
+
+/// Accept on a meeting's Request to join, as Teams' Accept: the meeting's pre-join in its own window, titled with the
+/// meeting's name once read. Nothing goes out, and the ring rings on, silent, until Join now answers it.
+fn accept_meeting_ring(calls: &Entity<Calls>, core: &Arc<dyn Core>, trace: &Arc<ViewTrace>, cx: &mut App) {
+    let shown = calls.read(cx).ring_in_prejoin();
+    let opened = calls.update(cx, |calls, cx| {
+        calls.open_ring_prejoin(crate::meeting_alert::NO_TITLE, cx)
+    });
+    let (Some(ring), Some(chat)) = (
+        opened,
+        calls
+            .read(cx)
+            .prejoin()
+            .and_then(|prejoin| prejoin.to_join.chat().map(str::to_owned)),
+    ) else {
+        return;
+    };
+    crate::call_window::raise(cx);
+    if shown {
+        return;
+    }
+    trace.record(&TraceLine::new("call", "prejoin").call(ring.get()).conversation(&chat));
+    log::info!("call: answer opened the pre-join of {chat}");
+    let (core, weak) = (Arc::clone(core), calls.downgrade());
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        let title = crate::meeting_alert::chat_name(&*core, &chat).await;
+        let _ = weak.update(cx, |calls, cx| calls.title_ring_prejoin(ring, title, cx));
     })
     .detach();
 }
@@ -2354,6 +2483,9 @@ pub fn join_now_then(
     let asked = calls.update(cx, |calls, cx| {
         let prejoin = calls.prejoin.as_mut().filter(|prejoin| !prejoin.joining)?;
         prejoin.joining = true;
+        let ring = prejoin
+            .ring
+            .filter(|ring| calls.ringing.as_ref().is_some_and(|ringing| ringing.call == *ring));
         let to_join = prejoin.to_join.clone();
         let starts = prejoin.entry == PrejoinEntry::MeetNow;
         let choices = Choices {
@@ -2363,12 +2495,15 @@ pub fn join_now_then(
         calls.refused = None;
         calls.choices = Some(choices);
         calls.meeting = Some(to_join.clone());
+        calls.answers_meeting = ring;
         cx.notify();
         // a Rejoin of a meeting started here goes into it as it runs (`Self::rejoin_of`)
         let ask = if starts {
             Ask::MeetNow {
                 channel: to_join.chat()?.to_owned(),
             }
+        } else if ring.is_some() {
+            Ask::Answer
         } else {
             to_join.ask()
         };

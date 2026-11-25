@@ -2428,6 +2428,7 @@ const STEPS: [Step; 5 + 374 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
                 caller: Mri::new(LAB_B),
                 caller_name: Some("Lab Bee".to_owned()),
                 group_chat: None,
+                meeting: None,
             }),
             cx,
         );
@@ -3173,6 +3174,7 @@ fn ring_group_call(shell: &Entity<Shell>, window: &mut Window, number: u64, cx: 
             caller: Mri::new(LAB_B),
             caller_name: Some("Cora 'Cee' Nuñez".to_owned()),
             group_chat: Some(ABC_CHAT.to_owned()),
+            meeting: None,
         }),
         cx,
     );
@@ -3762,6 +3764,7 @@ fn fake_group_call(shell: &Entity<Shell>, cx: &mut App) {
             caller: Mri::new(LAB_B),
             caller_name: Some("Lab Bee".to_owned()),
             group_chat: Some(ABC_CHAT.to_owned()),
+            meeting: None,
         }),
         teams_core::Event::Call {
             call,
@@ -4260,6 +4263,7 @@ fn fake_call(shell: &Entity<Shell>, cx: &mut App) {
             caller: Mri::new(LAB_B),
             caller_name: Some("Lab Bee".to_owned()),
             group_chat: None,
+            meeting: None,
         }),
         teams_core::Event::Call {
             call,

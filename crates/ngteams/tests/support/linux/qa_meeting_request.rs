@@ -13,8 +13,8 @@
 //!   nothing); an `add` that the service refuses shows "No response", not a "Calling…" that stays.
 //! - **The invitee's side** (`invitee_ring`): a group call's ring that names the meeting's chat but no `meetingInfo`
 //!   does not ring; a meeting's Request to join (`meetingInfo`, `conversationType` `scheduledMeeting`) rings with the
-//!   meeting's title. Answer joins the meeting at once; Teams opens a pre-join first, which is not built yet
-//!   (`docs/backlog/meeting-ring-accept-pre-join.md`). Shots of the ring in each theme.
+//!   meeting's title. Accept opens the meeting's pre-join and sends nothing; Cancel (Escape) lets the ring ring on;
+//!   Accept again, then Join now (Enter) joins the meeting. Shots of the ring and the pre-join in each theme.
 use super::{
     AB_CHAT, Duration, Instant, LAB_A, LAB_B, MEETING, MeetingCall, POLL, Rect, RgbImage, SETTLE, SUBJECT,
     SandboxResult, TENANT, TIMED_OUT, User, Value, WAIT, ensure, i32_of, join_the_meeting, json, people_focus, pixels,
@@ -510,47 +510,82 @@ pub(super) fn invitee_ring(user: &mut User<'_>) -> SandboxResult {
         thread::sleep(SETTLE);
         user.shot(&format!("invitee-ring-{theme}"))?;
     }
-    user.set_theme("light")?;
-    user.focus_main()?;
-    let screen = user.screen()?;
-    let answer = answer_button(&screen).ok_or("no Answer on the ring")?;
-    say(&format!("  Answer at {answer:?}"));
-    user.click(answer)?;
-    user.park()?;
-    // Teams: Accept opens the meeting's pre-join, and Join now joins; ngteams joins at once (see the module docs)
-    let deadline = Instant::now() + Duration::from_secs(8);
-    let mut prejoin = false;
-    while Instant::now() < deadline {
-        let state = user.state()?;
-        if !state["prejoin"].is_null() {
-            prejoin = true;
-            break;
-        }
-        if state["call"]["status"] == "connected" {
-            break;
-        }
-        thread::sleep(POLL);
-    }
-    if prejoin {
-        user.focus_other()?;
-        user.shot("invitee-prejoin")?;
-        user.press("enter")?;
-    }
-    let joined = user.wait_call("a in the meeting after Answer", |row| row.state == "connected");
+    through_the_prejoin(user)?;
+    let joined = user.wait_call("a in the meeting after Join now", |row| row.state == "connected");
     thread::sleep(SETTLE);
     let _ = user.shot("invitee-answered");
+    if joined.is_ok() {
+        user.set_theme("dark")?;
+        user.focus_other()?;
+        user.park()?;
+        thread::sleep(SETTLE);
+        let _ = user.shot("invitee-answered-dark");
+        user.set_theme("light")?;
+    }
     let in_meeting = user.state()?;
-    say(&format!("  after Answer: {}", in_meeting["call"]));
+    say(&format!("  after Join now: {}", in_meeting["call"]));
     let titled = meeting_titled(user);
     user.hang_up()?;
     let _ = user.mock.hang_up_call(&asked);
     joined?;
     ensure(in_meeting["call"]["chat"] == MEETING, || {
-        format!("Answer joined {}, not the meeting", in_meeting["call"]["chat"])
+        format!("Join now joined {}, not the meeting", in_meeting["call"]["chat"])
     })?;
     titled?;
-    if !prejoin {
-        say("  Answer joined at once, with no pre-join (a known gap)");
+    ensure(in_meeting["call"]["kind"] == "Meeting", || {
+        format!("Join now's call is no meeting's: {}", in_meeting["call"])
+    })
+}
+
+/// Accept opens the meeting's pre-join with its title, Cancel lets the ring ring on, and Accept again then Join now
+/// (Enter) answers; shots of the pre-join in each theme.
+fn through_the_prejoin(user: &mut User<'_>) -> SandboxResult {
+    // Accept opens the meeting's pre-join, as Teams' Accept: nothing goes out, and the ring rings on
+    accept(user)?;
+    let shown = user.until("the meeting's pre-join with its title", |state| {
+        state["prejoin"]["title"] == SUBJECT
+    })?;
+    say(&format!("  after Accept: {shown}"));
+    ensure(
+        shown["prejoin"]["chat"] == MEETING
+            && shown["prejoin"]["ring"] == true
+            && !shown["ringing"].is_null()
+            && shown["call"].is_null(),
+        || format!("Accept did not open the ring's pre-join alone: {shown}"),
+    )?;
+    let title = user.focus_other()?;
+    ensure(title == SUBJECT, || {
+        format!("the pre-join's window is titled {title:?}")
+    })?;
+    for theme in ["light", "dark"] {
+        user.set_theme(theme)?;
+        user.focus_other()?;
+        user.park()?;
+        thread::sleep(SETTLE);
+        user.shot(&format!("invitee-prejoin-{theme}"))?;
     }
+    user.set_theme("light")?;
+    // Cancel (Escape): the pre-join goes, and the ring rings on with its banner
+    user.focus_other()?;
+    user.press("escape")?;
+    let cancelled = user.until("the ring after Cancel", |state| {
+        state["prejoin"].is_null() && !state["ringing"].is_null()
+    })?;
+    ensure(cancelled["call"].is_null(), || format!("Cancel answered: {cancelled}"))?;
+    // Accept again, then Join now with the keyboard
+    accept(user)?;
+    user.until("the pre-join again", |state| state["prejoin"]["ring"] == true)?;
+    user.focus_other()?;
+    user.press("enter")?;
     Ok(())
+}
+
+/// Accept on the ring's banner in the main window, as the user clicks it.
+fn accept(user: &mut User<'_>) -> SandboxResult {
+    user.focus_main()?;
+    let screen = user.screen()?;
+    let answer = answer_button(&screen).ok_or("no Accept on the ring")?;
+    say(&format!("  Accept at {answer:?}"));
+    user.click(answer)?;
+    user.park()
 }

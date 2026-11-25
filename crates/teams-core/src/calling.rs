@@ -340,6 +340,8 @@ pub struct IncomingCall {
     pub caller_name: Option<String>,
     /// The group chat of a group call, or the meeting's chat for a meeting's Request to join.
     pub group_chat: Option<String>,
+    /// The organizer and tenant of a meeting's Request to join: its pre-join can join the meeting once the ring ends.
+    pub meeting: Option<MeetingInfo>,
 }
 
 /// Why a call action was refused. Nothing was sent.
@@ -942,21 +944,25 @@ where
         });
     }
 
+    /// An invitation rings: its offer kept for its answer, and the account told.
+    fn ring(&mut self, incoming: teams_call::Incoming) {
+        let group = incoming.group_chat.is_some();
+        self.offers.insert(incoming.call, (incoming.offer, group));
+        self.emit(Event::IncomingCall(IncomingCall {
+            call: incoming.call,
+            caller: incoming.caller,
+            caller_name: incoming.caller_name,
+            group_chat: incoming.group_chat,
+            meeting: incoming.meeting,
+        }));
+    }
+
     /// What the machine tells: to the account, and to the media.
     fn told(&mut self, event: CallEvent, now: Instant) {
         match event {
             CallEvent::CaptionService { call, .. } => self.service_changed(call),
             CallEvent::CaptionFailed { call } => self.service_join_failed(call),
-            CallEvent::Incoming(incoming) => {
-                let group = incoming.group_chat.is_some();
-                self.offers.insert(incoming.call, (incoming.offer, group));
-                self.emit(Event::IncomingCall(IncomingCall {
-                    call: incoming.call,
-                    caller: incoming.caller,
-                    caller_name: incoming.caller_name,
-                    group_chat: incoming.group_chat,
-                }));
-            }
+            CallEvent::Incoming(incoming) => self.ring(incoming),
             CallEvent::RingEnded { call, end } => {
                 self.cancel_answer(call);
                 self.offers.remove(&call);

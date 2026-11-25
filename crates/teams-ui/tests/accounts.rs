@@ -457,6 +457,7 @@ fn a_call_on_one_account_keeps_the_others_from_entering_one() {
         caller: Mri::new(LAB_C),
         caller_name: Some("Cee".to_owned()),
         group_chat: None,
+        meeting: None,
     };
     d.second.events.send(Event::IncomingCall(invitation)).unwrap();
     d.rig.cx.run_until_parked();

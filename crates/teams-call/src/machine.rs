@@ -144,6 +144,8 @@ pub struct Incoming {
     pub caller_name: Option<String>,
     /// The group chat of a group call, or the meeting's chat for a meeting's Request to join.
     pub group_chat: Option<String>,
+    /// The organizer and tenant of a meeting's Request to join, as its `invitationData.meetingInfo` names them.
+    pub meeting: Option<teams_proto::MeetingInfo>,
     /// The caller's (or a group call's mixer's) offer.
     pub offer: Option<MediaContent>,
 }
@@ -2072,6 +2074,7 @@ impl Calls {
             caller: invitation.caller,
             caller_name: invitation.caller_name,
             group_chat: invitation.group_chat,
+            meeting: call.meeting_info.clone(),
             offer: invitation.offer,
         }));
     }

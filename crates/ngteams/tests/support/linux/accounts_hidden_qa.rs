@@ -849,6 +849,7 @@ fn fake_call(shell: &Entity<Shell>, caller: &str, name: &str, cx: &mut App) {
             caller: Mri::new(caller),
             caller_name: Some(name.to_owned()),
             group_chat: None,
+            meeting: None,
         }),
         teams_core::Event::Call {
             call,

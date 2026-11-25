@@ -3,7 +3,8 @@
 //! Computer audio with the microphone's switch and the microphone and the speaker, Phone audio, which Teams offers
 //! greyed out to an account without dial-in, and Don't use audio, which joins muted), then Cancel and Join now.
 //! Nothing has gone out while it shows: Join now is what goes into the meeting's call ([`calls::join_now`]), starting
-//! it when nobody has.
+//! it when nobody has. Opened by Accept on the meeting's Request to join, its Join now answers that ring while it rings,
+//! and its Cancel leaves the ring to ring on.
 //!
 //! - **The camera** starts off, and only the switch (the user's click) turns it on, for the preview alone
 //!   ([`CameraPreview`]): nothing is sent. Whatever the pre-join's switches say at Join now, the call turns them into

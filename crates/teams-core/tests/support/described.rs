@@ -151,6 +151,7 @@ fn incoming_and_remote_end_diagnostics_keep_ids_and_codes_but_omit_display_names
             caller: Mri::new(teams_mock::LAB_B),
             caller_name: Some(PRIVATE_NAME.to_owned()),
             group_chat: group_chat.clone(),
+            meeting: None,
         });
         let (_, line) = logged(&event, LevelFilter::Info).unwrap();
         assert!(line.contains(teams_mock::LAB_B));

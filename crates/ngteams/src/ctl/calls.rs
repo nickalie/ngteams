@@ -5,7 +5,8 @@
 //!
 //! - `calls`: the call up and the invitation that rings, of every account (of the one addressed with `--account`).
 //! - `call <chat>`, `join <chat>`: the chat named as the reads name it ([`address::chat`]), called or its running call
-//!   joined; `answer`, `decline`: the invitation that rings; `hangup`: the call up left (or its ring cancelled).
+//!   joined; `answer` (a meeting's Request to join through its pre-join's Join now), `decline`: the invitation that
+//!   rings; `hangup`: the call up left (or its ring cancelled).
 //! - `mute on|off|toggle`, `camera on|off|toggle`: the microphone or the camera of the call up, asked only when it
 //!   isn't as `on`/`off` says already. They are asked one at a time, each once the one before it was answered: the
 //!   call shows a switch as it is only then, so one asked meanwhile would be compared with what it was before.
@@ -308,6 +309,14 @@ fn ask_now(target: &Target, ask: Ask, cx: &mut App) -> Result<(Settle, oneshot::
     if enters && target.accounts.read(cx).busy_elsewhere(&target.account.mri, cx) {
         calls::refuse_here(calls, &target.trace, &ask, "another-account", cx);
         return Err(refusal(calls.read(cx).refused()));
+    }
+    if ask == Ask::Answer && calls.read(cx).ring_opens_prejoin() {
+        // a meeting's Request to join: its Accept opens the pre-join, whose Join now answers, as `--now` joins a meeting
+        calls::ask(calls, &target.account.core, &target.trace, Ask::Answer, cx);
+        calls::join_now_then(calls, &target.account.core, &target.trace, cx, move |taken, _| {
+            let _ = told.send(if taken { Answered::Taken } else { Answered::Refused });
+        });
+        return Ok((settle, taken));
     }
     calls::ask_then(
         calls,

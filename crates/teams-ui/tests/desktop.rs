@@ -770,6 +770,7 @@ fn an_updates_restart_waits_for_an_unsent_message_and_for_a_call() {
         caller: teams_proto::Mri::new(LAB_B),
         caller_name: Some("Bee".to_owned()),
         group_chat: None,
+        meeting: None,
     }));
     d.rig.cx.run_until_parked();
     assert_eq!(waiting(&d), Some(Waiting::Call));

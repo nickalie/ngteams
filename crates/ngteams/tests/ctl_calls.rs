@@ -517,6 +517,29 @@ fn an_invitation_is_answered_muted_and_its_camera_turned_on_and_off_then_hung_up
     let _ = lab.mock.close_peer(&id, LAB_A);
 }
 
+/// `answer` on a meeting's Request to join goes through the meeting's pre-join, as Accept then Join now: it answers
+/// the ring, and the call is the meeting's.
+#[test]
+fn answer_on_a_meetings_request_to_join_answers_it_through_its_pre_join() {
+    let lab = Lab::start(true);
+    let chat = "19:meeting_MadeUpCtlRing0001@thread.v2";
+    let organizer = LAB_A.trim_start_matches("8:orgid:");
+    let info = serde_json::json!({"organizerId": organizer, "tenantId": TENANT});
+    let id = lab.mock.ring_meeting(LAB_B, chat, &[LAB_A], info);
+    lab.settle(Calls::ring_opens_prejoin);
+    let answered = lab.row(Request::Answer);
+    assert!(!answered.ringing && answered.state != "ended", "{answered:?}");
+    assert!(lab.sent().contains(&"accept".to_owned()), "{:?}", lab.sent());
+    lab.settle(|calls| {
+        calls
+            .call()
+            .is_some_and(|call| call.kind == teams_ui::calls::CallKind::Meeting)
+    });
+    assert!(lab.cx.read(|cx| lab.calls().read(cx).prejoin().is_none()));
+    lab.row(Request::HangUp);
+    let _ = lab.mock.close_peer(&id, LAB_A);
+}
+
 /// The microphone and the camera of the call up switched by `mute` and `camera`, each asked only when it isn't as the
 /// command says already; only the command turns the camera on.
 fn switches_ask_only_when_they_differ(lab: &Lab) {

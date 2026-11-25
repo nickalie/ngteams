@@ -469,6 +469,7 @@ fn a_rejoin_goes_on_in_the_same_transcript_and_an_invitation_s_call_is_kept_in_i
         caller: Mri::new(LAB_B),
         caller_name: Some("Lab Bee".to_owned()),
         group_chat: None,
+        meeting: None,
     }));
     status(&rig, 1, CallStatus::Connected);
     captions(&rig, 1, CaptionPhase::On, vec![caption("s/1", WORDS, true)]);
@@ -478,6 +479,7 @@ fn a_rejoin_goes_on_in_the_same_transcript_and_an_invitation_s_call_is_kept_in_i
         caller: Mri::new(LAB_B),
         caller_name: None,
         group_chat: None,
+        meeting: None,
     }));
     status(&rig, 2, CallStatus::Connected);
     assert_eq!(caption_asks(&rig), [true, true], "each call's captions turned on");

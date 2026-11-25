@@ -186,6 +186,7 @@ fn shown_after_a_ring(calls: Option<&PersonalCalls>) -> (bool, bool, bool, bool,
                 caller: teams_proto::Mri::new("8:orgid:00000000-0000-4000-8000-00000000000b"),
                 caller_name: Some("Someone Else".to_owned()),
                 group_chat: None,
+                meeting: None,
             }),
             cx,
         );

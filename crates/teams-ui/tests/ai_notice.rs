@@ -159,6 +159,7 @@ fn a_call_that_rings_while_the_notice_waits_is_answered_or_declined_from_the_key
             caller: Mri::new(LAB_B),
             caller_name: None,
             group_chat: None,
+            meeting: None,
         }));
     };
     let actions = || rig.core.call_actions.lock().unwrap().clone();
@@ -232,6 +233,7 @@ fn ring(rig: &Rig, number: u64) {
         caller: Mri::new(LAB_B),
         caller_name: None,
         group_chat: None,
+        meeting: None,
     }));
 }
 

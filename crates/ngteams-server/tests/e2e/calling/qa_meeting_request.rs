@@ -1,7 +1,9 @@
 //! QA of task 810 (round 1): Request to join in a meeting on the own server, on SQLite and on Postgres + Redis. The
 //! organizer's engine asks an invitee into its meeting. A client's raw socket reads the invitation's shape: the
 //! meeting's organizer and tenant and `conversationType` `scheduledMeeting`. A second invitee's engine rings in the
-//! meeting's chat, declines (the organizer is told), is asked again and joins. Every account and meeting is synthetic.
+//! meeting's chat, declines (the organizer is told), is asked again and joins. Task 831 adds the invitee's pre-join:
+//! its Join now answers the ring, or after the ring joins by the meeting the ring named. Every account and meeting is
+//! synthetic.
 
 use std::time::Duration;
 
@@ -138,5 +140,59 @@ async fn qa810_a_hosts_request_to_join_rings_with_the_meeting_and_a_decline_is_t
             Some(true),
             "the organizer was not told that the invitee declined"
         );
+    }
+}
+
+/// Task 831: the invitee's pre-join, as its actions reach the own server. Accept sends nothing, so the ring rings on
+/// while the pre-join shows. Join now answers the ring, and Cora is in the meeting. When the ring ended before Join
+/// now (here Cora declines it), Join now is the meeting's own join, by the organizer and tenant the ring named.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn qa831_an_invitee_joins_through_the_pre_join_by_the_rings_answer_or_after_the_ring_by_its_meeting() {
+    for backend in backends() {
+        let mixed = Mixed::start(backend).await;
+        let mut ada = Person::new(&mixed, "Ada", A_TONE).await;
+        let mut cora = Person::new(&mixed, "Cora", C_TONE).await;
+        let tag = uuid::Uuid::new_v4().simple().to_string();
+        let eve_upn = format!("eve-{tag}@own.test");
+        mixed.server().add_user(&eve_upn, "Eve").await;
+        let event = meeting_of(&ada, &cora, &eve_upn).await;
+        let chat = event.meeting_chat.clone().unwrap();
+        let a_call = joined(&mut ada, &join_of(&event)).await;
+        let cora_mri = Mri::new(cora.engine.mri.clone());
+        let cora_in = |view: &teams_core::CallView| view.participants.iter().any(|one| one.mri == cora_mri.as_str());
+        let ask_cora = CallAction::Add {
+            call: a_call,
+            invitee: cora_mri.clone(),
+        };
+
+        ada.engine.call(ask_cora.clone()).await;
+        let ringing = cora.engine.incoming().await;
+        assert_eq!(ringing.group_chat.as_deref(), Some(chat.as_str()));
+        let meeting = ringing.meeting.clone().expect("the ring names its meeting");
+        assert_eq!(meeting.organizer_id, ada.id());
+        assert_eq!(Some(&meeting), event.meeting.as_ref(), "the meeting the calendar names");
+        // the pre-join shows: nothing goes out, and the ring rings on
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let c_call = cora.engine.call(CallAction::Answer { call: ringing.call }).await;
+        assert_eq!(c_call, ringing.call, "Join now answers the ring that still rings");
+        cora.engine.status(c_call, &CallStatus::Connected).await;
+        ada.engine.view(a_call, cora_in).await;
+        cora.engine.call(CallAction::HangUp { call: c_call }).await;
+        cora.engine.ended(c_call).await;
+        ada.engine.view(a_call, |view| !cora_in(view)).await;
+
+        // asked again; the ring ends while the pre-join shows; Join now joins by the meeting the ring named
+        ada.engine.call(ask_cora).await;
+        let ringing = cora.engine.incoming().await;
+        cora.engine.call(CallAction::Decline { call: ringing.call }).await;
+        cora.engine.ended(ringing.call).await;
+        let by_link = CallAction::JoinMeeting {
+            chat: chat.clone(),
+            meeting: ringing.meeting.clone().expect("the ring names its meeting"),
+        };
+        let c_call = joined(&mut cora, &by_link).await;
+        ada.engine.view(a_call, cora_in).await;
+        leave_all(&mut [&mut cora, &mut ada], &[c_call, a_call]).await;
+        shut_down(vec![ada, cora], mixed).await;
     }
 }

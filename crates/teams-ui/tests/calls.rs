@@ -36,6 +36,9 @@ mod large_call;
 /// Live reactions float up the stage in every layout.
 #[path = "calls/live_reactions.rs"]
 mod live_reactions;
+/// Accept on a meeting's Request to join: its pre-join, then Join now.
+#[path = "calls/meeting_ring.rs"]
+mod meeting_ring;
 #[path = "common/notices.rs"]
 mod notices;
 /// What a call sounds like as it goes along.
@@ -262,6 +265,7 @@ fn invitation(number: u64, caller_name: Option<&str>, group_chat: Option<&str>) 
         caller: Mri::new(LAB_B),
         caller_name: caller_name.map(str::to_owned),
         group_chat: group_chat.map(str::to_owned),
+        meeting: None,
     }
 }
 
@@ -6250,6 +6254,7 @@ fn failed_background_media_setup_hides_calls_and_drops_an_incoming_ring(cx: &mut
                 caller: Mri::new(LAB_B),
                 caller_name: None,
                 group_chat: None,
+                meeting: None,
             }),
             cx,
         );

@@ -440,6 +440,7 @@ fn engine_events(call: CallId) -> Vec<Event> {
             caller: Mri::new(BEE),
             caller_name: Some("Bee Example".to_owned()),
             group_chat: Some(PROJECT.to_owned()),
+            meeting: None,
         }),
         Event::RingEnded {
             call,
