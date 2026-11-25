@@ -181,7 +181,8 @@ pub(crate) mod tests {
     pub(crate) fn keyframe(profile: u8, (width, height): (u32, u32), order: u32) -> Vec<u8> {
         let mut sps = Writer::default();
         sps.put(u32::from(profile), 8).put(0xC0, 8).put(42, 8).golomb(0);
-        if HIGH_PROFILES.contains(&profile) {
+        // the specification's own list, so a profile missing from `HIGH_PROFILES` fails the tests
+        if [100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135, 144].contains(&profile) {
             sps.golomb(1).golomb(0).golomb(0).put(0, 1).put(0, 1);
         }
         sps.golomb(0).golomb(order);
@@ -212,6 +213,7 @@ pub(crate) mod tests {
         assert_eq!(macroblocks(&keyframe(100, (640, 360), 1)), Some(920));
         assert_eq!(macroblocks(&keyframe(42, (2560, 1440), 2)), Some(14_400));
         assert_eq!(macroblocks(&keyframe(135, (1920, 1080), 0)), Some(8160));
+        assert_eq!(macroblocks(&keyframe(144, (1280, 720), 1)), Some(3600));
     }
 
     #[test]

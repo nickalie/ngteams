@@ -319,16 +319,17 @@ mod tests {
             ..Driven::default()
         };
         let params = room.legs.get_mut("a").unwrap().video_params().unwrap();
-        let screen = |keyframe: bool| Driven {
+        let sized = |keyframe: bool, size| Driven {
             frames: vec![Frame {
                 source: 1002,
                 time: 90_000,
                 keyframe,
                 params,
-                data: Arc::from(crate::mixer::sps::tests::keyframe(66, (1920, 1080), 2)),
+                data: Arc::from(crate::mixer::sps::tests::keyframe(66, size, 2)),
             }],
             ..Driven::default()
         };
+        let screen = |keyframe| sized(keyframe, (1920, 1080));
         let showing = |room: &Room| {
             room.slots
                 .get(&("b".to_owned(), B.sharing))
@@ -343,6 +344,17 @@ mod tests {
         room.driven("b", asked(8160), now);
         room.driven("a", screen(false), now);
         assert!(!showing(&room), "still waiting for a keyframe");
+        room.driven("a", screen(true), now);
+        assert!(showing(&room));
+        // a line that shows a 720p screen: a 1080p keyframe stops it, and a raised limit waits for the next keyframe
+        room.driven("b", asked(3600), now);
+        room.driven("a", sized(true, (1280, 720)), now);
+        assert!(showing(&room));
+        room.driven("a", screen(true), now);
+        assert!(!showing(&room));
+        room.driven("b", asked(8160), now);
+        room.driven("a", screen(false), now);
+        assert!(!showing(&room), "a delta frame in the middle of a picture group");
         room.driven("a", screen(true), now);
         assert!(showing(&room));
         room.remove("a");
