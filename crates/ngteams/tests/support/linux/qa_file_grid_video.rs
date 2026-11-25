@@ -237,6 +237,8 @@ impl Walk<'_> {
         let (_, dark) = self.shot_in("qa793-lone-video-again", DARK)?;
         if let Some(card) = dark.first().copied() {
             self.play_lone(card, DARK)?;
+        } else {
+            note("the lone video: no card on the Dark screen after it played".to_owned());
         }
         self.run.theme(false)?;
         step("a video alone: its card is two columns wide, shows its thumbnail and plays");
@@ -337,7 +339,7 @@ impl Walk<'_> {
         }
         let Some((back, presses)) = reached else {
             self.run.shot(self.sandbox, "qa793-keyboard-unreached-light.png")?;
-            // a gap from before task 793 (no file card is a tab stop), logged, not failed, until a task gives cards focus
+            // a gap from before task 793, logged, not failed: docs/backlog/file-card-keyboard-focus.md
             step(&format!(
                 "KNOWN GAP: the keyboard does not reach the lone video's card: 1 to {TABS} Tab or Shift+Tab presses, then Enter, \
                  play nothing"
