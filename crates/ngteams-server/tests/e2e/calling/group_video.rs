@@ -38,7 +38,7 @@ const QUIET: Duration = Duration::from_secs(1);
 const SLACK: Duration = Duration::from_secs(3);
 
 /// A picture's shape: its width over its height.
-fn shape(width: u32, height: u32) -> f32 {
+pub(super) fn shape(width: u32, height: u32) -> f32 {
     #[expect(clippy::cast_precision_loss, reason = "a picture's sides are a few thousand at most")]
     let (width, height) = (width as f32, height as f32);
     width / height.max(1.0)

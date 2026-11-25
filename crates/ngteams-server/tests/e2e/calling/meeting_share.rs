@@ -11,6 +11,7 @@ use teams_media::session::SHARING_LINE;
 
 use super::engines::{A_TONE, B_TONE, Engine, FRAMES, FULL_HD, Screen, wait_until};
 use super::group_media::{C_TONE, Mixed, connect_all, group_chat, hang_up_all};
+use super::group_video::shape;
 use super::meetings::{Person, join_of, joined, leave_all, schedule, shut_down};
 use crate::support::backends;
 
@@ -90,10 +91,11 @@ async fn a_720p_screen_shared_in_a_meeting_reaches_everyone_else_until_it_stops(
     meeting_share(Screen::Moving, SCREEN).await;
 }
 
-/// Waits until `viewer` shows `filmed`'s camera on its line in `call`: [`FRAMES`] more frames of the size `size`.
+/// Waits until `viewer` shows `filmed`'s camera on its line in `call`: [`FRAMES`] more frames of the shape of `size`.
 async fn sees_camera(viewer: &mut Engine, call: CallId, filmed: &str, size: PatternCamera) {
+    // the view that put the camera on its line can be among the views that `sees_screen` read
     let view = viewer
-        .view(call, |view| {
+        .shown(call, |view| {
             view.participants
                 .iter()
                 .any(|party| party.mri == filmed && party.video_on && party.line.is_some())
@@ -105,10 +107,12 @@ async fn sees_camera(viewer: &mut Engine, call: CallId, filmed: &str, size: Patt
         .find_map(|party| (party.mri == filmed).then_some(party.line).flatten())
         .unwrap();
     let since = viewer.seen(line).frames;
+    let wanted = shape(size.width, size.height);
     let what = format!("{}: {filmed}'s camera on line {line}", viewer.mri);
+    // a camera sent with balanced degradation can come smaller under load, so only its shape is sure
     wait_until(&what, || {
         let seen = viewer.seen(line);
-        seen.frames >= since + FRAMES && (seen.width, seen.height) == (size.width, size.height)
+        seen.frames >= since + FRAMES && (shape(seen.width, seen.height) - wanted).abs() < 0.1
     })
     .await;
     eprintln!("{what}: {:?}", viewer.seen(line));
