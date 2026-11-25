@@ -1313,13 +1313,18 @@ fn keyboard(user: &mut User<'_>) -> SandboxResult {
 
 /// Presses Tab until the keyboard is on the People heading or row `stop`.
 fn tab_to(user: &mut User<'_>, stop: &str) -> SandboxResult {
+    let mut seen = Vec::new();
     for _ in 0..40 {
         user.press("tab")?;
-        if people_focus(user)?.as_deref() == Some(stop) {
+        let focus = people_focus(user)?;
+        if focus.as_deref() == Some(stop) {
             return Ok(());
         }
+        if seen.last() != Some(&focus) {
+            seen.push(focus);
+        }
     }
-    Err(format!("Tab did not reach {stop}").into())
+    Err(format!("Tab did not reach {stop}; it reached {seen:?}").into())
 }
 
 /// People and the stage alone in Teams Light and Teams Dark.

@@ -16,9 +16,9 @@
 //!   meeting's title. Answer joins the meeting at once; Teams opens a pre-join first, which is not built yet
 //!   (`docs/backlog/meeting-ring-accept-pre-join.md`). Shots of the ring in each theme.
 use super::{
-    AB_CHAT, Duration, Instant, LAB_A, LAB_B, MEETING, MeetingCall, POLL, Rect, RgbImage, SETTLE, SandboxResult,
-    TENANT, TIMED_OUT, User, Value, WAIT, ensure, i32_of, join_the_meeting, json, people_focus, pixels, say, tab_to,
-    thread, u32_of, wait_until,
+    AB_CHAT, Duration, Instant, LAB_A, LAB_B, MEETING, MeetingCall, POLL, Rect, RgbImage, SETTLE, SUBJECT,
+    SandboxResult, TENANT, TIMED_OUT, User, Value, WAIT, ensure, i32_of, join_the_meeting, json, people_focus, pixels,
+    say, tab_to, thread, u32_of, wait_until,
 };
 use teams_mock::AddOutcome;
 
@@ -423,6 +423,42 @@ fn answer_button(image: &RgbImage) -> Option<(i32, i32)> {
     .map(Rect::center)
 }
 
+/// The desktop notification of a meeting's Request to join uses Teams' words.
+fn meeting_notified(user: &mut User<'_>, seen: usize) -> SandboxResult {
+    let asks = format!("wants you to join {SUBJECT}");
+    // the notification waits for the meeting's title from the chat list
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let notices: Vec<String> = user
+            .sandbox
+            .bus()
+            .notifications()
+            .into_iter()
+            .skip(seen)
+            .map(|notice| format!("{} / {}", notice.summary, notice.body))
+            .collect();
+        let told = notices.iter().any(|notice| notice.ends_with(&format!(" / {asks}")));
+        if told || Instant::now() > deadline {
+            say(&format!("  the ring's notifications: {notices:?}"));
+            return ensure(told, || format!("no notification says \"{asks}\": {notices:?}"));
+        }
+        thread::sleep(POLL);
+    }
+}
+
+/// The call window of the answered Request to join has the meeting's title.
+fn meeting_titled(user: &mut User<'_>) -> SandboxResult {
+    let titles: Vec<String> = user
+        .windows()?
+        .iter()
+        .map(|window| window["title"].as_str().unwrap_or_default().to_owned())
+        .collect();
+    say(&format!("  the windows: {titles:?}"));
+    ensure(titles.iter().any(|title| title == SUBJECT), || {
+        format!("no call window has the meeting's title: {titles:?}")
+    })
+}
+
 pub(super) fn invitee_ring(user: &mut User<'_>) -> SandboxResult {
     user.hang_up()?;
     user.meeting = None;
@@ -444,15 +480,7 @@ pub(super) fn invitee_ring(user: &mut User<'_>) -> SandboxResult {
     ensure(row.chat.as_deref() == Some(MEETING), || {
         format!("the ring is in {:?}, not the meeting's chat", row.chat)
     })?;
-    let notices: Vec<String> = user
-        .sandbox
-        .bus()
-        .notifications()
-        .into_iter()
-        .skip(seen)
-        .map(|notice| format!("{} / {}", notice.summary, notice.body))
-        .collect();
-    say(&format!("  the ring's notifications: {notices:?}"));
+    meeting_notified(user, seen)?;
     for theme in ["light", "dark"] {
         user.set_theme(theme)?;
         user.focus_main()?;
@@ -491,12 +519,14 @@ pub(super) fn invitee_ring(user: &mut User<'_>) -> SandboxResult {
     let _ = user.shot("invitee-answered");
     let in_meeting = user.state()?;
     say(&format!("  after Answer: {}", in_meeting["call"]));
+    let titled = meeting_titled(user);
     user.hang_up()?;
     let _ = user.mock.hang_up_call(&asked);
     joined?;
     ensure(in_meeting["call"]["chat"] == MEETING, || {
         format!("Answer joined {}, not the meeting", in_meeting["call"]["chat"])
     })?;
+    titled?;
     if !prejoin {
         say("  Answer joined at once, with no pre-join (a known gap)");
     }
