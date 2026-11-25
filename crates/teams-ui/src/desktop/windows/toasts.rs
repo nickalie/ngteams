@@ -348,8 +348,9 @@ fn xml(notice: &Notice, key: &str, picture: Option<&str>) -> String {
         ""
     };
     let actions = if call {
+        let answer = notice.answer_label();
         format!(
-            r#"<actions><action content="Answer" hint-buttonStyle="Success" arguments="{key}:answer" activationType="foreground"/><action content="Decline" hint-buttonStyle="Critical" arguments="{key}:decline" activationType="foreground"/></actions>"#
+            r#"<actions><action content="{answer}" hint-buttonStyle="Success" arguments="{key}:answer" activationType="foreground"/><action content="Decline" hint-buttonStyle="Critical" arguments="{key}:decline" activationType="foreground"/></actions>"#
         )
     } else if notice.kind == NoticeKind::Meeting {
         meeting_actions(key)

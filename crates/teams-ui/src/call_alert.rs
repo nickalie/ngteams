@@ -81,8 +81,7 @@ pub fn notice_of(incoming: &IncomingCall) -> Notice {
 }
 
 /// The body of a meeting's Request to join, as Teams' toast says it.
-#[must_use]
-pub fn meeting_ask_body(title: &str) -> String {
+fn meeting_ask_body(title: &str) -> String {
     format!("wants you to join {title}")
 }
 

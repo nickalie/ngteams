@@ -1822,6 +1822,81 @@ fn a_notification_says_who_calls_as_the_invitation_names_them() {
             MEETING_CHAT
         )
     );
+    assert_eq!(
+        [one.answer_label(), group.answer_label(), asked.answer_label()],
+        ["Answer", "Answer", "Accept"]
+    );
+}
+
+#[test]
+fn a_meeting_s_request_to_join_says_the_meeting_s_title_with_accept_and_is_titled_with_it() {
+    let rig = calling();
+    rig.core.conversations.lock().unwrap().push(chat(
+        MEETING_CHAT,
+        ConversationKind::Meeting,
+        Some("Synthetic meeting"),
+    ));
+    let (trace, _) = trace();
+    let ringer = Arc::new(FakeRinger::default());
+    let server = Arc::new(FakeServer::default());
+    let _alert = alert(&rig, &trace, &ringer, &server);
+    let (shell, cx) = shell_window(&rig, Some(AB), trace);
+    registered(&rig);
+    let said = |cx: &mut VisualTestContext| {
+        draw(cx);
+        cx.update(|_, cx| shell.read(cx).call_bar().read(cx).said(cx))
+            .map(|(text, answer)| (text.to_string(), answer))
+    };
+
+    rig.send(Event::IncomingCall(invitation(
+        3,
+        Some(CALLER_NAME),
+        Some(MEETING_CHAT),
+    )));
+    rig.cx.run_until_parked();
+    let shown = server.shown();
+    assert_eq!(
+        (shown[0].summary.as_str(), shown[0].body.as_str()),
+        (CALLER_NAME, "wants you to join Synthetic meeting"),
+        "the notification names the meeting as its chat's row does"
+    );
+    assert_eq!(
+        said(cx),
+        Some((
+            "Bee Caller wants you to join Synthetic meeting".to_owned(),
+            Some("Accept")
+        ))
+    );
+    click(cx, "call-answer");
+    assert_eq!(said(cx), Some(("Joining Synthetic meeting".to_owned(), Some("Accept"))));
+    status(&rig, 3, CallStatus::Connected);
+    assert_eq!(
+        said(cx),
+        Some(("Synthetic meeting".to_owned(), None)),
+        "the call's title"
+    );
+    status(&rig, 3, CallStatus::Ended(End::Remote(RemoteEnd::default())));
+
+    // a meeting the list has no row for: the banner and the call say "Meeting", as the notification does
+    let unlisted = "19:meeting_MadeUpMeeting0002@thread.v2";
+    rig.send(Event::IncomingCall(invitation(4, Some(CALLER_NAME), Some(unlisted))));
+    rig.cx.run_until_parked();
+    assert_eq!(server.shown()[1].body, "wants you to join Meeting");
+    assert_eq!(
+        said(cx),
+        Some(("Bee Caller wants you to join Meeting".to_owned(), Some("Accept")))
+    );
+    click(cx, "call-answer");
+    status(&rig, 4, CallStatus::Connected);
+    assert_eq!(said(cx), Some(("Meeting".to_owned(), None)));
+
+    // a group call keeps Answer
+    status(&rig, 4, CallStatus::Ended(End::Remote(RemoteEnd::default())));
+    rig.send(Event::IncomingCall(invitation(5, Some(CALLER_NAME), Some(TRIO))));
+    assert_eq!(
+        said(cx),
+        Some(("Bee Caller is calling in Lab trio".to_owned(), Some("Answer")))
+    );
 }
 
 #[test]
@@ -3098,14 +3173,7 @@ fn after_request_to_join_by_keyboard_the_focus_follows_the_person_and_a_second_e
         None,
         Modifiers::none(),
     );
-    for _ in 0..40 {
-        if people_focus(stage).as_deref() == Some("call-roster-added-0") {
-            break;
-        }
-        stage.simulate_keystrokes("tab");
-    }
-    assert_eq!(people_focus(stage).as_deref(), Some("call-roster-added-0"));
-    stage.simulate_keystrokes("tab");
+    tab_to_first_request(stage);
     press_and_release(stage, "enter");
     rig.cx.run_until_parked();
     draw(stage);
@@ -3126,6 +3194,42 @@ fn after_request_to_join_by_keyboard_the_focus_follows_the_person_and_a_second_e
     press_and_release(stage, "enter");
     rig.cx.run_until_parked();
     assert_eq!(adds(&rig), 1);
+
+    // an add the engine refuses moves nobody: the keyboard stays on the person's row
+    rig.core
+        .call_answers
+        .lock()
+        .unwrap()
+        .push_back(Err(EngineError::Call(CallActionError::Call(
+            teams_core::CallError::NotJoinable,
+        ))));
+    tab_to_first_request(stage);
+    press_and_release(stage, "enter");
+    rig.cx.run_until_parked();
+    draw(stage);
+    assert_eq!(adds(&rig), 2);
+    assert!(!drawn(stage, "call-roster-invited-1"), "nobody else is being called");
+    assert_ne!(
+        people_focus(stage).as_deref(),
+        Some("call-roster-invited-1"),
+        "no row that is not drawn"
+    );
+    assert!(
+        drawn(stage, "call-roster-request-0"),
+        "the keyboard stays on Request to join"
+    );
+}
+
+/// Tabs to the first "Others invited" row, then to its Request to join.
+fn tab_to_first_request(stage: &mut VisualTestContext) {
+    for _ in 0..40 {
+        if people_focus(stage).as_deref() == Some("call-roster-added-0") {
+            break;
+        }
+        stage.simulate_keystrokes("tab");
+    }
+    assert_eq!(people_focus(stage).as_deref(), Some("call-roster-added-0"));
+    stage.simulate_keystrokes("tab");
 }
 
 #[test]

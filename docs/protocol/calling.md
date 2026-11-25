@@ -387,11 +387,12 @@ The native client does the same. Request to join on an "Others invited" row is `
 organizer and tenant the call knows (the meeting it joined named them, or the invitation it answered, or the entry's
 answer's `meetingInfo`), the engine posts `AddToCall::to_meeting`. It lists the invitee "Calling…", then "Declined"
 (`callControllerTransactionEnd.code` `603`) or "No response", with Call again; 10 s after a decline the row goes back
-to "Others invited" with "No response". The call tracker offers an `evt` 109
+to "Others invited" with "No response". After Request to join with the keyboard, the focus goes to the person's
+"Calling…" row once the engine lists them there, so a second Enter asks nobody. The call tracker offers an `evt` 109
 that names a meeting's chat only when its `invitationData.meetingInfo` names the organizer and the tenant; the client
 rings with Teams' words ("<caller> wants you to join <meeting>", Accept and Decline, in the banner and the desktop
 notification) and answers it as a group call (`accept`), and the call is the meeting's, titled with the meeting's name.
-After Request to join with the keyboard, the focus goes to the person's new row, so a second Enter asks nobody. Its answer goes at once: it has no
+The invitation's answer goes at once: it has no
 pre-join step between Accept and the `accept`. A Rejoin after such a call is the meeting's own join, with the organizer and
 tenant the invitation named. For a meeting host's `add`, the own server's invitation adds `invitationData.meetingInfo` and `conversationType`
 `scheduledMeeting`; it sends no `meetingData` and keeps the group call's `meetingLiveState`. When an added

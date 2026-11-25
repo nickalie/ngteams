@@ -45,6 +45,7 @@ use crate::bridge::Core;
 use crate::calls::{self, ActiveCall, Ask, CallKind, Calls, Ended, Refused, Verdict};
 use crate::chat_list::{self, ChatList};
 use crate::icons::{Glyph, icon_button, icon_button_with_key, selected_by};
+use crate::meeting_alert::NO_TITLE;
 use crate::notify::SOMEONE;
 use crate::people::Shown;
 use crate::settings::SettingsModel;
@@ -516,6 +517,18 @@ impl CallBar {
         calls::ask(&self.calls, &self.core, &self.trace, ask, cx);
     }
 
+    /// What the strip says: the ringing invitation's banner and its answer button's label, else the call's title.
+    #[must_use]
+    pub fn said(&self, cx: &App) -> Option<(SharedString, Option<&'static str>)> {
+        let model = self.calls.read(cx);
+        if let Some(ringing) = model.ringing() {
+            let text = self.banner_text(ringing, model.answering(), cx);
+            return Some((text, Some(answer_look(ringing).1)));
+        }
+        let active = model.call()?;
+        Some((call_title(active, |chat| self.chat_name(chat, cx)), None))
+    }
+
     /// A chat's name as its row has it.
     fn chat_name(&self, chat: &str, cx: &App) -> SharedString {
         chat_name_in(&self.list, chat, cx)
@@ -542,10 +555,6 @@ impl CallBar {
         let model = self.calls.read(cx);
         let answering = model.answering();
         let text = self.banner_text(ringing, answering, cx);
-        let meeting = ringing
-            .group_chat
-            .as_deref()
-            .is_some_and(teams_proto::is_meeting_chat_id);
         // the answer waits for the devices (minutes on a first start) and the media: said here, as a start says it
         let status = answering.then(|| {
             div()
@@ -566,11 +575,7 @@ impl CallBar {
         } else {
             mark.children(crate::motion::ripple("call-banner-mark", palette.accent, 32.0, cx))
         };
-        let (glyph, answer_label) = if meeting {
-            (Glyph::VIDEO, "Accept")
-        } else {
-            (Glyph::PHONE, "Answer")
-        };
+        let (glyph, answer_label) = answer_look(ringing);
         let answer = (!answering).then(|| {
             control(
                 "call-answer",
@@ -770,11 +775,29 @@ impl CallBar {
     }
 }
 
-/// `chat`'s name as `list`'s row has it.
+/// The banner's answer button: a meeting's Request to join is accepted, with the camera's glyph, as Teams shows it.
+fn answer_look(ringing: &IncomingCall) -> (Glyph, &'static str) {
+    if ringing
+        .group_chat
+        .as_deref()
+        .is_some_and(teams_proto::is_meeting_chat_id)
+    {
+        (Glyph::VIDEO, "Accept")
+    } else {
+        (Glyph::PHONE, "Answer")
+    }
+}
+
+/// `chat`'s name as `list`'s row has it; with no row, a meeting's is the notification's [`NO_TITLE`].
 pub(crate) fn chat_name_in(list: &Entity<ChatList>, chat: &str, cx: &App) -> SharedString {
+    let unnamed = if teams_proto::is_meeting_chat_id(chat) {
+        NO_TITLE
+    } else {
+        "a group chat"
+    };
     list.read(cx)
         .row(chat)
-        .map_or_else(|| SharedString::from("a group chat"), |row| row.name.clone())
+        .map_or_else(|| SharedString::from(unnamed), |row| row.name.clone())
 }
 
 fn record_bar(trace: &ViewTrace, shown: &BarShown) {

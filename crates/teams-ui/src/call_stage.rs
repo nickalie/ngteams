@@ -1224,6 +1224,7 @@ impl Render for CallStage {
         };
         self.retitle(&title, window);
         self.follow_invite_box(window, cx);
+        self.follow_request(live.as_ref(), window, cx);
         let viewport = window.viewport_size();
         self.paging.window = (f32::from(viewport.width), f32::from(viewport.height));
         let body = self.framed_body((live.as_ref(), ended.as_ref()), &title, palette, window, cx);

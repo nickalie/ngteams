@@ -122,7 +122,7 @@ fn system_notification(notice: &Notice, tag: String) -> SystemNotification {
         vec![
             SystemNotificationAction {
                 id: ANSWER_ACTION.into(),
-                label: "Answer".into(),
+                label: notice.answer_label().into(),
             },
             SystemNotificationAction {
                 id: DECLINE_ACTION.into(),

@@ -148,6 +148,18 @@ pub struct Notice {
     pub picture: Option<BannerPicture>,
 }
 
+impl Notice {
+    /// An incoming call's answer button: a meeting's Request to join is accepted, as Teams words it.
+    #[must_use]
+    pub fn answer_label(&self) -> &'static str {
+        if teams_proto::is_meeting_chat_id(&self.conversation) {
+            "Accept"
+        } else {
+            "Answer"
+        }
+    }
+}
+
 /// The desktop's notification server, as the notifier sees it.
 pub trait NotificationServer: Send + Sync + 'static {
     /// Shows `notice`, in place of notification `replaces` when that isn't 0; answers the server's id for it.

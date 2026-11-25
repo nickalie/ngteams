@@ -34,6 +34,16 @@ impl Section {
 pub(super) struct PeopleKeys {
     handles: keyboard::Handles,
     folded: Vec<Section>,
+    follows: Option<Follow>,
+}
+
+/// The person a Request to join asked in: the keyboard goes to their row of the people being called once the engine
+/// lists them there, as no row is theirs before.
+struct Follow {
+    call: CallId,
+    mri: String,
+    /// The refusal shown when they were asked: a newer one is this ask's, and the keyboard stays on their row.
+    refused: Option<String>,
 }
 
 impl PeopleKeys {
@@ -43,6 +53,32 @@ impl PeopleKeys {
 }
 
 impl CallStage {
+    /// Moves the keyboard to the row of the person a Request to join asked in, once the engine added them (see
+    /// [`Follow`]); a refused ask, or another call, ends the wait.
+    pub(super) fn follow_request(&mut self, active: Option<&ActiveCall>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(follow) = &self.people_keys.follows else {
+            return;
+        };
+        let refused = self.calls.read(cx).refused().map(|refused| refused.text.clone());
+        let Some(active) = active.filter(|active| active.id == follow.call && refused == follow.refused) else {
+            self.people_keys.follows = None;
+            return;
+        };
+        let Some(index) = active
+            .invited
+            .iter()
+            .position(|invited| invited.mri.as_str().eq_ignore_ascii_case(&follow.mri))
+        else {
+            return;
+        };
+        self.people_keys.follows = None;
+        let row = self
+            .people_keys
+            .handles
+            .get(&format!("call-roster-invited-{index}"), cx);
+        window.focus(&row, cx);
+    }
+
     /// The People pane.
     pub(super) fn roster_pane(
         &self,
@@ -309,7 +345,7 @@ impl CallStage {
                 let shows = AddedShows {
                     request: reached && addable,
                     passed,
-                    moves_to: active.invited.len(),
+                    call: active.id,
                 };
                 self.added_row(index, person, shows, palette, cx)
             })
@@ -330,11 +366,7 @@ impl CallStage {
         &self,
         index: usize,
         (mri, name): (String, SharedString),
-        AddedShows {
-            request,
-            passed,
-            moves_to,
-        }: AddedShows,
+        AddedShows { request, passed, call }: AddedShows,
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -344,19 +376,20 @@ impl CallStage {
                 name: name.to_string(),
             };
             let id = format!("call-roster-request-{index}");
-            let moved = self
-                .people_keys
-                .handles
-                .get(&format!("call-roster-invited-{moves_to}"), cx);
+            let asked = mri.clone();
             selected_by(
                 id.clone(),
                 Button::new(SharedString::from(id))
                     .outline()
                     .xsmall()
                     .label("Request to join")
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         // the keyboard follows the person to "In this meeting": a second Enter asks nobody else
-                        window.focus(&moved, cx);
+                        this.people_keys.follows = Some(Follow {
+                            call,
+                            mri: asked.clone(),
+                            refused: this.calls.read(cx).refused().map(|refused| refused.text.clone()),
+                        });
                         this.ask(ask.clone(), cx);
                     })),
             )
@@ -796,6 +829,6 @@ struct AddedShows {
     request: bool,
     /// "No response" under the name: they declined being asked in.
     passed: bool,
-    /// The row of the people being called that the person moves to once asked: where the keyboard goes.
-    moves_to: usize,
+    /// The call they are asked into.
+    call: CallId,
 }

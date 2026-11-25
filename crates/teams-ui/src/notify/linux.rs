@@ -82,12 +82,7 @@ impl NotificationServer for BusNotifications {
             notice.body.clone()
         };
         let call_notice = notice.kind == NoticeKind::Call;
-        // a meeting's Request to join is accepted, as Teams words it
-        let answer = if teams_proto::is_meeting_chat_id(&notice.conversation) {
-            "Accept"
-        } else {
-            "Answer"
-        };
+        let answer = notice.answer_label();
         let meeting_notice = notice.kind == NoticeKind::Meeting;
         let reminder_notice = notice.kind == NoticeKind::Reminder;
         let channel = teams_proto::is_team_thread_id(&notice.conversation);
