@@ -639,6 +639,14 @@ fn player_statuses_render_their_loading_and_failure_states_and_fullscreen_is_rev
             cx.debug_bounds("video-failed-status").is_some(),
             matches!(state, State::Failed(_))
         );
+        let icon = ["video-icon-status teams", "video-icon-status glyph"]
+            .iter()
+            .any(|selector| cx.debug_bounds(selector).is_some());
+        assert_eq!(
+            icon,
+            !matches!(state, State::Failed(_)),
+            "the error replaces the play mark: {state:?}"
+        );
     }
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {

@@ -903,7 +903,7 @@ impl VideoPlayer {
     }
 
     /// The video's frame fitted into the box, else the file's thumbnail, else in a card the picture's shade (with the
-    /// large video icon when there is no thumbnail to wait for), else black.
+    /// large video icon when there is no thumbnail to wait for and no error to show in its place), else black.
     fn picture(&mut self, cx: &mut App) -> AnyElement {
         if let Some((frame, (width, height))) = self.frame() {
             return canvas(
@@ -939,11 +939,14 @@ impl VideoPlayer {
                 .into_any_element(),
             PictureState::Missing => {
                 let id = self.id.clone();
+                let failed = matches!(self.state(), Some(State::Failed(_)));
                 div()
                     .debug_selector(move || format!("video-no-thumbnail-{id}"))
                     .size_full()
                     .bg(gpui::rgb(files::picture_colour(theme::current(cx))))
-                    .child(files::no_picture(FileKind::Video, &format!("video-icon-{}", self.id)))
+                    .when(!failed, |shade| {
+                        shade.child(files::no_picture(FileKind::Video, &format!("video-icon-{}", self.id)))
+                    })
                     .into_any_element()
             }
         }
