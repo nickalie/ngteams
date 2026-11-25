@@ -749,8 +749,65 @@ with the date of the script), never the script. It shows Teams' packs after the 
 an account of Microsoft's cloud only (an own server has none). It reads the previews and the headers with
 `StickerPreview` ([endpoints.md](endpoints.md#teams-sticker-cdn-teamspubliconecdnstaticmicrosoft)). A pick reads the
 sticker's picture (Send waits for it), puts it in the box, and Send posts the captured form with its address (`Sticker::of_teams`), with
-nothing sent to AMS. A sticker with a caption is sent as its picture with its own words, and a meme as its picture
-with no words: the caption editor is not built yet.
+nothing sent to AMS. A sticker with a caption opens the caption editor ([Edit sticker](#edit-sticker-team-manage-2026-11-25)).
+
+## Edit sticker (team-manage, 2026-11-25)
+
+Browser Teams as a, in the a–b 1:1 chat (`team-manage`, its writes let through). The capture is
+`team-manage/20261125T121532Z` in the lab's data dir. The web client was build 26110100716.
+
+**Which stickers take a caption.** 136 stickers of a work account's packs: 99 of Office Drama, Designers, Devs and
+Legal, and the 37 memes. Each has, beside its picture, a picture with no words (its template) and a caption: a font, a
+colour and, for a meme, an edge colour. A sticker of the four packs also has a region of the template (left, top,
+right, bottom, in px of the template) and its own words, a string of the locale. A meme has no region: its words go on
+two lines. Fonts: Comic Sans MS (98), Impact (the memes) and Cochin Italic (Legal's "non sequitur"). The colours are
+black, `#417b84`, `#cb4653` and `#ed6950`; a meme's are white with a black edge. A tile of such a sticker has a pencil
+mark at its bottom right, and so has the header of each of the five packs. Popular's tile has none.
+
+**The editor** opens in the picker, in the place of the stickers, under the tabs and the back arrow with the search
+box. It shows:
+
+- the template with the words drawn on it, at most 250 px wide (a meme, 250 by 249, at 207 by 207);
+- for a sticker, a text box of four lines, "Caption" as its hint, up to 150 characters, that starts with the sticker's
+  own words (`THAT'S SO COOL`); for a meme, two one-line boxes, "Top Caption" and "Bottom caption", up to 25
+  characters each, that start empty, and the picture shows "TOP CAPTION" and "BOTTOM CAPTION" while both are empty;
+- Cancel (outlined) and Done (the brand's colour), side by side, as wide as each other. Done is off while the boxes
+  hold no words.
+
+Tab goes from the first box through the other box, Done and Cancel. Escape goes back to the stickers it came from. The
+picture shows each change at once.
+
+**How the words are drawn.** The page draws the template at its own size on a canvas and the words over it:
+
+- A sticker's words are drawn as typed, in the catalog's font and colour. A meme's lines are drawn in upper case, in
+  white Impact with a black edge 2 px wide, the top line in a band from 20 to 70 px, the bottom line from 70 to 20 px
+  above the bottom, each 20 px in from the sides.
+- The words go on about as many lines as the region's shape asks for: the square root of the region's height over its
+  width times the number of characters times the font's mean character width over its size. Each break is at the
+  space nearest an even split of the characters.
+- The block is then scaled, up or down, until it fills the region's width or its height, whichever comes first, and
+  is centred in the region. Each line is centred, and lines are 2 px apart.
+- A long caption ("Lab caption: the quarterly numbers look great and the whole team deserves a long weekend off") went
+  on nine short lines in small type in the speech bubble. A short one ("Go lab") went on one line in large type.
+
+**Done** puts in the box a PNG of the template's size, in the `readonly` element of itemtype Sticker, labelled by the
+caption: `<readonly aria-label="Lab 650 caption" contenteditable="false" itemtype="http://schema.skype.com/Sticker"
+title="Lab 650 caption"><img src="blob:…" width="240" height="180" data-image-type="standard"
+data-image-mode="single" itemscope="image/png" itemtype="http://schema.skype.com/CachedImage" alt="Sticker image,
+Lab 650 caption" data-cache-key="…"></readonly>`. The size is the PNG's (334 by 250) at 180 px high. A meme's label is
+its name, a space, then its lines. The sticker goes first in Recent, shown by its own preview.
+
+**Not shown.** The send stayed pending: the page asked a to sign in again, and this build sends its requests from a
+worker, which the capture does not see. Thus the post of a captioned sticker, and its form as read back, are still not
+known. The picker of this tenant has no "Upload an image": no custom sticker takes a caption.
+
+**The native client** keeps each caption in its table (`teams_catalog.txt`, a `caption` line after its sticker) and
+draws it as above (`teams_ui::stickers::caption`): the system's font of that name when it has one, else a free font
+bundled in its place (Anton for Impact, Comic Neue for Comic Sans MS, a serif italic for Cochin Italic). The editor
+(`teams_ui::sticker_editor`) reads the template from Teams' sticker CDN with no credential, as it reads a preview. Done
+puts the PNG in the box, which sends it to AMS at once, as it sends a pasted picture. Send posts it in the `readonly`
+element of itemtype Sticker around the AMSImage `<img>` (`Sticker::of_picture`'s form), 180 px high, labelled by the
+caption, its `alt` `Sticker image, <caption>` as in Teams' box.
 
 ## Link previews
 

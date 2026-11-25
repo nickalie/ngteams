@@ -561,7 +561,7 @@ fn scaled_size((width, height): (u32, u32), max_side: u32) -> (u32, u32) {
 }
 
 /// GPUI draws BGRA.
-fn to_bgra(image: &mut RgbaImage) {
+pub(crate) fn to_bgra(image: &mut RgbaImage) {
     for pixel in image.pixels_mut() {
         pixel.0.swap(0, 2);
     }

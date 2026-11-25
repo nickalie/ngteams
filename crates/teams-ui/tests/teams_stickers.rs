@@ -136,6 +136,50 @@ fn the_search_finds_what_teams_found() {
 }
 
 #[test]
+fn the_captioned_stickers_are_teams_and_draw_on_their_templates() {
+    let catalog = teams::catalog();
+    let captioned: Vec<_> = catalog
+        .packs()
+        .iter()
+        .filter(|pack| pack.id != POPULAR)
+        .flat_map(|pack| catalog.stickers_of(&pack.id))
+        .filter(|sticker| sticker.caption.is_some())
+        .collect();
+    // 99 of Office Drama, Designers, Devs and Legal take one block of words; the 37 memes a top and a bottom line
+    assert_eq!(captioned.len(), 136);
+    assert_eq!(
+        captioned
+            .iter()
+            .filter(|sticker| sticker.caption.as_ref().unwrap().is_meme())
+            .count(),
+        37
+    );
+    for sticker in &captioned {
+        assert!(["OfficeDrama", "Designers", "Devs", "Legal", "Meme"].contains(&sticker.pack.as_str()));
+    }
+    // all of Popular's take one, as in Teams
+    assert!(catalog.popular().iter().all(|sticker| sticker.caption.is_some()));
+    let high_five = catalog.sticker("OfficeDrama_HighFive").unwrap();
+    assert_eq!(
+        catalog.template(high_five).unwrap(),
+        "https://teams.public.onecdn.static.microsoft/evergreen-assets/stickerassets/officedrama-250x250/OfficeDrama_HighFive_Template.png?v=5"
+    );
+    assert!(StickerPicture::of(&catalog.template(high_five).unwrap()).is_some());
+    assert_eq!(high_five.caption.as_ref().unwrap().first_text(), ["HIGH FIVE!"]);
+    let doge = catalog.sticker("doge").unwrap();
+    assert!(
+        catalog
+            .template(doge)
+            .unwrap()
+            .ends_with("/meme-500x500/doge-template.png?v=5")
+    );
+    assert_eq!(
+        catalog.template(catalog.sticker("Teamsquatch_BugSquash").unwrap()),
+        None
+    );
+}
+
+#[test]
 fn a_table_out_of_its_form_names_its_line() {
     let pack = "pack\tMadeUp\tMade up\tMadeUp_header.png\t-";
     let sticker = "sticker\tMadeUp_A\tMadeUp_A.png\t-\t-\tA\ta, b";
@@ -160,6 +204,30 @@ fn a_table_out_of_its_form_names_its_line() {
         "a field missing"
     );
     assert_eq!(Catalog::parse("what\n").unwrap_err(), 1);
+    let caption = "caption\tMadeUp_A_Template.png\tImpact\t#000000\t-\t1 2 30 40\tHI";
+    assert!(
+        Catalog::parse(&format!("{pack}\n{sticker}\n{caption}\n"))
+            .unwrap()
+            .sticker("MadeUp_A")
+            .unwrap()
+            .caption
+            .is_some()
+    );
+    assert_eq!(
+        Catalog::parse(&format!("{pack}\n{caption}\n")).unwrap_err(),
+        2,
+        "a caption before any sticker"
+    );
+    assert_eq!(
+        Catalog::parse(&format!("{pack}\n{sticker}\n{caption}\n{caption}\n")).unwrap_err(),
+        4,
+        "a second caption"
+    );
+    assert_eq!(
+        Catalog::parse(&format!("{pack}\n{sticker}\ncaption\tMadeUp.png\tImpact\n")).unwrap_err(),
+        3,
+        "a caption out of its form"
+    );
     assert_eq!(
         Catalog::parse(&format!("{pack}\n{sticker}\npopular\tMadeUp_Gone\n")).unwrap_err(),
         3,

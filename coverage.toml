@@ -114,7 +114,7 @@ sha256 = "4f27776ff2e3d9d662467a5ecb6542670137e2e47658e9d5b3dc26196987a972"
 reason = "module declarations, documentation and an integer constant only; no executable bodies"
 
 [unmapped_sources."crates/teams-ui/src/lib.rs"]
-sha256 = "38f5a687eb2ae5be960d8024ecf2de994e6d6395c5b16d368ba7e36f9de52670"
+sha256 = "cbbc4d71057cf5cd5fd62b695d2b1c4ebe5461f93c808374228a97c27911f37f"
 reason = "module declarations, re-exports, documentation and the `ctrl!` hint macro (a string literal per platform) only; no executable bodies"
 
 [unmapped_sources."crates/teams-wpe-client/src/event.rs"]
@@ -614,7 +614,7 @@ context = { "crates/teams-ui/src/lib.rs" = "38f5a687eb2ae5be960d8024ecf2de994e6d
 [unmapped_sources_windows."crates/teams-ui/src/tray/linux.rs"]
 sha256 = "ceed6565f30d059be5e8b6c0901fcba714248fe4ba0998e40c912d90db539ade"
 reason = "Linux-only StatusNotifierItem, D-Bus menu and launcher unread transport; tray.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
-context = { "crates/teams-ui/src/lib.rs" = "38f5a687eb2ae5be960d8024ecf2de994e6d6395c5b16d368ba7e36f9de52670", "crates/teams-ui/src/tray.rs" = "761e00a9301f59539a3edca854dfd467ac83a8f68dcd509ef18e4eaa07d7a1ab" }
+context = { "crates/teams-ui/src/lib.rs" = "cbbc4d71057cf5cd5fd62b695d2b1c4ebe5461f93c808374228a97c27911f37f", "crates/teams-ui/src/tray.rs" = "761e00a9301f59539a3edca854dfd467ac83a8f68dcd509ef18e4eaa07d7a1ab" }
 
 [unmapped_sources_windows."crates/ngteams/src/ctl/socket/unix.rs"]
 sha256 = "ea79c3378f2968223f72f282f2514e5cd6cb8ff57c9d0dc46b9130aa2b7bc50e"
@@ -698,3 +698,7 @@ context = { "crates/teams-ui/src/stickers/lottie.rs" = "35d2a340f69e040aea50bc93
 sha256 = "bd8e2b947a94b40926219f96b6cd551d29a7add7379e793907ebc090116e6262"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
 context = { "crates/teams-ui/src/stickers/lottie/bounds.rs" = "f66b13085508191e5443b2cd70a6ef0d0dbf5ee3742cce3b887ceefe88ba8d95" }
+[unmapped_sources."crates/teams-ui/src/stickers/caption_tests.rs"]
+sha256 = "d5ad149381d8e222570d74f32fd4c5006431c20a638f10d3847a1c3e7c8cae95"
+reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
+context = { "crates/teams-ui/src/stickers/caption.rs" = "25d5418d9b82bc9ba8bde365bf4a22c3c04f3c33b6e5c043a65b17da368ff771" }

@@ -16,6 +16,8 @@ use std::sync::OnceLock;
 
 use teams_proto::{StickerPicture, StickerPreview};
 
+use super::caption::Caption;
+
 /// Our copy of Teams' sticker list.
 const TABLE: &str = include_str!("teams_catalog.txt");
 
@@ -60,6 +62,8 @@ pub struct TeamsSticker {
     file: String,
     preview: Option<String>,
     template: Option<String>,
+    /// The words Teams' "Edit sticker" draws on it, when it takes a caption.
+    pub caption: Option<Caption>,
 }
 
 /// Teams' packs and their stickers, in Teams' order.
@@ -121,7 +125,15 @@ impl Catalog {
                         file: file.to_owned(),
                         preview: given(preview).map(str::to_owned),
                         template: given(template).map(str::to_owned),
+                        caption: None,
                     });
+                }
+                ["caption", ref rest @ ..] => {
+                    let sticker = catalog.stickers.last_mut().ok_or(number)?;
+                    if sticker.caption.is_some() {
+                        return Err(number);
+                    }
+                    sticker.caption = Some(Caption::parse(rest).ok_or(number)?);
                 }
                 _ => return Err(number),
             }
@@ -188,6 +200,17 @@ impl Catalog {
             .collect()
     }
 
+    /// Whether pack `id` has stickers that take a caption, which Teams marks with a pencil (Popular, which only
+    /// shows other packs' stickers, is not marked).
+    #[must_use]
+    pub fn editable(&self, id: &str) -> bool {
+        id != POPULAR
+            && self
+                .stickers
+                .iter()
+                .any(|sticker| sticker.pack == id && sticker.caption.is_some())
+    }
+
     /// The pack sticker `sticker` is of.
     fn pack_of(&self, sticker: &TeamsSticker) -> Option<&TeamsPack> {
         self.pack(&sticker.pack)
@@ -200,15 +223,27 @@ impl Catalog {
         preview_src(&sticker.pack, meme, sticker.preview.as_deref().unwrap_or(&sticker.file))
     }
 
+    /// The address of `sticker`'s picture with no words, which its caption is drawn on; `None` when it takes none.
+    #[must_use]
+    pub fn template(&self, sticker: &TeamsSticker) -> Option<String> {
+        let caption = sticker.caption.as_ref()?;
+        Some(self.address(sticker, &caption.template))
+    }
+
     /// The address of `sticker`'s picture, as a message names it: `…/stickerassets/<pack>-<size>[/<locale>]/<file>?v=5`.
     #[must_use]
     pub fn picture(&self, sticker: &TeamsSticker) -> String {
+        let file = sticker.template.as_deref().unwrap_or(&sticker.file);
+        self.address(sticker, file)
+    }
+
+    /// The address of `file` in `sticker`'s pack folder.
+    fn address(&self, sticker: &TeamsSticker, file: &str) -> String {
         let (localized, meme) = self
             .pack_of(sticker)
             .map_or((false, false), |pack| (pack.localized, pack.meme));
         let size = if meme { "500x500" } else { "250x250" };
         let folder = format!("{}-{size}", sticker.pack.to_lowercase());
-        let file = sticker.template.as_deref().unwrap_or(&sticker.file);
         StickerPicture::src(&folder, localized.then_some(LOCALE), file)
     }
 }

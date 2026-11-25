@@ -11,7 +11,8 @@
 //! video's card (empty, its "More actions", two recipients and a message, the format bar and emoji picker, shared, and
 //! Copy link's "Link created"); a message of lines, small
 //! pictures and a block of code, in Teams Dark and Light; stickers alone with no bubble, in Teams Dark and Light, and
-//! one of Teams' own picked and sent; Teams' sticker packs in the picker, one opened and a search; the picker's
+//! one of Teams' own picked and sent; "Edit sticker" (a caption, a long one, Done and the send; a meme's two lines and
+//! the editor in Teams Dark); Teams' sticker packs in the picker, one opened and a search; the picker's
 //! "Import a Telegram sticker pack" with no token (Light, then Tab to its token field) and with one kept (Dark); the
 //! picker's "Import a Signal sticker pack" (Light, then a link that names no pack and Tab to Import; Dark, a link
 //! typed); a picture opened in the picture viewer, fitted and zoomed;
@@ -202,7 +203,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 368 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 374 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -2311,6 +2312,62 @@ const STEPS: [Step; 5 + 368 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     // sent by its address on the CDN, as Teams sends one: alone at 180 by 180, with no bubble
     ("chat-teams-sticker-sent", |shell, window, cx| {
         with_compose(shell, cx, |compose, cx| compose.send(window, cx));
+    }),
+    // "Edit sticker": a click on Office Drama's "So cool" (its pencil mark) opens the editor in the picker, the
+    // template read from Teams' sticker CDN (the mock's made-up picture) with the sticker's own words drawn on it
+    ("chat-sticker-editor", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, window, cx| {
+            picker.activate(&FunItem::TeamsPack("OfficeDrama".to_owned()), window, cx);
+            picker.activate(
+                &FunItem::Sticker(teams_ui::stickers::StickerRef::teams("OfficeDrama_SoCool")),
+                window,
+                cx,
+            );
+        });
+    }),
+    // a long caption: more lines in smaller type, fitted to the sticker's speech bubble
+    ("chat-sticker-editor-long", |shell, window, cx| {
+        with_sticker_editor(shell, window, cx, |editor, window, cx| {
+            editor.set_typed(
+                &["Lab caption: the numbers look great and the whole team deserves a long weekend off"],
+                window,
+                cx,
+            );
+        });
+    }),
+    // Done: the drawn sticker in the box, at 180 px high, sent to the media service at once
+    ("chat-captioned-sticker-in-box", |shell, window, cx| {
+        with_sticker_editor(shell, window, cx, |editor, _, cx| editor.finish(cx));
+    }),
+    // sent: alone, with no bubble
+    ("chat-captioned-sticker-sent", |shell, window, cx| {
+        with_compose(shell, cx, |compose, cx| compose.send(window, cx));
+    }),
+    // a meme's editor in Teams Dark: two lines, drawn in white Impact (or its free stand-in) with a black edge
+    ("chat-dark-sticker-editor-meme", |shell, window, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+        with_fun_picker(shell, window, cx, |picker, window, cx| {
+            picker.activate(&FunItem::TeamsPack("Meme".to_owned()), window, cx);
+            picker.activate(
+                &FunItem::Sticker(teams_ui::stickers::StickerRef::teams("grumpycat")),
+                window,
+                cx,
+            );
+        });
+        with_sticker_editor(shell, window, cx, |editor, window, cx| {
+            editor.set_typed(&["made up top", "and bottom"], window, cx);
+        });
+    }),
+    // "So cool" again in Teams Dark
+    ("chat-dark-sticker-editor", |shell, window, cx| {
+        with_fun_picker(shell, window, cx, |picker, window, cx| {
+            picker.activate(&FunItem::TeamsPack("OfficeDrama".to_owned()), window, cx);
+            picker.activate(
+                &FunItem::Sticker(teams_ui::stickers::StickerRef::teams("OfficeDrama_SoCool")),
+                window,
+                cx,
+            );
+        });
     }),
     // messages a tenant's policy blocked, as Teams shows them: a's own with its text and file put back from the
     // service's copy under the red notice and its link, b's with the notice alone (a file type, then a policy); in
@@ -4915,6 +4972,27 @@ fn with_fun_picker(
         .and_then(|chat| chat.read(cx).compose().read(cx).emoji_picker().cloned());
     if let Some(picker) = picker {
         picker.update(cx, |picker, cx| change(picker, window, cx));
+    }
+}
+
+/// Makes `change` to the picker's open "Edit sticker".
+fn with_sticker_editor(
+    shell: &Entity<Shell>,
+    window: &mut Window,
+    cx: &mut App,
+    change: impl FnOnce(
+        &mut teams_ui::sticker_editor::StickerEditor,
+        &mut Window,
+        &mut Context<teams_ui::sticker_editor::StickerEditor>,
+    ),
+) {
+    let editor = shell
+        .read(cx)
+        .chat()
+        .and_then(|chat| chat.read(cx).compose().read(cx).emoji_picker().cloned())
+        .and_then(|picker| picker.read(cx).sticker_editor().cloned());
+    if let Some(editor) = editor {
+        editor.update(cx, |editor, cx| change(editor, window, cx));
     }
 }
 

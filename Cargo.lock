@@ -12770,6 +12770,7 @@ dependencies = [
  "block2 0.6.2",
  "chrono",
  "chrono-tz",
+ "cosmic-text",
  "dirs 6.0.0",
  "flate2",
  "futures-util",

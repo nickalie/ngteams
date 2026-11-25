@@ -181,6 +181,7 @@ pub mod shell;
 pub mod sidebar;
 pub mod signal_import;
 pub mod sounds;
+pub mod sticker_editor;
 pub mod stickers;
 pub mod switcher;
 pub mod system_message;

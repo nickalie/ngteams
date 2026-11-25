@@ -61,6 +61,8 @@ pub struct Picture {
     pub state: PictureState,
     /// The label of a sticker; `None` for a picture.
     pub sticker: Option<SharedString>,
+    /// The words of a sticker's picture (its `alt`), when they aren't its label.
+    pub alt: Option<SharedString>,
 }
 
 impl std::fmt::Debug for Picture {
@@ -101,6 +103,7 @@ impl Picture {
             given,
             state: PictureState::Sending,
             sticker: None,
+            alt: None,
         })
     }
 
@@ -110,6 +113,16 @@ impl Picture {
         let mut picture = Self::of(bytes.bytes, 1.0)?;
         picture.given = (shown.0.max(1), shown.1.max(1));
         picture.sticker = Some(SharedString::from(label.to_owned()));
+        Some(picture)
+    }
+
+    /// One of Teams' stickers with its caption drawn in ("Edit sticker"): its picture `bytes` (a PNG), shown at `shown`
+    /// CSS pixels, labelled by its caption `label`, its picture's words "Sticker image, <caption>" as Teams' box
+    /// gives them. It is sent to the media service as a picture is.
+    #[must_use]
+    pub fn captioned(bytes: teams_proto::PastedPicture, shown: (u32, u32), label: &str) -> Option<Self> {
+        let mut picture = Self::sticker(bytes, shown, label)?;
+        picture.alt = Some(SharedString::from(format!("Sticker image, {label}")));
         Some(picture)
     }
 
@@ -351,7 +364,7 @@ impl Editor {
         Some(match &picture.sticker {
             Some(label) => teams_proto::chat::Node::Sticker(teams_proto::chat::Sticker {
                 image: teams_proto::chat::Image {
-                    alt: Some(label.to_string()),
+                    alt: Some(picture.alt.as_ref().unwrap_or(label).to_string()),
                     ..image
                 },
                 label: Some(label.to_string()),

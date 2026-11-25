@@ -42,6 +42,8 @@ serde_json.workspace = true
 same-file.workspace = true
 # a recap's AI summary's file named by a hash of its recording's link
 sha2.workspace = true
+# a caption drawn on one of Teams' stickers, in the system's font or a bundled free one
+cosmic-text.workspace = true
 # a reaction's animation strip (a PNG) cut into the frames GPUI plays, and a message's pictures (PNG, JPEG, GIF,
 # WebP) decoded: the version and decoders GPUI already links
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp"] }

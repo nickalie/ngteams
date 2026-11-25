@@ -9,6 +9,10 @@
 # popular <TAB> sticker id <TAB> … : the stickers of the Popular pack, in order
 # sticker <TAB> id <TAB> file <TAB> preview file (- for the file's own name) <TAB> template (- for none: the
 #   picture with no caption) <TAB> name <TAB> keywords (- for none)
+# caption <TAB> template file <TAB> font <TAB> colour <TAB> edge colour (- for none) <TAB> region (left top right
+#   bottom, px of the template) <TAB> words: the caption of the sticker before it ("Edit sticker"), one block of words
+#   that starts as its own words, or, with "-" for the region and the words, a meme's top and bottom lines. The
+#   captions come from the web client's script of 2026-11-25 and the words from its en-us strings.
 
 pack	Popular	Popular	Popular_header_large.png	-
 popular	OfficeDrama_OhYeah	doge	Devs_Works_On_My_Machine	OfficeDrama_Hey	Designers_Fix	SuccessKid	Legal_Research_Time	grumpycat	Designers_Creative	Devs_Approved	OfficeDrama_SoCool	Legal_Billing_Code
@@ -51,149 +55,285 @@ sticker	Clippy_Yeah	Clippy_Yeah.gif	Clippy_Yeah.png	-	Clippy says "Yeah!"	clippy
 
 pack	OfficeDrama	Office Drama	OfficeDrama_header_large.png	-
 sticker	OfficeDrama_SoCool	OfficeDrama_SoCool_New.png	-	-	So cool	cool, awesome, amazing, amazed, great, happy, excited, smile
+caption	OfficeDrama_SoCool_New_Template.png	Comic Sans MS	#000000	-	20 28 136 216	THAT'S SO COOL
 sticker	OfficeDrama_Hahaha	OfficeDrama_Hahaha.png	-	-	man laughing heartily	office, drama, man, laugh, laughing, haha, smile, sarcastic, mouth
+caption	OfficeDrama_Hahaha_Template.png	Comic Sans MS	#000000	-	16 16 120 200	LOL
 sticker	OfficeDrama_Hey	OfficeDrama_Hey.png	-	-	hey	hey, hello
+caption	OfficeDrama_Hey_Template.png	Comic Sans MS	#000000	-	16 24 134 178	HEY!
 sticker	OfficeDrama_Interesting	OfficeDrama_Interesting.png	-	-	interesting	interesting
+caption	OfficeDrama_Interesting_Template.png	Comic Sans MS	#000000	-	204 14 322 144	INTERESTING…
 sticker	OfficeDrama_Grrr	OfficeDrama_Grrr.png	-	-	grrr	grrr
+caption	OfficeDrama_Grrr_Template.png	Comic Sans MS	#000000	-	176 22 302 148	GRRR!
 sticker	OfficeDrama_TellMeMore	OfficeDrama_TellMeMore.png	-	-	intrigued man asks "tell me more"	office, drama, man, ask, curious, think, interested, inquisitive, intrigue
+caption	OfficeDrama_TellMeMore_Template.png	Comic Sans MS	#000000	-	158 16 316 142	TELL ME MORE...
 sticker	OfficeDrama_Oops	OfficeDrama_Oops.png	-	-	man sheepishly apologizes	office, drama, man, oops, embarrass, uncomfortable, sheepish, apologize, mistake, sorry, error, careless, shamefaced
+caption	OfficeDrama_Oops_Template.png	Comic Sans MS	#000000	-	20 16 200 100	OOPS, MY BAD...
 sticker	OfficeDrama_Yes	OfficeDrama_Yes.png	-	-	yes	yes
+caption	OfficeDrama_Yes_Template.png	Comic Sans MS	#000000	-	16 172 156 240	YES!
 sticker	OfficeDrama_OhYeah	OfficeDrama_OhYeah.png	-	-	Oh yeah	oh yeah, success, nice, fist pump, great, happy, excited, smile
+caption	OfficeDrama_OhYeah_Template.png	Comic Sans MS	#000000	-	158 16 316 118	OH YEAH!
 sticker	OfficeDrama_GotThis	OfficeDrama_GotThis.png	-	-	we got this	we got this
+caption	OfficeDrama_GotThis_Template.png	Comic Sans MS	#000000	-	136 16 320 62	WE GOT THIS
 sticker	OfficeDrama_Coffee	OfficeDrama_Coffee.png	-	-	never enough coffee	never enough coffee
+caption	OfficeDrama_Coffee_Template.png	Comic Sans MS	#000000	-	172 16 316 144	NEVER ENOUGH COFFEE
 sticker	OfficeDrama_NotAgain	OfficeDrama_NotAgain.png	-	-	not again	not again
+caption	OfficeDrama_NotAgain_Template.png	Comic Sans MS	#000000	-	182 18 316 140	NOT AGAIN
 sticker	OfficeDrama_Hmm	OfficeDrama_Hmm.png	-	-	hmm	hmm
+caption	OfficeDrama_Hmm_Template.png	Comic Sans MS	#000000	-	18 20 144 138	HMM…
 sticker	OfficeDrama_DonutShame	OfficeDrama_DonutShame.png	-	-	man eating dougnut in shame	-
+caption	OfficeDrama_DonutShame_Template.png	Comic Sans MS	#000000	-	16 16 164 153	*SHAME*
 sticker	OfficeDrama_Swell	OfficeDrama_Swell.png	-	-	man gives a thumbs up	office, drama, man, thumbs, up, good, swell, fabulous, awesome, nice, great, approve
+caption	OfficeDrama_Swell_Template.png	Comic Sans MS	#000000	-	128 16 316 100	GEE, THAT'S SWELL!
 sticker	OfficeDrama_Eew	OfficeDrama_Eew.png	-	-	woman making a disgusted face	office, drama, woman, disgust, gross, ew, nasty, stink, sick, yuck, revulsion, dislike, distaste, repulsion, repulse
+caption	OfficeDrama_Eew_Template.png	Comic Sans MS	#000000	-	16 16 113 228	*EEW*
 sticker	OfficeDrama_Meeting	OfficeDrama_Meeting.png	-	-	shocked looking man forgets meeting	office, drama, man, shock, aghast, afraid, crap, uh-oh, no, forget, confuse, confusion
+caption	OfficeDrama_Meeting_Template.png	Comic Sans MS	#000000	-	139 16 302 126	MEETING? WHAT MEETING?!
 sticker	OfficeDrama_Horrified	OfficeDrama_Horrified.png	-	-	woman looks on in horror	-
+caption	OfficeDrama_Horrified_Template.png	Comic Sans MS	#000000	-	16 16 136 153	*GASP*
 sticker	OfficeDrama_Beautiful	OfficeDrama_Beautiful.png	-	-	it's so beautiful	it's so beautiful
+caption	OfficeDrama_Beautiful_Template.png	Comic Sans MS	#000000	-	20 18 132 218	IT’S SO BEAUTIFUL
 sticker	OfficeDrama_HighFive	OfficeDrama_HighFive.png	-	-	High five	oh yeah, success, nice, fist pump, great, happy, excited, smile
+caption	OfficeDrama_HighFive_Template.png	Comic Sans MS	#000000	-	30 170 308 223	HIGH FIVE!
 sticker	OfficeDrama_CantThink	OfficeDrama_CantThink.png	-	-	can't think	can't think
+caption	OfficeDrama_CantThink_Template.png	Comic Sans MS	#000000	-	36 10 320 42	CAN’T… THINK…
 sticker	OfficeDrama_CutFeature	OfficeDrama_CutFeature.png	-	-	crying man thinks "my feature was cut!"	office, drama, sad, crying, man, suit, weep, cry, tear, upset, stoic, somber, heartbroken, sorrowful
+caption	OfficeDrama_CutFeature_Template.png	Comic Sans MS	#000000	-	124 13 320 130	M-MY FEATURE WAS CUT!
 sticker	OfficeDrama_Plan	OfficeDrama_Plan.png	-	-	it's a plan	it's a plan
+caption	OfficeDrama_Plan_Template.png	Comic Sans MS	#000000	-	18 16 144 152	IT’S A PLAN
 sticker	OfficeDrama_Stapler	OfficeDrama_Stapler.png	-	-	where's my stapler	where's my stapler
+caption	OfficeDrama_Stapler_Template.png	Comic Sans MS	#000000	-	38 18 322 48	WHERE’S MY STAPLER
 sticker	OfficeDrama_Retirement	OfficeDrama_Retirement.png	-	-	retirement now	retirement now
+caption	OfficeDrama_Retirement_Template.png	Comic Sans MS	#000000	-	146 18 316 144	RETIREMENT. NOW.
 sticker	OfficeDrama_ForgotSave	OfficeDrama_ForgotSave.png	-	-	forgot to save	forgot to save
+caption	OfficeDrama_ForgotSave_Template.png	Comic Sans MS	#000000	-	176 18 318 148	I… I FORGOT TO SAVE
 sticker	OfficeDrama_DontLike	OfficeDrama_DontLike.png	-	-	suspicious man doesn't like the look of it	office, drama, man, suspicious, squint, leer, glare, sneer, leery, wary, distrust, distrustful, dislike, disapprove
+caption	OfficeDrama_DontLike_Template.png	Comic Sans MS	#000000	-	16 16 190 160	I DON'T LIKE THE LOOK OF IT...
 sticker	OfficeDrama_Cough	OfficeDrama_Cough.png	-	-	cough	cough
+caption	OfficeDrama_Cough_Template.png	Comic Sans MS	#000000	-	192 16 316 130	*COUGH*
 
 pack	Meme	Meme	Meme_header_large.png	meme
 sticker	SuccessKid	SuccessKid.png	-	SuccessKid-template.png	SuccessKid	meme, Success Kid
+caption	SuccessKid-template.png	Impact	#FFFFFF	black	-	-
 sticker	grumpycat	grumpycat.png	-	grumpycat-template.png	grumpycat	meme, grumpy cat
+caption	grumpycat-template.png	Impact	#FFFFFF	black	-	-
 sticker	doge	doge.png	-	doge-template.png	doge	meme, doge, dog
+caption	doge-template.png	Impact	#FFFFFF	black	-	-
 sticker	FamilyGuyExcited	FamilyGuy_Excited.png	-	FamilyGuyExcited_template.png	Family Guy - Peter Happy	family, guy, peter, griffin, excited
+caption	FamilyGuyExcited_template.png	Impact	#FFFFFF	black	-	-
 sticker	OfficeSpaceWouldBeGreat	OfficeSpaceWouldBeGreat.png	-	OfficeSpaceWouldBeGreat_template.png	Office Space - That'd be Great	office, space, would, be, great, tps, report
+caption	OfficeSpaceWouldBeGreat_template.png	Impact	#FFFFFF	black	-	-
 sticker	BusinessCat	BusinessCat.png	-	BusinessCat_template.jpg	Business Cat	business, cat
+caption	BusinessCat_template.jpg	Impact	#FFFFFF	black	-	-
 sticker	FamilyGuyPBJTime	FamilyGuy_PBJTime.png	-	FamilyGuy_PBJTime_template.png	Family Guy - Peanut Butter Jelly Time	family, guy, pbj, peanut, butter, jelly, time
+caption	FamilyGuy_PBJTime_template.png	Impact	#FFFFFF	black	-	-
 sticker	OfficeSpaceInterview	OfficeSpaceInterview.png	-	OfficeSpaceInterview_template.png	Office Space - Interview	office, space, interview
+caption	OfficeSpaceInterview_template.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-01	Memes-01.png	-	Memes-01.png	Giraffe - laurenepbath/Getty Images	meme, tongue out, giraffe
+caption	Memes-01.png	Impact	#FFFFFF	black	-	-
 sticker	FamilyGuyBrianThinks	FamilyGuy_BrianThinks.png	-	FamilyGuy_BrianThinks_template.jpg	Office Space - Brian and Stewie	family, guy, brian, thinks
+caption	FamilyGuy_BrianThinks_template.jpg	Impact	#FFFFFF	black	-	-
 sticker	OfficeSpaceLookOut	OfficeSpaceLookOut.png	-	OfficeSpaceLookOut_template.png	Office Space - Milton	office, space, look, milton, waddams, stapler
+caption	OfficeSpaceLookOut_template.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-02	Memes-02.png	-	Memes-02.png	Gorilla - ac productions/Getty Images	meme, call, phone, monkey, gorilla, sup
+caption	Memes-02.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-03	Memes-03.png	-	Memes-03.png	Super kid - laurenspolding/laurenspolding/Getty Images	meme, kid, child, superhero, hero
+caption	Memes-03.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-04	Memes-04.png	-	Memes-04.png	Scorecards - Dave and Les Jacobs/Dave and Les Jacobs/Getty Images	meme, zero, fail, bad
+caption	Memes-04.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-05	Memes-05.png	-	Memes-05.png	Orangutan - Dirk Freder/Dirk Freder/Getty Images	meme, no, proud, ape, boss
+caption	Memes-05.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-06	Memes-06.png	-	Memes-06.png	Daredevil kid - Andrew Rich/Andrew Rich/Getty Images	meme, kid, child, boy, business, happy, pilot, fly, take off
+caption	Memes-06.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-07	Memes-07.png	-	Memes-07.png	Fashion Dog  - Lee Towndrow/Getty Images	meme, dog, fashion, wig, cool, attitude
+caption	Memes-07.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-08	Memes-08.png	-	Memes-08.png	Brainy bark - retales botijero/retales botijero/Getty Images	meme, dog, glasses, pink, puppy, polka dot
+caption	Memes-08.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-09	Memes-09.png	-	Memes-09.png	Yelling man - photovideostock/photovideostock/Getty Images	meme, steam, angry, business, frustration, furious
+caption	Memes-09.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-10	Memes-10.png	-	Memes-10.png	Gentleman baby  - Annette Bunch/Annette Bunch/Getty Images	meme, baby, moustache, smile, happy, fancy
+caption	Memes-10.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-11	Memes-11.png	-	Memes-11.png	Sad paper bag mask - Andrew Rich/Getty Images	meme, paperbag, unhappy, frown, sad
+caption	Memes-11.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-12	Memes-12.png	-	Memes-12.png	Smiling cat - JTSiemer/JTSiemer/Getty Images	meme, cat, smile, happy, ok
+caption	Memes-12.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-13	Memes-13.png	-	Memes-13.png	Grumpy man with arms crossed - Matthew P. Wicks/Getty Images	meme, angry, no, man, arms crossed, pout, attitude
+caption	Memes-13.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-14	Memes-14.png	-	Memes-14.png	Athetic kid - Andrew Rich/Getty Images	meme, kid, child, winner, champion, happy, good job
+caption	Memes-14.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-15	Memes-15.png	-	Memes-15.png	Man with two thumbs up - Guido Mieth/Getty Images	meme, man, good job, business, thumbs up, ok
+caption	Memes-15.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-16	Memes-16.png	-	Memes-16.png	Missed the dartboard - Larry Washburn/Larry Washburn/Getty Images	meme, fail, miss, defeat, darts, accuracy, bulls eye
+caption	Memes-16.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-17	Memes-17.png	-	Memes-17.png	Kid covering eyes - SimplyMui Photography/Getty Images	meme, face palm, no, fail, kid, child, eyes, facepalm
+caption	Memes-17.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-18	Memes-18.png	-	Memes-18.png	Lazy koala - Jade and Bertrand Maitre/Getty Images	meme, koala, hanging, sleepy, lazy, no
+caption	Memes-18.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-19	Memes-19.png	-	Memes-19.png	Crazy cat - saulgranda/Getty Images	meme, cat, shock, surpise, wow
+caption	Memes-19.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-20	Memes-20.png	-	Memes-20.png	Princess pup - retales botijero/retales botijero/Getty Images	meme, dog, birthday, french bulldog, happy, congratulations
+caption	Memes-20.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-21	Memes-21.png	-	Memes-21.png	Rocket man - DNY59/Getty Images	meme, business man, launch, rocket, start
+caption	Memes-21.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-22	Memes-22.png	-	Memes-22.png	Tin hat - Andrew Rich/Andrew Rich/Getty Images	meme, business man, laptop, tinfoil, busy, alien
+caption	Memes-22.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-23	Memes-23.png	-	Memes-23.png	Super squad - Andrew Rich/Andrew Rich/Getty Images	meme, child, kid, teamwork, superhero, success, friends
+caption	Memes-23.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-24	Memes-24.png	-	Memes-24.png	Celebration man - Dahl, Per/Dahl, Per/Getty Images	meme, success, business man, yay, success, winner, happy
+caption	Memes-24.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-25	Memes-25.png	-	Memes-25.png	Tech guru - Rubberball/Rubberball/Duston Todd/Getty Images	meme, call, glasses, waiting, necktie, telephone, landline
+caption	Memes-25.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-26	Memes-26.png	-	Memes-26.png	Surprised baby - PhotoAlto/Ale Ventura/PhotoAlto/Ale Ventura/Getty Images	meme, baby, excited, surprised, cute, wow
+caption	Memes-26.png	Impact	#FFFFFF	black	-	-
 sticker	Memes-27	Memes-27.png	-	Memes-27.png	Successful woman - Jose Luis Pelaez Inc/Jose Luis Pelaez Inc/Getty Images	meme, woman, success, yay, great job, happy, success
+caption	Memes-27.png	Impact	#FFFFFF	black	-	-
 
 pack	Designers	Designers	Designers_header_large.png	-
 sticker	Designers_Bigger	Designers_Bigger.png	-	-	Designers Bigger	big, yell, make, graphic, designer
+caption	Designers_Bigger_template.png	Comic Sans MS	#cb4653	-	4 32 175 218	Make it bigger
 sticker	Designers_Client_Taste	Designers_Client_Taste.png	-	-	Designers Client Taste	client, taste, yuck, bad, graphic, designer
+caption	Designers_Client_Taste_template.png	Comic Sans MS	#cb4653	-	192 24 361 237	CLIENT TASTE
 sticker	Designers_Cmyk_Or_Rgb	Designers_Cmyk_Or_Rgb.png	-	-	Designers Cmyk Or Rgb	cmyk, rgb, color, graphic, designer
+caption	Designers_Cmyk_Or_Rgb_template.png	Comic Sans MS	#cb4653	-	42 4 333 75	CMYK OR RGB
 sticker	Designers_Creative	Designers_Creative.png	-	-	Designers Creative	creative, think, create, work, make, graphic, designer
+caption	Designers_Creative_template.png	Comic Sans MS	#cb4653	-	55 12 320 99	CREATE!
 sticker	Designers_Design_Formal	Designers_Design_Formal.png	-	-	Designers Design Formal	design, formal, good, nice, tie, graphic, designer
+caption	Designers_Design_Formal_template.png	Comic Sans MS	#cb4653	-	157 37 364 213	DESIGN FORMAL
 sticker	Designers_Everyones_A_Critic	Designers_Everyones_A_Critic.png	-	-	Designers Everyones A Critic	everyone, critic, speech, graphic, designer
+caption	Designers_Everyones_A_Critic_template.png	Comic Sans MS	#cb4653	-	226 24 368 229	EVERYONE'S A CRITIC
 sticker	Designers_Everyones_A_Designer	Designers_Everyones_A_Designer.png	-	-	Designers Everyones A Designer	everyone, critic, annoy, opinion, graphic, designer
+caption	Designers_Everyones_A_Designer_template.png	Comic Sans MS	#cb4653	-	120 9 357 112	EVERYONE'S A DESIGNER
 sticker	Designers_Final	Designers_Final.png	-	-	Designers Final	final, name, file, never, graphic, designer
+caption	Designers_Final_template.png	Comic Sans MS	#cb4653	-	119 11 370 145	FINALFINALFINAL FINALV2.AI
 sticker	Designers_Fix	Designers_Fix.png	-	-	Designers Fix	fix, can, boss, nonsense, graphic, designer
+caption	Designers_Fix_template.png	Comic Sans MS	#cb4653	-	31 8 364 73	I CAN FIX IT
 sticker	Designers_Focus	Designers_Focus.png	-	-	Designers Focus	Focus, time, work, hard, graphic, designer
+caption	Designers_Focus_template.png	Comic Sans MS	#cb4653	-	2 87 151 235	FOCUS!
 sticker	Designers_Hotkey_Problems	Designers_Hotkey_Problems.png	-	-	Designers Hotkey Problems	hotkey, problems, keyboard, twist, graphic, designer
+caption	Designers_Hotkey_Problems_template.png	Comic Sans MS	#cb4653	-	39 11 336 65	HOTKEY PROBLEMS
 sticker	Designers_I_Dont_Get_It	Designers_I_Dont_Get_It.png	-	-	Designers I Dont Get It	get, understand, confused, graphic, designer
+caption	Designers_I_Dont_Get_It_template.png	Comic Sans MS	#cb4653	-	42 12 333 67	I DON'T GET IT
 sticker	Designers_Just_A_Crit	Designers_Just_A_Crit.png	-	-	Designers Just A Crit	just, crit, critique, daze, graphic, designer
+caption	Designers_Just_A_Crit_template.png	Comic Sans MS	#cb4653	-	166 12 363 205	JUST A CRIT...
 sticker	Designers_Layers_Flattened	Designers_Layers_Flattened.png	-	-	Designers Layers Flattened	layers, flattened, flat, squish, graphic, designer
+caption	Designers_Layers_Flattened_template.png	Comic Sans MS	#cb4653	-	79 2 296 145	LAYERS FLATTENED
 sticker	Designers_Make_It_Cool	Designers_Make_It_Cool.png	-	-	Designers Make It Cool	cool, make, change, request, really, graphic, designer
+caption	Designers_Make_It_Cool_template.png	Comic Sans MS	#cb4653	-	191 6 318 245	MAKE IT COOL
 sticker	Designers_My_Design	Designers_My_Design.png	-	-	Designers My Design	my, mine, touch, change, graphic, designer
+caption	Designers_My_Design_template.png	Comic Sans MS	#cb4653	-	7 8 365 69	DON'T TOUCH MY DESIGN
 sticker	Designers_Need_More_Screen	Designers_Need_More_Screen.png	-	-	Designers Need More Screen	need, more, screen, space, pixel, graphic, designer
+caption	Designers_Need_More_Screen_template.png	Comic Sans MS	#cb4653	-	29 4 346 68	NEED MORE SCREEN
 sticker	Designers_Negative_Space	Designers_Negative_Space.png	-	-	Designers Negative Space	negative, space, white, graphic, designer
+caption	Designers_Negative_Space_template.png	Comic Sans MS	#cb4653	-	125 104 294 197	NEGATIVE SPACE
 sticker	Designers_Not_Green	Designers_Not_Green.png	-	-	Designers Not Green	not, green, hex, color, graphic, designer
+caption	Designers_Not_Green_template.png	Comic Sans MS	#cb4653	-	3 9 203 243	NOT GREEN, 2DBA2D
 sticker	Designers_Pixel_Perfect	Designers_Pixel_Perfect.png	-	-	Designers Pixel Perfect	pixel, perfect, correct, crooked, graphic, designer
+caption	Designers_Pixel_Perfect_template.png	Comic Sans MS	#cb4653	-	214 36 368 226	PIXEL PERFECT
 sticker	Designers_Raise_Resolution	Designers_Raise_Resolution.png	-	-	Designers Raise Resolution	raise, resolution, raster, vector, pixel, graphic, designer
+caption	Designers_Raise_Resolution_template.png	Comic Sans MS	#cb4653	-	13 16 187 240	RAISE RESOLUTION
 sticker	Designers_Simple	Designers_Simple.png	-	-	Designers Simple	simple, try, hard, really, graphic, designer
+caption	Designers_Simple_template.png	Comic Sans MS	#cb4653	-	170 43 365 225	SIMPLE... YOU TRY IT
 sticker	Designers_Snap_To_Grid	Designers_Snap_To_Grid.png	-	-	Designers Snap To Grid	snap, grid, lines, ruler, pixel, perfect graphic, designer
+caption	Designers_Snap_To_Grid_template.png	Comic Sans MS	#cb4653	-	199 47 361 242	SNAP TO GRID
 sticker	Designers_Think_Outside_The_Box	Designers_Think_Outside_The_Box.png	-	-	Designers Think Outside The Box	think, outside, box, creative, graphic, designer
+caption	Designers_Think_Outside_The_Box_template.png	Comic Sans MS	#cb4653	-	176 8 363 243	THINK OUTSIDE THE BOX
 sticker	Designers_Work_For_Exposure	Designers_Work_For_Exposure.png	-	-	Designers Work For Exposure	work, exposure, no, free, graphic, designer
+caption	Designers_Work_For_Exposure_template.png	Comic Sans MS	#cb4653	-	5 31 253 239	WORK FOR EXPOSURE
 
 pack	Devs	Devs	Devs_header_large.png	-
 sticker	Devs_404	Devs_404.png	-	-	Devs 404	404, error, not, found, developer
+caption	Devs_404_template.png	Comic Sans MS	#ed6950	-	155 11 350 231	404 ERROR NOT FOUND
 sticker	Devs_500	Devs_500_Internal_Error.png	-	-	Devs 500	500, error, internal, developer
+caption	Devs_500_Internal_Error_template.png	Comic Sans MS	#ed6950	-	8 10 360 103	500 INTERNAL ERROR
 sticker	Devs_Approved	Devs_Approved.png	-	-	Devs Approved	approved, yes, good, happy, developer
+caption	Devs_Approved_template.png	Comic Sans MS	#ed6950	-	163 54 370 180	APPROVED!
 sticker	Devs_Big_Data	Devs_Big_Data.png	-	-	Devs Big Data	Big, data, power, developer
+caption	Devs_Big_Data_template.png	Comic Sans MS	#ed6950	-	220 35 365 217	BIG DATA
 sticker	Devs_Broke_the_Build	Devs_Broke_the_Build.png	-	-	Devs Broke the Build	Broke, error, Build, oops, developer
+caption	Devs_Broke_the_Build_template.png	Comic Sans MS	#ed6950	-	32 21 220 224	BROKE THE BUILD
 sticker	Devs_Bugs_Bugs_Bugs	Devs_Bugs_Bugs_Bugs.png	-	-	Devs Bugs Bugs Bugs	Bug, bugs, error, internal, developer
+caption	Devs_Bugs_Bugs_Bugs_template.png	Comic Sans MS	#ed6950	-	81 7 294 241	BUGS BUGS BUGS
 sticker	Devs_Multiplying	Devs_Bugs_Multiplying.png	-	-	Devs Multiplying	bug, error, bad, problem, developer
+caption	Devs_Bugs_Multiplying_template.png	Comic Sans MS	#ed6950	-	188 69 365 248	BUGS MULTIPLYING
 sticker	Devs_Can_You_Review	Devs_Can_You_Review.png	-	-	Devs Can You Review	Review, help, critique, developer
+caption	Devs_Can_You_Review_template.png	Comic Sans MS	#ed6950	-	5 27 241 130	CAN YOU REVIEW THIS?
 sticker	Devs_Cloud	Devs_Cloud.png	-	-	Devs Cloud	Cloud, data, information, storage, developer
+caption	Devs_Cloud_template.png	Comic Sans MS	#ed6950	-	65 145 310 240	THE CLOUD
 sticker	Devs_Computer_Masters	Devs_Computer_Masters.png	-	-	Devs Computer Masters	Computer, master, robot, developer
+caption	Devs_Computer_Masters_template.png	Comic Sans MS	#ed6950	-	53 6 322 56	MASTER!
 sticker	Devs_Done	Devs_Done.png	-	-	Devs Done	Done, Test, not, more, developer
+caption	Devs_Done_template.png	Comic Sans MS	#ed6950	-	3 5 165 246	DONE
 sticker	Devs_Hacked	Devs_Hacked.png	-	-	Devs Hacked	Hacked, danger, skull, developer
+caption	Devs_Hacked_template.png	Comic Sans MS	#ed6950	-	32 2 356 61	HACKED
 sticker	Devs_Make_It_Better	Devs_Make_It_Better.png	-	-	Devs Make It Better	better, make, bad, redo, developer
+caption	Devs_Make_It_Better_template.png	Comic Sans MS	#ed6950	-	121 13 360 148	MAKE IT BETTER
 sticker	Devs_Merge_Conflict	Devs_Merge_Conflict.png	-	-	Devs Merge Conflict	merge, conflict, problem, error, developer
+caption	Devs_Merge_Conflict_template.png	Comic Sans MS	#ed6950	-	139 7 365 123	MERGE CONFLICT
 sticker	Devs_No_Repro	Devs_No_repro.png	-	-	Devs No Repro	no, error, repro, developer
+caption	Devs_No_Repro_template.png	Comic Sans MS	#ed6950	-	180 55 365 198	NO REPRO
 sticker	Devs_Not_A_Bug	Devs_Not_A_Bug.png	-	-	Devs Not A Bug	Bug, error, feature, developer
+caption	Devs_Not_A_Bug_template.png	Comic Sans MS	#ed6950	-	3 20 191 239	IT'S NOT A BUG IT'S A FEATURE
 sticker	Devs_PR_Out	Devs_PR_Out.png	-	-	Devs PR Out	pr, out, pull, releas, developer
+caption	Devs_PR_Out_template.png	Comic Sans MS	#ed6950	-	16 16 200 222	PR OUT
 sticker	Devs_Smash	Devs_Smash.png	-	-	Devs Smash	smash, error, angry, stupid, developer
+caption	Devs_Smash_template.png	Comic Sans MS	#ed6950	-	30 7 337 66	SMASH
 sticker	Devs_Test_Fail	Devs_Test_Fail.png	-	-	Devs Test Fail	Test, error, fail, developer
+caption	Devs_Test_Fail_template.png	Comic Sans MS	#ed6950	-	190 25 370 194	TEST FAIL
 sticker	Devs_Uncodable	Devs_Uncodable.png	-	-	Devs Uncodable	uncodable, error, code, developer
+caption	Devs_Uncodable_template.png	Comic Sans MS	#ed6950	-	171 8 351 243	THIS IS UNCODABLE
 sticker	Devs_Waiting_For_Compile	Devs_Waiting_For_Compile.png	-	-	Devs Waiting For Compile	wait, error, compile, forever, developer
+caption	Devs_Waiting_For_Compile_template.png	Comic Sans MS	#ed6950	-	97 5 361 90	WAITING FOR COMPILE
 sticker	Devs_Works_On_My_Machine	Devs_Works_On_My_Machine.png	-	-	Devs Works On My Machine	Works, error, my, machine, developer
+caption	Devs_Works_On_My_Machine_template.png	Comic Sans MS	#ed6950	-	165 11 365 135	WORKS ON MY MACHINE
 
 pack	Legal	Legal	Legal_header_large.png	-
 sticker	Legal_Another_Six	Legal_Another_Six.png	-	-	Legal Another Six	Bill, another, six, 6, money, lawyer, legal
+caption	Legal_Another_Six_template.png	Comic Sans MS	#417b84	-	42 3 333 97	ANOTHER 6 MINUTES
 sticker	Legal_Billing_Code	Legal_Billing_Code.png	-	-	Legal Billing Code	bill, code, money, lawyer, legal
+caption	Legal_Billing_Code_template.png	Comic Sans MS	#417b84	-	181 75 368 198	BILLING CODE?
 sticker	Legal_Disbarred	Legal_Disbarred.png	-	-	Legal Disbarred	disbar, bad, problem, lawyer, legal
+caption	Legal_Disbarred_template.png	Comic Sans MS	#417b84	-	3 33 205 177	DISBARRED
 sticker	Legal_Doc_Review	Legal_Doc_Review.png	-	-	Legal Doc Review	doc, review, paper, work, lawyer, legal
+caption	Legal_Doc_Review_template.png	Comic Sans MS	#417b84	-	67 2 308 103	DOC REVIEW
 sticker	Legal_Doctor	Legal_Doctor.png	-	-	Legal Doctor	doctor, jd, juris, degree, school, lawyer, legal
+caption	Legal_Doctor_template.png	Comic Sans MS	#417b84	-	183 79 367 219	I'M A DOCTOR
 sticker	Legal_Fair_Use	Legal_Fair_Use.png	-	-	Legal Fair Use	fair, use, contract, rights, lawyer, legal
+caption	Legal_Fair_Use_template.png	Comic Sans MS	#417b84	-	9 18 191 239	IS THIS FAIR USE
 sticker	Legal_Fine_Print	Legal_Fine_Print.png	-	-	Legal Fine Print	fine, print, details, contract, catch, lawyer, legal
+caption	Legal_Fine_Print_template.png	Comic Sans MS	#417b84	-	98 21 277 83	CHECK THE FINE PRINT
 sticker	Legal_Force_Majeure	Legal_Force_Majeure.png	-	-	Legal Force Majeure	Force, majeure, god, nature, lawyer, legal
+caption	Legal_Force_Majeure_template.png	Comic Sans MS	#417b84	-	153 128 366 248	FORCE MAJEURE
 sticker	Legal_Legalese	Legal_Legalese.png	-	-	Legal Legalese	Legalese, talk, jargon, nonsense, lawyer, legal
+caption	Legal_Legalese_template.png	Comic Sans MS	#417b84	-	129 145 370 227	LEGALESE
 sticker	Legal_NDA	Legal_NDA.png	-	-	Legal NDA	NDA, non, disclosure, agreement, lawyer, legal
+caption	Legal_NDA_template.png	Comic Sans MS	#417b84	-	209 50 375 225	SHHHH, IT'S NDA
 sticker	Legal_Non_Sequitur	Legal_Non_Sequitur.png	-	-	Legal Non Sequitur	non, sequitur, latin, lawyer, legal
+caption	Legal_Non_Sequitur_template.png	Cochin Italic	#417b84	-	4 5 273 118	NON SEQUITUR
 sticker	Legal_Notary	Legal_Notary.png	-	-	Legal Notary	notary, need, document, lawyer, legal
+caption	Legal_Notary_template.png	Comic Sans MS	#417b84	-	7 62 165 227	I NEED A NOTARY!
 sticker	Legal_Objection	Legal_Objection.png	-	-	Legal Objection	objection, no, stop, loud, lawyer, legal
+caption	Legal_Objection_template.png	Comic Sans MS	#417b84	-	192 121 370 248	OBJECTION!
 sticker	Legal_Overruled	Legal_Overruled.png	-	-	Legal Overruled	Overrule, no, stop, judge, lawyer, legal
+caption	Legal_Overruled_template.png	Comic Sans MS	#417b84	-	4 78 168 225	OVERRULLED
 sticker	Legal_Plead_The_Fifth	Legal_Plead_The_Fifth.png	-	-	Legal Plead The Fifth	plead, fifth, silent, secret, lawyer, legal
+caption	Legal_Plead_The_Fifth_template.png	Comic Sans MS	#417b84	-	14 29 182 233	PLEAD THE FIFTH
 sticker	Legal_Research_Time	Legal_Research_Time.png	-	-	Legal Research Time	research, time, study, lawyer, legal
+caption	Legal_Research_Time_template.png	Comic Sans MS	#417b84	-	146 52 369 194	RESEARCH TIME
 sticker	Legal_Rule_11	Legal_Rule_11.png	-	-	Legal Rule 11	rule, 11, stop, attack, lawyer, legal
+caption	Legal_Rule_11_template.png	Comic Sans MS	#417b84	-	7 118 253 241	RULE 11
 sticker	Legal_Shark	Legal_Shark.png	-	-	Legal Shark	shark, coffee, lawyer, legal
+caption	Legal_Shark_template.png	Comic Sans MS	#417b84	-	15 18 154 235	ARE YOU DONE YET?
 sticker	Legal_Sign	Legal_Sign.png	-	-	Legal Sign	sign, document, fail, forget, lawyer, legal
+caption	Legal_Sign_template.png	Comic Sans MS	#417b84	-	14 30 180 232	DID YOU SIGN?
 sticker	Legal_Socratic_Method	Legal_Socratic_Method.png	-	-	Legal Socratic Method	socratic, method, logic, debate, lawyer, legal
+caption	Legal_Socratic_Method_template.png	Comic Sans MS	#417b84	-	62 4 313 79	SOCRATIC METHOD
 sticker	Legal_Sustained	Legal_Sustained.png	-	-	Legal Sustained	sustained, accept, support, lawyer, legal
+caption	Legal_Sustained_template.png	Comic Sans MS	#417b84	-	2 83 172 227	SUSTAINED
 sticker	Legal_Transcribe	Legal_Transcribe.png	-	-	Legal Transcribe	transcribe, time, no, machine, lawyer, legal
+caption	Legal_Transcribe_template.png	Comic Sans MS	#417b84	-	0 3 259 99	TIME TO TRANSCRIBE
 sticker	Legal_We_Got_Sued	Legal_We_Got_Sued.png	-	-	Legal We Got Sued	sue, bad, mistake, sad, lawyer, legal
+caption	Legal_We_Got_Sued_template.png	Comic Sans MS	#417b84	-	157 7 366 113	WE GOT SUED
 sticker	Legal_We_Need_A_Specialist	Legal_We_Need_A_Specialist.png	-	-	Legal We Need A Specialist	need, specialist, lawyer, legal
+caption	Legal_We_Need_A_Specialist_template.png	Comic Sans MS	#417b84	-	43 2 333 80	WE NEED A SPECIALIST
 
 pack	Broccoli	Broccoli	Broccoli_header_large.png	-
 sticker	Broccoli_Angry	stickerbroccoliangry.png	-	-	Broccoli Angry	angry, rage, bursting, spitting anger, broccoli, vegetable

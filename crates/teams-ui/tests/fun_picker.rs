@@ -1286,7 +1286,7 @@ fn the_search_finds_teams_stickers_after_the_user_s_and_the_keyboard_picks_one()
 }
 
 #[test]
-fn the_keyboard_opens_a_teams_pack_and_picks_its_sticker() {
+fn the_keyboard_opens_a_teams_pack_and_its_sticker_s_editor() {
     let place = Setup::new();
     let rig = teams_rig();
     teams_pictures(&rig, &["OfficeDrama_OhYeah"]);
@@ -1312,9 +1312,18 @@ fn the_keyboard_opens_a_teams_pack_and_picks_its_sticker() {
         Some(teams("OfficeDrama_OhYeah")),
         "Back, then the stickers: no menu"
     );
+    // Popular's stickers all take a caption: Space opens "Edit sticker", as a click does in Teams
     keys(cx, "space");
-    assert!(self::picker(&view, cx).is_none(), "Space picks");
-    assert!(drawn(cx, "editor-picture-1"));
+    let editor = cx.update(|_, cx| picker.read(cx).sticker_editor().cloned()).unwrap();
+    assert_eq!(
+        cx.update(|_, cx| editor.read(cx).sticker().to_owned()),
+        "OfficeDrama_OhYeah"
+    );
+    assert!(drawn(cx, "sticker-editor"));
+    keys(cx, "escape");
+    assert!(cx.update(|_, cx| picker.read(cx).sticker_editor().is_none()));
+    assert_eq!(current(cx), Some(teams("OfficeDrama_OhYeah")), "back on the sticker");
+    assert!(!drawn(cx, "editor-picture-1"), "nothing went in the box");
 }
 
 #[test]

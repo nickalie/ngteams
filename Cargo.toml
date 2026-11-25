@@ -221,6 +221,9 @@ oo7 = { version = "0.6.0", default-features = false, features = ["async-std", "n
 # The device seam's PipeWire backend (teams-media): audio and the camera on one server, the sandbox's or the
 # desktop's as the caller selects at run time (libpipewire through bindgen; MIT)
 pipewire = { version = "0.10.1", features = ["v0_3_49"] }
+# a caption drawn on one of Teams' stickers (teams-ui's "Edit sticker"): shaping, fallback and glyphs, the version
+# GPUI's Linux text system links; MIT OR Apache-2.0
+cosmic-text = "0.19.0"
 # the Public Suffix List, compiled in: which dotted part of a display name ends in a real top-level domain
 psl = "2.1.243"
 # Telegram's animated stickers (`.tgs`, a Lottie animation) rendered to frames (teams-ui's sticker import): pure Rust on

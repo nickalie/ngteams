@@ -8,6 +8,7 @@
 //! removal, a sticker put in a message (Recent). Each sticker's picture is decoded once, on a background thread, as
 //! it is first drawn. A shelf with no directory (settings kept in memory) holds nothing and imports nothing.
 
+pub mod caption;
 pub mod import;
 pub mod lottie;
 pub mod signal;

@@ -27,6 +27,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable as _,
     FontWeight, InteractiveElement as _, IntoElement, ParentElement as _, PathPromptOptions, Render, ScrollHandle,
@@ -42,6 +43,7 @@ use crate::inline::{PictureSource, PictureState};
 use crate::reaction_picker::{ReactionPicker, ReactionPickerEvent, Section};
 use crate::reactions;
 use crate::signal_import::{SignalImport, SignalImportEvent};
+use crate::sticker_editor::{Captioned, Draft, StickerEditor, StickerEditorEvent};
 use crate::stickers::teams;
 use crate::stickers::{ImportKind, ImportState, Shelf, StickerRef, Thumb};
 use crate::telegram_import::{TelegramImport, TelegramImportEvent};
@@ -78,6 +80,8 @@ pub enum FunPickerEvent {
     Emoji(String),
     /// A sticker picked.
     Sticker(StickerRef),
+    /// One of Teams' stickers with its caption drawn in ("Edit sticker"'s Done).
+    Captioned(Captioned),
     /// Closed without a pick.
     Dismissed,
 }
@@ -284,6 +288,9 @@ pub struct FunPicker {
     telegram: Option<(Entity<TelegramImport>, Subscription)>,
     /// "Import a Signal sticker pack", open in the picker's place.
     signal: Option<(Entity<SignalImport>, Subscription)>,
+    /// "Edit sticker", open in the place of the tab's content.
+    editing: Option<(Entity<StickerEditor>, Subscription)>,
+    core: Arc<dyn Core>,
     /// The item drawn with the keyboard's ring, and whether the tabs have the focus, as this frame draws them.
     ring: Option<Item>,
     tabs_ringed: bool,
@@ -304,7 +311,7 @@ impl FunPicker {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Find something fun"));
         let teams = stickers && core.capabilities().teams_stickers;
         let pictures = PictureSource::new(Arc::clone(&core));
-        let emoji = cx.new(|cx| ReactionPicker::embedded(core, window, cx));
+        let emoji = cx.new(|cx| ReactionPicker::embedded(Arc::clone(&core), window, cx));
         let mut subscriptions = vec![
             cx.subscribe_in(&search, window, |this: &mut Self, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -347,6 +354,8 @@ impl FunPicker {
             problem: None,
             telegram: None,
             signal: None,
+            editing: None,
+            core,
             ring: None,
             tabs_ringed: false,
             _subscriptions: subscriptions,
@@ -451,6 +460,7 @@ impl FunPicker {
         self.panel = Panel::None;
         self.renaming = None;
         self.problem = None;
+        self.editing = None;
     }
 
     fn query(&self, cx: &App) -> String {
@@ -528,6 +538,39 @@ impl FunPicker {
         cx.notify();
     }
 
+    /// Whether a click on `sticker` opens "Edit sticker": it is one of Teams' that takes a caption.
+    fn takes_caption(sticker: &StickerRef) -> bool {
+        sticker.is_teams() && Draft::of(&sticker.file).is_some()
+    }
+
+    /// "Edit sticker", while it is open.
+    #[must_use]
+    pub fn sticker_editor(&self) -> Option<&Entity<StickerEditor>> {
+        self.editing.as_ref().map(|(editor, _)| editor)
+    }
+
+    /// Opens "Edit sticker" for Teams' sticker `id` in the place of the tab's content; its Done tells the box.
+    pub fn open_editor(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(draft) = Draft::of(id) else {
+            return;
+        };
+        let core = Arc::clone(&self.core);
+        let editor = cx.new(|cx| StickerEditor::new(&core, draft, window, cx));
+        let events = cx.subscribe_in(&editor, window, |this, _, event: &StickerEditorEvent, window, cx| {
+            this.editing = None;
+            match event {
+                StickerEditorEvent::Done(captioned) => cx.emit(FunPickerEvent::Captioned(captioned.clone())),
+                StickerEditorEvent::Cancel => {
+                    this.items_focus.focus(window, cx);
+                    this.reveal(cx);
+                }
+            }
+            cx.notify();
+        });
+        self.editing = Some((editor, events));
+        cx.notify();
+    }
+
     /// Imports the chosen `files` into the shelf (as the add-a-pack menu's chooser does).
     pub fn import_files(&mut self, files: Vec<PathBuf>, cx: &mut Context<Self>) {
         self.panel = Panel::None;
@@ -580,6 +623,7 @@ impl FunPicker {
     pub fn activate(&mut self, item: &Item, window: &mut Window, cx: &mut Context<Self>) {
         match item {
             Item::Emoji(key) => cx.emit(FunPickerEvent::Emoji((*key).to_owned())),
+            Item::Sticker(sticker) if Self::takes_caption(sticker) => self.open_editor(&sticker.file, window, cx),
             Item::Sticker(sticker) => cx.emit(FunPickerEvent::Sticker(sticker.clone())),
             Item::Pack(id) => {
                 let from_packs = self.view == StickerView::Packs;
@@ -1332,10 +1376,13 @@ impl FunPicker {
                         .map_or_else(|| "Sticker".into(), |held| held.label.clone().into())
                 };
                 let picture = self.picture(sticker, px(side - 10.0), palette, cx);
-                base.bg(rgb(palette.hover))
+                let editable = Self::takes_caption(sticker);
+                base.relative()
+                    .bg(rgb(palette.hover))
                     .hover(move |style| style.bg(rgb(palette.selected)))
                     .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
                     .child(picture)
+                    .when(editable, |cell| cell.child(edit_mark(palette)))
             }
             _ => base,
         };
@@ -1413,7 +1460,13 @@ impl FunPicker {
             Item::TeamsPack(id) => match teams::catalog().pack(id) {
                 Some(pack) => (
                     pack.name.clone().into(),
-                    Some(self.preview(&pack.header(), px(28.0), palette, cx)),
+                    Some(
+                        div()
+                            .relative()
+                            .child(self.preview(&pack.header(), px(28.0), palette, cx))
+                            .when(teams::catalog().editable(id), |header| header.child(edit_mark(palette)))
+                            .into_any_element(),
+                    ),
                 ),
                 None => (SharedString::default(), None),
             },
@@ -1724,6 +1777,22 @@ impl FunPicker {
 }
 
 /// A picture that can't be shown: the picture mark.
+/// Teams' pencil mark on a sticker that takes a caption, and on a pack of them: a small dark disc at the bottom right.
+fn edit_mark(palette: Palette) -> gpui::Div {
+    div()
+        .debug_selector(|| "sticker-edit-mark".to_owned())
+        .absolute()
+        .right(px(2.0))
+        .bottom(px(2.0))
+        .size(px(16.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .bg(rgb(palette.foreground))
+        .child(Glyph::PENCIL.icon().size(px(10.0)).text_color(rgb(palette.background)))
+}
+
 fn broken(palette: Palette) -> AnyElement {
     Glyph::IMAGE
         .icon()
@@ -1834,6 +1903,11 @@ impl Render for FunPicker {
             .or_else(|| self.signal.as_ref().map(|(panel, _)| panel.clone().into_any_element()))
         {
             return Self::frame(palette, cx).child(panel);
+        }
+        if let Some((editor, _)) = &self.editing {
+            return Self::frame(palette, cx)
+                .child(self.tab_strip(palette, cx))
+                .child(editor.clone());
         }
         let content = if self.tab == Tab::Emoji {
             div().h(px(CONTENT_HEIGHT)).child(self.emoji.clone()).into_any_element()

@@ -1990,6 +1990,7 @@ impl Compose {
         let events = cx.subscribe_in(&picker, window, move |this, picker, event, window, cx| match event {
             FunPickerEvent::Emoji(key) => this.put_emoji(key, window, cx),
             FunPickerEvent::Sticker(sticker) => this.put_sticker(sticker, window, cx),
+            FunPickerEvent::Captioned(captioned) => this.put_captioned(captioned, window, cx),
             FunPickerEvent::Dismissed => {
                 // a click elsewhere keeps the focus where it went
                 let held = picker.read(cx).holds_focus(window, cx);
@@ -2047,6 +2048,31 @@ impl Compose {
         };
         if self.takes_picture(cx) {
             packs.update(cx, |packs, cx| packs.record_recent(sticker, cx));
+            self.put_picture(picture, cx);
+        }
+    }
+
+    /// Puts one of Teams' stickers with its caption drawn in ("Edit sticker") in the box at the cursor, as Teams' box
+    /// takes it: a picture of its own, sent to the media service at once, named by the message as a sticker. It closes
+    /// the picker, and the sticker goes first in Recent.
+    fn put_captioned(
+        &mut self,
+        captioned: &crate::sticker_editor::Captioned,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let packs = crate::stickers::Shelf::of(self.settings.read(cx).stickers_dir(), cx);
+        self.emoji = None;
+        self.focus(window, cx);
+        cx.notify();
+        let Some(picture) =
+            editor::pictures::Picture::captioned(captioned.picture.clone(), captioned.shown, &captioned.label)
+        else {
+            return self.show_problem("That sticker can't be drawn. Try again.", cx);
+        };
+        if self.takes_picture(cx) {
+            let sticker = crate::stickers::StickerRef::teams(&captioned.sticker);
+            packs.update(cx, |packs, cx| packs.record_recent(&sticker, cx));
             self.put_picture(picture, cx);
         }
     }
