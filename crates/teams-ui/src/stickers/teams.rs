@@ -6,8 +6,9 @@
 //! Every picture is a public file on Teams' sticker CDN, read with no credential: a sticker's preview and a pack's
 //! header, as the picker shows them ([`teams_proto::StickerPreview`]), and the sticker's own picture, as a message
 //! names it ([`teams_proto::StickerPicture`]). A message sends a sticker by that picture's address, as Teams' box
-//! sends one: nothing goes to the media service. A meme is sent as its picture with no caption (its "template"),
-//! the picture that Teams draws its caption on.
+//! sends one: nothing goes to the media service. A sticker that takes a caption, a meme too, goes through "Edit
+//! sticker" instead: its caption is drawn on its picture with no words (its template), and that PNG goes to the media
+//! service ([`super::caption`]).
 //!
 //! The search is Teams' own: a sticker is found when its name or one of its keywords holds the query, in any case.
 
@@ -61,7 +62,6 @@ pub struct TeamsSticker {
     pub keywords: Vec<String>,
     file: String,
     preview: Option<String>,
-    template: Option<String>,
     /// The words Teams' "Edit sticker" draws on it, when it takes a caption.
     pub caption: Option<Caption>,
 }
@@ -110,7 +110,7 @@ impl Catalog {
                     meme: flags.split(',').any(|flag| flag == "meme"),
                 }),
                 ["popular", ..] => catalog.popular = fields[1..].iter().map(|id| (*id).to_owned()).collect(),
-                ["sticker", id, file, preview, template, name, keywords] => {
+                ["sticker", id, file, preview, name, keywords] => {
                     let pack = catalog.packs.last().ok_or(number)?.id.clone();
                     if catalog.by_id.insert(id.to_owned(), catalog.stickers.len()).is_some() {
                         return Err(number);
@@ -124,7 +124,6 @@ impl Catalog {
                             .unwrap_or_default(),
                         file: file.to_owned(),
                         preview: given(preview).map(str::to_owned),
-                        template: given(template).map(str::to_owned),
                         caption: None,
                     });
                 }
@@ -233,8 +232,7 @@ impl Catalog {
     /// The address of `sticker`'s picture, as a message names it: `…/stickerassets/<pack>-<size>[/<locale>]/<file>?v=5`.
     #[must_use]
     pub fn picture(&self, sticker: &TeamsSticker) -> String {
-        let file = sticker.template.as_deref().unwrap_or(&sticker.file);
-        self.address(sticker, file)
+        self.address(sticker, &sticker.file)
     }
 
     /// The address of `file` in `sticker`'s pack folder.

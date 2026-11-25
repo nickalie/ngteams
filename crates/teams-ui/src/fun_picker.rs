@@ -540,7 +540,10 @@ impl FunPicker {
 
     /// Whether a click on `sticker` opens "Edit sticker": it is one of Teams' that takes a caption.
     fn takes_caption(sticker: &StickerRef) -> bool {
-        sticker.is_teams() && Draft::of(&sticker.file).is_some()
+        sticker.is_teams()
+            && teams::catalog()
+                .sticker(&sticker.file)
+                .is_some_and(|held| held.caption.is_some())
     }
 
     /// "Edit sticker", while it is open.
@@ -1776,7 +1779,6 @@ impl FunPicker {
     }
 }
 
-/// A picture that can't be shown: the picture mark.
 /// Teams' pencil mark on a sticker that takes a caption, and on a pack of them: a small dark disc at the bottom right.
 fn edit_mark(palette: Palette) -> gpui::Div {
     div()

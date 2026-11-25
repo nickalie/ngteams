@@ -79,10 +79,10 @@ fn a_sticker_s_addresses_are_the_ones_teams_uses() {
         picture("Teamsquatch_BugSquash"),
         "https://teams.public.onecdn.static.microsoft/evergreen-assets/stickerassets/teamsquatch-250x250/Teamsquatch_BugSquash.png?v=5"
     );
-    // a meme is its picture with no caption, at the meme size
+    // a meme is at the meme size
     assert_eq!(
         picture("grumpycat"),
-        "https://teams.public.onecdn.static.microsoft/evergreen-assets/stickerassets/meme-500x500/grumpycat-template.png?v=5"
+        "https://teams.public.onecdn.static.microsoft/evergreen-assets/stickerassets/meme-500x500/grumpycat.png?v=5"
     );
     // as Teams' picker showed them: a preview of its own name, or of the sticker's file
     assert_eq!(
@@ -182,7 +182,7 @@ fn the_captioned_stickers_are_teams_and_draw_on_their_templates() {
 #[test]
 fn a_table_out_of_its_form_names_its_line() {
     let pack = "pack\tMadeUp\tMade up\tMadeUp_header.png\t-";
-    let sticker = "sticker\tMadeUp_A\tMadeUp_A.png\t-\t-\tA\ta, b";
+    let sticker = "sticker\tMadeUp_A\tMadeUp_A.png\t-\tA\ta, b";
     let good = format!("# made up\n\n{pack}\n{sticker}\npopular\tMadeUp_A\n");
     let catalog = Catalog::parse(&good).unwrap();
     assert_eq!(catalog.packs().len(), 1);

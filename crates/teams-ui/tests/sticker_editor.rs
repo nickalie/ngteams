@@ -281,7 +281,7 @@ fn a_memes_two_lines_are_reached_by_the_keyboard_and_done_by_enter() {
         ["such wow", "very cat"],
         "Tab goes to the bottom line"
     );
-    // Tab: Done, then Cancel, then the back arrow, then the top line again; Shift+Tab back to Done
+    // Tab: Done, then Cancel, then the back arrow, then the top line again
     keys(cx, "tab tab tab tab");
     cx.simulate_input("!");
     draw(cx);
@@ -290,7 +290,8 @@ fn a_memes_two_lines_are_reached_by_the_keyboard_and_done_by_enter() {
         lines[0].contains('!') && lines[1] == "very cat",
         "round to the top line: {lines:?}"
     );
-    keys(cx, "tab tab");
+    // Shift+Tab: the back arrow, Cancel, then Done
+    keys(cx, "shift-tab shift-tab shift-tab");
     keys(cx, "enter");
     assert!(self::picker(&view, cx).is_none(), "Enter on Done puts it in the box");
     assert!(drawn(cx, "editor-picture-1"));

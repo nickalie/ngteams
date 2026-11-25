@@ -130,6 +130,11 @@ fn a_block_draws_the_trimmed_words_in_its_region() {
     );
     assert!(caption.texts(&typed(&["   "]), (200, 100)).is_empty());
     assert!(caption.texts(&[], (200, 100)).is_empty());
+    // a line break or a run of spaces is one space, as Teams' canvas draws it
+    assert_eq!(
+        caption.texts(&typed(&["THAT'S\nSO  COOL\r\n"]), (200, 100))[0].0,
+        "THAT'S SO COOL"
+    );
 }
 
 #[test]
@@ -161,6 +166,11 @@ fn the_label_is_what_was_typed_after_a_memes_name() {
     assert_eq!(meme().label("Doge", &typed(&["such", "wow"])), "Doge such, wow");
     assert_eq!(meme().label("Doge", &typed(&["", "wow"])), "Doge wow");
     assert_eq!(meme().label("Doge", &typed(&["", ""])), "Doge");
+    assert_eq!(meme().label("Doge", &typed(&["such\nwow", "\n"])), "Doge such wow");
+    assert_eq!(
+        meme().texts(&typed(&["such\n", "\n"]), (250, 200)),
+        vec![("SUCH".to_owned(), region(20.0, 20.0, 230.0, 70.0))]
+    );
 }
 
 #[test]
@@ -227,8 +237,13 @@ fn a_long_caption_wraps_to_the_regions_shape() {
     }
     // the widest line fills the width or the block fills the height
     let widest = tall.lines.iter().map(|line| half(&line.text)).fold(0.0, f32::max) * tall.size / 100.0;
-    let height = tall.lines.len() as f32 * tall.size;
+    let height = tall.lines.len() as f32 * tall.size + (tall.lines.len() - 1) as f32 * 2.0;
+    assert!(widest <= 100.01 && height <= 200.01, "{widest} {height}");
     assert!((widest - 100.0).abs() < 0.01 || (height - 200.0).abs() < 0.01);
+    // the block, its line spacing too, is centred in the height
+    let top = tall.lines[0].baseline - tall.size;
+    let bottom = tall.lines[tall.lines.len() - 1].baseline;
+    assert!((top - (200.0 - bottom)).abs() < 0.01, "{top} {bottom}");
     // every line is centred
     for line in &tall.lines {
         let width = half(&line.text) * tall.size / 100.0;

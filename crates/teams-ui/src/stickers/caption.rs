@@ -3,8 +3,8 @@
 //!
 //! - **A caption** ([`Caption`]) is one block of words in a region of the template, in the catalog's font and colour,
 //!   which the editor starts with the sticker's own words. A meme's is a top and a bottom line in a band 50 px high,
-//!   20 px in from the edges, in white Impact with a black edge, in upper case; with both lines empty it shows
-//!   "Top Caption" and "Bottom caption".
+//!   20 px in from the edges, in white Impact with a black edge, in upper case; with both lines empty it shows its
+//!   hints, "TOP CAPTION" and "BOTTOM CAPTION".
 //! - **The fit** ([`fit`]) is Teams' own: the words go on about as many lines as the region's shape asks for, each
 //!   break at the space nearest an even split, then the block is scaled, up or down, until it fills the region's
 //!   width or its height, and is centred in it.
@@ -137,13 +137,13 @@ impl Caption {
     pub fn texts(&self, typed: &[String], size: (u32, u32)) -> Vec<(String, Region)> {
         match &self.words {
             Words::Block { region, .. } => {
-                let text = typed.first().map_or("", |text| text.trim());
+                let text = typed.first().map_or_else(String::new, |text| one_line(text));
                 if text.is_empty() {
                     return Vec::new();
                 }
                 let [left, top, right, bottom] = region.map(side);
                 vec![(
-                    text.to_owned(),
+                    text,
                     Region {
                         left,
                         top,
@@ -153,9 +153,9 @@ impl Caption {
                 )]
             }
             Words::Meme => {
-                let lines: Vec<&str> = typed.iter().take(2).map(|line| line.trim()).collect();
-                let lines = if lines.iter().all(|line| line.is_empty()) {
-                    vec![TOP_HINT, BOTTOM_HINT]
+                let lines: Vec<String> = typed.iter().take(2).map(|line| one_line(line)).collect();
+                let lines = if lines.iter().all(String::is_empty) {
+                    vec![TOP_HINT.to_owned(), BOTTOM_HINT.to_owned()]
                 } else {
                     lines
                 };
@@ -190,7 +190,7 @@ impl Caption {
     pub fn label(&self, name: &str, typed: &[String]) -> String {
         let words = typed
             .iter()
-            .map(|text| text.trim())
+            .map(|text| one_line(text))
             .filter(|text| !text.is_empty())
             .collect::<Vec<_>>()
             .join(", ");
@@ -200,6 +200,11 @@ impl Caption {
             (false, _) => words,
         }
     }
+}
+
+/// `text` with each run of white space, line breaks too, made one space and none at the ends, as Teams' canvas draws it.
+fn one_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// `#rrggbb`, `black` or `white`.
@@ -248,14 +253,14 @@ pub fn fit(text: &str, region: Region, measure: &mut dyn FnMut(&str) -> f32) -> 
     if widest <= 0.0 {
         return None;
     }
-    let tall = count(chunks.len()) * BASE;
-    let scale = if shape < tall / widest {
-        height / tall
-    } else {
-        width / widest
-    };
+    let spacing = count(chunks.len().saturating_sub(1)) * LEADING;
+    let scale = (width / widest).min((height - spacing).max(0.0) / (count(chunks.len()) * BASE));
+    if scale <= 0.0 {
+        return None;
+    }
     let size = BASE * scale;
-    let first = region.top + (height - tall * scale) / 2.0 + size;
+    let block = count(chunks.len()) * size + spacing;
+    let first = region.top + (height - block) / 2.0 + size;
     let lines = chunks
         .into_iter()
         .zip(widths)

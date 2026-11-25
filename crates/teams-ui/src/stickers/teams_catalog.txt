@@ -7,8 +7,7 @@
 # pack <TAB> id <TAB> name <TAB> header file <TAB> flags (localized: the full picture's path names the locale;
 #   meme: the meme paths and sizes)
 # popular <TAB> sticker id <TAB> … : the stickers of the Popular pack, in order
-# sticker <TAB> id <TAB> file <TAB> preview file (- for the file's own name) <TAB> template (- for none: the
-#   picture with no caption) <TAB> name <TAB> keywords (- for none)
+# sticker <TAB> id <TAB> file <TAB> preview file (- for the file's own name) <TAB> name <TAB> keywords (- for none)
 # caption <TAB> template file <TAB> font <TAB> colour <TAB> edge colour (- for none) <TAB> region (left top right
 #   bottom, px of the template) <TAB> words: the caption of the sticker before it ("Edit sticker"), one block of words
 #   that starts as its own words, or, with "-" for the region and the words, a meme's top and bottom lines. The
@@ -18,577 +17,577 @@ pack	Popular	Popular	Popular_header_large.png	-
 popular	OfficeDrama_OhYeah	doge	Devs_Works_On_My_Machine	OfficeDrama_Hey	Designers_Fix	SuccessKid	Legal_Research_Time	grumpycat	Designers_Creative	Devs_Approved	OfficeDrama_SoCool	Legal_Billing_Code
 
 pack	Clippy	Clippy	Clippy_header_large.png	localized
-sticker	Clippy_Admire	Clippy_Admire.gif	Clippy_Admire.png	-	Clippy gazes with admiration	clippy, eyes, admire, wide-eyed, sparkle
-sticker	Clippy_AreYouThere	Clippy_AreYouThere.gif	Clippy_AreYouThere.png	-	Clippy asks "Are you there"?	clippy, speech bubble, question
-sticker	Clippy_Bandaged	Clippy_Bandaged.gif	Clippy_Bandaged.png	-	Clippy is injured	clippy, bandages, bandaged, hurt, injured, sick, ill, unwell, bandaid, broken
-sticker	Clippy_Bored	Clippy_Bored.gif	Clippy_Bored.png	-	a bored Clippy surfs the web	clippy, bored, tired, click, laptop, desk, social media, web, distract, distracted
-sticker	Clippy_Brb	Clippy_Brb.gif	Clippy_Brb.png	-	Clippy says "BRB"	clippy, brb, be right back, speech bubble
-sticker	Clippy_Coffee	Clippy_Coffee.gif	Clippy_Coffee.png	-	Clippy with a cup of coffee	clippy, coffee, cup, drink, caffeine, espresso, latte, hot, steam, thermos, raised, eyebrow
-sticker	Clippy_CoffeeMug	Clippy_CoffeeMug.gif	Clippy_CoffeeMug.png	-	Clippy with a mug of coffee	clippy, coffee, mug, cup, drink, hot, steam, caffeine
-sticker	Clippy_HappyHour	Clippy_HappyHour.gif	Clippy_HappyHour.png	-	Clippy enjoying a soda	clippy, soda, cola, pop, drink, cheers
-sticker	Clippy_HelloThere	Clippy_HelloThere.gif	Clippy_HelloThere.png	-	Clippy says "Hello there"	clippy, speech bubble, hello
-sticker	Clippy_ImHere	Clippy_ImHere.gif	Clippy_ImHere.png	-	Clippy says "I'm here"	clippy, speech bubble, i'm here
-sticker	Clippy_LooksGreat	Clippy_LooksGreat.gif	Clippy_LooksGreat.png	-	Clippy says "Looks great"	clippy, speech bubble, looks great, good, nice
-sticker	Clippy_Love	Clippy_Love.gif	Clippy_Love.png	-	Clippy in love	clippy, love, hearts, blush, like, pink
-sticker	Clippy_Meeting	Clippy_Meeting.gif	Clippy_Meeting.png	-	Clippy in a meeting	clippy, meet, meeting, present, interview, notes, laptop, desk, office, talk, chat, discuss, speech bubbles
-sticker	Clippy_Nap	Clippy_Nap.gif	Clippy_Nap.png	-	Clippy takes a nap	clippy, nap, desk, tired, sleep, snore, rest
-sticker	Clippy_Nice	Clippy_Nice.gif	Clippy_Nice.png	-	Clippy says "Nice!"	clippy, nice, speech bubble
-sticker	Clippy_NoProbs	Clippy_NoProbs.gif	Clippy_NoProbs.png	-	Clippy says "No probs!"	clippy, no problem, speech bubble
-sticker	Clippy_Normal	Clippy_Normal.gif	Clippy_Normal.png	-	Clippy	clippy
-sticker	Clippy_Ok	Clippy_Ok.gif	Clippy_Ok.png	-	Clippy says "Ok"	clippy, speech bubble, ok, okay
-sticker	Clippy_Oof	Clippy_Oof.gif	Clippy_Oof.png	-	Clippy is out of the office	clippy, desk, oof, out of facilities, off, gone, office
-sticker	Clippy_Payday	Clippy_Payday.gif	Clippy_Payday.png	-	Clippy gets paid	clippy, money, paid, dollars, rain, green, payday, pay, rich, wealthy
-sticker	Clippy_Presentation	Clippy_Presentation.gif	Clippy_Presentation.png	-	Clippy gives a presentation	clippy, present, presentation, meeting, chart, talk, show
-sticker	Clippy_Sad	Clippy_Sad.gif	Clippy_Sad.png	-	Clippy is sad	clippy, sad, blue, blues, disappointed, disappoint
-sticker	Clippy_ShipIt	Clippy_ShipIt.gif	Clippy_ShipIt.png	-	Clippy ships it	clippy, ship it, captain, complete, done
-sticker	Clippy_Sick	Clippy_Sick.gif	Clippy_Sick.png	-	Clippy feels sick	clippy, sick, ill, unwell, barf, puke, green
-sticker	Clippy_Spy	Clippy_Spy.gif	Clippy_Spy.png	-	Clippy peeks around the corner	clippy, sneak, peek, spy, creep, suspicious
-sticker	Clippy_StocksDown	Clippy_StocksDown.gif	Clippy_StocksDown.png	-	Clippy's stocks are down	clippy, poor, stocks, bad, red, broke
-sticker	Clippy_Sun	Clippy_Sun.gif	Clippy_Sun.png	-	Clippy gets some sun	clippy, sun, sunshine, sweat, sunglasses, shades, hot
-sticker	Clippy_Sunglasses	Clippy_Sunglasses.gif	Clippy_Sunglasses.png	-	Clippy peeks over his sunglasses	clippy, cool, star, sunglasses, shades, peek
-sticker	Clippy_Surprise	Clippy_Surprise.gif	Clippy_Surprise.png	-	Clippy jumps in surprise	clippy, surprised, jump, startle, gasp
-sticker	Clippy_ThankYou	Clippy_ThankYou.gif	Clippy_ThankYou.png	-	Clippy says "Thank you!"	clippy, speech bubble, thank you, thanks
-sticker	Clippy_Traffic	Clippy_Traffic.gif	Clippy_Traffic.png	-	Clippy is stuck in traffic	clippy, car, traffic, rage, road, drive, commute, gridlock, congested, angry, slow
-sticker	Clippy_What	Clippy_What.gif	Clippy_What.png	-	Clippy asks "What?"	clippy, question, ask, what, speech bubble
-sticker	Clippy_WriteLetter	Clippy_WriteLetter.gif	Clippy_WriteLetter.png	-	Clippy wants to help you write a letter	clippy, help, ask, question, speech bubble
-sticker	Clippy_Yeah	Clippy_Yeah.gif	Clippy_Yeah.png	-	Clippy says "Yeah!"	clippy, yeah, speech bubble, yay, hooray, yes
+sticker	Clippy_Admire	Clippy_Admire.gif	Clippy_Admire.png	Clippy gazes with admiration	clippy, eyes, admire, wide-eyed, sparkle
+sticker	Clippy_AreYouThere	Clippy_AreYouThere.gif	Clippy_AreYouThere.png	Clippy asks "Are you there"?	clippy, speech bubble, question
+sticker	Clippy_Bandaged	Clippy_Bandaged.gif	Clippy_Bandaged.png	Clippy is injured	clippy, bandages, bandaged, hurt, injured, sick, ill, unwell, bandaid, broken
+sticker	Clippy_Bored	Clippy_Bored.gif	Clippy_Bored.png	a bored Clippy surfs the web	clippy, bored, tired, click, laptop, desk, social media, web, distract, distracted
+sticker	Clippy_Brb	Clippy_Brb.gif	Clippy_Brb.png	Clippy says "BRB"	clippy, brb, be right back, speech bubble
+sticker	Clippy_Coffee	Clippy_Coffee.gif	Clippy_Coffee.png	Clippy with a cup of coffee	clippy, coffee, cup, drink, caffeine, espresso, latte, hot, steam, thermos, raised, eyebrow
+sticker	Clippy_CoffeeMug	Clippy_CoffeeMug.gif	Clippy_CoffeeMug.png	Clippy with a mug of coffee	clippy, coffee, mug, cup, drink, hot, steam, caffeine
+sticker	Clippy_HappyHour	Clippy_HappyHour.gif	Clippy_HappyHour.png	Clippy enjoying a soda	clippy, soda, cola, pop, drink, cheers
+sticker	Clippy_HelloThere	Clippy_HelloThere.gif	Clippy_HelloThere.png	Clippy says "Hello there"	clippy, speech bubble, hello
+sticker	Clippy_ImHere	Clippy_ImHere.gif	Clippy_ImHere.png	Clippy says "I'm here"	clippy, speech bubble, i'm here
+sticker	Clippy_LooksGreat	Clippy_LooksGreat.gif	Clippy_LooksGreat.png	Clippy says "Looks great"	clippy, speech bubble, looks great, good, nice
+sticker	Clippy_Love	Clippy_Love.gif	Clippy_Love.png	Clippy in love	clippy, love, hearts, blush, like, pink
+sticker	Clippy_Meeting	Clippy_Meeting.gif	Clippy_Meeting.png	Clippy in a meeting	clippy, meet, meeting, present, interview, notes, laptop, desk, office, talk, chat, discuss, speech bubbles
+sticker	Clippy_Nap	Clippy_Nap.gif	Clippy_Nap.png	Clippy takes a nap	clippy, nap, desk, tired, sleep, snore, rest
+sticker	Clippy_Nice	Clippy_Nice.gif	Clippy_Nice.png	Clippy says "Nice!"	clippy, nice, speech bubble
+sticker	Clippy_NoProbs	Clippy_NoProbs.gif	Clippy_NoProbs.png	Clippy says "No probs!"	clippy, no problem, speech bubble
+sticker	Clippy_Normal	Clippy_Normal.gif	Clippy_Normal.png	Clippy	clippy
+sticker	Clippy_Ok	Clippy_Ok.gif	Clippy_Ok.png	Clippy says "Ok"	clippy, speech bubble, ok, okay
+sticker	Clippy_Oof	Clippy_Oof.gif	Clippy_Oof.png	Clippy is out of the office	clippy, desk, oof, out of facilities, off, gone, office
+sticker	Clippy_Payday	Clippy_Payday.gif	Clippy_Payday.png	Clippy gets paid	clippy, money, paid, dollars, rain, green, payday, pay, rich, wealthy
+sticker	Clippy_Presentation	Clippy_Presentation.gif	Clippy_Presentation.png	Clippy gives a presentation	clippy, present, presentation, meeting, chart, talk, show
+sticker	Clippy_Sad	Clippy_Sad.gif	Clippy_Sad.png	Clippy is sad	clippy, sad, blue, blues, disappointed, disappoint
+sticker	Clippy_ShipIt	Clippy_ShipIt.gif	Clippy_ShipIt.png	Clippy ships it	clippy, ship it, captain, complete, done
+sticker	Clippy_Sick	Clippy_Sick.gif	Clippy_Sick.png	Clippy feels sick	clippy, sick, ill, unwell, barf, puke, green
+sticker	Clippy_Spy	Clippy_Spy.gif	Clippy_Spy.png	Clippy peeks around the corner	clippy, sneak, peek, spy, creep, suspicious
+sticker	Clippy_StocksDown	Clippy_StocksDown.gif	Clippy_StocksDown.png	Clippy's stocks are down	clippy, poor, stocks, bad, red, broke
+sticker	Clippy_Sun	Clippy_Sun.gif	Clippy_Sun.png	Clippy gets some sun	clippy, sun, sunshine, sweat, sunglasses, shades, hot
+sticker	Clippy_Sunglasses	Clippy_Sunglasses.gif	Clippy_Sunglasses.png	Clippy peeks over his sunglasses	clippy, cool, star, sunglasses, shades, peek
+sticker	Clippy_Surprise	Clippy_Surprise.gif	Clippy_Surprise.png	Clippy jumps in surprise	clippy, surprised, jump, startle, gasp
+sticker	Clippy_ThankYou	Clippy_ThankYou.gif	Clippy_ThankYou.png	Clippy says "Thank you!"	clippy, speech bubble, thank you, thanks
+sticker	Clippy_Traffic	Clippy_Traffic.gif	Clippy_Traffic.png	Clippy is stuck in traffic	clippy, car, traffic, rage, road, drive, commute, gridlock, congested, angry, slow
+sticker	Clippy_What	Clippy_What.gif	Clippy_What.png	Clippy asks "What?"	clippy, question, ask, what, speech bubble
+sticker	Clippy_WriteLetter	Clippy_WriteLetter.gif	Clippy_WriteLetter.png	Clippy wants to help you write a letter	clippy, help, ask, question, speech bubble
+sticker	Clippy_Yeah	Clippy_Yeah.gif	Clippy_Yeah.png	Clippy says "Yeah!"	clippy, yeah, speech bubble, yay, hooray, yes
 
 pack	OfficeDrama	Office Drama	OfficeDrama_header_large.png	-
-sticker	OfficeDrama_SoCool	OfficeDrama_SoCool_New.png	-	-	So cool	cool, awesome, amazing, amazed, great, happy, excited, smile
+sticker	OfficeDrama_SoCool	OfficeDrama_SoCool_New.png	-	So cool	cool, awesome, amazing, amazed, great, happy, excited, smile
 caption	OfficeDrama_SoCool_New_Template.png	Comic Sans MS	#000000	-	20 28 136 216	THAT'S SO COOL
-sticker	OfficeDrama_Hahaha	OfficeDrama_Hahaha.png	-	-	man laughing heartily	office, drama, man, laugh, laughing, haha, smile, sarcastic, mouth
+sticker	OfficeDrama_Hahaha	OfficeDrama_Hahaha.png	-	man laughing heartily	office, drama, man, laugh, laughing, haha, smile, sarcastic, mouth
 caption	OfficeDrama_Hahaha_Template.png	Comic Sans MS	#000000	-	16 16 120 200	LOL
-sticker	OfficeDrama_Hey	OfficeDrama_Hey.png	-	-	hey	hey, hello
+sticker	OfficeDrama_Hey	OfficeDrama_Hey.png	-	hey	hey, hello
 caption	OfficeDrama_Hey_Template.png	Comic Sans MS	#000000	-	16 24 134 178	HEY!
-sticker	OfficeDrama_Interesting	OfficeDrama_Interesting.png	-	-	interesting	interesting
+sticker	OfficeDrama_Interesting	OfficeDrama_Interesting.png	-	interesting	interesting
 caption	OfficeDrama_Interesting_Template.png	Comic Sans MS	#000000	-	204 14 322 144	INTERESTING…
-sticker	OfficeDrama_Grrr	OfficeDrama_Grrr.png	-	-	grrr	grrr
+sticker	OfficeDrama_Grrr	OfficeDrama_Grrr.png	-	grrr	grrr
 caption	OfficeDrama_Grrr_Template.png	Comic Sans MS	#000000	-	176 22 302 148	GRRR!
-sticker	OfficeDrama_TellMeMore	OfficeDrama_TellMeMore.png	-	-	intrigued man asks "tell me more"	office, drama, man, ask, curious, think, interested, inquisitive, intrigue
+sticker	OfficeDrama_TellMeMore	OfficeDrama_TellMeMore.png	-	intrigued man asks "tell me more"	office, drama, man, ask, curious, think, interested, inquisitive, intrigue
 caption	OfficeDrama_TellMeMore_Template.png	Comic Sans MS	#000000	-	158 16 316 142	TELL ME MORE...
-sticker	OfficeDrama_Oops	OfficeDrama_Oops.png	-	-	man sheepishly apologizes	office, drama, man, oops, embarrass, uncomfortable, sheepish, apologize, mistake, sorry, error, careless, shamefaced
+sticker	OfficeDrama_Oops	OfficeDrama_Oops.png	-	man sheepishly apologizes	office, drama, man, oops, embarrass, uncomfortable, sheepish, apologize, mistake, sorry, error, careless, shamefaced
 caption	OfficeDrama_Oops_Template.png	Comic Sans MS	#000000	-	20 16 200 100	OOPS, MY BAD...
-sticker	OfficeDrama_Yes	OfficeDrama_Yes.png	-	-	yes	yes
+sticker	OfficeDrama_Yes	OfficeDrama_Yes.png	-	yes	yes
 caption	OfficeDrama_Yes_Template.png	Comic Sans MS	#000000	-	16 172 156 240	YES!
-sticker	OfficeDrama_OhYeah	OfficeDrama_OhYeah.png	-	-	Oh yeah	oh yeah, success, nice, fist pump, great, happy, excited, smile
+sticker	OfficeDrama_OhYeah	OfficeDrama_OhYeah.png	-	Oh yeah	oh yeah, success, nice, fist pump, great, happy, excited, smile
 caption	OfficeDrama_OhYeah_Template.png	Comic Sans MS	#000000	-	158 16 316 118	OH YEAH!
-sticker	OfficeDrama_GotThis	OfficeDrama_GotThis.png	-	-	we got this	we got this
+sticker	OfficeDrama_GotThis	OfficeDrama_GotThis.png	-	we got this	we got this
 caption	OfficeDrama_GotThis_Template.png	Comic Sans MS	#000000	-	136 16 320 62	WE GOT THIS
-sticker	OfficeDrama_Coffee	OfficeDrama_Coffee.png	-	-	never enough coffee	never enough coffee
+sticker	OfficeDrama_Coffee	OfficeDrama_Coffee.png	-	never enough coffee	never enough coffee
 caption	OfficeDrama_Coffee_Template.png	Comic Sans MS	#000000	-	172 16 316 144	NEVER ENOUGH COFFEE
-sticker	OfficeDrama_NotAgain	OfficeDrama_NotAgain.png	-	-	not again	not again
+sticker	OfficeDrama_NotAgain	OfficeDrama_NotAgain.png	-	not again	not again
 caption	OfficeDrama_NotAgain_Template.png	Comic Sans MS	#000000	-	182 18 316 140	NOT AGAIN
-sticker	OfficeDrama_Hmm	OfficeDrama_Hmm.png	-	-	hmm	hmm
+sticker	OfficeDrama_Hmm	OfficeDrama_Hmm.png	-	hmm	hmm
 caption	OfficeDrama_Hmm_Template.png	Comic Sans MS	#000000	-	18 20 144 138	HMM…
-sticker	OfficeDrama_DonutShame	OfficeDrama_DonutShame.png	-	-	man eating dougnut in shame	-
+sticker	OfficeDrama_DonutShame	OfficeDrama_DonutShame.png	-	man eating dougnut in shame	-
 caption	OfficeDrama_DonutShame_Template.png	Comic Sans MS	#000000	-	16 16 164 153	*SHAME*
-sticker	OfficeDrama_Swell	OfficeDrama_Swell.png	-	-	man gives a thumbs up	office, drama, man, thumbs, up, good, swell, fabulous, awesome, nice, great, approve
+sticker	OfficeDrama_Swell	OfficeDrama_Swell.png	-	man gives a thumbs up	office, drama, man, thumbs, up, good, swell, fabulous, awesome, nice, great, approve
 caption	OfficeDrama_Swell_Template.png	Comic Sans MS	#000000	-	128 16 316 100	GEE, THAT'S SWELL!
-sticker	OfficeDrama_Eew	OfficeDrama_Eew.png	-	-	woman making a disgusted face	office, drama, woman, disgust, gross, ew, nasty, stink, sick, yuck, revulsion, dislike, distaste, repulsion, repulse
+sticker	OfficeDrama_Eew	OfficeDrama_Eew.png	-	woman making a disgusted face	office, drama, woman, disgust, gross, ew, nasty, stink, sick, yuck, revulsion, dislike, distaste, repulsion, repulse
 caption	OfficeDrama_Eew_Template.png	Comic Sans MS	#000000	-	16 16 113 228	*EEW*
-sticker	OfficeDrama_Meeting	OfficeDrama_Meeting.png	-	-	shocked looking man forgets meeting	office, drama, man, shock, aghast, afraid, crap, uh-oh, no, forget, confuse, confusion
+sticker	OfficeDrama_Meeting	OfficeDrama_Meeting.png	-	shocked looking man forgets meeting	office, drama, man, shock, aghast, afraid, crap, uh-oh, no, forget, confuse, confusion
 caption	OfficeDrama_Meeting_Template.png	Comic Sans MS	#000000	-	139 16 302 126	MEETING? WHAT MEETING?!
-sticker	OfficeDrama_Horrified	OfficeDrama_Horrified.png	-	-	woman looks on in horror	-
+sticker	OfficeDrama_Horrified	OfficeDrama_Horrified.png	-	woman looks on in horror	-
 caption	OfficeDrama_Horrified_Template.png	Comic Sans MS	#000000	-	16 16 136 153	*GASP*
-sticker	OfficeDrama_Beautiful	OfficeDrama_Beautiful.png	-	-	it's so beautiful	it's so beautiful
+sticker	OfficeDrama_Beautiful	OfficeDrama_Beautiful.png	-	it's so beautiful	it's so beautiful
 caption	OfficeDrama_Beautiful_Template.png	Comic Sans MS	#000000	-	20 18 132 218	IT’S SO BEAUTIFUL
-sticker	OfficeDrama_HighFive	OfficeDrama_HighFive.png	-	-	High five	oh yeah, success, nice, fist pump, great, happy, excited, smile
+sticker	OfficeDrama_HighFive	OfficeDrama_HighFive.png	-	High five	oh yeah, success, nice, fist pump, great, happy, excited, smile
 caption	OfficeDrama_HighFive_Template.png	Comic Sans MS	#000000	-	30 170 308 223	HIGH FIVE!
-sticker	OfficeDrama_CantThink	OfficeDrama_CantThink.png	-	-	can't think	can't think
+sticker	OfficeDrama_CantThink	OfficeDrama_CantThink.png	-	can't think	can't think
 caption	OfficeDrama_CantThink_Template.png	Comic Sans MS	#000000	-	36 10 320 42	CAN’T… THINK…
-sticker	OfficeDrama_CutFeature	OfficeDrama_CutFeature.png	-	-	crying man thinks "my feature was cut!"	office, drama, sad, crying, man, suit, weep, cry, tear, upset, stoic, somber, heartbroken, sorrowful
+sticker	OfficeDrama_CutFeature	OfficeDrama_CutFeature.png	-	crying man thinks "my feature was cut!"	office, drama, sad, crying, man, suit, weep, cry, tear, upset, stoic, somber, heartbroken, sorrowful
 caption	OfficeDrama_CutFeature_Template.png	Comic Sans MS	#000000	-	124 13 320 130	M-MY FEATURE WAS CUT!
-sticker	OfficeDrama_Plan	OfficeDrama_Plan.png	-	-	it's a plan	it's a plan
+sticker	OfficeDrama_Plan	OfficeDrama_Plan.png	-	it's a plan	it's a plan
 caption	OfficeDrama_Plan_Template.png	Comic Sans MS	#000000	-	18 16 144 152	IT’S A PLAN
-sticker	OfficeDrama_Stapler	OfficeDrama_Stapler.png	-	-	where's my stapler	where's my stapler
+sticker	OfficeDrama_Stapler	OfficeDrama_Stapler.png	-	where's my stapler	where's my stapler
 caption	OfficeDrama_Stapler_Template.png	Comic Sans MS	#000000	-	38 18 322 48	WHERE’S MY STAPLER
-sticker	OfficeDrama_Retirement	OfficeDrama_Retirement.png	-	-	retirement now	retirement now
+sticker	OfficeDrama_Retirement	OfficeDrama_Retirement.png	-	retirement now	retirement now
 caption	OfficeDrama_Retirement_Template.png	Comic Sans MS	#000000	-	146 18 316 144	RETIREMENT. NOW.
-sticker	OfficeDrama_ForgotSave	OfficeDrama_ForgotSave.png	-	-	forgot to save	forgot to save
+sticker	OfficeDrama_ForgotSave	OfficeDrama_ForgotSave.png	-	forgot to save	forgot to save
 caption	OfficeDrama_ForgotSave_Template.png	Comic Sans MS	#000000	-	176 18 318 148	I… I FORGOT TO SAVE
-sticker	OfficeDrama_DontLike	OfficeDrama_DontLike.png	-	-	suspicious man doesn't like the look of it	office, drama, man, suspicious, squint, leer, glare, sneer, leery, wary, distrust, distrustful, dislike, disapprove
+sticker	OfficeDrama_DontLike	OfficeDrama_DontLike.png	-	suspicious man doesn't like the look of it	office, drama, man, suspicious, squint, leer, glare, sneer, leery, wary, distrust, distrustful, dislike, disapprove
 caption	OfficeDrama_DontLike_Template.png	Comic Sans MS	#000000	-	16 16 190 160	I DON'T LIKE THE LOOK OF IT...
-sticker	OfficeDrama_Cough	OfficeDrama_Cough.png	-	-	cough	cough
+sticker	OfficeDrama_Cough	OfficeDrama_Cough.png	-	cough	cough
 caption	OfficeDrama_Cough_Template.png	Comic Sans MS	#000000	-	192 16 316 130	*COUGH*
 
 pack	Meme	Meme	Meme_header_large.png	meme
-sticker	SuccessKid	SuccessKid.png	-	SuccessKid-template.png	SuccessKid	meme, Success Kid
+sticker	SuccessKid	SuccessKid.png	-	SuccessKid	meme, Success Kid
 caption	SuccessKid-template.png	Impact	#FFFFFF	black	-	-
-sticker	grumpycat	grumpycat.png	-	grumpycat-template.png	grumpycat	meme, grumpy cat
+sticker	grumpycat	grumpycat.png	-	grumpycat	meme, grumpy cat
 caption	grumpycat-template.png	Impact	#FFFFFF	black	-	-
-sticker	doge	doge.png	-	doge-template.png	doge	meme, doge, dog
+sticker	doge	doge.png	-	doge	meme, doge, dog
 caption	doge-template.png	Impact	#FFFFFF	black	-	-
-sticker	FamilyGuyExcited	FamilyGuy_Excited.png	-	FamilyGuyExcited_template.png	Family Guy - Peter Happy	family, guy, peter, griffin, excited
+sticker	FamilyGuyExcited	FamilyGuy_Excited.png	-	Family Guy - Peter Happy	family, guy, peter, griffin, excited
 caption	FamilyGuyExcited_template.png	Impact	#FFFFFF	black	-	-
-sticker	OfficeSpaceWouldBeGreat	OfficeSpaceWouldBeGreat.png	-	OfficeSpaceWouldBeGreat_template.png	Office Space - That'd be Great	office, space, would, be, great, tps, report
+sticker	OfficeSpaceWouldBeGreat	OfficeSpaceWouldBeGreat.png	-	Office Space - That'd be Great	office, space, would, be, great, tps, report
 caption	OfficeSpaceWouldBeGreat_template.png	Impact	#FFFFFF	black	-	-
-sticker	BusinessCat	BusinessCat.png	-	BusinessCat_template.jpg	Business Cat	business, cat
+sticker	BusinessCat	BusinessCat.png	-	Business Cat	business, cat
 caption	BusinessCat_template.jpg	Impact	#FFFFFF	black	-	-
-sticker	FamilyGuyPBJTime	FamilyGuy_PBJTime.png	-	FamilyGuy_PBJTime_template.png	Family Guy - Peanut Butter Jelly Time	family, guy, pbj, peanut, butter, jelly, time
+sticker	FamilyGuyPBJTime	FamilyGuy_PBJTime.png	-	Family Guy - Peanut Butter Jelly Time	family, guy, pbj, peanut, butter, jelly, time
 caption	FamilyGuy_PBJTime_template.png	Impact	#FFFFFF	black	-	-
-sticker	OfficeSpaceInterview	OfficeSpaceInterview.png	-	OfficeSpaceInterview_template.png	Office Space - Interview	office, space, interview
+sticker	OfficeSpaceInterview	OfficeSpaceInterview.png	-	Office Space - Interview	office, space, interview
 caption	OfficeSpaceInterview_template.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-01	Memes-01.png	-	Memes-01.png	Giraffe - laurenepbath/Getty Images	meme, tongue out, giraffe
+sticker	Memes-01	Memes-01.png	-	Giraffe - laurenepbath/Getty Images	meme, tongue out, giraffe
 caption	Memes-01.png	Impact	#FFFFFF	black	-	-
-sticker	FamilyGuyBrianThinks	FamilyGuy_BrianThinks.png	-	FamilyGuy_BrianThinks_template.jpg	Office Space - Brian and Stewie	family, guy, brian, thinks
+sticker	FamilyGuyBrianThinks	FamilyGuy_BrianThinks.png	-	Office Space - Brian and Stewie	family, guy, brian, thinks
 caption	FamilyGuy_BrianThinks_template.jpg	Impact	#FFFFFF	black	-	-
-sticker	OfficeSpaceLookOut	OfficeSpaceLookOut.png	-	OfficeSpaceLookOut_template.png	Office Space - Milton	office, space, look, milton, waddams, stapler
+sticker	OfficeSpaceLookOut	OfficeSpaceLookOut.png	-	Office Space - Milton	office, space, look, milton, waddams, stapler
 caption	OfficeSpaceLookOut_template.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-02	Memes-02.png	-	Memes-02.png	Gorilla - ac productions/Getty Images	meme, call, phone, monkey, gorilla, sup
+sticker	Memes-02	Memes-02.png	-	Gorilla - ac productions/Getty Images	meme, call, phone, monkey, gorilla, sup
 caption	Memes-02.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-03	Memes-03.png	-	Memes-03.png	Super kid - laurenspolding/laurenspolding/Getty Images	meme, kid, child, superhero, hero
+sticker	Memes-03	Memes-03.png	-	Super kid - laurenspolding/laurenspolding/Getty Images	meme, kid, child, superhero, hero
 caption	Memes-03.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-04	Memes-04.png	-	Memes-04.png	Scorecards - Dave and Les Jacobs/Dave and Les Jacobs/Getty Images	meme, zero, fail, bad
+sticker	Memes-04	Memes-04.png	-	Scorecards - Dave and Les Jacobs/Dave and Les Jacobs/Getty Images	meme, zero, fail, bad
 caption	Memes-04.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-05	Memes-05.png	-	Memes-05.png	Orangutan - Dirk Freder/Dirk Freder/Getty Images	meme, no, proud, ape, boss
+sticker	Memes-05	Memes-05.png	-	Orangutan - Dirk Freder/Dirk Freder/Getty Images	meme, no, proud, ape, boss
 caption	Memes-05.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-06	Memes-06.png	-	Memes-06.png	Daredevil kid - Andrew Rich/Andrew Rich/Getty Images	meme, kid, child, boy, business, happy, pilot, fly, take off
+sticker	Memes-06	Memes-06.png	-	Daredevil kid - Andrew Rich/Andrew Rich/Getty Images	meme, kid, child, boy, business, happy, pilot, fly, take off
 caption	Memes-06.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-07	Memes-07.png	-	Memes-07.png	Fashion Dog  - Lee Towndrow/Getty Images	meme, dog, fashion, wig, cool, attitude
+sticker	Memes-07	Memes-07.png	-	Fashion Dog  - Lee Towndrow/Getty Images	meme, dog, fashion, wig, cool, attitude
 caption	Memes-07.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-08	Memes-08.png	-	Memes-08.png	Brainy bark - retales botijero/retales botijero/Getty Images	meme, dog, glasses, pink, puppy, polka dot
+sticker	Memes-08	Memes-08.png	-	Brainy bark - retales botijero/retales botijero/Getty Images	meme, dog, glasses, pink, puppy, polka dot
 caption	Memes-08.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-09	Memes-09.png	-	Memes-09.png	Yelling man - photovideostock/photovideostock/Getty Images	meme, steam, angry, business, frustration, furious
+sticker	Memes-09	Memes-09.png	-	Yelling man - photovideostock/photovideostock/Getty Images	meme, steam, angry, business, frustration, furious
 caption	Memes-09.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-10	Memes-10.png	-	Memes-10.png	Gentleman baby  - Annette Bunch/Annette Bunch/Getty Images	meme, baby, moustache, smile, happy, fancy
+sticker	Memes-10	Memes-10.png	-	Gentleman baby  - Annette Bunch/Annette Bunch/Getty Images	meme, baby, moustache, smile, happy, fancy
 caption	Memes-10.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-11	Memes-11.png	-	Memes-11.png	Sad paper bag mask - Andrew Rich/Getty Images	meme, paperbag, unhappy, frown, sad
+sticker	Memes-11	Memes-11.png	-	Sad paper bag mask - Andrew Rich/Getty Images	meme, paperbag, unhappy, frown, sad
 caption	Memes-11.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-12	Memes-12.png	-	Memes-12.png	Smiling cat - JTSiemer/JTSiemer/Getty Images	meme, cat, smile, happy, ok
+sticker	Memes-12	Memes-12.png	-	Smiling cat - JTSiemer/JTSiemer/Getty Images	meme, cat, smile, happy, ok
 caption	Memes-12.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-13	Memes-13.png	-	Memes-13.png	Grumpy man with arms crossed - Matthew P. Wicks/Getty Images	meme, angry, no, man, arms crossed, pout, attitude
+sticker	Memes-13	Memes-13.png	-	Grumpy man with arms crossed - Matthew P. Wicks/Getty Images	meme, angry, no, man, arms crossed, pout, attitude
 caption	Memes-13.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-14	Memes-14.png	-	Memes-14.png	Athetic kid - Andrew Rich/Getty Images	meme, kid, child, winner, champion, happy, good job
+sticker	Memes-14	Memes-14.png	-	Athetic kid - Andrew Rich/Getty Images	meme, kid, child, winner, champion, happy, good job
 caption	Memes-14.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-15	Memes-15.png	-	Memes-15.png	Man with two thumbs up - Guido Mieth/Getty Images	meme, man, good job, business, thumbs up, ok
+sticker	Memes-15	Memes-15.png	-	Man with two thumbs up - Guido Mieth/Getty Images	meme, man, good job, business, thumbs up, ok
 caption	Memes-15.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-16	Memes-16.png	-	Memes-16.png	Missed the dartboard - Larry Washburn/Larry Washburn/Getty Images	meme, fail, miss, defeat, darts, accuracy, bulls eye
+sticker	Memes-16	Memes-16.png	-	Missed the dartboard - Larry Washburn/Larry Washburn/Getty Images	meme, fail, miss, defeat, darts, accuracy, bulls eye
 caption	Memes-16.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-17	Memes-17.png	-	Memes-17.png	Kid covering eyes - SimplyMui Photography/Getty Images	meme, face palm, no, fail, kid, child, eyes, facepalm
+sticker	Memes-17	Memes-17.png	-	Kid covering eyes - SimplyMui Photography/Getty Images	meme, face palm, no, fail, kid, child, eyes, facepalm
 caption	Memes-17.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-18	Memes-18.png	-	Memes-18.png	Lazy koala - Jade and Bertrand Maitre/Getty Images	meme, koala, hanging, sleepy, lazy, no
+sticker	Memes-18	Memes-18.png	-	Lazy koala - Jade and Bertrand Maitre/Getty Images	meme, koala, hanging, sleepy, lazy, no
 caption	Memes-18.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-19	Memes-19.png	-	Memes-19.png	Crazy cat - saulgranda/Getty Images	meme, cat, shock, surpise, wow
+sticker	Memes-19	Memes-19.png	-	Crazy cat - saulgranda/Getty Images	meme, cat, shock, surpise, wow
 caption	Memes-19.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-20	Memes-20.png	-	Memes-20.png	Princess pup - retales botijero/retales botijero/Getty Images	meme, dog, birthday, french bulldog, happy, congratulations
+sticker	Memes-20	Memes-20.png	-	Princess pup - retales botijero/retales botijero/Getty Images	meme, dog, birthday, french bulldog, happy, congratulations
 caption	Memes-20.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-21	Memes-21.png	-	Memes-21.png	Rocket man - DNY59/Getty Images	meme, business man, launch, rocket, start
+sticker	Memes-21	Memes-21.png	-	Rocket man - DNY59/Getty Images	meme, business man, launch, rocket, start
 caption	Memes-21.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-22	Memes-22.png	-	Memes-22.png	Tin hat - Andrew Rich/Andrew Rich/Getty Images	meme, business man, laptop, tinfoil, busy, alien
+sticker	Memes-22	Memes-22.png	-	Tin hat - Andrew Rich/Andrew Rich/Getty Images	meme, business man, laptop, tinfoil, busy, alien
 caption	Memes-22.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-23	Memes-23.png	-	Memes-23.png	Super squad - Andrew Rich/Andrew Rich/Getty Images	meme, child, kid, teamwork, superhero, success, friends
+sticker	Memes-23	Memes-23.png	-	Super squad - Andrew Rich/Andrew Rich/Getty Images	meme, child, kid, teamwork, superhero, success, friends
 caption	Memes-23.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-24	Memes-24.png	-	Memes-24.png	Celebration man - Dahl, Per/Dahl, Per/Getty Images	meme, success, business man, yay, success, winner, happy
+sticker	Memes-24	Memes-24.png	-	Celebration man - Dahl, Per/Dahl, Per/Getty Images	meme, success, business man, yay, success, winner, happy
 caption	Memes-24.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-25	Memes-25.png	-	Memes-25.png	Tech guru - Rubberball/Rubberball/Duston Todd/Getty Images	meme, call, glasses, waiting, necktie, telephone, landline
+sticker	Memes-25	Memes-25.png	-	Tech guru - Rubberball/Rubberball/Duston Todd/Getty Images	meme, call, glasses, waiting, necktie, telephone, landline
 caption	Memes-25.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-26	Memes-26.png	-	Memes-26.png	Surprised baby - PhotoAlto/Ale Ventura/PhotoAlto/Ale Ventura/Getty Images	meme, baby, excited, surprised, cute, wow
+sticker	Memes-26	Memes-26.png	-	Surprised baby - PhotoAlto/Ale Ventura/PhotoAlto/Ale Ventura/Getty Images	meme, baby, excited, surprised, cute, wow
 caption	Memes-26.png	Impact	#FFFFFF	black	-	-
-sticker	Memes-27	Memes-27.png	-	Memes-27.png	Successful woman - Jose Luis Pelaez Inc/Jose Luis Pelaez Inc/Getty Images	meme, woman, success, yay, great job, happy, success
+sticker	Memes-27	Memes-27.png	-	Successful woman - Jose Luis Pelaez Inc/Jose Luis Pelaez Inc/Getty Images	meme, woman, success, yay, great job, happy, success
 caption	Memes-27.png	Impact	#FFFFFF	black	-	-
 
 pack	Designers	Designers	Designers_header_large.png	-
-sticker	Designers_Bigger	Designers_Bigger.png	-	-	Designers Bigger	big, yell, make, graphic, designer
+sticker	Designers_Bigger	Designers_Bigger.png	-	Designers Bigger	big, yell, make, graphic, designer
 caption	Designers_Bigger_template.png	Comic Sans MS	#cb4653	-	4 32 175 218	Make it bigger
-sticker	Designers_Client_Taste	Designers_Client_Taste.png	-	-	Designers Client Taste	client, taste, yuck, bad, graphic, designer
+sticker	Designers_Client_Taste	Designers_Client_Taste.png	-	Designers Client Taste	client, taste, yuck, bad, graphic, designer
 caption	Designers_Client_Taste_template.png	Comic Sans MS	#cb4653	-	192 24 361 237	CLIENT TASTE
-sticker	Designers_Cmyk_Or_Rgb	Designers_Cmyk_Or_Rgb.png	-	-	Designers Cmyk Or Rgb	cmyk, rgb, color, graphic, designer
+sticker	Designers_Cmyk_Or_Rgb	Designers_Cmyk_Or_Rgb.png	-	Designers Cmyk Or Rgb	cmyk, rgb, color, graphic, designer
 caption	Designers_Cmyk_Or_Rgb_template.png	Comic Sans MS	#cb4653	-	42 4 333 75	CMYK OR RGB
-sticker	Designers_Creative	Designers_Creative.png	-	-	Designers Creative	creative, think, create, work, make, graphic, designer
+sticker	Designers_Creative	Designers_Creative.png	-	Designers Creative	creative, think, create, work, make, graphic, designer
 caption	Designers_Creative_template.png	Comic Sans MS	#cb4653	-	55 12 320 99	CREATE!
-sticker	Designers_Design_Formal	Designers_Design_Formal.png	-	-	Designers Design Formal	design, formal, good, nice, tie, graphic, designer
+sticker	Designers_Design_Formal	Designers_Design_Formal.png	-	Designers Design Formal	design, formal, good, nice, tie, graphic, designer
 caption	Designers_Design_Formal_template.png	Comic Sans MS	#cb4653	-	157 37 364 213	DESIGN FORMAL
-sticker	Designers_Everyones_A_Critic	Designers_Everyones_A_Critic.png	-	-	Designers Everyones A Critic	everyone, critic, speech, graphic, designer
+sticker	Designers_Everyones_A_Critic	Designers_Everyones_A_Critic.png	-	Designers Everyones A Critic	everyone, critic, speech, graphic, designer
 caption	Designers_Everyones_A_Critic_template.png	Comic Sans MS	#cb4653	-	226 24 368 229	EVERYONE'S A CRITIC
-sticker	Designers_Everyones_A_Designer	Designers_Everyones_A_Designer.png	-	-	Designers Everyones A Designer	everyone, critic, annoy, opinion, graphic, designer
+sticker	Designers_Everyones_A_Designer	Designers_Everyones_A_Designer.png	-	Designers Everyones A Designer	everyone, critic, annoy, opinion, graphic, designer
 caption	Designers_Everyones_A_Designer_template.png	Comic Sans MS	#cb4653	-	120 9 357 112	EVERYONE'S A DESIGNER
-sticker	Designers_Final	Designers_Final.png	-	-	Designers Final	final, name, file, never, graphic, designer
+sticker	Designers_Final	Designers_Final.png	-	Designers Final	final, name, file, never, graphic, designer
 caption	Designers_Final_template.png	Comic Sans MS	#cb4653	-	119 11 370 145	FINALFINALFINAL FINALV2.AI
-sticker	Designers_Fix	Designers_Fix.png	-	-	Designers Fix	fix, can, boss, nonsense, graphic, designer
+sticker	Designers_Fix	Designers_Fix.png	-	Designers Fix	fix, can, boss, nonsense, graphic, designer
 caption	Designers_Fix_template.png	Comic Sans MS	#cb4653	-	31 8 364 73	I CAN FIX IT
-sticker	Designers_Focus	Designers_Focus.png	-	-	Designers Focus	Focus, time, work, hard, graphic, designer
+sticker	Designers_Focus	Designers_Focus.png	-	Designers Focus	Focus, time, work, hard, graphic, designer
 caption	Designers_Focus_template.png	Comic Sans MS	#cb4653	-	2 87 151 235	FOCUS!
-sticker	Designers_Hotkey_Problems	Designers_Hotkey_Problems.png	-	-	Designers Hotkey Problems	hotkey, problems, keyboard, twist, graphic, designer
+sticker	Designers_Hotkey_Problems	Designers_Hotkey_Problems.png	-	Designers Hotkey Problems	hotkey, problems, keyboard, twist, graphic, designer
 caption	Designers_Hotkey_Problems_template.png	Comic Sans MS	#cb4653	-	39 11 336 65	HOTKEY PROBLEMS
-sticker	Designers_I_Dont_Get_It	Designers_I_Dont_Get_It.png	-	-	Designers I Dont Get It	get, understand, confused, graphic, designer
+sticker	Designers_I_Dont_Get_It	Designers_I_Dont_Get_It.png	-	Designers I Dont Get It	get, understand, confused, graphic, designer
 caption	Designers_I_Dont_Get_It_template.png	Comic Sans MS	#cb4653	-	42 12 333 67	I DON'T GET IT
-sticker	Designers_Just_A_Crit	Designers_Just_A_Crit.png	-	-	Designers Just A Crit	just, crit, critique, daze, graphic, designer
+sticker	Designers_Just_A_Crit	Designers_Just_A_Crit.png	-	Designers Just A Crit	just, crit, critique, daze, graphic, designer
 caption	Designers_Just_A_Crit_template.png	Comic Sans MS	#cb4653	-	166 12 363 205	JUST A CRIT...
-sticker	Designers_Layers_Flattened	Designers_Layers_Flattened.png	-	-	Designers Layers Flattened	layers, flattened, flat, squish, graphic, designer
+sticker	Designers_Layers_Flattened	Designers_Layers_Flattened.png	-	Designers Layers Flattened	layers, flattened, flat, squish, graphic, designer
 caption	Designers_Layers_Flattened_template.png	Comic Sans MS	#cb4653	-	79 2 296 145	LAYERS FLATTENED
-sticker	Designers_Make_It_Cool	Designers_Make_It_Cool.png	-	-	Designers Make It Cool	cool, make, change, request, really, graphic, designer
+sticker	Designers_Make_It_Cool	Designers_Make_It_Cool.png	-	Designers Make It Cool	cool, make, change, request, really, graphic, designer
 caption	Designers_Make_It_Cool_template.png	Comic Sans MS	#cb4653	-	191 6 318 245	MAKE IT COOL
-sticker	Designers_My_Design	Designers_My_Design.png	-	-	Designers My Design	my, mine, touch, change, graphic, designer
+sticker	Designers_My_Design	Designers_My_Design.png	-	Designers My Design	my, mine, touch, change, graphic, designer
 caption	Designers_My_Design_template.png	Comic Sans MS	#cb4653	-	7 8 365 69	DON'T TOUCH MY DESIGN
-sticker	Designers_Need_More_Screen	Designers_Need_More_Screen.png	-	-	Designers Need More Screen	need, more, screen, space, pixel, graphic, designer
+sticker	Designers_Need_More_Screen	Designers_Need_More_Screen.png	-	Designers Need More Screen	need, more, screen, space, pixel, graphic, designer
 caption	Designers_Need_More_Screen_template.png	Comic Sans MS	#cb4653	-	29 4 346 68	NEED MORE SCREEN
-sticker	Designers_Negative_Space	Designers_Negative_Space.png	-	-	Designers Negative Space	negative, space, white, graphic, designer
+sticker	Designers_Negative_Space	Designers_Negative_Space.png	-	Designers Negative Space	negative, space, white, graphic, designer
 caption	Designers_Negative_Space_template.png	Comic Sans MS	#cb4653	-	125 104 294 197	NEGATIVE SPACE
-sticker	Designers_Not_Green	Designers_Not_Green.png	-	-	Designers Not Green	not, green, hex, color, graphic, designer
+sticker	Designers_Not_Green	Designers_Not_Green.png	-	Designers Not Green	not, green, hex, color, graphic, designer
 caption	Designers_Not_Green_template.png	Comic Sans MS	#cb4653	-	3 9 203 243	NOT GREEN, 2DBA2D
-sticker	Designers_Pixel_Perfect	Designers_Pixel_Perfect.png	-	-	Designers Pixel Perfect	pixel, perfect, correct, crooked, graphic, designer
+sticker	Designers_Pixel_Perfect	Designers_Pixel_Perfect.png	-	Designers Pixel Perfect	pixel, perfect, correct, crooked, graphic, designer
 caption	Designers_Pixel_Perfect_template.png	Comic Sans MS	#cb4653	-	214 36 368 226	PIXEL PERFECT
-sticker	Designers_Raise_Resolution	Designers_Raise_Resolution.png	-	-	Designers Raise Resolution	raise, resolution, raster, vector, pixel, graphic, designer
+sticker	Designers_Raise_Resolution	Designers_Raise_Resolution.png	-	Designers Raise Resolution	raise, resolution, raster, vector, pixel, graphic, designer
 caption	Designers_Raise_Resolution_template.png	Comic Sans MS	#cb4653	-	13 16 187 240	RAISE RESOLUTION
-sticker	Designers_Simple	Designers_Simple.png	-	-	Designers Simple	simple, try, hard, really, graphic, designer
+sticker	Designers_Simple	Designers_Simple.png	-	Designers Simple	simple, try, hard, really, graphic, designer
 caption	Designers_Simple_template.png	Comic Sans MS	#cb4653	-	170 43 365 225	SIMPLE... YOU TRY IT
-sticker	Designers_Snap_To_Grid	Designers_Snap_To_Grid.png	-	-	Designers Snap To Grid	snap, grid, lines, ruler, pixel, perfect graphic, designer
+sticker	Designers_Snap_To_Grid	Designers_Snap_To_Grid.png	-	Designers Snap To Grid	snap, grid, lines, ruler, pixel, perfect graphic, designer
 caption	Designers_Snap_To_Grid_template.png	Comic Sans MS	#cb4653	-	199 47 361 242	SNAP TO GRID
-sticker	Designers_Think_Outside_The_Box	Designers_Think_Outside_The_Box.png	-	-	Designers Think Outside The Box	think, outside, box, creative, graphic, designer
+sticker	Designers_Think_Outside_The_Box	Designers_Think_Outside_The_Box.png	-	Designers Think Outside The Box	think, outside, box, creative, graphic, designer
 caption	Designers_Think_Outside_The_Box_template.png	Comic Sans MS	#cb4653	-	176 8 363 243	THINK OUTSIDE THE BOX
-sticker	Designers_Work_For_Exposure	Designers_Work_For_Exposure.png	-	-	Designers Work For Exposure	work, exposure, no, free, graphic, designer
+sticker	Designers_Work_For_Exposure	Designers_Work_For_Exposure.png	-	Designers Work For Exposure	work, exposure, no, free, graphic, designer
 caption	Designers_Work_For_Exposure_template.png	Comic Sans MS	#cb4653	-	5 31 253 239	WORK FOR EXPOSURE
 
 pack	Devs	Devs	Devs_header_large.png	-
-sticker	Devs_404	Devs_404.png	-	-	Devs 404	404, error, not, found, developer
+sticker	Devs_404	Devs_404.png	-	Devs 404	404, error, not, found, developer
 caption	Devs_404_template.png	Comic Sans MS	#ed6950	-	155 11 350 231	404 ERROR NOT FOUND
-sticker	Devs_500	Devs_500_Internal_Error.png	-	-	Devs 500	500, error, internal, developer
+sticker	Devs_500	Devs_500_Internal_Error.png	-	Devs 500	500, error, internal, developer
 caption	Devs_500_Internal_Error_template.png	Comic Sans MS	#ed6950	-	8 10 360 103	500 INTERNAL ERROR
-sticker	Devs_Approved	Devs_Approved.png	-	-	Devs Approved	approved, yes, good, happy, developer
+sticker	Devs_Approved	Devs_Approved.png	-	Devs Approved	approved, yes, good, happy, developer
 caption	Devs_Approved_template.png	Comic Sans MS	#ed6950	-	163 54 370 180	APPROVED!
-sticker	Devs_Big_Data	Devs_Big_Data.png	-	-	Devs Big Data	Big, data, power, developer
+sticker	Devs_Big_Data	Devs_Big_Data.png	-	Devs Big Data	Big, data, power, developer
 caption	Devs_Big_Data_template.png	Comic Sans MS	#ed6950	-	220 35 365 217	BIG DATA
-sticker	Devs_Broke_the_Build	Devs_Broke_the_Build.png	-	-	Devs Broke the Build	Broke, error, Build, oops, developer
+sticker	Devs_Broke_the_Build	Devs_Broke_the_Build.png	-	Devs Broke the Build	Broke, error, Build, oops, developer
 caption	Devs_Broke_the_Build_template.png	Comic Sans MS	#ed6950	-	32 21 220 224	BROKE THE BUILD
-sticker	Devs_Bugs_Bugs_Bugs	Devs_Bugs_Bugs_Bugs.png	-	-	Devs Bugs Bugs Bugs	Bug, bugs, error, internal, developer
+sticker	Devs_Bugs_Bugs_Bugs	Devs_Bugs_Bugs_Bugs.png	-	Devs Bugs Bugs Bugs	Bug, bugs, error, internal, developer
 caption	Devs_Bugs_Bugs_Bugs_template.png	Comic Sans MS	#ed6950	-	81 7 294 241	BUGS BUGS BUGS
-sticker	Devs_Multiplying	Devs_Bugs_Multiplying.png	-	-	Devs Multiplying	bug, error, bad, problem, developer
+sticker	Devs_Multiplying	Devs_Bugs_Multiplying.png	-	Devs Multiplying	bug, error, bad, problem, developer
 caption	Devs_Bugs_Multiplying_template.png	Comic Sans MS	#ed6950	-	188 69 365 248	BUGS MULTIPLYING
-sticker	Devs_Can_You_Review	Devs_Can_You_Review.png	-	-	Devs Can You Review	Review, help, critique, developer
+sticker	Devs_Can_You_Review	Devs_Can_You_Review.png	-	Devs Can You Review	Review, help, critique, developer
 caption	Devs_Can_You_Review_template.png	Comic Sans MS	#ed6950	-	5 27 241 130	CAN YOU REVIEW THIS?
-sticker	Devs_Cloud	Devs_Cloud.png	-	-	Devs Cloud	Cloud, data, information, storage, developer
+sticker	Devs_Cloud	Devs_Cloud.png	-	Devs Cloud	Cloud, data, information, storage, developer
 caption	Devs_Cloud_template.png	Comic Sans MS	#ed6950	-	65 145 310 240	THE CLOUD
-sticker	Devs_Computer_Masters	Devs_Computer_Masters.png	-	-	Devs Computer Masters	Computer, master, robot, developer
+sticker	Devs_Computer_Masters	Devs_Computer_Masters.png	-	Devs Computer Masters	Computer, master, robot, developer
 caption	Devs_Computer_Masters_template.png	Comic Sans MS	#ed6950	-	53 6 322 56	MASTER!
-sticker	Devs_Done	Devs_Done.png	-	-	Devs Done	Done, Test, not, more, developer
+sticker	Devs_Done	Devs_Done.png	-	Devs Done	Done, Test, not, more, developer
 caption	Devs_Done_template.png	Comic Sans MS	#ed6950	-	3 5 165 246	DONE
-sticker	Devs_Hacked	Devs_Hacked.png	-	-	Devs Hacked	Hacked, danger, skull, developer
+sticker	Devs_Hacked	Devs_Hacked.png	-	Devs Hacked	Hacked, danger, skull, developer
 caption	Devs_Hacked_template.png	Comic Sans MS	#ed6950	-	32 2 356 61	HACKED
-sticker	Devs_Make_It_Better	Devs_Make_It_Better.png	-	-	Devs Make It Better	better, make, bad, redo, developer
+sticker	Devs_Make_It_Better	Devs_Make_It_Better.png	-	Devs Make It Better	better, make, bad, redo, developer
 caption	Devs_Make_It_Better_template.png	Comic Sans MS	#ed6950	-	121 13 360 148	MAKE IT BETTER
-sticker	Devs_Merge_Conflict	Devs_Merge_Conflict.png	-	-	Devs Merge Conflict	merge, conflict, problem, error, developer
+sticker	Devs_Merge_Conflict	Devs_Merge_Conflict.png	-	Devs Merge Conflict	merge, conflict, problem, error, developer
 caption	Devs_Merge_Conflict_template.png	Comic Sans MS	#ed6950	-	139 7 365 123	MERGE CONFLICT
-sticker	Devs_No_Repro	Devs_No_repro.png	-	-	Devs No Repro	no, error, repro, developer
+sticker	Devs_No_Repro	Devs_No_repro.png	-	Devs No Repro	no, error, repro, developer
 caption	Devs_No_Repro_template.png	Comic Sans MS	#ed6950	-	180 55 365 198	NO REPRO
-sticker	Devs_Not_A_Bug	Devs_Not_A_Bug.png	-	-	Devs Not A Bug	Bug, error, feature, developer
+sticker	Devs_Not_A_Bug	Devs_Not_A_Bug.png	-	Devs Not A Bug	Bug, error, feature, developer
 caption	Devs_Not_A_Bug_template.png	Comic Sans MS	#ed6950	-	3 20 191 239	IT'S NOT A BUG IT'S A FEATURE
-sticker	Devs_PR_Out	Devs_PR_Out.png	-	-	Devs PR Out	pr, out, pull, releas, developer
+sticker	Devs_PR_Out	Devs_PR_Out.png	-	Devs PR Out	pr, out, pull, releas, developer
 caption	Devs_PR_Out_template.png	Comic Sans MS	#ed6950	-	16 16 200 222	PR OUT
-sticker	Devs_Smash	Devs_Smash.png	-	-	Devs Smash	smash, error, angry, stupid, developer
+sticker	Devs_Smash	Devs_Smash.png	-	Devs Smash	smash, error, angry, stupid, developer
 caption	Devs_Smash_template.png	Comic Sans MS	#ed6950	-	30 7 337 66	SMASH
-sticker	Devs_Test_Fail	Devs_Test_Fail.png	-	-	Devs Test Fail	Test, error, fail, developer
+sticker	Devs_Test_Fail	Devs_Test_Fail.png	-	Devs Test Fail	Test, error, fail, developer
 caption	Devs_Test_Fail_template.png	Comic Sans MS	#ed6950	-	190 25 370 194	TEST FAIL
-sticker	Devs_Uncodable	Devs_Uncodable.png	-	-	Devs Uncodable	uncodable, error, code, developer
+sticker	Devs_Uncodable	Devs_Uncodable.png	-	Devs Uncodable	uncodable, error, code, developer
 caption	Devs_Uncodable_template.png	Comic Sans MS	#ed6950	-	171 8 351 243	THIS IS UNCODABLE
-sticker	Devs_Waiting_For_Compile	Devs_Waiting_For_Compile.png	-	-	Devs Waiting For Compile	wait, error, compile, forever, developer
+sticker	Devs_Waiting_For_Compile	Devs_Waiting_For_Compile.png	-	Devs Waiting For Compile	wait, error, compile, forever, developer
 caption	Devs_Waiting_For_Compile_template.png	Comic Sans MS	#ed6950	-	97 5 361 90	WAITING FOR COMPILE
-sticker	Devs_Works_On_My_Machine	Devs_Works_On_My_Machine.png	-	-	Devs Works On My Machine	Works, error, my, machine, developer
+sticker	Devs_Works_On_My_Machine	Devs_Works_On_My_Machine.png	-	Devs Works On My Machine	Works, error, my, machine, developer
 caption	Devs_Works_On_My_Machine_template.png	Comic Sans MS	#ed6950	-	165 11 365 135	WORKS ON MY MACHINE
 
 pack	Legal	Legal	Legal_header_large.png	-
-sticker	Legal_Another_Six	Legal_Another_Six.png	-	-	Legal Another Six	Bill, another, six, 6, money, lawyer, legal
+sticker	Legal_Another_Six	Legal_Another_Six.png	-	Legal Another Six	Bill, another, six, 6, money, lawyer, legal
 caption	Legal_Another_Six_template.png	Comic Sans MS	#417b84	-	42 3 333 97	ANOTHER 6 MINUTES
-sticker	Legal_Billing_Code	Legal_Billing_Code.png	-	-	Legal Billing Code	bill, code, money, lawyer, legal
+sticker	Legal_Billing_Code	Legal_Billing_Code.png	-	Legal Billing Code	bill, code, money, lawyer, legal
 caption	Legal_Billing_Code_template.png	Comic Sans MS	#417b84	-	181 75 368 198	BILLING CODE?
-sticker	Legal_Disbarred	Legal_Disbarred.png	-	-	Legal Disbarred	disbar, bad, problem, lawyer, legal
+sticker	Legal_Disbarred	Legal_Disbarred.png	-	Legal Disbarred	disbar, bad, problem, lawyer, legal
 caption	Legal_Disbarred_template.png	Comic Sans MS	#417b84	-	3 33 205 177	DISBARRED
-sticker	Legal_Doc_Review	Legal_Doc_Review.png	-	-	Legal Doc Review	doc, review, paper, work, lawyer, legal
+sticker	Legal_Doc_Review	Legal_Doc_Review.png	-	Legal Doc Review	doc, review, paper, work, lawyer, legal
 caption	Legal_Doc_Review_template.png	Comic Sans MS	#417b84	-	67 2 308 103	DOC REVIEW
-sticker	Legal_Doctor	Legal_Doctor.png	-	-	Legal Doctor	doctor, jd, juris, degree, school, lawyer, legal
+sticker	Legal_Doctor	Legal_Doctor.png	-	Legal Doctor	doctor, jd, juris, degree, school, lawyer, legal
 caption	Legal_Doctor_template.png	Comic Sans MS	#417b84	-	183 79 367 219	I'M A DOCTOR
-sticker	Legal_Fair_Use	Legal_Fair_Use.png	-	-	Legal Fair Use	fair, use, contract, rights, lawyer, legal
+sticker	Legal_Fair_Use	Legal_Fair_Use.png	-	Legal Fair Use	fair, use, contract, rights, lawyer, legal
 caption	Legal_Fair_Use_template.png	Comic Sans MS	#417b84	-	9 18 191 239	IS THIS FAIR USE
-sticker	Legal_Fine_Print	Legal_Fine_Print.png	-	-	Legal Fine Print	fine, print, details, contract, catch, lawyer, legal
+sticker	Legal_Fine_Print	Legal_Fine_Print.png	-	Legal Fine Print	fine, print, details, contract, catch, lawyer, legal
 caption	Legal_Fine_Print_template.png	Comic Sans MS	#417b84	-	98 21 277 83	CHECK THE FINE PRINT
-sticker	Legal_Force_Majeure	Legal_Force_Majeure.png	-	-	Legal Force Majeure	Force, majeure, god, nature, lawyer, legal
+sticker	Legal_Force_Majeure	Legal_Force_Majeure.png	-	Legal Force Majeure	Force, majeure, god, nature, lawyer, legal
 caption	Legal_Force_Majeure_template.png	Comic Sans MS	#417b84	-	153 128 366 248	FORCE MAJEURE
-sticker	Legal_Legalese	Legal_Legalese.png	-	-	Legal Legalese	Legalese, talk, jargon, nonsense, lawyer, legal
+sticker	Legal_Legalese	Legal_Legalese.png	-	Legal Legalese	Legalese, talk, jargon, nonsense, lawyer, legal
 caption	Legal_Legalese_template.png	Comic Sans MS	#417b84	-	129 145 370 227	LEGALESE
-sticker	Legal_NDA	Legal_NDA.png	-	-	Legal NDA	NDA, non, disclosure, agreement, lawyer, legal
+sticker	Legal_NDA	Legal_NDA.png	-	Legal NDA	NDA, non, disclosure, agreement, lawyer, legal
 caption	Legal_NDA_template.png	Comic Sans MS	#417b84	-	209 50 375 225	SHHHH, IT'S NDA
-sticker	Legal_Non_Sequitur	Legal_Non_Sequitur.png	-	-	Legal Non Sequitur	non, sequitur, latin, lawyer, legal
+sticker	Legal_Non_Sequitur	Legal_Non_Sequitur.png	-	Legal Non Sequitur	non, sequitur, latin, lawyer, legal
 caption	Legal_Non_Sequitur_template.png	Cochin Italic	#417b84	-	4 5 273 118	NON SEQUITUR
-sticker	Legal_Notary	Legal_Notary.png	-	-	Legal Notary	notary, need, document, lawyer, legal
+sticker	Legal_Notary	Legal_Notary.png	-	Legal Notary	notary, need, document, lawyer, legal
 caption	Legal_Notary_template.png	Comic Sans MS	#417b84	-	7 62 165 227	I NEED A NOTARY!
-sticker	Legal_Objection	Legal_Objection.png	-	-	Legal Objection	objection, no, stop, loud, lawyer, legal
+sticker	Legal_Objection	Legal_Objection.png	-	Legal Objection	objection, no, stop, loud, lawyer, legal
 caption	Legal_Objection_template.png	Comic Sans MS	#417b84	-	192 121 370 248	OBJECTION!
-sticker	Legal_Overruled	Legal_Overruled.png	-	-	Legal Overruled	Overrule, no, stop, judge, lawyer, legal
+sticker	Legal_Overruled	Legal_Overruled.png	-	Legal Overruled	Overrule, no, stop, judge, lawyer, legal
 caption	Legal_Overruled_template.png	Comic Sans MS	#417b84	-	4 78 168 225	OVERRULLED
-sticker	Legal_Plead_The_Fifth	Legal_Plead_The_Fifth.png	-	-	Legal Plead The Fifth	plead, fifth, silent, secret, lawyer, legal
+sticker	Legal_Plead_The_Fifth	Legal_Plead_The_Fifth.png	-	Legal Plead The Fifth	plead, fifth, silent, secret, lawyer, legal
 caption	Legal_Plead_The_Fifth_template.png	Comic Sans MS	#417b84	-	14 29 182 233	PLEAD THE FIFTH
-sticker	Legal_Research_Time	Legal_Research_Time.png	-	-	Legal Research Time	research, time, study, lawyer, legal
+sticker	Legal_Research_Time	Legal_Research_Time.png	-	Legal Research Time	research, time, study, lawyer, legal
 caption	Legal_Research_Time_template.png	Comic Sans MS	#417b84	-	146 52 369 194	RESEARCH TIME
-sticker	Legal_Rule_11	Legal_Rule_11.png	-	-	Legal Rule 11	rule, 11, stop, attack, lawyer, legal
+sticker	Legal_Rule_11	Legal_Rule_11.png	-	Legal Rule 11	rule, 11, stop, attack, lawyer, legal
 caption	Legal_Rule_11_template.png	Comic Sans MS	#417b84	-	7 118 253 241	RULE 11
-sticker	Legal_Shark	Legal_Shark.png	-	-	Legal Shark	shark, coffee, lawyer, legal
+sticker	Legal_Shark	Legal_Shark.png	-	Legal Shark	shark, coffee, lawyer, legal
 caption	Legal_Shark_template.png	Comic Sans MS	#417b84	-	15 18 154 235	ARE YOU DONE YET?
-sticker	Legal_Sign	Legal_Sign.png	-	-	Legal Sign	sign, document, fail, forget, lawyer, legal
+sticker	Legal_Sign	Legal_Sign.png	-	Legal Sign	sign, document, fail, forget, lawyer, legal
 caption	Legal_Sign_template.png	Comic Sans MS	#417b84	-	14 30 180 232	DID YOU SIGN?
-sticker	Legal_Socratic_Method	Legal_Socratic_Method.png	-	-	Legal Socratic Method	socratic, method, logic, debate, lawyer, legal
+sticker	Legal_Socratic_Method	Legal_Socratic_Method.png	-	Legal Socratic Method	socratic, method, logic, debate, lawyer, legal
 caption	Legal_Socratic_Method_template.png	Comic Sans MS	#417b84	-	62 4 313 79	SOCRATIC METHOD
-sticker	Legal_Sustained	Legal_Sustained.png	-	-	Legal Sustained	sustained, accept, support, lawyer, legal
+sticker	Legal_Sustained	Legal_Sustained.png	-	Legal Sustained	sustained, accept, support, lawyer, legal
 caption	Legal_Sustained_template.png	Comic Sans MS	#417b84	-	2 83 172 227	SUSTAINED
-sticker	Legal_Transcribe	Legal_Transcribe.png	-	-	Legal Transcribe	transcribe, time, no, machine, lawyer, legal
+sticker	Legal_Transcribe	Legal_Transcribe.png	-	Legal Transcribe	transcribe, time, no, machine, lawyer, legal
 caption	Legal_Transcribe_template.png	Comic Sans MS	#417b84	-	0 3 259 99	TIME TO TRANSCRIBE
-sticker	Legal_We_Got_Sued	Legal_We_Got_Sued.png	-	-	Legal We Got Sued	sue, bad, mistake, sad, lawyer, legal
+sticker	Legal_We_Got_Sued	Legal_We_Got_Sued.png	-	Legal We Got Sued	sue, bad, mistake, sad, lawyer, legal
 caption	Legal_We_Got_Sued_template.png	Comic Sans MS	#417b84	-	157 7 366 113	WE GOT SUED
-sticker	Legal_We_Need_A_Specialist	Legal_We_Need_A_Specialist.png	-	-	Legal We Need A Specialist	need, specialist, lawyer, legal
+sticker	Legal_We_Need_A_Specialist	Legal_We_Need_A_Specialist.png	-	Legal We Need A Specialist	need, specialist, lawyer, legal
 caption	Legal_We_Need_A_Specialist_template.png	Comic Sans MS	#417b84	-	43 2 333 80	WE NEED A SPECIALIST
 
 pack	Broccoli	Broccoli	Broccoli_header_large.png	-
-sticker	Broccoli_Angry	stickerbroccoliangry.png	-	-	Broccoli Angry	angry, rage, bursting, spitting anger, broccoli, vegetable
-sticker	Broccoli_Confused	stickerbroccoliconfused.png	-	-	Broccoli Confused	confused, unknown, not sure, clueless, broccoli, vegetable
-sticker	Broccoli_FistBump	stickerbroccolifistbump.png	-	-	Broccoli Fist Bump	fistBump, fist, bump, friendly, broccoli, vegetable
-sticker	Broccoli_GreatJobTeam	stickerbroccoligreatjob.png	-	-	Broccoli Great Job	greatjobteam, great, job, team, team work, helping, broccoli, vegetable
-sticker	Broccoli_HiFive	stickerbroccolihifive.png	-	-	Broccoli Hi Five	hifive, hi, five, excitement, friendly, broccoli, vegetable
-sticker	Broccoli_Cool	stickerbroccolicool.png	-	-	Broccoli Cool	Im great, I'm, great, vanity, vain, selflove, self care, cool, broccoli, vegetable
-sticker	Broccoli_Like	stickerbroccolilike.png	-	-	Broccoli Like	like, (y), approval, welldone, broccoli, vegetable
-sticker	Broccoli_NotMushroom	stickerbroccolinotmushroom.png	-	-	Broccoli Not Mushroom	notimpressed, not, impressed, not interested, not caring, broccoli, vegetable
-sticker	Broccoli_WOW	stickerbroccoliwow.png	-	-	Broccoli WOW	omg, oh, my, god, shocked, surprised, startled, broccoli, vegetable
-sticker	Broccoli_Overwhelmed	stickerbroccolioverwhelmed.png	-	-	Broccoli Overwhelmed	overwhelmed, over, whelmed, overflowed, surroudned broccoli, vegetable
-sticker	Broccoli_Party	stickerbroccoliparty.png	-	-	Broccoli Party	party, excitement, joy, fun, gatherings, fruit, maraccas, broccoli, vegetable
-sticker	Broccoli_Sad	stickerbroccolisad.png	-	-	Broccoli Sad	sad, (n), crying, disappointment, upset, broccoli, vegetable
-sticker	Broccoli_Cold	stickerbroccolicold.png	-	-	Broccoli Cold	scared, cold, shivering, fearful, worries, broccoli, vegetable
-sticker	Broccoli_OnMyWay	stickerbroccoliomw.png	-	-	Broccoli On My Way	super, onmyway, on, my, way, superhero, flying, zap, hero, broccoli, vegetable
-sticker	Broccoli_TeamCheers	stickerbroccoliteamcheers.png	-	-	Broccoli Team Cheers	teamcheers, team, cheers, drinks, gathering, friends, meeting, broccoli, vegetable
-sticker	Broccoli_TeamHuddle	stickerbroccoliteamhuddle.png	-	-	Broccoli Team Huddle	teamhuddle, team, huddle, friendly, friends, meeting, broccoli, vegetable
-sticker	Broccoli_Tired	stickerbroccolitired.png	-	-	Broccoli Tired	tired, sleeping, sleepy, snooze, bacon, bed, broccoli, vegetable
-sticker	Broccoli_Trapped	stickerbroccolitrapped.png	-	-	Broccoli Trapped	trapped, pinned, caged, help, fork, broccoli, vegetable
-sticker	Broccoli_Wave	stickerbroccoliwave.png	-	-	Broccoli Wave	wave, hello, greetings, broccoli, vegetable
-sticker	Broccoli_WhereAreYou	stickerbroccoliwhereareyou.png	-	-	Broccoli Where Are You	whereareyou, where, are, you, searching, looking, spyglass, broccoli, vegetable
+sticker	Broccoli_Angry	stickerbroccoliangry.png	-	Broccoli Angry	angry, rage, bursting, spitting anger, broccoli, vegetable
+sticker	Broccoli_Confused	stickerbroccoliconfused.png	-	Broccoli Confused	confused, unknown, not sure, clueless, broccoli, vegetable
+sticker	Broccoli_FistBump	stickerbroccolifistbump.png	-	Broccoli Fist Bump	fistBump, fist, bump, friendly, broccoli, vegetable
+sticker	Broccoli_GreatJobTeam	stickerbroccoligreatjob.png	-	Broccoli Great Job	greatjobteam, great, job, team, team work, helping, broccoli, vegetable
+sticker	Broccoli_HiFive	stickerbroccolihifive.png	-	Broccoli Hi Five	hifive, hi, five, excitement, friendly, broccoli, vegetable
+sticker	Broccoli_Cool	stickerbroccolicool.png	-	Broccoli Cool	Im great, I'm, great, vanity, vain, selflove, self care, cool, broccoli, vegetable
+sticker	Broccoli_Like	stickerbroccolilike.png	-	Broccoli Like	like, (y), approval, welldone, broccoli, vegetable
+sticker	Broccoli_NotMushroom	stickerbroccolinotmushroom.png	-	Broccoli Not Mushroom	notimpressed, not, impressed, not interested, not caring, broccoli, vegetable
+sticker	Broccoli_WOW	stickerbroccoliwow.png	-	Broccoli WOW	omg, oh, my, god, shocked, surprised, startled, broccoli, vegetable
+sticker	Broccoli_Overwhelmed	stickerbroccolioverwhelmed.png	-	Broccoli Overwhelmed	overwhelmed, over, whelmed, overflowed, surroudned broccoli, vegetable
+sticker	Broccoli_Party	stickerbroccoliparty.png	-	Broccoli Party	party, excitement, joy, fun, gatherings, fruit, maraccas, broccoli, vegetable
+sticker	Broccoli_Sad	stickerbroccolisad.png	-	Broccoli Sad	sad, (n), crying, disappointment, upset, broccoli, vegetable
+sticker	Broccoli_Cold	stickerbroccolicold.png	-	Broccoli Cold	scared, cold, shivering, fearful, worries, broccoli, vegetable
+sticker	Broccoli_OnMyWay	stickerbroccoliomw.png	-	Broccoli On My Way	super, onmyway, on, my, way, superhero, flying, zap, hero, broccoli, vegetable
+sticker	Broccoli_TeamCheers	stickerbroccoliteamcheers.png	-	Broccoli Team Cheers	teamcheers, team, cheers, drinks, gathering, friends, meeting, broccoli, vegetable
+sticker	Broccoli_TeamHuddle	stickerbroccoliteamhuddle.png	-	Broccoli Team Huddle	teamhuddle, team, huddle, friendly, friends, meeting, broccoli, vegetable
+sticker	Broccoli_Tired	stickerbroccolitired.png	-	Broccoli Tired	tired, sleeping, sleepy, snooze, bacon, bed, broccoli, vegetable
+sticker	Broccoli_Trapped	stickerbroccolitrapped.png	-	Broccoli Trapped	trapped, pinned, caged, help, fork, broccoli, vegetable
+sticker	Broccoli_Wave	stickerbroccoliwave.png	-	Broccoli Wave	wave, hello, greetings, broccoli, vegetable
+sticker	Broccoli_WhereAreYou	stickerbroccoliwhereareyou.png	-	Broccoli Where Are You	whereareyou, where, are, you, searching, looking, spyglass, broccoli, vegetable
 
 pack	Bee	Bee	Bee_header_large.png	-
-sticker	Bee_Angry	stickerbeeangry.png	-	-	Bee Angry	angry, rage, fire, steaming, explosion, unfathomable disapproval, bee, insects
-sticker	Bee_Ashamed	stickerbeeashamed.png	-	-	Bee Ashamed	ashamed, worry, cracked mirror, nervous, shame, anxiety bee, insects
-sticker	Bee_Bored	stckerbeebored.png	-	-	Bee Bored	bored, sleepy, dull, snooze, tired, boredroom, done with it all, bee, insects
-sticker	Bee_Cheers	stickerbeecheers.png	-	-	Bee Cheers	cheers, happy, clink, smiling, socializing, bee, insects
-sticker	Bee_Confused	stickerbeeconfused.png	-	-	Bee Confused	confusion, curious, i don't know, uninformed, unknown, not sure, bee, insects
-sticker	Bee_Happy	stickerbeehappy.png	-	-	Bee Happy	happy, joyed, joyful, smiling, beaming, bee, insects
-sticker	Bee_Hi	stickerbeehi.png	-	-	Bee Hi	hi, hello, greetings, introductions, bee, insects
-sticker	Bee_HiFive	stickerbeehifive.png	-	-	Bee Hi Five	hifive, hi5, friends, gathering bee, insects
-sticker	Bee_Laughing	stickerbeelaughing.png	-	-	Bee Laughing	laughing, lol, LOL, funny, jokes, memes, bee, insects
-sticker	Bee_Like	stickerbeelike.png	-	-	Bee Like	like, approval, well done, feeling good, bee, insects
-sticker	Bee_Love	stickerbeelove.png	-	-	Bee Love	love, heart eyes, lust passion, bee, insects
-sticker	Bee_MissingYou	stickerbeemissingyou.png	-	-	Bee Missing You	missing you, searching, looking for you, treasure hunting, bee, insects
-sticker	Bee_No	stickerbeeno.png	-	-	Bee No	no, not today, unavailable, can't happen, nada, bee, insects
-sticker	Bee_WOW	stickerbeewow.png	-	-	Bee WOW	omg, wow, shock, surprise, stunned, jaw dropping, bee, insects
-sticker	Bee_OMW	stickerbeeomw.png	-	-	Bee OMW	omw, on my way, travelling, progression, movement, locomotion, bee, insects
-sticker	Bee_Party	stickerbeeparty.png	-	-	Bee Party	party, friday night, concert, walk of shame, dancing, music, bee, insects
-sticker	Bee_FistBump	stickerbeefistbump.png	-	-	Bee Fist Bump	playful, cheeky, teasing, fist bump, friendly, fun, bee, insects
-sticker	Bee_Sad	stickerbeesad.png	-	-	Bee Sad	sad, crying, upset, hurt, tears, bee, insects
-sticker	Bee_Sick	stickerbeesick.png	-	-	Bee Sick	sick, ill, not feeling well, thermometer, groggy, gross, under the weather bee, insects
-sticker	Bee_Well	stickerbeewell.png	-	-	Bee Well?	well?, flirty, flirting, eye brown raising, getting to know you, bee, insects
+sticker	Bee_Angry	stickerbeeangry.png	-	Bee Angry	angry, rage, fire, steaming, explosion, unfathomable disapproval, bee, insects
+sticker	Bee_Ashamed	stickerbeeashamed.png	-	Bee Ashamed	ashamed, worry, cracked mirror, nervous, shame, anxiety bee, insects
+sticker	Bee_Bored	stckerbeebored.png	-	Bee Bored	bored, sleepy, dull, snooze, tired, boredroom, done with it all, bee, insects
+sticker	Bee_Cheers	stickerbeecheers.png	-	Bee Cheers	cheers, happy, clink, smiling, socializing, bee, insects
+sticker	Bee_Confused	stickerbeeconfused.png	-	Bee Confused	confusion, curious, i don't know, uninformed, unknown, not sure, bee, insects
+sticker	Bee_Happy	stickerbeehappy.png	-	Bee Happy	happy, joyed, joyful, smiling, beaming, bee, insects
+sticker	Bee_Hi	stickerbeehi.png	-	Bee Hi	hi, hello, greetings, introductions, bee, insects
+sticker	Bee_HiFive	stickerbeehifive.png	-	Bee Hi Five	hifive, hi5, friends, gathering bee, insects
+sticker	Bee_Laughing	stickerbeelaughing.png	-	Bee Laughing	laughing, lol, LOL, funny, jokes, memes, bee, insects
+sticker	Bee_Like	stickerbeelike.png	-	Bee Like	like, approval, well done, feeling good, bee, insects
+sticker	Bee_Love	stickerbeelove.png	-	Bee Love	love, heart eyes, lust passion, bee, insects
+sticker	Bee_MissingYou	stickerbeemissingyou.png	-	Bee Missing You	missing you, searching, looking for you, treasure hunting, bee, insects
+sticker	Bee_No	stickerbeeno.png	-	Bee No	no, not today, unavailable, can't happen, nada, bee, insects
+sticker	Bee_WOW	stickerbeewow.png	-	Bee WOW	omg, wow, shock, surprise, stunned, jaw dropping, bee, insects
+sticker	Bee_OMW	stickerbeeomw.png	-	Bee OMW	omw, on my way, travelling, progression, movement, locomotion, bee, insects
+sticker	Bee_Party	stickerbeeparty.png	-	Bee Party	party, friday night, concert, walk of shame, dancing, music, bee, insects
+sticker	Bee_FistBump	stickerbeefistbump.png	-	Bee Fist Bump	playful, cheeky, teasing, fist bump, friendly, fun, bee, insects
+sticker	Bee_Sad	stickerbeesad.png	-	Bee Sad	sad, crying, upset, hurt, tears, bee, insects
+sticker	Bee_Sick	stickerbeesick.png	-	Bee Sick	sick, ill, not feeling well, thermometer, groggy, gross, under the weather bee, insects
+sticker	Bee_Well	stickerbeewell.png	-	Bee Well?	well?, flirty, flirting, eye brown raising, getting to know you, bee, insects
 
 pack	Teamsquatch	Teamsquatch	Teamsquatch_header_large.png	-
-sticker	Teamsquatch_BrokenMrCopy	Teamsquatch_BrokenMrCopy.png	-	-	teamsquatch and friends smashing mr. copy	sasquatch, teamsquatch, bat, squirrel, rock, mo, copier, vandalize
-sticker	Teamsquatch_BugSquash	Teamsquatch_BugSquash.png	-	-	teamsquatch squashing a bug	sasquatch, teamsquatch, squash, bug, kill
-sticker	Teamsquatch_CoffeeBuzz	Teamsquatch_CoffeeBuzz.png	-	-	teamsquatch drinks too much coffee	sasquatch, teamsquatch, coffee, caffeine, jitters, buzz, wired, desk
-sticker	Teamsquatch_CoffeeCrew	Teamsquatch_CoffeeCrew.png	-	-	teamsquatch and friends drinking coffee together	sasquatch, teamsquatch, squirrel, rock, mo, coffee, friends, together, sip
-sticker	Teamsquatch_DeskClutter	Teamsquatch_DeskClutter.png	-	-	squirrel works late at his cluttered desk	teamsquatch, squirrel, computer, work, late, night, desk, clutter, messy, office
-sticker	Teamsquatch_Elevator	Teamsquatch_Elevator.png	-	-	teamsquatch in cramped elevator with treeford	sasquatch, teamsquatch, treeford, tree, cramped, elevator, uncomfortable
-sticker	Teamsquatch_Email	Teamsquatch_Email.png	-	-	teamsquatch gets an email	sasquatch, teamsquatch, email, mail, laptop, message
-sticker	Teamsquatch_EmailOverload	Teamsquatch_EmailOverload.png	-	-	teamsquatch gets overloaded with emails	sasquatch, teamsquatch, email, mail, message, laptop, overload, stress
-sticker	Teamsquatch_FireDrill	Teamsquatch_FireDrill.png	-	-	teamsquatch puts out a fire with mr. mccloud	sasquatch, teamsquatch, fire, rain, cloud, burn, urgent, water
-sticker	Teamsquatch_Goodnuff	Teamsquatch_Goodnuff.png	-	-	mo rock says "good'nuff"	rock, mo, good enough, good, passable, ok
-sticker	Teamsquatch_KillIt	Teamsquatch_KillIt.png	-	-	log gets chopped by an axe	log, chop, cut, wood, axe, kill, die, splinters, pain
-sticker	Teamsquatch_LateNight	Teamsquatch_LateNight.png	-	-	teamsquatch working late at the office	sasquatch, teamsquatch, work, late, night, moon, tired, sleepy, office, laptop
-sticker	Teamsquatch_LunchAlone	Teamsquatch_LunchAlone.png	-	-	teamsquatch eats a sandwich alone	sasquatch, teamsquatch, tear, sad, cry, bench, alone, lunch, sandwich, eat, hungry, bird, lonely
-sticker	Teamsquatch_MobileCrew	Teamsquatch_MobileCrew.png	-	-	teamsquatch and friends on their mobile devices	sasquatch, teamsquatch, squirrel, rock, mo, mobile, phone, device, cortana, text, message
-sticker	Teamsquatch_MrCopy	Teamsquatch_MrCopy.png	-	-	mr. copy pelts teamsquatch with paper	sasquatch, teamsquatch, copier, copy machine, paper, annoying, crumple, toss
-sticker	Teamsquatch_Nap	Teamsquatch_Nap.png	-	-	teamsquatch naps at his desk	sasquatch, teamsquatch, laptop, computer, sleep, nap, snore, doze, tired, sleepy, drool, rest
-sticker	Teamsquatch_Nice	Teamsquatch_Nice.png	-	-	teamsquatch says "nice"	sasquatch, teamsquatch, point, wink, nice, good, smile
-sticker	Teamsquatch_Screenwatching	Teamsquatch_Screenwatching.png	-	-	treeford looks over teamsquatch's shoulder	sasquatch, teamsquatch, work, laptop, tree, treeford, hover, spy, creep, annoying, screen, watch, look, creep, sneak
-sticker	Teamsquatch_StolenLunch	Teamsquatch_StolenLunch.png	-	-	squirrel eats a stolen lunch	sasquatch, teamsquatch, squirrel, lunch, eat, sandwich, alone, munch, crumbs, hungry, feed, steal, stolen
-sticker	Teamsquatch_Teamwork	Teamsquatch_Teamwork.png	-	-	let's go team	sasquatch, teamsquatch, squirrel, treeford, tree, rock, mo, cloud, rain, raincloud, mr. mccloud, pumped, teamwork, together, team, go, splitscreen
-sticker	Teamsquatch_WeekendRide	Teamsquatch_WeekendRide.png	-	-	teamsquatch and squirrel on a weekend drive	sasquatch, teamsquatch, squirrel, boombox, car, drive, casual, sunglasses, music, loud, cool, relax, chill
-sticker	Teamsquatch_WorkingHard	Teamsquatch_WorkingHard.png	-	-	teamsquatch working hard	sasquatch, teamsquatch, work, busy, headphones, music, sweat, focus, laptop, sticky notes, desk
-sticker	Teamsquatch_Yes	Teamsquatch_Yes.png	-	-	yes!	sasquatch, teamsquatch, dance, dancing, yes, happy, ecstatic, smile, joy, fist pump
+sticker	Teamsquatch_BrokenMrCopy	Teamsquatch_BrokenMrCopy.png	-	teamsquatch and friends smashing mr. copy	sasquatch, teamsquatch, bat, squirrel, rock, mo, copier, vandalize
+sticker	Teamsquatch_BugSquash	Teamsquatch_BugSquash.png	-	teamsquatch squashing a bug	sasquatch, teamsquatch, squash, bug, kill
+sticker	Teamsquatch_CoffeeBuzz	Teamsquatch_CoffeeBuzz.png	-	teamsquatch drinks too much coffee	sasquatch, teamsquatch, coffee, caffeine, jitters, buzz, wired, desk
+sticker	Teamsquatch_CoffeeCrew	Teamsquatch_CoffeeCrew.png	-	teamsquatch and friends drinking coffee together	sasquatch, teamsquatch, squirrel, rock, mo, coffee, friends, together, sip
+sticker	Teamsquatch_DeskClutter	Teamsquatch_DeskClutter.png	-	squirrel works late at his cluttered desk	teamsquatch, squirrel, computer, work, late, night, desk, clutter, messy, office
+sticker	Teamsquatch_Elevator	Teamsquatch_Elevator.png	-	teamsquatch in cramped elevator with treeford	sasquatch, teamsquatch, treeford, tree, cramped, elevator, uncomfortable
+sticker	Teamsquatch_Email	Teamsquatch_Email.png	-	teamsquatch gets an email	sasquatch, teamsquatch, email, mail, laptop, message
+sticker	Teamsquatch_EmailOverload	Teamsquatch_EmailOverload.png	-	teamsquatch gets overloaded with emails	sasquatch, teamsquatch, email, mail, message, laptop, overload, stress
+sticker	Teamsquatch_FireDrill	Teamsquatch_FireDrill.png	-	teamsquatch puts out a fire with mr. mccloud	sasquatch, teamsquatch, fire, rain, cloud, burn, urgent, water
+sticker	Teamsquatch_Goodnuff	Teamsquatch_Goodnuff.png	-	mo rock says "good'nuff"	rock, mo, good enough, good, passable, ok
+sticker	Teamsquatch_KillIt	Teamsquatch_KillIt.png	-	log gets chopped by an axe	log, chop, cut, wood, axe, kill, die, splinters, pain
+sticker	Teamsquatch_LateNight	Teamsquatch_LateNight.png	-	teamsquatch working late at the office	sasquatch, teamsquatch, work, late, night, moon, tired, sleepy, office, laptop
+sticker	Teamsquatch_LunchAlone	Teamsquatch_LunchAlone.png	-	teamsquatch eats a sandwich alone	sasquatch, teamsquatch, tear, sad, cry, bench, alone, lunch, sandwich, eat, hungry, bird, lonely
+sticker	Teamsquatch_MobileCrew	Teamsquatch_MobileCrew.png	-	teamsquatch and friends on their mobile devices	sasquatch, teamsquatch, squirrel, rock, mo, mobile, phone, device, cortana, text, message
+sticker	Teamsquatch_MrCopy	Teamsquatch_MrCopy.png	-	mr. copy pelts teamsquatch with paper	sasquatch, teamsquatch, copier, copy machine, paper, annoying, crumple, toss
+sticker	Teamsquatch_Nap	Teamsquatch_Nap.png	-	teamsquatch naps at his desk	sasquatch, teamsquatch, laptop, computer, sleep, nap, snore, doze, tired, sleepy, drool, rest
+sticker	Teamsquatch_Nice	Teamsquatch_Nice.png	-	teamsquatch says "nice"	sasquatch, teamsquatch, point, wink, nice, good, smile
+sticker	Teamsquatch_Screenwatching	Teamsquatch_Screenwatching.png	-	treeford looks over teamsquatch's shoulder	sasquatch, teamsquatch, work, laptop, tree, treeford, hover, spy, creep, annoying, screen, watch, look, creep, sneak
+sticker	Teamsquatch_StolenLunch	Teamsquatch_StolenLunch.png	-	squirrel eats a stolen lunch	sasquatch, teamsquatch, squirrel, lunch, eat, sandwich, alone, munch, crumbs, hungry, feed, steal, stolen
+sticker	Teamsquatch_Teamwork	Teamsquatch_Teamwork.png	-	let's go team	sasquatch, teamsquatch, squirrel, treeford, tree, rock, mo, cloud, rain, raincloud, mr. mccloud, pumped, teamwork, together, team, go, splitscreen
+sticker	Teamsquatch_WeekendRide	Teamsquatch_WeekendRide.png	-	teamsquatch and squirrel on a weekend drive	sasquatch, teamsquatch, squirrel, boombox, car, drive, casual, sunglasses, music, loud, cool, relax, chill
+sticker	Teamsquatch_WorkingHard	Teamsquatch_WorkingHard.png	-	teamsquatch working hard	sasquatch, teamsquatch, work, busy, headphones, music, sweat, focus, laptop, sticky notes, desk
+sticker	Teamsquatch_Yes	Teamsquatch_Yes.png	-	yes!	sasquatch, teamsquatch, dance, dancing, yes, happy, ecstatic, smile, joy, fist pump
 
 pack	BummerBert	Calamity Bert	BummerBert_header_large.png	-
-sticker	BummerBert_AnotherBadDay	BummerBert_AnotherBadDay.png	-	-	calamity bert another bad day	bert, calamitybert, sleep, clock, bed, sad, dissappointed, bad, day
-sticker	BummerBert_Corner	BummerBert_Corner.png	-	-	calamity bert corner	bert, calamitybert, corner, lonely, alone, scared
-sticker	BummerBert_Hopeless	BummerBert_Hopeless.png	-	-	calamity bert hopeless	bert, calamitybert, upset, hopeless, mad, yell, angry
-sticker	BummerBert_IGiveUp	BummerBert_IGiveUp.png	-	-	calamity bert i give up	calamitybert, bert, give, up, upset, hopeless, finish, tired
-sticker	BummerBert_IJustCant	BummerBert_IJustCant.png	-	-	calamity bert i just can't	bert, calamitybert, cant, weak, confused, sad, dissappointed
-sticker	BummerBert_IveMadeAHugeMistake	BummerBert_IveMadeAHugeMistake.png	-	-	calamity bert i've made a huge mistake	bert, calamitybert, sad, calamity, mistake, huge, oops
-sticker	BummerBert_IWillNeverFinish	BummerBert_IWillNeverFinish.png	-	-	calamity bert i'll never finish	bert, calamitybert, finish, never, computer, done, hopeless
-sticker	BummerBert_IWillTryAgainMaybe	BummerBert_IWillTryAgainMaybe.png	-	-	calamity bert i'll try again maybe	bert, calamitybert, try, hopeless, again, maybe, fail
-sticker	BummerBert_Meh	BummerBert_Meh.png	-	-	calamity bert meh	calamitybert, bert, meh, indifference, bored, hopeless, careless, tired
-sticker	BummerBert_NobodyCares	BummerBert_NobodyCares.png	-	-	calamity bert nobody cares	bert, calamitybert, nobody, cares, worthless, sad, dissappointed
-sticker	BummerBert_NotMe	BummerBert_NotMe.png	-	-	calamity bert not me	bert, calamitybert, scared, not, me, avoid, alone, fear
-sticker	BummerBert_NotSoFast	BummerBert_NotSoFast.png	-	-	calamity bert not so fast	bert, calamitybert, fast, not, stop, careful
-sticker	BummerBert_Sigh	BummerBert_Sigh.png	-	-	calamity bert sigh	bert, calamitybert, upset, hopeless, sigh, sad, alone
-sticker	BummerBert_Typical	BummerBert_Typical.png	-	-	calamity bert typical	calamitybert, bert, typical, fall, papers, hopeless, drop, crash, unlucky
-sticker	BummerBert_WellThatFailed	BummerBert_WellThatFailed.png	-	-	calamity bert well that failed	bert, calamitybert, fail, sit, sad, dissappointed
-sticker	BummerBert_WhatIsHappiness	BummerBert_WhatIsHappiness.png	-	-	calamity bert what is happiness	bert, calamitybert, sad, happiness, happy, thinking, philosophy, charlie
-sticker	BummerBert_WhyMe	BummerBert_WhyMe.png	-	-	calamity bert why me	bert, calamitybert, why, lonely, alone, me, avoid
-sticker	BummerBert_WorkingLateAgain	BummerBert_WorkingLateAgain.png	-	-	calamity bert working late again	bert, calamitybert, working, late, again, overwork, overtime
-sticker	BummerBert_WrongAgain	BummerBert_WrongAgain.png	-	-	calamity bert wrong again	calamitybert, bert, wrong, again, hopeless, sad, tired
+sticker	BummerBert_AnotherBadDay	BummerBert_AnotherBadDay.png	-	calamity bert another bad day	bert, calamitybert, sleep, clock, bed, sad, dissappointed, bad, day
+sticker	BummerBert_Corner	BummerBert_Corner.png	-	calamity bert corner	bert, calamitybert, corner, lonely, alone, scared
+sticker	BummerBert_Hopeless	BummerBert_Hopeless.png	-	calamity bert hopeless	bert, calamitybert, upset, hopeless, mad, yell, angry
+sticker	BummerBert_IGiveUp	BummerBert_IGiveUp.png	-	calamity bert i give up	calamitybert, bert, give, up, upset, hopeless, finish, tired
+sticker	BummerBert_IJustCant	BummerBert_IJustCant.png	-	calamity bert i just can't	bert, calamitybert, cant, weak, confused, sad, dissappointed
+sticker	BummerBert_IveMadeAHugeMistake	BummerBert_IveMadeAHugeMistake.png	-	calamity bert i've made a huge mistake	bert, calamitybert, sad, calamity, mistake, huge, oops
+sticker	BummerBert_IWillNeverFinish	BummerBert_IWillNeverFinish.png	-	calamity bert i'll never finish	bert, calamitybert, finish, never, computer, done, hopeless
+sticker	BummerBert_IWillTryAgainMaybe	BummerBert_IWillTryAgainMaybe.png	-	calamity bert i'll try again maybe	bert, calamitybert, try, hopeless, again, maybe, fail
+sticker	BummerBert_Meh	BummerBert_Meh.png	-	calamity bert meh	calamitybert, bert, meh, indifference, bored, hopeless, careless, tired
+sticker	BummerBert_NobodyCares	BummerBert_NobodyCares.png	-	calamity bert nobody cares	bert, calamitybert, nobody, cares, worthless, sad, dissappointed
+sticker	BummerBert_NotMe	BummerBert_NotMe.png	-	calamity bert not me	bert, calamitybert, scared, not, me, avoid, alone, fear
+sticker	BummerBert_NotSoFast	BummerBert_NotSoFast.png	-	calamity bert not so fast	bert, calamitybert, fast, not, stop, careful
+sticker	BummerBert_Sigh	BummerBert_Sigh.png	-	calamity bert sigh	bert, calamitybert, upset, hopeless, sigh, sad, alone
+sticker	BummerBert_Typical	BummerBert_Typical.png	-	calamity bert typical	calamitybert, bert, typical, fall, papers, hopeless, drop, crash, unlucky
+sticker	BummerBert_WellThatFailed	BummerBert_WellThatFailed.png	-	calamity bert well that failed	bert, calamitybert, fail, sit, sad, dissappointed
+sticker	BummerBert_WhatIsHappiness	BummerBert_WhatIsHappiness.png	-	calamity bert what is happiness	bert, calamitybert, sad, happiness, happy, thinking, philosophy, charlie
+sticker	BummerBert_WhyMe	BummerBert_WhyMe.png	-	calamity bert why me	bert, calamitybert, why, lonely, alone, me, avoid
+sticker	BummerBert_WorkingLateAgain	BummerBert_WorkingLateAgain.png	-	calamity bert working late again	bert, calamitybert, working, late, again, overwork, overtime
+sticker	BummerBert_WrongAgain	BummerBert_WrongAgain.png	-	calamity bert wrong again	calamitybert, bert, wrong, again, hopeless, sad, tired
 
 pack	CatsInSuits	Cats In Suits	CatsInSuits_header_large.png	-
-sticker	CatsInSuits_Cat	CatsInSuits_Cat.png	-	-	cats in suits cat	cat, catsinsuits, suit, animal, cute, happy, office
-sticker	CatsInSuits_Coffee	CatsInSuits_Coffee.png	-	-	cat with coffee	cat, catsinsuits, coffee, morning, happy, love, heart
-sticker	CatsInSuits_DogSuit	CatsInSuits_DogSuit.png	-	-	cats in dog suit	cat, catsinsuits, dog, disguise, woof, bark, funny
-sticker	CatsInSuits_Eating	CatsInSuits_Eating.png	-	-	cat eating	cat, catsinsuits, eat, food, lunch, meal, happy, content
-sticker	CatsInSuits_Hairball	CatsInSuits_Hairball.png	-	-	cat hairball	catsinsuits, cat, hairball, gross, upset, cough
-sticker	CatsInSuits_Injured	CatsInSuits_Injured.png	-	-	office injury	cat, catsinsuits, office, injury, hurt, sad, cry, tears, pain
-sticker	CatsInSuits_Jump	CatsInSuits_Jump.png	-	-	jumping cat	cat, catsinsuits, jump, excited, happy, yay
-sticker	CatsInSuits_Keyboard	CatsInSuits_Keyboard.png	-	-	cat on the keyboard	cat, catsinsuits, play, keyboard, computer, curious
-sticker	CatsInSuits_Lick	CatsInSuits_Lick.png	-	-	licking cat	cat, catsinsuits, lick, cute, happy, clean
-sticker	CatsInSuits_Mouse	CatsInSuits_Mouse.png	-	-	cat with mouse	catsinsuits, cat, mouse, play, curious, fun, cute
-sticker	CatsInSuits_OfficeChair	CatsInSuits_OfficeChair.png	-	-	manager cat	cat, catsinsuits, chair, office, manager, boss, happy
-sticker	CatsInSuits_PassOut	CatsInSuits_PassOut.png	-	-	passed out cat	cat, catsinsuits, pass, out, faint, dead, overwork, done
-sticker	CatsInSuits_Question	CatsInSuits_Question.png	-	-	curious cat	cat, catsinsuits, curious, cute, question, interested
-sticker	CatsInSuits_RollOver	CatsInSuits_RollOver.png	-	-	roll over cat	catsinsuits, cat, roll, over, cute, tummy
-sticker	CatsInSuits_Scared	CatsInSuits_Scared.png	-	-	scared cat	cat, catsinsuits, scared, surprise, startle, excited
-sticker	CatsInSuits_Shy	CatsInSuits_Shy.png	-	-	shy cat	cat, catsinsuits, shy, happiness, happy, thinking, cute
-sticker	CatsInSuits_SleepInSun	CatsInSuits_SleepInSun.png	-	-	cat in the sun	cat, catsinsuits, sun, sleepy, comfortable, happy, warm
-sticker	CatsInSuits_SleepOnDesk	CatsInSuits_SleepOnDesk.png	-	-	asleep on the desk	cat, catsinsuits, sleep, desk, tired, break
-sticker	CatsInSuits_WaterSpill	CatsInSuits_WaterSpill.png	-	-	water spill	catsinsuits, cat, water, spill, oops, accident, wasntme
-sticker	CatsInSuits_Window	CatsInSuits_Window.png	-	-	window cat	cat, catsinsuits, window, blinds, scratch, look, outside
-sticker	CatsInSuits_Yarn	CatsInSuits_Yarn.png	-	-	cat with yarn	catsinsuits, cat, yarn, play, game, happy, cute
+sticker	CatsInSuits_Cat	CatsInSuits_Cat.png	-	cats in suits cat	cat, catsinsuits, suit, animal, cute, happy, office
+sticker	CatsInSuits_Coffee	CatsInSuits_Coffee.png	-	cat with coffee	cat, catsinsuits, coffee, morning, happy, love, heart
+sticker	CatsInSuits_DogSuit	CatsInSuits_DogSuit.png	-	cats in dog suit	cat, catsinsuits, dog, disguise, woof, bark, funny
+sticker	CatsInSuits_Eating	CatsInSuits_Eating.png	-	cat eating	cat, catsinsuits, eat, food, lunch, meal, happy, content
+sticker	CatsInSuits_Hairball	CatsInSuits_Hairball.png	-	cat hairball	catsinsuits, cat, hairball, gross, upset, cough
+sticker	CatsInSuits_Injured	CatsInSuits_Injured.png	-	office injury	cat, catsinsuits, office, injury, hurt, sad, cry, tears, pain
+sticker	CatsInSuits_Jump	CatsInSuits_Jump.png	-	jumping cat	cat, catsinsuits, jump, excited, happy, yay
+sticker	CatsInSuits_Keyboard	CatsInSuits_Keyboard.png	-	cat on the keyboard	cat, catsinsuits, play, keyboard, computer, curious
+sticker	CatsInSuits_Lick	CatsInSuits_Lick.png	-	licking cat	cat, catsinsuits, lick, cute, happy, clean
+sticker	CatsInSuits_Mouse	CatsInSuits_Mouse.png	-	cat with mouse	catsinsuits, cat, mouse, play, curious, fun, cute
+sticker	CatsInSuits_OfficeChair	CatsInSuits_OfficeChair.png	-	manager cat	cat, catsinsuits, chair, office, manager, boss, happy
+sticker	CatsInSuits_PassOut	CatsInSuits_PassOut.png	-	passed out cat	cat, catsinsuits, pass, out, faint, dead, overwork, done
+sticker	CatsInSuits_Question	CatsInSuits_Question.png	-	curious cat	cat, catsinsuits, curious, cute, question, interested
+sticker	CatsInSuits_RollOver	CatsInSuits_RollOver.png	-	roll over cat	catsinsuits, cat, roll, over, cute, tummy
+sticker	CatsInSuits_Scared	CatsInSuits_Scared.png	-	scared cat	cat, catsinsuits, scared, surprise, startle, excited
+sticker	CatsInSuits_Shy	CatsInSuits_Shy.png	-	shy cat	cat, catsinsuits, shy, happiness, happy, thinking, cute
+sticker	CatsInSuits_SleepInSun	CatsInSuits_SleepInSun.png	-	cat in the sun	cat, catsinsuits, sun, sleepy, comfortable, happy, warm
+sticker	CatsInSuits_SleepOnDesk	CatsInSuits_SleepOnDesk.png	-	asleep on the desk	cat, catsinsuits, sleep, desk, tired, break
+sticker	CatsInSuits_WaterSpill	CatsInSuits_WaterSpill.png	-	water spill	catsinsuits, cat, water, spill, oops, accident, wasntme
+sticker	CatsInSuits_Window	CatsInSuits_Window.png	-	window cat	cat, catsinsuits, window, blinds, scratch, look, outside
+sticker	CatsInSuits_Yarn	CatsInSuits_Yarn.png	-	cat with yarn	catsinsuits, cat, yarn, play, game, happy, cute
 
 pack	WordArt	Word Art	WordArt_header_large.png	-
-sticker	WordArt_Amazing	WordArt_Amazing.png	-	-	amazing	word, wordart, amazing, sticker
-sticker	WordArt_Awesome	WordArt_Awesome.png	-	-	awesome	word, wordart, good, awesome, sticker
-sticker	WordArt_BRB	WordArt_BRB.png	-	-	brb	word, wordart, brb, sticker
-sticker	WordArt_Cool	WordArt_Cool.png	-	-	cool	word, wordart, sticker, cool
-sticker	WordArt_FYI	WordArt_FYI.png	-	-	fyi	wordart, word, sticker, fyi
-sticker	WordArt_Gross	WordArt_Gross.png	-	-	gross	word, wordart, sticker, gross, upset, sad, dissappointed
-sticker	WordArt_Hello	WordArt_Hello.png	-	-	hello	word, wordart, hello, sticker
-sticker	WordArt_JustASec	WordArt_JustASec.png	-	-	just a second	word, wordart, sticker, wait, second, hold
-sticker	WordArt_LOL	WordArt_LOL.png	-	-	lol	word, wordart, lol, sticker, laugh, funny
-sticker	WordArt_Nice	WordArt_Nice.png	-	-	nice	wordart, word, nice, sticker, cool, good
-sticker	WordArt_NoWay	WordArt_NoWay.png	-	-	no way	word, wordart, no, way, sticker, noway
-sticker	WordArt_Right	WordArt_Right.png	-	-	right	word, wordart, sticker, right
-sticker	WordArt_Sweet	WordArt_Sweet.png	-	-	sweet	word, wordart, sticker, sweet
-sticker	WordArt_Thanks	WordArt_Thanks.png	-	-	thanks	word, wordart, sticker, thanks
-sticker	WordArt_Totes	WordArt_Totes.png	-	-	totes	word, wordart, totes, sticker
-sticker	WordArt_WhyNot	WordArt_WhyNot.png	-	-	why not?	word, wordart, why, not, sticker
-sticker	WordArt_Wow	WordArt_Wow.png	-	-	wow	word, wordart, wow, sticker
-sticker	WordArt_YeahRight	WordArt_YeahRight.png	-	-	yeah right	wordart, word, yeah, right, sticker
-sticker	WordArt_YesPlease	WordArt_YesPlease.png	-	-	yes please	wordart, word, please, yes, sticker
+sticker	WordArt_Amazing	WordArt_Amazing.png	-	amazing	word, wordart, amazing, sticker
+sticker	WordArt_Awesome	WordArt_Awesome.png	-	awesome	word, wordart, good, awesome, sticker
+sticker	WordArt_BRB	WordArt_BRB.png	-	brb	word, wordart, brb, sticker
+sticker	WordArt_Cool	WordArt_Cool.png	-	cool	word, wordart, sticker, cool
+sticker	WordArt_FYI	WordArt_FYI.png	-	fyi	wordart, word, sticker, fyi
+sticker	WordArt_Gross	WordArt_Gross.png	-	gross	word, wordart, sticker, gross, upset, sad, dissappointed
+sticker	WordArt_Hello	WordArt_Hello.png	-	hello	word, wordart, hello, sticker
+sticker	WordArt_JustASec	WordArt_JustASec.png	-	just a second	word, wordart, sticker, wait, second, hold
+sticker	WordArt_LOL	WordArt_LOL.png	-	lol	word, wordart, lol, sticker, laugh, funny
+sticker	WordArt_Nice	WordArt_Nice.png	-	nice	wordart, word, nice, sticker, cool, good
+sticker	WordArt_NoWay	WordArt_NoWay.png	-	no way	word, wordart, no, way, sticker, noway
+sticker	WordArt_Right	WordArt_Right.png	-	right	word, wordart, sticker, right
+sticker	WordArt_Sweet	WordArt_Sweet.png	-	sweet	word, wordart, sticker, sweet
+sticker	WordArt_Thanks	WordArt_Thanks.png	-	thanks	word, wordart, sticker, thanks
+sticker	WordArt_Totes	WordArt_Totes.png	-	totes	word, wordart, totes, sticker
+sticker	WordArt_WhyNot	WordArt_WhyNot.png	-	why not?	word, wordart, why, not, sticker
+sticker	WordArt_Wow	WordArt_Wow.png	-	wow	word, wordart, wow, sticker
+sticker	WordArt_YeahRight	WordArt_YeahRight.png	-	yeah right	wordart, word, yeah, right, sticker
+sticker	WordArt_YesPlease	WordArt_YesPlease.png	-	yes please	wordart, word, please, yes, sticker
 
 pack	Monkey	Monkey	Monkey_header_large.png	-
-sticker	Monkey_Attack	Monkey_Attack.png	-	-	attack	monkey, cute, animal, attack
-sticker	Monkey_Banana	Monkey_Banana.png	-	-	banana	monkey, cute, banana, animal, food
-sticker	Monkey_Basic	Monkey_Basic.png	-	-	basic	monkey, cute, basic, animal, smile
-sticker	Monkey_Bored	Monkey_Bored.png	-	-	bored	monkey, cute, animal, bored
-sticker	Monkey_Cheer	Monkey_Cheer.png	-	-	cheer	cute, monkey, cheer, animal
-sticker	Monkey_Cool	Monkey_Cool.png	-	-	cool	monkey, cute, cool, animal
-sticker	Monkey_Dance	Monkey_Dance.png	-	-	dance	monkey, cute, dance, animal
-sticker	Monkey_Disguise	Monkey_Disguise.png	-	-	disguise	monkey, cute, animal, disguise
-sticker	Monkey_Dissed	Monkey_Dissed.png	-	-	dissed	monkey, cute, dissed, animal, offended
-sticker	Monkey_Dumbstruck	Monkey_Dumbstruck.png	-	-	dumbstruck	cute, monkey, dumbstruck, animal
-sticker	Monkey_Encourage	Monkey_Encourage.png	-	-	encourage	monkey, cute, encourage, animal
-sticker	Monkey_FaceDown	Monkey_FaceDown.png	-	-	facedown	monkey, cute, facedown, animal, fall, down
-sticker	Monkey_Frustrated	Monkey_Frustrated.png	-	-	frustrated	monkey, cute, frustrated, animal
-sticker	Monkey_Furious	Monkey_Furious.png	-	-	furious	monkey, cute, furious, animal
-sticker	Monkey_HearNoEvil	Monkey_HearNoEvil.png	-	-	hear no evil	cute, monkey, hear no evil, animal, evil
-sticker	Monkey_Jump	Monkey_Jump.png	-	-	jump	monkey, cute, jump, animal
-sticker	Monkey_Photo	Monkey_Photo.png	-	-	photo	monkey, cute, photo, animal
-sticker	Monkey_Run	Monkey_Run.png	-	-	run	monkey, cute, animal, run, exercise
-sticker	Monkey_SeeNoEvil	Monkey_SeeNoEvil.png	-	-	see no evil	monkey, cute, see no evil, animal, evil
-sticker	Monkey_Shrug	Monkey_Shrug.png	-	-	shrug	cute, monkey, shrug, animal
-sticker	Monkey_Sleep	Monkey_Sleep.png	-	-	sleep	monkey, cute, sleep, animal, laugh
-sticker	Monkey_Sneak	Monkey_Sneak.png	-	-	sneak	cute, monkey, sneak, animal
-sticker	Monkey_SpeakNoEvil	Monkey_SpeakNoEvil.png	-	-	speak no evil	word, monkey, speak no evil, smile, cute, evil
-sticker	Monkey_Stressed	Monkey_Stressed.png	-	-	stressed	monkey, animal, cute, stressed, tired
-sticker	Monkey_Tears	Monkey_Tears.png	-	-	tears	monkey, animal, cute, tears
-sticker	Monkey_Think	Monkey_Think.png	-	-	think	monkey, cute, animal, think
-sticker	Monkey_ThumbsUp	Monkey_ThumbsUp.png	-	-	thumbs up	monkey, cute, thumbs, animal, up
-sticker	Monkey_WornOut	Monkey_WornOut.png	-	-	worn out	monkey, cute, worn, animal, out
+sticker	Monkey_Attack	Monkey_Attack.png	-	attack	monkey, cute, animal, attack
+sticker	Monkey_Banana	Monkey_Banana.png	-	banana	monkey, cute, banana, animal, food
+sticker	Monkey_Basic	Monkey_Basic.png	-	basic	monkey, cute, basic, animal, smile
+sticker	Monkey_Bored	Monkey_Bored.png	-	bored	monkey, cute, animal, bored
+sticker	Monkey_Cheer	Monkey_Cheer.png	-	cheer	cute, monkey, cheer, animal
+sticker	Monkey_Cool	Monkey_Cool.png	-	cool	monkey, cute, cool, animal
+sticker	Monkey_Dance	Monkey_Dance.png	-	dance	monkey, cute, dance, animal
+sticker	Monkey_Disguise	Monkey_Disguise.png	-	disguise	monkey, cute, animal, disguise
+sticker	Monkey_Dissed	Monkey_Dissed.png	-	dissed	monkey, cute, dissed, animal, offended
+sticker	Monkey_Dumbstruck	Monkey_Dumbstruck.png	-	dumbstruck	cute, monkey, dumbstruck, animal
+sticker	Monkey_Encourage	Monkey_Encourage.png	-	encourage	monkey, cute, encourage, animal
+sticker	Monkey_FaceDown	Monkey_FaceDown.png	-	facedown	monkey, cute, facedown, animal, fall, down
+sticker	Monkey_Frustrated	Monkey_Frustrated.png	-	frustrated	monkey, cute, frustrated, animal
+sticker	Monkey_Furious	Monkey_Furious.png	-	furious	monkey, cute, furious, animal
+sticker	Monkey_HearNoEvil	Monkey_HearNoEvil.png	-	hear no evil	cute, monkey, hear no evil, animal, evil
+sticker	Monkey_Jump	Monkey_Jump.png	-	jump	monkey, cute, jump, animal
+sticker	Monkey_Photo	Monkey_Photo.png	-	photo	monkey, cute, photo, animal
+sticker	Monkey_Run	Monkey_Run.png	-	run	monkey, cute, animal, run, exercise
+sticker	Monkey_SeeNoEvil	Monkey_SeeNoEvil.png	-	see no evil	monkey, cute, see no evil, animal, evil
+sticker	Monkey_Shrug	Monkey_Shrug.png	-	shrug	cute, monkey, shrug, animal
+sticker	Monkey_Sleep	Monkey_Sleep.png	-	sleep	monkey, cute, sleep, animal, laugh
+sticker	Monkey_Sneak	Monkey_Sneak.png	-	sneak	cute, monkey, sneak, animal
+sticker	Monkey_SpeakNoEvil	Monkey_SpeakNoEvil.png	-	speak no evil	word, monkey, speak no evil, smile, cute, evil
+sticker	Monkey_Stressed	Monkey_Stressed.png	-	stressed	monkey, animal, cute, stressed, tired
+sticker	Monkey_Tears	Monkey_Tears.png	-	tears	monkey, animal, cute, tears
+sticker	Monkey_Think	Monkey_Think.png	-	think	monkey, cute, animal, think
+sticker	Monkey_ThumbsUp	Monkey_ThumbsUp.png	-	thumbs up	monkey, cute, thumbs, animal, up
+sticker	Monkey_WornOut	Monkey_WornOut.png	-	worn out	monkey, cute, worn, animal, out
 
 pack	Octocorn	Octocorn	Octocorn_header_large.png	-
-sticker	Octocorn_Amazed	Octocorn_Amazed.png	-	-	amazed	octocorn, cute, animal, amazed
-sticker	Octocorn_Awe	Octocorn_Awe.png	-	-	awe	octocorn, cute, awe, animal
-sticker	Octocorn_Barf	Octocorn_Barf.png	-	-	barf	octocorn, cute, barf, animal, puke, sick, throw up
-sticker	Octocorn_Coffee	Octocorn_Coffee.png	-	-	coffee	octocorn, cute, animal, coffee
-sticker	Octocorn_Cold	Octocorn_Cold.png	-	-	cold	cute, octocorn, cold, animal
-sticker	Octocorn_Command	Octocorn_Command.png	-	-	command	octocorn, cute, command, animal
-sticker	Octocorn_Confident	Octocorn_Confident.png	-	-	confident	octocorn, cute, confident, animal
-sticker	Octocorn_Confused	Octocorn_Confused.png	-	-	confused	octocorn, cute, animal, confused
-sticker	Octocorn_Creepy	Octocorn_Creepy.png	-	-	creepy	octocorn, cute, creepy, animal
-sticker	Octocorn_Crosseye	Octocorn_Crosseye.png	-	-	crosseye	cute, octocorn, crosseye, animal
-sticker	Octocorn_Cry	Octocorn_Cry.png	-	-	cry	octocorn, cute, cry, animal
-sticker	Octocorn_Derp	Octocorn_Derp.png	-	-	derp	octocorn, cute, derp, animal
-sticker	Octocorn_Devious	Octocorn_Devious.png	-	-	devious	octocorn, cute, devious, animal
-sticker	Octocorn_Drunk	Octocorn_Drunk.png	-	-	drunk	octocorn, cute, drunk, animal
-sticker	Octocorn_Eager	Octocorn_Eager.png	-	-	eager	cute, octocorn, eager, animal
-sticker	Octocorn_Enthused	Octocorn_Enthused.png	-	-	enthused	octocorn, cute, eager, animal, enthused
-sticker	Octocorn_Excited	Octocorn_Excited.png	-	-	excited	octocorn, cute, please, rush, animal
-sticker	Octocorn_FacePlant	Octocorn_FacePlant.png	-	-	face plant	octocorn, cute, animal, face, fall
-sticker	Octocorn_Fly	Octocorn_Fly.png	-	-	fly	octocorn, cute, fly, animal
-sticker	Octocorn_Formal	Octocorn_Formal.png	-	-	formal	cute, octocorn, ship, it, animal
-sticker	Octocorn_Giggle	Octocorn_Giggle.png	-	-	giggle	octocorn, cute, giggle, animal, laugh
-sticker	Octocorn_Goofy	Octocorn_Goofy.png	-	-	goofy	cute, octocorn, goofy, animal
-sticker	Octocorn_Happy	Octocorn_Happy.png	-	-	this side up	word, octocorn, happy, smile, cute
-sticker	Octocorn_Hot	Octocorn_Hot.png	-	-	hot	octocorn, animal, cute, hot, tired
-sticker	Octocorn_KnockedOver	Octocorn_KnockedOver.png	-	-	knocked over	octocorn, animal, knocked, cute, fall, over
-sticker	Octocorn_Laugh	Octocorn_Laugh.png	-	-	laugh	octocorn, cute, animal, laugh
-sticker	Octocorn_Ouch	Octocorn_Ouch.png	-	-	ouch	octocorn, cute, ouch, animal
-sticker	Octocorn_Proud	Octocorn_Proud.png	-	-	proud	octocorn, cute, proud, animal
-sticker	Octocorn_Question	Octocorn_Question.png	-	-	question	octocorn, cute, animal, question
-sticker	Octocorn_Rage	Octocorn_Rage.png	-	-	rage	cute, octocorn, rage, animal, angry
-sticker	Octocorn_Sad	Octocorn_Sad.png	-	-	sad	octocorn, cute, sad, animal
-sticker	Octocorn_Salute	Octocorn_Salute.png	-	-	salute	octocorn, cute, salute, animal
-sticker	Octocorn_Scared	Octocorn_Scared.png	-	-	scared	octocorn, cute, animal, scared
-sticker	Octocorn_Shy	Octocorn_Shy.png	-	-	shy	octocorn, cute, shy, animal
-sticker	Octocorn_Sick	Octocorn_Sick.png	-	-	sick	cute, octocorn, sick, animal
-sticker	Octocorn_Simple	Octocorn_Simple.png	-	-	simple	octocorn, cute, simple, animal
-sticker	Octocorn_Sleep	Octocorn_Sleep.png	-	-	sleep	octocorn, cute, sleep, animal
-sticker	Octocorn_Slow	Octocorn_Slow.png	-	-	slow	octocorn, cute, slow, animal
-sticker	Octocorn_Startled	Octocorn_Startled.png	-	-	startled	octocorn, cute, startled, animal
-sticker	Octocorn_Stretch	Octocorn_Stretch.png	-	-	stretch	cute, octocorn, stretch, animal
-sticker	Octocorn_Study	Octocorn_Study.png	-	-	study	octocorn, cute, study, animal, paper
-sticker	Octocorn_Stunned	Octocorn_Stunned.png	-	-	stunned	octocorn, cute, stunned, animal
-sticker	Octocorn_Stupified	Octocorn_Stupified.png	-	-	stupefied	octocorn, cute, animal, stupefied
-sticker	Octocorn_Suspicious	Octocorn_Suspicious.png	-	-	suspicious	octocorn, cute, suspicious, animal
-sticker	Octocorn_Terror	Octocorn_Terror.png	-	-	terror	cute, octocorn, terror, scared, animal
-sticker	Octocorn_Thinking	Octocorn_Thinking.png	-	-	thinking	octocorn, cute, thinking, animal
-sticker	Octocorn_Tongue	Octocorn_Tongue.png	-	-	tongue	cute, octocorn, tongue, animal
-sticker	Octocorn_Tough	Octocorn_Tough.png	-	-	tough	word, octocorn, tough, cute
-sticker	Octocorn_Twitch	Octocorn_Twitch.png	-	-	twitch	octocorns, animal, cute, twitch
-sticker	Octocorn_Upset	Octocorn_Upset.png	-	-	upset	octocorns, animal, upset, cute
+sticker	Octocorn_Amazed	Octocorn_Amazed.png	-	amazed	octocorn, cute, animal, amazed
+sticker	Octocorn_Awe	Octocorn_Awe.png	-	awe	octocorn, cute, awe, animal
+sticker	Octocorn_Barf	Octocorn_Barf.png	-	barf	octocorn, cute, barf, animal, puke, sick, throw up
+sticker	Octocorn_Coffee	Octocorn_Coffee.png	-	coffee	octocorn, cute, animal, coffee
+sticker	Octocorn_Cold	Octocorn_Cold.png	-	cold	cute, octocorn, cold, animal
+sticker	Octocorn_Command	Octocorn_Command.png	-	command	octocorn, cute, command, animal
+sticker	Octocorn_Confident	Octocorn_Confident.png	-	confident	octocorn, cute, confident, animal
+sticker	Octocorn_Confused	Octocorn_Confused.png	-	confused	octocorn, cute, animal, confused
+sticker	Octocorn_Creepy	Octocorn_Creepy.png	-	creepy	octocorn, cute, creepy, animal
+sticker	Octocorn_Crosseye	Octocorn_Crosseye.png	-	crosseye	cute, octocorn, crosseye, animal
+sticker	Octocorn_Cry	Octocorn_Cry.png	-	cry	octocorn, cute, cry, animal
+sticker	Octocorn_Derp	Octocorn_Derp.png	-	derp	octocorn, cute, derp, animal
+sticker	Octocorn_Devious	Octocorn_Devious.png	-	devious	octocorn, cute, devious, animal
+sticker	Octocorn_Drunk	Octocorn_Drunk.png	-	drunk	octocorn, cute, drunk, animal
+sticker	Octocorn_Eager	Octocorn_Eager.png	-	eager	cute, octocorn, eager, animal
+sticker	Octocorn_Enthused	Octocorn_Enthused.png	-	enthused	octocorn, cute, eager, animal, enthused
+sticker	Octocorn_Excited	Octocorn_Excited.png	-	excited	octocorn, cute, please, rush, animal
+sticker	Octocorn_FacePlant	Octocorn_FacePlant.png	-	face plant	octocorn, cute, animal, face, fall
+sticker	Octocorn_Fly	Octocorn_Fly.png	-	fly	octocorn, cute, fly, animal
+sticker	Octocorn_Formal	Octocorn_Formal.png	-	formal	cute, octocorn, ship, it, animal
+sticker	Octocorn_Giggle	Octocorn_Giggle.png	-	giggle	octocorn, cute, giggle, animal, laugh
+sticker	Octocorn_Goofy	Octocorn_Goofy.png	-	goofy	cute, octocorn, goofy, animal
+sticker	Octocorn_Happy	Octocorn_Happy.png	-	this side up	word, octocorn, happy, smile, cute
+sticker	Octocorn_Hot	Octocorn_Hot.png	-	hot	octocorn, animal, cute, hot, tired
+sticker	Octocorn_KnockedOver	Octocorn_KnockedOver.png	-	knocked over	octocorn, animal, knocked, cute, fall, over
+sticker	Octocorn_Laugh	Octocorn_Laugh.png	-	laugh	octocorn, cute, animal, laugh
+sticker	Octocorn_Ouch	Octocorn_Ouch.png	-	ouch	octocorn, cute, ouch, animal
+sticker	Octocorn_Proud	Octocorn_Proud.png	-	proud	octocorn, cute, proud, animal
+sticker	Octocorn_Question	Octocorn_Question.png	-	question	octocorn, cute, animal, question
+sticker	Octocorn_Rage	Octocorn_Rage.png	-	rage	cute, octocorn, rage, animal, angry
+sticker	Octocorn_Sad	Octocorn_Sad.png	-	sad	octocorn, cute, sad, animal
+sticker	Octocorn_Salute	Octocorn_Salute.png	-	salute	octocorn, cute, salute, animal
+sticker	Octocorn_Scared	Octocorn_Scared.png	-	scared	octocorn, cute, animal, scared
+sticker	Octocorn_Shy	Octocorn_Shy.png	-	shy	octocorn, cute, shy, animal
+sticker	Octocorn_Sick	Octocorn_Sick.png	-	sick	cute, octocorn, sick, animal
+sticker	Octocorn_Simple	Octocorn_Simple.png	-	simple	octocorn, cute, simple, animal
+sticker	Octocorn_Sleep	Octocorn_Sleep.png	-	sleep	octocorn, cute, sleep, animal
+sticker	Octocorn_Slow	Octocorn_Slow.png	-	slow	octocorn, cute, slow, animal
+sticker	Octocorn_Startled	Octocorn_Startled.png	-	startled	octocorn, cute, startled, animal
+sticker	Octocorn_Stretch	Octocorn_Stretch.png	-	stretch	cute, octocorn, stretch, animal
+sticker	Octocorn_Study	Octocorn_Study.png	-	study	octocorn, cute, study, animal, paper
+sticker	Octocorn_Stunned	Octocorn_Stunned.png	-	stunned	octocorn, cute, stunned, animal
+sticker	Octocorn_Stupified	Octocorn_Stupified.png	-	stupefied	octocorn, cute, animal, stupefied
+sticker	Octocorn_Suspicious	Octocorn_Suspicious.png	-	suspicious	octocorn, cute, suspicious, animal
+sticker	Octocorn_Terror	Octocorn_Terror.png	-	terror	cute, octocorn, terror, scared, animal
+sticker	Octocorn_Thinking	Octocorn_Thinking.png	-	thinking	octocorn, cute, thinking, animal
+sticker	Octocorn_Tongue	Octocorn_Tongue.png	-	tongue	cute, octocorn, tongue, animal
+sticker	Octocorn_Tough	Octocorn_Tough.png	-	tough	word, octocorn, tough, cute
+sticker	Octocorn_Twitch	Octocorn_Twitch.png	-	twitch	octocorns, animal, cute, twitch
+sticker	Octocorn_Upset	Octocorn_Upset.png	-	upset	octocorns, animal, upset, cute
 
 pack	DonutFriends	Donut Friends	DonutFriends_Header.png	-
-sticker	DonutFriends_begging	DonutFriends_begging.png	-	-	Begging Donut	sad, cry, tears, beg, begging, pleading, oops, donut, frown
-sticker	DonutFriends_chagrin	DonutFriends_chagrin.png	-	-	Chagrined Donut	sweat, chagrin, oops, bashful, donut, smile
-sticker	DonutFriends_cheering	DonutFriends_cheering.png	-	-	Cheering Donut	cheer, donut, cheering, happy, celebrate, yay, pompom, smile
-sticker	DonutFriends_crying	DonutFriends_crying.png	-	-	Crying Donut	cry, crying, sob, sobbing, donut, sad, frown
-sticker	DonutFriends_extremeshock	DonutFriends_extremeshock.png	-	-	Shocked Donut	donut, shocked, surprised, stunned, omg
-sticker	DonutFriends_facepalm	DonutFriends_facepalm.png	-	-	Facepalm Donut	donut, facepalm, oops, omg, doh
-sticker	DonutFriends_impatient	DonutFriends_impatient.png	-	-	Impatient Donut	donut, angry, impatient, upset, no, mad, smile
-sticker	DonutFriends_lightbulb	DonutFriends_lightbulb.png	-	-	Lightbulb Donut	donut, lightbulb, idea, inspired, light, smile
-sticker	DonutFriends_rofl	DonutFriends_rofl.png	-	-	ROFL Donut	donut, rofl, laugh, funny, lol, haha, happy, smile
-sticker	DonutFriends_searching	DonutFriends_searching.png	-	-	Searching Donut	donut, searching, looking, look, search, magnify, investigate, detective, inspect
-sticker	DonutFriends_thinking	DonutFriends_thinking.png	-	-	Thinking Donut	donut, think, thinking, hmm, wonder
-sticker	DonutFriends_thumbsup	DonutFriends_thumbsup.png	-	-	Thumbsup Donut	donut, thumbsup, good, ok, yes, like, nice, smile
+sticker	DonutFriends_begging	DonutFriends_begging.png	-	Begging Donut	sad, cry, tears, beg, begging, pleading, oops, donut, frown
+sticker	DonutFriends_chagrin	DonutFriends_chagrin.png	-	Chagrined Donut	sweat, chagrin, oops, bashful, donut, smile
+sticker	DonutFriends_cheering	DonutFriends_cheering.png	-	Cheering Donut	cheer, donut, cheering, happy, celebrate, yay, pompom, smile
+sticker	DonutFriends_crying	DonutFriends_crying.png	-	Crying Donut	cry, crying, sob, sobbing, donut, sad, frown
+sticker	DonutFriends_extremeshock	DonutFriends_extremeshock.png	-	Shocked Donut	donut, shocked, surprised, stunned, omg
+sticker	DonutFriends_facepalm	DonutFriends_facepalm.png	-	Facepalm Donut	donut, facepalm, oops, omg, doh
+sticker	DonutFriends_impatient	DonutFriends_impatient.png	-	Impatient Donut	donut, angry, impatient, upset, no, mad, smile
+sticker	DonutFriends_lightbulb	DonutFriends_lightbulb.png	-	Lightbulb Donut	donut, lightbulb, idea, inspired, light, smile
+sticker	DonutFriends_rofl	DonutFriends_rofl.png	-	ROFL Donut	donut, rofl, laugh, funny, lol, haha, happy, smile
+sticker	DonutFriends_searching	DonutFriends_searching.png	-	Searching Donut	donut, searching, looking, look, search, magnify, investigate, detective, inspect
+sticker	DonutFriends_thinking	DonutFriends_thinking.png	-	Thinking Donut	donut, think, thinking, hmm, wonder
+sticker	DonutFriends_thumbsup	DonutFriends_thumbsup.png	-	Thumbsup Donut	donut, thumbsup, good, ok, yes, like, nice, smile
 
 pack	UncleBlob	Uncle Blob	UncleBlob_Header.png	-
-sticker	UncleBlob_Angry	UncleBlob_Angry.png	-	-	Angry Blob	blob, angry, annoyed, irritated, mad, cross, fuming, unamused, no
-sticker	UncleBlob_Cheer	UncleBlob_Cheer.png	-	-	Cheering Blob	blob, cheer, happy, celebrate, pompom, yay, confetti, cheering, smile, congrats, party
-sticker	UncleBlob_EndOfTheWorld	UncleBlob_EndOfTheWorld.png	-	-	Hopeless Blob	blob, sad, hopeless, depressed, lying, tears, crying
-sticker	UncleBlob_HeartEyes	UncleBlob_HeartEyes.png	-	-	Heart Eyes Blob	blob, hearteyes, heart, love, happy, like
-sticker	UncleBlob_Hungry	UncleBlob_Hungry.png	-	-	Hungry Blob	blob, hungry, food, burger, hamburger, cheeseburger, eat, yum, starving, lunch, dinner, breakfast, snack
-sticker	UncleBlob_Laughing	UncleBlob_Laughing.png	-	-	Laughing Blob	blob, lol, rofl, laugh, haha, funny, laughing, smile, humor, lmao
-sticker	UncleBlob_Pleading	UncleBlob_Pleading.png	-	-	Pleading Blob	blob, pleading, sad, cloud, tear, cry, crying, upset, sob, please
-sticker	UncleBlob_Shocked	UncleBlob_Shocked.png	-	-	Shocked Blob	blob, shocked, stunned, surprised, jump, boo, omg, crazy, scared, nervous
-sticker	UncleBlob_Sleepy	UncleBlob_Sleepy.png	-	-	Sleepy Blob	blob, sleepy, tired, exhausted, drool, sit, zzz, dozing
-sticker	UncleBlob_Thinking	UncleBlob_Thinking.png	-	-	Thinking Blob	blob, thinking, think, ponder, hmm, wonder
-sticker	UncleBlob_ThumbsUp	UncleBlob_ThumbsUp.png	-	-	Thumbsup Blob	blob, thumbsup, like, love, happy, good, yes, ok, smile
-sticker	UncleBlob_Unmotivated	UncleBlob_Unmotivated.png	-	-	Unmotivated Blob	blob, unmotivated, sleep, day, burned out, tired, lying, fall, lazy, daydreaming, vacation
+sticker	UncleBlob_Angry	UncleBlob_Angry.png	-	Angry Blob	blob, angry, annoyed, irritated, mad, cross, fuming, unamused, no
+sticker	UncleBlob_Cheer	UncleBlob_Cheer.png	-	Cheering Blob	blob, cheer, happy, celebrate, pompom, yay, confetti, cheering, smile, congrats, party
+sticker	UncleBlob_EndOfTheWorld	UncleBlob_EndOfTheWorld.png	-	Hopeless Blob	blob, sad, hopeless, depressed, lying, tears, crying
+sticker	UncleBlob_HeartEyes	UncleBlob_HeartEyes.png	-	Heart Eyes Blob	blob, hearteyes, heart, love, happy, like
+sticker	UncleBlob_Hungry	UncleBlob_Hungry.png	-	Hungry Blob	blob, hungry, food, burger, hamburger, cheeseburger, eat, yum, starving, lunch, dinner, breakfast, snack
+sticker	UncleBlob_Laughing	UncleBlob_Laughing.png	-	Laughing Blob	blob, lol, rofl, laugh, haha, funny, laughing, smile, humor, lmao
+sticker	UncleBlob_Pleading	UncleBlob_Pleading.png	-	Pleading Blob	blob, pleading, sad, cloud, tear, cry, crying, upset, sob, please
+sticker	UncleBlob_Shocked	UncleBlob_Shocked.png	-	Shocked Blob	blob, shocked, stunned, surprised, jump, boo, omg, crazy, scared, nervous
+sticker	UncleBlob_Sleepy	UncleBlob_Sleepy.png	-	Sleepy Blob	blob, sleepy, tired, exhausted, drool, sit, zzz, dozing
+sticker	UncleBlob_Thinking	UncleBlob_Thinking.png	-	Thinking Blob	blob, thinking, think, ponder, hmm, wonder
+sticker	UncleBlob_ThumbsUp	UncleBlob_ThumbsUp.png	-	Thumbsup Blob	blob, thumbsup, like, love, happy, good, yes, ok, smile
+sticker	UncleBlob_Unmotivated	UncleBlob_Unmotivated.png	-	Unmotivated Blob	blob, unmotivated, sleep, day, burned out, tired, lying, fall, lazy, daydreaming, vacation
 
 pack	Animalopolis	Animalopolis	Animalopolis_Header.png	-
-sticker	Animalopolis_cry_mouse	Animalopolis_cry_mouse.png	-	-	Crying Mouse	animal, mouse, cry, sob, sad, tears, hurt, frown
-sticker	Animalopolis_cute_koala	Animalopolis_cute_koala.png	-	-	Shy Koala	animal, koala, cute, happy, nice, bashful, smile
-sticker	Animalopolis_excited_bunny	Animalopolis_excited_bunny.png	-	-	Excited Bunny	animal, bunny, rabbit, rainbow, happy, celebrate, excited, jump, leap, smile
-sticker	Animalopolis_grumpy_goat	Animalopolis_grumpy_goat.png	-	-	Grumpy Goat	animal, goat, ram, grumpy, tired, unimpressed, dry, wait
-sticker	Animalopolis_hmm_fox	Animalopolis_hmm_fox.png	-	-	Thinking Fox	animal, fox, thinking, hmm, ponder, wonder, think, question
-sticker	Animalopolis_hype_monkey	Animalopolis_hype_monkey.png	-	-	Hype Monkey	animal, monkey, hype, excited, happy, jump, celebrate, yay, smile
-sticker	Animalopolis_laughing_donkey	Animalopolis_laughing_donkey.png	-	-	Laughing Donkey	animal, donkey, mule, laugh, rofl, lol, smile, laughing, funny, hilarious
-sticker	Animalopolis_love_hedgehog	Animalopolis_love_hedgehog.png	-	-	Heart Eyes Hedgehog	animal, hedgehog, porcupine, love, like, happy, smile, heart eyes, infatuated
-sticker	Animalopolis_mad_rhino	Animalopolis_mad_rhino.png	-	-	Mad Rhino	animal, rhino, mad, angry, frown, annoyed, upset, irritated, unimpressed
-sticker	Animalopolis_oops_panda	Animalopolis_oops_panda.png	-	-	Oops Panda	animal, panda, oops, mistake, sad, work, laptop, busy
-sticker	Animalopolis_running_cheetah	Animalopolis_running_cheetah.png	-	-	Running Cheetah	animal, cheetah, run, running, sprint, sprinting, fast, speed, quick
-sticker	Animalopolis_weird_lemur	Animalopolis_weird_lemur.png	-	-	Weird Lemur	animal, lemur, look, peek, eyes, sneaky, hello, weird
+sticker	Animalopolis_cry_mouse	Animalopolis_cry_mouse.png	-	Crying Mouse	animal, mouse, cry, sob, sad, tears, hurt, frown
+sticker	Animalopolis_cute_koala	Animalopolis_cute_koala.png	-	Shy Koala	animal, koala, cute, happy, nice, bashful, smile
+sticker	Animalopolis_excited_bunny	Animalopolis_excited_bunny.png	-	Excited Bunny	animal, bunny, rabbit, rainbow, happy, celebrate, excited, jump, leap, smile
+sticker	Animalopolis_grumpy_goat	Animalopolis_grumpy_goat.png	-	Grumpy Goat	animal, goat, ram, grumpy, tired, unimpressed, dry, wait
+sticker	Animalopolis_hmm_fox	Animalopolis_hmm_fox.png	-	Thinking Fox	animal, fox, thinking, hmm, ponder, wonder, think, question
+sticker	Animalopolis_hype_monkey	Animalopolis_hype_monkey.png	-	Hype Monkey	animal, monkey, hype, excited, happy, jump, celebrate, yay, smile
+sticker	Animalopolis_laughing_donkey	Animalopolis_laughing_donkey.png	-	Laughing Donkey	animal, donkey, mule, laugh, rofl, lol, smile, laughing, funny, hilarious
+sticker	Animalopolis_love_hedgehog	Animalopolis_love_hedgehog.png	-	Heart Eyes Hedgehog	animal, hedgehog, porcupine, love, like, happy, smile, heart eyes, infatuated
+sticker	Animalopolis_mad_rhino	Animalopolis_mad_rhino.png	-	Mad Rhino	animal, rhino, mad, angry, frown, annoyed, upset, irritated, unimpressed
+sticker	Animalopolis_oops_panda	Animalopolis_oops_panda.png	-	Oops Panda	animal, panda, oops, mistake, sad, work, laptop, busy
+sticker	Animalopolis_running_cheetah	Animalopolis_running_cheetah.png	-	Running Cheetah	animal, cheetah, run, running, sprint, sprinting, fast, speed, quick
+sticker	Animalopolis_weird_lemur	Animalopolis_weird_lemur.png	-	Weird Lemur	animal, lemur, look, peek, eyes, sneaky, hello, weird
