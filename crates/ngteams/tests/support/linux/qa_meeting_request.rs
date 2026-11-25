@@ -135,6 +135,15 @@ fn both_themes(user: &mut User<'_>, name: &str) -> SandboxResult {
     user.set_theme("light")
 }
 
+/// A shot in Teams Light and Teams Dark, named `<name>-<theme>`, with the focus and the pointer where they are.
+fn themes_in_place(user: &mut User<'_>, name: &str) -> SandboxResult {
+    for theme in ["light", "dark"] {
+        user.set_theme(theme)?;
+        user.shot(&format!("{name}-{theme}"))?;
+    }
+    user.set_theme("light")
+}
+
 /// Waits until the state of `mri` in People holds `wanted`.
 fn until_asked(user: &mut User<'_>, what: &str, mri: &str, wanted: impl Fn(Option<Value>) -> bool) -> SandboxResult {
     user.until(what, |state| wanted(asked_of(state, mri))).map(drop)
@@ -307,7 +316,7 @@ fn keyboard_request(user: &mut User<'_>) -> SandboxResult {
     user.park()?;
     tab_to(user, "call-roster-added-1")?;
     thread::sleep(SETTLE);
-    user.shot("request-keyboard-on-row")?;
+    themes_in_place(user, "request-keyboard-on-row")?;
     let before = user.sent("add");
     // Enter on the row itself, then Tab to its Request to join and Enter
     user.press("enter")?;
@@ -336,7 +345,11 @@ fn keyboard_request(user: &mut User<'_>) -> SandboxResult {
     let focus = people_focus(user)?;
     say(&format!("  the keyboard is on {focus:?} after the move"));
     thread::sleep(SETTLE);
-    user.shot("request-keyboard-after")?;
+    themes_in_place(user, "request-keyboard-after")?;
+    let still = people_focus(user)?;
+    ensure(still == focus, || {
+        format!("the theme change moved the keyboard from {focus:?} to {still:?}")
+    })?;
     // a second Enter where the keyboard stays must not ask the next person in
     let before = user.sent("add");
     let bodies = add_bodies(user, &meeting.call).len();
