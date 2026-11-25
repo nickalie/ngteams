@@ -1483,8 +1483,16 @@ fn hover_and_focus_bare(user: &mut User<'_>) -> SandboxResult {
         user.ask(&format!("theme-{theme}"))?;
         let (_, found) = user.stickers(&format!("hover-start-{theme}"), 2)?;
         let (theirs, own) = theirs_and_own(&found).ok_or("no sticker of b's and of a's")?;
-        for (sticker, is_own, who) in [(theirs, false, "b's"), (own, true, "a's")] {
+        for (id, sticker, is_own, who) in [(&ids[0], theirs, false, "b's"), (&ids[1], own, true, "a's")] {
             user.point(sticker.centre())?;
+            if let Err(error) = user.until(&format!("{who} sticker hovered"), |state| {
+                state["chat"]["hovered"] == id.as_str()
+            }) {
+                faults.push(format!("{theme}: {error}"));
+                continue;
+            }
+            // the hover can come after the pointer's settle: give its frame time to paint
+            thread::sleep(SETTLE);
             let image = image::open(user.shot(&format!("hover-{}-{theme}", &who[..1]))?)?.to_rgb8();
             let drawn = behind(&image, sticker.sticker, is_own);
             if !drawn.is_empty() {
