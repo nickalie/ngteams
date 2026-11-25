@@ -48,7 +48,10 @@ The level of each step comes from these settings (`crates/teams-media/src/proces
 The level is kept for each account in the settings file (the `noise_suppression` table, by the account's MRI). An
 account that has no row is at Auto. The call reads the level at each frame. Thus a change in Settings or in the call's
 audio menu applies to the next 10 ms frame. A change to or from Low makes libwebrtc's echo module again (it selects
-its parts only when it is made). The echo canceller then converges again in about one second.
+its parts only when it is made). The echo canceller then converges again in about one second. The classic
+suppressor stays in the echo module: there it analyses the frame before AEC3. If it is a module of its own after
+the echo canceller, the gain control brings the noise that it lowered back up. Measured: steady noise alone, 2 s
+into the call, is 1 dB down, not 14 dB.
 
 ### DeepFilterNet3
 
@@ -56,8 +59,9 @@ DeepFilterNet3 is a neural network that keeps speech and removes other sounds, s
 ngteams runs it through `deep-filter-rt` (libDF's real-time inference on tract, pure Rust). The model is in the
 crate, so it is in the `ngteams` binary of each release (Linux packages, Windows, macOS). No release script or
 package file has to install a model file. The code and the model weights are MIT or Apache-2.0, as ngteams is. The
-crate logs only its setup at `debug` (the load of the model, a change of the limit). Its per-frame line is at
-`trace`, which the compile-time cap of `teams-log` removes. No line has audio in it.
+crate logs its setup at `info` and `debug` (the load of the model, a change of the limit). It logs a warning for
+each frame that clips, up to 100 lines in each second. No line has audio in it. None of these lines gets to the log
+file: `teams-log` keeps only the `teams_…` and `ngteams` targets.
 
 The model loads one time for each process, on a thread of its own, when the first call's processing starts. Each call
 then gets a clone of the model with a new state. Until the model is ready, the frames go through without

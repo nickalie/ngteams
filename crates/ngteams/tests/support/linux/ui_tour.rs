@@ -1312,6 +1312,10 @@ const STEPS: [Step; 5 + 368 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     }),
     ("settings-calls-noise-light", |shell, _, cx| {
         fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+    }),
+    // the Calls page's video effects, scrolled to: a camera to preview (the test pattern), one of the app's pictures
+    // chosen, the camera off with Preview; the noise suppression back at Auto after the High shots
+    ("settings-video-effects", |shell, _, cx| {
         let account = shell.read(cx).account().to_owned();
         let model = shell.read(cx).settings().clone();
         model.update(cx, |model, cx| {
@@ -1320,11 +1324,6 @@ const STEPS: [Step; 5 + 368 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
                 cx,
             );
         });
-    }),
-    // the Calls page's video effects, scrolled to: a camera to preview (the test pattern), one of the app's pictures
-    // chosen, the camera off with Preview
-    ("settings-video-effects", |shell, _, cx| {
-        let model = shell.read(cx).settings().clone();
         let camera: Arc<dyn teams_media::devices::Devices + Send + Sync> = match PictureCamera::sample() {
             Some(picture) => Arc::new(picture),
             None => Arc::new(teams_media::devices::file::FileDevices {

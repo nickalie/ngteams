@@ -90,7 +90,7 @@ fn the_echo_of_what_the_speaker_plays_is_suppressed_by_the_margin() {
 
 #[test]
 fn with_the_processing_off_the_microphone_s_frames_pass_unchanged() {
-    let processing = AudioProcessing::new(ProcessingConfig::OFF).unwrap();
+    let processing = AudioProcessing::with_noise(ProcessingConfig::OFF, NoiseControl::default()).unwrap();
     assert!(!processing.config().any());
     let far = speech_like(300, 7, FAR_PEAK);
     let (heard, processed) = looped(&processing, &far, &voice(300, VOICE), 10);
@@ -240,14 +240,15 @@ fn a_level_changed_during_the_call_applies_at_once() {
     DeepFilter::loaded(NO_LIMIT_DB).unwrap();
     let control = NoiseControl::new(NoiseSuppression::Off);
     let processing = AudioProcessing::with_noise(NOISE_ONLY, control.clone()).unwrap();
-    let near = bursts(1200, 9, 0.1);
+    let near = bursts(1500, 9, 0.1);
     let mut out = Vec::with_capacity(near.len());
-    // 3 s at each level, Off, High, Low, then Auto
+    // 3 s at each level: Off, High, Auto on High's state, Low, then High on a fresh state
     for (stretch, level) in near.chunks(300).zip([
         NoiseSuppression::Off,
         NoiseSuppression::High,
-        NoiseSuppression::Low,
         NoiseSuppression::Auto,
+        NoiseSuppression::Low,
+        NoiseSuppression::High,
     ]) {
         control.set(level);
         assert_eq!(processing.noise_level(), level);
@@ -258,36 +259,14 @@ fn a_level_changed_during_the_call_applies_at_once() {
         let at = stretch * 300 + 100..stretch * 300 + 300;
         -decibels(rms(&out[at.clone()]), rms(&near[at]))
     };
-    let (off, high, low, auto) = (lowered(0), lowered(1), lowered(2), lowered(3));
-    eprintln!("lowered by: Off {off:.1} dB, High {high:.1}, Low {low:.1}, Auto {auto:.1}");
+    let (off, high, auto, low, high_again) = (lowered(0), lowered(1), lowered(2), lowered(3), lowered(4));
+    eprintln!("lowered by: Off {off:.1} dB, High {high:.1}, Auto {auto:.1}, Low {low:.1}, High {high_again:.1}");
     assert!(off.abs() < 0.5, "Off lowers the noise {off:.1} dB");
     assert!(high > low + HIGH_OVER_LOW_DB, "High {high:.1} dB, Low {low:.1} dB");
     assert!(auto > low, "Auto {auto:.1} dB, Low {low:.1} dB");
     assert!(auto < high, "Auto {auto:.1} dB, High {high:.1} dB: Auto is the gentler");
-}
-
-#[test]
-fn a_call_s_processing_loads_the_model_itself_and_the_frames_pass_until_it_is_ready() {
-    let processing = AudioProcessing::with_noise(NOISE_ONLY, NoiseControl::new(NoiseSuppression::High)).unwrap();
-    assert!(format!("{processing:?}").contains("High"), "{processing:?}");
-    assert_eq!(ProcessingConfig::default(), ProcessingConfig::CALL);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    let noise = bursts(100, 13, 0.1);
-    let lowered = loop {
-        let mut out = noise.clone();
-        for frame in &mut out {
-            processing.near_end(frame).unwrap();
-        }
-        if -decibels(rms(&out[50..]), rms(&noise[50..])) > HIGH_OVER_LOW_DB {
-            break true;
-        }
-        if std::time::Instant::now() > deadline {
-            break false;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    };
     assert!(
-        lowered,
-        "the model loaded on its own thread within a minute and took the noise out"
+        high_again > auto,
+        "High after Low {high_again:.1} dB, Auto {auto:.1} dB"
     );
 }

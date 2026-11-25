@@ -12,7 +12,9 @@
 //!
 //! The gain control is a module of its own after the noise suppression, so it levels the cleaned voice, not the
 //! noise. libwebrtc's module takes its parts only when it is made: a change to or from Low makes the echo
-//! canceller's module again, which then converges again within about a second.
+//! canceller's module again, which then converges again within about a second. The classic suppressor stays in the
+//! echo canceller's module: there it analyses the frame before AEC3, and as a module of its own after it, the gain
+//! control brings the noise it lowered back up.
 //!
 //! The session runs it itself rather than leaving it to libwebrtc's audio source: the far end is played by the device
 //! seam, not by a libwebrtc audio device, so only the session can hand the module what the speaker plays.
@@ -105,14 +107,6 @@ impl std::fmt::Debug for AudioProcessing {
 }
 
 impl AudioProcessing {
-    /// A processing running `config` on frames at [`SAMPLE_RATE`], its noise suppression at [`NoiseSuppression::Auto`].
-    ///
-    /// # Errors
-    /// Never today: kept for a module that can refuse its setup.
-    pub fn new(config: ProcessingConfig) -> Result<Self, Error> {
-        Self::with_noise(config, NoiseControl::default())
-    }
-
     /// A processing running `config`, its noise suppression at the level `noise` holds at each frame. With noise
     /// suppression in `config`, DeepFilterNet's model starts to load.
     ///
