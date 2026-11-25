@@ -393,3 +393,103 @@ async fn a_step_addressed_to_an_account_goes_to_that_account_s_page() {
     assert!(addressed(&mut pages, "@c js true").0.is_none());
     assert!(addressed(&mut pages, "@nobody js true").0.is_none());
 }
+
+fn on(page: &crate::scenario::test_page::Page, session: Option<&str>, method: &str, params: serde_json::Value) {
+    page.events
+        .send(crate::cdp::Event {
+            session_id: session.map(crate::cdp::SessionId::new),
+            method: method.into(),
+            params,
+        })
+        .unwrap();
+}
+
+#[tokio::test]
+async fn seen_names_the_target_of_each_request_and_how_it_ended() {
+    let mut page = page_with(false, false, |_, _| None).await;
+    page.driver.know_targets([crate::arming::ArmedTarget {
+        target_id: "synthetic-frame-target".into(),
+        session: crate::cdp::SessionId::new("synthetic-frame"),
+        kind: crate::arming::TargetKind::Iframe,
+        parent: None,
+    }]);
+    on(
+        &page,
+        None,
+        "Target.attachedToTarget",
+        json!({"sessionId":"synthetic-worker","targetInfo":{"type":"worker","targetId":"synthetic-worker-target"}}),
+    );
+    let url = |id: &str| format!("https://teams.cloud.microsoft/api/chatsvc/synthetic/{id}?private=hidden");
+    for (session, id, method) in [
+        (Some("synthetic-worker"), "sent", "POST"),
+        (Some("synthetic-worker"), "held", "POST"),
+        (Some("synthetic-page"), "read", "GET"),
+        (Some("synthetic-frame"), "framed", "PUT"),
+        (Some("synthetic-stranger"), "stranger", "DELETE"),
+        (None, "browser", "PATCH"),
+    ] {
+        on(
+            &page,
+            session,
+            "Network.requestWillBeSent",
+            json!({"requestId":id,"request":{"method":method,"url":url(id),"postData":"synthetic body"}}),
+        );
+    }
+    on(
+        &page,
+        Some("synthetic-worker"),
+        "Network.responseReceived",
+        json!({"requestId":"sent","response":{"status":201}}),
+    );
+    on(
+        &page,
+        Some("synthetic-worker"),
+        "Network.loadingFailed",
+        json!({"requestId":"held","errorText":"net::ERR_BLOCKED_BY_CLIENT"}),
+    );
+    on(
+        &page,
+        Some("synthetic-page"),
+        "Network.responseReceived",
+        json!({"requestId":"read","response":{"status":200}}),
+    );
+    let mut seen = 0;
+    let mut report = ScenarioReport::new(ScenarioName::TeamManage);
+    let answer = writes_seen(&mut page.driver, &mut report, &mut seen, &TEAM_SERVICES).await;
+    let lines: Vec<_> = answer.lines().collect();
+    let expect = [
+        "POST https://teams.cloud.microsoft/api/chatsvc/synthetic/sent?private -> 201 from worker",
+        "POST https://teams.cloud.microsoft/api/chatsvc/synthetic/held?private -> failed net::ERR_BLOCKED_BY_CLIENT from worker",
+        "GET https://teams.cloud.microsoft/api/chatsvc/synthetic/read?private -> 200 from page",
+        "PUT https://teams.cloud.microsoft/api/chatsvc/synthetic/framed?private -> pending from iframe",
+        "DELETE https://teams.cloud.microsoft/api/chatsvc/synthetic/stranger?private -> pending from unknown target",
+        "PATCH https://teams.cloud.microsoft/api/chatsvc/synthetic/browser?private -> pending from browser",
+    ];
+    assert_eq!(lines.len(), expect.len(), "{answer}");
+    for (line, expected) in lines.iter().zip(expect) {
+        assert!(line.starts_with(expected), "{line} / {expected}");
+    }
+    assert!(!answer.contains("hidden"));
+    assert!(
+        report
+            .notes
+            .iter()
+            .any(|note| note.ends_with("synthetic/sent?private from worker"))
+    );
+}
+
+#[test]
+fn every_target_kind_has_its_cdp_name() {
+    use crate::arming::TargetKind;
+    for name in [
+        "page",
+        "iframe",
+        "worker",
+        "shared_worker",
+        "service_worker",
+        "worklet",
+        "synthetic_other",
+    ] {
+        assert_eq!(TargetKind::from_type(name).name(), name);
+    }
+}

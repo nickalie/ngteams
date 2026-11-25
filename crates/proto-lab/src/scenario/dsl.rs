@@ -361,10 +361,15 @@ impl Driver {
     /// The same driver, knowing the kind of each target attached before it began.
     #[must_use]
     pub fn with_targets(mut self, targets: impl IntoIterator<Item = ArmedTarget>) -> Self {
+        self.know_targets(targets);
+        self
+    }
+
+    /// Learns the kind of each of `targets`, attached before the driver began.
+    pub fn know_targets(&mut self, targets: impl IntoIterator<Item = ArmedTarget>) {
         for target in targets {
             self.kinds.insert(target.session, target.kind.name().to_owned());
         }
-        self
     }
 
     /// Which target sent `request`: `page` (the driven tab), the CDP type of another target (`worker`, `iframe`,

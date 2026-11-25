@@ -464,3 +464,249 @@ async fn native_authorization_uses_the_dedicated_driver_and_closes_before_return
             .contains("synthetic-redirect-secret")
     );
 }
+
+const REPROCESS: &str = "https://login.microsoftonline.com/common/reprocess?ctx=synthetic";
+
+fn reprocess(page: &Page, times: u32) {
+    for _ in 0..times {
+        page.send(
+            "Page.frameNavigated",
+            json!({"frame":{"id":"synthetic-frame","url":REPROCESS}}),
+        );
+        page.send("Page.frameStoppedLoading", json!({"frameId":"synthetic-frame"}));
+    }
+}
+
+async fn cookie_page() -> Page {
+    Page::new(|command| match command["method"].as_str().unwrap() {
+        "Runtime.evaluate" => Ok(evaluated(json!({}))),
+        "Network.getCookies" => Ok(json!({"cookies":[
+            {"name":"synthetic-ests","domain":".login.microsoftonline.com","path":"/"},
+            {"name":"synthetic-live","domain":"login.live.com","path":"/"},
+            {"name":"synthetic-shared","domain":".microsoft.com","path":"/"},
+            {"name":"synthetic-lookalike","domain":"notlogin.live.com","path":"/"},
+            {"name":"synthetic-incomplete"}
+        ]})),
+        "Network.deleteCookies" | "Page.navigate" | "Storage.clearDataForOrigin" => Ok(json!({})),
+        method => Err(format!("unexpected synthetic reprocess command {method}")),
+    })
+    .await
+}
+
+fn sent(page: &Page, method: &str) -> Vec<Value> {
+    page.commands()
+        .into_iter()
+        .filter(|command| command["method"] == method)
+        .map(|command| command["params"].clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_reprocess_loop_deletes_only_the_sign_in_cookies_once_then_stops_the_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let accounts = accounts();
+    let status = StatusFile::new(dir.path(), Alias::A);
+    let mut page = cookie_page().await;
+    let mut session = page.session(dir.path(), false);
+    let run = Run {
+        upn: UPN,
+        credentials: accounts.for_alias(Alias::A, UPN).unwrap(),
+        status: &status,
+        options: LoginOptions {
+            timeout: Duration::from_millis(3500),
+        },
+    };
+    let mut sign_in = SignIn::default();
+    reprocess(&page, REPROCESS_LOOP - 1);
+    assert!(matches!(
+        run.until_loaded(&mut session, &mut sign_in).await,
+        Err(LoginError::Timeout { .. })
+    ));
+    assert!(
+        sent(&page, "Network.getCookies").is_empty(),
+        "fewer reloads are no loop"
+    );
+
+    reprocess(&page, 1);
+    assert!(matches!(
+        run.until_loaded(&mut session, &mut sign_in).await,
+        Err(LoginError::Timeout { .. })
+    ));
+    let deleted = sent(&page, "Network.deleteCookies");
+    assert_eq!(
+        deleted,
+        [
+            json!({"name":"synthetic-ests","domain":".login.microsoftonline.com","path":"/"}),
+            json!({"name":"synthetic-live","domain":"login.live.com","path":"/"}),
+        ]
+    );
+    assert_eq!(
+        sent(&page, "Page.navigate"),
+        [json!({"url": "about:blank"}), json!({"url": TEAMS_URL})]
+    );
+    let cleared = sent(&page, "Storage.clearDataForOrigin");
+    assert_eq!(cleared.len(), SIGN_IN_HOSTS.len());
+    assert_eq!(
+        cleared[0],
+        json!({"origin":"https://login.microsoftonline.com","storageTypes":"all"})
+    );
+    let record: Value = serde_json::from_str(&fs::read_to_string(&status.path).unwrap()).unwrap();
+    assert_eq!(record["state"], "sign-in-cookies-deleted");
+    assert_eq!(record["cookies"], 2);
+
+    reprocess(&page, REPROCESS_LOOP);
+    assert!(matches!(
+        run.until_loaded(&mut session, &mut sign_in).await,
+        Err(LoginError::ReprocessLoop)
+    ));
+    assert_eq!(
+        sent(&page, "Network.deleteCookies").len(),
+        2,
+        "the cookies go once only"
+    );
+    assert_eq!(sent(&page, "Page.navigate").len(), 2);
+}
+
+#[tokio::test]
+async fn a_reprocess_loop_after_typing_stops_without_deleting_cookies() {
+    let dir = tempfile::tempdir().unwrap();
+    let accounts = accounts();
+    let status = StatusFile::new(dir.path(), Alias::A);
+    let mut page = cookie_page().await;
+    let mut session = page.session(dir.path(), false);
+    let run = Run {
+        upn: UPN,
+        credentials: accounts.for_alias(Alias::A, UPN).unwrap(),
+        status: &status,
+        options: LoginOptions {
+            timeout: Duration::from_secs(2),
+        },
+    };
+    let mut sign_in = SignIn {
+        progress: Progress {
+            email_sent: true,
+            password_sent: false,
+        },
+        ..SignIn::default()
+    };
+    reprocess(&page, REPROCESS_LOOP);
+    assert!(matches!(
+        run.until_loaded(&mut session, &mut sign_in).await,
+        Err(LoginError::ReprocessLoop)
+    ));
+    assert!(sent(&page, "Network.getCookies").is_empty());
+    assert!(sent(&page, "Page.navigate").is_empty());
+}
+
+#[test]
+fn the_reprocess_run_counts_only_unbroken_main_frame_commits_of_the_reprocess_page() {
+    let page = SessionId::new("synthetic-page");
+    let mut watch = crate::session::SessionWatch::new(page.clone());
+    let commit = |watch: &mut crate::session::SessionWatch, url: &str, parent: bool| {
+        let mut frame = json!({"id":"synthetic-frame","url":url});
+        if parent {
+            frame["parentId"] = json!("synthetic-parent");
+        }
+        watch.observe(&crate::cdp::Event {
+            method: "Page.frameNavigated".into(),
+            params: json!({ "frame": frame }),
+            session_id: Some(page.clone()),
+        });
+    };
+    commit(&mut watch, REPROCESS, false);
+    commit(&mut watch, "https://login.live.com/Me.htm?v=3", true);
+    commit(&mut watch, REPROCESS, false);
+    assert_eq!(watch.reprocess_run(), 2, "a sub-frame doesn't break the run");
+    commit(
+        &mut watch,
+        "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        false,
+    );
+    assert_eq!(watch.reprocess_run(), 0);
+    commit(&mut watch, "https://outside.example.test/common/reprocess", false);
+    assert_eq!(watch.reprocess_run(), 0, "only a sign-in host's page counts");
+}
+
+fn redirect(from: &str, location: &str) -> crate::cdp::Event {
+    crate::cdp::Event {
+        method: "Network.requestWillBeSent".into(),
+        params: json!({
+            "requestId":"synthetic-redirect",
+            "request":{"method":"GET","url":"https://teams.cloud.microsoft/v2/authv2","headers":{}},
+            "redirectResponse":{"url":from,"status":302,"headers":{"Location":location}}
+        }),
+        session_id: Some(SessionId::new("synthetic-frame-session")),
+    }
+}
+
+const AUTHORIZE: &str = "https://login.microsoftonline.com/00000000-0000-4000-8000-000000000001/oauth2/v2.0/authorize";
+
+#[test]
+fn the_watch_keeps_only_the_error_and_aadsts_code_of_a_sign_in_redirect() {
+    let mut watch = crate::session::SessionWatch::new(SessionId::new("synthetic-page"));
+    for (from, location, expected) in [
+        ("https://teams.cloud.microsoft/", "/v2/#error=login_required", None),
+        (
+            AUTHORIZE,
+            "https://teams.cloud.microsoft/v2/authv2#code=synthetic",
+            None,
+        ),
+        (
+            AUTHORIZE,
+            "https://teams.cloud.microsoft/v2/authv2?error=access_denied",
+            Some("access_denied"),
+        ),
+        (
+            AUTHORIZE,
+            "https://teams.cloud.microsoft/v2/authv2#error=login_required&error_description=AADSTS500341%3A+The+user+account+synthetic%40example.test+has+been+deleted",
+            Some("login_required AADSTS500341"),
+        ),
+        (
+            AUTHORIZE,
+            "/v2/authv2#error=bad%3Cname%3E&error_description=no+code+AADSTS",
+            Some("badname"),
+        ),
+    ] {
+        let mut fresh = crate::session::SessionWatch::new(SessionId::new("synthetic-page"));
+        fresh.observe(&redirect(from, location));
+        assert_eq!(fresh.sign_in_error(), expected, "{location}");
+        watch.observe(&redirect(from, location));
+    }
+    assert_eq!(watch.sign_in_error(), Some("badname"), "the last error stands");
+    watch.observe(&crate::cdp::Event {
+        method: "Network.requestWillBeSent".into(),
+        params: json!({"requestId":"plain","request":{"method":"GET","url":AUTHORIZE,"headers":{}}}),
+        session_id: None,
+    });
+    assert_eq!(watch.sign_in_error(), Some("badname"));
+}
+
+#[tokio::test]
+async fn a_timeout_names_the_sign_in_error_without_the_description() {
+    let dir = tempfile::tempdir().unwrap();
+    let accounts = accounts();
+    let status = StatusFile::new(dir.path(), Alias::A);
+    let mut page = page(json!({})).await;
+    let mut session = page.session(dir.path(), false);
+    let redirected = redirect(
+        AUTHORIZE,
+        "https://teams.cloud.microsoft/v2/authv2#error=login_required&error_description=AADSTS500341%3A+synthetic%40example.test+deleted",
+    );
+    page.send(&redirected.method, redirected.params.clone());
+    let run = Run {
+        upn: UPN,
+        credentials: accounts.for_alias(Alias::A, UPN).unwrap(),
+        status: &status,
+        options: LoginOptions {
+            timeout: Duration::from_millis(800),
+        },
+    };
+    let error = run
+        .until_loaded(&mut session, &mut SignIn::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(&error, LoginError::SignInAnswer { answer, .. } if answer == "login_required AADSTS500341"));
+    let text = error.to_string();
+    assert!(text.ends_with("answered login_required AADSTS500341"), "{text}");
+    assert!(!text.contains("example.test"));
+}

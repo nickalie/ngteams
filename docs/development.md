@@ -270,7 +270,12 @@ proto-lab service-mri echo <mri>
 ```
 
 `login` uses the password input outside the repository, records its steps in `status-<alias>.json`, and records the
-account's MRI. `auth` uses the profile's existing sign-in, catches Entra's native redirect, then exchanges and
+account's MRI. If a stale Microsoft session makes the main frame load Entra's `/reprocess` page again and again (five
+times in a row) before anything was typed, `login` deletes that profile's cookies of the sign-in hosts one time
+(state `sign-in-cookies-deleted`) and opens Teams again for a full sign-in. A second loop, or one after the email went
+in, stops the run. `login` also stops when Microsoft says it knows no account of the email, and a run that times out
+names the error Entra redirected back with, such as `login_required AADSTS500341` (the account was deleted from the
+directory), without its description. `auth` uses the profile's existing sign-in, catches Entra's native redirect, then exchanges and
 refreshes tokens in Rust; it never types a password. A profile needing interaction is reported for `login`.
 Probes make plain HTTP GETs with the account's tokens and print outlines/claims, never response bodies or tokens.
 `run` exits non-zero when its goal is not reached or capture setup fails. Captures are raw private lab data.
@@ -285,6 +290,12 @@ Probes make plain HTTP GETs with the account's tokens and print outlines/claims,
 | `ab-meeting`, `ab-meeting-join`, `meeting-steps` | scheduling, pre-join and step-controlled meeting captures |
 | `channel-create`, `team-manage` | held channel/team writes; team sending requires explicit scenario configuration. `team-manage` is also how an agent looks at a feature in browser Teams before building it: steps over `PROTO_LAB_STEPS_SOCKET` (`go`, `click`, `point`, `xy`, `wheel`, `type`, `insert`, `press`, `js`, `shot`, `seen`, `hold`, `quit`) |
 | `own-presence-activity`, `own-presence-endpoint`, `own-presence-both`, `own-presence-manual-held`, `own-presence-manual` | compare activity/presence paths, with the requested capture holds |
+
+Every capture attaches the page's dedicated, shared and service workers before they run, and records and holds
+their requests as it does the page's: the web client makes its chat and middle-tier calls from a dedicated worker. A
+`seen` line is `<method> <url> -> <status | failed <error> | pending> from <target>`, where the target is `page`,
+`worker`, `shared_worker`, `service_worker`, `iframe`, `browser` or `unknown target`; a held request shows
+`failed net::ERR_BLOCKED_BY_CLIENT`.
 
 Protocol details and scenario controls are in [the protocol notes](protocol/).
 

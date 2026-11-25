@@ -836,6 +836,20 @@ fn the_email_and_then_the_password_are_typed_once_each() {
 }
 
 #[test]
+fn an_unknown_username_stops_the_run_after_the_email_went_in() {
+    let unknown = probe_of(&json!({"email": EMAIL, "unknownAccount": true, "proofs": true, "next": true}));
+    assert_eq!(
+        next_action(&unknown, Progress::default()),
+        Action::TypeEmail(EMAIL.to_owned())
+    );
+    let sent = Progress {
+        email_sent: true,
+        password_sent: false,
+    };
+    assert_eq!(next_action(&unknown, sent), Action::Stop(SignInStop::UnknownAccount));
+}
+
+#[test]
 fn a_rejected_password_stops_the_run() {
     let progress = Progress {
         email_sent: true,

@@ -142,6 +142,10 @@ pub struct SessionWatch {
     service_requests: HashSet<(Option<SessionId>, String)>,
     /// How many documents the main frame has committed.
     documents: u64,
+    /// How many of the main frame's last commits in a row were Entra's `/reprocess` page.
+    reprocess_run: u32,
+    /// The last error a sign-in host redirected back with: its `error` and the `AADSTS` code of its description.
+    sign_in_error: Option<String>,
     identities: Vec<Identity>,
     action_targets: Option<Arc<ActionTargets>>,
 }
@@ -162,6 +166,8 @@ impl SessionWatch {
             service_reads_ok: 0,
             service_requests: HashSet::new(),
             documents: 0,
+            reprocess_run: 0,
+            sign_in_error: None,
             identities: Vec::new(),
             action_targets: None,
         }
@@ -198,7 +204,13 @@ impl SessionWatch {
             return;
         }
         self.main_frame = frame["id"].as_str().map(str::to_owned);
-        self.place = Place::of(frame["url"].as_str().unwrap_or_default());
+        let url = frame["url"].as_str().unwrap_or_default();
+        self.place = Place::of(url);
+        self.reprocess_run = if self.place == Place::SignIn && is_reprocess(url) {
+            self.reprocess_run.saturating_add(1)
+        } else {
+            0
+        };
         self.stopped = false;
         self.authz_ok = false;
         self.authz_forbidden = false;
@@ -209,6 +221,9 @@ impl SessionWatch {
     }
 
     fn request(&mut self, event: &Event) {
+        if let Some(error) = sign_in_error(&event.params) {
+            self.sign_in_error = Some(error);
+        }
         let request = &event.params["request"];
         if let Some(identity) = identity_in(&request["headers"])
             && !self.identities.contains(&identity)
@@ -279,6 +294,18 @@ impl SessionWatch {
         self.documents
     }
 
+    /// The last error a sign-in host answered with, as `<error> <AADSTS code>` (no description: it can name the user).
+    #[must_use]
+    pub fn sign_in_error(&self) -> Option<&str> {
+        self.sign_in_error.as_deref()
+    }
+
+    /// How many times in a row the main frame last committed Entra's `/reprocess` page (`0` when it is elsewhere).
+    #[must_use]
+    pub fn reprocess_run(&self) -> u32 {
+        self.reprocess_run
+    }
+
     /// The status of the last answer to the web client's authz exchange, for a report on a session that didn't load.
     #[must_use]
     pub fn last_authz_status(&self) -> Option<u16> {
@@ -298,6 +325,49 @@ impl SessionWatch {
             .all(|other| other.oid == first.oid && other.tenant == first.tenant)
             .then_some(first)
     }
+}
+
+/// The error of a redirect a sign-in host made (`Network.requestWillBeSent`'s `redirectResponse`), from its
+/// `Location`'s fragment or query: `error`, and the `AADSTS` code of `error_description` when it has one.
+fn sign_in_error(params: &Value) -> Option<String> {
+    let redirect = params.get("redirectResponse")?;
+    let from = Url::parse(redirect["url"].as_str()?).ok()?;
+    if Place::of(from.as_str()) != Place::SignIn {
+        return None;
+    }
+    let headers = redirect["headers"].as_object()?;
+    let location = headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("location"))?
+        .1
+        .as_str()?;
+    let location = from.join(location).ok()?;
+    let fields = |part: Option<&str>| {
+        url::form_urlencoded::parse(part.unwrap_or_default().as_bytes())
+            .into_owned()
+            .collect::<HashMap<_, _>>()
+    };
+    let (fragment, query) = (fields(location.fragment()), fields(location.query()));
+    let error = fragment.get("error").or_else(|| query.get("error"))?;
+    let description = fragment
+        .get("error_description")
+        .or_else(|| query.get("error_description"));
+    let code = description.and_then(|text| {
+        let at = text.find("AADSTS")?;
+        let digits = text[at + 6..].chars().take_while(char::is_ascii_digit).count();
+        (digits > 0).then(|| text[at..at + 6 + digits].to_owned())
+    });
+    let error: String = error
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .take(64)
+        .collect();
+    Some(code.map_or_else(|| error.clone(), |code| format!("{error} {code}")))
+}
+
+/// Entra's `/<tenant>/reprocess` page: it re-runs a sign-in with the session the browser already has.
+fn is_reprocess(url: &str) -> bool {
+    Url::parse(url).is_ok_and(|url| url.path().ends_with("/reprocess"))
 }
 
 /// Holds a refusal back until it has stood for [`REFUSAL_GRACE`]: until then the client may still retry its way into a

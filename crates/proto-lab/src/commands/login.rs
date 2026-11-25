@@ -39,7 +39,7 @@ use crate::cdp::{Cdp, CdpError, SessionId};
 use crate::config::{Alias, ConfigError, LabConfig, LabLocations, MriRecord, record_account_mri};
 use crate::scenario::dsl::js_string;
 use crate::session::{
-    LabSession, NotAGuid, SessionError, SessionOptions, SessionReport, SessionState, Settling, TEAMS_URL,
+    LabSession, NotAGuid, SIGN_IN_HOSTS, SessionError, SessionOptions, SessionReport, SessionState, Settling, TEAMS_URL,
 };
 
 /// What a sign-in page shows, as [`probe`] finds it. A field is the selector of the one element of its kind a person
@@ -72,16 +72,19 @@ pub enum Signal {
     Approval,
     /// The page asks to pick a verification method.
     Proofs,
+    /// The page says Microsoft knows no account of that username.
+    UnknownAccount,
 }
 
 impl Signal {
-    const ALL: [(Self, &str); 6] = [
+    const ALL: [(Self, &str); 7] = [
         (Self::Next, "next"),
         (Self::PasswordError, "passwordError"),
         (Self::Rejected, "rejected"),
         (Self::Registration, "registration"),
         (Self::Approval, "approval"),
         (Self::Proofs, "proofs"),
+        (Self::UnknownAccount, "unknownAccount"),
     ];
 }
 
@@ -127,6 +130,8 @@ pub struct Progress {
 pub enum SignInStop {
     #[error("the password was rejected")]
     PasswordRejected,
+    #[error("Microsoft knows no account of this username")]
+    UnknownAccount,
     #[error("Microsoft asks to register an MFA method; not proceeding")]
     MfaRegistration,
     #[error("Microsoft asks to pick an MFA method; not proceeding")]
@@ -204,6 +209,9 @@ pub fn next_action(probe: &SignInProbe, progress: Progress) -> Action {
         // still the email page after the email went in: wait. Its "Sign-in options" tile is a `div.table` button, so
         // reading on would take it for a verification-method choice.
         if progress.email_sent {
+            if probe.shows(Signal::UnknownAccount) {
+                return Action::Stop(SignInStop::UnknownAccount);
+            }
             return Action::Wait;
         }
         return Action::TypeEmail(email.clone());
@@ -268,6 +276,7 @@ const PROBE: &str = r#"(() => {
     registration: /more information required|keep your account secure|set up your account/i.test(text),
     approval: /approve sign.in|open your authenticator|enter the number/i.test(text),
     proofs: any(['[data-value][role="button"]', 'div.table[role="button"]', '#idDiv_SAOTCS_Proofs [role="button"]']),
+    unknownAccount: any(['#usernameError']) || /username may be incorrect|couldn.t find an account/i.test(text),
   };
 })()"#;
 
@@ -301,6 +310,10 @@ pub enum LoginError {
     UnexpectedHost(String),
     #[error("the web client didn't load within {timeout:?} ({})", authz.map_or_else(|| "no authz answer".to_owned(), |status| format!("authz answered {status}")))]
     Timeout { timeout: Duration, authz: Option<u16> },
+    #[error("the web client didn't load within {timeout:?}: Microsoft's sign-in answered {answer}")]
+    SignInAnswer { timeout: Duration, answer: String },
+    #[error("Microsoft's sign-in page reloads its reprocess page again and again")]
+    ReprocessLoop,
     #[error("the web client loaded, but no request showed the account's identity")]
     NoIdentity,
     #[error("the account's {0}")]
@@ -555,6 +568,11 @@ struct Run<'a> {
 pub const TICK: Duration = Duration::from_millis(700);
 /// How long the identity may take to show once the web client has loaded.
 const IDENTITY_WAIT: Duration = Duration::from_secs(30);
+/// How many `/reprocess` commits in a row make a loop. A stale Entra session reloads that page about once a second with
+/// no field to fill; a normal sign-in passes it at most once.
+pub const REPROCESS_LOOP: u32 = 5;
+/// How long a blank page stands before the sign-in data is deleted, for the loop's last replies to land.
+const SETTLE_BLANK: Duration = Duration::from_secs(2);
 
 /// Where the sign-in is: what was sent, the last click, and when the page may be looked at next.
 #[derive(Default)]
@@ -562,6 +580,8 @@ struct SignIn {
     progress: Progress,
     clicks: Clicks,
     next_look: Option<tokio::time::Instant>,
+    /// The main-frame document on which the sign-in cookies were deleted, which is done once only.
+    cookies_cleared_on: Option<u64>,
 }
 
 impl Run<'_> {
@@ -625,6 +645,12 @@ impl Run<'_> {
         let mut settling = Settling::default();
         loop {
             if tokio::time::Instant::now() >= deadline {
+                if let Some(answer) = session.watch().sign_in_error() {
+                    return Err(LoginError::SignInAnswer {
+                        timeout: self.options.timeout,
+                        answer: answer.to_owned(),
+                    });
+                }
                 return Err(LoginError::Timeout {
                     timeout: self.options.timeout,
                     authz: session.watch().last_authz_status(),
@@ -632,6 +658,10 @@ impl Run<'_> {
             }
             if !session.pump(TICK).await {
                 return Err(LoginError::CaptureFailed(session.report().summary()));
+            }
+            if in_reprocess_loop(session, sign_in) {
+                self.restart_sign_in(session, sign_in).await?;
+                continue;
             }
             match settling.judge(session.watch().state(), tokio::time::Instant::now()) {
                 SessionState::Loaded => return Ok(None),
@@ -641,6 +671,30 @@ impl Run<'_> {
                 SessionState::SignInShown => self.sign_in_step(session, sign_in).await?,
             }
         }
+    }
+
+    /// Leaves a reprocess loop: once, before anything was typed, the profile's sign-in data is deleted and Teams is
+    /// opened again, so that Microsoft asks for the email and the password. Otherwise the loop stops the run.
+    async fn restart_sign_in(&self, session: &mut LabSession, sign_in: &mut SignIn) -> Result<(), LoginError> {
+        let typed = sign_in.progress.email_sent || sign_in.progress.password_sent;
+        if typed || sign_in.cookies_cleared_on.is_some() {
+            return Err(LoginError::ReprocessLoop);
+        }
+        // the loop's replies in flight set the session cookies again: they must end before the cookies go
+        session.navigate("about:blank").await?;
+        let quiet = tokio::time::Instant::now() + SETTLE_BLANK;
+        while tokio::time::Instant::now() < quiet {
+            if !session.pump(TICK.min(SETTLE_BLANK)).await {
+                return Err(LoginError::CaptureFailed(session.report().summary()));
+            }
+        }
+        sign_in.cookies_cleared_on = Some(session.watch().document());
+        let deleted = delete_sign_in_data(session.cdp(), session.page()).await?;
+        self.status
+            .write("sign-in-cookies-deleted", &json!({"cookies": deleted}))
+            .map_err(LoginError::Status)?;
+        session.navigate(TEAMS_URL).await?;
+        Ok(())
     }
 
     /// One look at the sign-in page and the step it calls for, unless the page was looked at less than [`TICK`] ago.
@@ -668,6 +722,54 @@ impl Run<'_> {
         };
         self.status.write(state, &json!({})).map_err(LoginError::Status)
     }
+}
+
+/// Whether the main frame has committed only `/reprocess` for the last [`REPROCESS_LOOP`] documents, all after the
+/// sign-in cookies were deleted, if they were.
+fn in_reprocess_loop(session: &LabSession, sign_in: &SignIn) -> bool {
+    let watch = session.watch();
+    watch.reprocess_run() >= REPROCESS_LOOP
+        && sign_in
+            .cookies_cleared_on
+            .is_none_or(|cleared| watch.document() >= cleared + u64::from(REPROCESS_LOOP))
+}
+
+/// Deletes the data and the cookies of Microsoft's sign-in hosts ([`SIGN_IN_HOSTS`]) from the profile and returns how
+/// many cookies went. Cookies of a parent domain that other sites share stay.
+async fn delete_sign_in_data(cdp: &Cdp, page: &SessionId) -> Result<usize, CdpError> {
+    for host in SIGN_IN_HOSTS {
+        let origin = json!({"origin": format!("https://{host}"), "storageTypes": "all"});
+        cdp.call(Some(page), "Storage.clearDataForOrigin", origin).await?;
+    }
+    let urls: Vec<String> = SIGN_IN_HOSTS.iter().map(|host| format!("https://{host}/")).collect();
+    let found = cdp
+        .call(Some(page), "Network.getCookies", json!({"urls": urls}))
+        .await?;
+    let mut deleted = 0;
+    for cookie in found["cookies"].as_array().into_iter().flatten() {
+        let (Some(name), Some(domain), Some(path)) = (
+            cookie["name"].as_str(),
+            cookie["domain"].as_str(),
+            cookie["path"].as_str(),
+        ) else {
+            continue;
+        };
+        if !is_sign_in_domain(domain) {
+            continue;
+        }
+        let target = json!({"name": name, "domain": domain, "path": path});
+        cdp.call(Some(page), "Network.deleteCookies", target).await?;
+        deleted += 1;
+    }
+    Ok(deleted)
+}
+
+/// A cookie domain of one of [`SIGN_IN_HOSTS`] or below it.
+fn is_sign_in_domain(domain: &str) -> bool {
+    let domain = domain.trim_start_matches('.');
+    SIGN_IN_HOSTS
+        .iter()
+        .any(|host| domain == *host || domain.strip_suffix(host).is_some_and(|rest| rest.ends_with('.')))
 }
 
 #[cfg(test)]
