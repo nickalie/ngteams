@@ -478,6 +478,10 @@ impl FunPicker {
 
     fn searched(&mut self, cx: &mut Context<Self>) {
         let query = self.query(cx);
+        // the editor shares the search field's row: a search shows what it finds in the editor's place
+        if !query.is_empty() {
+            self.editing = None;
+        }
         self.emoji.update(cx, |emoji, cx| emoji.search_for(&query, cx));
         self.at = (0, 0);
         cx.notify();
@@ -558,7 +562,8 @@ impl FunPicker {
             return;
         };
         let core = Arc::clone(&self.core);
-        let editor = cx.new(|cx| StickerEditor::new(&core, draft, window, cx));
+        let search = self.search.focus_handle(cx);
+        let editor = cx.new(|cx| StickerEditor::new(&core, draft, search, window, cx));
         let events = cx.subscribe_in(&editor, window, |this, _, event: &StickerEditorEvent, window, cx| {
             this.editing = None;
             match event {
@@ -819,7 +824,8 @@ impl FunPicker {
             self.step_tab(if modifiers.shift { -1 } else { 1 }, window, cx);
             return true;
         }
-        if modifiers.number_of_modifiers() != 0 {
+        // the search field beside the editor's back arrow is in the editor's reach
+        if modifiers.number_of_modifiers() != 0 || self.editing.is_some() {
             return false;
         }
         // the held Escape's first push acted (it ended the rename or closed the picker): its repeats do nothing more
@@ -1875,6 +1881,15 @@ fn summary(headline: String, skipped: &[crate::stickers::Skipped], palette: Pale
 }
 
 impl FunPicker {
+    /// The "Find something fun" field.
+    fn search_field(&self, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
+        div().debug_selector(|| "fun-search".to_owned()).child(
+            Input::new(&self.search)
+                .with_size(Size::Small)
+                .suffix(self.search_mark(palette, cx)),
+        )
+    }
+
     /// The picker's raised surface, with nothing in it yet.
     fn frame(palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
         div()
@@ -1908,9 +1923,18 @@ impl Render for FunPicker {
             return Self::frame(palette, cx).child(panel);
         }
         if let Some((editor, _)) = &self.editing {
+            let editor = editor.clone();
+            let back = editor.update(cx, |editor, cx| editor.back_arrow(window, cx));
+            let top = div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(back)
+                .child(div().flex_1().child(self.search_field(palette, cx)));
             return Self::frame(palette, cx)
                 .child(self.tab_strip(palette, cx))
-                .child(editor.clone());
+                .child(top)
+                .child(editor);
         }
         let content = if self.tab == Tab::Emoji {
             div().h(px(CONTENT_HEIGHT)).child(self.emoji.clone()).into_any_element()
@@ -1933,13 +1957,7 @@ impl Render for FunPicker {
         };
         Self::frame(palette, cx)
             .child(self.tab_strip(palette, cx))
-            .child(
-                div().debug_selector(|| "fun-search".to_owned()).child(
-                    Input::new(&self.search)
-                        .with_size(Size::Small)
-                        .suffix(self.search_mark(palette, cx)),
-                ),
-            )
+            .child(self.search_field(palette, cx))
             .child(content)
     }
 }

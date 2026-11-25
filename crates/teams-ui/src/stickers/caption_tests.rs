@@ -1,8 +1,11 @@
 use cosmic_text::Style;
 use image::{Rgba, RgbaImage};
 
+use std::sync::Mutex;
+
 use super::{
-    BOTTOM_HINT, Caption, Fitted, Fonts, Region, TOP_HINT, Words, breaks, draw, fit, png, render, shown, split,
+    BOTTOM_HINT, Caption, Fitted, Fonts, MAX_CAPTION, Region, TOP_HINT, Words, breaks, decode, draw, fit, limited, png,
+    render, shown, split,
 };
 
 fn block(region: [u32; 4], words: &str) -> Caption {
@@ -48,10 +51,8 @@ fn region(left: f32, top: f32, right: f32, bottom: f32) -> Region {
 }
 
 /// A grey template of `width` by `height`, as a PNG.
-fn template(width: u32, height: u32) -> Vec<u8> {
-    png(&RgbaImage::from_pixel(width, height, Rgba([128, 128, 128, 255])))
-        .unwrap()
-        .bytes
+fn template(width: u32, height: u32) -> RgbaImage {
+    RgbaImage::from_pixel(width, height, Rgba([128, 128, 128, 255]))
 }
 
 fn pixels_of(image: &RgbaImage, color: [u8; 3]) -> usize {
@@ -274,9 +275,9 @@ fn a_font_the_system_lacks_has_a_free_stand_in() {
 
 #[test]
 fn a_block_is_drawn_in_its_colour_inside_its_region() {
-    let mut fonts = Fonts::bundled();
+    let fonts = Mutex::new(Fonts::bundled());
     let caption = block([20, 30, 180, 90], "x");
-    let image = draw(&template(200, 120), &caption, &typed(&["HIGH FIVE!"]), &mut fonts).unwrap();
+    let image = draw(&template(200, 120), &caption, &typed(&["HIGH FIVE!"]), &fonts);
     assert_eq!(image.dimensions(), (200, 120));
     let mut inside = 0;
     for (x, y, pixel) in image.enumerate_pixels() {
@@ -290,14 +291,14 @@ fn a_block_is_drawn_in_its_colour_inside_its_region() {
     assert!(inside > 200, "{inside}");
     assert!(pixels_of(&image, caption.color) > 50);
 
-    let empty = draw(&template(200, 120), &caption, &typed(&[""]), &mut fonts).unwrap();
+    let empty = draw(&template(200, 120), &caption, &typed(&[""]), &fonts);
     assert!(empty.pixels().all(|pixel| pixel.0 == [128, 128, 128, 255]));
 }
 
 #[test]
 fn a_memes_lines_are_white_with_a_black_edge() {
-    let mut fonts = Fonts::bundled();
-    let image = draw(&template(250, 250), &meme(), &typed(&["such wow", ""]), &mut fonts).unwrap();
+    let fonts = Mutex::new(Fonts::bundled());
+    let image = draw(&template(250, 250), &meme(), &typed(&["such wow", ""]), &fonts);
     assert!(pixels_of(&image, [255, 255, 255]) > 50);
     assert!(pixels_of(&image, [0, 0, 0]) > 50);
     // the bottom band is empty: only the top line is drawn
@@ -310,17 +311,17 @@ fn a_memes_lines_are_white_with_a_black_edge() {
 
 #[test]
 fn a_caption_on_a_clear_template_makes_its_letters_solid() {
-    let mut fonts = Fonts::bundled();
-    let clear = png(&RgbaImage::new(100, 60)).unwrap().bytes;
-    let image = draw(&clear, &block([0, 0, 100, 60], "x"), &typed(&["OK"]), &mut fonts).unwrap();
+    let fonts = Mutex::new(Fonts::bundled());
+    let clear = RgbaImage::new(100, 60);
+    let image = draw(&clear, &block([0, 0, 100, 60], "x"), &typed(&["OK"]), &fonts);
     assert!(image.pixels().any(|pixel| pixel.0 == [0xcb, 0x46, 0x53, 255]));
 }
 
 #[test]
-fn a_template_that_is_no_picture_draws_nothing() {
-    let mut fonts = Fonts::bundled();
-    assert!(draw(b"not a picture", &meme(), &[], &mut fonts).is_none());
-    assert!(render(b"not a picture", &meme(), &[]).is_none());
+fn a_template_that_is_no_picture_decodes_to_nothing() {
+    assert!(decode(b"not a picture").is_none());
+    let picture = png(&template(30, 20)).unwrap();
+    assert_eq!(decode(&picture.bytes).unwrap().dimensions(), (30, 20));
 }
 
 #[test]
@@ -336,4 +337,32 @@ fn a_captioned_sticker_is_shown_180_high() {
     assert_eq!(shown((334, 250)), (240, 180));
     assert_eq!(shown((250, 250)), (180, 180));
     assert_eq!(shown((0, 0)), (180, 180));
+}
+
+#[test]
+fn a_caption_keeps_its_first_150_characters_and_refuses_more_keys() {
+    let full = "a".repeat(MAX_CAPTION);
+    assert_eq!(limited("", &full, MAX_CAPTION), None, "150 fit");
+    // a key at the end, past the limit: refused, the cursor stays at the end
+    let typed = format!("{full}b");
+    assert_eq!(limited(&full, &typed, MAX_CAPTION), Some((full.clone(), MAX_CAPTION)));
+    // a key in the middle: refused, the text is not cut at its end
+    let full = format!("{}z", "a".repeat(MAX_CAPTION - 1));
+    let typed = format!("aaax{}", &full[3..]);
+    assert_eq!(limited(&full, &typed, MAX_CAPTION), Some((full.clone(), 3)));
+}
+
+#[test]
+fn a_paste_past_the_limit_keeps_what_fits() {
+    let old = "ab".repeat(70);
+    let new = format!("ab{}{}", "XY".repeat(10), &old[2..]);
+    let (kept, at) = limited(&old, &new, MAX_CAPTION).unwrap();
+    assert_eq!(kept, format!("abXYXYXYXYXY{}", &old[2..]));
+    assert_eq!(kept.chars().count(), MAX_CAPTION);
+    assert_eq!(at, 12);
+    // the limit counts characters, not bytes
+    let old = "é".repeat(149);
+    let (kept, at) = limited(&old, &format!("{old}éé"), MAX_CAPTION).unwrap();
+    assert_eq!(kept.chars().count(), 150);
+    assert_eq!(at, kept.len());
 }

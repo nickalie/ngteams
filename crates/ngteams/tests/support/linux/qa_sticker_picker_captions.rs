@@ -792,6 +792,7 @@ fn meme_faults(drawn: &RgbaImage) -> SandboxResult<Vec<String>> {
     ))
     .ok_or("the meme template is not made up")?;
     let upper = ["MADE UP TOP".to_owned(), "MADE UP BOTTOM".to_owned()];
+    let template = caption::decode(&template).ok_or("the meme template is no picture")?;
     let expected = caption::render(&template, &caption_of(MEME)?, &upper).ok_or("no upper-case drawing")?;
     let expected = image::load_from_memory(&expected.bytes)?.to_rgba8();
     if expected.as_raw() != drawn.as_raw() {
@@ -827,17 +828,18 @@ fn meme_faults(drawn: &RgbaImage) -> SandboxResult<Vec<String>> {
     Ok(faults)
 }
 
-/// The keyboard: Shift+Tab from the field to the back arrow, Enter goes back; Tab to Done, Enter puts the sticker in
-/// the box; Tab twice to Cancel, Space goes back; Tab three times round to the back arrow and a fourth to the field;
-/// Escape goes back. The pointer: back and Cancel go back.
+/// The keyboard: Shift+Tab twice from the field (past the search field) to the back arrow, Enter goes back; Tab to
+/// Done, Enter puts the sticker in the box; Tab twice to Cancel, Space goes back; Tab three times round to the back
+/// arrow, a fourth to the search field and a fifth to the field; Escape goes back. The pointer: back and Cancel go back.
 pub(super) fn caption_keyboard_and_back(user: &mut User<'_>) -> SandboxResult {
     let chat = user.world.captions_chat.to_owned();
     user.open(&chat)?;
     let mut faults = Vec::new();
     user.open_editor_by_keys(SO_COOL, "so cool")?;
     user.press("shift+tab")?;
+    user.press("shift+tab")?;
     user.press("enter")?;
-    user.editor_closed("Shift+Tab, Enter: back")?;
+    user.editor_closed("Shift+Tab twice, Enter: back")?;
     user.open_editor_by_keys(SO_COOL, "so cool")?;
     let object = user.expect_upload();
     user.press("tab")?;
@@ -855,12 +857,12 @@ pub(super) fn caption_keyboard_and_back(user: &mut User<'_>) -> SandboxResult {
     user.press("space")?;
     user.editor_closed("Tab, Tab, Space: Cancel")?;
     user.open_editor_by_keys(SO_COOL, "so cool")?;
-    for _ in 0..4 {
+    for _ in 0..5 {
         user.press("tab")?;
     }
     user.press("end")?;
     user.type_text("z")?;
-    if let Err(error) = user.until("Tab four times: back in the field", |state| {
+    if let Err(error) = user.until("Tab five times: back in the field", |state| {
         editor(state)["typed"] == json!(["THAT'S SO COOLz"])
     }) {
         faults.push(error.to_string());

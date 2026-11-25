@@ -2,26 +2,31 @@
 //! tile has a pencil mark) opens it in the place of the sticker grid, as Teams' web client does.
 //!
 //! - **The picture** is the sticker's picture with no words (read from Teams' sticker CDN with no credential), with the
-//!   caption drawn on it as it is typed ([`crate::stickers::caption`]), at most 250 px wide and 207 px high.
+//!   caption drawn on it as it is typed ([`crate::stickers::caption`]), at most 250 px wide and 207 px high. One draw
+//!   at a time runs off the UI thread, once the fields stay unchanged for [`SETTLE`]: fast typing never queues draws,
+//!   and no finished draw redraws the window between two keys.
+//! - **The top row** is the back arrow beside the picker's search field, as in Teams; a search closes the editor.
 //! - **The caption field** of a sticker ("Caption", up to 150 characters, four lines) starts with the sticker's own
 //!   words. A meme has two one-line fields, "Top Caption" and "Bottom caption" (25 characters each), which start empty;
 //!   the picture shows their hints while both are.
 //! - **Done** (offered only while a field holds words) draws the picture at its full size and tells the picker
 //!   ([`StickerEditorEvent::Done`]): the box puts it in as a sticker picture, sent to the media service at once.
 //!   **Cancel**, the back arrow or Escape goes back to the stickers. A picture that can't be read says so.
-//! - **Reach**: the first field has the focus when it opens; Tab and Shift+Tab go through the back arrow, the fields,
-//!   Done (while it is offered) and Cancel (Teams' order); Enter or Space presses a button.
+//! - **Reach**: the first field has the focus when it opens; Tab and Shift+Tab go through the back arrow, the search
+//!   field, the fields, Done (while it is offered) and Cancel (Teams' order); Enter or Space presses a button.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    AnyElement, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, RenderImage, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Window, div, img, px, rgb,
+    Styled as _, Subscription, WeakEntity, Window, div, img, px, rgb,
 };
-use gpui_component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
+use gpui_component::input::{Input, InputEvent, InputState, RopeExt as _, Textarea, TextareaState};
 use gpui_component::{Sizable as _, Size};
+use image::RgbaImage;
 use teams_proto::PastedPicture;
 
 use crate::bridge::Core;
@@ -31,13 +36,13 @@ use crate::stickers::teams;
 use crate::telegram_import::outer_ring;
 use crate::theme::{self, Palette};
 
-/// The editor's name, as Teams' screen reader hears it.
-pub const TITLE: &str = "Edit sticker";
 /// What it says of a picture it can't read, in Teams' words.
 pub const LOAD_FAILED: &str = "Failed to load image";
 /// The largest the picture is drawn, px.
 const PICTURE_WIDTH: f32 = 250.0;
 const PICTURE_HEIGHT: f32 = 207.0;
+/// How long the fields stay unchanged before the picture is drawn again: fast typing draws only when it pauses.
+pub const SETTLE: Duration = Duration::from_millis(120);
 
 /// A button of the editor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,9 +120,12 @@ enum Fields {
 /// How the template's read stands.
 enum Template {
     Reading,
-    Ready(Arc<PastedPicture>),
+    Ready(Arc<RgbaImage>),
     Failed,
 }
+
+/// The picture as drawn for the editor, and its size.
+type Preview = (Arc<RenderImage>, (u32, u32));
 
 /// The "Edit sticker" editor (see the module docs).
 pub struct StickerEditor {
@@ -126,14 +134,20 @@ pub struct StickerEditor {
     caption: Caption,
     fields: Fields,
     template: Template,
+    /// The caption field's text as last kept, which the next edit is limited against.
+    block_text: String,
     /// The picture as last drawn, and its size.
-    preview: Option<(Arc<RenderImage>, (u32, u32))>,
-    /// The number of the last drawing asked for: an older one that ends later is dropped.
-    drawing: u64,
+    preview: Option<Preview>,
+    /// The number of the last change asked to be drawn.
+    asked: u64,
+    /// A draw runs or waits for its [`SETTLE`].
+    drawing: bool,
     /// Done was pressed, and the full picture is being drawn.
     finishing: bool,
     focus: FocusHandle,
     buttons: Vec<(Press, FocusHandle)>,
+    /// The picker's search field.
+    search: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -146,8 +160,15 @@ impl Focusable for StickerEditor {
 }
 
 impl StickerEditor {
-    /// The editor of `draft`, its picture read through `core`, its first field focused.
-    pub fn new(core: &Arc<dyn Core>, draft: Draft, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// The editor of `draft`, its picture read through `core`, its first field focused; `search` is the picker's
+    /// search field, beside the back arrow.
+    pub fn new(
+        core: &Arc<dyn Core>,
+        draft: Draft,
+        search: FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let Draft {
             id,
             name,
@@ -168,23 +189,30 @@ impl StickerEditor {
         let reply = core.message_picture(template);
         cx.spawn(async move |this, cx| {
             let bytes = reply.await.ok().flatten();
-            let _ = this.update(cx, |this, cx| this.read(bytes, cx));
+            let decoded = cx
+                .background_spawn(async move { bytes.and_then(|bytes| caption::decode(&bytes.bytes)) })
+                .await;
+            let _ = this.update(cx, |this, cx| this.read(decoded, cx));
         })
         .detach();
+        let block_text = caption.first_text().concat();
         let editor = Self {
+            block_text,
             sticker: id,
             name,
             caption,
             fields,
             template: Template::Reading,
             preview: None,
-            drawing: 0,
+            asked: 0,
+            drawing: false,
             finishing: false,
             focus: cx.focus_handle(),
             buttons: Press::ALL
                 .iter()
                 .map(|press| (*press, cx.focus_handle().tab_stop(true)))
                 .collect(),
+            search,
             _subscriptions: subscriptions,
         };
         editor.focus_first(window, cx);
@@ -218,13 +246,23 @@ impl StickerEditor {
                 if !matches!(event, InputEvent::Change) {
                     return;
                 }
-                // the text box takes no limit of its own: what goes past Teams' 150 characters is cut off
-                let text = block.read(cx).value();
-                if text.chars().count() > MAX_CAPTION {
-                    let kept: String = text.chars().take(MAX_CAPTION).collect();
-                    block.update(cx, |block, cx| block.set_value(kept, window, cx));
+                // the text box takes no limit of its own: an edit keeps only what fits, as Teams' maxLength does
+                let text = block.read(cx).value().to_string();
+                let kept = match caption::limited(&this.block_text, &text, MAX_CAPTION) {
+                    Some((kept, at)) => {
+                        block.update(cx, |block, cx| {
+                            block.set_value(kept.clone(), window, cx);
+                            let at = block.text().offset_to_position(at);
+                            block.set_cursor_position(at, window, cx);
+                        });
+                        kept
+                    }
+                    None => text,
+                };
+                if kept != this.block_text {
+                    this.block_text = kept;
+                    this.redraw(cx);
                 }
-                this.redraw(cx);
             }),
         ];
         (Fields::Block(block), subscriptions)
@@ -265,7 +303,11 @@ impl StickerEditor {
     pub fn set_typed(&mut self, texts: &[&str], window: &mut Window, cx: &mut Context<Self>) {
         let text = |at: usize| texts.get(at).copied().unwrap_or_default().to_owned();
         match &self.fields {
-            Fields::Block(block) => block.update(cx, |block, cx| block.set_value(text(0), window, cx)),
+            Fields::Block(block) => {
+                let kept: String = text(0).chars().take(MAX_CAPTION).collect();
+                self.block_text.clone_from(&kept);
+                block.update(cx, |block, cx| block.set_value(kept, window, cx));
+            }
             Fields::Meme(top, bottom) => {
                 top.update(cx, |top, cx| top.set_value(text(0), window, cx));
                 bottom.update(cx, |bottom, cx| bottom.set_value(text(1), window, cx));
@@ -300,45 +342,68 @@ impl StickerEditor {
         self.focus.contains_focused(window, cx) || self.stops(cx).iter().any(|stop| stop.is_focused(window))
     }
 
-    /// The template's bytes came (`None`: they can't be read).
-    fn read(&mut self, bytes: Option<Arc<PastedPicture>>, cx: &mut Context<Self>) {
-        self.template = match bytes {
-            Some(bytes) if image::load_from_memory(&bytes.bytes).is_ok() => Template::Ready(bytes),
-            _ => Template::Failed,
-        };
+    /// Whether a change is not drawn yet.
+    #[must_use]
+    pub fn drawing(&self) -> bool {
+        self.drawing
+    }
+
+    /// The template came, decoded (`None`: it can't be read).
+    fn read(&mut self, template: Option<RgbaImage>, cx: &mut Context<Self>) {
+        self.template = template.map_or(Template::Failed, |template| Template::Ready(Arc::new(template)));
         self.redraw(cx);
     }
 
-    /// Draws the picture with the fields' words again, on a background thread.
+    /// Asks for the picture with the fields' words: the one draw at a time takes the words typed when it starts.
     fn redraw(&mut self, cx: &mut Context<Self>) {
-        let Template::Ready(bytes) = &self.template else {
-            cx.notify();
+        cx.notify();
+        if !matches!(self.template, Template::Ready(_)) {
             return;
-        };
-        self.drawing += 1;
-        let (number, bytes, caption, typed) = (self.drawing, Arc::clone(bytes), self.caption.clone(), self.typed(cx));
-        let drawn = cx.background_spawn(async move {
-            let mut fonts = caption::shared()
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            caption::draw(&bytes.bytes, &caption, &typed, &mut fonts)
-        });
-        cx.spawn(async move |this, cx| {
-            let Some(mut image) = drawn.await else {
+        }
+        self.asked += 1;
+        if self.drawing {
+            return;
+        }
+        self.drawing = true;
+        let asked = self.asked;
+        cx.spawn(async move |this, cx| Self::draw_until_drawn(this, asked, cx).await)
+            .detach();
+    }
+
+    /// Draws the picture once the fields stay unchanged for [`SETTLE`], until the last change is drawn.
+    async fn draw_until_drawn(this: WeakEntity<Self>, mut seen: u64, cx: &mut AsyncApp) {
+        loop {
+            cx.background_executor().timer(SETTLE).await;
+            let Ok(asked) = this.update(cx, |this, _| this.asked) else {
                 return;
             };
-            let size = image.dimensions();
-            crate::inline::to_bgra(&mut image);
-            let image = Arc::new(RenderImage::new(vec![image::Frame::new(image)]));
-            let _ = this.update(cx, |this, cx| {
-                if this.drawing == number {
-                    this.preview = Some((image, size));
-                    cx.notify();
+            if std::mem::replace(&mut seen, asked) != asked {
+                continue;
+            }
+            let Ok(Some((number, template, caption, typed))) = this.update(cx, |this, cx| {
+                let Template::Ready(template) = &this.template else {
+                    this.drawing = false;
+                    return None;
+                };
+                Some((this.asked, Arc::clone(template), this.caption.clone(), this.typed(cx)))
+            }) else {
+                return;
+            };
+            let preview = cx
+                .background_spawn(async move { preview(&template, &caption, &typed) })
+                .await;
+            let more = this.update(cx, |this, cx| {
+                if let Some((old, _)) = this.preview.replace(preview) {
+                    cx.drop_image(old, None);
                 }
+                this.drawing = this.asked != number;
+                cx.notify();
+                this.drawing
             });
-        })
-        .detach();
-        cx.notify();
+            if !matches!(more, Ok(true)) {
+                return;
+            }
+        }
     }
 
     /// Done: the picture drawn at its full size as a PNG, then the picker told.
@@ -346,18 +411,17 @@ impl StickerEditor {
         if !self.can_finish(cx) {
             return;
         }
-        let Template::Ready(bytes) = &self.template else {
+        let Template::Ready(template) = &self.template else {
             return;
         };
         self.finishing = true;
         cx.notify();
         let typed = self.typed(cx);
         let label = self.caption.label(&self.name, &typed);
-        let (bytes, caption, sticker) = (Arc::clone(bytes), self.caption.clone(), self.sticker.clone());
+        let (template, caption, sticker) = (Arc::clone(template), self.caption.clone(), self.sticker.clone());
         let drawn = cx.background_spawn(async move {
-            let picture = caption::render(&bytes.bytes, &caption, &typed)?;
-            let size = image::load_from_memory(&picture.bytes).ok()?;
-            Some((picture, caption::shown((size.width(), size.height()))))
+            let picture = caption::render(&template, &caption, &typed)?;
+            Some((picture, caption::shown(template.dimensions())))
         });
         cx.spawn(async move |this, cx| {
             let drawn = drawn.await;
@@ -401,9 +465,9 @@ impl StickerEditor {
             .map_or_else(|| self.focus.clone(), |(_, focus)| focus.clone())
     }
 
-    /// The editor's stops in Tab's order: the back arrow, the fields, Done, Cancel.
+    /// The editor's stops in Tab's order: the back arrow, the search field, the fields, Done, Cancel.
     fn stops(&self, cx: &gpui::App) -> Vec<FocusHandle> {
-        let mut stops = vec![self.focus_of(Press::Back)];
+        let mut stops = vec![self.focus_of(Press::Back), self.search.clone()];
         match &self.fields {
             Fields::Block(block) => stops.push(block.focus_handle(cx)),
             Fields::Meme(top, bottom) => stops.extend([top.focus_handle(cx), bottom.focus_handle(cx)]),
@@ -448,7 +512,20 @@ impl StickerEditor {
     }
 }
 
+/// `typed` drawn on `template` as `caption` says, ready for the editor to show.
+fn preview(template: &RgbaImage, caption: &Caption, typed: &[String]) -> Preview {
+    let mut image = caption::draw(template, caption, typed, caption::shared());
+    let size = image.dimensions();
+    crate::inline::to_bgra(&mut image);
+    (Arc::new(RenderImage::new(vec![image::Frame::new(image)])), size)
+}
+
 impl StickerEditor {
+    /// The back arrow, for the picker's top row: it goes back to the stickers.
+    pub fn back_arrow(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        self.back(theme::current(cx), window, cx).into_any_element()
+    }
+
     fn back(&self, palette: Palette, window: &Window, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let focus = self.focus_of(Press::Back);
         let ring = if focus.is_focused(window) {
@@ -579,18 +656,6 @@ impl StickerEditor {
 impl Render for StickerEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = theme::current(cx);
-        let header = div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .child(self.back(palette, window, cx))
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(palette.foreground))
-                    .truncate()
-                    .child(TITLE),
-            );
         let buttons = div()
             .flex()
             .gap_2()
@@ -603,7 +668,6 @@ impl Render for StickerEditor {
             .flex()
             .flex_col()
             .gap_3()
-            .child(header)
             .child(self.picture(palette))
             .when(!self.failed(), |editor| editor.child(self.inputs()).child(buttons))
     }

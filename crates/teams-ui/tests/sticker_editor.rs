@@ -20,7 +20,7 @@ use teams_proto::chat::MessageText;
 use teams_store::Member;
 use teams_ui::chat_view::ChatView;
 use teams_ui::compose::Compose;
-use teams_ui::fun_picker::{FunPicker, Item, StickerView};
+use teams_ui::fun_picker::{FunPicker, Item, Place, StickerView};
 use teams_ui::settings::SettingsModel;
 use teams_ui::sticker_editor::{self, Press, StickerEditor};
 use teams_ui::stickers::{Shelf, StickerRef};
@@ -40,6 +40,8 @@ fn picture(width: u32, height: u32) -> Vec<u8> {
 
 fn draw(cx: &mut VisualTestContext) {
     for _ in 0..3 {
+        cx.run_until_parked();
+        cx.executor().advance_clock(sticker_editor::SETTLE);
         cx.run_until_parked();
         cx.update(|window, cx| {
             let _ = window.draw(cx);
@@ -281,8 +283,8 @@ fn a_memes_two_lines_are_reached_by_the_keyboard_and_done_by_enter() {
         ["such wow", "very cat"],
         "Tab goes to the bottom line"
     );
-    // Tab: Done, then Cancel, then the back arrow, then the top line again
-    keys(cx, "tab tab tab tab");
+    // Tab: Done, then Cancel, then the back arrow, then the search field, then the top line again
+    keys(cx, "tab tab tab tab tab");
     cx.simulate_input("!");
     draw(cx);
     let lines = typed(&editor, cx);
@@ -290,8 +292,8 @@ fn a_memes_two_lines_are_reached_by_the_keyboard_and_done_by_enter() {
         lines[0].contains('!') && lines[1] == "very cat",
         "round to the top line: {lines:?}"
     );
-    // Shift+Tab: the back arrow, Cancel, then Done
-    keys(cx, "shift-tab shift-tab shift-tab");
+    // Shift+Tab: the search field, the back arrow, Cancel, then Done
+    keys(cx, "shift-tab shift-tab shift-tab shift-tab");
     keys(cx, "enter");
     assert!(self::picker(&view, cx).is_none(), "Enter on Done puts it in the box");
     assert!(drawn(cx, "editor-picture-1"));
@@ -417,4 +419,110 @@ fn a_sticker_with_no_caption_still_goes_straight_in() {
     draw(cx);
     assert!(!picker_open(&view, cx), "no editor: it goes in the box");
     assert!(drawn(cx, "editor-picture-1"));
+}
+
+/// "So cool"'s editor, open in the a–b chat, its caption field focused.
+fn so_cool(
+    rig: &Rig,
+    dir: &std::path::Path,
+) -> (Entity<FunPicker>, Entity<StickerEditor>, &'static mut VisualTestContext) {
+    let (view, cx) = chat_window(rig, dir);
+    let picker = open_pack(&view, "OfficeDrama", cx);
+    cx.update(|window, cx| {
+        picker.update(cx, |picker, cx| {
+            picker.activate(&Item::Sticker(StickerRef::teams("OfficeDrama_SoCool")), window, cx);
+        });
+    });
+    draw(cx);
+    let editor = editor(&picker, cx).unwrap();
+    (picker, editor, cx)
+}
+
+#[test]
+fn a_caption_keeps_its_first_150_characters_and_refuses_more_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let rig = rig(&["OfficeDrama_SoCool"], 334, 250);
+    let (_, editor, cx) = so_cool(&rig, dir.path());
+    let first = "made up words ".repeat(11);
+    let first: String = first.chars().take(149).collect();
+    keys(cx, "ctrl-a");
+    cx.simulate_input(&first);
+    draw(cx);
+    for key in ["a", "b", "c"] {
+        cx.simulate_input(key);
+        draw(cx);
+    }
+    let full = format!("{first}a");
+    assert_eq!(typed(&editor, cx), [full.as_str()], "the keys past 150 are refused");
+    // a key at the start of a full caption is refused too: the end is not cut
+    keys(cx, "ctrl-home");
+    cx.simulate_input("Z");
+    draw(cx);
+    assert_eq!(typed(&editor, cx), [full.as_str()]);
+    // with room again, a key goes where the cursor is
+    keys(cx, "ctrl-end backspace");
+    cx.simulate_input("Q");
+    draw(cx);
+    assert_eq!(typed(&editor, cx), [format!("{first}Q")]);
+}
+
+#[test]
+fn fast_typing_draws_the_picture_once_the_keys_settle() {
+    let dir = tempfile::tempdir().unwrap();
+    let rig = rig(&["OfficeDrama_SoCool"], 334, 250);
+    let (_, editor, cx) = so_cool(&rig, dir.path());
+    assert!(!cx.update(|_, cx| editor.read(cx).drawing()));
+    keys(cx, "ctrl-a");
+    for key in "a fast typist".chars() {
+        cx.simulate_input(&key.to_string());
+        cx.run_until_parked();
+    }
+    assert!(
+        cx.update(|_, cx| editor.read(cx).drawing()),
+        "no draw starts before the keys settle"
+    );
+    // the keys went on after the draw was asked for: it waits for the fields to stay unchanged a whole SETTLE
+    cx.executor().advance_clock(sticker_editor::SETTLE);
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| editor.read(cx).drawing()));
+    cx.executor().advance_clock(sticker_editor::SETTLE);
+    cx.run_until_parked();
+    assert!(
+        !cx.update(|_, cx| editor.read(cx).drawing()),
+        "one draw takes all the keys typed"
+    );
+    assert_eq!(cx.update(|_, cx| editor.read(cx).drawn()), Some((334, 250)));
+}
+
+#[test]
+fn the_top_row_is_the_back_arrow_beside_the_search_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let rig = rig(&["OfficeDrama_SoCool"], 334, 250);
+    let (picker, _, cx) = so_cool(&rig, dir.path());
+    let back = cx.debug_bounds(Press::Back.selector()).unwrap();
+    let search = cx
+        .debug_bounds("fun-search")
+        .expect("the search field is in the editor's top row, as in Teams");
+    let picture = cx.debug_bounds("sticker-editor-picture").unwrap();
+    assert!(search.left() > back.right(), "beside the back arrow");
+    assert!(
+        search.top() < back.center().y && back.center().y < search.bottom(),
+        "on one row"
+    );
+    assert!(search.bottom() <= picture.top(), "above the picture");
+    // Shift+Tab from the caption goes to the search field; a search there shows what it finds
+    keys(cx, "shift-tab");
+    cx.simulate_input("cool");
+    draw(cx);
+    assert!(!editor_open(&picker, cx), "a search closes the editor");
+    assert_eq!(
+        cx.update(|window, cx| picker.read(cx).place(window, cx)),
+        Some(Place::Search),
+        "the typing stays in the search field"
+    );
+    let found = cx.update(|_, cx| picker.read(cx).rows(cx)).concat();
+    assert!(
+        found.contains(&Item::Sticker(StickerRef::teams("OfficeDrama_SoCool"))),
+        "{found:?}"
+    );
 }

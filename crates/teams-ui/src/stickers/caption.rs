@@ -487,19 +487,21 @@ fn blend(pixel: &mut Rgba<u8>, color: [u8; 3], alpha: f32) {
     pixel[3] = byte(out * 255.0);
 }
 
-/// The template `template` (its file's bytes) with `typed` drawn on it as `caption` says, in `fonts`; `None` when the
-/// bytes hold no picture.
-pub fn draw(template: &[u8], caption: &Caption, typed: &[String], fonts: &mut Fonts) -> Option<RgbaImage> {
-    let mut image = image::load_from_memory(template).ok()?.to_rgba8();
-    let face = fonts.face(&caption.family);
+/// The picture in `template`, a file's bytes; `None` when they hold no picture.
+#[must_use]
+pub fn decode(template: &[u8]) -> Option<RgbaImage> {
+    Some(image::load_from_memory(template).ok()?.to_rgba8())
+}
+
+/// `template` with `typed` drawn on it as `caption` says, in `fonts`.
+#[must_use]
+pub fn draw(template: &RgbaImage, caption: &Caption, typed: &[String], fonts: &Mutex<Fonts>) -> RgbaImage {
+    let mut image = template.clone();
     for (text, region) in caption.texts(typed, image.dimensions()) {
-        let Some(fitted) = fit(&text, region, &mut |text| fonts.width(text, &face, BASE)) else {
+        // the fonts are held only to shape the letters: the painting goes on without them
+        let Some(mask) = cover(&text, region, caption, image.dimensions(), fonts) else {
             continue;
         };
-        let mut mask = Mask::new(image.width(), image.height());
-        for line in &fitted.lines {
-            fonts.cover(line, &face, fitted.size, &mut mask);
-        }
         match caption.border {
             // Teams strokes each letter 2 px wide on its outline, over the fill
             Some(border) => {
@@ -509,7 +511,19 @@ pub fn draw(template: &[u8], caption: &Caption, typed: &[String], fonts: &mut Fo
             None => paint(&mut image, &mask, caption.color),
         }
     }
-    Some(image)
+    image
+}
+
+/// The cover of `text` fitted to `region`, on a picture of `size`.
+fn cover(text: &str, region: Region, caption: &Caption, size: (u32, u32), fonts: &Mutex<Fonts>) -> Option<Mask> {
+    let mut fonts = fonts.lock().unwrap_or_else(PoisonError::into_inner);
+    let face = fonts.face(&caption.family);
+    let fitted = fit(text, region, &mut |text| fonts.width(text, &face, BASE))?;
+    let mut mask = Mask::new(size.0, size.1);
+    for line in &fitted.lines {
+        fonts.cover(line, &face, fitted.size, &mut mask);
+    }
+    Some(mask)
 }
 
 /// The fonts of the app's captions, read the first time they are asked for (the system's take a moment).
@@ -518,14 +532,40 @@ pub(crate) fn shared() -> &'static Mutex<Fonts> {
     FONTS.get_or_init(|| Mutex::new(Fonts::with_system()))
 }
 
-/// [`draw`] in the system's fonts, as a PNG; `None` when the template holds no picture.
+/// [`draw`] in the system's fonts, as a PNG.
 #[must_use]
-pub fn render(template: &[u8], caption: &Caption, typed: &[String]) -> Option<PastedPicture> {
-    let image = {
-        let mut fonts = shared().lock().unwrap_or_else(PoisonError::into_inner);
-        draw(template, caption, typed, &mut fonts)?
-    };
-    png(&image)
+pub fn render(template: &RgbaImage, caption: &Caption, typed: &[String]) -> Option<PastedPicture> {
+    png(&draw(template, caption, typed, shared()))
+}
+
+/// `new`, an edit of `old`, kept to `max` characters as a text field's `maxLength` keeps it: of what the edit put in,
+/// only what fits stays. `None` when `new` fits; else the kept text and the place after what stayed, in bytes.
+#[must_use]
+pub fn limited(old: &str, new: &str, max: usize) -> Option<(String, usize)> {
+    let length = new.chars().count();
+    if length <= max {
+        return None;
+    }
+    let start: usize = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(was, is)| was == is)
+        .map(|(was, _)| was.len_utf8())
+        .sum();
+    let end: usize = old[start..]
+        .chars()
+        .rev()
+        .zip(new[start..].chars().rev())
+        .take_while(|(was, is)| was == is)
+        .map(|(was, _)| was.len_utf8())
+        .sum();
+    let put = &new[start..new.len() - end];
+    let room = max.saturating_sub(length - put.chars().count());
+    let stays: String = put.chars().take(room).collect();
+    let kept: String = [&new[..start], &stays, &new[new.len() - end..]].concat();
+    let kept: String = kept.chars().take(max).collect();
+    let at = (start + stays.len()).min(kept.len());
+    Some((kept, at))
 }
 
 /// `image` as a PNG.
