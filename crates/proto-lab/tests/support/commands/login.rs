@@ -546,6 +546,17 @@ async fn a_reprocess_loop_deletes_only_the_sign_in_cookies_once_then_stops_the_r
     );
     let cleared = sent(&page, "Storage.clearDataForOrigin");
     assert_eq!(cleared.len(), SIGN_IN_HOSTS.len());
+    let methods: Vec<_> = page
+        .commands()
+        .into_iter()
+        .map(|command| command["method"].clone())
+        .collect();
+    let last_delete = methods.iter().rposition(|method| method == "Network.deleteCookies");
+    let first_clear = methods.iter().position(|method| method == "Storage.clearDataForOrigin");
+    assert!(
+        last_delete < first_clear,
+        "the cookies are counted before the clear removes them"
+    );
     assert_eq!(
         cleared[0],
         json!({"origin":"https://login.microsoftonline.com","storageTypes":"all"})
@@ -705,8 +716,13 @@ async fn a_timeout_names_the_sign_in_error_without_the_description() {
         .until_loaded(&mut session, &mut SignIn::default())
         .await
         .unwrap_err();
-    assert!(matches!(&error, LoginError::SignInAnswer { answer, .. } if answer == "login_required AADSTS500341"));
+    assert!(
+        matches!(&error, LoginError::SignInAnswer { answer, authz: None, .. } if answer == "login_required AADSTS500341")
+    );
     let text = error.to_string();
-    assert!(text.ends_with("answered login_required AADSTS500341"), "{text}");
+    assert!(
+        text.ends_with("answered login_required AADSTS500341 (no authz answer)"),
+        "{text}"
+    );
     assert!(!text.contains("example.test"));
 }

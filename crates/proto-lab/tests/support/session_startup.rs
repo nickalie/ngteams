@@ -223,6 +223,12 @@ async fn close_after_arming(session: LabSession, paths: &LabPaths) -> (SessionRe
                 .filter(|target| target["attached"] == true)
                 .all(|target| armed.iter().any(|known| target["targetId"] == known.target_id));
             assert_clean(&session.report());
+            let attached = session.armed.attached();
+            assert!(
+                armed
+                    .iter()
+                    .all(|target| attached.contains(&(target.session.clone(), target.kind.clone())))
+            );
             if all_armed && session.status().pending() == 0 {
                 break;
             }

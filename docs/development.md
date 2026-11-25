@@ -271,11 +271,11 @@ proto-lab service-mri echo <mri>
 
 `login` uses the password input outside the repository, records its steps in `status-<alias>.json`, and records the
 account's MRI. If a stale Microsoft session makes the main frame load Entra's `/reprocess` page again and again (five
-times in a row) before anything was typed, `login` deletes that profile's cookies of the sign-in hosts one time
-(state `sign-in-cookies-deleted`) and opens Teams again for a full sign-in. A second loop, or one after the email went
+times in a row) before anything was typed, `login` deletes that profile's cookies and site data of the sign-in hosts
+one time, never those of a parent domain (state `sign-in-cookies-deleted`) and opens Teams again for a full sign-in. A second loop, or one after the email went
 in, stops the run. `login` also stops when Microsoft says it knows no account of the email, and a run that times out
 names the error Entra redirected back with, such as `login_required AADSTS500341` (the account was deleted from the
-directory), without its description. `auth` uses the profile's existing sign-in, catches Entra's native redirect, then exchanges and
+directory), without its description, and the last authz status. `auth` uses the profile's existing sign-in, catches Entra's native redirect, then exchanges and
 refreshes tokens in Rust; it never types a password. A profile needing interaction is reported for `login`.
 Probes make plain HTTP GETs with the account's tokens and print outlines/claims, never response bodies or tokens.
 `run` exits non-zero when its goal is not reached or capture setup fails. Captures are raw private lab data.

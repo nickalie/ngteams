@@ -6,7 +6,7 @@ use crate::capture_hold::{CaptureHold, Handled, HeldRequest, Hold};
 use crate::cdp::{Cdp, CdpError, Event, Events, SessionId};
 use crate::frame_hold::{self, FrameHold};
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -148,7 +148,7 @@ pub struct ArmedTarget {
 }
 #[derive(Default)]
 struct Targets {
-    attached: HashSet<SessionId>,
+    attached: HashMap<SessionId, TargetKind>,
     ready: HashMap<SessionId, ArmedTarget>,
     failures: Vec<String>,
 }
@@ -356,6 +356,16 @@ impl ArmedBrowser {
     pub fn targets(&self) -> Vec<ArmedTarget> {
         self.shared.targets().ready.values().cloned().collect()
     }
+    /// The session and kind of each attached target, armed yet or not.
+    #[must_use]
+    pub fn attached(&self) -> Vec<(SessionId, TargetKind)> {
+        let targets = self.shared.targets();
+        targets
+            .attached
+            .iter()
+            .map(|(session, kind)| (session.clone(), kind.clone()))
+            .collect()
+    }
     pub fn hold(&self, rule: Hold) {
         self.shared.http.hold(rule);
     }
@@ -411,6 +421,13 @@ fn attach(children: bool) -> Value {
 }
 async fn handle_events(cdp: Cdp, mut events: Events, shared: Arc<Shared>) {
     while let Some(event) = events.recv().await {
+        // known before the tap: a watcher that subscribes later finds the target in its snapshot, not in its events
+        if event.method == "Target.attachedToTarget"
+            && let Some(id) = event.params["sessionId"].as_str()
+        {
+            let kind = TargetKind::from_type(event.params["targetInfo"]["type"].as_str().unwrap_or("?"));
+            shared.targets().attached.insert(SessionId::new(id), kind);
+        }
         shared.tap(&event);
         if let Some(capture) = &shared.capture {
             capture.observe(&cdp, &event);
@@ -430,9 +447,6 @@ async fn handle_events(cdp: Cdp, mut events: Events, shared: Arc<Shared>) {
                 });
             }
             "Target.attachedToTarget" => {
-                if let Some(id) = event.params["sessionId"].as_str() {
-                    shared.targets().attached.insert(SessionId::new(id));
-                }
                 let cdp = cdp.clone();
                 let work = Working::start(&shared);
                 tokio::spawn(async move {
@@ -480,7 +494,7 @@ async fn on_attached(cdp: &Cdp, shared: &Shared, event: &Event) {
     match setup_target(cdp, shared, &target).await {
         Ok(()) => {
             let mut targets = shared.targets();
-            if targets.attached.contains(&target.session) {
+            if targets.attached.contains_key(&target.session) {
                 targets.ready.insert(target.session.clone(), target);
             }
         }

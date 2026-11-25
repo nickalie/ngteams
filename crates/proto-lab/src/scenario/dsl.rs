@@ -34,7 +34,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::action_targets::ActionTargets;
-use crate::arming::ArmedTarget;
+use crate::arming::TargetKind;
 use crate::capture_hold::without_query;
 use crate::cdp::{Cdp, CdpError, Event, SessionId};
 
@@ -325,7 +325,7 @@ pub struct Driver {
     events: mpsc::UnboundedReceiver<Event>,
     requests: Vec<SeenRequest>,
     /// The CDP type (`worker`, `shared_worker`, `service_worker`, `iframe`, …) of each target session seen.
-    kinds: HashMap<SessionId, String>,
+    kinds: HashMap<SessionId, TargetKind>,
     /// The first request a request wait may match.
     cursor: usize,
     closed: bool,
@@ -360,16 +360,13 @@ impl Driver {
 
     /// The same driver, knowing the kind of each target attached before it began.
     #[must_use]
-    pub fn with_targets(mut self, targets: impl IntoIterator<Item = ArmedTarget>) -> Self {
+    pub fn with_targets(mut self, targets: impl IntoIterator<Item = (SessionId, TargetKind)>) -> Self {
         self.know_targets(targets);
         self
     }
 
-    /// Learns the kind of each of `targets`, attached before the driver began.
-    pub fn know_targets(&mut self, targets: impl IntoIterator<Item = ArmedTarget>) {
-        for target in targets {
-            self.kinds.insert(target.session, target.kind.name().to_owned());
-        }
+    pub(crate) fn know_targets(&mut self, targets: impl IntoIterator<Item = (SessionId, TargetKind)>) {
+        self.kinds.extend(targets);
     }
 
     /// Which target sent `request`: `page` (the driven tab), the CDP type of another target (`worker`, `iframe`,
@@ -379,7 +376,7 @@ impl Driver {
         match &request.session {
             None => "browser",
             Some(session) if *session == self.page => "page",
-            Some(session) => self.kinds.get(session).map_or("unknown target", String::as_str),
+            Some(session) => self.kinds.get(session).map_or("unknown target", TargetKind::name),
         }
     }
 
@@ -951,7 +948,7 @@ impl Driver {
         if event.method == "Target.attachedToTarget"
             && let (Some(session), Some(kind)) = (params["sessionId"].as_str(), params["targetInfo"]["type"].as_str())
         {
-            self.kinds.insert(SessionId::new(session), kind.to_owned());
+            self.kinds.insert(SessionId::new(session), TargetKind::from_type(kind));
         }
         let Some(id) = params["requestId"].as_str() else {
             return;
@@ -959,6 +956,14 @@ impl Driver {
         let session = event.session_id.clone();
         match event.method.as_str() {
             "Network.requestWillBeSent" => {
+                // a redirect hop's status comes only with the next hop, as its `redirectResponse`
+                if let Some(status) = params["redirectResponse"]["status"]
+                    .as_u64()
+                    .and_then(|s| u16::try_from(s).ok())
+                    && let Some(hop) = self.seen_mut(session.as_ref(), id)
+                {
+                    hop.status = Some(status);
+                }
                 let request = &params["request"];
                 self.requests.push(SeenRequest {
                     session: session.clone(),

@@ -407,12 +407,10 @@ fn on(page: &crate::scenario::test_page::Page, session: Option<&str>, method: &s
 #[tokio::test]
 async fn seen_names_the_target_of_each_request_and_how_it_ended() {
     let mut page = page_with(false, false, |_, _| None).await;
-    page.driver.know_targets([crate::arming::ArmedTarget {
-        target_id: "synthetic-frame-target".into(),
-        session: crate::cdp::SessionId::new("synthetic-frame"),
-        kind: crate::arming::TargetKind::Iframe,
-        parent: None,
-    }]);
+    page.driver.know_targets([(
+        crate::cdp::SessionId::new("synthetic-frame"),
+        crate::arming::TargetKind::Iframe,
+    )]);
     on(
         &page,
         None,
@@ -475,6 +473,43 @@ async fn seen_names_the_target_of_each_request_and_how_it_ended() {
             .notes
             .iter()
             .any(|note| note.ends_with("synthetic/sent?private from worker"))
+    );
+}
+
+#[tokio::test]
+async fn a_redirect_hop_keeps_its_own_status() {
+    let mut page = page_with(false, false, |_, _| None).await;
+    let url = |id: &str| format!("https://teams.cloud.microsoft/api/chatsvc/synthetic/{id}");
+    on(
+        &page,
+        Some("synthetic-page"),
+        "Network.requestWillBeSent",
+        json!({"requestId":"hop","request":{"method":"POST","url":url("first")}}),
+    );
+    on(
+        &page,
+        Some("synthetic-page"),
+        "Network.requestWillBeSent",
+        json!({"requestId":"hop","request":{"method":"GET","url":url("second")},"redirectResponse":{"status":307}}),
+    );
+    on(
+        &page,
+        Some("synthetic-page"),
+        "Network.responseReceived",
+        json!({"requestId":"hop","response":{"status":200}}),
+    );
+    let mut seen = 0;
+    let mut report = ScenarioReport::new(ScenarioName::TeamManage);
+    let answer = writes_seen(&mut page.driver, &mut report, &mut seen, &TEAM_SERVICES).await;
+    let lines: Vec<_> = answer.lines().collect();
+    assert_eq!(lines.len(), 2, "{answer}");
+    assert!(
+        lines[0].starts_with("POST https://teams.cloud.microsoft/api/chatsvc/synthetic/first -> 307 from page"),
+        "{answer}"
+    );
+    assert!(
+        lines[1].starts_with("GET https://teams.cloud.microsoft/api/chatsvc/synthetic/second -> 200 from page"),
+        "{answer}"
     );
 }
 

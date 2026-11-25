@@ -12,7 +12,10 @@
 //!   document ([`Clicks`]), so a form whose post is still on its way isn't submitted twice, and the page is looked at
 //!   at most every [`TICK`];
 //! - a request to register an MFA method stops the run, and so does any other multi-factor prompt: one to pick a
-//!   method, to approve in an app, or to enter a one-time code.
+//!   method, to approve in an app, or to enter a one-time code;
+//! - when Microsoft says it knows no account for the email, the run stops;
+//! - when the main frame loads Entra's `/reprocess` page again and again before anything was typed, the cookies and
+//!   site data of the sign-in hosts are deleted one time and Teams is opened again; a later loop stops the run.
 //!
 //! The run is recorded like a scenario's, under
 //! `captures/login/<ts>/` ([`LOGIN_CAPTURE`]), so the sign-in form's queries can be read for the sign-in window's own
@@ -308,10 +311,14 @@ pub enum LoginError {
     FieldGone,
     #[error("the page stopped on an unexpected host: {0}")]
     UnexpectedHost(String),
-    #[error("the web client didn't load within {timeout:?} ({})", authz.map_or_else(|| "no authz answer".to_owned(), |status| format!("authz answered {status}")))]
+    #[error("the web client didn't load within {timeout:?} ({})", authz_text(*authz))]
     Timeout { timeout: Duration, authz: Option<u16> },
-    #[error("the web client didn't load within {timeout:?}: Microsoft's sign-in answered {answer}")]
-    SignInAnswer { timeout: Duration, answer: String },
+    #[error("the web client didn't load within {timeout:?}: Microsoft's sign-in answered {answer} ({})", authz_text(*authz))]
+    SignInAnswer {
+        timeout: Duration,
+        answer: String,
+        authz: Option<u16>,
+    },
     #[error("Microsoft's sign-in page reloads its reprocess page again and again")]
     ReprocessLoop,
     #[error("the web client loaded, but no request showed the account's identity")]
@@ -322,6 +329,13 @@ pub enum LoginError {
     Status(#[source] std::io::Error),
     #[error("capture setup failed: {0}")]
     CaptureFailed(String),
+}
+
+fn authz_text(authz: Option<u16>) -> String {
+    authz.map_or_else(
+        || "no authz answer".to_owned(),
+        |status| format!("authz answered {status}"),
+    )
 }
 
 /// Reads the page: what a person would see to act on.
@@ -649,6 +663,7 @@ impl Run<'_> {
                     return Err(LoginError::SignInAnswer {
                         timeout: self.options.timeout,
                         answer: answer.to_owned(),
+                        authz: session.watch().last_authz_status(),
                     });
                 }
                 return Err(LoginError::Timeout {
@@ -734,13 +749,9 @@ fn in_reprocess_loop(session: &LabSession, sign_in: &SignIn) -> bool {
             .is_none_or(|cleared| watch.document() >= cleared + u64::from(REPROCESS_LOOP))
 }
 
-/// Deletes the data and the cookies of Microsoft's sign-in hosts ([`SIGN_IN_HOSTS`]) from the profile and returns how
-/// many cookies went. Cookies of a parent domain that other sites share stay.
+/// Deletes the cookies and the other site data of Microsoft's sign-in hosts ([`SIGN_IN_HOSTS`]) from the profile and
+/// returns how many cookies went. Cookies of a parent domain that other sites share stay.
 async fn delete_sign_in_data(cdp: &Cdp, page: &SessionId) -> Result<usize, CdpError> {
-    for host in SIGN_IN_HOSTS {
-        let origin = json!({"origin": format!("https://{host}"), "storageTypes": "all"});
-        cdp.call(Some(page), "Storage.clearDataForOrigin", origin).await?;
-    }
     let urls: Vec<String> = SIGN_IN_HOSTS.iter().map(|host| format!("https://{host}/")).collect();
     let found = cdp
         .call(Some(page), "Network.getCookies", json!({"urls": urls}))
@@ -760,6 +771,11 @@ async fn delete_sign_in_data(cdp: &Cdp, page: &SessionId) -> Result<usize, CdpEr
         let target = json!({"name": name, "domain": domain, "path": path});
         cdp.call(Some(page), "Network.deleteCookies", target).await?;
         deleted += 1;
+    }
+    // after the cookies: this clear removes the host-only ones too, which would leave them out of the count
+    for host in SIGN_IN_HOSTS {
+        let origin = json!({"origin": format!("https://{host}"), "storageTypes": "all"});
+        cdp.call(Some(page), "Storage.clearDataForOrigin", origin).await?;
     }
     Ok(deleted)
 }
