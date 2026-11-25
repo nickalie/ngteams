@@ -4,7 +4,9 @@
 //! - The callee's answer takes the main video line and up to the slots' count of the other video lines both ways (as
 //!   the web client answers them; nothing is sent on the receiving ones), each with reduced-size RTCP, its feedback for
 //!   every payload type and the largest picture it takes (as the mixer takes them); it takes the sharing line the same
-//!   way (someone's screen comes on it), rejects any line past the slots and keeps the data line; each receiving line's
+//!   way (someone's screen comes on it), taking a screen's larger picture there (1080p at 15 frames a second, as the
+//!   web client's: the mixer forwards a share unscaled), rejects any line past the slots and keeps the data line; each
+//!   receiving line's
 //!   and the sharing line's stream id (`a=x-source-streamid`) is what a source request names it by, and the data line's
 //!   is the client's own control plane source.
 //! - The lines are described as the web client describes them: the main line `recvonly` while the camera is off,
@@ -100,9 +102,33 @@ fn mixer_answer(slots: usize) -> TestResult<(NgcSession, String)> {
     Ok((session, text))
 }
 
+/// The largest picture a camera's line takes: 720p at 30 frames a second.
+const CAMERA_LIMITS: &str = "max-fs=3600;max-mbps=108000;max-fps=3000";
+/// The largest picture the sharing line takes, as the web client's: 1080p at 15 frames a second.
+const SCREEN_LIMITS: &str = "max-fs=8160;max-mbps=122400;max-fps=1500";
+
+/// The H.264 format's parameters of `section`.
+fn h264_fmtp<'a>(section: &[&'a str]) -> Option<&'a str> {
+    let pt = section
+        .iter()
+        .find_map(|line| line.strip_prefix("a=rtpmap:")?.strip_suffix(" H264/90000"))?;
+    section
+        .iter()
+        .find_map(|line| line.strip_prefix(&format!("a=fmtp:{pt} ")))
+}
+
+/// `section` takes at most `limits`.
+fn assert_limits(section: &[&str], limits: &str) {
+    assert!(
+        h264_fmtp(section).is_some_and(|fmtp| fmtp.ends_with(limits)),
+        "the largest picture taken, {limits}: {section:?}"
+    );
+}
+
 /// A video line taken as the mixer takes it: both ways, as the web client answers them (described receive-only),
-/// with reduced-size RTCP, the feedback for every payload type, its stream named and the largest picture it takes.
-fn assert_taken(slot: &[&str]) {
+/// with reduced-size RTCP, the feedback for every payload type, its stream named and the largest picture it takes
+/// (`limits`).
+fn assert_taken(slot: &[&str], limits: &str) {
     assert!(!slot[0].starts_with("m=video 0 "), "{slot:?}");
     assert!(slot.contains(&"a=sendrecv"), "{slot:?}");
     assert!(slot.contains(&"a=rtcp-rsize"), "{slot:?}");
@@ -118,10 +144,7 @@ fn assert_taken(slot: &[&str]) {
             .any(|line| line.starts_with(&format!("a=ssrc:{ssrc} cname:"))),
         "its stream named by its range: {slot:?}"
     );
-    assert!(
-        value(slot, "fmtp").is_some_and(|fmtp| fmtp.contains("max-fs=3600")),
-        "the largest picture taken: {slot:?}"
-    );
+    assert_limits(slot, limits);
 }
 
 #[test]
@@ -142,10 +165,10 @@ fn a_callee_takes_the_main_line_both_ways_and_the_slots_receiving() -> TestResul
         "the main line's stream named: {main:?}"
     );
     for slot in &lines[1..11] {
-        assert_taken(slot);
+        assert_taken(slot, CAMERA_LIMITS);
     }
     assert_eq!(value(&lines[11], "label"), Some("applicationsharing-video"));
-    assert_taken(&lines[11]);
+    assert_taken(&lines[11], SCREEN_LIMITS);
     assert!(
         lines[12][0].starts_with("m=x-data "),
         "the data line kept: {:?}",
@@ -206,6 +229,8 @@ fn our_group_offer_is_the_web_client_s_kind() -> TestResult {
         assert!(slot.contains(&"a=sendrecv"), "{slot:?}");
     }
     assert_eq!(value(&lines[11], "label"), Some("applicationsharing-video"));
+    assert_limits(&lines[1], CAMERA_LIMITS);
+    assert_limits(&lines[11], SCREEN_LIMITS);
     assert!(lines[12][0].starts_with("m=x-data "), "{:?}", lines[12]);
     assert_eq!(
         session.video_slots().len(),

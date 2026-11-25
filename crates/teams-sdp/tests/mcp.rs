@@ -155,6 +155,14 @@ fn the_handshake_then_source_requests() {
     );
     let (next, _) = plane.request_source(417, -1, ReceiveLimits::HD).unwrap();
     assert_eq!(next, sequence + 1, "numbered on");
+    // a screen on the sharing line, at the web client's limits for a share: 1080p at 15 frames a second
+    let (_, packet) = plane.request_source(425, 212, ReceiveLimits::of(true)).unwrap();
+    let (_, sr) = read_sent(&packet).unwrap();
+    assert_eq!(
+        sr[0]["controlVideoStreaming"]["controlInfo"]["fmtParams"],
+        json!([{"max-fs": 8160, "max-mbps": 122_400, "max-fps": 1500}])
+    );
+    assert_eq!(ReceiveLimits::of(false), ReceiveLimits::HD);
 
     let told = plane.receive(&from_mixer(
         &mut mixer,

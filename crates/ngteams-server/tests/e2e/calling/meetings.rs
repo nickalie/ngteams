@@ -11,7 +11,7 @@ use teams_media::tone::Tone;
 use teams_proto::chat::ChatReads;
 use teams_proto::{CalendarEvent, MIDDLE_TIER_AUDIENCE, MeetingInfo, Mri};
 
-use super::engines::{A_TONE, B_TONE, Engine};
+use super::engines::{A_TONE, B_TONE, Engine, Screen};
 use super::group_media::{C_TONE, Mixed};
 use crate::calendar::meetings::invited;
 use crate::calendar::{MONDAY, draft};
@@ -27,12 +27,17 @@ pub(super) struct Person {
 
 impl Person {
     pub(super) async fn new(mixed: &Mixed, name: &str, tone: Tone) -> Self {
+        Self::sharing(mixed, name, tone, Screen::Moving).await
+    }
+
+    /// [`Person::new`] whose engine shares `screen`.
+    pub(super) async fn sharing(mixed: &Mixed, name: &str, tone: Tone, screen: Screen) -> Self {
         let tag = uuid::Uuid::new_v4().simple().to_string();
         let upn = format!("{}-{tag}@own.test", name.to_lowercase());
         let id = mixed.server().add_user(&upn, name).await;
         let account = Account::sign_in(mixed.server(), &upn, &id).await;
         let nodes = (mixed.server(), mixed.server());
-        let engine = Engine::start_served(&account, name, nodes, (tone, mixed.dir())).await;
+        let engine = Engine::start_served_sharing(&account, name, nodes, (tone, mixed.dir(), screen)).await;
         Self {
             engine,
             upn,

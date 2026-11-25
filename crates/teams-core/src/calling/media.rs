@@ -722,14 +722,13 @@ impl LiveMedia {
                         self.call.get()
                     );
                 }
-                SessionEvent::SourceRequested {
-                    sequence,
-                    stream,
-                    source,
-                } => {
+                SessionEvent::SourceRequested { sequence, request } => {
+                    let what = if request.screen { "screen" } else { "line" };
                     log::info!(
-                        "call {}: source request {sequence}: line {stream} to source {source}",
-                        self.call.get()
+                        "call {}: source request {sequence}: {what} {} to source {}",
+                        self.call.get(),
+                        request.stream,
+                        request.source
                     );
                 }
                 SessionEvent::SourceResult { sequence, result } => {

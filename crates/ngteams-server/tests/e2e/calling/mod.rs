@@ -9,6 +9,7 @@ mod group_signaling;
 mod group_video;
 mod held_socket;
 mod history;
+mod meeting_share;
 mod meetings;
 mod mixer;
 mod qa_group_log;

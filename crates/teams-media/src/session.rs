@@ -123,8 +123,8 @@ pub enum SessionEvent {
     DeviceClosed(SessionDevice),
     /// A group call's control plane is up: the mixer answered its handshake, naming what it sends and what it takes.
     ControlActive { send: Vec<String>, receive: Vec<String> },
-    /// A source request went: numbered `sequence`, the line by its stream id, the source (`-1` for none).
-    SourceRequested { sequence: u64, stream: u32, source: i64 },
+    /// A source request went, numbered `sequence`.
+    SourceRequested { sequence: u64, request: SourceRequest },
     /// The mixer's answer to the source request numbered `sequence`.
     SourceResult { sequence: u64, result: String },
     /// A group call's mixer didn't answer the control plane's handshake: no source request goes.

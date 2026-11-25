@@ -9,6 +9,9 @@
 //!   the time since its last frame, so a line that changes source is one stream to the client's decoder. A line that
 //!   went on by one frame after a pause (a second share on the same line) made the receiver take the pause as jitter
 //!   and hold its frames for a second, past the share's end.
+//! - **The largest picture a line takes** is its source request's `max-fs`: as Teams' mixer, this one never scales a
+//!   stream down, so a source whose keyframes carry larger pictures ([`super::sps`]) shows nothing on that line (a
+//!   1080p share reaches no line that asked for 720p).
 //! - **Keyframes**: a receiver's PLI or FIR on a line, and a line that starts a source, ask that source's leg for one;
 //!   a source is asked at most every [`KEYFRAME_EVERY`].
 
@@ -107,6 +110,8 @@ pub(crate) struct Frame {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Slot {
     source: Option<u32>,
+    /// The largest picture it takes, in macroblocks (none: any).
+    max_fs: Option<u32>,
     /// It shows nothing until the source's next keyframe.
     waiting: bool,
     /// What the source's RTP time is moved by on this line.
@@ -129,6 +134,21 @@ impl Slot {
 
     pub(crate) fn source(&self) -> Option<u32> {
         self.source
+    }
+
+    /// The largest picture the line takes from now on, in macroblocks (none: any).
+    pub(crate) fn limit(&mut self, max_fs: Option<u32>) {
+        self.max_fs = max_fs;
+    }
+
+    /// Whether pictures of `size` macroblocks (none: not known) fit the line. One that doesn't makes the line wait for
+    /// a keyframe again, so it shows its source again only from one that fits.
+    pub(crate) fn fits(&mut self, size: Option<u32>) -> bool {
+        let fits = size.zip(self.max_fs).is_none_or(|(size, max_fs)| size <= max_fs);
+        if !fits {
+            self.waiting = self.source.is_some();
+        }
+        fits
     }
 
     /// The RTP time a frame of the source at `time` goes out at on this line at `now`; none while the line waits for a
@@ -236,6 +256,24 @@ mod tests {
         let later = now + Duration::from_secs(4);
         assert_eq!(slot.pass(true, 500_000, later), Some(90_000 + 4 * 90_000));
         assert_eq!(slot.pass(false, 506_000, later), Some(456_000));
+    }
+
+    #[test]
+    fn a_line_takes_only_pictures_that_fit_its_limit() {
+        let now = Instant::now();
+        let mut slot = Slot::default();
+        slot.show(1022);
+        assert!(slot.fits(Some(8160)), "no limit asked: any size");
+        slot.limit(Some(3600));
+        assert!(slot.fits(Some(3600)));
+        assert!(slot.fits(None), "a size not known yet");
+        assert_eq!(slot.pass(true, 90_000, now), Some(90_000));
+        // a 1080p screen on a line that asked for 720p: nothing, and the line waits for a keyframe that fits
+        assert!(!slot.fits(Some(8160)));
+        assert_eq!(slot.pass(false, 93_000, now), None);
+        slot.limit(Some(8160));
+        assert!(slot.fits(Some(8160)));
+        assert!(slot.pass(true, 96_000, now).is_some());
     }
 
     #[test]

@@ -11,9 +11,36 @@ use crate::rtc::Peer;
 
 use super::{SessionEvent, Shared};
 
-/// Which source the caller wants on which receiving line: the line's stream id and the participant's video source id
-/// (`-1` for none).
-pub type SourceRequest = (u32, i64);
+/// Which source the caller wants on which receiving line: the line's stream id, the participant's video source id
+/// (`-1` for none), and whether the line is the sharing line (a screen takes larger pictures than a camera).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceRequest {
+    pub stream: u32,
+    pub source: i64,
+    pub screen: bool,
+}
+
+impl SourceRequest {
+    /// The camera of `source` on the receiving line `stream`.
+    #[must_use]
+    pub fn camera(stream: u32, source: i64) -> Self {
+        Self {
+            stream,
+            source,
+            screen: false,
+        }
+    }
+
+    /// The screen of `source` on the sharing line `stream`.
+    #[must_use]
+    pub fn screen(stream: u32, source: i64) -> Self {
+        Self {
+            stream,
+            source,
+            screen: true,
+        }
+    }
+}
 
 /// The control plane, and what it is to ask the mixer for.
 pub(super) struct Control {
@@ -76,36 +103,38 @@ impl Control {
         if !self.plane.takes_source_requests() {
             return;
         }
-        let had_source =
-            |stream: u32, sent: &[SourceRequest]| sent.iter().any(|(at, source)| *at == stream && *source != -1);
+        let had_source = |stream: u32, sent: &[SourceRequest]| {
+            sent.iter()
+                .any(|request| request.stream == stream && request.source != -1)
+        };
         let mut changes: Vec<SourceRequest> = self
             .wanted
             .iter()
             .filter(|wanted| !self.sent.contains(wanted))
-            .filter(|(stream, source)| *source != -1 || had_source(*stream, &self.sent))
+            .filter(|wanted| wanted.source != -1 || had_source(wanted.stream, &self.sent))
             .copied()
             .collect();
         changes.extend(
             self.sent
                 .iter()
-                .filter(|(stream, source)| *source != -1 && !self.wanted.iter().any(|(wanted, _)| wanted == stream))
-                .map(|(stream, _)| (*stream, -1)),
+                .filter(|sent| sent.source != -1 && !self.wanted.iter().any(|wanted| wanted.stream == sent.stream))
+                .map(|sent| SourceRequest { source: -1, ..*sent }),
         );
-        for (stream, source) in changes {
-            let Ok((sequence, packet)) = self.plane.request_source(stream, source, ReceiveLimits::HD) else {
+        for request in changes {
+            let limits = ReceiveLimits::of(request.screen);
+            let Ok((sequence, packet)) = self.plane.request_source(request.stream, request.source, limits) else {
                 return;
             };
             if !peer.send_channel(&packet) {
                 // the channel took nothing: what wasn't sent goes at the next change
                 return;
             }
-            shared.report(SessionEvent::SourceRequested {
-                sequence,
-                stream,
-                source,
-            });
-            self.sent.retain(|(sent, _)| *sent != stream);
-            self.sent.push((stream, source));
+            if request.screen && request.source != -1 {
+                shared.video.await_screen();
+            }
+            shared.report(SessionEvent::SourceRequested { sequence, request });
+            self.sent.retain(|sent| sent.stream != request.stream);
+            self.sent.push(request);
         }
     }
 }

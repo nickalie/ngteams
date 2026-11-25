@@ -100,13 +100,21 @@ impl VideoOutput for Shown {
     }
 }
 
-/// The screen an engine shares: the file backend's moving pattern, or one that holds still after its first frames, as a
-/// desktop's does while nothing on it changes.
+/// The screen an engine shares: the file backend's moving pattern, one that holds still after its first frames, as a
+/// desktop's does while nothing on it changes, or a moving 1080p one, a real desktop's size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Screen {
     Moving,
     Still,
+    FullHd,
 }
+
+/// A 1080p screen, at a screen's rate.
+pub(super) const FULL_HD: PatternCamera = PatternCamera {
+    width: 1920,
+    height: 1080,
+    fps: 15,
+};
 
 /// The file backend's devices, its screen as [`Screen`] says.
 struct TestDevices {
@@ -132,6 +140,11 @@ impl Devices for TestDevices {
         Ok(match self.screen {
             Screen::Moving => screen,
             Screen::Still => Box::new(StillSource::new(screen, 3)),
+            Screen::FullHd => FileDevices {
+                camera: FULL_HD,
+                ..self.files.clone()
+            }
+            .camera()?,
         })
     }
 }
@@ -185,19 +198,19 @@ impl Engine {
     }
 
     /// [`Engine::start`] with every service base the account's authz names, as the account's bring-up sets them: the
-    /// middle tier and CSA too (the calendar, a channel's meeting).
-    pub(super) async fn start_served(
+    /// middle tier and CSA too (the calendar, a channel's meeting), sharing `screen`.
+    pub(super) async fn start_served_sharing(
         account: &Account,
         name: &str,
         nodes: (&TestServer, &TestServer),
-        (tone, dir): (Tone, &Path),
+        (tone, dir, screen): (Tone, &Path, Screen),
     ) -> Self {
         let id = account.mri.trim_start_matches("8:orgid:");
         let transports = (
             crate::teams::transport(&account.session, nodes.1, id).await,
             crate::teams::transport(&account.session, nodes.1, id).await,
         );
-        let film = (tone, dir, PatternCamera::default(), Screen::Moving);
+        let film = (tone, dir, PatternCamera::default(), screen);
         Self::start_on(account, name, nodes, transports, film).await
     }
 

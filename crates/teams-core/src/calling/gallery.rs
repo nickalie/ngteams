@@ -10,8 +10,9 @@
 //!   camera is on, `-1` while it is off), each line only when it changed (the session keeps what went).
 //! - **Whose screen the sharing line shows** (a group call's): the participant whose share started last (the
 //!   roster's `applicationsharing-video` stream going out), asked for on the call's sharing line by its stream id as a
-//!   receiving line's video is (`-1` once nobody shares), as the web client's viewer asks the mixer for it. As in
-//!   Teams, a new share takes over: the sharing line follows it while the old sharer's client stops its own.
+//!   receiving line's video is (`-1` once nobody shares), as the web client's viewer asks the mixer for it: at a
+//!   screen's size (1080p), as the mixer forwards a share unscaled. As in Teams, a new share takes over: the sharing
+//!   line follows it while the old sharer's client stops its own.
 //! - **Who is speaking**: in a 1:1 call, the far end while what the speaker plays is louder than [`SPEAKING_LEVEL`];
 //!   in a group call, the newest dominant speaker the mixer told (by audio source id) while what the speaker plays is
 //!   (the mixer's word alone would keep the last one speaking through a silence), and nobody in a group call without
@@ -208,12 +209,17 @@ impl Gallery {
         };
         let screen = self.sharing_slot.map(|stream| {
             let sharer = self.sharer().and_then(|p| p.sharing_source);
-            (stream, sharer.unwrap_or(-1))
+            SourceRequest::screen(stream, sharer.unwrap_or(-1))
         });
         self.slots
             .iter()
             .zip(&self.shown)
-            .filter_map(|(stream, shown)| Some((stream.as_ref().copied()?, shown.as_ref().map_or(-1, source))))
+            .filter_map(|(stream, shown)| {
+                Some(SourceRequest::camera(
+                    stream.as_ref().copied()?,
+                    shown.as_ref().map_or(-1, source),
+                ))
+            })
             .chain(screen)
             .collect()
     }
@@ -416,15 +422,24 @@ mod tests {
         assert!(gallery.sharer().is_none(), "no sharing line yet");
         gallery.set_sharing_slot(Some(425));
         assert!(gallery.sharer().is_none(), "nobody shares");
-        assert_eq!(gallery.assign(), vec![(5, 11), (425, -1)]);
+        assert_eq!(
+            gallery.assign(),
+            vec![SourceRequest::camera(5, 11), SourceRequest::screen(425, -1)]
+        );
         let mut sharing = participant("8:orgid:c", 20);
         sharing.sharing_source = Some(212);
         gallery.set_participants(vec![participant("8:orgid:b", 10), sharing]);
         assert_eq!(gallery.sharer().map(|p| p.mri.as_str()), Some("8:orgid:c"));
-        assert_eq!(gallery.assign(), vec![(5, 11), (425, 212)]);
+        assert_eq!(
+            gallery.assign(),
+            vec![SourceRequest::camera(5, 11), SourceRequest::screen(425, 212)]
+        );
         gallery.set_participants(vec![participant("8:orgid:b", 10), participant("8:orgid:c", 20)]);
         assert!(gallery.sharer().is_none());
-        assert_eq!(gallery.assign(), vec![(5, 11), (425, -1)]);
+        assert_eq!(
+            gallery.assign(),
+            vec![SourceRequest::camera(5, 11), SourceRequest::screen(425, -1)]
+        );
     }
 
     #[test]

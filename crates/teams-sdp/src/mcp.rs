@@ -236,11 +236,24 @@ pub struct ReceiveLimits {
 }
 
 impl ReceiveLimits {
-    /// 1280 by 720 at 30 frames a second.
+    /// 1280 by 720 at 30 frames a second: a camera's line.
     pub const HD: Self = Self {
         max_fs: 3600,
         max_fps: 3000,
     };
+
+    /// 1920 by 1080 at 15 frames a second: the sharing line, as the web client asks for a screen. The mixer forwards a
+    /// share as its sharer sends it (1080p) and never scales it: a smaller limit gets no frame.
+    pub const SCREEN: Self = Self {
+        max_fs: 8160,
+        max_fps: 1500,
+    };
+
+    /// The limits a line takes: [`Self::SCREEN`] on the sharing line, else [`Self::HD`].
+    #[must_use]
+    pub fn of(screen: bool) -> Self {
+        if screen { Self::SCREEN } else { Self::HD }
+    }
 
     /// Macroblocks a second (`max_fs` times the frame rate).
     #[must_use]

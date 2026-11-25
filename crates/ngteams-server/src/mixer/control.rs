@@ -1,6 +1,7 @@
 //! The mixer's end of a leg's control plane: MCP messages on the client's `main-channel` (`teams_sdp::mcp`). A `syn`
 //! is answered with an `ack` naming what the mixer sends and takes; the mixer tells the dominant speakers (`dsh`); a
-//! source request (`sr`: which source a receiving line is to show) is answered `sr_res` `ok` and handed to the room.
+//! source request (`sr`: which source a receiving line is to show, and the largest picture it takes) is answered
+//! `sr_res` `ok` and handed to the room.
 //! Any other message is ignored: the native client runs without `heartbeat`, `bwe` and the rest.
 
 use serde_json::{Value, json};
@@ -13,11 +14,13 @@ const RECEIVE_CAPABILITIES: [&str; 1] = ["sr"];
 /// The version byte in front of every message array.
 const VERSION: u8 = 1;
 
-/// A source request: the receiving line (by its stream id) is to show the source `source` (`-1`: nothing).
+/// A source request: the receiving line (by its stream id) is to show the source `source` (`-1`: nothing), in
+/// pictures of at most `max_fs` macroblocks (its `fmtParams`' `max-fs`; none when it names none).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SourceRequest {
     pub stream: u32,
     pub source: i64,
+    pub max_fs: Option<u32>,
 }
 
 /// What a packet of the client's came to.
@@ -87,8 +90,11 @@ impl Control {
             .and_then(|info| info.get("streamMsid")?.as_u64())
             .and_then(|stream| u32::try_from(stream).ok());
         let source = info.and_then(|info| info.get("sourceId")?.as_i64());
+        let max_fs = info
+            .and_then(|info| info.pointer("/fmtParams/0/max-fs")?.as_u64())
+            .and_then(|max_fs| u32::try_from(max_fs).ok());
         if let (Some(stream), Some(source)) = (stream, source) {
-            received.requests.push(SourceRequest { stream, source });
+            received.requests.push(SourceRequest { stream, source, max_fs });
         }
         let sequence = streaming
             .and_then(|streaming| streaming.get("sequenceNumber"))
@@ -151,7 +157,8 @@ mod tests {
             received.requests,
             [SourceRequest {
                 stream: 1004,
-                source: 1021
+                source: 1021,
+                max_fs: Some(3600),
             }]
         );
         let [answer] = received.answers.as_slice() else {

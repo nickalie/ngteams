@@ -1,7 +1,8 @@
 //! A call's room: its legs and its 20 ms tick, on the node's monotonic clock. Each tick takes a frame from every leg,
 //! mixes for each listener every active source but its own, and sends the mix; the dominant speakers are told when
 //! they change (at most every 300 ms) and to a leg once its control plane comes up. Video is forwarded as it comes:
-//! each frame of a camera or a screen goes onto every receiving line whose source request named it ([`super::video`]).
+//! each frame of a camera or a screen goes onto every receiving line whose source request named it and whose largest
+//! picture its pictures fit, as its last keyframe tells their size ([`super::video`]).
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -9,6 +10,7 @@ use std::time::{Duration, Instant};
 use super::audio::{self, Activity, FRAME, Heard, Speakers};
 use super::control::SourceRequest;
 use super::leg::{Driven, Leg};
+use super::sps;
 use super::video::{Asked, Frame, Slot};
 
 /// The tick.
@@ -31,6 +33,8 @@ pub(crate) struct Room {
     slots: BTreeMap<(String, u32), Slot>,
     /// When each source was last asked for a keyframe.
     asked: Asked,
+    /// The macroblocks of each source's pictures, as its last keyframe told them.
+    sizes: BTreeMap<u32, u32>,
 }
 
 impl Room {
@@ -44,6 +48,7 @@ impl Room {
             next_tick: now + TICK,
             slots: BTreeMap::new(),
             asked: Asked::default(),
+            sizes: BTreeMap::new(),
         }
     }
 
@@ -52,6 +57,8 @@ impl Room {
         if let Some(mut leg) = self.legs.remove(id) {
             leg.close();
             self.speakers.forget(leg.sources.audio);
+            self.sizes.remove(&leg.sources.video);
+            self.sizes.remove(&leg.sources.sharing);
         }
         self.activity.remove(id);
         self.slots.retain(|(leg, _), _| leg != id);
@@ -84,6 +91,7 @@ impl Room {
             return;
         }
         let slot = self.slots.entry((id.to_owned(), request.stream)).or_default();
+        slot.limit(request.max_fs);
         if slot.show(request.source)
             && let Some(source) = slot.source()
         {
@@ -94,9 +102,15 @@ impl Room {
     /// `frame` of the leg `from` onto every other leg's line that shows its source; a line still waiting for a keyframe
     /// has the source asked for one.
     fn forward(&mut self, from: &str, frame: &Frame, now: Instant) {
+        if frame.keyframe
+            && let Some(size) = sps::macroblocks(&frame.data)
+        {
+            self.sizes.insert(frame.source, size);
+        }
+        let size = self.sizes.get(&frame.source).copied();
         let mut wanted = false;
         for ((id, stream), slot) in &mut self.slots {
-            if id == from || slot.source() != Some(frame.source) {
+            if id == from || slot.source() != Some(frame.source) || !slot.fits(size) {
                 continue;
             }
             let Some(leg) = self.legs.get_mut(id).filter(|leg| leg.seed.is_some()) else {
@@ -205,7 +219,11 @@ mod tests {
 
     fn requested(stream: u32, source: i64) -> Driven {
         Driven {
-            requests: vec![SourceRequest { stream, source }],
+            requests: vec![SourceRequest {
+                stream,
+                source,
+                max_fs: None,
+            }],
             ..Driven::default()
         }
     }
@@ -281,5 +299,49 @@ mod tests {
         );
         room.remove("b");
         assert!(room.slots.is_empty());
+    }
+
+    #[test]
+    fn a_screen_reaches_only_the_lines_whose_limit_its_pictures_fit() {
+        let now = Instant::now();
+        let mut room = room(now);
+        room.legs.get_mut("b").unwrap().seed = Some(4_000_000);
+        let asked = |max_fs| Driven {
+            requests: vec![SourceRequest {
+                stream: B.sharing,
+                source: 1002,
+                max_fs: Some(max_fs),
+            }],
+            ..Driven::default()
+        };
+        let params = room.legs.get_mut("a").unwrap().video_params().unwrap();
+        let screen = |keyframe: bool| Driven {
+            frames: vec![Frame {
+                source: 1002,
+                time: 90_000,
+                keyframe,
+                params,
+                data: Arc::from(crate::mixer::sps::tests::keyframe(66, (1920, 1080), 2)),
+            }],
+            ..Driven::default()
+        };
+        let showing = |room: &Room| {
+            room.slots
+                .get(&("b".to_owned(), B.sharing))
+                .is_some_and(|slot| slot.clone().pass(false, 1, now).is_some())
+        };
+        // b asks for a's screen at 720p: a's 1080p keyframe doesn't fit, nothing goes
+        room.driven("b", asked(3600), now);
+        room.driven("a", screen(true), now);
+        assert_eq!(room.sizes.get(&1002), Some(&8160));
+        assert!(!showing(&room));
+        // asked at 1080p, as the web client asks for a screen: from the next keyframe on
+        room.driven("b", asked(8160), now);
+        room.driven("a", screen(false), now);
+        assert!(!showing(&room), "still waiting for a keyframe");
+        room.driven("a", screen(true), now);
+        assert!(showing(&room));
+        room.remove("a");
+        assert!(room.sizes.is_empty());
     }
 }

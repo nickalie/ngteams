@@ -317,7 +317,8 @@ that made it work, and `abc-call-mixed`'s captures, where the lab browser's data
   "streamMsid", "fmtParams": [{"max-fs", "max-mbps", "max-fps", "profile-level-id"}]}}}`): per receiving line its
   stream id (`streamMsid`, the line's `a=x-source-streamid`), the participant's video `sourceId` (from the roster;
   `-1` to stop a line) and the largest picture it takes (`max-fs` in macroblocks, `max-fps` in hundredths of a
-  frame per second; the web client asks up to 1920 by 1080, `max-fs` 8160, the native client 1280 by 720); the
+  frame per second; the web client asks up to 1920 by 1080, `max-fs` 8160, the native client 1280 by 720 for a
+  camera and 1920 by 1080 at 15 frames a second for a screen, as below in "The size of a share"); the
   mixer answers each `sr_res` `ok`. The mixer tells who spoke last as `dsh` (the dominant speakers' audio source
   ids); the web client also trades `heartbeat`s with it every second, gets its estimate of the bandwidth (`bwe`)
   and the sending constraints for its own video (`vdclc`, its `fmtParamsList`, e.g. `max-fs=2040`, `max-br=482`),
@@ -907,6 +908,18 @@ a alone). What each of Teams' remaining call controls sends:
   sharing line goes both ways with its own streams named from the call's start (`a=ssrc-group:FID`, its
   `x-ssrc-range` the first), in its group offer and in its answer to the mixer's: the screen later goes out on those
   streams, which is why nothing is renegotiated.
+- **The size of a share.** The web client sends a screen at 1920 by 1080 and 15 frames a second (its first screen
+  constraints), and asks for a screen at the same size: its sharing line's H.264 `fmtp` and its source request for a
+  share both say `max-fs` 8160, `max-fps` 1500 (`max-mbps` 122400); a camera's line says `max-fs` 3600, `max-fps`
+  3000. The mixer forwards a share as its sharer sends it and does not scale it. Until task 842 the native client
+  asked the sharing line for 1280 by 720 too (3600), and in a real meeting it then got no frame of a desktop's
+  1080p share for the whole share: the roster named the sharer, the stage said "is sharing", the request was
+  answered `ok`, and no video came (two users' logs: 0 video frames received). The synthetic screens of the native
+  runs and tests are 720p, which fits, so they did not show it. The native client now asks the sharing line for 1080p at 15 frames a
+  second in both places, and logs the share's source request (`source request <n>: screen <line> to source <id>`)
+  and the first frame of the share that comes (`the first frame of a shared screen came: <w>x<h>`). The own
+  server's mixer holds each receiving line to its request's `max-fs` the same way, by the picture size in the
+  source's keyframes.
 - **The native client's share, group call or meeting.** As the web client's: its sharing line goes both ways from the
   call's start, libwebrtc's idle screen track on it (a source fed nothing, the encoding inactive) so its answer and
   its group offer name the line's own streams. A line the mixer offered is turned to send before it is answered,

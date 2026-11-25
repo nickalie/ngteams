@@ -1440,7 +1440,7 @@ fn write_section(
     if section.kind == Kind::Data {
         write_data_payload(out, writing.mixer.map(|mixer| mixer.data_ssrc))?;
     } else {
-        write_rtp_payload(section, &port, writing.role, out);
+        write_rtp_payload(section, (&port, name.label == SHARING_LABEL), writing.role, out);
     }
     write_transport(section, name, candidates, out);
     if section.kind == Kind::Data {
@@ -1485,7 +1485,7 @@ fn write_section(
 }
 
 /// The payload lines of an audio or video section, from Teams' feedback attribute to the extensions.
-fn write_rtp_payload(section: &Section, port: &str, role: Role, out: &mut Vec<String>) {
+fn write_rtp_payload(section: &Section, (port, sharing): (&str, bool), role: Role, out: &mut Vec<String>) {
     out.push(match section.kind {
         Kind::Audio => "a=x-signaling-fb:* x-message app recv:dsh".to_owned(),
         Kind::Video | Kind::Data => "a=x-signaling-fb:* x-message app send:src recv:src,vc".to_owned(),
@@ -1500,7 +1500,7 @@ fn write_rtp_payload(section: &Section, port: &str, role: Role, out: &mut Vec<St
     out.extend(
         section
             .values("fmtp")
-            .map(|value| format!("a=fmtp:{}", with_receive_limits(section, value))),
+            .map(|value| format!("a=fmtp:{}", with_receive_limits(section, value, sharing))),
     );
     if role == Role::Offer {
         out.push(format!("a=rtcp:{port}"));
@@ -1519,9 +1519,13 @@ fn write_rtp_payload(section: &Section, port: &str, role: Role, out: &mut Vec<St
 /// second, what the native client decodes. The mixer refuses a group call's answer whose receiving lines name none:
 /// `410 SdpParsingFailure`, M3 Task 19.
 const H264_RECEIVE_LIMITS: &str = "max-fs=3600;max-mbps=108000;max-fps=3000";
+/// The largest picture we take on a sharing line, as the web client names it for a screen: 1920 by 1080 at 15 frames
+/// a second (a share comes as its sharer sends it, never scaled down to fit a smaller line).
+const H264_SCREEN_LIMITS: &str = "max-fs=8160;max-mbps=122400;max-fps=1500";
 
-/// An `a=fmtp` value of `section` with [`H264_RECEIVE_LIMITS`] added when it is H.264's on a video line that names none.
-fn with_receive_limits(section: &Section, value: &str) -> String {
+/// An `a=fmtp` value of `section` with [`H264_RECEIVE_LIMITS`] (on a `sharing` line [`H264_SCREEN_LIMITS`]) added when
+/// it is H.264's on a video line that names none.
+fn with_receive_limits(section: &Section, value: &str, sharing: bool) -> String {
     let Some((pt, params)) = value.split_once(' ') else {
         return value.to_owned();
     };
@@ -1532,7 +1536,12 @@ fn with_receive_limits(section: &Section, value: &str) -> String {
     if section.kind != Kind::Video || !h264 || params.contains("max-fs=") {
         return value.to_owned();
     }
-    format!("{pt} {params};{H264_RECEIVE_LIMITS}")
+    let limits = if sharing {
+        H264_SCREEN_LIMITS
+    } else {
+        H264_RECEIVE_LIMITS
+    };
+    format!("{pt} {params};{limits}")
 }
 
 /// A section's `a=rtcp-fb` lines as Teams writes them: a video line's once each for every payload type (`a=rtcp-fb:*

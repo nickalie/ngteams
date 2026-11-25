@@ -116,6 +116,8 @@ pub(super) struct VideoShared {
     /// The call's media controller asked for the shared screen: a keyframe is due at the screen thread's next read of
     /// its counts.
     pub(super) screen_asked: AtomicBool,
+    /// A shared screen was asked for and none of its frames came since: the first one is logged.
+    screen_awaited: AtomicBool,
     /// The sinks of the far end's video, by line, once the video started.
     sinks: Mutex<Option<LineSinks>>,
     /// The decoding threads.
@@ -139,6 +141,16 @@ impl VideoShared {
             shown: read(&self.shown),
             screen_sent: read(&self.screen_sent),
         }
+    }
+
+    /// A shared screen was asked for: its first frame is logged when it comes.
+    pub(super) fn await_screen(&self) {
+        self.screen_awaited.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether a frame on `line` is the first of a shared screen asked for: it is taken as come.
+    fn first_of_screen(&self, line: usize) -> bool {
+        line == crate::rtc::SHARING_LINE && self.screen_awaited.swap(false, Ordering::Relaxed)
     }
 
     fn count(counter: &AtomicU64) {
@@ -500,6 +512,13 @@ impl Decoder {
             let Some(picture) = from_buffer(&frame.buffer.to_i420()) else {
                 continue;
             };
+            if self.shared.video.first_of_screen(line) {
+                log::info!(
+                    "the first frame of a shared screen came: {}x{}",
+                    picture.width,
+                    picture.height
+                );
+            }
             if self.shared.video.show(line, &picture) {
                 VideoShared::count(&self.shared.video.shown);
             }
