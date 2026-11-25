@@ -91,6 +91,7 @@ fn media(dir: &tempfile::TempDir) -> CallMedia {
         relay: Relay::Teams,
         session: SessionConfig {
             processing: ProcessingConfig::OFF,
+            ..Default::default()
         },
         video: None,
     }

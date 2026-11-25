@@ -45,6 +45,7 @@ fn native(turn: &TurnServer, devices: &FileDevices) -> MediaSession {
     let relay = teams_media::test_turn::relay(turn.udp);
     let config = SessionConfig {
         processing: ProcessingConfig::OFF,
+        ..Default::default()
     };
     MediaSession::start(&relay, devices, config).unwrap()
 }

@@ -73,6 +73,7 @@ impl LoopbackPeer {
         let relay = teams_media::test_turn::relay(turn);
         let config = SessionConfig {
             processing: ProcessingConfig::OFF,
+            ..Default::default()
         };
         let session = MediaSession::start(&relay, devices, config)?;
         session.start_video(VideoParts {

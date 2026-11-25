@@ -56,6 +56,7 @@ impl Peer {
         let turn = TurnServer::start()?;
         let config = SessionConfig {
             processing: ProcessingConfig::OFF,
+            ..Default::default()
         };
         let session = MediaSession::start_without_devices(&support::relay(&turn), config)?;
         session.start_video(VideoParts {

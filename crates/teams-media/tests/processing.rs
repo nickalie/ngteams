@@ -1,13 +1,17 @@
 //! The microphone's audio processing on the device seam's 10 ms frames: what the speaker plays comes back into the
 //! microphone after a delay and an attenuation, and is handed to the processing as the far end on the same frames;
 //! the echo is suppressed by a set margin, a near-end voice is kept while both talk, and noise under a voice is
-//! lowered. The signals are `teams_media::test_signal`'s (a steady tone is noise to the noise suppression).
+//! lowered. The signals are `teams_media::test_signal`'s (a steady tone is noise to the noise suppression), all
+//! synthetic. The echo, double-talk and steady-noise tests run the classic suppressor (Low); the levels' tests compare
+//! DeepFilterNet (High) with it on noise that comes and goes.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
 
 use teams_media::devices::AudioFrame;
-use teams_media::processing::{AudioProcessing, ProcessingConfig};
+use teams_media::processing::deep::DeepFilter;
+use teams_media::processing::noise::NO_LIMIT_DB;
+use teams_media::processing::{AudioProcessing, NoiseControl, NoiseSuppression, ProcessingConfig};
 use teams_media::test_signal::{Noise, gap_level, rms, speech_like, voice, voice_level};
 use teams_media::tone::decibels;
 
@@ -57,6 +61,11 @@ fn looped(
     (heard, processed)
 }
 
+/// The call's processing with the classic suppressor (Low), whose model needs no load.
+fn classic() -> AudioProcessing {
+    AudioProcessing::with_noise(ProcessingConfig::CALL, NoiseControl::new(NoiseSuppression::Low)).unwrap()
+}
+
 fn silence(frames: usize) -> Vec<AudioFrame> {
     vec![AudioFrame::silence(); frames]
 }
@@ -65,7 +74,7 @@ fn silence(frames: usize) -> Vec<AudioFrame> {
 fn the_echo_of_what_the_speaker_plays_is_suppressed_by_the_margin() {
     // 100 ms, and the UI sandbox's loopback's 250 ms
     for delay in [10, 25] {
-        let processing = AudioProcessing::new(ProcessingConfig::CALL).unwrap();
+        let processing = classic();
         let far = speech_like(1000, 7, FAR_PEAK);
         let (heard, processed) = looped(&processing, &far, &silence(1000), delay);
         let (echo, left) = (rms(&heard[CONVERGE..]), rms(&processed[CONVERGE..]));
@@ -90,7 +99,7 @@ fn with_the_processing_off_the_microphone_s_frames_pass_unchanged() {
 
 #[test]
 fn a_near_end_voice_is_kept_while_both_talk() {
-    let processing = AudioProcessing::new(ProcessingConfig::CALL).unwrap();
+    let processing = classic();
     let far = speech_like(2000, 11, FAR_PEAK);
     // the far end alone for 10 s, then both
     let mut near = silence(1000);
@@ -117,7 +126,7 @@ fn a_near_end_voice_is_kept_while_both_talk() {
 
 #[test]
 fn noise_under_a_voice_is_lowered_and_the_voice_kept() {
-    let processing = AudioProcessing::new(ProcessingConfig::CALL).unwrap();
+    let processing = classic();
     // noise alone for 3 s, then the voice over it
     let mut near = silence(CONVERGE);
     near.extend(voice(1200, VOICE));
@@ -141,5 +150,144 @@ fn noise_under_a_voice_is_lowered_and_the_voice_kept() {
     assert!(
         lowered_alone >= NOISE_MARGIN_DB,
         "noise alone is only {lowered_alone:.1} dB down"
+    );
+}
+
+/// Only the noise suppression: no echo canceller or gain control to change the levels compared.
+const NOISE_ONLY: ProcessingConfig = ProcessingConfig {
+    echo_cancellation: false,
+    noise_suppression: true,
+    gain_control: false,
+};
+/// Frames of noise alone before the voice starts (3 s).
+const NOISE_ALONE: usize = 300;
+/// How much further High must lower the noise than Low, in dB.
+const HIGH_OVER_LOW_DB: f32 = 6.0;
+
+/// Noise that comes and goes as keys, steps or a door do: 40 ms bursts of white noise, each at a random level of up
+/// to `peak` or silent, from `seed`.
+fn bursts(frames: usize, seed: u64, peak: f32) -> Vec<AudioFrame> {
+    let mut noise = Noise::new(seed);
+    let mut out = silence(frames);
+    for burst in out.chunks_mut(4) {
+        let level = peak * noise.next_sample().max(0.0);
+        noise.add_to(burst, level);
+    }
+    out
+}
+
+/// [`NOISE_ALONE`] frames of the bursts, then the voice over them for `voiced` frames.
+fn noisy_voice(voiced: usize) -> Vec<AudioFrame> {
+    let mut near = silence(NOISE_ALONE);
+    near.extend(voice(voiced, VOICE));
+    for (frame, noise) in near.iter_mut().zip(bursts(NOISE_ALONE + voiced, 5, 0.1)) {
+        for (sample, added) in frame.samples_mut().iter_mut().zip(noise.samples()) {
+            *sample += added;
+        }
+    }
+    near
+}
+
+/// `near` through the noise suppression at `level`, with the model loaded first.
+fn suppressed(near: &[AudioFrame], level: NoiseSuppression) -> Vec<AudioFrame> {
+    DeepFilter::loaded(NO_LIMIT_DB).unwrap();
+    let processing = AudioProcessing::with_noise(NOISE_ONLY, NoiseControl::new(level)).unwrap();
+    assert_eq!(processing.noise_level(), level);
+    looped(&processing, &silence(near.len()), near, 0).1
+}
+
+#[test]
+fn high_lowers_noise_that_comes_and_goes_more_than_low() {
+    let near = noisy_voice(500);
+    let (low, high) = (
+        suppressed(&near, NoiseSuppression::Low),
+        suppressed(&near, NoiseSuppression::High),
+    );
+    let alone = |frames: &[AudioFrame]| rms(&frames[100..NOISE_ALONE]);
+    let (noise, at_low, at_high) = (alone(&near), alone(&low), alone(&high));
+    let (low_db, high_db) = (-decibels(at_low, noise), -decibels(at_high, noise));
+    eprintln!("noise alone at {noise:.4}: Low takes {low_db:.1} dB out, High {high_db:.1} dB");
+    assert!(noise > 0.01, "the noise is heard: {noise}");
+    assert!(
+        high_db >= low_db + HIGH_OVER_LOW_DB,
+        "High takes {high_db:.1} dB out, Low {low_db:.1} dB"
+    );
+    // and between the voice's syllables, past DeepFilterNet's 30 ms delay
+    let gaps = |frames: &[AudioFrame]| gap_level(&frames[NOISE_ALONE..], 0, 500, 4);
+    let (gap_low, gap_high) = (gaps(&low), gaps(&high));
+    eprintln!("between the syllables: Low leaves {gap_low:.5}, High {gap_high:.5}");
+    assert!(
+        gap_high < gap_low,
+        "High leaves {gap_high} between the syllables, Low {gap_low}"
+    );
+}
+
+#[test]
+fn at_off_the_noise_passes() {
+    let near = noisy_voice(100);
+    let off = suppressed(&near, NoiseSuppression::Off);
+    let (noise, left) = (rms(&near[100..NOISE_ALONE]), rms(&off[100..NOISE_ALONE]));
+    assert!(
+        decibels(left, noise).abs() < 0.5,
+        "the noise at {noise} comes out at {left}"
+    );
+    let none = AudioProcessing::with_noise(ProcessingConfig::OFF, NoiseControl::new(NoiseSuppression::High)).unwrap();
+    assert_eq!(none.noise_level(), NoiseSuppression::Off);
+}
+
+#[test]
+fn a_level_changed_during_the_call_applies_at_once() {
+    DeepFilter::loaded(NO_LIMIT_DB).unwrap();
+    let control = NoiseControl::new(NoiseSuppression::Off);
+    let processing = AudioProcessing::with_noise(NOISE_ONLY, control.clone()).unwrap();
+    let near = bursts(1200, 9, 0.1);
+    let mut out = Vec::with_capacity(near.len());
+    // 3 s at each level, Off, High, Low, then Auto
+    for (stretch, level) in near.chunks(300).zip([
+        NoiseSuppression::Off,
+        NoiseSuppression::High,
+        NoiseSuppression::Low,
+        NoiseSuppression::Auto,
+    ]) {
+        control.set(level);
+        assert_eq!(processing.noise_level(), level);
+        out.extend(looped(&processing, &silence(stretch.len()), stretch, 0).1);
+    }
+    // judged from 1 s into each stretch, once the suppressor has settled
+    let lowered = |stretch: usize| {
+        let at = stretch * 300 + 100..stretch * 300 + 300;
+        -decibels(rms(&out[at.clone()]), rms(&near[at]))
+    };
+    let (off, high, low, auto) = (lowered(0), lowered(1), lowered(2), lowered(3));
+    eprintln!("lowered by: Off {off:.1} dB, High {high:.1}, Low {low:.1}, Auto {auto:.1}");
+    assert!(off.abs() < 0.5, "Off lowers the noise {off:.1} dB");
+    assert!(high > low + HIGH_OVER_LOW_DB, "High {high:.1} dB, Low {low:.1} dB");
+    assert!(auto > low, "Auto {auto:.1} dB, Low {low:.1} dB");
+    assert!(auto < high, "Auto {auto:.1} dB, High {high:.1} dB: Auto is the gentler");
+}
+
+#[test]
+fn a_call_s_processing_loads_the_model_itself_and_the_frames_pass_until_it_is_ready() {
+    let processing = AudioProcessing::with_noise(NOISE_ONLY, NoiseControl::new(NoiseSuppression::High)).unwrap();
+    assert!(format!("{processing:?}").contains("High"), "{processing:?}");
+    assert_eq!(ProcessingConfig::default(), ProcessingConfig::CALL);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let noise = bursts(100, 13, 0.1);
+    let lowered = loop {
+        let mut out = noise.clone();
+        for frame in &mut out {
+            processing.near_end(frame).unwrap();
+        }
+        if -decibels(rms(&out[50..]), rms(&noise[50..])) > HIGH_OVER_LOW_DB {
+            break true;
+        }
+        if std::time::Instant::now() > deadline {
+            break false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert!(
+        lowered,
+        "the model loaded on its own thread within a minute and took the noise out"
     );
 }

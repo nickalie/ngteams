@@ -546,6 +546,7 @@ fn media(relay: std::net::SocketAddr, tone: Tone, recording: &Path, microphones:
         relay: Relay::Fixed(vec![RelayServer::udp(relay)]),
         session: SessionConfig {
             processing: ProcessingConfig::OFF,
+            ..Default::default()
         },
         video: None,
     }

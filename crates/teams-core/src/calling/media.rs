@@ -295,7 +295,7 @@ fn set_up(
 ) -> Result<Prepared, String> {
     let text = |error: &dyn std::fmt::Display| error.to_string();
     // no device opens before the call's start, join or answer was admitted (`open_devices`)
-    let session = MediaSession::start_without_devices(relay, media.session).map_err(|error| text(&error))?;
+    let session = MediaSession::start_without_devices(relay, media.session.clone()).map_err(|error| text(&error))?;
     let mut dialect = NgcSession::new();
     let video = start_video(&session, media.video.as_ref(), kind);
     let group = video && kind == VideoKind::Group;

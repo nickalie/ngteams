@@ -8,4 +8,4 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 # Names doc comments write as they are, beside clippy's own list ("..").
-doc-valid-idents = ["PipeWire", "OpenAI", "OpenRouter", "WirePlumber", "OpenH264", "SharePoint", "OneDrive", "AppImage", "YouTube", ".."]
+doc-valid-idents = ["PipeWire", "OpenAI", "OpenRouter", "WirePlumber", "OpenH264", "SharePoint", "OneDrive", "AppImage", "YouTube", "DeepFilterNet", "DeepFilterNet3", ".."]

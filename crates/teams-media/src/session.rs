@@ -57,7 +57,7 @@ use libwebrtc::audio_track::RtcAudioTrack;
 use crate::Error;
 use crate::devices::VideoSource;
 use crate::devices::{AudioFrame, AudioSink, AudioSource, Devices, FRAME_DURATION, FRAME_SAMPLES, SAMPLE_RATE};
-use crate::processing::{AudioProcessing, ProcessingConfig, from_i16, to_i16};
+use crate::processing::{AudioProcessing, NoiseControl, ProcessingConfig, from_i16, to_i16};
 use crate::relay::RelayConfig;
 use crate::rtc::{Next, Peer, PeerEvent, next_within};
 pub use crate::rtc::{SHARING_LINE, SdpAnswer, SdpOffer};
@@ -83,17 +83,20 @@ const NET_WAIT: Duration = Duration::from_millis(50);
 const EVENT_QUEUE: usize = 64;
 
 /// How the session runs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionConfig {
     /// What the microphone's frames go through before they are sent ([`ProcessingConfig::CALL`] by default;
     /// [`ProcessingConfig::OFF`] leaves them as they are).
     pub processing: ProcessingConfig,
+    /// The level of the noise suppression, read at each frame: a change applies during the call.
+    pub noise: NoiseControl,
 }
 
 impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             processing: ProcessingConfig::CALL,
+            noise: NoiseControl::default(),
         }
     }
 }
@@ -334,7 +337,7 @@ impl MediaSession {
     /// up, [`Error::Io`] when a thread can't be spawned.
     pub fn start_without_devices(relay: &RelayConfig, config: SessionConfig) -> Result<Self, Error> {
         let processing = if config.processing.any() {
-            Some(Arc::new(AudioProcessing::new(config.processing)?))
+            Some(Arc::new(AudioProcessing::with_noise(config.processing, config.noise)?))
         } else {
             None
         };

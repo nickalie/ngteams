@@ -522,6 +522,7 @@ impl Phone {
             relay: Relay::Teams,
             session: SessionConfig {
                 processing: ProcessingConfig::OFF,
+                ..Default::default()
             },
             video: Some(CallVideo {
                 encoder: EncoderSettings::default(),

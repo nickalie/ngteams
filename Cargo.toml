@@ -267,6 +267,13 @@ toml_edit = "0.25.17"
 # tract (Sonos; MIT/Apache-2.0), pure Rust: no system library, a few milliseconds a frame. Without its `transformers`
 # ops, which the model doesn't use.
 tract-onnx = { version = "0.23.9", default-features = false }
+# The calls' noise suppression at Auto and High (teams-media): DeepFilterNet3 by libDF's real-time inference on the
+# same tract, its model (MIT/Apache-2.0, like the code) in the crate, so in the binary: no file to package. On the CPU
+# only: measured against ONNX Runtime (`ort`) on the CPU and on the GPU (WebGPU; CUDA), it was the fastest by far
+# (docs/protocol/noise-suppression.md). Its logs name the model's setup and a clipped frame, no audio.
+deep-filter-rt = "0.2.0"
+# a 10 ms frame handed to the model as its (channel, sample) view
+ndarray = { version = "0.17.2", default-features = false, features = ["std"] }
 # ... and the same model on the GPU where there is one: Burn (Tracel; MIT/Apache-2.0), pure Rust, its wgpu backend
 # (Vulkan; kernel fusion, no autotune: autotuning a model this small costs a minute of GPU on its first run) through
 # CubeCL. The model's code and weights are generated from the ONNX at build time by burn-onnx (teams-media's build
@@ -429,6 +436,17 @@ opt-level = 3
 [profile.dev.package.tract-linalg]
 opt-level = 3
 [profile.dev.package.tract-core]
+opt-level = 3
+
+# The calls' noise suppression runs DeepFilterNet3 on every 10 ms frame: its feature extraction and FFTs unoptimized
+# take most of a frame's time, so a debug build gets them optimized as tract's kernels are.
+[profile.dev.package.deep-filter-rt]
+opt-level = 3
+[profile.dev.package.realfft]
+opt-level = 3
+[profile.dev.package.rustfft]
+opt-level = 3
+[profile.dev.package.tract-pulse]
 opt-level = 3
 
 # The own server hashes every password with Argon2id: unoptimized, one hash takes over a second, which made the

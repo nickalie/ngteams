@@ -368,6 +368,9 @@ pub fn start(turn: &TurnServer, devices: &dyn Devices) -> MediaSession {
 
 /// Starts a session on `devices` behind its own allocation on `turn`, its microphone through `processing`.
 pub fn start_with(turn: &TurnServer, devices: &dyn Devices, processing: ProcessingConfig) -> MediaSession {
-    let config = SessionConfig { processing };
+    let config = SessionConfig {
+        processing,
+        ..Default::default()
+    };
     MediaSession::start(&relay(turn), devices, config).unwrap()
 }
