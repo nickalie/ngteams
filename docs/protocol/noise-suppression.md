@@ -49,9 +49,9 @@ The level is kept for each account in the settings file (the `noise_suppression`
 account that has no row is at Auto. The call reads the level at each frame. Thus a change in Settings or in the call's
 audio menu applies to the next 10 ms frame. A change to or from Low makes libwebrtc's echo module again (it selects
 its parts only when it is made). The echo canceller then converges again in about one second. The classic
-suppressor stays in the echo module: there it analyses the frame before AEC3. If it is a module of its own after
-the echo canceller, the gain control brings the noise that it lowered back up. Measured: steady noise alone, 2 s
-into the call, is 1 dB down, not 14 dB.
+suppressor stays in the echo module, where it analyses the frame before AEC3. As a module of its own after the echo
+canceller, it lowered steady noise alone, 2 s into the call, by 1 dB, not 14 dB. The cause of that difference was not
+measured.
 
 ### DeepFilterNet3
 

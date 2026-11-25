@@ -13,8 +13,8 @@
 //! The gain control is a module of its own after the noise suppression, so it levels the cleaned voice, not the
 //! noise. libwebrtc's module takes its parts only when it is made: a change to or from Low makes the echo
 //! canceller's module again, which then converges again within about a second. The classic suppressor stays in the
-//! echo canceller's module: there it analyses the frame before AEC3, and as a module of its own after it, the gain
-//! control brings the noise it lowered back up.
+//! echo canceller's module, where it analyses the frame before AEC3: measured as a module of its own after AEC3, it
+//! lowered steady noise by 1 dB, not 14 dB.
 //!
 //! The session runs it itself rather than leaving it to libwebrtc's audio source: the far end is played by the device
 //! seam, not by a libwebrtc audio device, so only the session can hand the module what the speaker plays.

@@ -10,7 +10,7 @@
 
 use teams_media::devices::AudioFrame;
 use teams_media::processing::deep::DeepFilter;
-use teams_media::processing::noise::NO_LIMIT_DB;
+use teams_media::processing::noise::{AUTO_LIMIT_DB, NO_LIMIT_DB};
 use teams_media::processing::{AudioProcessing, NoiseControl, NoiseSuppression, ProcessingConfig};
 use teams_media::test_signal::{Noise, gap_level, rms, speech_like, voice, voice_level};
 use teams_media::tone::decibels;
@@ -163,6 +163,8 @@ const NOISE_ONLY: ProcessingConfig = ProcessingConfig {
 const NOISE_ALONE: usize = 300;
 /// How much further High must lower the noise than Low, in dB.
 const HIGH_OVER_LOW_DB: f32 = 6.0;
+/// How far a level's measured attenuation may pass its limit.
+const LIMIT_MARGIN_DB: f32 = 1.0;
 
 /// Noise that comes and goes as keys, steps or a door do: 40 ms bursts of white noise, each at a random level of up
 /// to `peak` or silent, from `seed`.
@@ -264,9 +266,16 @@ fn a_level_changed_during_the_call_applies_at_once() {
     assert!(off.abs() < 0.5, "Off lowers the noise {off:.1} dB");
     assert!(high > low + HIGH_OVER_LOW_DB, "High {high:.1} dB, Low {low:.1} dB");
     assert!(auto > low, "Auto {auto:.1} dB, Low {low:.1} dB");
-    assert!(auto < high, "Auto {auto:.1} dB, High {high:.1} dB: Auto is the gentler");
     assert!(
-        high_again > auto,
+        auto <= AUTO_LIMIT_DB + LIMIT_MARGIN_DB,
+        "Auto {auto:.1} dB runs past its {AUTO_LIMIT_DB} dB limit"
+    );
+    assert!(
+        auto + LIMIT_MARGIN_DB < high,
+        "Auto {auto:.1} dB, High {high:.1} dB: Auto is the gentler"
+    );
+    assert!(
+        auto + LIMIT_MARGIN_DB < high_again,
         "High after Low {high_again:.1} dB, Auto {auto:.1} dB"
     );
 }
