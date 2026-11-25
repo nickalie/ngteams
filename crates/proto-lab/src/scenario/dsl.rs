@@ -23,6 +23,7 @@
 //! [`Driver::set_call_timeout`] sets another): a page that stops answering (a busy renderer, a modal dialog) fails the
 //! step instead of hanging the run before its teardown.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,6 +34,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::action_targets::ActionTargets;
+use crate::arming::ArmedTarget;
 use crate::capture_hold::without_query;
 use crate::cdp::{Cdp, CdpError, Event, SessionId};
 
@@ -322,6 +324,8 @@ pub struct Driver {
     page: SessionId,
     events: mpsc::UnboundedReceiver<Event>,
     requests: Vec<SeenRequest>,
+    /// The CDP type (`worker`, `shared_worker`, `service_worker`, `iframe`, …) of each target session seen.
+    kinds: HashMap<SessionId, String>,
     /// The first request a request wait may match.
     cursor: usize,
     closed: bool,
@@ -343,6 +347,7 @@ impl Driver {
             page,
             events,
             requests: Vec::new(),
+            kinds: HashMap::new(),
             cursor: 0,
             closed: false,
             call_timeout: CALL_TIMEOUT,
@@ -350,6 +355,26 @@ impl Driver {
             #[cfg(unix)]
             pause_override: None,
             action_targets: None,
+        }
+    }
+
+    /// The same driver, knowing the kind of each target attached before it began.
+    #[must_use]
+    pub fn with_targets(mut self, targets: impl IntoIterator<Item = ArmedTarget>) -> Self {
+        for target in targets {
+            self.kinds.insert(target.session, target.kind.name().to_owned());
+        }
+        self
+    }
+
+    /// Which target sent `request`: `page` (the driven tab), the CDP type of another target (`worker`, `iframe`,
+    /// `shared_worker`, `service_worker`, …), `browser` for an event of the browser itself, or `unknown target`.
+    #[must_use]
+    pub fn origin(&self, request: &SeenRequest) -> &str {
+        match &request.session {
+            None => "browser",
+            Some(session) if *session == self.page => "page",
+            Some(session) => self.kinds.get(session).map_or("unknown target", String::as_str),
         }
     }
 
@@ -918,6 +943,11 @@ impl Driver {
             targets.observe(event);
         }
         let params = &event.params;
+        if event.method == "Target.attachedToTarget"
+            && let (Some(session), Some(kind)) = (params["sessionId"].as_str(), params["targetInfo"]["type"].as_str())
+        {
+            self.kinds.insert(SessionId::new(session), kind.to_owned());
+        }
         let Some(id) = params["requestId"].as_str() else {
             return;
         };

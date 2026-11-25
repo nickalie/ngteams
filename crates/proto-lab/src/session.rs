@@ -565,6 +565,7 @@ impl LabSession {
     #[must_use]
     pub fn driver(&self) -> Driver {
         Driver::new(self.armed.cdp().clone(), self.page.clone(), self.armed.watch())
+            .with_targets(self.armed.targets())
             .with_action_targets(self.watch.action_targets.clone())
     }
 

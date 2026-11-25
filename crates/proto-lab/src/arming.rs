@@ -38,6 +38,19 @@ impl TargetKind {
             other => Self::Other(other.into()),
         }
     }
+    /// The target's CDP type, as `Target.attachedToTarget` names it.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Page => "page",
+            Self::Iframe => "iframe",
+            Self::Worker => "worker",
+            Self::SharedWorker => "shared_worker",
+            Self::ServiceWorker => "service_worker",
+            Self::Worklet => "worklet",
+            Self::Other(name) => name,
+        }
+    }
     #[must_use]
     pub fn steps(&self) -> &'static [Step] {
         match self {

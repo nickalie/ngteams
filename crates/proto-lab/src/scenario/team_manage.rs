@@ -13,7 +13,7 @@ use crate::session::{LabSession, SessionOptions};
 use super::ab_chat::{load, save_screenshot_as};
 use super::ab_trouter::size;
 use super::channel_create::click_named;
-use super::dsl::{Driver, Key, Selector};
+use super::dsl::{Driver, Key, SeenRequest, Selector};
 use super::{RunOptions, ScenarioError, ScenarioName, ScenarioReport};
 
 /// The label of a capture hold a `hold` step added.
@@ -296,7 +296,9 @@ fn hold(page: &LabSession, rest: &str) -> Result<String, ScenarioError> {
 }
 
 /// The requests since `seen` on the services team management uses (never another host, whose bodies can carry a token),
-/// each as `<method> <url> -> <status>`, and the body of one that isn't a plain read unless it holds anything like a token.
+/// each as `<method> <url> -> <status or failure> from <target>`, and the body of one that isn't a plain read unless it
+/// holds anything like a token. The target tells a page's request from its worker's: the web client makes its chat
+/// and middle-tier calls from a dedicated worker.
 async fn writes_seen(drive: &mut Driver, report: &mut ScenarioReport, seen: &mut usize, services: &[&str]) -> String {
     let now = drive.seen_so_far();
     let requests: Vec<_> = drive.requests().get(*seen..now).unwrap_or_default().to_vec();
@@ -309,9 +311,10 @@ async fn writes_seen(drive: &mut Driver, report: &mut ScenarioReport, seen: &mut
         }
         if request.method == "GET" {
             lines.push(format!(
-                "GET {} -> {:?}",
+                "GET {} -> {} from {}",
                 crate::protocol::log_url(&request.url),
-                request.status
+                outcome(&request),
+                drive.origin(&request)
             ));
             continue;
         }
@@ -323,10 +326,24 @@ async fn writes_seen(drive: &mut Driver, report: &mut ScenarioReport, seen: &mut
             body
         };
         let url = crate::protocol::log_url(&read.url);
-        report.notes.push(format!("seen: {} {url}", read.method));
-        lines.push(format!("{} {url} -> {:?} {body}", read.method, read.status));
+        let origin = drive.origin(&read);
+        report.notes.push(format!("seen: {} {url} from {origin}", read.method));
+        lines.push(format!(
+            "{} {url} -> {} from {origin} {body}",
+            read.method,
+            outcome(&read)
+        ));
     }
     lines.join("\n")
+}
+
+/// A seen request's status, or why it failed (a held one: `net::ERR_BLOCKED_BY_CLIENT`), or `pending`.
+fn outcome(request: &SeenRequest) -> String {
+    match (&request.failed, request.status) {
+        (Some(error), _) => format!("failed {error}"),
+        (None, Some(status)) => status.to_string(),
+        (None, None) => "pending".to_owned(),
+    }
 }
 
 #[cfg(test)]
