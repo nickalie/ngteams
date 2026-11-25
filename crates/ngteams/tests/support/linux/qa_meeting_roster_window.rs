@@ -829,9 +829,13 @@ impl<'a> User<'a> {
 /// the pane's left 54 px (a name starts 60 px in), none cut by that column's edge (a button's outline is).
 fn rows_in(shot: &RgbImage, pane: Rect, dark: bool) -> Rows {
     let column = Rect { w: 54, ..pane };
-    // under the pane's title row: the window's frame lies under the pane's bottom
-    let ground = shot.get_pixel(u32_of(pane.x + 6), u32_of(pane.y + 2)).0;
+    // the ground of the same line at the pane's left edge: a row the keyboard is on is filled
+    let ground = |y: i32| {
+        shot.get_pixel_checked(u32_of(pane.x + 6), u32_of(y))
+            .map(|pixel| pixel.0)
+    };
     let off_ground = |x: i32, y: i32| {
+        let Some(ground) = ground(y) else { return false };
         shot.get_pixel_checked(u32_of(x), u32_of(y)).is_some_and(|pixel| {
             let distance: i32 = pixel
                 .0

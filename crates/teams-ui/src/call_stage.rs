@@ -1228,6 +1228,7 @@ impl Render for CallStage {
         let viewport = window.viewport_size();
         self.paging.window = (f32::from(viewport.width), f32::from(viewport.height));
         let body = self.framed_body((live.as_ref(), ended.as_ref()), &title, palette, window, cx);
+        self.keep_people_focus(window, cx);
         let header = self.header(live.as_ref(), title, palette, cx);
         let mut captions = live.as_ref().and_then(|_| self.caption_pane(palette, cx));
         // a refusal while the call is up, or of a call back from its end

@@ -4,7 +4,10 @@
 //! then in a group call "People added to the chat", in a meeting "Others invited": its chat's members who aren't in
 //! it, each with Request to join as the pointer or the keyboard is on them (they are called into the call, as an add
 //! is: in a meeting, the add names the meeting's chat and organizer). A meeting's chat members are its invitees: only the roster says who joined. The keyboard
-//! reaches each section's heading (Enter or Space folds the section) and each row, in the drawn order.
+//! reaches each section's heading (Enter or Space folds the section) and each row, in the drawn order. When the row
+//! the keyboard is on goes away, the keyboard goes to the row after it (or before it), so Tab keeps its place.
+use std::cell::RefCell;
+
 use super::*;
 use crate::keyboard;
 use teams_core::LobbyPerson;
@@ -35,6 +38,13 @@ pub(super) struct PeopleKeys {
     handles: keyboard::Handles,
     folded: Vec<Section>,
     follows: Option<Follow>,
+    /// The row a keyboard's Request to join moved the keyboard to, lit while the keyboard stays on it: a pointer that
+    /// enters the window takes GPUI out of its keyboard mode, which alone lights a focused row.
+    lit: Option<String>,
+    /// The keys of the headings and rows drawn in this frame, in the drawn order.
+    drawn: RefCell<Vec<String>>,
+    /// The same of the frame before.
+    last: Vec<String>,
 }
 
 /// The person a Request to join asked in: the keyboard goes to their row of the people being called once the engine
@@ -56,6 +66,14 @@ impl CallStage {
     /// Moves the keyboard to the row of the person a Request to join asked in, once the engine added them (see
     /// [`Follow`]); a refused ask, or another call, ends the wait.
     pub(super) fn follow_request(&mut self, active: Option<&ActiveCall>, window: &mut Window, cx: &mut Context<Self>) {
+        let keys = &mut self.people_keys;
+        if keys
+            .lit
+            .as_ref()
+            .is_some_and(|lit| !keys.handles.get(lit, cx).is_focused(window))
+        {
+            keys.lit = None;
+        }
         let Some(follow) = &self.people_keys.follows else {
             return;
         };
@@ -72,11 +90,25 @@ impl CallStage {
             return;
         };
         self.people_keys.follows = None;
-        let row = self
-            .people_keys
-            .handles
-            .get(&format!("call-roster-invited-{index}"), cx);
-        window.focus(&row, cx);
+        let key = format!("call-roster-invited-{index}");
+        window.focus(&self.people_keys.handles.get(&key, cx), cx);
+        self.people_keys.lit = Some(key);
+    }
+
+    /// After a frame: when the heading or row the keyboard was on is drawn no more, the keyboard goes to its neighbour
+    /// (see [`neighbour`]), as GPUI's Tab finds no next stop from a handle that is not drawn.
+    pub(super) fn keep_people_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let keys = &mut self.people_keys;
+        let drawn = std::mem::take(keys.drawn.get_mut());
+        let last = std::mem::replace(&mut keys.last, drawn);
+        let Some(gone) = keys.handles.focused(window) else {
+            return;
+        };
+        if let Some(next) = neighbour(&last, &keys.last, &gone) {
+            let handle = keys.handles.get(next, cx);
+            keys.lit = None;
+            window.focus(&handle, cx);
+        }
     }
 
     /// The People pane.
@@ -87,6 +119,59 @@ impl CallStage {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let lobby = (!active.lobby.is_empty()).then(|| self.lobby_section(&active.lobby, palette, cx));
+        let heading = if active.is_meeting() {
+            format!("In this meeting ({})", self.in_call_count(active))
+        } else {
+            format!("Currently in this call ({})", self.in_call_count(active))
+        };
+        let mute_all = self.mute_all_button(active, cx);
+        let in_call = self.section_heading(Section::InCall, heading, mute_all, palette, cx);
+        let rows = if self.people_keys.folded(Section::InCall) {
+            Vec::new()
+        } else {
+            self.in_call_rows(active, palette, cx)
+        };
+        let added = self.added_section(active, palette, window, cx);
+        let close = selected_by(
+            "call-roster-close",
+            icon_button("call-roster-close", Glyph::X, "Close")
+                .small()
+                .on_click(cx.listener(|this, _, _, cx| this.show_roster(false, cx))),
+        );
+        let more = self.roster_more(active, cx);
+        let close = div().flex().items_center().gap_1().children(more).child(close);
+        side_pane("call-roster-pane", "Participants", close, palette)
+            .children(self.invite(active, palette, cx))
+            .children(self.invite_box(palette, cx))
+            .child(
+                div()
+                    .id("call-roster-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .children(lobby)
+                    .child(in_call)
+                    .children(rows)
+                    .children(added),
+            )
+            .into_any_element()
+    }
+
+    /// How many rows "In this meeting" or "Currently in this call" has: the account, the others in it and the people
+    /// being called.
+    fn in_call_count(&self, active: &ActiveCall) -> usize {
+        let others = if active.people_stand_in() {
+            self.people.of(active.id).len()
+        } else {
+            active.view.participants.len()
+        };
+        1 + others + active.invited.len()
+    }
+
+    /// The rows of "In this meeting" or "Currently in this call": the account, the others in it, the people being
+    /// called.
+    fn in_call_rows(&self, active: &ActiveCall, palette: Palette, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let people = self.people.of(active.id);
         let me = self.core.me();
         let own = self_row(
@@ -128,41 +213,7 @@ impl CallStage {
                 .enumerate()
                 .map(|(index, invited)| self.invited_row(index, invited, palette, cx)),
         );
-        let heading = if active.is_meeting() {
-            format!("In this meeting ({})", rows.len())
-        } else {
-            format!("Currently in this call ({})", rows.len())
-        };
-        let close = selected_by(
-            "call-roster-close",
-            icon_button("call-roster-close", Glyph::X, "Close")
-                .small()
-                .on_click(cx.listener(|this, _, _, cx| this.show_roster(false, cx))),
-        );
-        let lobby = (!active.lobby.is_empty()).then(|| self.lobby_section(&active.lobby, palette, cx));
-        let mute_all = self.mute_all_button(active, cx);
-        let in_call = self.section_heading(Section::InCall, heading, mute_all, palette, cx);
-        if self.people_keys.folded(Section::InCall) {
-            rows.clear();
-        }
-        let added = self.added_section(active, palette, window, cx);
-        let more = self.roster_more(active, cx);
-        let close = div().flex().items_center().gap_1().children(more).child(close);
-        side_pane("call-roster-pane", "Participants", close, palette)
-            .children(self.invite(active, palette, cx))
-            .children(self.invite_box(palette, cx))
-            .child(
-                div()
-                    .id("call-roster-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .children(lobby)
-                    .child(in_call)
-                    .children(rows)
-                    .children(added),
-            )
-            .into_any_element()
+        rows
     }
 
     /// A meeting's Share invite, once its join link is known: a menu whose Copy meeting link puts it on the clipboard.
@@ -324,6 +375,7 @@ impl CallStage {
             format!("People added to the chat ({})", out.len())
         };
         let folded = self.people_keys.folded(Section::Others);
+        let heading = self.section_heading(Section::Others, heading, None, palette, cx);
         // the engine adds into a meeting only in the meeting's own chat (a channel meeting's is the channel)
         let addable = !meeting || active.chat.as_deref().is_some_and(teams_proto::is_meeting_chat_id);
         let rows: Vec<AnyElement> = out
@@ -350,7 +402,6 @@ impl CallStage {
                 self.added_row(index, person, shows, palette, cx)
             })
             .collect();
-        let heading = self.section_heading(Section::Others, heading, None, palette, cx);
         Some(
             div()
                 .debug_selector(|| "call-roster-added".to_owned())
@@ -383,13 +434,15 @@ impl CallStage {
                     .outline()
                     .xsmall()
                     .label("Request to join")
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
                         // the keyboard follows the person to "In this meeting": a second Enter asks nobody else
-                        this.people_keys.follows = Some(Follow {
-                            call,
-                            mri: asked.clone(),
-                            refused: this.calls.read(cx).refused().map(|refused| refused.text.clone()),
-                        });
+                        if event.is_keyboard() {
+                            this.people_keys.follows = Some(Follow {
+                                call,
+                                mri: asked.clone(),
+                                refused: this.calls.read(cx).refused().map(|refused| refused.text.clone()),
+                            });
+                        }
                         this.ask(ask.clone(), cx);
                     })),
             )
@@ -552,6 +605,9 @@ impl CallStage {
 
     /// A row of the People pane as a tab stop keyed by its selector `key`, lit while the keyboard is on it.
     fn person_stop(&self, key: &str, row: gpui::Stateful<gpui::Div>, palette: Palette, cx: &App) -> AnyElement {
+        self.people_keys.drawn.borrow_mut().push(key.to_owned());
+        let lit = self.people_keys.lit.as_deref() == Some(key);
+        let row = row.when(lit, |row| row.bg(rgb(palette.hover)));
         keyboard::stop(SharedString::from(key.to_owned()), row, palette)
             .handle(&self.people_keys.handles.get(key, cx))
             .into_any_element()
@@ -568,6 +624,7 @@ impl CallStage {
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let key = section.key();
+        self.people_keys.drawn.borrow_mut().push(key.to_owned());
         let chevron = if self.people_keys.folded(section) {
             Glyph::CHEVRON_RIGHT
         } else {
@@ -618,6 +675,28 @@ impl CallStage {
     pub fn people_focus(&self, window: &Window) -> Option<String> {
         self.people_keys.handles.focused(window)
     }
+
+    /// The key of the People pane's row that a keyboard's Request to join moved the keyboard to and lights, if any.
+    #[must_use]
+    pub fn people_lit(&self) -> Option<String> {
+        self.people_keys.lit.clone()
+    }
+}
+
+/// Where the keyboard goes when `gone`, a key of the frame before (`last`), is not `drawn` now: the first key after it
+/// that is drawn, else the nearest before it, else the first drawn; `None` while it is drawn or the pane is not.
+fn neighbour<'a>(last: &'a [String], drawn: &'a [String], gone: &str) -> Option<&'a str> {
+    if drawn.is_empty() || drawn.iter().any(|key| key == gone) {
+        return None;
+    }
+    let at = last.iter().position(|key| key == gone).unwrap_or(last.len());
+    let (before, after) = last.split_at(at);
+    after
+        .iter()
+        .chain(before.iter().rev())
+        .find(|key| drawn.contains(key))
+        .or_else(|| drawn.first())
+        .map(String::as_str)
 }
 
 /// The selector of the row `index` of "People added to the chat" or "Others invited", and its focus key.
