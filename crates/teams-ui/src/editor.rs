@@ -22,6 +22,8 @@
 //!   writes; any other paste, and every paste into a block of code, is plain text, a paragraph per line (in a list
 //!   item an item per line, in a block of code its lines). A picture on the clipboard, or picture files a file manager
 //!   copied, go in the box as pictures of their own, where its owner takes them ([`pictures`]).
+//! - **A field** can hold at most so many characters ([`Editor::max_chars`]), take only plain text
+//!   ([`Editor::plain_text_only`]) or be one line ([`Editor::single_line`]).
 //! - **Typing goes through GPUI's input handler** ([`EntityInputHandler`]), so an input method composes text in place.
 
 pub mod convert;
@@ -148,11 +150,24 @@ pub struct Editor {
     pub(crate) read_only: bool,
     /// The most characters it holds (a line break is one), as a text field's `maxLength`.
     max_chars: Option<usize>,
+    /// What a paste can put in ([`Self::plain_text_only`], [`Self::single_line`]).
+    takes: Takes,
     /// The pictures put in the box, by id ([`pictures`]), kept while it lives so undo brings one back.
     pictures: HashMap<u64, pictures::Picture>,
     next_picture: u64,
     takes_pictures: bool,
     _focus: Vec<Subscription>,
+}
+
+/// What a paste can put in an [`Editor`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Takes {
+    /// Rich text, with its formats.
+    Rich,
+    /// Plain text only.
+    Plain,
+    /// Plain text on one line.
+    OneLine,
 }
 
 impl EventEmitter<EditorEvent> for Editor {}
@@ -200,6 +215,7 @@ impl Editor {
             min_height: None,
             read_only: false,
             max_chars: None,
+            takes: Takes::Rich,
             pictures: HashMap::new(),
             next_picture: 0,
             takes_pictures: false,
@@ -220,11 +236,25 @@ impl Editor {
         cx.notify();
     }
 
-    /// It, holding at most `max` characters: of what is typed or pasted, only what fits goes in, and any other edit
-    /// past `max` is refused.
+    /// It, holding at most `max` characters: of what is typed or pasted as plain text, only what fits goes in, and any
+    /// other edit past `max` (a rich paste too) is refused.
     #[must_use]
     pub fn max_chars(mut self, max: usize) -> Self {
         self.max_chars = Some(max);
+        self
+    }
+
+    /// It, taking every paste as plain text: a format pasted can't go in.
+    #[must_use]
+    pub fn plain_text_only(mut self) -> Self {
+        self.takes = Takes::Plain;
+        self
+    }
+
+    /// It, as a one-line field: every paste is plain text and a line break in it becomes a space.
+    #[must_use]
+    pub fn single_line(mut self) -> Self {
+        self.takes = Takes::OneLine;
         self
     }
 
@@ -975,6 +1005,7 @@ impl Editor {
     /// Pictures and files are taken first ([`pictures`]) unless `plain`; `scale` is the screen's, which a picture's
     /// shown size is its pixels' over.
     pub fn paste(&mut self, plain: bool, scale: f32, cx: &mut Context<Self>) {
+        let plain = plain || self.takes != Takes::Rich;
         let Some(item) = cx.read_from_clipboard() else { return };
         if !plain && self.paste_pictures(&item, scale, cx) {
             return;
@@ -1000,7 +1031,10 @@ impl Editor {
     /// Pastes `text`: in a block of code its lines stay in the block; in a list item each line is an item of its
     /// list; elsewhere a paragraph per line.
     pub fn paste_plain(&mut self, text: &str, cx: &mut Context<Self>) {
-        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        let mut text = text.replace("\r\n", "\n").replace('\r', "\n");
+        if self.takes == Takes::OneLine {
+            text = text.replace('\n', " ");
+        }
         let (start, end) = self.selection.range();
         let text = self.fit(start, end, &text);
         let kind = self.block_kind();

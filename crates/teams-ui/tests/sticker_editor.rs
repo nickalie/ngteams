@@ -492,6 +492,11 @@ fn fast_typing_draws_the_picture_once_the_keys_settle() {
         "one draw takes all the keys typed"
     );
     assert_eq!(cx.update(|_, cx| editor.read(cx).drawn()), Some((334, 250)));
+    assert_eq!(
+        cx.update(|_, cx| editor.read(cx).drawn_words().map(<[String]>::to_vec)),
+        Some(vec!["a fast typist".to_owned()]),
+        "the picture shows what was typed"
+    );
 }
 
 #[test]
@@ -525,4 +530,21 @@ fn the_top_row_is_the_back_arrow_beside_the_search_field() {
         found.contains(&Item::Sticker(StickerRef::teams("OfficeDrama_SoCool"))),
         "{found:?}"
     );
+}
+
+#[test]
+fn the_tab_strip_keeps_its_keys_while_the_editor_is_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let rig = rig(&["OfficeDrama_SoCool"], 334, 250);
+    let (picker, _, cx) = so_cool(&rig, dir.path());
+    // a click in the strip past the last tab's label
+    let last = cx.debug_bounds("fun-tab-stickers").unwrap();
+    cx.simulate_click(gpui::point(last.right() + px(20.0), last.center().y), Modifiers::none());
+    draw(cx);
+    assert_eq!(
+        cx.update(|window, cx| picker.read(cx).place(window, cx)),
+        Some(Place::Tabs)
+    );
+    keys(cx, "left");
+    assert!(!editor_open(&picker, cx), "the tab strip's arrows go to the next tab");
 }

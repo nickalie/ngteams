@@ -824,8 +824,10 @@ impl FunPicker {
             self.step_tab(if modifiers.shift { -1 } else { 1 }, window, cx);
             return true;
         }
-        // the search field beside the editor's back arrow is in the editor's reach
-        if modifiers.number_of_modifiers() != 0 || self.editing.is_some() {
+        // past the tab strip, the editor and the search field beside its back arrow are in the editor's reach
+        if modifiers.number_of_modifiers() != 0
+            || (self.editing.is_some() && self.place(window, cx) != Some(Place::Tabs))
+        {
             return false;
         }
         // the held Escape's first push acted (it ended the rename or closed the picker): its repeats do nothing more

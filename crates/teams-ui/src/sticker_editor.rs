@@ -28,7 +28,7 @@ use image::RgbaImage;
 use teams_proto::PastedPicture;
 
 use crate::bridge::Core;
-use crate::editor::doc::{Block, Doc};
+use crate::compose::plain_doc;
 use crate::editor::{Editor, EditorEvent, EnterMode};
 use crate::icons::Glyph;
 use crate::stickers::caption::{self, BOTTOM_HINT, CAPTION_HINT, Caption, MAX_CAPTION, MAX_MEME_LINE, TOP_HINT};
@@ -126,8 +126,8 @@ enum Template {
     Failed,
 }
 
-/// The picture as drawn for the editor, and its size.
-type Preview = (Arc<RenderImage>, (u32, u32));
+/// The picture as drawn for the editor, its size and the words drawn on it.
+type Preview = (Arc<RenderImage>, (u32, u32), Vec<String>);
 
 /// The "Edit sticker" editor (see the module docs).
 pub struct StickerEditor {
@@ -186,6 +186,13 @@ impl StickerEditor {
                 cx.stop_propagation();
             }
         }));
+        // the last picture shown leaves the windows' atlas with the editor
+        cx.on_release(|this: &mut Self, cx| {
+            if let Some((image, ..)) = this.preview.take() {
+                cx.drop_image(image, None);
+            }
+        })
+        .detach();
         let reply = core.message_picture(template);
         cx.spawn(async move |this, cx| {
             let bytes = reply.await.ok().flatten();
@@ -221,7 +228,12 @@ impl StickerEditor {
     fn fields(caption: &Caption, window: &mut Window, cx: &mut Context<Self>) -> (Fields, Vec<Subscription>) {
         if caption.is_meme() {
             let line = |hint: &'static str, window: &mut Window, cx: &mut Context<Self>| {
-                cx.new(|cx| Editor::new(window, cx).placeholder(hint).max_chars(MAX_MEME_LINE))
+                cx.new(|cx| {
+                    Editor::new(window, cx)
+                        .placeholder(hint)
+                        .max_chars(MAX_MEME_LINE)
+                        .single_line()
+                })
             };
             let (top, bottom) = (line(TOP_HINT, window, cx), line(BOTTOM_HINT, window, cx));
             let subscriptions = vec![Self::watch(&top, cx), Self::watch(&bottom, cx)];
@@ -229,10 +241,13 @@ impl StickerEditor {
         }
         let first = caption.first_text().concat();
         let block = cx.new(|cx| {
-            let mut block = Editor::new(window, cx).placeholder(CAPTION_HINT).max_chars(MAX_CAPTION);
+            let mut block = Editor::new(window, cx)
+                .placeholder(CAPTION_HINT)
+                .max_chars(MAX_CAPTION)
+                .plain_text_only();
             block.set_enter_mode(EnterMode::NewLine, cx);
             block.set_heights(Some(px(BLOCK_HEIGHT)), Some(px(BLOCK_HEIGHT)), cx);
-            block.set_doc(plain(&first), cx);
+            block.set_doc(plain_doc(&first), cx);
             block
         });
         (Fields::Block(block.clone()), vec![Self::watch(&block, cx)])
@@ -282,7 +297,7 @@ impl StickerEditor {
         };
         for (at, field) in self.editors().into_iter().enumerate() {
             let text: String = texts.get(at).copied().unwrap_or_default().chars().take(most).collect();
-            field.update(cx, |field, cx| field.set_doc(plain(&text), cx));
+            field.update(cx, |field, cx| field.set_doc(plain_doc(&text), cx));
         }
         self.redraw(cx);
     }
@@ -304,7 +319,13 @@ impl StickerEditor {
     /// The picture as last drawn: its size, once it is.
     #[must_use]
     pub fn drawn(&self) -> Option<(u32, u32)> {
-        self.preview.as_ref().map(|(_, size)| *size)
+        self.preview.as_ref().map(|(_, size, _)| *size)
+    }
+
+    /// The words on the picture as last drawn, once it is.
+    #[must_use]
+    pub fn drawn_words(&self) -> Option<&[String]> {
+        self.preview.as_ref().map(|(.., words)| words.as_slice())
     }
 
     /// Whether the focus is in the editor: in what it draws, or in a field it hides (a picture that can't be read
@@ -361,10 +382,10 @@ impl StickerEditor {
                 return;
             };
             let preview = cx
-                .background_spawn(async move { preview(&template, &caption, &typed) })
+                .background_spawn(async move { preview(&template, &caption, typed) })
                 .await;
             let more = this.update(cx, |this, cx| {
-                if let Some((old, _)) = this.preview.replace(preview) {
+                if let Some((old, ..)) = this.preview.replace(preview) {
                     cx.drop_image(old, None);
                 }
                 this.drawing = this.asked != number;
@@ -469,17 +490,16 @@ impl StickerEditor {
     /// Handles `keystroke` while the focus is in the editor; whether it took it.
     fn key(&mut self, keystroke: &gpui::Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let modifiers = keystroke.modifiers;
+        let pressed = self
+            .focused_press(window)
+            .filter(|_| modifiers.number_of_modifiers() == 0);
         match keystroke.key.as_str() {
             "escape" if modifiers.number_of_modifiers() == 0 => cx.emit(StickerEditorEvent::Cancel),
             "tab" if modifiers.number_of_modifiers() == u8::from(modifiers.shift) => {
                 self.step_focus(!modifiers.shift, window, cx);
             }
-            "enter" | "space" if modifiers.number_of_modifiers() == 0 && self.focused_press(window).is_some() => {
-                if let Some(press) = self.focused_press(window) {
-                    self.press(press, cx);
-                }
-            }
-            // a meme's line is one line, as Teams' one-line field
+            "enter" | "space" if let Some(press) = pressed => self.press(press, cx),
+            // a meme's line is one line, as Teams' one-line field: Enter does nothing there
             "enter" if self.in_meme_line(window, cx) => {}
             _ => return false,
         }
@@ -488,11 +508,11 @@ impl StickerEditor {
 }
 
 /// `typed` drawn on `template` as `caption` says, ready for the editor to show.
-fn preview(template: &RgbaImage, caption: &Caption, typed: &[String]) -> Preview {
-    let mut image = caption::draw(template, caption, typed, caption::shared());
+fn preview(template: &RgbaImage, caption: &Caption, typed: Vec<String>) -> Preview {
+    let mut image = caption::draw(template, caption, &typed, caption::shared());
     let size = image.dimensions();
     crate::inline::to_bgra(&mut image);
-    (Arc::new(RenderImage::new(vec![image::Frame::new(image)])), size)
+    (Arc::new(RenderImage::new(vec![image::Frame::new(image)])), size, typed)
 }
 
 impl StickerEditor {
@@ -585,7 +605,7 @@ impl StickerEditor {
                 .child(LOAD_FAILED)
                 .into_any_element();
         }
-        let Some((image, (width, height))) = &self.preview else {
+        let Some((image, (width, height), _)) = &self.preview else {
             return frame.into_any_element();
         };
         #[expect(clippy::cast_precision_loss, reason = "a sticker's picture is a few hundred pixels")]
@@ -624,11 +644,6 @@ impl StickerEditor {
         });
         div().flex().flex_col().gap_2().children(boxes).into_any_element()
     }
-}
-
-/// `text` as a document of plain paragraphs, one a line.
-fn plain(text: &str) -> Doc {
-    Doc::new(text.split('\n').map(Block::paragraph).collect())
 }
 
 impl Render for StickerEditor {

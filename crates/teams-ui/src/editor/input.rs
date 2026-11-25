@@ -194,12 +194,13 @@ impl EntityInputHandler for Editor {
             (None, None) => self.selection.range(),
         };
         let after = self.replace_between(start, end, text, cx);
-        self.marked = (!text.is_empty()).then_some((start, after));
+        self.marked = (after != start).then_some((start, after));
         if let Some(selected) = selected {
             let base = self.utf16_of(start);
+            // a limit can cut the composed text: the selection stays in what went in
             let selection = Selection {
-                anchor: self.pos_of_utf16(base + selected.start),
-                head: self.pos_of_utf16(base + selected.end),
+                anchor: self.pos_of_utf16(base + selected.start).min(after),
+                head: self.pos_of_utf16(base + selected.end).min(after),
             };
             self.selection = selection;
         }

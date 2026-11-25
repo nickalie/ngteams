@@ -596,3 +596,80 @@ fn a_paste_past_the_limit_keeps_what_fits_and_counts_characters() {
     cx.update(|_, cx| editor.update(cx, Editor::undo));
     assert_eq!(text_of(&editor, cx), "abcd", "a refused edit leaves no step of undo");
 }
+
+/// Puts a bold bulleted list of `TOP` and `BOTTOM` on the clipboard as the editor copies it.
+fn copy_a_rich_list(host: &Entity<Host>, cx: &mut VisualTestContext) {
+    let editor = editor_of(host, cx);
+    let bold = Attrs {
+        marks: Marks::BOLD,
+        ..Attrs::default()
+    };
+    let items = ["TOP", "BOTTOM"].map(|text| Block::new(Kind::Bullet, 0, vec![Run::new(text, bold.clone())]));
+    cx.update(|_, cx| editor.update(cx, |editor, cx| editor.set_doc(Doc::new(items.to_vec()), cx)));
+    cx.simulate_keystrokes("ctrl-a ctrl-c");
+}
+
+/// Puts `make` in `host`'s place of its editor and focuses it.
+fn swap_editor(
+    host: &Entity<Host>,
+    cx: &mut VisualTestContext,
+    make: impl FnOnce(Editor) -> Editor + 'static,
+) -> Entity<Editor> {
+    cx.update(|window, cx| {
+        host.update(cx, |host, cx| host.editor = cx.new(|cx| make(Editor::new(window, cx))));
+        let focus = host.read(cx).editor.focus_handle(cx);
+        window.focus(&focus, cx);
+    });
+    draw(cx);
+    editor_of(host, cx)
+}
+
+#[test]
+fn a_plain_text_field_pastes_a_rich_copy_as_plain_text_up_to_its_limit() {
+    let (host, cx) = editor_window();
+    copy_a_rich_list(&host, cx);
+    let editor = swap_editor(&host, cx, |editor| editor.max_chars(8).plain_text_only());
+    cx.simulate_keystrokes("ctrl-v");
+    assert_eq!(text_of(&editor, cx), "TOP\nBOTT", "what fits of the rich copy goes in");
+    let doc = doc_of(&host, cx);
+    assert!(doc.blocks.iter().all(|block| block.kind == Kind::Paragraph), "no list");
+    assert!(
+        doc.blocks
+            .iter()
+            .flat_map(|block| &block.runs)
+            .all(|run| !run.attrs.marks.contains(Marks::BOLD)),
+        "no format"
+    );
+}
+
+#[test]
+fn a_single_line_field_pastes_and_types_line_breaks_as_spaces() {
+    let (host, cx) = editor_window();
+    copy_a_rich_list(&host, cx);
+    let editor = swap_editor(&host, cx, |editor| editor.max_chars(25).single_line());
+    cx.simulate_keystrokes("ctrl-v");
+    assert_eq!(text_of(&editor, cx), "TOP BOTTOM");
+    cx.update(|_, cx| editor.update(cx, |editor, cx| editor.paste_plain("\r\nup\ndown", cx)));
+    assert_eq!(text_of(&editor, cx), "TOP BOTTOM up down");
+    assert_eq!(doc_of(&host, cx).blocks.len(), 1, "one line");
+}
+
+#[test]
+fn a_composition_cut_by_the_limit_keeps_the_caret_in_what_went_in() {
+    use gpui::EntityInputHandler as _;
+    let (host, cx) = editor_window();
+    let editor = limited_to(6, "abcd", &host, cx);
+    let selected = cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.replace_and_mark_text_in_range(None, "xyz", Some(3..3), window, cx);
+            (
+                editor
+                    .selected_text_range(false, window, cx)
+                    .map(|selection| selection.range),
+                editor.marked_text_range(window, cx),
+            )
+        })
+    });
+    assert_eq!(text_of(&editor, cx), "abcdxy");
+    assert_eq!(selected, (Some(6..6), Some(4..6)), "the caret ends at the cut text");
+}
