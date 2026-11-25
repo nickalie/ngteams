@@ -162,11 +162,14 @@ async fn a_recording_its_recap_names_no_item_of_streams_by_its_item_on_graph() {
             .up_to_n_times(1)
             .expect(1)
     };
-    // a presentation that fails once its item reads is unavailable, so the player plays the file instead
-    graph_item(item.to_string()).mount(&rig.server).await;
-    manifest_answers(&rig.server, ResponseTemplate::new(500)).await;
-    let error = rig.handle.recording_presentation(link, "", "").await.unwrap_err();
-    assert!(matches!(error, EngineError::FileUnavailable), "{error:?}");
+    // once its item reads, a presentation refused is unavailable (the player plays the file), one failed on the way unread
+    for (status, unavailable) in [(403, true), (500, false)] {
+        graph_item(item.to_string()).mount(&rig.server).await;
+        manifest_answers(&rig.server, ResponseTemplate::new(status)).await;
+        let error = rig.handle.recording_presentation(link, "", "").await.unwrap_err();
+        assert_eq!(matches!(error, EngineError::FileUnavailable), unavailable, "{error:?}");
+        assert_eq!(matches!(error, EngineError::FileUnread), !unavailable, "{error:?}");
+    }
     // an item that names no drive can't be streamed, though its presentation would read
     graph_item(r#"{"id": "ITEM1"}"#.to_owned()).mount(&rig.server).await;
     manifest_answers(
@@ -184,7 +187,7 @@ async fn a_recording_its_recap_names_no_item_of_streams_by_its_item_on_graph() {
     assert!(matches!(error, EngineError::FileUnavailable), "{error:?}");
     rig.server.verify().await;
     let received = rig.server.received_requests().await.unwrap();
-    assert_eq!(received.iter().filter(|asked| asked.url.path() == MANIFEST).count(), 2);
+    assert_eq!(received.iter().filter(|asked| asked.url.path() == MANIFEST).count(), 3);
     rig.handle.shutdown();
 }
 
