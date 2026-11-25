@@ -23,6 +23,9 @@
 //!   with their pictures, a pack in 3 columns, a pick by the pointer and by the keyboard, b sees it, a PNG sticker
 //!   from another client, the search, a sticker that cannot be read, Recent after a restart, and a fourth run as an
 //!   own-server account.
+//! - **Edit sticker** (task 650, `qa_sticker_picker_captions.rs`): the pencil marks, the editor opened by a click,
+//!   a typed caption that redraws the picture, Done, Send and what b sees; a long and an empty caption; a meme; the
+//!   keyboard, Cancel and back.
 //!
 //! The checks run in order and build on each other (the imports first). `QA653_ONLY` (a comma list of check names)
 //! runs only those. `QA653_EVIDENCE` names a directory that gets the screenshots and the results too. Screenshots also
@@ -90,6 +93,9 @@ use files::{Rgb, Sources};
 
 #[path = "qa_sticker_picker_teams.rs"]
 mod teams;
+
+#[path = "qa_sticker_picker_captions.rs"]
+mod captions;
 
 const CHILD_ENV: &str = "QA653_CHILD";
 const ONLY_ENV: &str = "QA653_ONLY";
@@ -204,7 +210,7 @@ fn wanted(name: &str) -> bool {
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
 /// The first run of the app.
-const FIRST: [Check; 22] = [
+const FIRST: [Check; 27] = [
     ("opens_by_button_and_keys", opens_by_button_and_keys),
     ("teams_all_before_imports", teams::teams_all_before_imports),
     ("import_folder", import_folder),
@@ -226,6 +232,11 @@ const FIRST: [Check; 22] = [
     ("teams_search_and_keys", teams::teams_search_and_keys),
     ("teams_unreadable_sticker", teams::teams_unreadable_sticker),
     ("teams_all_after_send", teams::teams_all_after_send),
+    ("caption_pointer_send", captions::caption_pointer_send),
+    ("caption_b_sees", captions::caption_b_sees),
+    ("caption_long_and_empty", captions::caption_long_and_empty),
+    ("caption_meme", captions::caption_meme),
+    ("caption_keyboard_and_back", captions::caption_keyboard_and_back),
     ("remember_before_restart", remember_before_restart),
 ];
 
@@ -265,6 +276,8 @@ struct World<'a> {
     trouter: &'a str,
     /// The chat of a and b where b's other client sent a Teams PNG sticker.
     teams_chat: &'a str,
+    /// The chat of a and b for the captioned stickers.
+    captions_chat: &'a str,
 }
 
 fn parent() -> SandboxResult {
@@ -285,6 +298,7 @@ fn parent() -> SandboxResult {
     let mock = runtime.block_on(ChatServiceMock::start())?;
     let chats = seed(&mock)?;
     let teams_chat = teams::seed(&mock, &runtime)?;
+    let captions_chat = captions::seed(&mock)?;
     let trouter = mock.start_trouter()?;
     let chooser = Chooser::start(sandbox.bus().address())?;
     let sources = Sources::make()?;
@@ -299,6 +313,7 @@ fn parent() -> SandboxResult {
         dir: dir.path(),
         trouter: trouter.origin(),
         teams_chat: &teams_chat,
+        captions_chat: &captions_chat,
     };
     let tally = run_all(&world)?;
     drop(trouter);
@@ -2465,7 +2480,19 @@ fn picker_state(picker: &Entity<FunPicker>, window: &Window, cx: &App) -> Value 
         .iter()
         .map(|row| row.iter().map(Item::selector).collect())
         .collect();
+    let editor = picker.sticker_editor().map(|editor| {
+        let editor = editor.read(cx);
+        json!({
+            "sticker": editor.sticker(),
+            "typed": editor.typed(cx),
+            "can_finish": editor.can_finish(cx),
+            "failed": editor.failed(),
+            "drawn": editor.drawn().map(|(width, height)| [width, height]),
+            "focus": editor.holds_focus(window, cx),
+        })
+    });
     json!({
+        "editor": editor,
         "tab": format!("{:?}", picker.tab()),
         "view": format!("{:?}", picker.sticker_view()),
         "place": place,
@@ -2491,6 +2518,7 @@ fn compose_state(compose: &Entity<Compose>, window: &Window, cx: &App) -> Value 
             };
             json!({
                 "sticker": picture.sticker.as_ref().map(ToString::to_string),
+                "alt": picture.alt.as_ref().map(ToString::to_string),
                 "state": state,
                 "given": [picture.given.0, picture.given.1],
             })

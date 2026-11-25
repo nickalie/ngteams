@@ -698,7 +698,8 @@ context = { "crates/teams-ui/src/stickers/lottie.rs" = "35d2a340f69e040aea50bc93
 sha256 = "bd8e2b947a94b40926219f96b6cd551d29a7add7379e793907ebc090116e6262"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
 context = { "crates/teams-ui/src/stickers/lottie/bounds.rs" = "f66b13085508191e5443b2cd70a6ef0d0dbf5ee3742cce3b887ceefe88ba8d95" }
+
 [unmapped_sources."crates/teams-ui/src/stickers/caption_tests.rs"]
-sha256 = "d5ad149381d8e222570d74f32fd4c5006431c20a638f10d3847a1c3e7c8cae95"
+sha256 = "960c9d06ead2e739c183f00d52af95f54e92bf445a4d7e8aacde763fbd5b12c5"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
-context = { "crates/teams-ui/src/stickers/caption.rs" = "25d5418d9b82bc9ba8bde365bf4a22c3c04f3c33b6e5c043a65b17da368ff771" }
+context = { "crates/teams-ui/src/stickers/caption.rs" = "4167043f9339dc458a1be76192c3a0f563ee188717cbaa79f7eed7013def6a84" }

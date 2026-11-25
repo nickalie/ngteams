@@ -15,7 +15,7 @@ use teams_mock::ChatServiceMock;
 pub(super) const HEADER: Rgb = [40, 90, 200];
 pub(super) const BUG: Rgb = [200, 40, 60];
 pub(super) const COFFEE: Rgb = [110, 240, 160];
-const FACE: Rgb = [90, 70, 140];
+pub(super) const FACE: Rgb = [90, 70, 140];
 
 const BUG_LABEL: &str = "teamsquatch squashing a bug";
 const BUG_ITEM: &str = "sticker-teams-teamsquatch_bugsquash";
@@ -74,6 +74,9 @@ const POPULAR: [&str; 4] = [
 
 /// The made-up picture the mock's CDN gives for `path`, in the format its file name gives.
 pub(super) fn teams_picture(path: &str) -> Vec<u8> {
+    if let Some(template) = super::captions::template_picture(path) {
+        return template;
+    }
     if path.contains("/stickerassets/") && path.contains("Clippy_Nap") {
         return b"made-up bytes that are not a picture".to_vec();
     }
