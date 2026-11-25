@@ -210,9 +210,19 @@ fn the_channel_headers_join_goes_once_the_meetings_post_tells_its_end() {
     registered(&rig);
     click(cx, "channel-row-1");
     assert!(drawn(cx, "channel-join-meeting"), "Join while the meeting runs");
-    let ended = call_event(END, "callEnded", None);
-    channel_holds(&rig, vec![ended.clone(), call_event(POST, "callStarted", Some(TITLE))]);
     rig.core.channel_meetups.lock().unwrap().clear();
+    meeting_ends(&rig);
+    assert!(drawn(cx, &format!("event-{POST}")), "its ended line");
+    assert!(
+        !drawn(cx, "channel-join-meeting"),
+        "no Join once the post tells the end, before the next timed read"
+    );
+}
+
+/// The delivery of the post [`END`] that tells the meeting of [`POST`] ended, with the channel's posts then.
+fn meeting_ends(rig: &Rig) {
+    let ended = call_event(END, "callEnded", None);
+    channel_holds(rig, vec![ended.clone(), call_event(POST, "callStarted", Some(TITLE))]);
     rig.send(Event::Message {
         conversation: CHANNEL.to_owned(),
         id: END.to_owned(),
@@ -222,10 +232,65 @@ fn the_channel_headers_join_goes_once_the_meetings_post_tells_its_end() {
         source: Source::Delivery,
     });
     rig.cx.run_until_parked();
-    assert!(drawn(cx, &format!("event-{POST}")), "its ended line");
+}
+
+#[test]
+fn an_older_meeting_read_that_ends_last_does_not_put_the_headers_join_back() {
+    let rig = calling();
+    channel_holds(&rig, vec![call_event(POST, "callStarted", Some(TITLE))]);
+    *rig.core.hold_channel_meetups.lock().unwrap() = true;
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let _windows = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    click(cx, "channel-row-1");
+    meeting_ends(&rig);
+    let mut held = std::mem::take(&mut *rig.core.held_channel_meetups.lock().unwrap());
+    assert_eq!(held.len(), 2, "the open's read and the read after the end");
+    held.remove(1).send(Ok(None));
+    held.remove(0).send(Ok(Some(meetup())));
+    rig.cx.run_until_parked();
     assert!(
         !drawn(cx, "channel-join-meeting"),
-        "no Join once the post tells the end, before the next timed read"
+        "the read from before the end is older than the one applied"
+    );
+}
+
+#[test]
+fn opening_a_channel_with_a_running_meeting_reads_its_meeting_once() {
+    let rig = calling();
+    channel_holds(&rig, vec![call_event(POST, "callStarted", Some(TITLE))]);
+    rig.core
+        .channel_meetups
+        .lock()
+        .unwrap()
+        .insert(CHANNEL.to_owned(), meetup());
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let _windows = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    click(cx, "channel-row-1");
+    assert!(drawn(cx, "channel-join-meeting"));
+    assert_eq!(*rig.core.channel_meetup_reads.lock().unwrap(), 1);
+}
+
+#[test]
+fn opening_the_shown_channel_again_keeps_one_timed_meeting_read() {
+    let rig = calling();
+    channel_holds(&rig, vec![call_event(POST, "callStarted", Some(TITLE))]);
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let _windows = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    click(cx, "channel-row-1");
+    click(cx, "channel-row-1");
+    assert_eq!(*rig.core.channel_meetup_reads.lock().unwrap(), 2);
+    rig.cx.executor().advance_clock(teams_ui::shell::CHANNEL_MEETUP_REFRESH);
+    rig.cx.run_until_parked();
+    assert_eq!(
+        *rig.core.channel_meetup_reads.lock().unwrap(),
+        3,
+        "one timed read: the first open's loop stopped"
     );
 }
 

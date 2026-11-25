@@ -308,6 +308,11 @@ pub struct FakeCore {
     pub meetings: Mutex<HashMap<String, teams_core::MeetingDetails>>,
     /// What `channel_meetup` answers, by the channel; any other channel has no meeting running.
     pub channel_meetups: Mutex<HashMap<String, teams_core::ChannelMeetup>>,
+    /// How many `channel_meetup` reads were asked for; with `hold_channel_meetups` set, each waits in
+    /// `held_channel_meetups` until the test answers it.
+    pub channel_meetup_reads: Mutex<usize>,
+    pub hold_channel_meetups: Mutex<bool>,
+    pub held_channel_meetups: Mutex<Vec<Answer<Option<teams_core::ChannelMeetup>>>>,
     /// The chats' translations kept, as the store keeps them (a newer version's replacing an older one's).
     pub translations: Mutex<Vec<StoredTranslation>>,
     /// The account's own messages as written, kept when they were sent translated.
@@ -632,6 +637,12 @@ impl Core for FakeCore {
     }
 
     fn channel_meetup(&self, channel: String) -> Reply<Option<teams_core::ChannelMeetup>> {
+        *locked(&self.channel_meetup_reads) += 1;
+        if *locked(&self.hold_channel_meetups) {
+            let (answer, reply) = Reply::later();
+            locked(&self.held_channel_meetups).push(answer);
+            return reply;
+        }
         Reply::ready(Ok(locked(&self.channel_meetups).get(&channel).cloned()))
     }
 

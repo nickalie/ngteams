@@ -343,6 +343,12 @@ pub struct Shell {
     channel_listed: bool,
     /// The meeting that runs in the channel shown, as last read ([`Self::read_channel_meetup`]): its header's Join.
     channel_meetup: Option<(String, ChannelMeetup)>,
+    /// The channel-meeting reads started (each one's number) and the newest one applied: an older read's answer that
+    /// comes last is not applied.
+    meetup_reads: u64,
+    meetup_applied: u64,
+    /// The timed meeting loop of the channel opened last: an older loop stops at its next read.
+    meetup_loop: u64,
     settings_view: Entity<SettingsView>,
     /// The calendar, shown across both panes from the rail's Calendar.
     calendar: Entity<CalendarView>,
@@ -491,6 +497,9 @@ impl Shell {
             channel: None,
             channel_listed: false,
             channel_meetup: None,
+            meetup_reads: 0,
+            meetup_applied: 0,
+            meetup_loop: 0,
             settings_view,
             calendar,
             first_run,
@@ -1353,17 +1362,24 @@ impl Shell {
     }
 
     /// Reads whether a meeting runs in the channel `channel` ([`Core::channel_meetup`]), and again every
-    /// [`CHANNEL_MEETUP_REFRESH`] while that channel is shown: its header has Join while one runs, as Teams' does.
+    /// [`CHANNEL_MEETUP_REFRESH`] while that channel is shown and no later open started a loop of its own: its header
+    /// has Join while one runs, as Teams' does.
     fn read_channel_meetup(&mut self, channel: String, cx: &mut Context<Self>) {
         if self.channel_meetup.as_ref().is_some_and(|(shown, _)| *shown != channel) {
             self.channel_meetup = None;
         }
-        let core = Arc::clone(&self.core);
+        self.meetup_loop += 1;
+        let (core, generation) = (Arc::clone(&self.core), self.meetup_loop);
         cx.spawn(async move |this, cx| {
             loop {
+                let Ok(Some(number)) = this.update(cx, |this, _| {
+                    (this.meetup_loop == generation).then(|| this.start_meetup_read())
+                }) else {
+                    return;
+                };
                 let read = core.channel_meetup(channel.clone()).await;
                 let shown = this
-                    .update(cx, |this, cx| this.channel_meetup_read(&channel, read, cx))
+                    .update(cx, |this, cx| this.channel_meetup_read(&channel, number, read, cx))
                     .unwrap_or(false);
                 if !shown {
                     return;
@@ -1378,24 +1394,37 @@ impl Shell {
     fn reread_channel_meetup(&mut self, cx: &mut Context<Self>) {
         let Main::Channel(channel) = &self.main else { return };
         let (channel, core) = (channel.clone(), Arc::clone(&self.core));
+        let number = self.start_meetup_read();
         cx.spawn(async move |this, cx| {
             let read = core.channel_meetup(channel.clone()).await;
-            let _ = this.update(cx, |this, cx| this.channel_meetup_read(&channel, read, cx));
+            let _ = this.update(cx, |this, cx| this.channel_meetup_read(&channel, number, read, cx));
         })
         .detach();
     }
 
-    /// What a read of the channel `channel`'s meeting gave, kept while that channel shows (a read that failed keeps what
-    /// was read last); whether it still shows.
+    /// The number of a channel-meeting read that starts now.
+    fn start_meetup_read(&mut self) -> u64 {
+        self.meetup_reads += 1;
+        self.meetup_reads
+    }
+
+    /// What the read `number` of the channel `channel`'s meeting gave, kept while that channel shows (a read that
+    /// failed keeps what was read last, and a read older than one applied is not applied); whether it still shows.
     fn channel_meetup_read(
         &mut self,
         channel: &str,
+        number: u64,
         read: Result<Option<ChannelMeetup>, teams_core::EngineError>,
         cx: &mut Context<Self>,
     ) -> bool {
         if self.main != Main::Channel(channel.to_owned()) {
             return false;
         }
+        // two server reads make one, so they can end out of order
+        if number < self.meetup_applied {
+            return true;
+        }
+        self.meetup_applied = number;
         let kept = self.channel_meetup.take().filter(|(shown, _)| shown == channel);
         let now = match read {
             Ok(meetup) => meetup.map(|meetup| (channel.to_owned(), meetup)),

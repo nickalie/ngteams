@@ -538,8 +538,8 @@ A standard channel's thread read (`GET v1/threads/<channel>?view=msnp24Equivalen
 `threadType: topic`, `spaceId` (the team's root) and `groupId`. A private channel's thread is a `space` of its own
 (`productThreadType: TeamsPrivateChannel`). These are service identity shapes, not a write-permission check.
 
-The native client joins a running channel meeting: the channel's header shows **Join** while CSA names a meeting running in it (read when the channel opens and every 30 s
-while it shows, `Core::channel_meetup`), which opens the pre-join, and Join now reads the meeting again and enters it at
+The native client joins a running channel meeting: the channel's header shows **Join** while CSA names a meeting running in it (read when the channel opens, again at once when its
+posts show a meeting start or end, and every 30 s while it shows, `Core::channel_meetup`), which opens the pre-join, and Join now reads the meeting again and enters it at
 its conversation in the web client's entry shape (`Calls::join_channel_meeting`). The meeting's post is Teams' card with
 **Join** while no `callEnded` of its `callId` came (its line "<title> ended" after); that Join opens the same pre-join.
 Both titles are the post's `meetingtitle`, else `Meeting in "<channel>"`. Each Join names its post

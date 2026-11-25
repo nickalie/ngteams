@@ -3915,7 +3915,8 @@ impl ChatView {
 
     /// Tells the owner when the channel's posts show another set of running meetings than the rows showed before.
     fn tell_meeting_calls(&mut self, cx: &mut Context<Self>) {
-        if self.place != Place::Channel {
+        // before the first load the rows are not the channel's yet: the open reads the meeting itself
+        if self.place != Place::Channel || self.loads == 0 {
             return;
         }
         let running: Vec<String> = self
