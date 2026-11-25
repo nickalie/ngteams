@@ -25,6 +25,7 @@ use teams_media::devices::SystemDevices;
 use teams_media::devices::catalog::DeviceDirectory;
 use teams_media::devices::deferred::DeferredDevices;
 use teams_media::player::PlayerSetup;
+use teams_media::processing::NoiseControl;
 use teams_proto::Mri;
 use teams_ui::sounds::SoundBoard;
 use teams_ui::{Ringer, VideoFeed};
@@ -50,6 +51,8 @@ pub struct PersonalCalls {
     pub camera: Option<Arc<dyn Devices + Send + Sync>>,
     /// The devices the settings list and choose among; `None` lists none.
     pub devices: Option<Arc<dyn DeviceDirectory>>,
+    /// The noise suppression level the account's calls read: the settings keep it at the account's level.
+    pub noise: NoiseControl,
 }
 
 impl std::fmt::Debug for PersonalCalls {
@@ -78,8 +81,11 @@ pub fn on_devices(devices: Arc<dyn Devices + Send + Sync>, video: bool) -> (Acco
     let feed = video.then(VideoFeed::new);
     let camera = video.then(|| Arc::clone(&devices));
     let video = feed.clone().map(|feed| call_video(Arc::new(feed)));
+    let mut calls = account_calls(devices, video);
+    let noise = NoiseControl::default();
+    calls.media.session.noise = noise.clone();
     (
-        account_calls(devices, video),
+        calls,
         PersonalCalls {
             ringer: Some(ringer),
             sounds: Some(sounds),
@@ -87,6 +93,7 @@ pub fn on_devices(devices: Arc<dyn Devices + Send + Sync>, video: bool) -> (Acco
             video: feed,
             camera,
             devices: None,
+            noise,
         },
     )
 }

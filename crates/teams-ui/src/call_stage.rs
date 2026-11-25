@@ -94,6 +94,7 @@ use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_component::tooltip::Tooltip;
 use teams_core::{CallId, CallParticipant, CallStatus, CallView};
 use teams_media::devices::catalog::DeviceKind;
+use teams_media::processing::NoiseSuppression;
 use teams_proto::Mri;
 
 use crate::bridge::Core;
@@ -1366,6 +1367,32 @@ pub(crate) fn device_items(
         }
     }
     menu.scrollable(true).max_h(px(MENU_HEIGHT)).min_w(px(260.0))
+}
+
+/// The noise suppression levels in a call's audio menu, `account`'s checked: a change applies to the call at once.
+/// Each row's test selector is `call-noise-<level>`.
+pub(crate) fn noise_items(mut menu: PopupMenu, model: &Entity<SettingsModel>, account: &str, cx: &App) -> PopupMenu {
+    let set = model.read(cx).settings().noise_suppression_of(account);
+    menu = menu.label("Noise suppression");
+    for level in NoiseSuppression::ALL {
+        let selector = format!("call-noise-{}", level.key());
+        let (model, account) = (model.clone(), account.to_owned());
+        menu = menu.item(
+            PopupMenuItem::element(move |_, _| {
+                let selector = selector.clone();
+                div()
+                    .debug_selector(move || selector.clone())
+                    .child(crate::settings::noise::label(level))
+            })
+            .checked(set == level)
+            .on_click(move |_, _, cx| {
+                model.update(cx, |model, cx| {
+                    model.change(|settings| settings.set_noise_suppression(&account, level), cx);
+                });
+            }),
+        );
+    }
+    menu
 }
 
 /// The tallest a device menu gets before it scrolls, px.

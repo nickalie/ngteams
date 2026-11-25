@@ -17,7 +17,8 @@
 //! - **Privacy**: sending typing and read receipts.
 //! - **Calls** (where the app has calls, or its calls have video): the calls' microphone, speaker and camera
 //!   ("Follow the system", naming the system's default, then every device there is, a device chosen that isn't there
-//!   shown as not connected), "Make a test call" under them as Teams has it (the echo service's test call, asked of
+//!   shown as not connected), the account's noise suppression level under the microphone and the speaker (Auto, High,
+//!   Low, Off, [`crate::settings::noise`]), "Make a test call" under them as Teams has it (the echo service's test call, asked of
 //!   the shell: [`SettingsViewEvent::MakeTestCall`]; offered while no call is up or rings on any account, the calling
 //!   endpoint is registered and the app isn't read-only, else said why), the calls' video switch ("Video in
 //!   calls"), and the camera's video effects (blur, a picture behind the person) with their self-preview
@@ -52,6 +53,7 @@ use gpui_component::{Disableable as _, Sizable as _};
 use teams_core::{Choice, Reporting};
 use teams_log::diagnostics::WARNING;
 use teams_media::devices::catalog::{DeviceKind, DeviceList, DeviceStatus};
+use teams_media::processing::NoiseSuppression;
 
 use crate::app_admin::{AppAdmin, ManageApps};
 use crate::clock::{self, HourCycle};
@@ -59,7 +61,7 @@ use crate::effects::{EffectsPicker, PickerPlace};
 use crate::icons::{Glyph, icon_button, selected_by};
 use crate::local_ai::Work;
 use crate::presence;
-use crate::settings::{LogLevel, ManualStatus, Notifications, Settings, SettingsModel, TimeFormat};
+use crate::settings::{LogLevel, ManualStatus, Notifications, Settings, SettingsModel, TimeFormat, noise};
 use crate::settings_view::ai_picker::AiPicker;
 use crate::settings_view::ai_providers::AiProviders;
 use crate::shell::shown_as;
@@ -782,11 +784,7 @@ impl SettingsView {
     // --- the pages ---
 
     fn general(&self, settings: &Settings, palette: Palette) -> Vec<AnyElement> {
-        let account = self
-            .account
-            .clone()
-            .or_else(|| settings.first_account.clone())
-            .unwrap_or_default();
+        let account = self.own_account(settings);
         let set = settings.manual_status_of(&account);
         let statuses = ManualStatus::ALL
             .into_iter()
@@ -1241,7 +1239,11 @@ impl SettingsView {
             .unwrap_or_default();
         let status = self.model.read(cx).media_status();
         match status {
-            DeviceStatus::Ready => {}
+            DeviceStatus::Ready => {
+                // under the microphone and the speaker, as Teams has it
+                let at = rows.len().min(2);
+                rows.insert(at, self.noise_suppression(settings, palette));
+            }
             DeviceStatus::Preparing => {
                 rows.clear();
                 rows.push(
@@ -1363,6 +1365,39 @@ impl SettingsView {
             })
             .into_iter()
             .collect()
+    }
+
+    /// The noise suppression level of the view's account's calls, with what the chosen level does.
+    fn noise_suppression(&self, settings: &Settings, palette: Palette) -> AnyElement {
+        let account = self.own_account(settings);
+        let set = settings.noise_suppression_of(&account);
+        let picks = NoiseSuppression::ALL
+            .into_iter()
+            .map(|level| {
+                let account = account.clone();
+                Pick {
+                    key: level.key().to_owned(),
+                    label: noise::label(level).into(),
+                    status: None,
+                    chosen: set == level,
+                    apply: self.changer(move |settings| settings.set_noise_suppression(&account, level)),
+                }
+            })
+            .collect();
+        row(
+            "Noise suppression",
+            Some(noise::description(set)),
+            picker("noise-suppression", picks, palette),
+            palette,
+        )
+    }
+
+    /// The account whose own settings the view shows: the first account's when the shell named none.
+    fn own_account(&self, settings: &Settings) -> String {
+        self.account
+            .clone()
+            .or_else(|| settings.first_account.clone())
+            .unwrap_or_default()
     }
 
     /// "Make a test call" under the devices, as Teams has it: what it does, or why it can't start now with the button

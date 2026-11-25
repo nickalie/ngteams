@@ -208,6 +208,7 @@ fn media(devices: Arc<dyn Devices + Send + Sync>, output: Arc<dyn VideoOutput>) 
         relay: Relay::Teams,
         session: SessionConfig {
             processing: ProcessingConfig::OFF,
+            ..Default::default()
         },
         video: Some(call_video(output)),
     }
@@ -1176,6 +1177,7 @@ fn child() -> SandboxResult {
             video: Some(feed),
             camera: None,
             devices: None,
+            noise: teams_media::processing::NoiseControl::default(),
         }),
     };
     let runner = support::runner(&dir)?;

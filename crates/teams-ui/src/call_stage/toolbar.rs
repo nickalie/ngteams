@@ -568,6 +568,7 @@ impl CallStage {
         let model = self.settings.clone();
         let stage = cx.weak_entity();
         let effects = kinds == CAMERAS;
+        let account = self.core.me().to_owned();
         Some(
             selected_by(
                 id,
@@ -580,6 +581,7 @@ impl CallStage {
                         if effects {
                             menu.item(effects_item("call-camera-video-effects", stage.clone()))
                         } else {
+                            let menu = super::noise_items(menu, &model, &account, cx).separator();
                             // as Teams' microphone flyout ends: the full audio settings
                             let settings = stage.clone();
                             menu.item(

@@ -549,6 +549,7 @@ fn run_app(first: Started<MemorySecretStore>, video: VideoFeed, echo: &str) -> S
             video: Some(video),
             camera: None,
             devices: None,
+            noise: teams_media::processing::NoiseControl::default(),
         }),
         ..first
     };

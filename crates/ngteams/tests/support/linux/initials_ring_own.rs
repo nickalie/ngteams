@@ -492,6 +492,7 @@ impl Account {
             relay: Relay::Teams,
             session: SessionConfig {
                 processing: ProcessingConfig::OFF,
+                ..Default::default()
             },
             video,
         };

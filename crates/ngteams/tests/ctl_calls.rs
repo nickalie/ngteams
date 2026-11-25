@@ -207,6 +207,7 @@ impl Lab {
             video: feed,
             camera: None,
             devices: None,
+            noise: teams_media::processing::NoiseControl::default(),
         };
         let launch = Launch {
             first: Started {
@@ -380,6 +381,7 @@ fn a_engine(
         relay: Relay::Fixed(vec![RelayServer::udp(relay)]),
         session: SessionConfig {
             processing: ProcessingConfig::OFF,
+            ..Default::default()
         },
         video: feed.map(|feed| teams_core::account::call_video(Arc::new(feed))),
     };

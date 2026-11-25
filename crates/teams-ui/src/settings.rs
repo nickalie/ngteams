@@ -17,6 +17,8 @@
 //! - **The devices** (M3 Task 20, [`attach_devices`]): with the calls' devices attached, the model keeps the list of
 //!   devices there are (each change of it shown as it comes), hands the device directory the choice of each kind at
 //!   once and on every change, so a call that runs moves to the device chosen; the settings view lists them.
+//! - **The noise suppression** ([`noise`]): the level of each account's calls (Auto, High, Low, Off), which a call
+//!   follows at once ([`noise::follow`]).
 //! - **The first run** (the personal build, M2 Task 27, [`SettingsModel::requiring_first_run`]): typing, read receipts
 //!   and the account's availability are the writes that happen without a per-item action; until the user confirms the
 //!   first-run screen ([`Settings::first_run`]) none of them is sent, whatever its switch says
@@ -50,6 +52,7 @@ use teams_core::Choice;
 pub use teams_log::Level as LogLevel;
 use teams_log::diagnostics::{Report, Source as DiagnosticsSource};
 use teams_media::devices::catalog::{DeviceDirectory, DeviceKind, DeviceList, DeviceStatus};
+use teams_media::processing::NoiseSuppression;
 use teams_media::video::effects::{self, Backdrop, Background};
 use teams_proto::ManualAvailability;
 use toml::{Table, Value};
@@ -61,6 +64,7 @@ use crate::theme::{self, Appearance};
 use crate::translate;
 
 mod message_bar;
+pub mod noise;
 mod toolbar;
 
 pub use message_bar::{BarChoice, BarItem};
@@ -418,6 +422,9 @@ pub struct Settings {
     /// The buttons each account chose for a message's hover bar, by the account's MRI ([`message_bar`]); an account
     /// with none shows the bar of Teams.
     pub message_bar: BTreeMap<String, BarChoice>,
+    /// The noise suppression level of each account's calls, by the account's MRI ([`noise`]); an account that isn't
+    /// here has Auto.
+    pub noise_suppression: BTreeMap<String, NoiseSuppression>,
     /// Which sound plays for each event, how loud, and the pack they come from ([`crate::sounds`]).
     pub sounds: SoundSettings,
 }
@@ -490,6 +497,21 @@ impl Settings {
         choice.show(item, shown);
         if *choice == BarChoice::default() {
             self.message_bar.remove(account);
+        }
+    }
+
+    /// The noise suppression level of `account`'s calls.
+    #[must_use]
+    pub fn noise_suppression_of(&self, account: &str) -> NoiseSuppression {
+        self.noise_suppression.get(account).copied().unwrap_or_default()
+    }
+
+    /// Sets the noise suppression level of `account`'s calls.
+    pub fn set_noise_suppression(&mut self, account: &str, level: NoiseSuppression) {
+        if level == NoiseSuppression::default() {
+            self.noise_suppression.remove(account);
+        } else {
+            self.noise_suppression.insert(account.to_owned(), level);
         }
     }
 
@@ -600,6 +622,7 @@ impl Settings {
             }
         }
         self.accounts.remove(account);
+        self.noise_suppression.remove(account);
         self.chat_languages.retain(|kept| kept.account != account);
     }
 
@@ -689,6 +712,7 @@ impl Default for Settings {
             compose_hidden: Vec::new(),
             compose_shown: Vec::new(),
             message_bar: BTreeMap::new(),
+            noise_suppression: BTreeMap::new(),
             sounds: SoundSettings::default(),
         }
     }
@@ -754,6 +778,8 @@ pub mod keys {
     /// The buttons each account hid from, and showed on, a message's hover bar: a table of tables, by the account's
     /// MRI, each with `hidden` and `shown` arrays of names.
     pub const MESSAGE_BAR: &str = "message_bar";
+    /// The noise suppression level of each account's calls: a table of level names, by the account's MRI.
+    pub const NOISE_SUPPRESSION: &str = "noise_suppression";
     /// The sound pack chosen as a whole (`builtin/<key>` or `added/<id>`), "Play sounds when I'm busy", every sound's
     /// volume, and each event's sound: a table of tables, by the event's name.
     pub const SOUND_PACK: &str = "sound_pack";
@@ -870,6 +896,7 @@ fn take(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem
         keys::COMPOSE_HIDDEN => settings.compose_hidden = toolbar::take(keys::COMPOSE_HIDDEN, false, value)?,
         keys::COMPOSE_SHOWN => settings.compose_shown = toolbar::take(keys::COMPOSE_SHOWN, true, value)?,
         keys::MESSAGE_BAR => message_bar::take(&mut settings.message_bar, value)?,
+        keys::NOISE_SUPPRESSION => noise::take(&mut settings.noise_suppression, value)?,
         keys::FIRST_ACCOUNT => {
             settings.first_account = Some(chat_id(value).ok_or(bad(keys::FIRST_ACCOUNT, "not an account's MRI"))?);
         }
@@ -1311,6 +1338,7 @@ pub fn render(settings: &Settings) -> String {
     render_chat_translation(settings, &mut table);
     toolbar::render(&settings.compose_hidden, &settings.compose_shown, &mut table);
     message_bar::render(&settings.message_bar, &mut table);
+    noise::render(&settings.noise_suppression, &mut table);
     sounds::render(&settings.sounds, &mut table);
     table.to_string()
 }

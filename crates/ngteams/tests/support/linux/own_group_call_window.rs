@@ -397,6 +397,7 @@ impl Account {
             relay: Relay::Teams,
             session: SessionConfig {
                 processing: ProcessingConfig::OFF,
+                ..Default::default()
             },
             video,
         };
@@ -1000,6 +1001,7 @@ fn first_account(dir: &Path) -> SandboxResult<Started<MemorySecretStore>> {
             video: Some(feed),
             camera: None,
             devices: None,
+            noise: teams_media::processing::NoiseControl::default(),
         }),
     })
 }

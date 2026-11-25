@@ -904,6 +904,7 @@ fn mock_engine(devices: Arc<dyn Devices + Send + Sync>, feed: VideoFeed, dir: &P
         relay: Relay::Fixed(vec![RelayServer::udp(env(RELAY_ENV)?.parse()?)]),
         session: SessionConfig {
             processing: ProcessingConfig::OFF,
+            ..Default::default()
         },
     };
     let push = Push::new(trouter()?);
@@ -940,6 +941,7 @@ fn child_microsoft() -> SandboxResult {
             video: Some(feed),
             camera: Some(pipewire.clone()),
             devices: Some(pipewire),
+            noise: teams_media::processing::NoiseControl::default(),
         }),
         ..first
     };

@@ -202,7 +202,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 365 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 368 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -1295,6 +1295,31 @@ const STEPS: [Step; 5 + 365 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
             cx,
         );
         show_page(shell, Page::Calls, cx);
+    }),
+    // the noise suppression at High, under the microphone and the speaker, with what High does
+    ("settings-calls-noise", |shell, _, cx| {
+        let account = shell.read(cx).account().to_owned();
+        let model = shell.read(cx).settings().clone();
+        model.update(cx, |model, cx| {
+            model.change(
+                |settings| settings.set_noise_suppression(&account, teams_media::processing::NoiseSuppression::High),
+                cx,
+            );
+        });
+    }),
+    ("settings-calls-noise-dark", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    ("settings-calls-noise-light", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        let account = shell.read(cx).account().to_owned();
+        let model = shell.read(cx).settings().clone();
+        model.update(cx, |model, cx| {
+            model.change(
+                |settings| settings.set_noise_suppression(&account, teams_media::processing::NoiseSuppression::Auto),
+                cx,
+            );
+        });
     }),
     // the Calls page's video effects, scrolled to: a camera to preview (the test pattern), one of the app's pictures
     // chosen, the camera off with Preview

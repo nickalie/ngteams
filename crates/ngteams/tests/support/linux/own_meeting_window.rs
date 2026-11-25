@@ -205,6 +205,7 @@ fn media(tone: Tone, output: Arc<dyn VideoOutput>) -> CallMedia {
         relay: Relay::Teams,
         session: SessionConfig {
             processing: ProcessingConfig::OFF,
+            ..Default::default()
         },
         video: Some(call_video(output)),
     }
@@ -1308,6 +1309,7 @@ fn child() -> SandboxResult {
                 pacing: Pacing::RealTime,
             })),
             devices: None,
+            noise: teams_media::processing::NoiseControl::default(),
         }),
     };
     let runner = support::runner(&dir)?;

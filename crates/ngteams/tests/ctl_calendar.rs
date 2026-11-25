@@ -119,6 +119,7 @@ impl Lab {
             video: None,
             camera: None,
             devices: None,
+            noise: teams_media::processing::NoiseControl::default(),
         });
         let launch = Launch {
             first: Started {

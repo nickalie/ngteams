@@ -1166,6 +1166,7 @@ fn engine(feed: VideoFeed, dir: &Path, read_only: bool) -> SandboxResult<EngineH
             relay: Relay::Fixed(vec![RelayServer::udp(env(RELAY_ENV)?.parse()?)]),
             session: SessionConfig {
                 processing: ProcessingConfig::OFF,
+                ..Default::default()
             },
         };
         Some(CallParts::new(calling, identity, media))
@@ -1218,6 +1219,7 @@ fn child() -> SandboxResult {
             video: Some(feed),
             camera: None,
             devices: None,
+            noise: teams_media::processing::NoiseControl::default(),
         });
         let launched = app::launch(
             cx,

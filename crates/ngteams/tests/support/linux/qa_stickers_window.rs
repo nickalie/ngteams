@@ -2047,6 +2047,7 @@ fn engine(feed: VideoFeed, dir: &Path) -> SandboxResult<EngineHandle> {
         relay: Relay::Fixed(vec![RelayServer::udp(env(RELAY_ENV)?.parse()?)]),
         session: SessionConfig {
             processing: ProcessingConfig::OFF,
+            ..Default::default()
         },
     };
     let push = Push::new(trouter()?);
@@ -2100,6 +2101,7 @@ fn child() -> SandboxResult {
                         video: Some(feed),
                         camera: None,
                         devices: None,
+                        noise: teams_media::processing::NoiseControl::default(),
                     }),
                     ..first
                 },

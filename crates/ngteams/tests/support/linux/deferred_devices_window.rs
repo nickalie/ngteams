@@ -976,6 +976,7 @@ fn engine(
         relay: Relay::Fixed(vec![RelayServer::udp(env(RELAY_ENV)?.parse()?)]),
         session: SessionConfig {
             processing: ProcessingConfig::OFF,
+            ..Default::default()
         },
     };
     let push = Push::new(trouter()?);
@@ -1041,6 +1042,7 @@ fn child(alias: Alias) -> SandboxResult {
         video: Some(feed),
         camera: Some(devices),
         devices: Some(deferred.clone()),
+        noise: teams_media::processing::NoiseControl::default(),
     };
     let failed = Arc::new(Mutex::new(None));
     let failed_in_app = Arc::clone(&failed);

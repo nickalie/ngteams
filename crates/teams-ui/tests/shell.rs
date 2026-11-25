@@ -19,6 +19,7 @@ use teams_core::sync::CatchUpReport;
 use teams_core::{Cause, Event, MessageChange, Source};
 use teams_log::diagnostics::{Source as DiagnosticsSource, WARNING};
 use teams_media::devices::catalog::{DeviceDirectory as _, DeviceInfo, DeviceKind, DeviceList, FixedDirectory};
+use teams_media::processing::{NoiseControl, NoiseSuppression};
 use teams_store::{Applied, Conversation, ConversationKind, Member, Message};
 use teams_trouter::{Down, Stop};
 use teams_ui::chat_list::{ChatList, DELETED, RowKind, UNKNOWN_USER, listed, one_to_one_partner, preview};
@@ -1034,6 +1035,70 @@ fn the_settings_view_lists_the_devices_and_moves_the_calls_to_the_one_chosen() {
         bounds(cx, "microphone-built-in-mic").is_none(),
         "the one unplugged is gone"
     );
+}
+
+#[test]
+fn the_noise_suppression_level_is_chosen_by_keyboard_and_a_call_follows_it() {
+    let rig = seeded();
+    let directory = FixedDirectory::new(DeviceList::new(vec![device_info(
+        DeviceKind::Microphone,
+        "built-in-mic",
+        "Built-in microphone",
+    )]));
+    let (shell, cx) = shell_window(&rig, Settings::default(), Arc::new(ViewTrace::off()));
+    let model = cx.update(|_, cx| shell.read(cx).settings().clone());
+    cx.update(|_, cx| attach_devices(&model, Arc::new(directory), cx));
+    cx.update(|_, cx| shell.update(cx, Shell::show_settings));
+    click(cx, "settings-page-calls");
+    let picker = bounds(cx, "noise-suppression").expect("the level's picker is drawn");
+    let microphone = bounds(cx, "microphone").expect("drawn");
+    assert!(
+        picker.origin.y > microphone.origin.y,
+        "under the microphone, as Teams has it"
+    );
+
+    click(cx, "noise-suppression");
+    for level in ["auto", "low", "high", "off"] {
+        assert!(
+            bounds(cx, &format!("noise-suppression-{level}")).is_some(),
+            "{level} is listed"
+        );
+    }
+    // Teams' order: Auto, Low, High, then Off
+    let ys: Vec<_> = ["auto", "low", "high", "off"]
+        .iter()
+        .map(|level| {
+            bounds(cx, &format!("noise-suppression-{level}"))
+                .expect("drawn")
+                .origin
+                .y
+        })
+        .collect();
+    assert!(ys.windows(2).all(|pair| pair[0] < pair[1]), "in Teams' order: {ys:?}");
+    cx.simulate_keystrokes("down down down enter");
+    cx.run_until_parked();
+    let chosen = settings_of(&shell, cx).noise_suppression;
+    assert_eq!(chosen.values().copied().collect::<Vec<_>>(), [NoiseSuppression::High]);
+    let account = chosen.keys().next().cloned().expect("the view's account");
+
+    // a call's control follows the level, now and at each change
+    let control = NoiseControl::default();
+    cx.update(|_, cx| teams_ui::settings::noise::follow(&model, account.clone(), control.clone(), cx));
+    assert_eq!(control.level(), NoiseSuppression::High);
+    click(cx, "noise-suppression");
+    cx.simulate_keystrokes("down down down down enter");
+    cx.run_until_parked();
+    assert_eq!(
+        settings_of(&shell, cx).noise_suppression_of(&account),
+        NoiseSuppression::Off
+    );
+    assert_eq!(control.level(), NoiseSuppression::Off);
+    // Auto, the default, leaves nothing in the file
+    click(cx, "noise-suppression");
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    assert!(settings_of(&shell, cx).noise_suppression.is_empty());
+    assert_eq!(control.level(), NoiseSuppression::Auto);
 }
 
 /// Both AI tools installed at synthetic paths (nothing here runs them), with a few models each lists.

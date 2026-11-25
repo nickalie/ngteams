@@ -196,6 +196,24 @@ fn desktop_parts(app_id: &'static str, shell: ShellParts, account: &PersonalAcco
     }
 }
 
+/// Makes `account` the first account of the settings, and keeps its calls' noise suppression at its level.
+fn first_account_settings(
+    settings: &Entity<SettingsModel>,
+    account: &str,
+    calls: Option<&PersonalCalls>,
+    cx: &mut App,
+) {
+    settings.update(cx, |settings, cx| settings.set_first_account(account, cx));
+    follow_noise(settings, account, calls, cx);
+}
+
+/// Keeps the noise suppression of `account`'s calls at its level in the settings, when it has calls.
+fn follow_noise(settings: &Entity<SettingsModel>, account: &str, calls: Option<&PersonalCalls>, cx: &mut App) {
+    if let Some(calls) = calls {
+        teams_ui::settings::noise::follow(settings, account.to_owned(), calls.noise.clone(), cx);
+    }
+}
+
 /// Starts the app inside GPUI's `run`: a bridge per account holding its engine, the window with every account in it,
 /// the sign-out watches, the bus, and what the rail asks (an account added or removed) and the quit.
 ///
@@ -232,7 +250,7 @@ pub fn launch<S: SecretStore + 'static>(cx: &mut App, launch: Launch<S>) -> Resu
     );
     let core = bridge.read(cx).core();
     let key = core.me().to_owned();
-    settings.update(cx, |settings, cx| settings.set_first_account(&key, cx));
+    first_account_settings(&settings, &key, first.calls.as_ref(), cx);
     let parts = ShellParts {
         core,
         models,
@@ -627,6 +645,7 @@ impl Running {
         );
         let core = bridge.read(cx).core();
         let key = core.me().to_owned();
+        follow_noise(&self.settings, &key, calls.as_ref(), cx);
         let parts = AccountParts {
             core,
             models,

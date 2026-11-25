@@ -58,6 +58,7 @@ use teams_core::{
 };
 use teams_media::devices::catalog::{DeviceDirectory as _, DeviceInfo, DeviceKind, DeviceList, FixedDirectory};
 use teams_media::devices::pattern::TestPattern;
+use teams_media::processing::{NoiseControl, NoiseSuppression};
 use teams_proto::Mri;
 use teams_store::{Applied, ConversationKind, Member};
 use teams_ui::call_alert::{CallAlert, notice_of};
@@ -2408,6 +2409,49 @@ fn the_call_window_s_device_menus_choose_the_settings_devices() {
     // More's "Device settings"
     click(window, "call-more");
     assert!(drawn(window, "call-more-device-settings"));
+}
+
+#[test]
+fn the_call_s_audio_menu_sets_the_noise_suppression_at_once() {
+    let rig = calling();
+    let (trace, _written) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    let directory = FixedDirectory::new(DeviceList::new(vec![DeviceInfo {
+        kind: DeviceKind::Microphone,
+        name: "built-in-mic".to_owned(),
+        description: "Built-in microphone".to_owned(),
+    }]));
+    let model = rig.cx.read(|cx| shell.read(cx).settings().clone());
+    rig.cx
+        .update(|cx| attach_devices(&model, Arc::new(directory.clone()), cx));
+    let control = NoiseControl::default();
+    let account = LAB_A.to_owned();
+    rig.cx
+        .update(|cx| teams_ui::settings::noise::follow(&model, account.clone(), control.clone(), cx));
+    registered(&rig);
+    click(cx, "chat-call");
+    status(&rig, 1, CallStatus::Connected);
+    let window = stage(&rig, &windows);
+    click(window, "call-audio-devices");
+    for level in ["auto", "low", "high", "off"] {
+        assert!(drawn(window, &format!("call-noise-{level}")), "{level}");
+    }
+    click(window, "call-noise-low");
+    let level = |rig: &Rig| {
+        rig.cx
+            .read(|cx| model.read(cx).settings().noise_suppression_of(&account))
+    };
+    assert_eq!(level(&rig), NoiseSuppression::Low);
+    assert_eq!(
+        control.level(),
+        NoiseSuppression::Low,
+        "the call's processing takes it at once"
+    );
+    click(window, "call-audio-devices");
+    click(window, "call-noise-high");
+    assert_eq!(level(&rig), NoiseSuppression::High);
+    assert_eq!(control.level(), NoiseSuppression::High);
 }
 
 #[test]

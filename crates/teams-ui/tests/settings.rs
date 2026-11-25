@@ -129,7 +129,13 @@ fn changed() -> Settings {
         compose_hidden: vec![ComposeTool::Emoji],
         compose_shown: vec![ComposeTool::Translate],
         message_bar: changed_bar(),
+        noise_suppression: changed_noise(),
     }
+}
+
+fn changed_noise() -> std::collections::BTreeMap<String, teams_media::processing::NoiseSuppression> {
+    let account = "8:orgid:00000000-0000-4000-8000-00000000000a".to_owned();
+    [(account, teams_media::processing::NoiseSuppression::High)].into()
 }
 
 fn changed_bar() -> std::collections::BTreeMap<String, BarChoice> {

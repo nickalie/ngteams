@@ -1926,6 +1926,7 @@ fn child_app(mode: &str) -> SandboxResult {
             video: None,
             camera: None,
             devices: None,
+            noise: teams_media::processing::NoiseControl::default(),
         }),
         ..support::started(Alias::A, engine)?
     };
