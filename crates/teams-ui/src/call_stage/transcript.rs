@@ -26,6 +26,7 @@ use super::recording::{Start, Stopped, TranscriptRow};
 use super::*;
 use crate::calls::SpokenLine;
 use crate::translate::{self, CaptionTranslation};
+use std::collections::HashSet;
 use teams_core::RecordingPhase;
 
 /// What the meeting's privacy policy link opens: Microsoft's privacy statement, as Teams links it when the
@@ -92,22 +93,27 @@ impl CallStage {
         self.record.transcribing_seen = transcribing;
     }
 
-    /// The captions run while a transcription runs, for the transcript's words: asked once as it starts, and stopped as
-    /// it stops unless the user shows them or they are saved.
-    pub(super) fn hold_transcript_captions(&self, active: &ActiveCall, cx: &mut Context<Self>) {
+    /// The captions run while a transcription runs, for the transcript's words: asked as it starts (and again a few
+    /// times, apart, after they failed or ended unseen), and stopped as it stops unless the user shows them or they are
+    /// saved.
+    pub(super) fn hold_transcript_captions(&mut self, active: &ActiveCall, cx: &mut Context<Self>) {
         let want = active.meeting.transcribing.is_some()
-            && active.status == CallStatus::Connected
+            && matches!(active.status, CallStatus::Connected | CallStatus::Reconnecting)
             && active.kind != CallKind::TestCall
             && !self.core.read_only()
             && self.core.capabilities().captions;
         let calls = self.calls.read(cx);
-        if calls.transcript_captions() == want {
-            return;
-        }
         let running = matches!(
             calls.captions().phase,
             teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
         );
+        if calls.transcript_captions() == want {
+            if want {
+                self.retry_transcript_captions(running, cx);
+            }
+            return;
+        }
+        self.record.transcript_retries = 0;
         let kept = calls.caption_pane_asked() || calls.saving_captions();
         self.calls
             .update(cx, |calls, cx| calls.set_transcript_captions(want, cx));
@@ -115,6 +121,55 @@ impl CallStage {
             self.ask(Ask::RecordCaptions(true), cx);
         } else if !want && running && !kept {
             self.ask(Ask::RecordCaptions(false), cx);
+        }
+    }
+
+    /// The captions held for the transcript stopped unseen (failed, or ended by the service): asked for again after a
+    /// while, a few times, unless the user shows them (their failure shows) or the saved transcript retries them.
+    fn retry_transcript_captions(&mut self, running: bool, cx: &mut Context<Self>) {
+        if running && self.calls.read(cx).captions().phase == teams_core::CaptionPhase::On {
+            self.record.transcript_retries = 0;
+        }
+        let calls = self.calls.read(cx);
+        if running
+            || calls.captions_shown()
+            || calls.saving_captions()
+            || self.record.transcript_retrying
+            || self.record.transcript_retries >= crate::call_transcript::RETRIES
+        {
+            return;
+        }
+        self.record.transcript_retries += 1;
+        self.record.transcript_retrying = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(crate::call_transcript::RETRY_AFTER)
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.record.transcript_retrying = false;
+                let calls = this.calls.read(cx);
+                let stopped = !matches!(
+                    calls.captions().phase,
+                    teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
+                );
+                if calls.transcript_captions() && stopped {
+                    this.ask(Ask::RecordCaptions(true), cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The transcript follows its newest line as one comes, unless the user scrolled up from it.
+    pub(super) fn follow_transcript(&mut self, cx: &App) {
+        let lines = self.calls.read(cx).spoken().len() + self.record.transcript.len();
+        if lines == self.record.transcript_lines {
+            return;
+        }
+        self.record.transcript_lines = lines;
+        let scroll = &self.record.transcript_scroll;
+        if scroll.max_offset().y + scroll.offset().y <= px(FOLLOW_WITHIN) {
+            scroll.scroll_to_bottom();
         }
     }
 
@@ -126,6 +181,8 @@ impl CallStage {
         } else if self.pane == Pane::Transcript {
             self.pane = Pane::None;
         }
+        let live = self.live(cx);
+        self.translate(live.as_ref(), cx);
         cx.notify();
     }
 
@@ -501,6 +558,28 @@ impl CallStage {
     }
 }
 
+/// How near its end (px) the transcript must be scrolled to follow a new line.
+const FOLLOW_WITHIN: f32 = 24.0;
+
+/// What the translation follows while the Transcript pane shows: the whole call's words, then the captions' lines not
+/// final among them, so a line keeps its translation after the captions dropped it.
+pub(super) fn translated_lines(spoken: &[SpokenLine], captions: &[teams_core::Caption]) -> Vec<teams_core::Caption> {
+    let keys: HashSet<translate::LineKey> = spoken
+        .iter()
+        .map(|line| translate::LineKey::of(&line.caption))
+        .collect();
+    spoken
+        .iter()
+        .map(|line| line.caption.clone())
+        .chain(
+            captions
+                .iter()
+                .filter(|caption| !keys.contains(&translate::LineKey::of(caption)))
+                .cloned(),
+        )
+        .collect()
+}
+
 /// What the transcript lists, in the order it happened: a start or a stop of the transcription, or a speaker's turn
 /// (their utterances one after another, nothing else between).
 #[derive(Debug, PartialEq, Eq)]
@@ -683,6 +762,19 @@ mod tests {
                 Entry::Turn(lines) => format!("turn {}", lines.len()),
             })
             .collect()
+    }
+
+    #[test]
+    fn the_translation_follows_the_whole_transcript_then_the_captions_not_final_in_it() {
+        let spoken = [line(10, Some("a"), "A"), line(20, Some("b"), "B")];
+        let mut partial = line(30, Some("a"), "A").caption;
+        partial.final_result = false;
+        let captions = [spoken[1].caption.clone(), partial.clone()];
+        let ids: Vec<String> = translated_lines(&spoken, &captions)
+            .into_iter()
+            .map(|caption| caption.id)
+            .collect();
+        assert_eq!(ids, ["10", "20", "30"]);
     }
 
     #[test]

@@ -5236,6 +5236,76 @@ fn the_transcript_shows_what_is_said_by_speaker_for_the_whole_call_while_a_trans
     );
 }
 
+fn captions_in(rig: &Rig, phase: teams_core::CaptionPhase) {
+    rig.send(Event::CallCaptions {
+        call: call(1),
+        captions: teams_core::CallCaptions {
+            phase,
+            spoken_language: "en-us".into(),
+            error: None,
+            lines: Vec::new(),
+        },
+    });
+    rig.cx.run_until_parked();
+}
+
+fn caption_asks(rig: &Rig) -> Vec<bool> {
+    actions(rig)
+        .into_iter()
+        .filter_map(|action| match action {
+            CallAction::Captions { enabled, .. } => Some(enabled),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_transcript_leaves_out_earlier_words_and_its_captions_outlast_a_failure_and_a_reconnect() {
+    let rig = calling();
+    let stage = group_call_up(&rig);
+    captions_on(&rig, vec![spoken("1", LAB_B, "Synthetic words before.", 100)]);
+    meeting(&rig, transcribing_by(LAB_B, false));
+    captions_on(
+        &rig,
+        vec![
+            spoken("1", LAB_B, "Synthetic words before.", 100),
+            spoken("2", LAB_A, "Synthetic words during.", 200),
+        ],
+    );
+    let texts = |rig: &Rig| -> Vec<String> {
+        rig.cx.read(|cx| {
+            rig.models
+                .calls
+                .read(cx)
+                .spoken()
+                .iter()
+                .map(|line| line.caption.text.clone())
+                .collect()
+        })
+    };
+    assert_eq!(
+        texts(&rig),
+        ["Synthetic words during."],
+        "said before the transcription"
+    );
+    let asked = caption_asks(&rig);
+    status(&rig, 1, CallStatus::Reconnecting);
+    rig.cx.run_until_parked();
+    status(&rig, 1, CallStatus::Connected);
+    rig.cx.run_until_parked();
+    assert_eq!(caption_asks(&rig), asked, "a reconnect leaves the captions running");
+    captions_in(&rig, teams_core::CaptionPhase::Failed);
+    assert!(
+        !drawn(stage, "call-captions"),
+        "a failure of the held captions doesn't show"
+    );
+    stage.executor().advance_clock(std::time::Duration::from_secs(21));
+    rig.cx.run_until_parked();
+    let mut again = asked.clone();
+    again.push(true);
+    assert_eq!(caption_asks(&rig), again, "tried again");
+}
+
 #[test]
 fn a_recording_and_transcription_records_the_audio_alone_from_more_options() {
     let rig = calling();

@@ -29,7 +29,7 @@
 //! The asks are traced by the caller's trace (`call asked`, `call refused` with the ask and why), never with a name, and
 //! logged at `info` with the chat's id (the diagnostic log).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -834,28 +834,56 @@ pub struct SpokenLine {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Spoken {
     lines: Vec<SpokenLine>,
-    keys: Vec<String>,
+    /// Each utterance's line in `lines`.
+    index: HashMap<String, usize>,
     /// When each utterance not final yet was first heard.
     heard: HashMap<String, i64>,
+    /// A transcription runs and its captions are heard.
+    listening: bool,
+    /// The utterances already final as the transcription started: said before it, not in it.
+    before: HashSet<String>,
 }
 
 impl Spoken {
+    /// The captions changed from `was` to `now_lines`: while a transcription runs (`transcribing`), what is said in it
+    /// is heard.
+    fn follow(
+        &mut self,
+        call: CallId,
+        transcribing: bool,
+        was: &[teams_core::Caption],
+        now_lines: &[teams_core::Caption],
+        now: i64,
+    ) {
+        if !transcribing {
+            self.listening = false;
+            return;
+        }
+        if !self.listening {
+            self.listening = true;
+            self.before = was
+                .iter()
+                .filter(|caption| caption.final_result)
+                .map(|caption| crate::call_transcript::utterance(call, caption))
+                .collect();
+        }
+        self.hear(call, now_lines, now);
+    }
+
     fn hear(&mut self, call: CallId, captions: &[teams_core::Caption], now: i64) {
         for caption in captions {
             let key = crate::call_transcript::utterance(call, caption);
+            if self.before.contains(&key) {
+                continue;
+            }
             let at = *self.heard.entry(key.clone()).or_insert(now);
             if !caption.final_result || caption.text.trim().is_empty() {
                 continue;
             }
-            if let Some(line) = self
-                .keys
-                .iter()
-                .position(|known| *known == key)
-                .and_then(|index| self.lines.get_mut(index))
-            {
+            if let Some(line) = self.index.get(&key).and_then(|index| self.lines.get_mut(*index)) {
                 line.caption.clone_from(caption);
             } else {
-                self.keys.push(key);
+                self.index.insert(key, self.lines.len());
                 self.lines.push(SpokenLine {
                     at,
                     caption: caption.clone(),
@@ -942,8 +970,8 @@ impl Calls {
         &self.captions
     }
 
-    /// Whether the caption pane shows: the captions aren't off and, while the calls' captions are saved, the user showed
-    /// it (captions that run for the saved transcript alone show nothing).
+    /// Whether the caption pane shows: the captions aren't off and, while the calls' captions are saved or held for the
+    /// live transcript, the user showed it (captions that run for the saved or the live transcript alone show nothing).
     #[must_use]
     pub fn captions_shown(&self) -> bool {
         self.captions.phase != teams_core::CaptionPhase::Off
@@ -991,8 +1019,8 @@ impl Calls {
     }
 
     /// What a caption ask leaves the engine to do once the pane is shown or hidden as it asks: the captions turned on
-    /// or off, or nothing (`None`) when they already run for the saved transcript (shown) or keep running for it
-    /// (hidden). Any other ask is left as it is.
+    /// or off, or nothing (`None`) when they already run for the saved or the live transcript (shown) or keep running
+    /// for it (hidden). Any other ask is left as it is.
     fn caption_pane_ask(&mut self, ask: Ask, cx: &mut Context<Self>) -> Option<Ask> {
         let show = match ask {
             Ask::ToggleCaptions => !self.captions_shown(),
@@ -1321,10 +1349,10 @@ impl Calls {
             }
             Event::CallCaptions { call, captions } => {
                 if let Some(active) = self.call.as_ref().filter(|active| active.id == *call) {
-                    if active.meeting.transcribing.is_some() {
-                        let now = chrono::Utc::now().timestamp_millis();
-                        self.spoken.hear(*call, &captions.lines, now);
-                    }
+                    let now = chrono::Utc::now().timestamp_millis();
+                    let transcribing = active.meeting.transcribing.is_some();
+                    self.spoken
+                        .follow(*call, transcribing, &self.captions.lines, &captions.lines, now);
                     self.captions = captions.clone();
                 }
             }
@@ -2496,5 +2524,45 @@ mod tests {
             .map(|line| (line.at, line.caption.text.as_str()))
             .collect();
         assert_eq!(lines, [(1_000, "Synthetic one."), (3_000, "Synthetic two, again.")]);
+    }
+
+    #[test]
+    fn the_transcript_leaves_out_what_was_said_before_its_transcription_started() {
+        let call = CallId::for_tests(1);
+        let mut spoken = Spoken::default();
+        let before = [said("1", "a", "Synthetic before.", true, 100)];
+        spoken.follow(call, false, &[], &before, 1_000);
+        assert!(spoken.lines.is_empty(), "no transcription runs");
+        let started = [
+            said("1", "a", "Synthetic before.", true, 100),
+            said("2", "b", "Synthetic still", false, 200),
+        ];
+        spoken.follow(call, true, &before, &started, 2_000);
+        let heard = [
+            said("1", "a", "Synthetic before.", true, 100),
+            said("2", "b", "Synthetic still going.", true, 200),
+            said("3", "a", "Synthetic during.", true, 300),
+        ];
+        spoken.follow(call, true, &started, &heard, 3_000);
+        let gap = [said("4", "b", "Synthetic between.", true, 400)];
+        spoken.follow(call, false, &heard, &gap, 4_000);
+        let again = [
+            said("4", "b", "Synthetic between.", true, 400),
+            said("5", "a", "Synthetic after.", true, 500),
+        ];
+        spoken.follow(call, true, &gap, &again, 5_000);
+        let lines: Vec<(i64, &str)> = spoken
+            .lines
+            .iter()
+            .map(|line| (line.at, line.caption.text.as_str()))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                (2_000, "Synthetic still going."),
+                (3_000, "Synthetic during."),
+                (5_000, "Synthetic after.")
+            ]
+        );
     }
 }

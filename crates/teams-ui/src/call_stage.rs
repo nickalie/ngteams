@@ -668,7 +668,7 @@ impl CallStage {
     /// go and a test call's devices are named as they were.
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.caption_scroll.scroll_to_bottom();
-        self.record.transcript_scroll.scroll_to_bottom();
+        self.follow_transcript(cx);
         let live = self.live(cx);
         self.translate(live.as_ref(), cx);
         if let Some(active) = &live {
@@ -841,14 +841,18 @@ impl CallStage {
     fn translate(&self, live: Option<&ActiveCall>, cx: &mut Context<Self>) {
         let calls = self.calls.read(cx);
         let captions = calls.captions();
-        // captions that run only for the saved transcript (their pane hidden) aren't translated
+        // captions are translated while their pane or the Transcript pane shows them
         let showing = live.is_some()
             && (calls.captions_shown() || self.transcript_shown())
             && matches!(
                 captions.phase,
                 teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
             );
-        let lines = captions.lines.clone();
+        let lines = if self.transcript_shown() {
+            transcript::translated_lines(calls.spoken(), &captions.lines)
+        } else {
+            captions.lines.clone()
+        };
         let brief = live.map(|active| self.brief(active, cx)).unwrap_or_default();
         self.translation
             .update(cx, |translation, cx| translation.follow(&lines, showing, brief, cx));

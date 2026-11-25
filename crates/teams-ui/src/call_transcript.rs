@@ -45,8 +45,8 @@ pub const TRANSCRIPT: &str = "Transcript";
 /// How a transcript location of ours starts.
 pub const LOCAL: &str = "local:";
 /// How many times a start of the captions that failed is tried again, and how long after.
-const RETRIES: u32 = 3;
-const RETRY_AFTER: Duration = Duration::from_secs(20);
+pub(crate) const RETRIES: u32 = 3;
+pub(crate) const RETRY_AFTER: Duration = Duration::from_secs(20);
 /// How near a call's end row in its chat a transcript's end must be to be linked from it.
 const END_NEAR_MS: i64 = 3 * 60 * 1000;
 
