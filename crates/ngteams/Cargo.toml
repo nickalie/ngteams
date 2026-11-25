@@ -264,6 +264,11 @@ name = "qa_bar_customize_window"
 harness = false
 
 [[test]]
+# QA of task 844: the noise suppression level in Settings and in a call's audio menu, in the UI sandbox on the mock
+name = "qa_noise_window"
+harness = false
+
+[[test]]
 # QA of task 575: one message translated from its More options menu, over the mock and an own server, in the UI sandbox
 name = "qa_translate_message_window"
 harness = false

@@ -88,6 +88,26 @@ fn the_echo_of_what_the_speaker_plays_is_suppressed_by_the_margin() {
     }
 }
 
+/// QA of task 844: the echo canceller stays at every level, Off (no noise suppression) and DeepFilterNet's too.
+#[test]
+fn the_echo_is_suppressed_by_the_margin_at_each_level() {
+    DeepFilter::loaded(NO_LIMIT_DB).unwrap();
+    for level in [NoiseSuppression::Off, NoiseSuppression::Auto, NoiseSuppression::High] {
+        for delay in [10, 25] {
+            let processing = AudioProcessing::with_noise(ProcessingConfig::CALL, NoiseControl::new(level)).unwrap();
+            let far = speech_like(1000, 7, FAR_PEAK);
+            let (heard, processed) = looped(&processing, &far, &silence(1000), delay);
+            let (echo, left) = (rms(&heard[CONVERGE..]), rms(&processed[CONVERGE..]));
+            let suppressed = -decibels(left, echo);
+            eprintln!("{level:?}, {delay}0 ms: the echo at {echo:.4} comes out at {left:.6}, {suppressed:.1} dB down");
+            assert!(
+                suppressed >= ECHO_MARGIN_DB,
+                "{level:?}, {delay}0 ms: the echo is only {suppressed:.1} dB down"
+            );
+        }
+    }
+}
+
 #[test]
 fn with_the_processing_off_the_microphone_s_frames_pass_unchanged() {
     let processing = AudioProcessing::with_noise(ProcessingConfig::OFF, NoiseControl::default()).unwrap();
