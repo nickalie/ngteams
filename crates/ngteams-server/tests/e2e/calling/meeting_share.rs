@@ -91,7 +91,8 @@ async fn a_720p_screen_shared_in_a_meeting_reaches_everyone_else_until_it_stops(
     meeting_share(Screen::Moving, SCREEN).await;
 }
 
-/// Waits until `viewer` shows `filmed`'s camera on its line in `call`: [`FRAMES`] more frames of the shape of `size`.
+/// Waits until `viewer` shows `filmed`'s camera on its line in `call`: [`FRAMES`] more frames of the shape of `size`
+/// and not larger than it.
 async fn sees_camera(viewer: &mut Engine, call: CallId, filmed: &str, size: PatternCamera) {
     // the view that put the camera on its line can be among the views that `sees_screen` read
     let view = viewer
@@ -109,10 +110,13 @@ async fn sees_camera(viewer: &mut Engine, call: CallId, filmed: &str, size: Patt
     let since = viewer.seen(line).frames;
     let wanted = shape(size.width, size.height);
     let what = format!("{}: {filmed}'s camera on line {line}", viewer.mri);
-    // a camera sent with balanced degradation can come smaller under load, so only its shape is sure
+    // balanced degradation can only make the camera smaller; the size limit keeps a 16:9 screen off this line
     wait_until(&what, || {
         let seen = viewer.seen(line);
-        seen.frames >= since + FRAMES && (shape(seen.width, seen.height) - wanted).abs() < 0.1
+        seen.frames >= since + FRAMES
+            && seen.width <= size.width
+            && seen.height <= size.height
+            && (shape(seen.width, seen.height) - wanted).abs() < 0.1
     })
     .await;
     eprintln!("{what}: {:?}", viewer.seen(line));
