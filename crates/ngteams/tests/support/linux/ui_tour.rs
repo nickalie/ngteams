@@ -2820,10 +2820,7 @@ const STEPS: [Step; 5 + 374 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     }),
     // and in Teams Dark
     ("call-group-transcribing-dark", |shell, _, cx| {
-        let model = shell.read(cx).settings().clone();
-        model.update(cx, |model, cx| {
-            model.change(|settings| settings.appearance.theme = teams_ui::theme::DARK_KEY, cx);
-        });
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
     }),
     // in Teams Light, Start recording while it transcribes asks what to record: Audio only picked
     ("call-group-record-audio-only", |shell, _, cx| {
