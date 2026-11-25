@@ -43,7 +43,7 @@ pub const MAX_RANGE: u32 = 2 * 1024 * 1024;
 pub const MAX_STREAM: u64 = 64 * 1024 * 1024;
 
 /// The header Graph's reads of a shared file go with (see the module docs).
-pub const REDEEM_SHARING_LINK: [(&str, &str); 1] = [("Prefer", "redeemSharingLink")];
+pub const REDEEM_SHARING_LINK: [(&str, &str); 1] = [("prefer", "redeemSharingLink")];
 
 /// `GET https://graph.microsoft.com/v1.0/shares/u!<link>/driveItem`: the item of the file a sharing link names, with
 /// its size and its download link. Its answer is read with [`FileDownload::read_answer`].
@@ -91,8 +91,9 @@ impl FileDownload {
         })
     }
 
-    /// The drive and the id of the item the answer is (`parentReference.driveId`, `id`), when both are plain ids (a
-    /// recording whose recap names neither is streamed by them); `None` for anything else.
+    /// The drive and the id of the item the answer is (`parentReference.driveId`, `id`), as the answer gives them (a
+    /// recording whose recap names neither is streamed by them; [`crate::RecordingManifest::of`] checks them); `None`
+    /// when the answer has no such strings.
     #[must_use]
     pub fn read_item_ids(answer: &Response) -> Option<(String, String)> {
         let item: Value = serde_json::from_slice(answer.body()).ok()?;

@@ -302,6 +302,35 @@ fn the_transcript_is_read_searched_and_plays_the_recording_from_a_paragraph() {
 }
 
 #[test]
+fn a_recording_its_recap_names_no_item_of_is_still_streamed() {
+    let rig = rig(false);
+    let mut contents = locked(&rig.core.meeting_contents);
+    let parts = contents.get_mut(fixtures::MEETING).into_iter().flatten();
+    for part in parts.filter(|part| part.kind == teams_proto::recap::ContentKind::Recording) {
+        part.drive_id = None;
+        part.item_id = None;
+    }
+    drop(contents);
+    let (shell, cx) = shell_window(&rig, fixtures::MEETING);
+    cx.update(|window, cx| shell.update(cx, |shell, cx| shell.show_chat_tab(ChatTab::Recap, window, cx)));
+    draw(cx);
+    let view = recap(&shell, cx);
+    cx.update(|_, cx| view.update(cx, |view, cx| view.play_from(Duration::ZERO, cx)));
+    draw(cx);
+    let streamed = cx.update(|_, cx| {
+        teams_ui::video_player::players(cx)
+            .into_iter()
+            .find(|player| player.read(cx).id() == "recap-0")
+            .and_then(|player| player.read(cx).recording().cloned())
+    });
+    let empty = teams_ui::video_player::Recording {
+        drive: String::new(),
+        item: String::new(),
+    };
+    assert_eq!(streamed, Some(empty), "the engine finds its drive and item by its link");
+}
+
+#[test]
 fn a_transcript_alone_shows_no_player_and_who_stopped_it() {
     let rig = rig(false);
     locked(&rig.core.transcripts).insert(fixtures::transcript_location("ITEM9"), fixtures::VTT.to_owned());

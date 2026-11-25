@@ -447,6 +447,12 @@ impl VideoPlayer {
         self
     }
 
+    /// The meeting recording it streams, when it streams one.
+    #[must_use]
+    pub fn recording(&self) -> Option<&Recording> {
+        self.recording.as_ref()
+    }
+
     /// Its captions (a recap's player: its recording's transcript), or none.
     pub fn set_captions(&mut self, captions: Option<Captions>, cx: &mut Context<Self>) {
         if self.captions != captions {

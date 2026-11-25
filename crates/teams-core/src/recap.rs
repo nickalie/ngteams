@@ -11,7 +11,8 @@
 //! from the personal site that holds it, and its parts from the media transform service, each read when the player
 //! asks for it. That works whether or not the account may download the recording (an attendee's view of another's
 //! meeting is refused at the download link). A recording whose recap names no drive or item is streamed by the ones its
-//! item on Graph names, read by its sharing link ([`FileDownload`]). A presentation refused or unreadable is
+//! item on Graph names, read by its sharing link ([`FileDownload`]); once that item reads, its presentation not read
+//! for any reason is [`EngineError::FileUnavailable`], so the player plays its file. A presentation refused or unreadable is
 //! [`EngineError::FileUnavailable`], as is a part refused; one whose read failed on the way is
 //! [`EngineError::FileUnread`].
 //!
@@ -196,7 +197,10 @@ async fn presentation_by_link<C: Credentials>(
     })?;
     let (drive, id) = FileDownload::read_item_ids(&item).ok_or(EngineError::FileUnavailable)?;
     let manifest = RecordingManifest::of(link, &drive, &id).ok_or(EngineError::FileUnavailable)?;
-    read_presentation(client, &manifest).await
+    // the item read did, so the player can still fall back to its download link
+    read_presentation(client, &manifest)
+        .await
+        .map_err(|_| EngineError::FileUnavailable)
 }
 
 /// A file read that failed: refused or too large, or a transport error that a later read can resolve.

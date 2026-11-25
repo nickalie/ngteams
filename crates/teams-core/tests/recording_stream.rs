@@ -155,18 +155,36 @@ async fn a_recording_its_recap_names_no_item_of_streams_by_its_item_on_graph() {
     .await;
     let presentation = rig.handle.recording_presentation(link, "", "").await.unwrap();
     assert_eq!(presentation.duration_ms, 12_000);
-    // an item that names no drive can't be streamed
-    Mock::given(method("GET"))
-        .and(path(format!("/v1.0/shares/{}/driveItem", share.share())))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"id": "ITEM1"}"#, "application/json"))
-        .mount(&rig.server)
-        .await;
+    let graph_item = |body: String| {
+        Mock::given(method("GET"))
+            .and(path(format!("/v1.0/shares/{}/driveItem", share.share())))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .up_to_n_times(1)
+            .expect(1)
+    };
+    // a presentation that fails once its item reads is unavailable, so the player plays the file instead
+    graph_item(item.to_string()).mount(&rig.server).await;
+    manifest_answers(&rig.server, ResponseTemplate::new(500)).await;
+    let error = rig.handle.recording_presentation(link, "", "").await.unwrap_err();
+    assert!(matches!(error, EngineError::FileUnavailable), "{error:?}");
+    // an item that names no drive can't be streamed, though its presentation would read
+    graph_item(r#"{"id": "ITEM1"}"#.to_owned()).mount(&rig.server).await;
+    manifest_answers(
+        &rig.server,
+        ResponseTemplate::new(200)
+            .insert_header("content-type", "application/dash+xml")
+            .set_body_string(MPD),
+    )
+    .await;
     let error = rig
         .handle
         .recording_presentation(link, "b!madeup", "")
         .await
         .unwrap_err();
     assert!(matches!(error, EngineError::FileUnavailable), "{error:?}");
+    rig.server.verify().await;
+    let received = rig.server.received_requests().await.unwrap();
+    assert_eq!(received.iter().filter(|asked| asked.url.path() == MANIFEST).count(), 2);
     rig.handle.shutdown();
 }
 

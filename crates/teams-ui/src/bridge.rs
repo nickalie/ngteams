@@ -196,7 +196,8 @@ pub trait Core: Send + Sync + 'static {
     }
     /// The DASH presentation of the meeting recording that is item `item` of drive `drive` on the personal site of
     /// its sharing link `link`, as Teams' Recap player streams it: what a recap plays a recording by, its download
-    /// blocked or not. A fake without recordings answers that it can't be had.
+    /// blocked or not. An empty `drive` or `item` means the recap names neither: the engine finds both by `link`. A fake
+    /// without recordings answers that it can't be had.
     fn recording_presentation(
         &self,
         link: String,
