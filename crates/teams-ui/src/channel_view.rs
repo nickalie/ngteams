@@ -74,6 +74,8 @@ pub enum ChannelViewEvent {
     AppDetails(Box<teams_proto::StoreApp>),
     /// A post's "Translation" → "Settings".
     TranslationSettings,
+    /// The channel's posts show another set of running meetings: the header's Join is read again.
+    MeetingCallsChanged,
     /// A file card's Share: "Share this file" for that file, as a chat's ([`ChatViewEvent::ShareFile`]).
     ShareFile(Box<teams_proto::chat::SharedFile>),
 }
@@ -168,6 +170,7 @@ impl ChannelView {
             ChatViewEvent::AppDialog(seed) => cx.emit(ChannelViewEvent::AppDialog(seed.clone())),
             ChatViewEvent::AppDetails(store) => cx.emit(ChannelViewEvent::AppDetails(store.clone())),
             ChatViewEvent::TranslationSettings => cx.emit(ChannelViewEvent::TranslationSettings),
+            ChatViewEvent::MeetingCallsChanged => cx.emit(ChannelViewEvent::MeetingCallsChanged),
             ChatViewEvent::Action { .. }
             | ChatViewEvent::OpenRecap { .. }
             | ChatViewEvent::OpenSavedTranscript(_)

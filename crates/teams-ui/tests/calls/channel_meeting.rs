@@ -5,10 +5,10 @@
 
 use std::sync::Arc;
 
-use teams_store::{ChannelKind, Message, Team, TeamChannel};
+use teams_store::{Applied, ChannelKind, Message, Team, TeamChannel};
 use teams_ui::calls::MeetingToJoin;
 
-use teams_core::CallAction;
+use teams_core::{CallAction, Event, MessageChange, Source};
 
 use super::{AB, LAB_B, Rig, actions, call_windows, calling, calls_of, click, drawn, prejoin_window, registered};
 use super::{shell_window, trace};
@@ -159,17 +159,11 @@ fn an_ended_channel_meetings_post_offers_no_join() {
 fn the_channel_headers_join_titles_the_pre_join_with_the_meetings_own_title() {
     let rig = calling();
     channel_holds(&rig, vec![call_event(POST, "callStarted", Some(TITLE))]);
-    rig.core.channel_meetups.lock().unwrap().insert(
-        CHANNEL.to_owned(),
-        teams_core::ChannelMeetup {
-            message_id: POST.to_owned(),
-            conversation: teams_proto::CallLink::parse(&LINK.replace("&amp;", "&")).unwrap(),
-            meeting: teams_core::MeetingInfo {
-                organizer_id: ORGANIZER.to_owned(),
-                tenant_id: TENANT.to_owned(),
-            },
-        },
-    );
+    rig.core
+        .channel_meetups
+        .lock()
+        .unwrap()
+        .insert(CHANNEL.to_owned(), meetup());
     let (trace, _) = trace();
     let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
     let (windows, _) = call_windows(&rig, &shell, &trace);
@@ -186,6 +180,52 @@ fn the_channel_headers_join_titles_the_pre_join_with_the_meetings_own_title() {
             post: Some(POST.to_owned()),
         }],
         "the header's Join goes into the meeting that it read"
+    );
+}
+
+/// What the engine reads for the channel's running meeting: the meeting of [`POST`].
+fn meetup() -> teams_core::ChannelMeetup {
+    teams_core::ChannelMeetup {
+        message_id: POST.to_owned(),
+        conversation: teams_proto::CallLink::parse(&LINK.replace("&amp;", "&")).unwrap(),
+        meeting: teams_core::MeetingInfo {
+            organizer_id: ORGANIZER.to_owned(),
+            tenant_id: TENANT.to_owned(),
+        },
+    }
+}
+
+#[test]
+fn the_channel_headers_join_goes_once_the_meetings_post_tells_its_end() {
+    let rig = calling();
+    channel_holds(&rig, vec![call_event(POST, "callStarted", Some(TITLE))]);
+    rig.core
+        .channel_meetups
+        .lock()
+        .unwrap()
+        .insert(CHANNEL.to_owned(), meetup());
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let _windows = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    click(cx, "channel-row-1");
+    assert!(drawn(cx, "channel-join-meeting"), "Join while the meeting runs");
+    let ended = call_event(END, "callEnded", None);
+    channel_holds(&rig, vec![ended.clone(), call_event(POST, "callStarted", Some(TITLE))]);
+    rig.core.channel_meetups.lock().unwrap().clear();
+    rig.send(Event::Message {
+        conversation: CHANNEL.to_owned(),
+        id: END.to_owned(),
+        change: MessageChange::New,
+        applied: Applied::Inserted,
+        message: Some(Box::new(ended)),
+        source: Source::Delivery,
+    });
+    rig.cx.run_until_parked();
+    assert!(drawn(cx, &format!("event-{POST}")), "its ended line");
+    assert!(
+        !drawn(cx, "channel-join-meeting"),
+        "no Join once the post tells the end, before the next timed read"
     );
 }
 

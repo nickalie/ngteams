@@ -161,8 +161,8 @@ pub const LIST_MAX: f32 = 560.0;
 const ACCOUNT_AVATAR: f32 = 36.0;
 /// The test selectors' start of a chat header's avatar ([`crate::chat_list::chat_avatar`]).
 const HEADER_AVATAR: &str = "chat-header-avatar";
-/// How often a channel shown is read again for a meeting that runs in it (its header's Join): nothing the native
-/// client hears tells it.
+/// How often a channel shown is read again for a meeting that runs in it (its header's Join), beside a read when its
+/// posts show a meeting start or end.
 pub const CHANNEL_MEETUP_REFRESH: std::time::Duration = std::time::Duration::from_secs(30);
 /// The rail's width, px.
 pub const RAIL_WIDTH: f32 = 76.0;
@@ -1370,6 +1370,17 @@ impl Shell {
                 }
                 cx.background_executor().timer(CHANNEL_MEETUP_REFRESH).await;
             }
+        })
+        .detach();
+    }
+
+    /// Reads the shown channel's meeting once more, now: its posts showed a meeting start or end.
+    fn reread_channel_meetup(&mut self, cx: &mut Context<Self>) {
+        let Main::Channel(channel) = &self.main else { return };
+        let (channel, core) = (channel.clone(), Arc::clone(&self.core));
+        cx.spawn(async move |this, cx| {
+            let read = core.channel_meetup(channel.clone()).await;
+            let _ = this.update(cx, |this, cx| this.channel_meetup_read(&channel, read, cx));
         })
         .detach();
     }
@@ -2793,6 +2804,7 @@ impl Shell {
             ChatViewEvent::TranslationSettings => this.open_settings_page(Page::General, window, cx),
             // a chat has no channel's thread or meeting card
             ChatViewEvent::Action { .. }
+            | ChatViewEvent::MeetingCallsChanged
             | ChatViewEvent::OpenThread { .. }
             | ChatViewEvent::EditMeeting { .. }
             | ChatViewEvent::JoinMeeting { .. } => {}
@@ -2826,6 +2838,7 @@ impl Shell {
             ChannelViewEvent::AppDetails(store) => this.open_app_details(store.as_ref().clone(), window, cx),
             ChannelViewEvent::TranslationSettings => this.open_settings_page(Page::General, window, cx),
             ChannelViewEvent::ShareFile(file) => this.open_share_file(file.as_ref().clone(), window, cx),
+            ChannelViewEvent::MeetingCallsChanged => this.reread_channel_meetup(cx),
         })
     }
 

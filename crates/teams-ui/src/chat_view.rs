@@ -482,6 +482,9 @@ pub enum ChatViewEvent {
     AppDetails(Box<teams_proto::StoreApp>),
     /// A message's "Translation" → "Settings": the settings' page that holds the "Translate to" language.
     TranslationSettings,
+    /// A channel's posts show another set of running meetings (a meeting's post started or ended): the channel
+    /// header's Join is read again.
+    MeetingCallsChanged,
     /// A recap card's View recap, Transcript or thumbnail: the chat's Recap tab, at the card's recording (its sharing
     /// link) when the meeting was recorded, showing `open`. A call transcribed alone names its transcript's item's
     /// sharing link as `recording`, and `transcribed` is the part it stands for, shown when the recap's read lists none
@@ -1203,6 +1206,8 @@ pub struct ChatView {
     quick: Vec<String>,
     /// How many reactions of the account's the rows held when its most used were last asked for.
     own_reactions: Option<usize>,
+    /// The channel's posts of running meetings, as the rows last showed them ([`ChatViewEvent::MeetingCallsChanged`]).
+    meeting_calls: Option<Vec<String>>,
     reactors: reactors::Reactors,
     /// The text selected with the mouse, in any of the messages ([`crate::selection`]).
     text_selection: TextSelection,
@@ -1450,6 +1455,7 @@ impl ChatView {
             quick_bar: Rc::default(),
             quick: quick_reactions(&[]),
             own_reactions: None,
+            meeting_calls: None,
             reactors: reactors::Reactors::default(),
             text_selection: TextSelection::default(),
             options: None,
@@ -3901,9 +3907,26 @@ impl ChatView {
             self.own_reactions = Some(own);
             self.ask_frequent(cx);
         }
+        self.tell_meeting_calls(cx);
         self.trace_items();
         self.trace_outbox();
         cx.notify();
+    }
+
+    /// Tells the owner when the channel's posts show another set of running meetings than the rows showed before.
+    fn tell_meeting_calls(&mut self, cx: &mut Context<Self>) {
+        if self.place != Place::Channel {
+            return;
+        }
+        let running: Vec<String> = self
+            .message_items()
+            .filter(|item| matches!(item.body, Body::MeetingCall(_)))
+            .map(|item| item.id.clone())
+            .collect();
+        let before = self.meeting_calls.replace(running.clone());
+        if before.is_some_and(|before| before != running) {
+            cx.emit(ChatViewEvent::MeetingCallsChanged);
+        }
     }
 
     /// Closes what waits on a message that no longer offers it (gone from the rows, or deleted meanwhile): its quick
