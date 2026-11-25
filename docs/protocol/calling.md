@@ -208,8 +208,8 @@ the mixer's control plane, the media descriptions and the bandwidth seed) and th
   (`CUDA_HOME` unset): with a decoder alive at exit, NVIDIA's decoder library hangs the process in its exit handler. Its encoder follows its own bandwidth estimate within the call's bounds
   (`EncoderSettings`: up to 1.5 Mb/s and 30 fps; a group call's 600 kb/s and 640 by 360).
 - **The audio devices stay ours**: libwebrtc runs with no audio device of its own (LiveKit's synthetic one paces its
-  playout every 10 ms); the session hands it the microphone's frames after libwebrtc's own audio processing module
-  (AEC3, noise suppression, AGC2) and plays its audio on the device seam's speaker, each played frame handed to the
+  playout every 10 ms); the session hands it the microphone's frames after the audio processing (libwebrtc's AEC3
+  and AGC2, and the noise suppression at the account's level: [noise-suppression.md](noise-suppression.md)) and plays its audio on the device seam's speaker, each played frame handed to the
   module as the far end.
 - **The video switch**: the settings' "Video in calls" (on by default; off, a call starts no video).
 
