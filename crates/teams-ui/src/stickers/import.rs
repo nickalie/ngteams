@@ -1,7 +1,7 @@
-//! Imports a folder, a `.zip` or chosen files of pictures as a sticker pack: each PNG, WebP or GIF file, and each
-//! Telegram animated sticker (`.tgs`, [`super::lottie`]), becomes a sticker, still or animated, made ready to send. A
-//! still sticker is kept (and sent) as a PNG, an animated one (an animated GIF, WebP or PNG, or a `.tgs`) as a GIF,
-//! which every Teams client plays. A Telegram video sticker (`.webm`) is skipped and said to be one.
+//! Imports a folder, a `.zip` or chosen files of pictures as a sticker pack: each PNG, WebP or GIF file, each Telegram
+//! animated sticker (`.tgs`, [`super::lottie`]) and each Telegram video sticker (`.webm`, [`super::video`]), becomes a
+//! sticker, still or animated, made ready to send. A still sticker is kept (and sent) as a PNG, an animated one (an
+//! animated GIF, WebP or PNG, a `.tgs` or a `.webm`) as a GIF, which every Teams client plays.
 //!
 //! - **What is read**: the files in the folder and its folders (at most [`MAX_DEPTH`] deep, no symbolic link), or the
 //!   archive's files, in the order of their names. Hidden files and folders (and a Mac archive's `__MACOSX`) are passed
@@ -79,8 +79,8 @@ pub enum ImportKind {
 pub enum Skip {
     #[error("isn't a PNG, WebP or GIF picture or a Telegram sticker")]
     NotPicture,
-    #[error("is a video sticker, which can't be imported yet")]
-    Video,
+    #[error("is a video sticker, and this computer has no decoder for it (GStreamer's VP9 plugins)")]
+    NoVideoDecoder,
     #[error("is an animated Telegram sticker, which this build of the app can't import")]
     NoRenderer,
     #[error("uses an animation feature that can't be imported")]
@@ -488,7 +488,7 @@ pub fn fit(own: (u32, u32), most: u32) -> (u32, u32) {
 }
 
 /// `frame` scaled down to [`KEPT_SIDE`].
-fn kept(frame: RgbaImage) -> RgbaImage {
+pub(super) fn kept(frame: RgbaImage) -> RgbaImage {
     let (width, height) = fit(frame.dimensions(), KEPT_SIDE);
     if (width, height) == frame.dimensions() {
         frame
@@ -527,20 +527,17 @@ fn still(decoder: impl ImageDecoder) -> Result<Frames, Skip> {
     })
 }
 
-/// Whether `bytes` are a Matroska (`.webm`) file: a Telegram video sticker.
-fn is_video(bytes: &[u8]) -> bool {
-    bytes.starts_with(&[0x1a, 0x45, 0xdf, 0xa3])
-}
-
-/// The frames of a PNG (an animated one's too), WebP or GIF picture, or of a Telegram animated sticker.
+/// The frames of a PNG (an animated one's too), WebP or GIF picture, or of a Telegram animated or video sticker.
 fn frames(bytes: &[u8]) -> Result<Frames, Skip> {
     if super::lottie::is_tgs(bytes) {
         return Ok(Frames {
             frames: super::lottie::frames(bytes, super::lottie::renderer())?,
         });
     }
-    if is_video(bytes) {
-        return Err(Skip::Video);
+    if super::video::is_webm(bytes) {
+        return Ok(Frames {
+            frames: super::video::frames(bytes)?,
+        });
     }
     let format = PastedFormat::sniff(bytes).ok_or(Skip::NotPicture)?;
     let skip = |error: image::ImageError| decode_skip(&error);

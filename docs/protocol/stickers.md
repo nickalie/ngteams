@@ -12,7 +12,7 @@ A Telegram pack has three kinds of stickers. The file of each kind is told by it
 | --- | --- | --- | --- |
 | still | `.webp`, 512 px on its longer side | `RIFF....WEBP` | decodes it as any WebP picture; a PNG sticker |
 | animated | `.tgs`: a gzipped Lottie animation (JSON), 512 by 512, at most 3 s, often 60 frames a second | `1f 8b` (gzip) | renders it to frames, then a GIF sticker |
-| video | `.webm`: VP9 with an alpha channel, at most 3 s | `1a 45 df a3` (Matroska) | skips it and says so (not imported yet) |
+| video | `.webm`: VP9 with an alpha channel, 512 px on its longer side, at most 3 s, at most 30 frames a second, no sound | `1a 45 df a3` (Matroska) | decodes it to frames, then a GIF sticker |
 
 A Lottie animation names its canvas (`w`, `h`), its frame rate (`fr`) and its first frame and the frame after its
 last (`ip`, `op`). Its layers are vector shapes. A `.tgs` from Telegram has no expressions and no raster pictures.
@@ -43,6 +43,22 @@ the dash and gap values can ease to, plus one dash for each dash and gap entry, 
 whole list on each path. A layer also counts the transforms of its parents. Each precomposition, matte and copy counts
 each time it is drawn. A number that is not finite as a 32-bit float has no bound.
 
+A `.webm` sticker has one VP9 video track with `AlphaMode` 1. Each block holds the colour frame, and its
+`BlockAdditional` (`BlockAddID` 1) holds a second VP9 frame whose luma plane is the alpha. A demuxer that drops
+`BlockAdditional` gives an opaque video.
+
+The import decodes it with `GStreamer`, which the app links already for the chat's videos: `matroskademux` gives the
+alpha to `vp9alphadecodebin` (gst-plugins-bad), which decodes both streams with `vp9dec` (gst-plugins-good, libvpx)
+and joins them. The app's packages install both plugin sets. A computer without them skips the sticker and says so.
+Only a file that starts with the Matroska bytes reaches `GStreamer`, with the same restrictions as the chat's videos
+(no element that fetches, no hardware decoder). The decode stops after 20 s.
+
+Each frame is scaled down to 250 px as it comes, at most 30 frames a second are kept (a frame in the same 1/30 s as
+the one before it is dropped), and each frame's time is the time to the next kept frame, cut on hundredths of a
+second. The last frame lasts to the video's end. A 3-second sticker at 30 frames a second becomes 90 frames of 30 or
+40 ms, 3 s in all. The limits and the hard transparency of a GIF are those of the `.tgs` path: a frame at most 4096 px
+on a side, at most 200 frames.
+
 ## A pack from its link: the Bot API
 
 A pack's link is `https://t.me/addstickers/<name>` (also `telegram.me`, or `addemoji` for an emoji pack) or
@@ -55,7 +71,7 @@ The requests (rows in [endpoints.md](endpoints.md#telegrams-bot-api-with-the-use
 1. `GET /bot<token>/getStickerSet?name=<name>`. The answer is `{"ok": true, "result": {...}}`. The result has `name`,
    `title`, `sticker_type` and `stickers`. Each sticker has `file_id`, `file_unique_id`, `type`, `width`, `height`,
    `is_animated` (a `.tgs`), `is_video` (a `.webm`), `emoji` and `file_size`.
-2. For each sticker that is not a video: `GET /bot<token>/getFile?file_id=<id>`. The result has `file_path` (for
+2. For each sticker: `GET /bot<token>/getFile?file_id=<id>`. The result has `file_path` (for
    example `stickers/file_12.webp`) and `file_size`.
 3. `GET /file/bot<token>/<file_path>`: the file's bytes. The Bot API gives files of at most 20 MB. The import reads at
    most 10 MB.
@@ -76,7 +92,9 @@ The pack's title names the imported pack, and each sticker's emoji is its label.
 requests. The token is kept in the system keyring (a lab alias and the read-only mode keep it in memory only).
 
 What is not known from a live run: the agents' host has no bot token, so the requests above are checked against a
-local mock that follows the Bot API's documentation (`teams_mock::telegram`), not against Telegram itself.
+local mock that follows the Bot API's documentation (`teams_mock::telegram`), not against Telegram itself. The video
+path is checked with a synthetic `.webm` that `ffmpeg`'s libvpx encoder made in the same form (VP9, alpha in
+`BlockAdditional`), not with a sticker from Telegram.
 
 ## A Signal pack from its link
 

@@ -1,7 +1,7 @@
 //! The user's sticker packs: one store for all the app's accounts ([`store`], beside the settings file), the import
 //! of a folder, a `.zip` or chosen files of pictures as a pack ([`import`], Telegram's animated stickers through
-//! [`lottie`]), the import of a Telegram pack ([`telegram`]) or a Signal pack ([`signal`]) from its link, and the
-//! [`Shelf`] the compose box's picker shows them from.
+//! [`lottie`] and its video stickers through [`video`]), the import of a Telegram pack ([`telegram`]) or a Signal
+//! pack ([`signal`]) from its link, and the [`Shelf`] the compose box's picker shows them from.
 //!
 //! The shelf reads the store once, then keeps it in step with what the app does to it: an import (run on a background
 //! thread, its progress and its outcome kept on the shelf, so the picker shows them when it opens again), a rename, a
@@ -15,6 +15,7 @@ pub mod signal;
 pub mod store;
 pub mod teams;
 pub mod telegram;
+pub mod video;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

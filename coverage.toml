@@ -106,7 +106,7 @@ sha256 = "4db81f87c8fec8e742df8f2822847589b2525b24a3e52ca807bb39b530804f83"
 reason = "module declarations, re-exports and documentation only; no executable bodies"
 
 [unmapped_sources."crates/teams-media/src/lib.rs"]
-sha256 = "7a1ac30b145718540b3ad7c0c7a9594624c80a1cbae8a72872bbee8c6f542d5a"
+sha256 = "e419b727b9bdb920c6ee52fb7d83e939672477a6cc7f4d23909e275e48ddf483"
 reason = "module declarations and derived error type only; no authored executable bodies"
 
 [unmapped_sources."crates/teams-media/src/video.rs"]
@@ -703,3 +703,13 @@ context = { "crates/teams-ui/src/stickers/lottie/bounds.rs" = "f66b13085508191e5
 sha256 = "ceff2cc3ca8298dc3a6cbb8ed65cf986f48ebd734d07cd300e4e9722dbb61b72"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
 context = { "crates/teams-ui/src/stickers/caption.rs" = "933c2529beab64da0c7791675905c37b35512d2ee03bd7990f7a31d26d3a2451" }
+
+[unmapped_sources."crates/teams-media/src/video_file_tests.rs"]
+sha256 = "68fe49bad88ce3dd99c7a5e79e9516d6926c1c2ba058b901992a690b8b055630"
+reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
+context = { "crates/teams-media/src/video_file.rs" = "81812cbaf4f0478f5cf9d386b6e25a18f66fe577d6cd2c35f32b583bac41ff17" }
+
+[unmapped_sources."crates/teams-ui/src/stickers/video_tests.rs"]
+sha256 = "64d10304bd95100af8ecc95ec5dd278a56c55316fa4ac826167d0c7548a20620"
+reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
+context = { "crates/teams-ui/src/stickers/video.rs" = "b00e137961ca8f6bafa9c5f5338b060841417ff64dcfdffd5a0979a6b4570f9c" }

@@ -120,6 +120,19 @@ impl Lab {
 }
 
 /// `lines.json` (synthetic-from-capture), its placeholders filled with the mock's made-up ids.
+/// The synthetic, marked `.webm` video sticker of the fixtures.
+fn synthetic_webm() -> Vec<u8> {
+    let hex = include_str!("../../../tests/fixtures/telegram/synthetic-sticker.webm.hex");
+    let digits: String = hex.lines().filter(|line| !line.starts_with('#')).collect();
+    digits
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect()
+}
+
 fn lines_fixture() -> Value {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fixtures/chatsvc/lines.json");
     let oid = |mri: &str| mri.trim_start_matches("8:orgid:").to_owned();
@@ -489,14 +502,14 @@ impl Walk {
         assert_eq!(frames.count(), 3, "an animated sticker");
     }
 
-    /// a imports a Telegram pack from its link (the mock Bot API) in the picker, then sends its animated sticker: b gets
-    /// Teams' sticker element around the media object, and the media service got the GIF the `.tgs` was made.
+    /// a imports a Telegram pack from its link (the mock Bot API) in the picker, then sends its animated sticker and its
+    /// video sticker: b gets Teams' sticker element around the media object, and the media service got the GIF each
+    /// was made (the `.tgs`'s, the `.webm`'s).
     fn an_animated_telegram_sticker_from_its_link(&mut self) {
         use std::io::Write as _;
         use teams_mock::telegram::{BotApiMock, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN};
-        use teams_ui::fun_picker::Item;
         use teams_ui::stickers::telegram::{BotApis, BotToken};
-        use teams_ui::stickers::{ImportState, Shelf, StickerRef};
+        use teams_ui::stickers::{ImportState, Shelf};
 
         let json = include_str!("../../../tests/fixtures/telegram/synthetic-sticker.json");
         let mut tgs = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
@@ -504,11 +517,18 @@ impl Walk {
         let bot = BotApiMock::start(vec![MockSet {
             name: "SyntheticCats".to_owned(),
             title: "Synthetic cats".to_owned(),
-            stickers: vec![MockSticker {
-                kind: MockKind::Animated,
-                emoji: "\u{1f638}".to_owned(),
-                bytes: tgs.finish().unwrap(),
-            }],
+            stickers: vec![
+                MockSticker {
+                    kind: MockKind::Animated,
+                    emoji: "\u{1f638}".to_owned(),
+                    bytes: tgs.finish().unwrap(),
+                },
+                MockSticker {
+                    kind: MockKind::Video,
+                    emoji: "\u{1f639}".to_owned(),
+                    bytes: synthetic_webm(),
+                },
+            ],
         }])
         .unwrap();
         let origin = bot.origin();
@@ -553,19 +573,50 @@ impl Walk {
             self.cx.run_until_parked();
             std::thread::sleep(Duration::from_millis(10));
         }
-        let sticker = StickerRef {
-            pack: "synthetic-cats".to_owned(),
-            file: "001.gif".to_owned(),
-        };
-        self.cx.update(|window, cx| {
-            picker.update(cx, |picker, cx| picker.activate(&Item::Sticker(sticker), window, cx));
-        });
-        self.until_the_sticker_is_sent(&compose);
-        self.b_gets_the_animated_sticker(&stickers);
+        self.sends_the_animated_and_the_video_sticker(&compose, &stickers);
     }
 
-    /// a presses Enter: b gets the sticker called by its emoji, and the media service got the GIF made from the `.tgs`.
-    fn b_gets_the_animated_sticker(&mut self, stickers: &std::path::Path) {
+    /// a sends the imported pack's animated sticker, then its video sticker, from the picker; b gets each.
+    fn sends_the_animated_and_the_video_sticker(&mut self, compose: &Entity<Compose>, stickers: &std::path::Path) {
+        use teams_ui::fun_picker::Item;
+        use teams_ui::stickers::StickerRef;
+
+        for (file, label, frames, shown) in [
+            ("001.gif", "\u{1f638}", 30..=30, (180, 180)),
+            // the alpha decoder often gives no frame for the video's last block
+            ("002.gif", "\u{1f639}", 14..=15, (64, 64)),
+        ] {
+            focus_compose(&self.view, self.cx);
+            if self.cx.update(|_, cx| compose.read(cx).emoji_picker().is_none()) {
+                self.cx
+                    .update(|window, cx| compose.update(cx, |compose, cx| compose.toggle_emoji(window, cx)));
+            }
+            let picker = self
+                .cx
+                .update(|_, cx| compose.read(cx).emoji_picker().cloned())
+                .expect("the picker is open");
+            let sticker = StickerRef {
+                pack: "synthetic-cats".to_owned(),
+                file: file.to_owned(),
+            };
+            self.cx.update(|window, cx| {
+                picker.update(cx, |picker, cx| picker.activate(&Item::Sticker(sticker), window, cx));
+            });
+            self.until_the_sticker_is_sent(compose);
+            let gif = stickers.join("synthetic-cats").join(file);
+            self.b_gets_the_animated_sticker(&gif, label, frames, shown);
+        }
+    }
+
+    /// a presses Enter: b gets the sticker called by its `label`, `shown` in size, and the media service got the GIF of
+    /// a count of frames in `frames`, kept at `gif` (made from the `.tgs` or the `.webm`).
+    fn b_gets_the_animated_sticker(
+        &mut self,
+        gif: &std::path::Path,
+        label: &str,
+        frames: std::ops::RangeInclusive<usize>,
+        shown: (u32, u32),
+    ) {
         self.cx.simulate_keystrokes("enter");
         let (_, posted) = self.b.message(self.cx);
         let text = teams_proto::chat::parse_html(&posted.content);
@@ -577,9 +628,9 @@ impl Walk {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("b got a sticker: {}", posted.content));
-        assert_eq!(got.label.as_deref(), Some("\u{1f638}"));
-        assert_eq!(got.image.size, Some((180, 180)));
-        let gif = std::fs::read(stickers.join("synthetic-cats/001.gif")).unwrap();
+        assert_eq!(got.label.as_deref(), Some(label));
+        assert_eq!(got.image.size, Some(shown));
+        let gif = std::fs::read(gif).unwrap();
         let uploaded = self
             .lab
             .runtime
@@ -588,11 +639,12 @@ impl Walk {
             .filter(|request| request.method.as_str() == "PUT" && request.url.path().ends_with("/content/imgpsh"))
             .last()
             .expect("its picture went to the media service");
-        assert_eq!(uploaded.body, gif, "the GIF made from the .tgs");
-        let frames = image::AnimationDecoder::into_frames(
+        assert_eq!(uploaded.body, gif, "the GIF made from the sticker's file");
+        let decoded = image::AnimationDecoder::into_frames(
             image::codecs::gif::GifDecoder::new(std::io::Cursor::new(gif)).unwrap(),
         );
-        assert_eq!(frames.count(), 30, "an animated sticker");
+        let count = decoded.count();
+        assert!(frames.contains(&count), "an animated sticker: {count} frames");
     }
 
     /// Until the one picture in a's box is ready to send: sent to the media service, or one of Teams' stickers read.

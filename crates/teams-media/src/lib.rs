@@ -20,6 +20,8 @@
 //!   group call's data channel: whose video the mixer sends on each receiving video line, who speaks.
 //! - [`player`]: a video a message carries, played in its card by `GStreamer`'s `playbin`, its bytes from the engine
 //!   (an `appsrc`), its frames to the view and its sound to the device seam's speaker.
+//! - [`video_file`]: a short `WebM` video (a Telegram video sticker, VP9 with alpha) read as RGBA frames by
+//!   `GStreamer`.
 //!
 //! Nothing here sends signaling.
 
@@ -45,6 +47,7 @@ pub mod test_signal;
 pub mod test_turn;
 pub mod tone;
 pub mod video;
+pub mod video_file;
 
 /// Everything the media can fail with.
 #[derive(Debug, thiserror::Error)]

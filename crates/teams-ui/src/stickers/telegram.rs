@@ -4,9 +4,8 @@
 //! - **The token** is kept only in the app's keyring ([`BotToken`], under [`TOKEN_NAME`]); a lab alias and the read-only
 //!   mode keep it in the memory. It is read on the import's thread, handed to the Bot API's client, and never drawn,
 //!   logged or written to a file.
-//! - **The pack**: its title names it; each sticker's emoji is its label. A still sticker (`.webp`) and an animated one
-//!   (`.tgs`) are made stickers as a file's are ([`super::import`]); a video sticker (`.webm`) is skipped, said to be
-//!   one, and not downloaded.
+//! - **The pack**: its title names it; each sticker's emoji is its label. A still sticker (`.webp`), an animated one
+//!   (`.tgs`) and a video one (`.webm`) are made stickers as a file's are ([`super::import`]).
 
 use std::sync::Arc;
 
@@ -189,9 +188,6 @@ impl Source for Linked {
 
     fn read(&mut self, index: usize) -> Result<Vec<u8>, Skip> {
         let sticker = self.sticker(index).ok_or(Skip::Unreadable)?;
-        if sticker.is_video {
-            return Err(Skip::Video);
-        }
         if sticker.file_size.is_some_and(|size| size > MAX_FILE) {
             return Err(Skip::TooLarge);
         }

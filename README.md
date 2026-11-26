@@ -28,7 +28,7 @@ built for your desktop instead of a web page in a wrapper.
 **Chat**
 - One-on-one and group chats, with formatting, emoji, @mentions, replies, reactions, edits and deletes
 - Drop in files, or paste screenshots and pictures straight into a message
-- Send stickers from Teams' own packs (Clippy, Office Drama, Octocorn and the rest), or write your own caption on Teams' captioned stickers and memes (Edit sticker), or send your own: import a folder, a .zip or chosen files of PNG, WebP or GIF pictures or Telegram stickers (`.webp`, animated `.tgs`), or a Telegram pack from its t.me/addstickers link with your own bot token, or a Signal pack from its signal.art link, and pick them from the Stickers tab beside the emoji
+- Send stickers from Teams' own packs (Clippy, Office Drama, Octocorn and the rest), or write your own caption on Teams' captioned stickers and memes (Edit sticker), or send your own: import a folder, a .zip or chosen files of PNG, WebP or GIF pictures or Telegram stickers (`.webp`, animated `.tgs`, video `.webm`), or a Telegram pack from its t.me/addstickers link with your own bot token, or a Signal pack from its signal.art link, and pick them from the Stickers tab beside the emoji
 - Search messages and people, mark chats as read or unread, and keep unread counts in sync with your other devices
 - Click or hover anyone's picture or name for their profile card, as in Teams: their availability, work hours and local time, contact details, who they work with and their org chart, with Chat, a quick message, and video and audio calls right there
 - Drafts stay put while you move around

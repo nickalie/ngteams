@@ -6,12 +6,12 @@
 //! and asks the child what the views hold through a file in the sandbox dir (`harness = false`: GPUI runs on the
 //! process's main thread).
 //!
-//! - **Files**: a folder, a `.zip` file and chosen files, each of a `.tgs`, a `.webp` and a `.webm`: the `.tgs` is an
-//!   animated sticker (its first frame in the picker, playing in the chat), the `.webp` a still one, the `.webm` skipped with its note. The "+"
-//!   menu's rows.
+//! - **Files**: a folder, a `.zip` file and chosen files, each of a `.tgs`, a `.webp` and a `.webm`: the `.tgs` and
+//!   the `.webm` (task 655) are animated stickers (the first frame in the picker, playing in the chat), the `.webp` a
+//!   still one. The "+" menu's rows.
 //! - **The Telegram panel**: the link's forms, a link that names no pack, no token, a malformed token, a refused
-//!   token, a missing pack, a pack of only video stickers, a Bot API that can't be reached; each says the user's words
-//!   and sends only what it must. A good import shows its progress and its summary.
+//!   token, a missing pack, a Bot API that can't be reached; each says the user's words and sends only what it must.
+//!   A good import (its video sticker too) shows its progress and its summary.
 //! - **The token**: never drawn (the masked field's pixels do not change with the token), Replace / Keep it / Remove,
 //!   kept after a restart, and in no line of the app's debug log, its output or the chat service's requests.
 //! - **The keyboard**: Tab, Shift+Tab, Enter, Space and Escape in the panel.
@@ -147,7 +147,6 @@ const MASK_TWO: &str = "999999999:mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm";
 /// The mock Bot API's packs.
 const GOOD_SET: &str = "QaSyntheticBlobs";
 const GOOD_TITLE: &str = "QA synthetic blobs";
-const VIDEO_SET: &str = "QaOnlyVideo";
 const MISSING_SET: &str = "QaNoSuchPack";
 /// The still stickers of the good pack, beside its animated and its video sticker: enough for a progress line.
 const GOOD_STILLS: usize = 10;
@@ -466,9 +465,17 @@ fn disc_webp(colour: Rgb) -> SandboxResult<Vec<u8>> {
     Ok(bytes.into_inner())
 }
 
-/// The start of a Matroska file: a Telegram video sticker, as the import sees one.
+/// The synthetic, marked `.webm` video sticker of the fixtures.
 fn video() -> Vec<u8> {
-    vec![0x1a, 0x45, 0xdf, 0xa3, 0x80, 0x42, 0x86, 0x81, 0x01]
+    let hex = include_str!("../../../../../tests/fixtures/telegram/synthetic-sticker.webm.hex");
+    let digits: String = hex.lines().filter(|line| !line.starts_with('#')).collect();
+    digits
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .filter_map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect()
 }
 
 fn bot_sets() -> SandboxResult<Vec<MockSet>> {
@@ -491,25 +498,11 @@ fn bot_sets() -> SandboxResult<Vec<MockSet>> {
             bytes: disc_webp(DISC)?,
         });
     }
-    let only_video = (0..2)
-        .map(|_| MockSticker {
-            kind: MockKind::Video,
-            emoji: VIDEO_EMOJI.to_owned(),
-            bytes: video(),
-        })
-        .collect();
-    Ok(vec![
-        MockSet {
-            name: GOOD_SET.to_owned(),
-            title: GOOD_TITLE.to_owned(),
-            stickers: good,
-        },
-        MockSet {
-            name: VIDEO_SET.to_owned(),
-            title: "QA only video".to_owned(),
-            stickers: only_video,
-        },
-    ])
+    Ok(vec![MockSet {
+        name: GOOD_SET.to_owned(),
+        title: GOOD_TITLE.to_owned(),
+        stickers: good,
+    }])
 }
 
 /// The three of a kind each source holds: an animated `.tgs`, a still `.webp` and a `.webm` video.
@@ -1255,8 +1248,8 @@ fn skipped(state: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// A pack made of the three files: an animated sticker, a still one, and the video skipped with its note.
-fn three_faults(state: &Value, name: &str, video: &str) -> Vec<String> {
+/// A pack made of the three files: two animated stickers (the `.tgs` and the `.webm`) and a still one, none skipped.
+fn three_faults(state: &Value, name: &str) -> Vec<String> {
     let mut faults = Vec::new();
     let Some(pack) = pack_named(state, name) else {
         return vec![format!("no pack {name:?}: {}", state["shelf"]["packs"])];
@@ -1265,8 +1258,8 @@ fn three_faults(state: &Value, name: &str, video: &str) -> Vec<String> {
     let animated: Vec<bool> = stickers.iter().map(|sticker| sticker["animated"] == true).collect();
     let mut kinds = animated.clone();
     kinds.sort_unstable();
-    if kinds != [false, true] {
-        faults.push(format!("{name}: not one animated and one still sticker: {stickers:?}"));
+    if kinds != [false, true, true] {
+        faults.push(format!("{name}: not two animated and one still sticker: {stickers:?}"));
     }
     for sticker in &stickers {
         let file = sticker["file"].as_str().unwrap_or_default();
@@ -1277,14 +1270,8 @@ fn three_faults(state: &Value, name: &str, video: &str) -> Vec<String> {
     }
     let lines = skipped(state);
     say(&format!("  {name} skipped: {lines:?}"));
-    if !lines
-        .iter()
-        .any(|line| line.contains(video) && line.contains("is a video sticker, which can't be imported yet"))
-    {
-        faults.push(format!("{name}: no video note for {video}: {lines:?}"));
-    }
-    if lines.len() != 1 {
-        faults.push(format!("{name}: {} skipped lines, 1 expected", lines.len()));
+    if !lines.is_empty() {
+        faults.push(format!("{name}: skipped lines {lines:?}, none expected"));
     }
     faults
 }
@@ -1310,7 +1297,7 @@ fn import_folder(user: &mut User<'_>) -> SandboxResult {
     user.key_pick("sticker-import-folder")?;
     let (_, state) = user.finish_import("import-folder")?;
     user.image("import-folder-summary")?;
-    faults.extend(three_faults(&state, FOLDER, "folder_clip.webm"));
+    faults.extend(three_faults(&state, FOLDER));
     faults_to_result(&faults)
 }
 
@@ -1346,7 +1333,7 @@ fn import_zip(user: &mut User<'_>) -> SandboxResult {
     user.pick_import("sticker-import-zip")?;
     let (_, state) = user.finish_import("import-zip")?;
     user.image("import-zip-summary")?;
-    faults_to_result(&three_faults(&state, ZIP, "zip_clip.webm"))
+    faults_to_result(&three_faults(&state, ZIP))
 }
 
 /// "Import picture or sticker files" from the menu: three files chosen at once make a pack named after their folder.
@@ -1355,7 +1342,7 @@ fn import_chosen_files(user: &mut User<'_>) -> SandboxResult {
     user.pick_import("sticker-import-files")?;
     let (_, state) = user.finish_import("import-files")?;
     user.image("import-files-summary")?;
-    faults_to_result(&three_faults(&state, CHOSEN, "chosen_clip.webm"))
+    faults_to_result(&three_faults(&state, CHOSEN))
 }
 
 /// The x of every ball in `area`, left to right.
@@ -1592,13 +1579,13 @@ type FailureCase = (
     &'static [&'static str],
 );
 
-/// A refused token, a missing pack, a pack of only video stickers and a Bot API that can't be reached: each import
+/// A refused token, a missing pack and a Bot API that can't be reached: each import
 /// ends in the user's words, keeps no pack and asks Telegram only what it must.
 fn panel_telegram_failures(user: &mut User<'_>) -> SandboxResult {
     let sent_before = user.messages_sent();
     let packs_before = user.state()?["shelf"]["packs"].as_array().map_or(0, Vec::len);
     let mut faults = Vec::new();
-    let cases: [FailureCase; 4] = [
+    let cases: [FailureCase; 3] = [
         (
             "refused-token",
             GOOD_LINK,
@@ -1611,13 +1598,6 @@ fn panel_telegram_failures(user: &mut User<'_>) -> SandboxResult {
             "t.me/addstickers/QaNoSuchPack",
             Some(SYNTHETIC_BOT_TOKEN),
             "Telegram has no sticker pack at that link.",
-            &["getStickerSet"],
-        ),
-        (
-            "only-video",
-            "t.me/addstickers/QaOnlyVideo",
-            None,
-            "No PNG, WebP or GIF picture or Telegram sticker there could be made a sticker.",
             &["getStickerSet"],
         ),
         (
@@ -1648,7 +1628,6 @@ fn panel_telegram_failures(user: &mut User<'_>) -> SandboxResult {
         user.ask("bot live")?;
     }
     let _ = MISSING_SET;
-    let _ = VIDEO_SET;
     let state = user.state()?;
     let packs = state["shelf"]["packs"].as_array().map_or(0, Vec::len);
     if packs != packs_before {
@@ -1665,9 +1644,8 @@ fn panel_telegram_failures(user: &mut User<'_>) -> SandboxResult {
     faults_to_result(&faults)
 }
 
-/// A good link with the kept token: the progress line, then the summary with the video sticker's note; the pack with
-/// its animated and still stickers, labelled by their emoji. Each request has the token in its path only, and the
-/// video sticker is never downloaded.
+/// A good link with the kept token: the progress line, then the summary with nothing skipped; the pack with its
+/// animated, video and still stickers, labelled by their emoji. Each request has the token in its path only.
 fn panel_good_import(user: &mut User<'_>) -> SandboxResult {
     let before = user.world.bot.requests().len();
     user.open_panel()?;
@@ -1691,40 +1669,32 @@ fn panel_good_import(user: &mut User<'_>) -> SandboxResult {
     }
     let lines = skipped(&state);
     say(&format!("  skipped: {lines:?}"));
-    let note = format!("Sticker 2 {VIDEO_EMOJI} is a video sticker, which can't be imported yet");
-    if lines != [note.clone()] && !lines.iter().any(|line| line.contains(&note)) {
-        faults.push(format!("the summary's skipped lines {lines:?}, {note:?} expected"));
+    if !lines.is_empty() {
+        faults.push(format!("the summary's skipped lines {lines:?}, none expected"));
     }
     match pack_named(&state, GOOD_TITLE) {
         Some(pack) => {
             let stickers = pack["stickers"].as_array().cloned().unwrap_or_default();
             let animated: Vec<&Value> = stickers.iter().filter(|sticker| sticker["animated"] == true).collect();
-            if stickers.len() != GOOD_STILLS + 1 || animated.len() != 1 {
+            if stickers.len() != GOOD_STILLS + 2 || animated.len() != 2 {
                 faults.push(format!("the pack's stickers: {stickers:?}"));
             }
-            if animated
-                .first()
-                .is_none_or(|sticker| sticker["label"] != ANIMATED_EMOJI)
-            {
-                faults.push(format!("the animated sticker's label: {animated:?}"));
+            let labels: Vec<&str> = animated
+                .iter()
+                .filter_map(|sticker| sticker["label"].as_str())
+                .collect();
+            if labels != [ANIMATED_EMOJI, VIDEO_EMOJI] {
+                faults.push(format!("the animated and the video sticker's labels: {labels:?}"));
             }
         }
         None => faults.push(format!("no pack {GOOD_TITLE:?}: {}", state["shelf"]["packs"])),
     }
     let requests = user.bot_requests(before);
     let got = methods(&requests);
-    let wanted_files = GOOD_STILLS + 1;
+    let wanted_files = GOOD_STILLS + 2;
     let count = |method: &str| got.iter().filter(|one| *one == method).count();
     if count("getStickerSet") != 1 || count("getFile") != wanted_files || count("download") != wanted_files {
         faults.push(format!("Telegram was asked {got:?}"));
-    }
-    let video = format!("{GOOD_SET}__1");
-    if requests.iter().any(|request| {
-        request.target.ends_with(&video)
-            || request.target.contains(&format!("{video}&"))
-            || request.target.contains(&format!("{video}."))
-    }) {
-        faults.push("the video sticker was asked for".to_owned());
     }
     faults.extend(bot_request_faults(&requests, "the good import"));
     user.key_pick("sticker-import-close")?;

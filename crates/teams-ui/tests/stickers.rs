@@ -1,6 +1,7 @@
 //! The sticker store and the import of a folder, a `.zip` or chosen files of pictures and Telegram stickers, and of a
 //! Telegram or a Signal pack's link against the mock Bot API or the mock CDN (`teams_ui::stickers`): every picture,
-//! pack id and key is made here, in the test; the one file read from the repo is the synthetic, marked Lottie animation of `tests/fixtures/telegram/`.
+//! pack id and key is made here, in the test; the files read from the repo are the synthetic, marked Lottie animation
+//! and video sticker of `tests/fixtures/telegram/`.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -9,7 +10,7 @@ use std::io::{Cursor, Write as _};
 use std::path::Path;
 
 use image::codecs::gif::{GifEncoder, Repeat};
-use image::{Delay, Frame, ImageFormat, Rgba, RgbaImage};
+use image::{AnimationDecoder as _, Delay, Frame, ImageFormat, Rgba, RgbaImage};
 use std::sync::Arc;
 
 use teams_auth::secrets::Secret;
@@ -715,37 +716,68 @@ fn synthetic_tgs() -> Vec<u8> {
     encoder.finish().unwrap()
 }
 
-/// The first bytes of a Matroska file, as a `.webm` video sticker starts.
+/// The synthetic, marked `.webm` video sticker of the fixtures: 64 by 64, 15 frames, its top right clear.
 fn webm() -> Vec<u8> {
-    vec![0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 0x01]
+    let hex = include_str!("../../../tests/fixtures/telegram/synthetic-sticker.webm.hex");
+    let digits: String = hex.lines().filter(|line| !line.starts_with('#')).collect();
+    digits
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect()
 }
 
-/// What a Telegram import made: still and animated stickers, the video skipped.
-fn telegram_pack_made(imported: &import::Imported, stickers: &Path, video: &str) {
-    let files: Vec<&str> = imported
+/// What a Telegram import made: each sticker in `files` (its `.gif` animated, its `.png` still), none skipped; the
+/// video sticker `video` (a file of `files`) a looping GIF of 14 or 15 frames (the alpha decoder often gives
+/// none for the last block) with its clear corner.
+fn telegram_pack_made(imported: &import::Imported, stickers: &Path, files: [&str; 3], video: &str) {
+    let made: Vec<&str> = imported
         .pack
         .stickers
         .iter()
         .map(|sticker| sticker.file.as_str())
         .collect();
-    assert_eq!(files, ["001.gif", "002.png"], "the .tgs animated, the .webp still");
-    let gif = std::fs::read(stickers.join(&imported.pack.id).join("001.gif")).unwrap();
+    assert_eq!(made, files);
+    assert_eq!(imported.skipped, [], "no sticker is skipped");
+    let dir = stickers.join(&imported.pack.id);
+    for sticker in &imported.pack.stickers {
+        let bytes = std::fs::read(dir.join(&sticker.file)).unwrap();
+        let animated = sticker.animated();
+        assert_eq!(
+            teams_proto::PastedFormat::sniff(&bytes),
+            Some(if animated {
+                teams_proto::PastedFormat::Gif
+            } else {
+                teams_proto::PastedFormat::Png
+            })
+        );
+    }
+    let gif = std::fs::read(dir.join(video)).unwrap();
+    let frames: Vec<Frame> = image::codecs::gif::GifDecoder::new(Cursor::new(gif))
+        .unwrap()
+        .into_frames()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!([14, 15].contains(&frames.len()), "the video's frames: {}", frames.len());
     assert_eq!(
-        teams_proto::PastedFormat::sniff(&gif),
-        Some(teams_proto::PastedFormat::Gif)
+        frames[0].buffer().get_pixel(50, 10).0[3],
+        0,
+        "its clear corner stays clear"
     );
-    assert_eq!(imported.pack.stickers[0].size, (SHOWN_SIDE, SHOWN_SIDE));
-    assert_eq!(
-        imported.skipped,
-        [import::Skipped {
-            name: video.to_owned(),
-            why: Skip::Video
-        }]
-    );
-    assert_eq!(
-        imported.skipped[0].to_string(),
-        format!("{video} is a video sticker, which can't be imported yet")
-    );
+    assert_eq!(frames[0].buffer().get_pixel(10, 50).0[3], 255);
+    let size = |file: &str| {
+        imported
+            .pack
+            .stickers
+            .iter()
+            .find(|sticker| sticker.file == file)
+            .unwrap()
+            .size
+    };
+    assert_eq!(size(files[0]), (SHOWN_SIDE, SHOWN_SIDE));
+    assert_eq!(size(video), (64, 64), "never scaled up");
 }
 
 #[test]
@@ -760,14 +792,15 @@ fn telegram_files_import_one_by_one_from_a_folder_and_from_a_zip() {
     folder(&pack, &files);
     let stickers = source.path().join("stickers");
 
+    let by_name = ["001.gif", "002.gif", "003.png"];
     let imported = import::import(&pack, ImportKind::Folder, &stickers, &mut no_progress()).unwrap();
-    telegram_pack_made(&imported, &stickers, "party.webm");
+    telegram_pack_made(&imported, &stickers, by_name, "002.gif");
     assert_eq!(imported.pack.stickers[0].label, "Hello");
 
     let zip = source.path().join("Zipped cats.zip");
     archive(&zip, &files);
     let imported = import::import(&zip, ImportKind::Archive, &stickers, &mut no_progress()).unwrap();
-    telegram_pack_made(&imported, &stickers, "party.webm");
+    telegram_pack_made(&imported, &stickers, by_name, "002.gif");
     assert_eq!(imported.pack.name, "Zipped cats");
 
     let chosen = vec![
@@ -780,7 +813,7 @@ fn telegram_files_import_one_by_one_from_a_folder_and_from_a_zip() {
     assert_eq!((one_by_one.name(), one_by_one.len()), ("Telegram cats".to_owned(), 3));
     assert_eq!(one_by_one.read(7).unwrap_err(), Skip::Unreadable);
     let imported = import::import_from(&mut one_by_one, &stickers, &mut no_progress()).unwrap();
-    telegram_pack_made(&imported, &stickers, "party.webm");
+    telegram_pack_made(&imported, &stickers, by_name, "002.gif");
     assert_eq!(imported.pack.name, "Telegram cats (2)");
 }
 
@@ -845,7 +878,7 @@ fn a_telegram_link_imports_its_pack_through_the_mock_bot_api() {
     )
     .unwrap();
     assert_eq!(imported.pack.name, "Synthetic cats");
-    telegram_pack_made(&imported, stickers.path(), "Sticker 3 \u{1f639}");
+    telegram_pack_made(&imported, stickers.path(), ["001.gif", "002.png", "003.gif"], "003.gif");
     let labels: Vec<&str> = imported
         .pack
         .stickers
@@ -854,7 +887,7 @@ fn a_telegram_link_imports_its_pack_through_the_mock_bot_api() {
         .collect();
     assert_eq!(
         labels,
-        ["\u{1f638}", "\u{1f63a}"],
+        ["\u{1f638}", "\u{1f63a}", "\u{1f639}"],
         "each sticker is called by its emoji"
     );
     assert_eq!(told.last(), Some(&Progress { done: 3, total: 3 }));
@@ -862,10 +895,9 @@ fn a_telegram_link_imports_its_pack_through_the_mock_bot_api() {
     let targets: Vec<String> = mock.requests().into_iter().map(|request| request.target).collect();
     assert_eq!(
         targets.len(),
-        5,
-        "the pack, then two files' paths and bytes; the video not asked: {targets:?}"
+        7,
+        "the pack, then three files' paths and bytes, the video's too: {targets:?}"
     );
-    assert!(targets.iter().all(|target| !target.contains("__2")), "{targets:?}");
     assert!(mock.requests().iter().all(|request| !request.authorization));
 
     assert!(log.flush_written());
@@ -957,17 +989,17 @@ fn a_telegram_link_s_failures_each_say_what_to_do() {
     };
     let mock = BotApiMock::start(vec![only_video]).unwrap();
     let (tokens, apis) = bot(&mock, Some(SYNTHETIC_BOT_TOKEN));
-    let failed = telegram::import_link(
+    let imported = telegram::import_link(
         "t.me/addstickers/OnlyVideo",
         &tokens,
         &apis,
         stickers.path(),
         &mut no_progress(),
-    );
-    let Err(ImportError::NoStickers(skipped)) = failed else {
-        panic!("{failed:?}");
-    };
-    assert_eq!(skipped[0].why, Skip::Video);
+    )
+    .unwrap();
+    assert_eq!(imported.pack.name, "Only video");
+    assert_eq!(imported.pack.stickers.len(), 1, "a pack of only video stickers imports");
+    assert!(imported.skipped.is_empty());
 
     let dead = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()

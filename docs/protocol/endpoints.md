@@ -550,7 +550,7 @@ requests. The formats are in [stickers.md](stickers.md).
 | --- | --- | --- | --- | --- | --- |
 | `GET` | `https://api.telegram.org/bot<token>/getStickerSet?name=` | a pack: its title, and each sticker's file id, emoji and kind (still, animated, video) | `telegram::BotApi::sticker_set` | [stickers.md](stickers.md#a-pack-from-its-link-the-bot-api) · 651 | native on a loopback mock only (`teams_mock::telegram`); no live run (no bot token on the agents' host); own server: not served (not Teams) |
 | `GET` | `https://api.telegram.org/bot<token>/getFile?file_id=` | a sticker's file path and size | `telegram::BotApi::file` | [stickers.md](stickers.md#a-pack-from-its-link-the-bot-api) · 651 | native on a loopback mock only; own server: not served (not Teams) |
-| `GET` | `https://api.telegram.org/file/bot<token>/<file_path>` | the sticker's file: `.webp`, `.tgs` or `.webm` (a video sticker is never asked for) | `telegram::BotApi::file` | [stickers.md](stickers.md#a-pack-from-its-link-the-bot-api) · 651 | native on a loopback mock only; own server: not served (not Teams) |
+| `GET` | `https://api.telegram.org/file/bot<token>/<file_path>` | the sticker's file: `.webp`, `.tgs` or `.webm` | `telegram::BotApi::file` | [stickers.md](stickers.md#a-pack-from-its-link-the-bot-api) · 651, 655 | native on a loopback mock only; own server: not served (not Teams) |
 
 ## Signal's sticker CDN (`cdn-ca.signal.org`)
 

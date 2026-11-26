@@ -1535,6 +1535,19 @@ fn synthetic_tgs() -> Vec<u8> {
     encoder.finish().unwrap()
 }
 
+/// The synthetic, marked `.webm` video sticker of the fixtures.
+fn synthetic_webm() -> Vec<u8> {
+    let hex = include_str!("../../../tests/fixtures/telegram/synthetic-sticker.webm.hex");
+    let digits: String = hex.lines().filter(|line| !line.starts_with('#')).collect();
+    digits
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect()
+}
+
 /// A mock Bot API holding a pack of an animated, a still and a video sticker, made the app's Bot API.
 fn telegram_mock(cx: &mut VisualTestContext) -> BotApiMock {
     let mock = BotApiMock::start(vec![MockSet {
@@ -1554,7 +1567,7 @@ fn telegram_mock(cx: &mut VisualTestContext) -> BotApiMock {
             MockSticker {
                 kind: MockKind::Video,
                 emoji: "\u{1f639}".to_owned(),
-                bytes: vec![0x1a, 0x45, 0xdf, 0xa3, 0x80],
+                bytes: synthetic_webm(),
             },
         ],
     }])
@@ -1636,9 +1649,9 @@ fn a_telegram_pack_imports_from_its_link_and_the_token_is_kept_replaced_and_remo
     };
     assert_eq!(
         (imported.pack.name.as_str(), imported.pack.stickers.len()),
-        ("Synthetic cats", 2)
+        ("Synthetic cats", 3)
     );
-    assert_eq!(imported.skipped.len(), 1, "the video sticker");
+    assert!(imported.skipped.is_empty(), "the video sticker is imported too");
     assert!(drawn(cx, "sticker-import-summary"));
     let kept = cx.update(|_, cx| BotToken::of(cx).get().unwrap().unwrap());
     assert_eq!(kept.expose(), SYNTHETIC_BOT_TOKEN);
