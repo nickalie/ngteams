@@ -410,6 +410,12 @@ harness = false
 name = "qa_rtl_text_window"
 harness = false
 
+[[test]]
+# QA of task 903: the app starts on GPUI 0.3.14 and its Ctrl shortcuts (`secondary!`) fire from the keyboard, in the
+# app's window over the mock
+name = "qa_secondary_keys_window"
+harness = false
+
 [build-dependencies]
 embed-resource.workspace = true
 
