@@ -469,7 +469,7 @@ impl EventForm {
                 let DatePickerEvent::Change(picked) = event;
                 let start = this.series_day();
                 if let Some(repeat) = &mut this.repeat {
-                    repeat.until = repeat::picked_until(kit_day(picked), start);
+                    repeat.until = repeat::picked_until(crate::kit_date::picked_day(picked), start);
                 }
                 cx.notify();
             }),
@@ -480,7 +480,7 @@ impl EventForm {
                     let DatePickerEvent::Change(picked) = event;
                     let start = this.series_day();
                     if let Some(custom) = &mut this.custom {
-                        custom.until = repeat::picked_until(kit_day(picked), start);
+                        custom.until = repeat::picked_until(crate::kit_date::picked_day(picked), start);
                     }
                     cx.notify();
                 },
@@ -1129,11 +1129,6 @@ impl EventForm {
         let repeat = custom.repeat(self.series_day());
         self.set_repeat(Some(repeat), window, cx);
     }
-}
-
-/// The day a date picker gave, as the app keeps it.
-fn kit_day(picked: &gpui_component::date_picker::DateTime) -> Option<NaiveDate> {
-    picked.start().and_then(|time| crate::kit_date::from_kit(time.date()))
 }
 
 /// Whom an event read whole invites: its attendees with an address, the organizer (the account itself, listed by the

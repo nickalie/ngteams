@@ -136,12 +136,12 @@ built() {
     rm -rf "$dest/examples"
   fi
   for patch in "$patches"/*.patch; do
-    patch -s -p1 "$@" -d "$dest" <"$patch" || die "$(basename "$patch") does not apply to $crate $version"
+    patch -s -p1 --no-backup-if-mismatch "$@" -d "$dest" <"$patch" || die "$(basename "$patch") does not apply to $crate $version"
   done
 }
 
 # The next snapshot has no vendored tree to compare with, so its patches must apply exactly.
-strict=(--fuzz=0 --no-backup-if-mismatch)
+strict=(--fuzz=0)
 
 # Replace $2 with the directory $1.
 replace() {

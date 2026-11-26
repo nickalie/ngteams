@@ -1105,8 +1105,9 @@ macos.rs`, `crates/ngteams/src/mac_app.rs`): notifications the app posts to the 
 banner's picture as an attachment, while GPUI's binding hands back responses and dismissals (only for the app started
 from `ngteams.app`; a bare binary gets none), the unread total on the Dock badge, the Dock in the tray's place
 (closing the main window keeps the app, a Dock click shows it again), the menu bar (⌘Q, ⌘H, ⌘M, ⌘W) and
-`AppKit`'s terminate (the Dock's Quit, a logout) routed through the app's own quit. Shortcuts bind `secondary-`
-(⌘ on macOS, Ctrl elsewhere); the message box adds macOS's ⌥/⌘ arrow keys.
+`AppKit`'s terminate (the Dock's Quit, a logout) routed through the app's own quit. Shortcuts bind
+with teams-ui's `secondary!` macro (⌘ on macOS, Ctrl elsewhere, chosen at build time); the message box adds
+macOS's ⌥/⌘ arrow keys.
 
 `scripts/run-lab-macos.py <alias>` runs a lab alias on the console: lab-marked builds only, its broker and app on a
 private socket pair, `--shot <name>` saving the run's own windows (`screencapture -l`, which needs the Screen

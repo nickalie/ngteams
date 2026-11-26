@@ -21,6 +21,12 @@ pub fn from_kit(day: civil::Date) -> Option<NaiveDate> {
     NaiveDate::from_ymd_opt(i32::from(day.year()), month, date)
 }
 
+/// The app's day for the first day a kit date picker gives.
+#[must_use]
+pub fn picked_day(picked: &gpui_component::date_picker::DateTime) -> Option<NaiveDate> {
+    picked.start().and_then(|time| from_kit(time.date()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
