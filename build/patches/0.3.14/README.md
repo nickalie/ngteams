@@ -14,19 +14,20 @@ patch leaves a gap in the numbers.
 
 ## Status
 
-The patches here are copies of the 0.3.9 patches, with their offsets refreshed against 0.3.14. They have the same
-added and removed lines.
+The patches with the status "here" are copies of the 0.3.9 patches, with their offsets refreshed against 0.3.14. They
+have the same added and removed lines. The patches with the status "ported" have changes for 0.3.14, as the table
+tells.
 
 | Crate | Patch | Status |
 |---|---|---|
-| gpui-pre | 0001-external-surfaces | to port (external surfaces and wgpu 30 task) |
+| gpui-pre | 0001-external-surfaces | ported: new offsets only |
 | gpui-pre | 0002-no-break-after-opening-punctuation | to drop: upstream breaks lines by UAX #14 (`icu_segmenter`, zed #64624). Keep the `[[account]]` wrap test. |
 | gpui-pre | 0003-path-prompt-title-and-filters | here |
 | gpui-pre | 0004-file-drag-is-pointer-input | here |
 | gpui-pre | 0005-bidirectional-text | to port (text task) |
 | gpui-pre | 0006-keystroke-event-is-held | to port (text task) |
 | gpui-pre | 0007-test-window-title | here |
-| gpui-pre-wgpu | 0001-dmabuf-external-surfaces | to port (external surfaces and wgpu 30 task) |
+| gpui-pre-wgpu | 0001-dmabuf-external-surfaces | ported: wgpu 30. The pipeline uses the depth attachment of the main pass with no depth write, as the macOS surface pipeline does. The vertex shader clips the quad to the content mask with `clip_to_mask`, because 0.3.14 removed `distance_from_clip_rect`. |
 | gpui-pre-wgpu | 0002-font-weight-and-style-synthesis | here |
 | gpui-pre-wgpu | 0003-native-backend-env | here |
 | gpui-pre-linux | 0001-html-clipboard | here |
