@@ -67,15 +67,18 @@ fn drawn(cx: &mut VisualTestContext, selector: &str) -> bool {
     cx.debug_bounds(selector.to_owned().leak()).is_some()
 }
 
-/// Whether the brand's line of the focused field is along the foot of the field `selector`.
+/// Whether the brand's line is along the foot of the field `selector`, inside it.
 fn accent_under(cx: &mut VisualTestContext, selector: &str) -> bool {
     let (Some(accent), Some(field)) = (
-        cx.debug_bounds("sticker-editor-accent"),
+        cx.debug_bounds(format!("{selector}-accent").leak()),
         cx.debug_bounds(selector.to_owned().leak()),
     ) else {
         return false;
     };
-    accent.left() == field.left() && accent.right() == field.right() && accent.bottom() > field.bottom() - px(2.0)
+    accent.left() == field.left()
+        && accent.right() == field.right()
+        && accent.top() >= field.top()
+        && (accent.bottom() - field.bottom()).abs() < px(2.0)
 }
 
 /// An account of Microsoft's cloud, with the a–b chat, the previews of `ids` and their templates (`width` by
@@ -334,13 +337,24 @@ fn the_brand_line_is_under_the_focused_field_only() {
         accent_under(cx, "sticker-editor-top"),
         "the top line has the focus as it opens"
     );
+    assert!(
+        !drawn(cx, "sticker-editor-bottom-accent"),
+        "only the focused field has the line"
+    );
     keys(cx, "tab");
     assert!(
         accent_under(cx, "sticker-editor-bottom"),
         "the line goes with the focus"
     );
+    assert!(
+        !drawn(cx, "sticker-editor-top-accent"),
+        "only the focused field has the line"
+    );
     keys(cx, "tab");
-    assert!(!drawn(cx, "sticker-editor-accent"), "no line while Done has the focus");
+    assert!(
+        !drawn(cx, "sticker-editor-top-accent") && !drawn(cx, "sticker-editor-bottom-accent"),
+        "no line while Done has the focus"
+    );
 }
 
 fn editor_open(picker: &Entity<FunPicker>, cx: &mut VisualTestContext) -> bool {

@@ -654,15 +654,15 @@ impl StickerEditor {
                     palette.muted_foreground
                 }))
                 .bg(rgb(palette.hover))
-                .when(focused, |field_box| field_box.child(Self::accent(palette)))
+                .when(focused, |field_box| field_box.child(Self::accent(selector, palette)))
         });
         div().flex().flex_col().gap_2().children(boxes).into_any_element()
     }
 
     /// The brand's line along the focused field's foot: one more pixel above its brand border.
-    fn accent(palette: Palette) -> gpui::Div {
+    fn accent(field: &'static str, palette: Palette) -> gpui::Div {
         div()
-            .debug_selector(|| "sticker-editor-accent".to_owned())
+            .debug_selector(move || format!("{field}-accent"))
             .absolute()
             .left_0()
             .right_0()
