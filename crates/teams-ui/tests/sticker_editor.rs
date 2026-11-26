@@ -67,6 +67,17 @@ fn drawn(cx: &mut VisualTestContext, selector: &str) -> bool {
     cx.debug_bounds(selector.to_owned().leak()).is_some()
 }
 
+/// Whether the brand's line of the focused field is along the foot of the field `selector`.
+fn accent_under(cx: &mut VisualTestContext, selector: &str) -> bool {
+    let (Some(accent), Some(field)) = (
+        cx.debug_bounds("sticker-editor-accent"),
+        cx.debug_bounds(selector.to_owned().leak()),
+    ) else {
+        return false;
+    };
+    accent.left() == field.left() && accent.right() == field.right() && accent.bottom() > field.bottom() - px(2.0)
+}
+
 /// An account of Microsoft's cloud, with the a–b chat, the previews of `ids` and their templates (`width` by
 /// `height`) readable through the engine.
 fn rig(ids: &[&str], width: u32, height: u32) -> Rig {
@@ -305,6 +316,31 @@ fn a_memes_two_lines_are_reached_by_the_keyboard_and_done_by_enter() {
         posted[0].html()
     );
     assert!(posted[0].html().contains("width=\"181\" height=\"180\""));
+}
+
+#[test]
+fn the_brand_line_is_under_the_focused_field_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let rig = rig(&["grumpycat"], 250, 249);
+    let (view, cx) = chat_window(&rig, dir.path());
+    let picker = open_pack(&view, "Meme", cx);
+    cx.update(|window, cx| {
+        picker.update(cx, |picker, cx| {
+            picker.activate(&Item::Sticker(StickerRef::teams("grumpycat")), window, cx);
+        });
+    });
+    draw(cx);
+    assert!(
+        accent_under(cx, "sticker-editor-top"),
+        "the top line has the focus as it opens"
+    );
+    keys(cx, "tab");
+    assert!(
+        accent_under(cx, "sticker-editor-bottom"),
+        "the line goes with the focus"
+    );
+    keys(cx, "tab");
+    assert!(!drawn(cx, "sticker-editor-accent"), "no line while Done has the focus");
 }
 
 fn editor_open(picker: &Entity<FunPicker>, cx: &mut VisualTestContext) -> bool {

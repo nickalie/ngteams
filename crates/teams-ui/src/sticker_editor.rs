@@ -623,7 +623,8 @@ impl StickerEditor {
             .into_any_element()
     }
 
-    /// The fields, each in a box as a text field draws it, the brand's colour round the focused one.
+    /// The fields, each a grey box with a line under it as Teams draws them, the brand's thicker line under the
+    /// focused one; High Contrast keeps a border on all sides.
     fn inputs(&self, palette: Palette, window: &Window, cx: &gpui::App) -> AnyElement {
         let selectors: &[&'static str] = match self.fields {
             Fields::Block(_) => &["sticker-editor-caption"],
@@ -631,18 +632,43 @@ impl StickerEditor {
         };
         let boxes = self.editors().into_iter().zip(selectors).map(|(field, selector)| {
             let focused = field.read(cx).is_focused(window);
-            div()
+            let field_box = div()
                 .debug_selector(move || (*selector).to_owned())
+                .relative()
                 .px_2()
                 .py_1()
-                .rounded_md()
-                .border_1()
-                .border_color(rgb(if focused { palette.brand } else { palette.border }))
-                .bg(rgb(palette.surface))
                 .text_sm()
-                .child(field.clone())
+                .child(field.clone());
+            if !palette.depth {
+                return field_box
+                    .border_1()
+                    .border_color(rgb(if focused { palette.brand } else { palette.border }))
+                    .bg(rgb(palette.surface));
+            }
+            field_box
+                .rounded_t_md()
+                .border_b_1()
+                .border_color(rgb(if focused {
+                    palette.brand
+                } else {
+                    palette.muted_foreground
+                }))
+                .bg(rgb(palette.hover))
+                .when(focused, |field_box| field_box.child(Self::accent(palette)))
         });
         div().flex().flex_col().gap_2().children(boxes).into_any_element()
+    }
+
+    /// The brand's line along the focused field's foot: one more pixel above its brand border.
+    fn accent(palette: Palette) -> gpui::Div {
+        div()
+            .debug_selector(|| "sticker-editor-accent".to_owned())
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .h(px(1.0))
+            .bg(rgb(palette.brand))
     }
 }
 
