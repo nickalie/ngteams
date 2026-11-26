@@ -1163,7 +1163,7 @@ fn press_now(window: &mut Window, cx: &mut App, key: &str) {
     window.dispatch_event(gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }), cx);
 }
 
-/// The ring drawn on the card's control `what`, by the name it has for a screen reader (`what: name`).
+/// The ring marker on the card's control `what`, with the tip it shows (`what: tip`).
 fn ring(cx: &mut gpui::VisualTestContext, what: &str) -> Option<String> {
     let names = [
         "Play",
@@ -1221,7 +1221,7 @@ fn tab_goes_through_each_control_of_a_card_s_player_in_their_order_and_back() {
         .collect();
     assert_eq!(
         ringed, wanted,
-        "each control is ringed while it has the keys, named for a screen reader"
+        "each control has the ring marker with its tip while it has the keys"
     );
     let more = Some("");
     let expected = [

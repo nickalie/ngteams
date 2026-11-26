@@ -471,7 +471,8 @@ impl Walk<'_> {
     }
 
     /// Enter and Space on each control of the player after the video ended, Tab bringing the keys to it in the order
-    /// of the bar: each presses only its own control (only Play plays the video).
+    /// of the bar: Play plays the video, More options opens a menu, Full screen fills the window and Open in browser
+    /// opens the link; no other control plays the video, fills the window or opens a link.
     fn player_controls(&mut self, stop: Stop) -> SandboxResult {
         let mut pressed = Vec::new();
         for (presses, name) in (1..).zip(PLAYER_CONTROLS) {

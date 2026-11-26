@@ -19,7 +19,8 @@
 //!   keys in it, until the pointer presses in it. Tab goes through each control in the order of the bar, ringed as the
 //!   kit's buttons are; Enter or Space presses the control that has the keys, and the keys stay on it (in full screen
 //!   too), where Tab stays in the video. A press of the pointer on a control leaves the keys on the control that has
-//!   them; full screen and a recap's menus bring them into the player from another place, for its Escape.
+//!   them (from the kit's "More options", which full screen does not draw again, they go to the picture); full screen
+//!   and a recap's menus bring them into the player from another place, for its Escape.
 //! - **Its states**: loading and buffering show a spinner over the picture; a video that can't be played here (a
 //!   format no installed `GStreamer` plugin plays, a file the account can't read, the network) says so and offers the
 //!   browser.
