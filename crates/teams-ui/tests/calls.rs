@@ -164,6 +164,15 @@ fn shell_window(
         selected_chat: chat.map(str::to_owned),
         ..Settings::default()
     };
+    shell_window_with(rig, settings, trace)
+}
+
+/// The shell in a window of its own, with a's `settings`.
+fn shell_window_with(
+    rig: &Rig,
+    settings: Settings,
+    trace: Arc<ViewTrace>,
+) -> (Entity<Shell>, &'static mut VisualTestContext) {
     let parts = ShellParts {
         core: rig.cx.read(|cx| rig.bridge.read(cx).core()),
         models: rig.models.clone(),
@@ -4844,8 +4853,18 @@ fn a_reconnecting_call_says_so_over_its_stage() {
 
 /// A group call in the trio chat, connected, its roster telling b and c: the call's window.
 fn group_call_up(rig: &Rig) -> &'static mut VisualTestContext {
+    group_call_up_saving(rig, false)
+}
+
+/// [`group_call_up`], with the setting that saves the calls' captions `saving`.
+fn group_call_up_saving(rig: &Rig, saving: bool) -> &'static mut VisualTestContext {
     let (trace, _) = trace();
-    let (shell, cx) = shell_window(rig, Some(TRIO), Arc::clone(&trace));
+    let settings = Settings {
+        selected_chat: Some(TRIO.to_owned()),
+        save_call_captions: saving,
+        ..Settings::default()
+    };
+    let (shell, cx) = shell_window_with(rig, settings, Arc::clone(&trace));
     let (windows, _) = call_windows(rig, &shell, &trace);
     registered(rig);
     cx.simulate_keystrokes("ctrl-shift-c");
@@ -5395,19 +5414,28 @@ fn a_transcription_stop_clears_its_failed_captions() {
 #[test]
 fn saved_captions_that_fail_are_tried_again_by_their_saving_alone() {
     let rig = calling();
-    let stage = group_call_up(&rig);
-    rig.cx.update(|cx| {
-        rig.models
-            .calls
-            .update(cx, |calls, cx| calls.set_saving_captions(true, cx));
-    });
+    let stage = group_call_up_saving(&rig, true);
+    assert!(rig.cx.read(|cx| rig.models.calls.read(cx).saving_captions()));
     meeting(&rig, transcribing_by(LAB_B, false));
+    // the saving tries three times (`call_transcript::RETRIES`)
+    for round in 0..3 {
+        captions_in(&rig, teams_core::CaptionPhase::Failed);
+        let mut again = caption_asks(&rig);
+        stage.executor().advance_clock(std::time::Duration::from_secs(21));
+        rig.cx.run_until_parked();
+        again.push(true);
+        assert_eq!(caption_asks(&rig), again, "tried again once, round {round}");
+    }
     captions_in(&rig, teams_core::CaptionPhase::Failed);
     let mut again = caption_asks(&rig);
     stage.executor().advance_clock(std::time::Duration::from_secs(21));
     rig.cx.run_until_parked();
     again.push(true);
-    assert_eq!(caption_asks(&rig), again, "tried again once");
+    assert_eq!(
+        caption_asks(&rig),
+        again,
+        "the hold tries again once the saving has no tries left"
+    );
 }
 
 #[test]

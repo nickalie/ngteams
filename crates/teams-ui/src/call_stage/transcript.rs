@@ -128,8 +128,8 @@ impl CallStage {
     }
 
     /// The captions held for the transcript stopped unseen (failed, or ended by the service): asked for again after a
-    /// while, a few times, unless the user shows them (their failure shows) or they are saved and failed (the saving
-    /// tries them again). A try that finds the call reconnecting is not counted.
+    /// while, a few times, unless the user shows them (their failure shows) or they failed and the saving still tries
+    /// them again. A try that finds the call reconnecting is not counted.
     fn retry_transcript_captions(&mut self, running: bool, cx: &mut Context<Self>) {
         if running && self.calls.read(cx).captions().phase == teams_core::CaptionPhase::On {
             self.record.transcript_retries = 0;
@@ -137,7 +137,7 @@ impl CallStage {
         let calls = self.calls.read(cx);
         if running
             || calls.captions_shown()
-            || (calls.saving_captions() && calls.captions().phase == teams_core::CaptionPhase::Failed)
+            || self.saving_retries(cx)
             || self.record.transcript_retrying
             || self.record.transcript_retries >= crate::call_transcript::RETRIES
         {
@@ -159,7 +159,7 @@ impl CallStage {
                     calls.captions().phase,
                     teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
                 );
-                if !calls.transcript_captions() || !stopped {
+                if !calls.transcript_captions() || !stopped || this.saving_retries(cx) {
                     return;
                 }
                 if connected {
@@ -170,6 +170,13 @@ impl CallStage {
             });
         })
         .detach();
+    }
+
+    /// The captions failed and their saving tries them again: the hold leaves the try to it.
+    fn saving_retries(&self, cx: &App) -> bool {
+        self.calls.read(cx).captions().phase == teams_core::CaptionPhase::Failed
+            && crate::call_transcript::recorder_of(self.core.me(), cx)
+                .is_some_and(|recorder| recorder.read(cx).retries_captions())
     }
 
     /// The transcript stays at its end while it was there at the last frame: a new line, a translation or a longer
@@ -567,8 +574,8 @@ impl CallStage {
     }
 }
 
-/// How near its end (px) the transcript must be to follow: each frame follows, so only a sub-pixel rest counts.
-const FOLLOW_WITHIN: f32 = 1.0;
+/// How near its end (px) the transcript must be to follow: each frame follows, so only the end itself counts.
+const FOLLOW_WITHIN: f32 = 0.01;
 
 /// What the translation follows while the Transcript pane shows: the whole call's words, then the captions' lines not
 /// final among them, so a line keeps its translation after the captions dropped it.

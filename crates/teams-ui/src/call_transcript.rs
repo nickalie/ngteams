@@ -256,9 +256,10 @@ struct Saving {
     title: Option<String>,
     /// When it connected, ms since the epoch: the transcript's start.
     connected_at: i64,
-    /// Its captions were asked for (and how many times again after they failed).
+    /// Its captions were asked for (and how many times again after they failed, whether a try waits).
     asked: bool,
     retries: u32,
+    retrying: bool,
     /// Its transcript, once the store opened it; whether that was asked.
     transcript: Option<i64>,
     opening: bool,
@@ -337,6 +338,14 @@ impl Recorder {
         self.saving.as_ref().map(|saving| saving.call)
     }
 
+    /// Whether the captions saved, once failed, are (or will be) asked for again by the saving.
+    #[must_use]
+    pub fn retries_captions(&self) -> bool {
+        self.saving
+            .as_ref()
+            .is_some_and(|saving| saving.retrying || saving.retries < RETRIES)
+    }
+
     /// The calls or the settings changed: the captions of the call up are saved as the setting says.
     fn follow(&mut self, cx: &mut Context<Self>) {
         // the read-only app turns nothing on: starting the captions is a request of its own
@@ -377,6 +386,7 @@ impl Recorder {
                 connected_at: chrono::Utc::now().timestamp_millis(),
                 asked: false,
                 retries: 0,
+                retrying: false,
                 transcript: None,
                 opening: false,
                 heard: BTreeMap::new(),
@@ -392,8 +402,15 @@ impl Recorder {
         let phase = self.calls.read(cx).captions().phase;
         let shown = self.calls.read(cx).captions_shown();
         let Some(saving) = self.saving.as_mut() else { return };
+        if phase == teams_core::CaptionPhase::On {
+            saving.retries = 0;
+        }
+        if saving.retrying {
+            return;
+        }
         if phase == teams_core::CaptionPhase::Failed && saving.asked && !shown && saving.retries < RETRIES {
             saving.retries += 1;
+            saving.retrying = true;
             let call = saving.call;
             cx.spawn(async move |this, cx: &mut AsyncApp| {
                 cx.background_executor().timer(RETRY_AFTER).await;
@@ -416,6 +433,7 @@ impl Recorder {
     fn retry(&mut self, call: CallId, cx: &mut Context<Self>) {
         if let Some(saving) = self.saving.as_mut().filter(|saving| saving.call == call) {
             saving.asked = false;
+            saving.retrying = false;
             self.follow(cx);
         }
     }
