@@ -196,6 +196,23 @@ impl TelegramImport {
         self.token.read(cx).focus_handle(cx).is_focused(window)
     }
 
+    /// Whether the link field has the focus.
+    pub fn link_focused(&self, window: &Window, cx: &gpui::App) -> bool {
+        self.link.read(cx).focus_handle(cx).is_focused(window)
+    }
+
+    /// The text in the link field.
+    #[must_use]
+    pub fn link_text(&self, cx: &gpui::App) -> SharedString {
+        self.link.read(cx).value()
+    }
+
+    /// How many characters the token field holds: its mask shows that many, never the token.
+    #[must_use]
+    pub fn token_chars(&self, cx: &gpui::App) -> usize {
+        self.token.read(cx).value().chars().count()
+    }
+
     /// Puts `link` in the link field (as typed or pasted).
     pub fn set_link(&mut self, link: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.link

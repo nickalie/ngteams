@@ -1795,6 +1795,22 @@ fn the_telegram_panel_s_tab_order_is_its_drawn_order() {
 }
 
 #[test]
+fn the_telegram_panel_tells_its_focused_field_and_typed_text() {
+    let (_view, _picker, panel, cx) = panel_with_kept_token();
+    assert!(cx.update(|window, cx| panel.read(cx).link_focused(window, cx)));
+    cx.simulate_input("t.me/addstickers/QaCats");
+    assert_eq!(
+        cx.update(|_, cx| panel.read(cx).link_text(cx)).as_ref(),
+        "t.me/addstickers/QaCats"
+    );
+    keys(cx, "tab enter");
+    assert!(token_focused(&panel, cx));
+    assert!(!cx.update(|window, cx| panel.read(cx).link_focused(window, cx)));
+    cx.simulate_input("123:абв");
+    assert_eq!(cx.update(|_, cx| panel.read(cx).token_chars(cx)), 7);
+}
+
+#[test]
 fn the_import_button_s_focus_ring_is_outside_its_brand_fill() {
     use telegram_import::Press;
     let (_view, _picker, panel, cx) = panel_with_kept_token();

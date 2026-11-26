@@ -1774,8 +1774,8 @@ fn token_never_drawn(user: &mut User<'_>) -> SandboxResult {
     user.image("panel-token-saved")?;
     user.press("tab")?;
     user.press("space")?;
-    user.until("Replace showed the token field", |state| {
-        panel(state)["asks_token"] == true
+    user.until("Replace showed the token field, focused", |state| {
+        panel(state)["asks_token"] == true && panel(state)["token_focused"] == true
     })?;
     let mut shots = Vec::new();
     for (field, name) in [("token", "mask"), ("link", "plain")] {
@@ -1784,9 +1784,26 @@ fn token_never_drawn(user: &mut User<'_>) -> SandboxResult {
             for _ in 0..3 {
                 user.press("shift+tab")?;
             }
+            user.until("Shift+Tab three times: the link field", |state| {
+                panel(state)["link_focused"] == true
+            })?;
         }
+        let holds = |state: &Value, text: &str| {
+            let panel = panel(state);
+            if field == "token" {
+                panel["token_chars"] == text.chars().count() && panel["token_focused"] == true
+            } else {
+                panel["link"] == text && panel["link_focused"] == true
+            }
+        };
         for (index, token) in [MASK_ONE, MASK_TWO].into_iter().enumerate() {
-            user.retype(token)?;
+            // a loaded machine takes the keys late; the two tokens have one length, so the field must empty first
+            user.retype("")?;
+            user.until(&format!("the {field} field emptied"), |state| holds(state, ""))?;
+            user.type_text(token)?;
+            user.until(&format!("the {field} field holds token {index}"), |state| {
+                holds(state, token)
+            })?;
             shots.push(user.stable_image(&format!("{name}-{index}"))?);
         }
     }
@@ -2500,6 +2517,10 @@ fn panel_state(panel: &Entity<TelegramImport>, window: &Window, cx: &App) -> Val
         "asks_token": panel.asks_token(),
         "problem": panel.problem().map(ToString::to_string),
         "focus": panel.holds_focus(window, cx),
+        "link_focused": panel.link_focused(window, cx),
+        "token_focused": panel.token_focused(window, cx),
+        "link": panel.link_text(cx).to_string(),
+        "token_chars": panel.token_chars(cx),
     })
 }
 

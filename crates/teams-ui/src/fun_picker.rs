@@ -1867,7 +1867,7 @@ fn summary(headline: String, skipped: &[crate::stickers::Skipped], palette: Pale
             div()
                 .text_xs()
                 .text_color(rgb(palette.muted_foreground))
-                .truncate()
+                .whitespace_normal()
                 .child(format!("{skipped}"))
         }));
         if count > SKIPPED_SHOWN {
