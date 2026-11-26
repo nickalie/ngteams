@@ -5384,6 +5384,31 @@ fn the_keyboard_reaches_the_transcript_and_its_keys_scroll_it() {
 }
 
 #[test]
+fn the_keyboard_on_the_newest_turn_keeps_following_new_turns() {
+    let rig = calling();
+    let stage = transcript_with_the_keyboard(&rig);
+    stage.simulate_keystrokes("end");
+    assert!(drawn(stage, "call-transcript-lit-40"));
+    captions_on(&rig, vec![spoken("41", LAB_B, "Synthetic words.", 4100)]);
+    assert!(transcript_at_end(stage, 41), "End: the list follows a new turn");
+    assert!(drawn(stage, "call-transcript-lit-41"), "and the new turn is lit");
+    stage.simulate_keystrokes("up");
+    assert!(drawn(stage, "call-transcript-lit-40"));
+    captions_on(&rig, vec![spoken("42", LAB_A, "Synthetic words.", 4200)]);
+    assert!(!transcript_at_end(stage, 42), "on an older turn: the list stays");
+    assert!(drawn(stage, "call-transcript-lit-40"));
+    let back = (0..40).any(|_| {
+        stage.simulate_keystrokes("tab");
+        drawn(stage, "call-transcript-keys")
+    });
+    assert!(back, "Tab comes back to the list");
+    assert!(!drawn(stage, "call-transcript-lit-40"), "the old turn is lit no more");
+    stage.simulate_keystrokes("end");
+    captions_on(&rig, vec![spoken("43", LAB_B, "Synthetic words.", 4300)]);
+    assert!(transcript_at_end(stage, 43));
+}
+
+#[test]
 fn hidden_captions_stay_hidden_while_the_transcription_s_stop_stops_them() {
     let rig = calling();
     let stage = group_call_up(&rig);
@@ -5406,6 +5431,23 @@ fn hidden_captions_stay_hidden_while_the_transcription_s_stop_stops_them() {
     // once off, captions that run again for no transcript show as before
     captions_on(&rig, vec![spoken("3", LAB_B, "Synthetic words later.", 300)]);
     assert!(drawn(stage, "call-captions"));
+}
+
+#[test]
+fn captions_shown_while_the_transcription_s_stop_stops_them_are_asked_for_again() {
+    let rig = calling();
+    let stage = group_call_up(&rig);
+    meeting(&rig, transcribing_by(LAB_B, false));
+    captions_on(&rig, vec![spoken("1", LAB_B, "Synthetic words.", 100)]);
+    meeting(&rig, teams_core::MeetingState::default());
+    assert_eq!(caption_asks(&rig).last(), Some(&false));
+    stage.simulate_keystrokes("alt-shift-c");
+    stage.run_until_parked();
+    assert_eq!(
+        caption_asks(&rig).last(),
+        Some(&true),
+        "the captions are asked for after the stop"
+    );
 }
 
 fn captions_in(rig: &Rig, phase: teams_core::CaptionPhase) {

@@ -22,7 +22,7 @@
 //!   fails says why ([`super::recording`]); one that takes longer than Teams waits says "Couldn't start recording and
 //!   transcription." ([`teams_core::RecordingProblem`]).
 
-use super::recording::{Start, Stopped, TranscriptRow};
+use super::recording::{KeyAt, Start, Stopped, TranscriptRow};
 use super::*;
 use crate::calls::SpokenLine;
 use crate::translate::{self, CaptionTranslation};
@@ -190,7 +190,7 @@ impl CallStage {
     /// line keeps it there, a scroll up from the end stops it, as does the keyboard on an entry before the newest
     /// (`count` entries) while the list has it (`keyboard_on`).
     fn follow_transcript(&self, keyboard_on: bool, count: usize) {
-        if keyboard_on && self.record.transcript_at.is_some_and(|at| at + 1 < count) {
+        if keyboard_on && matches!(self.record.transcript_at, Some(KeyAt::Entry(at)) if at + 1 < count) {
             return;
         }
         let scroll = &self.record.transcript_scroll;
@@ -306,7 +306,7 @@ impl CallStage {
 
     /// The Transcript pane while it is open (see the module docs).
     pub(super) fn transcript_pane(
-        &self,
+        &mut self,
         active: &ActiveCall,
         palette: Palette,
         window: &Window,
@@ -327,6 +327,10 @@ impl CallStage {
                     .on_click(cx.listener(|this, _, _, cx| this.show_transcript(false, cx))),
             ));
         let keyboard_on = self.transcript_focus.is_focused(window);
+        if !keyboard_on {
+            // Tab back into the list starts at the newest again, which follows new lines
+            self.record.transcript_at = None;
+        }
         let rows = self.transcript_rows(active, palette, keyboard_on, cx);
         self.follow_transcript(keyboard_on, rows.len());
         Some(
@@ -383,7 +387,8 @@ impl CallStage {
         let count = entries(&self.record.transcript, self.calls.read(cx).spoken()).len();
         let lead = usize::from(self.pending_start(cx).is_some()) + 1;
         let scroll = &self.record.transcript_scroll;
-        let Some(step) = transcript_step(event, count, self.record.transcript_at) else {
+        let now = self.record.transcript_at.map(|at| at.index(count));
+        let Some(step) = transcript_step(event, count, now) else {
             return;
         };
         let at = match step {
@@ -404,7 +409,11 @@ impl CallStage {
                 edge.saturating_sub(lead).min(count.saturating_sub(1))
             }
         };
-        self.record.transcript_at = Some(at);
+        self.record.transcript_at = Some(if at + 1 == count {
+            KeyAt::Newest
+        } else {
+            KeyAt::Entry(at)
+        });
         cx.stop_propagation();
         cx.notify();
     }
@@ -423,6 +432,7 @@ impl CallStage {
             .or_else(|| calls.spoken().first().map(|line| line.at))
             .unwrap_or_default();
         let translation = self.translation.read(cx);
+        let at = self.record.transcript_at.map(|at| at.index(entries.len()));
         entries
             .iter()
             .enumerate()
@@ -444,7 +454,7 @@ impl CallStage {
             })
             .enumerate()
             .map(|(index, (row, words))| {
-                let lit = keyboard_on && self.record.transcript_at == Some(index);
+                let lit = keyboard_on && at == Some(index);
                 let row = row
                     .id(("call-transcript-entry", index))
                     .role(gpui::accesskit::Role::ListItem)

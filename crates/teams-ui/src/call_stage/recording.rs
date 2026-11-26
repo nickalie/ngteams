@@ -100,7 +100,7 @@ pub(super) struct RecordUi {
     /// The transcript's scroll: it follows the newest line.
     pub(super) transcript_scroll: gpui::ScrollHandle,
     /// The transcript's entry the keyboard is on, lit and read while its list has the focus.
-    pub(super) transcript_at: Option<usize>,
+    pub(super) transcript_at: Option<KeyAt>,
     /// The captions held for the transcript were asked for again this many times since they last ran.
     pub(super) transcript_retries: u32,
     /// A try again of those captions waits.
@@ -109,6 +109,24 @@ pub(super) struct RecordUi {
     pub(super) pending: Option<super::transcript::Pending>,
     /// That notice was put away.
     pub(super) pending_closed: bool,
+}
+
+/// The transcript's entry the keyboard is on: one before the newest stays where it is, the newest stays the newest as
+/// new entries come, so the list keeps following them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum KeyAt {
+    Entry(usize),
+    Newest,
+}
+
+impl KeyAt {
+    /// The entry it is among `count` entries.
+    pub(super) fn index(self, count: usize) -> usize {
+        match self {
+            Self::Entry(at) => at.min(count.saturating_sub(1)),
+            Self::Newest => count.saturating_sub(1),
+        }
+    }
 }
 
 /// What More's Record and transcribe offers now.

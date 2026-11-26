@@ -1059,10 +1059,11 @@ impl Calls {
             self.pane.shown = show;
             cx.notify();
         }
+        // captions on their way off for the transcript's stop are asked for again, after that stop
         let running = matches!(
             self.captions.phase,
             teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
-        );
+        ) && self.pane.transcript != Hold::Stopping;
         let local = running && (show || self.pane.saving || self.pane.transcript == Hold::Running);
         (!local).then_some(Ask::Captions(show))
     }
