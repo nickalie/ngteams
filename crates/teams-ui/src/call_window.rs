@@ -81,8 +81,9 @@ pub struct CallWindows {
     accounts: Vec<Followed>,
     open: Option<Open>,
     prejoin: Option<OpenPrejoin>,
-    /// The accounts whose pre-join showed when the calls last changed: one that shows since is the one opened last.
-    prejoins: Vec<String>,
+    /// The pre-joins (account, open) that showed when the calls last changed: one that shows since is the one opened
+    /// last.
+    prejoins: Vec<(String, u64)>,
     /// The call whose window the user closed: not opened again by itself.
     closed: Option<(String, CallId)>,
     namer: Option<AccountNamer>,
@@ -199,11 +200,13 @@ impl CallWindows {
     /// The pre-join's window follows the calls: open while one shows and no call is up. A ring's pre-join comes
     /// first, as its ring is silent while it shows; then the one opened last.
     fn follow_prejoin(&mut self, call_up: bool, cx: &mut Context<Self>) {
-        let showing: Vec<String> = self
+        let showing: Vec<(String, u64)> = self
             .accounts
             .iter()
-            .filter(|account| account.parts.models.calls.read(cx).prejoin().is_some())
-            .map(|account| account.key.clone())
+            .filter_map(|account| {
+                let opened = account.parts.models.calls.read(cx).prejoin()?.opened;
+                Some((account.key.clone(), opened))
+            })
             .collect();
         let wanted = (!call_up).then(|| self.prejoin_wanted(&showing, cx)).flatten();
         self.prejoins = showing;
@@ -219,15 +222,20 @@ impl CallWindows {
     }
 
     /// The account whose pre-join the window shows, of the accounts `showing` one (see [`Self::follow_prejoin`]).
-    fn prejoin_wanted(&self, showing: &[String], cx: &App) -> Option<String> {
+    fn prejoin_wanted(&self, showing: &[(String, u64)], cx: &App) -> Option<String> {
         let open = self.prejoin.as_ref().map(|open| &open.key);
         self.accounts
             .iter()
             .find(|account| account.parts.models.calls.read(cx).ring_in_prejoin())
             .map(|account| &account.key)
-            .or_else(|| showing.iter().find(|key| !self.prejoins.contains(key)))
-            .or_else(|| showing.iter().find(|key| Some(*key) == open))
-            .or_else(|| showing.first())
+            .or_else(|| {
+                showing
+                    .iter()
+                    .find(|shown| !self.prejoins.contains(shown))
+                    .map(|(key, _)| key)
+            })
+            .or_else(|| showing.iter().map(|(key, _)| key).find(|key| Some(*key) == open))
+            .or_else(|| showing.first().map(|(key, _)| key))
             .cloned()
     }
 

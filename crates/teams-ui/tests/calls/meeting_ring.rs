@@ -475,6 +475,87 @@ fn a_calendar_pre_join_opened_last_shows_over_another_accounts_open_one() {
 }
 
 #[test]
+fn a_pre_join_that_replaces_its_accounts_own_shows_over_another_accounts_opened_before_it() {
+    let rig = calling();
+    let (trace, _) = trace();
+    let (shell, _cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    let (other, calls) = second_account(&rig, &shell, &windows, &trace);
+    rig.cx.update(|cx| {
+        assert!(teams_ui::calls::show_prejoin(
+            &calls,
+            &trace,
+            meeting_to_join(),
+            false,
+            cx
+        ));
+    });
+    rig.cx.run_until_parked();
+    rig.cx.update(|cx| {
+        assert!(teams_ui::calls::show_prejoin(
+            &calls_of(&rig),
+            &trace,
+            meeting_to_join(),
+            false,
+            cx
+        ));
+    });
+    let window = prejoin_window(&rig, &windows);
+    window.simulate_keystrokes("enter");
+    window.run_until_parked();
+    assert_eq!(
+        actions(&rig),
+        [join_meeting_action()],
+        "Join now on the window shown joins the pre-join opened last"
+    );
+    assert!(
+        other.call_actions.lock().unwrap().is_empty(),
+        "the account whose pre-join opened before joins nothing"
+    );
+}
+
+#[test]
+fn an_accepted_rings_pre_join_stays_over_a_calendar_pre_join_another_account_opens_after_it() {
+    let rig = calling();
+    listed_meeting(&rig);
+    let (trace, _) = trace();
+    let (shell, _cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    let (other, calls) = second_account(&rig, &shell, &windows, &trace);
+    let core: Arc<dyn teams_ui::Core> = other.clone();
+    rig.cx.update(|cx| {
+        calls.update(cx, |calls, cx| calls.apply(&Event::IncomingCall(meeting_ring(10)), cx));
+        teams_ui::calls::ask(&calls, &core, &trace, teams_ui::calls::Ask::Answer, cx);
+    });
+    rig.cx.run_until_parked();
+    rig.cx.update(|cx| {
+        assert!(teams_ui::calls::show_prejoin(
+            &calls_of(&rig),
+            &trace,
+            meeting_to_join(),
+            false,
+            cx
+        ));
+    });
+    rig.cx.run_until_parked();
+    assert!(rig.cx.read(|cx| calls.read(cx).ring_in_prejoin()));
+    let window = prejoin_window(&rig, &windows);
+    window.simulate_keystrokes("enter");
+    window.run_until_parked();
+    assert_eq!(
+        *other.call_actions.lock().unwrap(),
+        [CallAction::Answer { call: call(10) }],
+        "Join now on the window shown answers the accepted ring, silent while its pre-join shows"
+    );
+    assert!(
+        actions(&rig).is_empty(),
+        "the calendar pre-join opened after it joins nothing"
+    );
+}
+
+#[test]
 fn a_ring_that_ends_before_its_meetings_name_is_read_leaves_its_pre_join_titled_with_the_name() {
     let rig = calling();
     listed_meeting(&rig);

@@ -746,6 +746,23 @@ impl MeetingToJoin {
         }
     }
 
+    /// Names the meeting in `chat` `title` while it shows the placeholder title. Whether it did.
+    fn retitle(&mut self, chat: &str, title: &str) -> bool {
+        let Self::Chat {
+            chat: shown,
+            title: current,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        if shown != chat || current != crate::meeting_alert::NO_TITLE {
+            return false;
+        }
+        title.clone_into(current);
+        true
+    }
+
     fn ask(&self) -> Ask {
         match self {
             Self::Chat {
@@ -776,6 +793,8 @@ pub struct Prejoin {
     pub entry: PrejoinEntry,
     /// The meeting's Request to join whose Accept opened it: its Join now answers that ring while it rings.
     pub ring: Option<CallId>,
+    /// Which open of the account's pre-joins this is: a pre-join that replaces another has a new one.
+    pub opened: u64,
 }
 
 /// What a pre-join's Join now does.
@@ -946,6 +965,8 @@ pub struct Calls {
     video: Option<VideoFeed>,
     /// The meeting's pre-join, while it shows.
     prejoin: Option<Prejoin>,
+    /// The pre-joins opened so far.
+    prejoins_opened: u64,
     /// The meeting last gone into: its call's title, and what a Rejoin goes into.
     meeting: Option<MeetingToJoin>,
     /// The call that actually adopted that pre-join, so Rejoin cannot reuse a different meeting.
@@ -1247,6 +1268,7 @@ impl Calls {
         self.refused = None;
         self.ended = None;
         self.taken_back = false;
+        self.prejoins_opened += 1;
         self.prejoin = Some(Prejoin {
             to_join,
             muted: false,
@@ -1255,6 +1277,7 @@ impl Calls {
             joining: false,
             entry: PrejoinEntry::Join,
             ring: None,
+            opened: self.prejoins_opened,
         });
         cx.notify();
     }
@@ -1311,26 +1334,16 @@ impl Calls {
     /// The meeting's name, read for the pre-join that Accept on a ring in `chat` opened (its ring can have ended since):
     /// also the title of the meeting its Join now already went into, and of that meeting's call.
     fn title_ring_prejoin(&mut self, chat: &str, title: String, cx: &mut Context<Self>) {
-        if let Some(MeetingToJoin::Chat {
-            chat: shown,
-            title: current,
-            ..
-        }) = self.prejoin.as_mut().map(|prejoin| &mut prejoin.to_join)
-            && shown == chat
-            && current == crate::meeting_alert::NO_TITLE
+        if let Some(prejoin) = &mut self.prejoin
+            && prejoin.to_join.retitle(chat, &title)
         {
-            current.clone_from(&title);
             cx.notify();
         }
-        if let Some(MeetingToJoin::Chat {
-            chat: joined,
-            title: current,
-            ..
-        }) = &mut self.meeting
-            && joined == chat
-            && current == crate::meeting_alert::NO_TITLE
+        if self
+            .meeting
+            .as_mut()
+            .is_some_and(|meeting| meeting.retitle(chat, &title))
         {
-            current.clone_from(&title);
             if let Some(active) = self.call.as_mut().filter(|active| Some(active.id) == self.meeting_call) {
                 active.title = Some(title);
             }
