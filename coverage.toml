@@ -547,7 +547,7 @@ reason = "Unix-only lab command/scenario subtree, excluded by the cfg-selected m
 context = { "crates/proto-lab/src/lib.rs" = "8d3871c865c472e3b5bcd76d93027c67ff8e8b7d7bece89c91673280a166e3d8", "crates/proto-lab/src/main.rs" = "66c96952c1c552b94f1cc1938cc7f595f9b1e1967f7d5c8e5ef5f48f58a90f2d", "crates/proto-lab/src/commands.rs" = "eac1126557b554aae9c187daa89a44640a3a08fae132c60468def9156fd01f70", "crates/proto-lab/src/scenario/windows.rs" = "9a5966754730f2bd844f6ba5f094948287af7ab896b6030c33b2a104f16af126" }
 
 [unmapped_sources_windows."crates/proto-lab/src/scenario/team_manage.rs"]
-sha256 = "5bfe2f0298c61ca398de030c25ead7ce2b7731f711a2272692335d05c8f1085c"
+sha256 = "8d97ebe7365cd5ce87e03c2e20dcd2d6606a85a518e245699292855be5335bd2"
 reason = "Unix-only lab command/scenario subtree, excluded by the cfg-selected module roots on Windows; remains in the Linux source inventory and coverage gate."
 context = { "crates/proto-lab/src/lib.rs" = "8d3871c865c472e3b5bcd76d93027c67ff8e8b7d7bece89c91673280a166e3d8", "crates/proto-lab/src/main.rs" = "66c96952c1c552b94f1cc1938cc7f595f9b1e1967f7d5c8e5ef5f48f58a90f2d", "crates/proto-lab/src/commands.rs" = "eac1126557b554aae9c187daa89a44640a3a08fae132c60468def9156fd01f70", "crates/proto-lab/src/scenario/windows.rs" = "9a5966754730f2bd844f6ba5f094948287af7ab896b6030c33b2a104f16af126" }
 

@@ -9,7 +9,7 @@ use gpui_component::{IconName, IconNamed as _};
 use teams_ui::AppAssets;
 use teams_ui::assets::WITHHELD;
 
-/// Every `IconName` the kit's components draw (`gpui-component` 0.8's sources, its tests' aside).
+/// Every `IconName` the kit's components draw (`gpui-component` 0.11's sources, its tests' aside).
 fn drawn_by_the_kit() -> Vec<IconName> {
     use IconName as I;
     vec![

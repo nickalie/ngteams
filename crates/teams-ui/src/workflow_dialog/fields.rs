@@ -120,7 +120,7 @@ impl WorkflowDialog {
             .subscriptions
             .push(cx.subscribe(&date, move |this, _, event: &DatePickerEvent, cx| {
                 let DatePickerEvent::Change(picked) = event;
-                let day = picked.start().and_then(|time| crate::kit_date::from_kit(time.date()));
+                let day = crate::kit_date::picked_day(picked);
                 this.date_picked(index, day, cx);
             }));
         field.date = Some(date);
