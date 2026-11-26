@@ -1,0 +1,61 @@
+# The crates that the Android library links must build for Android. Without call media (`teams-core` with no default
+# features) they link no libwebrtc, GStreamer or GPU code. The Android track's branches run it on each push too.
+name: Android check
+
+on:
+  push:
+    branches: [main, 'team/android-*']
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      # the Nix flake uses a release's binaries and builds nothing of the workspace
+      - '!flake.nix'
+      - '!flake.lock'
+      - '!packaging/nix/**'
+      - '**/tests/fixtures/**'
+      - vendor/gpui-pre/README.md
+  pull_request:
+    paths:
+      - '**'
+      - '!**/*.md'
+      - '!docs/**'
+      - '!flake.nix'
+      - '!flake.lock'
+      - '!packaging/nix/**'
+      - '**/tests/fixtures/**'
+      - vendor/gpui-pre/README.md
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-check:
+    name: Core crates check for Android (arm64-v8a, x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the repository toolchain and the Android targets
+        run: |
+          rustup show active-toolchain
+          rustup target add aarch64-linux-android x86_64-linux-android
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+      - name: Check the crates of the Android library
+        run: |
+          echo "NDK: $ANDROID_NDK_LATEST_HOME"
+          ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" cargo ndk -t arm64-v8a -t x86_64 -P 29 check --locked \
+            -p teams-sdp -p teams-platform -p teams-log -p teams-store -p teams-auth -p teams-proto -p teams-call \
+            -p teams-trouter -p teams-core --no-default-features
