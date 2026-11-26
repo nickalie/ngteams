@@ -816,9 +816,20 @@ struct CaptionPane {
     /// The calls' captions are saved ("Save live captions of every call", [`crate::call_transcript`]): they keep
     /// running while their pane is hidden.
     saving: bool,
-    /// The captions run for the call's live transcript (a transcription runs): they keep running while their pane is
-    /// hidden.
-    transcript: bool,
+    /// The captions run for the call's live transcript, or stop after it.
+    transcript: Hold,
+}
+
+/// The captions' hold for the call's live transcript.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Hold {
+    #[default]
+    None,
+    /// A transcription runs: the captions keep running while their pane is hidden.
+    Running,
+    /// The transcription stopped and the captions are asked to stop while their pane is hidden: it stays hidden until
+    /// they are off, also when the stop fails.
+    Stopping,
 }
 
 /// One utterance of the call's live transcript: its last final result, and when it was first heard (ms since the
@@ -975,7 +986,7 @@ impl Calls {
     #[must_use]
     pub fn captions_shown(&self) -> bool {
         self.captions.phase != teams_core::CaptionPhase::Off
-            && (self.pane.shown || !(self.pane.saving || self.pane.transcript))
+            && (self.pane.shown || !(self.pane.saving || self.pane.transcript != Hold::None))
     }
 
     /// The call's live transcript: each final utterance heard while a transcription ran, in the order first heard.
@@ -987,13 +998,27 @@ impl Calls {
     /// Whether the captions run for the call's live transcript ([`Self::set_transcript_captions`]).
     #[must_use]
     pub fn transcript_captions(&self) -> bool {
-        self.pane.transcript
+        self.pane.transcript == Hold::Running
     }
 
     /// The captions run for the call's live transcript (`on`): hiding their pane leaves them running.
     pub fn set_transcript_captions(&mut self, on: bool, cx: &mut Context<Self>) {
-        if self.pane.transcript != on {
-            self.pane.transcript = on;
+        let hold = match (on, self.pane.transcript) {
+            (true, _) => Hold::Running,
+            (false, Hold::Running) => Hold::None,
+            (false, hold) => hold,
+        };
+        if self.pane.transcript != hold {
+            self.pane.transcript = hold;
+            cx.notify();
+        }
+    }
+
+    /// The captions held for the live transcript are no longer held and are asked to stop: their pane stays hidden
+    /// until the engine tells them off.
+    pub fn stop_transcript_captions(&mut self, cx: &mut Context<Self>) {
+        if self.pane.transcript != Hold::Stopping {
+            self.pane.transcript = Hold::Stopping;
             cx.notify();
         }
     }
@@ -1038,7 +1063,7 @@ impl Calls {
             self.captions.phase,
             teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
         );
-        let local = running && (show || self.pane.saving || self.pane.transcript);
+        let local = running && (show || self.pane.saving || self.pane.transcript == Hold::Running);
         (!local).then_some(Ask::Captions(show))
     }
 
@@ -1347,15 +1372,7 @@ impl Calls {
                     self.rang_out = Some((*call, end.by.clone()));
                 }
             }
-            Event::CallCaptions { call, captions } => {
-                if let Some(active) = self.call.as_ref().filter(|active| active.id == *call) {
-                    let now = chrono::Utc::now().timestamp_millis();
-                    let transcribing = active.meeting.transcribing.is_some();
-                    self.spoken
-                        .follow(*call, transcribing, &self.captions.lines, &captions.lines, now);
-                    self.captions = captions.clone();
-                }
-            }
+            Event::CallCaptions { call, captions } => self.captions_told(*call, captions),
             Event::CallRecording { call, recording } => {
                 if self.call.as_ref().is_some_and(|active| active.id == *call) {
                     self.recording = *recording;
@@ -1593,12 +1610,28 @@ impl Calls {
         }
     }
 
+    /// The engine told the call's captions: the live transcript follows them, and a stop of the captions held for it
+    /// ends once they are off.
+    fn captions_told(&mut self, call: CallId, captions: &teams_core::CallCaptions) {
+        let Some(active) = self.call.as_ref().filter(|active| active.id == call) else {
+            return;
+        };
+        let now = chrono::Utc::now().timestamp_millis();
+        let transcribing = active.meeting.transcribing.is_some();
+        self.spoken
+            .follow(call, transcribing, &self.captions.lines, &captions.lines, now);
+        self.captions = captions.clone();
+        if captions.phase == teams_core::CaptionPhase::Off && self.pane.transcript == Hold::Stopping {
+            self.pane.transcript = Hold::None;
+        }
+    }
+
     /// A call of the account's moved on.
     fn status(&mut self, call: CallId, status: &CallStatus) {
         if self.call.as_ref().is_none_or(|active| active.id != call) {
             self.captions = teams_core::CallCaptions::default();
             self.pane.shown = false;
-            self.pane.transcript = false;
+            self.pane.transcript = Hold::None;
             self.spoken = Spoken::default();
             self.recording = teams_core::CallRecording::default();
             self.call = Some(self.adopt(call));
@@ -1626,7 +1659,7 @@ impl Calls {
         if let CallStatus::Ended(end) = status {
             self.captions = teams_core::CallCaptions::default();
             self.pane.shown = false;
-            self.pane.transcript = false;
+            self.pane.transcript = Hold::None;
             self.recording = teams_core::CallRecording::default();
             active.check.failed = matches!(end, End::Failed(_));
             // a refusal during the call was shown in its bar: how it ended is what is told now; but the start's own

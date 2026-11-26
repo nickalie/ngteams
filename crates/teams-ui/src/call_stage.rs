@@ -325,6 +325,8 @@ pub struct CallStage {
     /// The end closing by itself, while it is due.
     closing: Option<Task<()>>,
     focus: FocusHandle,
+    /// The Transcript pane's list of lines: a tab stop whose keys scroll it.
+    transcript_focus: FocusHandle,
     /// What the keyboard reaches in the People pane, and its folded sections.
     people_keys: people_pane::PeopleKeys,
     ticking: Option<Task<()>>,
@@ -454,6 +456,7 @@ impl CallStage {
             end_shown: false,
             closing: None,
             focus: cx.focus_handle(),
+            transcript_focus: cx.focus_handle(),
             people_keys: people_pane::PeopleKeys::default(),
             ticking: None,
             _waking: waking,
@@ -1086,7 +1089,7 @@ impl CallStage {
             let effects = self.effects_pane(active, palette, cx);
             let info = self.meeting_info_pane(active, title, palette, cx);
             let health = self.health_pane(palette, cx);
-            let transcript = self.transcript_pane(active, palette, cx);
+            let transcript = self.transcript_pane(active, palette, window, cx);
             return div()
                 .size_full()
                 .flex()

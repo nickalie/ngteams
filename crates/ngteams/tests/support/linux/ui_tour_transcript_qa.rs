@@ -83,7 +83,7 @@ pub(super) const STEPS: [Step; 17] = [
         toggle_captions(window, cx);
         say_line(shell, GROUP, MANY + 7, cx);
     }),
-    // the transcription stops: its captions are asked to stop (then off, as the engine tells it); the lines stay
+    // the transcription stops: its captions are asked to stop, their pane still hidden; the lines stay
     ("qa-transcript-stopped", |shell, _, cx| {
         transcribing(shell, GROUP, None, cx);
     }),
@@ -223,7 +223,7 @@ fn expected(name: &str) -> (&'static [&'static str], (usize, usize)) {
         "qa-transcript-reopened" => (&["spoken=65 ", "pane=true "], (0, 0)),
         "qa-transcript-captions-shown" => (&["spoken=66 ", "held=true ", "shown=true ", "asked=true "], (0, 1)),
         "qa-transcript-captions-hidden" => (&["spoken=67 ", "held=true ", "shown=false ", "asked=false "], (0, 1)),
-        "qa-transcript-stopped" => (&["spoken=67 ", "held=false "], (1, 0)),
+        "qa-transcript-stopped" => (&["spoken=67 ", "held=false ", "shown=false "], (1, 0)),
         "qa-transcript-meeting" => (&["spoken=0 ", "held=true ", "shown=false ", "meeting=true "], (1, 0)),
         "qa-transcript-meeting-speech" | "qa-transcript-meeting-dark" => (&["spoken=6 ", "pane=true "], (0, 0)),
         "qa-transcript-translated" => (&["spoken=7 ", "pane=true "], (0, 0)),
@@ -242,6 +242,15 @@ pub(super) struct Checker {
 }
 
 impl Checker {
+    /// Before the first of these steps runs (`next` after `name`), counts no asks of the tour's other steps.
+    pub(super) fn before_next(&mut self, name: &str, next: Option<&str>, asks: &Asks) {
+        if !ours(name) && next.is_some_and(ours) {
+            // the asks are traced as they are made: they reach the parent's reader a moment later
+            thread::sleep(Duration::from_millis(300));
+            self.before = asks.counts();
+        }
+    }
+
     /// Checks the child's line of step `name` against [`expected`] and the asks made since the last check.
     fn check(&mut self, name: &str, line: &str, asks: &Asks) -> Result<(), String> {
         // the asks are traced as they are made: they reach the parent's reader a moment later

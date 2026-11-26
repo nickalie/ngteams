@@ -26,6 +26,7 @@ use super::recording::{Start, Stopped, TranscriptRow};
 use super::*;
 use crate::calls::SpokenLine;
 use crate::translate::{self, CaptionTranslation};
+use gpui::{KeyDownEvent, point};
 use std::collections::HashSet;
 use teams_core::RecordingPhase;
 
@@ -118,11 +119,17 @@ impl CallStage {
         }
         self.record.transcript_retries = 0;
         let kept = calls.caption_pane_asked() || calls.saving_captions();
-        self.calls
-            .update(cx, |calls, cx| calls.set_transcript_captions(want, cx));
+        let stop = !want && phase != teams_core::CaptionPhase::Off && !kept;
+        self.calls.update(cx, |calls, cx| {
+            if stop {
+                calls.stop_transcript_captions(cx);
+            } else {
+                calls.set_transcript_captions(want, cx);
+            }
+        });
         if want && !running {
             self.ask(Ask::RecordCaptions(true), cx);
-        } else if !want && phase != teams_core::CaptionPhase::Off && !kept {
+        } else if stop {
             self.ask(Ask::RecordCaptions(false), cx);
         }
     }
@@ -180,8 +187,12 @@ impl CallStage {
     }
 
     /// The transcript stays at its end while it was there at the last frame: a new line, a translation or a longer
-    /// line keeps it there, a scroll up from the end stops it.
-    fn follow_transcript(&self) {
+    /// line keeps it there, a scroll up from the end stops it, as does the keyboard on an entry before the newest
+    /// (`count` entries) while the list has it (`keyboard_on`).
+    fn follow_transcript(&self, keyboard_on: bool, count: usize) {
+        if keyboard_on && self.record.transcript_at.is_some_and(|at| at + 1 < count) {
+            return;
+        }
         let scroll = &self.record.transcript_scroll;
         if scroll.max_offset().y + scroll.offset().y <= px(FOLLOW_WITHIN) {
             scroll.scroll_to_bottom();
@@ -298,6 +309,7 @@ impl CallStage {
         &self,
         active: &ActiveCall,
         palette: Palette,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if self.pane != Pane::Transcript {
@@ -314,14 +326,25 @@ impl CallStage {
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| this.show_transcript(false, cx))),
             ));
-        let rows = self.transcript_rows(active, palette, cx);
-        self.follow_transcript();
+        let keyboard_on = self.transcript_focus.is_focused(window);
+        let rows = self.transcript_rows(active, palette, keyboard_on, cx);
+        self.follow_transcript(keyboard_on, rows.len());
         Some(
             people_pane::side_pane("call-transcript-pane", "Transcript", actions, palette)
                 .children((!self.record.transcript_tip_closed).then(|| Self::transcript_tip(palette, cx)))
                 .child(
                     div()
                         .id("call-transcript-scroll")
+                        .role(gpui::accesskit::Role::List)
+                        .aria_label("Transcript")
+                        .track_focus(&self.transcript_focus.clone().tab_stop(true))
+                        .on_key_down(cx.listener(|this, event, _, cx| this.transcript_key(event, cx)))
+                        .border_1()
+                        .border_color(gpui::transparent_black())
+                        .focus_visible(move |style| style.border_color(rgb(palette.brand)))
+                        .when(keyboard_on, |list| {
+                            list.debug_selector(|| "call-transcript-keys".to_owned())
+                        })
                         .flex_1()
                         .min_h_0()
                         .overflow_y_scroll()
@@ -354,8 +377,41 @@ impl CallStage {
         )
     }
 
-    /// The transcript's rows: each start and stop of the transcription, and each speaker's turn.
-    fn transcript_rows(&self, active: &ActiveCall, palette: Palette, cx: &App) -> Vec<AnyElement> {
+    /// The keys of the transcript's list (see [`transcript_step`]): the entry the keyboard goes to is scrolled into
+    /// sight, a page key scrolls by the list's height and goes to the entry at the edge it scrolled to.
+    fn transcript_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let count = entries(&self.record.transcript, self.calls.read(cx).spoken()).len();
+        let lead = usize::from(self.pending_start(cx).is_some()) + 1;
+        let scroll = &self.record.transcript_scroll;
+        let Some(step) = transcript_step(event, count, self.record.transcript_at) else {
+            return;
+        };
+        let at = match step {
+            Step::To(at) => {
+                if at + 1 == count {
+                    scroll.scroll_to_bottom();
+                } else {
+                    scroll.scroll_to_item(lead + at);
+                }
+                at
+            }
+            Step::Page { up } => {
+                let page = scroll.bounds().size.height;
+                let offset = scroll.offset();
+                let y = if up { offset.y + page } else { offset.y - page };
+                scroll.set_offset(point(offset.x, y.clamp(-scroll.max_offset().y, px(0.0))));
+                let edge = if up { scroll.top_item() } else { scroll.bottom_item() };
+                edge.saturating_sub(lead).min(count.saturating_sub(1))
+            }
+        };
+        self.record.transcript_at = Some(at);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// The transcript's rows: each start and stop of the transcription, and each speaker's turn; the one the keyboard
+    /// is on lit while the list has the focus (`keyboard_on`), each read by its words.
+    fn transcript_rows(&self, active: &ActiveCall, palette: Palette, keyboard_on: bool, cx: &App) -> Vec<AnyElement> {
         let calls = self.calls.read(cx);
         let entries = entries(&self.record.transcript, calls.spoken());
         let start = self
@@ -377,15 +433,35 @@ impl CallStage {
                         .as_ref()
                         .map_or_else(|| SharedString::from(SOMEONE), |mri| self.name_of(active, mri));
                     let what = if row.started { "started" } else { "stopped" };
-                    transcript_line(
-                        Glyph::RECORD,
-                        SharedString::from(format!("{who} {what} transcription")),
-                        palette,
+                    let text = SharedString::from(format!("{who} {what} transcription"));
+                    (
+                        transcript_line(Glyph::RECORD, text.clone(), palette)
+                            .debug_selector(|| "call-transcript-event".to_owned()),
+                        text,
                     )
-                    .debug_selector(|| "call-transcript-event".to_owned())
-                    .into_any_element()
                 }
                 Entry::Turn(lines) => turn(index, lines, start, translation, palette),
+            })
+            .enumerate()
+            .map(|(index, (row, words))| {
+                let lit = keyboard_on && self.record.transcript_at == Some(index);
+                let row = row
+                    .id(("call-transcript-entry", index))
+                    .role(gpui::accesskit::Role::ListItem)
+                    .aria_label(words)
+                    .rounded_md()
+                    .when(lit, |row| {
+                        row.aria_active_descendant()
+                            .bg(rgb(palette.hover))
+                            .relative()
+                            // the row's own selector stays: the mark is a child that takes no room
+                            .child(
+                                div()
+                                    .absolute()
+                                    .debug_selector(move || format!("call-transcript-lit-{index}")),
+                            )
+                    });
+                row.into_any_element()
             })
             .collect()
     }
@@ -648,7 +724,7 @@ fn turn(
     start: i64,
     translation: &CaptionTranslation,
     palette: Palette,
-) -> AnyElement {
+) -> (gpui::Div, SharedString) {
     let first = lines.first().map(|line| &line.caption);
     let name = SharedString::from(
         first
@@ -658,6 +734,7 @@ fn turn(
     );
     let since = lines.first().map_or(0, |line| line.at.saturating_sub(start));
     let time = crate::video_player::clock(Duration::from_millis(u64::try_from(since).unwrap_or(0)));
+    let heading = format!("{name} {time}");
     let header = div()
         .flex()
         .items_center()
@@ -665,27 +742,64 @@ fn turn(
         .child(people::avatar(Some(&name), None, Size::Small).flex_none())
         .child(div().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).child(name))
         .child(div().text_xs().text_color(rgb(palette.muted_foreground)).child(time));
-    let said = lines.iter().map(|line| {
-        let (text, selector) = match translation.shown(&line.caption) {
+    let said: Vec<(SharedString, &'static str)> = lines
+        .iter()
+        .map(|line| match translation.shown(&line.caption) {
             translate::Shown::Translated(text) => (text, "call-transcript-translated"),
             translate::Shown::Waiting(text) | translate::Shown::Spoken(text) => (text, "call-transcript-said"),
-        };
+        })
+        .map(|(text, selector)| (SharedString::from(text.trim().to_owned()), selector))
+        .collect();
+    let words = std::iter::once(heading)
+        .chain(said.iter().map(|(text, _)| text.to_string()))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let said = said.into_iter().map(|(text, selector)| {
         div()
             .debug_selector(move || selector.to_owned())
             .pl(px(32.0))
             .text_sm()
             .text_color(rgb(palette.foreground))
-            .child(SharedString::from(text.trim().to_owned()))
+            .child(text)
     });
-    div()
+    let row = div()
         .debug_selector(move || format!("call-transcript-turn-{index}"))
         .pt_2()
         .flex()
         .flex_col()
         .gap_1()
         .child(header)
-        .children(said)
-        .into_any_element()
+        .children(said);
+    (row, SharedString::from(words))
+}
+
+/// Where a key of the transcript's list goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Step {
+    /// To this entry: Up and Down to the one before or after (the newest first, as the list follows it), Home and End
+    /// to the first and the last.
+    To(usize),
+    /// A page up or down: Page Up and Page Down.
+    Page { up: bool },
+}
+
+/// The step a key takes over the transcript's `count` entries from the one the keyboard is `at`; `None` for any other
+/// key or an empty list.
+pub(super) fn transcript_step(event: &KeyDownEvent, count: usize, at: Option<usize>) -> Option<Step> {
+    if count == 0 || event.keystroke.modifiers.modified() {
+        return None;
+    }
+    let last = count - 1;
+    let at = at.map(|at| at.min(last));
+    Some(match (event.keystroke.key.as_str(), at) {
+        ("home", _) => Step::To(0),
+        ("end" | "up" | "down", None) | ("end", Some(_)) => Step::To(last),
+        ("up", Some(at)) => Step::To(at.saturating_sub(1)),
+        ("down", Some(at)) => Step::To((at + 1).min(last)),
+        ("pageup", _) => Step::Page { up: true },
+        ("pagedown", _) => Step::Page { up: false },
+        _ => return None,
+    })
 }
 
 /// A line of the transcript: its mark and its text.
@@ -747,6 +861,36 @@ pub(super) fn indicator(active: &ActiveCall, palette: Palette) -> Option<AnyElem
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn key(name: &str, modifiers: gpui::Modifiers) -> KeyDownEvent {
+        KeyDownEvent {
+            keystroke: gpui::Keystroke {
+                modifiers,
+                key: name.to_owned(),
+                key_char: None,
+            },
+            is_held: false,
+            prefer_character_input: false,
+        }
+    }
+
+    #[test]
+    fn the_transcript_s_keys_step_from_the_newest_entry_and_stop_at_the_ends() {
+        let step = |name: &str, at| transcript_step(&key(name, gpui::Modifiers::none()), 5, at);
+        assert_eq!(step("up", None), Some(Step::To(4)));
+        assert_eq!(step("down", None), Some(Step::To(4)));
+        assert_eq!(step("up", Some(2)), Some(Step::To(1)));
+        assert_eq!(step("up", Some(0)), Some(Step::To(0)));
+        assert_eq!(step("down", Some(4)), Some(Step::To(4)));
+        assert_eq!(step("down", Some(9)), Some(Step::To(4)));
+        assert_eq!(step("home", Some(3)), Some(Step::To(0)));
+        assert_eq!(step("end", Some(1)), Some(Step::To(4)));
+        assert_eq!(step("pageup", None), Some(Step::Page { up: true }));
+        assert_eq!(step("pagedown", Some(1)), Some(Step::Page { up: false }));
+        assert_eq!(step("a", None), None);
+        assert_eq!(transcript_step(&key("up", gpui::Modifiers::none()), 0, None), None);
+        assert_eq!(transcript_step(&key("up", gpui::Modifiers::shift()), 5, None), None);
+    }
 
     fn row(at: i64, started: bool) -> TranscriptRow {
         TranscriptRow { by: None, started, at }

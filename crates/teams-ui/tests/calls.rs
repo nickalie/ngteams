@@ -5289,10 +5289,10 @@ fn the_transcript_keeps_its_translation_after_its_captions_stop() {
 fn transcript_at_end(stage: &mut VisualTestContext, turn: usize) -> bool {
     draw(stage);
     let pane = stage.debug_bounds("call-transcript-pane").unwrap();
-    let last = stage
+    // a turn scrolled far out of sight is not drawn
+    stage
         .debug_bounds(Box::leak(format!("call-transcript-turn-{turn}").into_boxed_str()))
-        .unwrap();
-    last.bottom() <= pane.bottom() + gpui::px(1.0)
+        .is_some_and(|last| last.bottom() <= pane.bottom() + gpui::px(1.0))
 }
 
 #[test]
@@ -5327,6 +5327,85 @@ fn the_transcript_follows_its_newest_line_until_scrolled_up() {
     draw(stage);
     captions_on(&rig, vec![line(turns + 1, "Synthetic words.")]);
     assert!(!transcript_at_end(stage, 41), "scrolled up: stays where the user is");
+}
+
+/// A transcript of 40 turns, its pane open at the newest, and the keyboard on its list of lines.
+fn transcript_with_the_keyboard(rig: &Rig) -> &'static mut VisualTestContext {
+    let stage = group_call_up(rig);
+    meeting(rig, transcribing_by(LAB_B, false));
+    open_record_menu(stage, "call-transcript-toggle");
+    click(stage, "call-transcript-toggle");
+    for index in 1..=40_u64 {
+        let speaker = if index.is_multiple_of(2) { LAB_A } else { LAB_B };
+        captions_on(
+            rig,
+            vec![spoken(&index.to_string(), speaker, "Synthetic words.", index * 100)],
+        );
+        draw(stage);
+    }
+    assert!(transcript_at_end(stage, 40));
+    let reached = (0..40).any(|_| {
+        stage.simulate_keystrokes("tab");
+        drawn(stage, "call-transcript-keys")
+    });
+    assert!(reached, "Tab stops on the list of lines");
+    stage
+}
+
+#[test]
+fn the_keyboard_reaches_the_transcript_and_its_keys_scroll_it() {
+    let rig = calling();
+    let stage = transcript_with_the_keyboard(&rig);
+    stage.simulate_keystrokes("home");
+    assert!(drawn(stage, "call-transcript-lit-0"), "Home: the start's row");
+    assert!(!transcript_at_end(stage, 40));
+    let pane = stage.debug_bounds("call-transcript-pane").unwrap();
+    let first = stage.debug_bounds("call-transcript-turn-1").unwrap();
+    assert!(first.top() >= pane.top(), "the first turn is in sight");
+    stage.simulate_keystrokes("end");
+    assert!(drawn(stage, "call-transcript-lit-40"));
+    assert!(transcript_at_end(stage, 40), "End: the newest turn");
+    stage.simulate_keystrokes("up");
+    assert!(drawn(stage, "call-transcript-lit-39"), "Up: the turn before");
+    stage.simulate_keystrokes("down");
+    assert!(drawn(stage, "call-transcript-lit-40"), "Down: the turn after");
+    stage.simulate_keystrokes("pageup");
+    assert!(!transcript_at_end(stage, 40), "Page Up scrolls up");
+    assert!(
+        !drawn(stage, "call-transcript-lit-40"),
+        "and goes to the turn at the top"
+    );
+    stage.simulate_keystrokes(&["pagedown"; 40].join(" "));
+    assert!(transcript_at_end(stage, 40), "Page Down scrolls back down");
+    assert!(drawn(stage, "call-transcript-lit-40"));
+    stage.simulate_keystrokes("tab");
+    assert!(!drawn(stage, "call-transcript-keys"), "Tab goes on past the list");
+    assert!(!drawn(stage, "call-transcript-lit-40"), "its turn is lit no more");
+}
+
+#[test]
+fn hidden_captions_stay_hidden_while_the_transcription_s_stop_stops_them() {
+    let rig = calling();
+    let stage = group_call_up(&rig);
+    meeting(&rig, transcribing_by(LAB_B, false));
+    captions_on(&rig, vec![spoken("1", LAB_B, "Synthetic words.", 100)]);
+    assert!(!drawn(stage, "call-captions"));
+    meeting(&rig, teams_core::MeetingState::default());
+    assert_eq!(
+        caption_asks(&rig).last(),
+        Some(&false),
+        "the captions are asked to stop"
+    );
+    captions_on(&rig, vec![spoken("2", LAB_B, "Synthetic words after.", 200)]);
+    assert!(
+        !drawn(stage, "call-captions"),
+        "the pane stays hidden while they stop, also when the stop fails"
+    );
+    captions_in(&rig, teams_core::CaptionPhase::Off);
+    assert!(!drawn(stage, "call-captions"));
+    // once off, captions that run again for no transcript show as before
+    captions_on(&rig, vec![spoken("3", LAB_B, "Synthetic words later.", 300)]);
+    assert!(drawn(stage, "call-captions"));
 }
 
 fn captions_in(rig: &Rig, phase: teams_core::CaptionPhase) {

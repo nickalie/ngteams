@@ -2818,7 +2818,9 @@ const STEPS: [Step; 5 + 374 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("call-group-transcribing", |shell, _, cx| {
         with_stage(cx, CallStage::close_record_dialog);
         transcription_state(shell, false, cx);
-        transcript_speech(shell, cx);
+        // the speech after the stage saw the start, as in a call: the start's row comes first
+        let shell = shell.clone();
+        cx.defer(move |cx| transcript_speech(&shell, cx));
     }),
     // and in Teams Dark
     ("call-group-transcribing-dark", |shell, _, cx| {
@@ -4475,7 +4477,8 @@ fn tour(sandbox: &Sandbox) -> SandboxResult {
     running
         .line_where(STARTUP, |line| line == "ready")
         .map_err(|error| running.fail(&format!("no ready line: {error:?}")))?;
-    for (name, _) in tour_steps() {
+    let names: Vec<&str> = tour_steps().into_iter().map(|(name, _)| name).collect();
+    for (index, &name) in names.iter().enumerate() {
         let edge = if compose_edge::SHOTS.contains(&name) {
             let said = running
                 .line_where(WAIT, |line| line.starts_with(compose_edge::PREFIX))
@@ -4522,6 +4525,7 @@ fn tour(sandbox: &Sandbox) -> SandboxResult {
         }
         transcript_qa::after_shot(sandbox, name, &png, &shots_dir()?)
             .map_err(|error| running.fail(&format!("{name}: {error}")))?;
+        checker.before_next(name, names.get(index + 1).copied(), &asks);
         fs::write(sandbox.dir().join(NEXT), "")?;
     }
     running
