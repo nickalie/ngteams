@@ -6,7 +6,7 @@ own `--lib` tests do not build from the crates.io package). An upstream candidat
 
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -264,6 +264,10 @@
+@@ -287,6 +287,10 @@
  name = "action_macros"
  path = "tests/action_macros.rs"
  
@@ -19,7 +19,7 @@ own `--lib` tests do not build from the crates.io package). An upstream candidat
  features = ["enumn"]
 --- a/src/window.rs
 +++ b/src/window.rs
-@@ -5620,7 +5620,13 @@
+@@ -6117,7 +6117,13 @@
          let old_modality = self.last_input_modality;
          self.last_input_modality = match &event {
              PlatformInput::KeyDown(_) => InputModality::Keyboard,

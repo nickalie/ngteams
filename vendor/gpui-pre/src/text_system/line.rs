@@ -77,7 +77,6 @@ impl ShapedLine {
     }
 
     /// The length of the line in utf-8 bytes.
-    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.layout.len
     }
@@ -167,6 +166,9 @@ impl ShapedLine {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
+        if !has_background(&self.decoration_runs) {
+            return Ok(());
+        }
         paint_line_background(
             origin,
             &self.layout,
@@ -425,6 +427,9 @@ impl LineLayout {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
+        if !has_background(decoration_runs) {
+            return Ok(());
+        }
         paint_line_background(
             origin,
             self,
@@ -452,7 +457,6 @@ pub struct WrappedLine {
 
 impl WrappedLine {
     /// The length of the underlying, unwrapped layout, in utf-8 bytes.
-    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.layout.len()
     }
@@ -517,6 +521,9 @@ impl WrappedLine {
             None => self.layout.wrap_width,
         };
 
+        if !has_background(&self.decoration_runs) {
+            return Ok(());
+        }
         if let Some(rows) = &self.layout.bidi {
             return paint_bidi_background(
                 origin,
@@ -529,7 +536,6 @@ impl WrappedLine {
                 window,
             );
         }
-
         paint_line_background(
             origin,
             &self.layout.unwrapped_layout,
@@ -564,15 +570,7 @@ fn paint_line(
         &mut Window,
     ),
 ) -> Result<()> {
-    let line_bounds = line_paint_bounds(
-        origin,
-        layout,
-        line_height,
-        align,
-        align_width,
-        wrap_boundaries,
-    );
-    window.paint_layer(line_bounds, |window| {
+    window.paint_layer(|window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let underline_y_offset = underline_y_offset(line_height, layout.ascent, layout.descent);
@@ -816,29 +814,18 @@ fn paint_line(
     })
 }
 
-/// The left edge of each row of a line in the bidi path, as [`WrappedLineLayout::row_offset`] aligns it, and the
-/// bounds of all its rows.
+/// The left edge of each row of a line in the bidi path, as [`WrappedLineLayout::row_offset`] aligns it.
 fn bidi_row_origins(
     origin: Point<Pixels>,
     layout: &WrappedLineLayout,
     rows: &BidiRows,
-    line_height: Pixels,
     align: TextAlign,
     align_width: Option<Pixels>,
-) -> (Vec<Pixels>, Bounds<Pixels>) {
+) -> Vec<Pixels> {
     let align_width = align_width.unwrap_or(layout.unwrapped_layout.width);
-    let mut bounds = Bounds::new(origin, size(px(0.), px(0.)));
-    let lefts = (0..rows.row_count())
-        .map(|row| {
-            let left = origin.x + layout.row_offset(row, align, align_width);
-            bounds = bounds.union(&Bounds::new(
-                point(left, origin.y + line_height * row as f32),
-                size(rows.row_width(row), line_height),
-            ));
-            left
-        })
-        .collect();
-    (lefts, bounds)
+    (0..rows.row_count())
+        .map(|row| origin.x + layout.row_offset(row, align, align_width))
+        .collect()
 }
 
 fn decoration_run_ends(decoration_runs: &[DecorationRun]) -> Vec<usize> {
@@ -866,9 +853,8 @@ fn paint_bidi_line(
     cx: &mut App,
 ) -> Result<()> {
     let layout = &wrapped.unwrapped_layout;
-    let (lefts, line_bounds) =
-        bidi_row_origins(origin, wrapped, rows, line_height, align, align_width);
-    window.paint_layer(line_bounds, |window| {
+    let lefts = bidi_row_origins(origin, wrapped, rows, align, align_width);
+    window.paint_layer(|window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let run_ends = decoration_run_ends(decoration_runs);
@@ -950,9 +936,8 @@ fn paint_bidi_background(
     decoration_runs: &[DecorationRun],
     window: &mut Window,
 ) -> Result<()> {
-    let (lefts, line_bounds) =
-        bidi_row_origins(origin, wrapped, rows, line_height, align, align_width);
-    window.paint_layer(line_bounds, |window| {
+    let lefts = bidi_row_origins(origin, wrapped, rows, align, align_width);
+    window.paint_layer(|window| {
         let run_ends = decoration_run_ends(decoration_runs);
         for (row, left) in lefts.iter().enumerate() {
             let top = origin.y + line_height * row as f32;
@@ -975,6 +960,14 @@ fn paint_bidi_background(
     })
 }
 
+/// Painting backgrounds walks every glyph and opens a layer, so callers skip it when there's
+/// nothing to paint.
+fn has_background(decoration_runs: &[DecorationRun]) -> bool {
+    decoration_runs
+        .iter()
+        .any(|run| run.background_color.is_some())
+}
+
 fn paint_line_background(
     origin: Point<Pixels>,
     layout: &LineLayout,
@@ -986,15 +979,7 @@ fn paint_line_background(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
-    let line_bounds = line_paint_bounds(
-        origin,
-        layout,
-        line_height,
-        align,
-        align_width,
-        wrap_boundaries,
-    );
-    window.paint_layer(line_bounds, |window| {
+    window.paint_layer(|window| {
         let mut decoration_runs = decoration_runs.iter();
         let mut wraps = wrap_boundaries.iter().peekable();
         let mut run_end = 0;
@@ -1086,7 +1071,7 @@ fn paint_line_background(
                 }
 
                 if let Some((mut background_origin, background_color)) = finished_background {
-                    let mut width = glyph_origin.x - background_origin.x;
+                    let width = glyph_origin.x - background_origin.x;
                     if background_origin.x == glyph_origin.x {
                         background_origin.x -= max_glyph_size.width.half();
                     };
@@ -1123,51 +1108,6 @@ fn paint_line_background(
 
         Ok(())
     })
-}
-
-fn line_paint_bounds(
-    origin: Point<Pixels>,
-    layout: &LineLayout,
-    line_height: Pixels,
-    align: TextAlign,
-    align_width: Option<Pixels>,
-    wrap_boundaries: &[WrapBoundary],
-) -> Bounds<Pixels> {
-    let mut bounds = Bounds::new(
-        origin,
-        size(
-            layout.width,
-            line_height * (wrap_boundaries.len() as f32 + 1.),
-        ),
-    );
-    if align == TextAlign::Left || layout.len == 0 {
-        return bounds;
-    }
-
-    let align_width = align_width.unwrap_or(layout.width);
-    let mut row_start = Pixels::ZERO;
-    let row_ends = wrap_boundaries
-        .iter()
-        .map(|boundary| {
-            layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix]
-                .position
-                .x
-        })
-        .chain([layout.width]);
-    for (row, row_end) in row_ends.enumerate() {
-        let width = row_end - row_start;
-        let offset = match align {
-            TextAlign::Left => Pixels::ZERO,
-            TextAlign::Center => (align_width - width) / 2.,
-            TextAlign::Right => align_width - width,
-        };
-        bounds = bounds.union(&Bounds::new(
-            point(origin.x + offset, origin.y + line_height * row as f32),
-            size(width, line_height),
-        ));
-        row_start = row_end;
-    }
-    bounds
 }
 
 fn aligned_origin_x(
@@ -1234,68 +1174,6 @@ mod tests {
             }),
             text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
-        }
-    }
-
-    #[test]
-    fn test_aligned_line_paint_bounds() {
-        let line = make_shaped_line("abcd", &[(0, 0.), (1, 10.), (2, 20.), (3, 30.)], 40., &[]);
-        let origin = point(px(10.), px(20.));
-        let line_height = px(16.);
-        for (wrapped, align_width, expected_edges) in [
-            (false, None, [(10., 50.), (10., 50.), (10., 50.)]),
-            (true, None, [(10., 50.), (10., 50.), (10., 50.)]),
-            (false, Some(40.), [(10., 50.), (10., 50.), (10., 50.)]),
-            (true, Some(40.), [(10., 50.), (10., 50.), (10., 50.)]),
-            (false, Some(100.), [(10., 50.), (10., 80.), (10., 110.)]),
-            (true, Some(100.), [(10., 50.), (10., 70.), (10., 110.)]),
-            (false, Some(10.), [(10., 50.), (-5., 50.), (-20., 50.)]),
-            (true, Some(10.), [(10., 50.), (5., 50.), (0., 50.)]),
-            (false, Some(0.), [(10., 50.), (-10., 50.), (-30., 50.)]),
-            (true, Some(0.), [(10., 50.), (0., 50.), (-10., 50.)]),
-        ] {
-            let boundaries = if wrapped {
-                vec![WrapBoundary {
-                    run_ix: 0,
-                    glyph_ix: 2,
-                }]
-            } else {
-                Vec::new()
-            };
-            for (align, (left, right)) in [TextAlign::Left, TextAlign::Center, TextAlign::Right]
-                .into_iter()
-                .zip(expected_edges)
-            {
-                assert_eq!(
-                    line_paint_bounds(
-                        origin,
-                        &line.layout,
-                        line_height,
-                        align,
-                        align_width.map(px),
-                        &boundaries,
-                    ),
-                    Bounds::new(
-                        point(px(left), origin.y),
-                        size(px(right - left), px(if wrapped { 32. } else { 16. })),
-                    ),
-                    "wrapped={wrapped}, align={align:?}, align_width={align_width:?}",
-                );
-            }
-        }
-        let empty = make_shaped_line("", &[], 0., &[]);
-        for align in [TextAlign::Left, TextAlign::Center, TextAlign::Right] {
-            assert_eq!(
-                line_paint_bounds(
-                    origin,
-                    &empty.layout,
-                    line_height,
-                    align,
-                    Some(px(100.)),
-                    &[]
-                ),
-                Bounds::new(origin, size(Pixels::ZERO, line_height)),
-            );
         }
     }
 

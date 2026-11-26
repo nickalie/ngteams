@@ -333,7 +333,7 @@ impl Opened {
     }
 
     /// `key` pressed and let go: a focused button takes Enter or Space as it is let go.
-    fn press(&mut self, key: &str) {
+    fn press(&mut self, key: &'static str) {
         let keystroke = gpui::Keystroke::parse(key).unwrap();
         self.cx.simulate_event(gpui::KeyDownEvent {
             keystroke: keystroke.clone(),

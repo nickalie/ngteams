@@ -1,10 +1,8 @@
 The test platform's window gives its title back, so a test can check what the window is titled.
 
-diff --git a/src/platform/test/window.rs b/src/platform/test/window.rs
-index 5692b1e7..7bd78d1c 100644
 --- a/src/platform/test/window.rs
 +++ b/src/platform/test/window.rs
-@@ -444,6 +444,10 @@ impl PlatformWindow for TestWindow {
+@@ -517,6 +517,10 @@
          self.0.lock().title = Some(title.to_owned());
      }
  

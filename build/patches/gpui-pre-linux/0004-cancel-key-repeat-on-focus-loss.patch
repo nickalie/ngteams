@@ -3,7 +3,7 @@ Key releases stop the repeat even while no window has focus.
 
 --- a/src/linux/wayland/client.rs
 +++ b/src/linux/wayland/client.rs
-@@ -545,6 +545,13 @@
+@@ -550,6 +550,13 @@
      current_keycode: Option<xkb::Keycode>,
  }
  
@@ -17,7 +17,7 @@ Key releases stop the repeat even while no window has focus.
  pub(crate) enum PendingActivation {
      /// URI to open in the web browser.
      Uri(String),
-@@ -803,10 +810,12 @@
+@@ -811,10 +818,12 @@
          {
              state.mouse_focused_window = Some(window);
          }
@@ -34,7 +34,7 @@ Key releases stop the repeat even while no window has focus.
          }
          if let Some(window) = state.cursor_hidden_window.take()
              && !window.ptr_eq(&closed_window)
-@@ -2103,7 +2112,7 @@
+@@ -2074,7 +2083,7 @@
                  state.keyboard_focused_window = None;
                  state.enter_token.take();
                  // Prevent keyboard events from repeating after opening e.g. a file chooser and closing it quickly
@@ -43,8 +43,8 @@ Key releases stop the repeat even while no window has focus.
                  state.restore_cursor_after_hide();
  
                  if let Some(window) = keyboard_focused_window {
-@@ -2157,13 +2166,19 @@
-                     state.serial_tracker.update(SerialKind::KeyPress, serial);
+@@ -2136,13 +2145,19 @@
+                     );
                  }
  
 +                let keycode = Keycode::from(key + MIN_KEYCODE);
@@ -64,18 +64,18 @@ Key releases stop the repeat even while no window has focus.
                  let keysym = keymap_state.key_get_one_sym(keycode);
  
                  match key_state {
-@@ -2263,10 +2278,6 @@
-                         let input = PlatformInput::KeyUp(KeyUpEvent {
+@@ -2243,10 +2258,6 @@
                              keystroke: keystroke_from_xkb(keymap_state, state.modifiers, keycode),
                          });
--
+ 
 -                        if state.repeat.current_keycode == Some(keycode) {
 -                            state.repeat.current_keycode = None;
 -                        }
- 
+-
                          drop(state);
                          focused_window.handle_input(input);
-@@ -3198,6 +3209,25 @@
+                     }
+@@ -3183,6 +3194,25 @@
      use super::*;
  
      #[test]

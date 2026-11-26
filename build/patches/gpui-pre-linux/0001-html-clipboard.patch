@@ -3,7 +3,6 @@ as the item's metadata, `{"text/html": "<html>"}`, so the app's rich-text editor
 (through teams-proto's sanitizing reader). A UTF-16 one (with its byte order mark) is decoded. Our own
 copies keep their item as they were (the self-offer path is untouched).
 
-diff -ruN a/src/linux/wayland/clipboard.rs b/src/linux/wayland/clipboard.rs
 --- a/src/linux/wayland/clipboard.rs
 +++ b/src/linux/wayland/clipboard.rs
 @@ -21,6 +21,9 @@

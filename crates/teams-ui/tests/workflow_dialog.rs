@@ -547,11 +547,11 @@ fn advanced_definition_saves_its_current_connection_references_without_losing_un
         Some(properties.to_string())
     );
     let body = bounds(cx, "workflow-scroll").unwrap();
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: gpui::point(body.left() + gpui::px(8.0), body.center().y),
         delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-1200.0))),
         touch_phase: gpui::TouchPhase::Moved,
-        ..gpui::ScrollWheelEvent::default()
+        ..gpui::ScrollEvent::default()
     });
     click(cx, "workflow-save");
     assert!(
@@ -1023,11 +1023,11 @@ fn workflows_home_and_see_all_leave_the_dialog_for_the_workflows_app() {
 /// Scrolls the dialog's page to its end, where the Owners are.
 fn to_the_end(cx: &mut VisualTestContext) {
     let body = bounds(cx, "workflow-scroll").unwrap();
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: gpui::point(body.left() + gpui::px(8.0), body.center().y),
         delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(-3000.0))),
         touch_phase: gpui::TouchPhase::Moved,
-        ..gpui::ScrollWheelEvent::default()
+        ..gpui::ScrollEvent::default()
     });
 }
 

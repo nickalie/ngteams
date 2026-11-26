@@ -3588,7 +3588,7 @@ fn people_lit(stage: &mut VisualTestContext) -> Option<String> {
 }
 
 /// `key` pressed and let go: a focused control takes Enter or Space as it is let go.
-fn press_and_release(stage: &mut VisualTestContext, key: &str) {
+fn press_and_release(stage: &mut VisualTestContext, key: &'static str) {
     let keystroke = gpui::Keystroke::parse(key).unwrap();
     stage.simulate_event(gpui::KeyDownEvent {
         keystroke: keystroke.clone(),
@@ -5422,11 +5422,12 @@ fn the_transcript_follows_its_newest_line_until_scrolled_up() {
     captions_on(&rig, vec![line(turns, &long)]);
     assert!(transcript_at_end(stage, 40), "follows a longer line");
     let pane = stage.debug_bounds("call-transcript-pane").unwrap();
-    stage.simulate_event(gpui::ScrollWheelEvent {
+    stage.simulate_event(gpui::ScrollEvent {
         position: pane.center(),
         delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(400.0))),
         modifiers: Modifiers::none(),
         touch_phase: gpui::TouchPhase::Moved,
+        source: gpui::ScrollSource::Pointer,
     });
     draw(stage);
     captions_on(&rig, vec![line(turns + 1, "Synthetic words.")]);
@@ -5743,8 +5744,8 @@ fn the_account_starts_a_recording_after_asking_its_language_and_stops_it_after_a
     open_record_menu(stage, "call-record-start");
     click(stage, "call-record-start");
     click(stage, "call-record-language");
-    // one the scrolled list shows at once
-    click(stage, "call-record-language-ar-sa");
+    // the list opens scrolled to the language checked (English (US)); the one after it shows with it
+    click(stage, "call-record-language-et-ee");
     click(stage, "call-record-confirm");
     let Some(CallAction::Record {
         title,
@@ -5755,7 +5756,7 @@ fn the_account_starts_a_recording_after_asking_its_language_and_stops_it_after_a
     else {
         panic!("{:?}", actions(&rig));
     };
-    assert_eq!(language, "ar-sa");
+    assert_eq!(language, "et-ee");
     assert!(title.starts_with("Call with "), "{title}");
     assert_eq!(organizer, None, "a call names no organizer");
     assert!(!drawn(stage, "call-record-dialog"));

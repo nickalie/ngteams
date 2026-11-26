@@ -1065,7 +1065,7 @@ fn one_escape_closes_a_menu_opened_with_a_click() {
 }
 
 /// Presses and lets go of `key`, as a keyboard does: a focused row clicks when the key comes up.
-fn press(cx: &mut VisualTestContext, key: &str) {
+fn press(cx: &mut VisualTestContext, key: &'static str) {
     let keystroke = gpui::Keystroke::parse(key).unwrap();
     cx.simulate_keystrokes(key);
     cx.simulate_event(gpui::KeyUpEvent { keystroke });

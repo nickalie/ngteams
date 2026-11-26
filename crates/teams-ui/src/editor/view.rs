@@ -453,14 +453,6 @@ pub(super) struct BlockText {
     reveal: (Rc<Cell<bool>>, ScrollHandle),
 }
 
-impl IntoElement for BlockText {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl BlockText {
     fn layout(&self) -> &TextLayout {
         self.text.layout()

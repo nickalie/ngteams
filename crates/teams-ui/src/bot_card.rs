@@ -282,7 +282,7 @@ impl CardBot {
             }
             InputKind::Date { value, .. } => {
                 let state = cx.new(|cx| DatePickerState::new(window, cx).date_format("%-m/%-d/%Y"));
-                if let Some(day) = value.as_deref().and_then(parse_date) {
+                if let Some(day) = value.as_deref().and_then(parse_date).and_then(crate::kit_date::to_kit) {
                     state.update(cx, |state, cx| state.set_date(day, window, cx));
                 }
                 let key = key.to_owned();
@@ -383,6 +383,7 @@ impl CardBot {
                 .read(cx)
                 .date()
                 .start()
+                .and_then(crate::kit_date::from_kit)
                 .map(|day| day.format("%Y-%m-%d").to_string())
                 .unwrap_or_default(),
             Some(Field::Toggle(on)) => toggle_answer(input, *on),

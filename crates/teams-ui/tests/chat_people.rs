@@ -702,11 +702,11 @@ fn a_large_group_chat_s_picker_hangs_from_its_action_inside_the_window() {
     let view = people(&shell, cx);
     assert_eq!(cx.update(|_, cx| view.read(cx).members().len()), 21);
     let flyout = cx.debug_bounds("chat-people").expect("the flyout");
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: flyout.center(),
         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-3000.0))),
         touch_phase: gpui::TouchPhase::Moved,
-        ..gpui::ScrollWheelEvent::default()
+        ..gpui::ScrollEvent::default()
     });
     draw(cx);
     let add = cx.debug_bounds("chat-people-add").expect("Add people");

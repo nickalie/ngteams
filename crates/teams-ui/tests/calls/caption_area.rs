@@ -88,11 +88,12 @@ fn at_end(window: &mut VisualTestContext, index: usize) -> bool {
 
 fn wheel(window: &mut VisualTestContext, dy: f32) {
     let list = bounds(window, "call-caption-text").unwrap();
-    window.simulate_event(gpui::ScrollWheelEvent {
+    window.simulate_event(gpui::ScrollEvent {
         position: list.center(),
         delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(dy))),
         modifiers: Modifiers::none(),
         touch_phase: gpui::TouchPhase::Moved,
+        source: gpui::ScrollSource::Pointer,
     });
     draw(window);
 }

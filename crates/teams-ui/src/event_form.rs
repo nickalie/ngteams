@@ -469,7 +469,7 @@ impl EventForm {
                 let DatePickerEvent::Change(picked) = event;
                 let start = this.series_day();
                 if let Some(repeat) = &mut this.repeat {
-                    repeat.until = repeat::picked_until(picked.start().map(|time| time.date()), start);
+                    repeat.until = repeat::picked_until(kit_day(picked), start);
                 }
                 cx.notify();
             }),
@@ -480,7 +480,7 @@ impl EventForm {
                     let DatePickerEvent::Change(picked) = event;
                     let start = this.series_day();
                     if let Some(custom) = &mut this.custom {
-                        custom.until = repeat::picked_until(picked.start().map(|time| time.date()), start);
+                        custom.until = repeat::picked_until(kit_day(picked), start);
                     }
                     cx.notify();
                 },
@@ -555,7 +555,11 @@ impl EventForm {
         self.repeat = full.recurrence.as_ref().filter(|_| repeats).map(Repeat::of);
         let until = self.repeat.as_ref().and_then(|repeat| repeat.until);
         self.until_picker.update(cx, |picker, cx| {
-            picker.set_date(gpui_component::calendar::Date::Single(until), window, cx);
+            picker.set_date(
+                gpui_component::calendar::Date::Single(until.and_then(crate::kit_date::to_kit)),
+                window,
+                cx,
+            );
         });
         self.load_body(full.body_html.as_deref(), cx);
         let subject = event.subject.clone();
@@ -967,7 +971,7 @@ impl EventForm {
             "escape" if self.custom.is_some() => self.custom = None,
             "escape" if self.confirm.is_some() => self.confirm = None,
             "escape" if self.suggestions.is_some() => self.suggestions = None,
-            "s" if keystroke.modifiers.secondary() && !keystroke.modifiers.alt => self.save(window, cx),
+            "s" if keystroke.modifiers.secondary(cx) && !keystroke.modifiers.alt => self.save(window, cx),
             _ => return,
         }
         cx.stop_propagation();
@@ -1080,7 +1084,11 @@ impl EventForm {
         let until = repeat.as_ref().and_then(|repeat| repeat.until);
         self.repeat = repeat;
         self.until_picker.update(cx, |picker, cx| {
-            picker.set_date(gpui_component::calendar::Date::Single(until), window, cx);
+            picker.set_date(
+                gpui_component::calendar::Date::Single(until.and_then(crate::kit_date::to_kit)),
+                window,
+                cx,
+            );
         });
         cx.notify();
     }
@@ -1092,7 +1100,11 @@ impl EventForm {
         let until = custom.until;
         self.custom = Some(custom);
         self.custom_until_picker.update(cx, |picker, cx| {
-            picker.set_date(gpui_component::calendar::Date::Single(until), window, cx);
+            picker.set_date(
+                gpui_component::calendar::Date::Single(until.and_then(crate::kit_date::to_kit)),
+                window,
+                cx,
+            );
         });
         cx.notify();
     }
@@ -1117,6 +1129,11 @@ impl EventForm {
         let repeat = custom.repeat(self.series_day());
         self.set_repeat(Some(repeat), window, cx);
     }
+}
+
+/// The day a date picker gave, as the app keeps it.
+fn kit_day(picked: &gpui_component::date_picker::DateTime) -> Option<NaiveDate> {
+    picked.start().and_then(|time| crate::kit_date::from_kit(time.date()))
 }
 
 /// Whom an event read whole invites: its attendees with an address, the organizer (the account itself, listed by the

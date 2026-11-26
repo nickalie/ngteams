@@ -109,9 +109,9 @@ const BADGE: f32 = 16.0;
 pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("shift-escape", MarkAllRead, Some(CONTEXT)),
-        KeyBinding::new("secondary-alt-u", ToggleUnread, Some(CONTEXT)),
-        KeyBinding::new("secondary-alt-m", ToggleMentions, Some(CONTEXT)),
-        KeyBinding::new("secondary-alt-shift-o", TurnOffApp, Some(CONTEXT)),
+        KeyBinding::new(secondary!("alt-u"), ToggleUnread, Some(CONTEXT)),
+        KeyBinding::new(secondary!("alt-m"), ToggleMentions, Some(CONTEXT)),
+        KeyBinding::new(secondary!("alt-shift-o"), TurnOffApp, Some(CONTEXT)),
     ]);
 }
 

@@ -187,11 +187,11 @@ pub fn init(cx: &mut App) {
     // the last bound is the one a tooltip names
     cx.bind_keys([CONTEXT, EMOJI_CONTEXT].into_iter().flat_map(|context| {
         [
-            KeyBinding::new("secondary-;", ToggleEmoji, Some(context)),
-            KeyBinding::new("secondary-.", ToggleEmoji, Some(context)),
+            KeyBinding::new(secondary!(";"), ToggleEmoji, Some(context)),
+            KeyBinding::new(secondary!("."), ToggleEmoji, Some(context)),
         ]
     }));
-    cx.bind_keys([KeyBinding::new("secondary-shift-u", AttachFiles, Some(CONTEXT))]);
+    cx.bind_keys([KeyBinding::new(secondary!("shift-u"), AttachFiles, Some(CONTEXT))]);
     correction::bind_keys(cx);
     crate::customize_list::bind_keys(cx);
     draft_translation::bind_keys(cx);

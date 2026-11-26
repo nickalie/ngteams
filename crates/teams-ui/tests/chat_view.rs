@@ -68,7 +68,7 @@ use std::sync::Arc;
 use chrono::{FixedOffset, NaiveDate, TimeZone as _};
 use common::{LAB_A, LAB_B, Rig, Written};
 use gpui::{
-    AppContext as _, Entity, ListOffset, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase,
+    AppContext as _, Entity, ListOffset, Modifiers, ScrollDelta, ScrollEvent, TestAppContext, TouchPhase,
     VisualTestContext, point, px, size,
 };
 use teams_core::{Event, MessageChange, NOTES, Source};
@@ -717,11 +717,12 @@ fn a_new_message_shows_at_the_bottom_and_the_list_follows_it() {
 /// Scrolls the message list up by `by` px.
 fn scroll_up(cx: &mut VisualTestContext, by: f32) {
     let list = cx.debug_bounds("chat-messages").expect("the message list is drawn");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: list.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(by))),
         modifiers: Modifiers::none(),
         touch_phase: TouchPhase::Moved,
+        source: gpui::ScrollSource::Pointer,
     });
     draw(cx);
 }

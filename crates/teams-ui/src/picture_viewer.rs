@@ -36,7 +36,7 @@ use chrono::Local;
 use gpui::{
     AnyElement, App, AppContext as _, Bounds, Context, FocusHandle, Global, InteractiveElement as _, IntoElement,
     KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _, Pixels, Point, Render, RenderImage,
-    ScrollWheelEvent, SharedString, Styled as _, Task, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowHandle,
+    ScrollEvent, SharedString, Styled as _, Task, TitlebarOptions, WeakEntity, Window, WindowBounds, WindowHandle,
     WindowOptions, actions, div, img, point, prelude::FluentBuilder as _, px, rgb, size,
 };
 use gpui_component::Disableable as _;
@@ -113,16 +113,16 @@ pub fn init(cx: &mut App) {
     let context = Some(CONTEXT);
     cx.bind_keys([
         KeyBinding::new("escape", CloseViewer, context),
-        KeyBinding::new("secondary-=", ZoomIn, context),
-        KeyBinding::new("secondary-+", ZoomIn, context),
+        KeyBinding::new(secondary!("="), ZoomIn, context),
+        KeyBinding::new(secondary!("+"), ZoomIn, context),
         KeyBinding::new("=", ZoomIn, context),
         KeyBinding::new("+", ZoomIn, context),
-        KeyBinding::new("secondary--", ZoomOut, context),
+        KeyBinding::new(secondary!("-"), ZoomOut, context),
         KeyBinding::new("-", ZoomOut, context),
-        KeyBinding::new("secondary-0", ZoomFit, context),
+        KeyBinding::new(secondary!("0"), ZoomFit, context),
         KeyBinding::new("left", PreviousPicture, context),
         KeyBinding::new("right", NextPicture, context),
-        KeyBinding::new("secondary-s", DownloadPicture, context),
+        KeyBinding::new(secondary!("s"), DownloadPicture, context),
     ]);
 }
 
@@ -559,11 +559,11 @@ impl PictureViewer {
     }
 
     /// The wheel: with Ctrl it zooms about the pointer; else it pans a picture larger than the stage.
-    fn wheel(&mut self, event: &ScrollWheelEvent, window: &Window, cx: &mut Context<Self>) {
+    fn wheel(&mut self, event: &ScrollEvent, window: &Window, cx: &mut Context<Self>) {
         let Some(natural) = self.natural() else { return };
         let stage = stage(window);
         let delta = event.delta.pixel_delta(px(WHEEL_LINE));
-        if event.modifiers.secondary() {
+        if event.modifiers.secondary(cx) {
             let scale = self.placement.scale(natural, stage);
             let to = scale * WHEEL_ZOOM.powf(f32::from(delta.y) / WHEEL_LINE);
             let anchor = from_centre(event.position, window);
@@ -957,7 +957,7 @@ impl PictureViewer {
             .flex_1()
             .min_h_0()
             .overflow_hidden()
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| this.wheel(event, window, cx)))
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| this.wheel(event, window, cx)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| this.press(event, window, cx)),

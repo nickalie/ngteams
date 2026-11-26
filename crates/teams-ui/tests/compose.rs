@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use common::{LAB_A, LAB_B, Rig, Written, outbox_row};
 use gpui::{
-    Entity, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase,
+    Entity, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ScrollDelta, ScrollEvent, TestAppContext, TouchPhase,
     VisualTestContext, point, px, size,
 };
 use teams_core::{Action, Command, Event, MessageChange, Source, Transient};
@@ -1933,11 +1933,12 @@ fn more_reactions_scrolls_through_recent_and_every_category_its_tabs_following()
     // the whole catalog in one list: scrolled down, the tab follows; a tab clicked scrolls to its section
     let list = cx.debug_bounds("emoji-1f44b_wavinghand").unwrap();
     cx.simulate_mouse_move(list.center(), None, Modifiers::none());
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: list.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-1_500.0))),
         modifiers: Modifiers::none(),
         touch_phase: TouchPhase::Moved,
+        source: gpui::ScrollSource::Pointer,
     });
     draw(cx);
     assert!(matches!(
@@ -2239,7 +2240,7 @@ fn escape_in_the_list_closes_a_clicked_menu_before_the_delete_s_confirmation() {
 }
 
 /// A key pushed and let go, as a button takes it.
-fn press(cx: &mut VisualTestContext, key: &str) {
+fn press(cx: &mut VisualTestContext, key: &'static str) {
     let keystroke = Keystroke::parse(key).unwrap();
     cx.simulate_event(KeyDownEvent {
         keystroke: keystroke.clone(),

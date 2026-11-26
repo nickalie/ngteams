@@ -305,16 +305,16 @@ diff -ruN a/src/external_surface.rs b/src/external_surface.rs
 diff -ruN a/src/gpui.rs b/src/gpui.rs
 --- a/src/gpui.rs
 +++ b/src/gpui.rs
-@@ -21,6 +21,8 @@
+@@ -35,6 +35,8 @@
  mod element;
  mod elements;
  mod executor;
 +#[cfg(target_os = "linux")]
 +mod external_surface;
- mod platform_scheduler;
- pub(crate) use platform_scheduler::PlatformScheduler;
  mod geometry;
-@@ -110,6 +112,8 @@
+ mod gestures;
+ mod global;
+@@ -122,6 +124,8 @@
  pub use element::*;
  pub use elements::*;
  pub use executor::*;
@@ -326,7 +326,7 @@ diff -ruN a/src/gpui.rs b/src/gpui.rs
 diff -ruN a/src/scene.rs b/src/scene.rs
 --- a/src/scene.rs
 +++ b/src/scene.rs
-@@ -771,6 +771,9 @@
+@@ -1172,6 +1172,9 @@
      pub content_mask: ContentMask<ScaledPixels>,
      #[cfg(any(target_os = "macos", target_os = "ios"))]
      pub image_buffer: objc2_core_foundation::CFRetained<objc2_core_video::CVPixelBuffer>,
@@ -339,7 +339,7 @@ diff -ruN a/src/scene.rs b/src/scene.rs
 diff -ruN a/src/window.rs b/src/window.rs
 --- a/src/window.rs
 +++ b/src/window.rs
-@@ -5171,6 +5171,26 @@
+@@ -5665,6 +5665,26 @@
          });
      }
  

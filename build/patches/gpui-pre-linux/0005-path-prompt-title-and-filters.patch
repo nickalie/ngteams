@@ -4,7 +4,7 @@ types, `*` for a filter with neither; the first filter is the current one.
 
 --- a/src/linux/platform.rs
 +++ b/src/linux/platform.rs
-@@ -777,11 +777,15 @@
+@@ -831,11 +831,15 @@
          #[cfg(any(feature = "wayland", feature = "x11"))]
          self.foreground_executor()
              .spawn(async move {
@@ -25,7 +25,7 @@ types, `*` for a filter with neither; the first filter is the current one.
  
                  let request = match ashpd::desktop::file_chooser::OpenFileRequest::default()
                      .identifier(identifier.await)
-@@ -790,6 +794,8 @@
+@@ -844,6 +848,8 @@
                      .accept_label(options.prompt.as_ref().map(gpui::SharedString::as_str))
                      .multiple(options.multiple)
                      .directory(options.directories)
@@ -34,7 +34,7 @@ types, `*` for a filter with neither; the first filter is the current one.
                      .send()
                      .await
                  {
-@@ -1223,6 +1229,28 @@
+@@ -1278,6 +1284,28 @@
      diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
  }
  

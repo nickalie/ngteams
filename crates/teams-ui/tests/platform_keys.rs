@@ -411,7 +411,7 @@ fn on_the_platform_key(action: &dyn Action, cx: &mut VisualTestContext) -> bool 
                     } else {
                         modifiers.platform
                     };
-                    modifiers.secondary() && !other
+                    modifiers.secondary(cx) && !other
                 })
             })
     })

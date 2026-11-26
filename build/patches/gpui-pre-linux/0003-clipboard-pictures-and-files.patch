@@ -2,8 +2,6 @@ Wayland clipboard reads keep every form an offer holds: its text (with its HTML)
 WebP, ...) and the local files a text/uri-list names, as one item's entries, so a paste can choose among them
 (a screenshot, a browser's copied image beside its HTML, a file manager's copied files beside their paths).
 
-diff --git a/src/linux/wayland/clipboard.rs b/src/linux/wayland/clipboard.rs
-index 49308236..8c3298df 100644
 --- a/src/linux/wayland/clipboard.rs
 +++ b/src/linux/wayland/clipboard.rs
 @@ -13,7 +13,10 @@ use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};

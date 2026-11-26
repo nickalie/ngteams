@@ -16,7 +16,7 @@ files enter where the pointer is then.
  default-features = false
 --- a/src/linux/wayland/client.rs
 +++ b/src/linux/wayland/client.rs
-@@ -90,7 +90,9 @@
+@@ -93,7 +93,9 @@
      keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, new_xkb_context,
      open_uri_internal, read_fd_with_timeout, reveal_path_internal,
      wayland::{
@@ -25,9 +25,9 @@ files enter where the pointer is then.
 +            Clipboard, DataOffer, FILE_LIST_MIME_TYPE, PORTAL_FILE_TRANSFER_MIME_TYPE, TEXT_MIME_TYPES,
 +        },
          cursor::Cursor,
-         serial::{Serial, SerialKind, SerialTracker},
+         serial::{ActivationContext, Serial, SerialKind, SerialTracker},
          to_shape,
-@@ -421,21 +423,41 @@
+@@ -426,21 +428,41 @@
      window: Option<Window>,
      position: Point<Pixels>,
      uri_read_generation: u64,
@@ -70,7 +70,7 @@ files enter where the pointer is then.
  }
  
  trait FileDragDataOffer {
-@@ -458,24 +480,41 @@
+@@ -463,24 +485,41 @@
      DataOffer: FileDragDataOffer + Clone,
      Window: Clone,
  {
@@ -121,7 +121,7 @@ files enter where the pointer is then.
          Some((
              window,
              PlatformInput::FileDrop(FileDropEvent::Submit {
-@@ -489,21 +528,81 @@
+@@ -494,21 +533,81 @@
          generation: u64,
          data_offer: DataOffer,
          window: Window,
@@ -213,7 +213,7 @@ files enter where the pointer is then.
      }
  }
  
-@@ -1096,6 +1195,8 @@
+@@ -1103,6 +1202,8 @@
                  window: None,
                  position: Point::default(),
                  uri_read_generation: 0,
@@ -222,7 +222,7 @@ files enter where the pointer is then.
              },
              external_drag: None,
              click: ClickState {
-@@ -2906,15 +3007,33 @@
+@@ -2893,15 +2994,33 @@
                  state.serial_tracker.update(SerialKind::DataDevice, serial);
                  if let Some(data_offer) = data_offer {
                      let Some(drag_window) = get_window(&mut state, &surface.id()) else {
@@ -259,7 +259,7 @@ files enter where the pointer is then.
                          BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
                      });
                      let fd = pipe.read;
-@@ -2933,47 +3052,39 @@
+@@ -2920,47 +3039,39 @@
                          .foreground_executor
                          .clone()
                          .spawn(async move {
@@ -324,7 +324,7 @@ files enter where the pointer is then.
                                  drag_window.handle_input(input);
                              }
                          })
-@@ -2981,11 +3092,12 @@
+@@ -2968,11 +3079,12 @@
                  }
              }
              wl_data_device::Event::Motion { x, y, .. } => {
@@ -339,7 +339,7 @@ files enter where the pointer is then.
  
                  let input = PlatformInput::FileDrop(FileDropEvent::Pending { position });
                  drop(state);
-@@ -3027,14 +3139,7 @@
+@@ -3014,14 +3126,7 @@
          let mut state = client.borrow_mut();
  
          if let wl_data_offer::Event::Offer { mime_type } = event {
@@ -355,7 +355,7 @@ files enter where the pointer is then.
              if let Some(offer) = state
                  .data_offers
                  .iter_mut()
-@@ -3305,6 +3410,8 @@
+@@ -3253,6 +3358,8 @@
              window: None,
              position: Point::default(),
              uri_read_generation: 0,
@@ -364,7 +364,7 @@ files enter where the pointer is then.
          }
      }
  
-@@ -3313,22 +3420,23 @@
+@@ -3261,22 +3368,23 @@
          generation: u64,
          data_offer: FakeDataOffer,
          window: &'static str,
@@ -393,7 +393,7 @@ files enter where the pointer is then.
          }
      }
  
-@@ -3336,7 +3444,7 @@
+@@ -3284,7 +3392,7 @@
      fn leave_discards_pending_drag_uri_read() {
          let mut drag = drag_state();
          let data_offer = FakeDataOffer::new("A");
@@ -402,7 +402,7 @@ files enter where the pointer is then.
          let mut entered_windows = Vec::new();
  
          record_entered(drag.handle_leave(), &mut entered_windows);
-@@ -3352,37 +3460,91 @@
+@@ -3300,37 +3408,91 @@
      }
  
      #[test]
@@ -508,7 +508,7 @@ files enter where the pointer is then.
          record_entered(
              complete_drag_uri_read(&mut drag, generation_b, data_offer_b.clone(), "window B"),
              &mut entered_windows,
-@@ -3399,6 +3561,39 @@
+@@ -3347,6 +3509,39 @@
          assert_eq!(drag.window, Some("window B"));
      }
  
@@ -550,7 +550,7 @@ files enter where the pointer is then.
          cursor_rectangles: RefCell<Vec<(i32, i32, i32, i32)>>,
 --- a/src/linux/wayland/clipboard.rs
 +++ b/src/linux/wayland/clipboard.rs
-@@ -22,6 +22,8 @@
+@@ -17,6 +17,8 @@
  pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
      ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
  pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
@@ -559,7 +559,7 @@ files enter where the pointer is then.
  
  /// Text mime types that we'll accept from other programs.
  pub(crate) const ALLOWED_TEXT_MIME_TYPES: [&str; 2] = ["text/plain;charset=utf-8", "UTF8_STRING"];
-@@ -201,7 +203,7 @@
+@@ -75,7 +77,7 @@
          self.mime_types.push(mime_type)
      }
  

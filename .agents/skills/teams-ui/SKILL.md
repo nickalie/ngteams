@@ -107,7 +107,7 @@ offered: the call bar's Leave (tooltip "Leave call"), the Ctrl+K command "Leave 
 "hang up" in one place and "leave" in another. When you rename an action, grep the switcher (`switcher.rs`), the
 notifications, the README and the tests for the old name. Errors say what happened and what to do, without apologising.
 
-## Kit pitfalls (gpui-component 0.8)
+## Kit pitfalls (gpui-component 0.11)
 
 - `Button` takes no `debug_selector`: wrap it with `selected_by(id, button)` so tests can still find it.
 - The kit draws some icons by path (`IconName`: carets, submenu chevrons, the date field's calendar, spinners);

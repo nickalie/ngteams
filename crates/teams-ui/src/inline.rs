@@ -643,14 +643,6 @@ pub enum Laid {
     Measured(Option<Arc<RenderImage>>, (u32, u32), (u32, u32)),
 }
 
-impl IntoElement for Picture {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for Picture {
     type RequestLayoutState = Laid;
     type PrepaintState = ();
@@ -1033,14 +1025,6 @@ impl InlineText {
             layout,
             emoticons,
         }
-    }
-}
-
-impl IntoElement for InlineText {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 

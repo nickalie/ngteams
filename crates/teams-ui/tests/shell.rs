@@ -781,16 +781,17 @@ fn the_title_bar_menus_open_each_place_and_change_zoom_without_losing_the_chat()
     let (shell, cx) = shell_window(&rig, Settings::default(), Arc::new(ViewTrace::off()));
     click(cx, "chat-row-1");
     let chat = cx.update(|_, cx| shell.read(cx).main().clone());
+    // the first Down lands on the first place, past the menu's "Apps" label
     click(cx, "title-launcher");
-    cx.simulate_keystrokes("down down down enter");
+    cx.simulate_keystrokes("down down enter");
     let _ = bounds(cx, "title-launcher");
     assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), Main::Calendar);
     click(cx, "title-launcher");
-    cx.simulate_keystrokes("down down down down enter");
+    cx.simulate_keystrokes("down down down enter");
     let _ = bounds(cx, "title-launcher");
     assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), Main::Settings);
     click(cx, "title-launcher");
-    cx.simulate_keystrokes("down down enter");
+    cx.simulate_keystrokes("down enter");
     let _ = bounds(cx, "title-launcher");
     assert_eq!(cx.update(|_, cx| shell.read(cx).main().clone()), chat);
     let initial = settings_of(&shell, cx).appearance.font_size;
@@ -949,11 +950,12 @@ fn the_font_picker_shows_a_family_chosen_elsewhere_and_the_settings_scroll() {
     cx.simulate_resize(gpui::size(px(800.0), px(400.0)));
     let before = bounds(cx, "font-family").expect("drawn").origin.y;
     let pane = bounds(cx, "settings").expect("drawn");
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: pane.center(),
         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-400.0))),
         modifiers: Modifiers::none(),
         touch_phase: gpui::TouchPhase::Moved,
+        source: gpui::ScrollSource::Pointer,
     });
     let after = bounds(cx, "font-family").expect("drawn").origin.y;
     assert!(after < before, "the settings scrolled: {before:?} to {after:?}");
@@ -1843,15 +1845,22 @@ fn replacing_an_own_file_refreshes_the_playing_sound_without_changing_the_source
         writer.finish().unwrap();
         click(cx, "sound-message");
         let menu_row = bounds(cx, "sound-message-pack").expect("drawn");
-        let before = bounds(cx, "sound-message-own-file").expect("drawn").origin.y;
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        // the pointer goes over the menu first, as a hand moves it there before the wheel
+        cx.simulate_mouse_move(menu_row.center(), None, Modifiers::none());
+        cx.simulate_event(gpui::ScrollEvent {
             position: menu_row.center(),
             delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-400.0))),
             modifiers: Modifiers::none(),
             touch_phase: gpui::TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
-        let after = bounds(cx, "sound-message-own-file").expect("drawn").origin.y;
-        assert!(after < before, "the menu scrolled: {before:?} to {after:?}");
+        // the menu is at most 320 px high from its first row: the own file shows in it, scrolled to if the list is
+        // longer
+        let own = bounds(cx, "sound-message-own-file").expect("drawn");
+        assert!(
+            own.bottom() <= menu_row.top() + px(320.0),
+            "the own file shows in the menu: {menu_row:?}, {own:?}"
+        );
         click(cx, "sound-message-own-file");
         assert!(cx.did_prompt_for_paths());
         cx.simulate_path_prompt_response(|options| {

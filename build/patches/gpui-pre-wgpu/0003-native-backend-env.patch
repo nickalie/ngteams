@@ -3,10 +3,9 @@ mask remains unchanged. CPU-only CI can explicitly use Vulkan/Lavapipe, avoiding
 on a machine with no DRM device; errors are still reported, and native windows continue to be rendered and tested.
 scripts/vendor-gpui.sh applies this to the verified crates.io archive after 0001 and 0002.
 
-diff --git a/src/wgpu_context.rs b/src/wgpu_context.rs
 --- a/src/wgpu_context.rs
 +++ b/src/wgpu_context.rs
-@@ -483,7 +483,7 @@
+@@ -491,7 +491,7 @@
      #[cfg(not(target_family = "wasm"))]
      pub fn instance(display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>) -> wgpu::Instance {
          wgpu::Instance::new(wgpu::InstanceDescriptor {

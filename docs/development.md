@@ -102,13 +102,13 @@ and pins itself with `teams_wpe_client::worker::pin_worker_path`.
 
 ## Third-party UI code
 
-The views are built on [`gpui-component`](https://crates.io/crates/gpui-component) 0.8 (Longbridge's GPUI Kit,
-Apache-2.0), the UI kit for `gpui-pre` 0.3.9; it resolves to the workspace's vendored GPUI patch. Its audit (M2 Task 7,
+The views are built on [`gpui-component`](https://crates.io/crates/gpui-component) 0.11 (Longbridge's GPUI Kit,
+Apache-2.0), the UI kit for `gpui-pre` 0.3.14; it resolves to the workspace's vendored GPUI patch. Its audit (M2 Task 7,
 `docs/plans/completed/20261021-native-teams-m2-gpui-daily-driver.md`) found, and `crates/teams-ui/tests/reach.rs` keeps
 checking:
 
 - It takes `gpui-pre` with its default features (`x11`, `font-kit`, `windows-manifest`), so the workspace's GPUI has
-  them on. In `gpui-pre` 0.3.9 `x11` only lets GPUI name an X11 display it could use and `font-kit` switches nothing;
+  them on. In `gpui-pre` 0.3.14 `x11` only lets GPUI name an X11 display it could use and `font-kit` switches nothing;
   the X11 client is `gpui-pre-linux`'s, which stays Wayland-only (`crates/teams-ui/tests/reach.rs` checks it), and
   `ngteams` lab and read-only modes refuse a set `DISPLAY` all the same. `windows-manifest` acts on Windows builds only.
 - Its tree for the host holds no HTTP or WebSocket client (`gpui-pre-reqwest` is for wasm only) and only licences an

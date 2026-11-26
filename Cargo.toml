@@ -128,12 +128,15 @@ async-channel = "2.5.0"
 base64 = "0.23.1"
 # a Signal sticker pack's blocks chained as Signal encrypts them (teams-core's `signal`); no logging
 cbc = { version = "0.2.1", default-features = false, features = ["block-padding"] }
-# the chat list's times in the local time zone (read from TZ and the zoneinfo files, no libc localtime): the version
-# the UI kit already links, with only its clock
+# the chat list's times in the local time zone (read from TZ and the zoneinfo files, no libc localtime), with only
+# its clock
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 # the scheduling form's start and end time zones: the IANA zones and their offsets at a time (no logging of its own,
 # so nothing of it reaches the compile-time log cap)
 chrono-tz = { version = "0.10.4", default-features = false, features = ["std"] }
+# the UI kit's date pickers take and give `jiff::civil` dates: the version the kit links, converted from and to
+# Chrono at the kit's boundary (teams-ui's `kit_date`); jiff logs nothing (its `logging` feature stays off)
+jiff = { version = "1.0.3", default-features = false, features = ["std"] }
 # The desktop's IANA zone on Windows and Unix; already used by Chrono. No runtime logging on either platform.
 iana-time-zone = "0.1.65"
 # Native known folders on Windows, including redirected Downloads. Already resolved by GPUI; no runtime logging.
@@ -159,12 +162,12 @@ gstreamer-app = "0.25.2"
 gstreamer-audio = "0.25.2"
 # the system random source: PKCE verifiers and OAuth state
 getrandom = "0.4.3"
-# GPUI as agterm-rs takes it: the crates.io `gpui-pre` snapshot, pinned exactly so agterm-rs's patches apply as they
+# GPUI: the crates.io `gpui-pre` snapshot that the UI kit pins, exactly, so the patches in build/patches apply as they
 # are. Wayland only: without `x11`, GPUI's Linux platform has no X11 backend to fall back to.
-gpui-pre = { version = "=0.3.9", default-features = false, features = ["wayland"] }
+gpui-pre = { version = "=0.3.14", default-features = false, features = ["wayland"] }
 # `runtime_shaders` acts on macOS only: Metal compiles GPUI's shaders when the app starts instead of at build time,
 # so a build needs no separately downloaded Metal Toolchain (Xcode 26 and later leave it out).
-gpui-pre-platform = { version = "=0.3.9", default-features = false, features = ["wayland", "runtime_shaders"] }
+gpui-pre-platform = { version = "=0.3.14", default-features = false, features = ["wayland", "runtime_shaders"] }
 # The sign-in window's engine (`teams-wpe`) and its web process extension: GLib and GIO as WPE WebKit 2.54 links
 # them, through gtk-rs; the extension calls `g_variant_*` and `g_signal_connect_data` by hand on the -sys crates
 gio = "0.22.10"
@@ -178,13 +181,13 @@ pkg-config = "0.3.34"
 system-deps = "7.0.8"
 # `teams-wpe`'s input modifiers and page settings
 bitflags = { version = "2.13.2", features = ["serde"] }
-# The UI kit (Apache-2.0; M2 Task 7's audit): built for `gpui-pre =0.3.9`, so it resolves to the vendored patched
+# The UI kit (Apache-2.0; M2 Task 7's audit): built for `gpui-pre =0.3.14`, so it resolves to the vendored patched
 # copy above. It takes `gpui-pre` with its default features, so the workspace's GPUI gains `x11`, `font-kit` and
 # `windows-manifest` (the lab app refuses a set `DISPLAY`); none of the kit's own optional features.
-gpui-component = { version = "0.8.0", default-features = false }
+gpui-component = { version = "0.11.0", default-features = false }
 # The kit's icons, by the paths its components draw them from (`teams_ui::AppAssets`): the kit's own assets crate
 # (Apache-2.0; Lucide's SVGs, ISC/MIT), the version the kit locks
-gpui-kit-assets = { version = "0.8.0", default-features = false }
+gpui-kit-assets = { version = "0.11.0", default-features = false }
 # GPUI's `RenderImage` frames are `image` buffers: the version GPUI already links.
 image = { version = "0.25.10", default-features = false }
 # Keep the decoder's allocation bounds when resolving image's transitive dependencies.
@@ -280,7 +283,7 @@ ndarray = { version = "0.17.2", default-features = false, features = ["std"] }
 # ... and the same model on the GPU where there is one: Burn (Tracel; MIT/Apache-2.0), pure Rust, its wgpu backend
 # (Vulkan; kernel fusion, no autotune: autotuning a model this small costs a minute of GPU on its first run) through
 # CubeCL. The model's code and weights are generated from the ONNX at build time by burn-onnx (teams-media's build
-# script). wgpu here is its own version, beside GPUI's. The graphics API is chosen per target in teams-media: Vulkan on
+# script). Its wgpu is the one GPUI links (30). The graphics API is chosen per target in teams-media: Vulkan on
 # Linux and Windows, Metal on macOS (Vulkan there would need the Vulkan SDK at build time). Their logs under the `debug` cap (crates/teams-log) name the
 # adapter's features and the kernels compiled; the kernels' sources are `trace`, compiled out: no frame data.
 burn = { version = "0.22.0", default-features = false, features = ["std", "wgpu", "fusion"] }
@@ -465,7 +468,7 @@ opt-level = 3
 # GPUI with agterm-rs's external-surfaces patches (M0 Task 16, approach (b) of the video spike):
 # `Window::paint_external_surface` draws CPU pixels uploaded into a texture kept per surface, or a dmabuf imported on
 # the GPU, instead of a new sprite atlas texture per video frame. vendor/gpui-pre and vendor/gpui-pre-wgpu are the verified crates.io sources of the
-# pinned 0.3.9 plus build/patches/gpui-pre{,-wgpu} (scripts/vendor-crates.sh; `--check` verifies them); so is
+# pinned 0.3.14 plus build/patches/gpui-pre{,-wgpu} (scripts/vendor-crates.sh; `--check` verifies them); so is
 # vendor/gpui-pre-linux, whose Wayland clipboard keeps another program's HTML for the rich-text editor's paste.
 [patch.crates-io]
 gpui-pre = { path = "vendor/gpui-pre" }

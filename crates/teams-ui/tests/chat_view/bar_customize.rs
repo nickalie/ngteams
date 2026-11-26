@@ -51,7 +51,7 @@ fn shown(cx: &mut VisualTestContext, selector: &'static str) -> bool {
 }
 
 /// A key down and up: a focused row's click comes on the key's release.
-fn press(cx: &mut VisualTestContext, key: &str) {
+fn press(cx: &mut VisualTestContext, key: &'static str) {
     let keystroke = gpui::Keystroke::parse(key).unwrap();
     cx.simulate_keystrokes(key);
     cx.simulate_event(gpui::KeyUpEvent { keystroke });
@@ -525,11 +525,11 @@ fn the_keys_on_a_more_options_the_wheel_scrolled_start_on_its_first_row_in_view(
     hover(cx, "message-2");
     click(cx, "message-more");
     let menu = cx.debug_bounds("message-menu").unwrap();
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: menu.center(),
         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-3000.0))),
         touch_phase: gpui::TouchPhase::Moved,
-        ..gpui::ScrollWheelEvent::default()
+        ..gpui::ScrollEvent::default()
     });
     draw(cx);
     let menu = cx.debug_bounds("message-menu").unwrap();
