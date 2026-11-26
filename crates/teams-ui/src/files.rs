@@ -32,16 +32,23 @@
 //!   "Download" saves it where the user chooses (the downloads folder without a chooser)
 //!   (`crate::recording_download`). Each runs to its end, also when the other one starts while it runs. A line under
 //!   the card tells how far the last one got.
+//! - **The keyboard** reaches each card as Teams' does: a card is a Tab stop in its message's order, ringed while the
+//!   keyboard is on it ([`focus_ring`]), then its own buttons. Enter or Space does what a click does: it opens the file,
+//!   or plays a video in its card, the keys going into the player; Escape there pauses it and gives the keys back to
+//!   the card (`crate::video_player`). A screen reader names a card by the file's name and kind ([`spoken_name`]):
+//!   no capture gives a file's size, so the name has none.
 //! - Colours come from the palette but for the file types' own, fixed in every theme as Teams' file icons are.
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, App, ClipboardItem, Global, Image, ImageFormat, InteractiveElement as _, IntoElement, ObjectFit,
-    ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _, StyledImage as _,
-    Window, div, img, px, rgb,
+    AnyElement, App, ClickEvent, ClipboardItem, Entity, FocusHandle, Global, Image, ImageFormat,
+    InteractiveElement as _, IntoElement, MouseButton, ObjectFit, ParentElement as _, RenderOnce, SharedString,
+    StatefulInteractiveElement as _, Styled as _, StyledImage as _, Window, div, img, px, rgb,
 };
 use gpui_component::Sizable as _;
 use gpui_component::button::Button;
@@ -54,7 +61,7 @@ use crate::inline::{PictureSource, PictureState, picture, thumbnail};
 use crate::recording_download::{self, Failure, Progress, Then, download_of};
 use crate::rich_text::tint;
 use crate::theme::{self, Palette};
-use crate::video_player::{player_of, plays_inline};
+use crate::video_player::{VideoPlayer, player_of, plays_inline};
 
 /// A card's width in a grid of two or more files, as Teams draws one.
 pub const CARD_WIDTH: f32 = 316.0;
@@ -193,6 +200,58 @@ pub const fn kind_glyph(kind: FileKind) -> Glyph {
     }
 }
 
+/// A file type as a screen reader names it, in Teams' words.
+#[must_use]
+pub const fn kind_name(kind: FileKind) -> &'static str {
+    match kind {
+        FileKind::Video => "Video",
+        FileKind::Image => "Image",
+        FileKind::Audio => "Audio",
+        FileKind::Pdf => "PDF",
+        FileKind::Word => "Word document",
+        FileKind::Excel => "Excel workbook",
+        FileKind::PowerPoint => "PowerPoint presentation",
+        FileKind::Archive => "Compressed folder",
+        FileKind::Text => "Text document",
+        FileKind::Other => "File",
+    }
+}
+
+/// A card's name for a screen reader: the file's name and its kind ("plan.docx, Word document").
+#[must_use]
+pub fn spoken_name(file: &SharedFile) -> String {
+    format!("{}, {}", file.name, kind_name(file.kind()))
+}
+
+/// The ring over a card (or a recap's picture) while the keyboard is on it, as Teams draws a focused card: a 2 px line
+/// of the text's colour inside its edge. `None` when the keys are elsewhere or came from the pointer. Once the keyboard
+/// brought the keys, the ring stays until they leave, as a browser's does (GPUI's own focus-visible goes off at any
+/// move of the pointer).
+#[must_use]
+pub fn focus_ring(
+    focus: &FocusHandle,
+    selector: String,
+    palette: Palette,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<AnyElement> {
+    let from_keys = window.use_keyed_state(SharedString::from(format!("{selector}-keys")), cx, |_, _| {
+        Cell::new(false)
+    });
+    let ringed = focus.is_focused(window) && (from_keys.read(cx).get() || window.last_input_was_keyboard());
+    from_keys.read(cx).set(ringed);
+    ringed.then(|| {
+        div()
+            .debug_selector(move || selector.clone())
+            .absolute()
+            .inset_0()
+            .rounded_lg()
+            .border_2()
+            .border_color(rgb(palette.foreground))
+            .into_any_element()
+    })
+}
+
 /// What a card's Share calls with its file: the view that drew it opening "Share this file" (`crate::share_file`).
 #[derive(Clone)]
 pub struct ShareFile(Rc<Share>);
@@ -266,32 +325,45 @@ pub struct FileCard {
 impl RenderOnce for FileCard {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let kind = self.file.kind();
-        if let Some(preview) = self.preview(cx) {
+        let focus = self.focus(window, cx);
+        if let Some(preview) = self.preview(&focus, window, cx) {
             return preview;
         }
-        let picture = match &self.source {
-            Some(source) if plays_inline(&self.file) => {
-                Some(player_of(&self.id, &self.file, source, window, cx).into_any_element())
-            }
-            _ => Some(self.picture(kind, cx)),
+        let player = match &self.source {
+            Some(source) if plays_inline(&self.file) => Some(player_of(&self.id, &self.file, source, window, cx)),
+            _ => None,
         };
+        if let Some(player) = &player {
+            player.update(cx, |player, _| player.return_to(&focus));
+        }
+        let picture = match &player {
+            Some(player) => player.clone().into_any_element(),
+            None => self.picture(kind, cx),
+        };
+        let ring = focus_ring(&focus, format!("file-card-ring-{}", self.id), self.palette, window, cx);
         let id = self.id.clone();
-        div()
-            .debug_selector(move || format!("file-card-{id}"))
-            .w(px(self.width))
-            .max_w_full()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .rounded_lg()
-            .overflow_hidden()
-            .border_1()
-            .border_color(rgb(self.palette.border))
-            .bg(rgb(header_colour(self.palette)))
-            .child(self.header(kind))
-            .children(picture)
-            .children(self.status(cx))
-            .into_any_element()
+        self.keyed(
+            div().id(SharedString::from(format!("file-card-box-{id}"))),
+            &focus,
+            player,
+        )
+        .debug_selector(move || format!("file-card-{id}"))
+        .relative()
+        .w(px(self.width))
+        .max_w_full()
+        .flex_none()
+        .flex()
+        .flex_col()
+        .rounded_lg()
+        .overflow_hidden()
+        .border_1()
+        .border_color(rgb(self.palette.border))
+        .bg(rgb(header_colour(self.palette)))
+        .child(self.header(kind))
+        .child(picture)
+        .children(self.status(cx))
+        .children(ring)
+        .into_any_element()
     }
 }
 
@@ -312,9 +384,46 @@ pub fn preview_size(natural: (u32, u32)) -> (f32, f32) {
 }
 
 impl FileCard {
+    /// The card's focus handle, a Tab stop, kept from frame to frame.
+    fn focus(&self, window: &mut Window, cx: &mut App) -> FocusHandle {
+        window
+            .use_keyed_state(
+                SharedString::from(format!("file-card-focus-{}", self.id)),
+                cx,
+                |_, cx| cx.focus_handle().tab_stop(true),
+            )
+            .read(cx)
+            .clone()
+    }
+
+    /// `card` as the keyboard reaches it: a Tab stop with its screen reader name, whose Enter or Space opens the file,
+    /// or plays it in `player` (see the module docs). A press of the pointer leaves the keys where they are, as a click
+    /// in the messages does.
+    fn keyed(
+        &self,
+        card: gpui::Stateful<gpui::Div>,
+        focus: &FocusHandle,
+        player: Option<Entity<VideoPlayer>>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let (file, own) = (self.file.clone(), self.own());
+        card.track_focus(focus)
+            .role(gpui::accesskit::Role::Button)
+            .aria_label(spoken_name(&self.file))
+            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+            .on_click(move |event: &ClickEvent, window, cx| {
+                if !event.is_keyboard() {
+                    return;
+                }
+                match &player {
+                    Some(player) => player.update(cx, |player, cx| player.play_from_keys(window, cx)),
+                    None => open_file(&file, own.as_ref(), cx),
+                }
+            })
+    }
+
     /// An image drawn as its preview (see the module docs); `None` when it is drawn as its card: another kind of file,
     /// no preview, no engine to ask, or none to have.
-    fn preview(&self, cx: &mut App) -> Option<AnyElement> {
+    fn preview(&self, focus: &FocusHandle, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let preview = self.file.preview.as_ref().filter(|_| drawn_as_preview(&self.file))?;
         let state = picture(&preview.src, self.source.as_ref()?, cx);
         let given = preview.size;
@@ -336,6 +445,8 @@ impl FileCard {
             ),
         };
         let group = SharedString::from(format!("file-preview-{id}"));
+        // shown while the keyboard is on the card or on it too, so Tab never lands on a button no one sees
+        let keys = focus.contains_focused(window, cx);
         let more = self.more(FileKind::Image).map(|more| {
             div()
                 .absolute()
@@ -343,10 +454,12 @@ impl FileCard {
                 .right_1()
                 .rounded_md()
                 .bg(rgb(self.palette.surface))
-                .opacity(0.0)
-                .group_hover(group.clone(), |style| style.opacity(1.0))
+                .when(!keys, |more| {
+                    more.opacity(0.0).group_hover(group.clone(), |style| style.opacity(1.0))
+                })
                 .child(more)
         });
+        let ring = focus_ring(focus, format!("file-card-ring-{id}"), self.palette, window, cx);
         let picture = open_on_click(
             div()
                 .id(SharedString::from(format!("file-picture-{id}")))
@@ -356,8 +469,12 @@ impl FileCard {
             self.own(),
         );
         let status = self.status(cx);
-        let preview = div()
-            .id(SharedString::from(format!("file-preview-box-{id}")))
+        let preview = self
+            .keyed(
+                div().id(SharedString::from(format!("file-preview-box-{id}"))),
+                focus,
+                None,
+            )
             .debug_selector(move || format!("{selector}-{id}"))
             .group(group)
             .relative()
@@ -371,6 +488,7 @@ impl FileCard {
             .border_color(rgb(self.palette.border))
             .child(picture)
             .children(more)
+            .children(ring)
             .into_any_element();
         Some(match status {
             Some(status) => div()
@@ -611,17 +729,25 @@ fn header_button(id: String, glyph: Glyph, tip: &'static str) -> Button {
 /// `element` opening `file` when clicked, with the pointer's hand: an own server's through its engine ([`OwnFile::open`]),
 /// any other in the browser (its sharing link, else its own); as it was when the file has no link to open.
 fn open_on_click(element: gpui::Stateful<gpui::Div>, file: &SharedFile, own: Option<OwnFile>) -> AnyElement {
-    let Some(link) = file.open_link().map(str::to_owned) else {
+    if file.open_link().is_none() {
         return element.into_any_element();
-    };
+    }
+    let file = file.clone();
     element
         .cursor_pointer()
         .hover(|style| style.opacity(0.85))
-        .on_click(move |_, _, cx| match &own {
-            Some(own) => own.open(cx),
-            None => cx.open_url(&link),
-        })
+        .on_click(move |_, _, cx| open_file(&file, own.as_ref(), cx))
         .into_any_element()
+}
+
+/// Opens `file`: an own server's through its engine ([`OwnFile::open`]), any other in the browser (its sharing link,
+/// else its own); nothing when it has no link.
+fn open_file(file: &SharedFile, own: Option<&OwnFile>, cx: &mut App) {
+    match (own, file.open_link()) {
+        (Some(own), _) => own.open(cx),
+        (None, Some(link)) => cx.open_url(link),
+        (None, None) => {}
+    }
 }
 
 /// Why an own server's file couldn't be downloaded, as its card's line says it.

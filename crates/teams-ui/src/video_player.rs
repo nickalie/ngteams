@@ -14,7 +14,8 @@
 //!   where it is clicked or dragged to, its tooltip the time. In a card the controls show only while the pointer is on
 //!   the video (or its seek bar is dragged, or a menu of it is open), whether it plays or not, as in Teams; a recap's
 //!   player shows them while it doesn't play too. Space plays or pauses, Left and Right go 10 s back or forward, M
-//!   mutes.
+//!   mutes. In a card, Escape pauses it and gives the keys back to its card ([`VideoPlayer::return_to`]), which a
+//!   card's Enter or Space moved into it ([`VideoPlayer::play_from_keys`]); the controls show while the keys are in it.
 //! - **Its states**: loading and buffering show a spinner over the picture; a video that can't be played here (a
 //!   format no installed `GStreamer` plugin plays, a file the account can't read, the network) says so and offers the
 //!   browser.
@@ -70,6 +71,25 @@ mod menus;
 
 pub use captions::{Caption, CaptionColor, CaptionSize, CaptionStyle, Captions, language_name};
 pub use menus::{KEYS, Menu, Page, rate_label};
+
+/// The player's key context: its Escape is taken before the list's or the recap's around it.
+pub const CONTEXT: &str = "VideoPlayer";
+
+gpui::actions!(teams_ui, [LeavePlayer]);
+
+/// Marks the player's key bindings as installed.
+struct Bound;
+
+impl Global for Bound {}
+
+/// Binds the player's Escape ([`LeavePlayer`]), once per app.
+pub fn bind(cx: &mut App) {
+    if cx.has_global::<Bound>() {
+        return;
+    }
+    cx.set_global(Bound);
+    cx.bind_keys([gpui::KeyBinding::new("escape", LeavePlayer, Some(CONTEXT))]);
+}
 
 /// How far back and forward the skip buttons go.
 pub const SKIP: Duration = Duration::from_secs(10);
@@ -372,6 +392,8 @@ pub struct VideoPlayer {
     /// The menu open over the picture.
     menu: Option<Menu>,
     focus: FocusHandle,
+    /// The card that holds it: where Escape gives the keys back.
+    card: Option<FocusHandle>,
     _woken: Task<()>,
 }
 
@@ -429,7 +451,46 @@ impl VideoPlayer {
             captions: None,
             menu: None,
             focus: cx.focus_handle(),
+            card: None,
             _woken: task,
+        }
+    }
+
+    /// Makes Escape in it give the keys back to its card's `card`.
+    pub fn return_to(&mut self, card: &FocusHandle) {
+        if self.card.as_ref() != Some(card) {
+            self.card = Some(card.clone());
+        }
+    }
+
+    /// Enter or Space on its card: the keys go into it and it plays (it goes on playing if it does).
+    pub fn play_from_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus, cx);
+        if !self.playing() {
+            self.toggle(cx);
+        }
+        cx.notify();
+    }
+
+    /// Whether the keys are in it: on its picture or on one of its controls.
+    #[must_use]
+    pub fn has_keys(&self, window: &Window, cx: &App) -> bool {
+        self.focus.contains_focused(window, cx)
+    }
+
+    /// Escape: an open menu closes, then full screen ends, then a card's player pauses and gives the keys back to its
+    /// card; else it goes on to the view around it.
+    fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.menu.is_some() {
+            self.show_menu(None, cx);
+        } else if self.full_screen.on {
+            self.toggle_fullscreen(window, cx);
+        } else if let Some(card) = self.card.clone() {
+            self.pause(cx);
+            window.focus(&card, cx);
+            cx.notify();
+        } else {
+            cx.propagate();
         }
     }
 
@@ -786,7 +847,8 @@ impl VideoPlayer {
 
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event.keystroke.key.as_str() {
-            "space" => self.toggle(cx),
+            // Space on one of its controls presses that control
+            "space" if self.focus.is_focused(window) => self.toggle(cx),
             "left" => self.skip(true, cx),
             "right" => self.skip(false, cx),
             "m" => self.toggle_mute(cx),
@@ -796,8 +858,6 @@ impl VideoPlayer {
             }
             "z" if self.fill => self.step_rate(false, cx),
             "x" if self.fill => self.step_rate(true, cx),
-            "escape" if self.menu.is_some() => self.show_menu(None, cx),
-            "escape" if self.full_screen.on => self.toggle_fullscreen(window, cx),
             _ => return,
         }
         cx.stop_propagation();
@@ -830,11 +890,11 @@ impl Render for VideoPlayer {
             // the video is drawn over the whole window; the card keeps its place, black
             div().size_full().bg(gpui::black()).into_any_element()
         } else {
-            self.screen_box(cx)
+            self.screen_box(window, cx)
         };
         let overlay = self.full_screen.on.then(|| {
             let viewport = window.viewport_size();
-            let screen = self.screen_box(cx);
+            let screen = self.screen_box(window, cx);
             deferred(
                 anchored()
                     .position_mode(gpui::AnchoredPositionMode::Window)
@@ -857,7 +917,7 @@ impl Render for VideoPlayer {
 /// The parts of the player's box.
 impl VideoPlayer {
     /// The black box with the picture, what is over it and the controls.
-    fn screen_box(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn screen_box(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let id = self.id.clone();
         let group = SharedString::from(format!("video-screen-{id}"));
         let picture = self.picture(cx);
@@ -865,14 +925,17 @@ impl VideoPlayer {
         let caption = self
             .caption(cx)
             .map(|text| captions::caption(&id, text, CaptionStyle::current(cx)));
-        let controls = self.controls(&group, cx);
+        let keys = self.has_keys(window, cx);
+        let controls = self.controls(&group, keys, cx);
         let shift = if self.file.open_link().is_some() { 0.0 } else { 32.0 };
         let menu = self.menu_panel(shift, cx);
         div()
             .id(SharedString::from(format!("video-screen-{id}")))
             .debug_selector(move || format!("video-screen-{id}"))
             .group(group)
+            .key_context(CONTEXT)
             .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &LeavePlayer, window, cx| this.escape(window, cx)))
             .on_key_down(cx.listener(Self::key))
             .relative()
             .size_full()
@@ -1016,8 +1079,8 @@ impl VideoPlayer {
     /// The seek bar and the buttons over the box's bottom, on a shade: while the pointer is on the video, or always
     /// while they are used (see the module docs). Its test selector says which: `video-controls-<id> shown` or
     /// `video-controls-<id> on-hover`.
-    fn controls(&mut self, group: &SharedString, cx: &mut Context<Self>) -> AnyElement {
-        let always = (self.fill && !self.playing()) || self.dragging.is_some() || self.menu.is_some();
+    fn controls(&mut self, group: &SharedString, keys: bool, cx: &mut Context<Self>) -> AnyElement {
+        let always = (self.fill && !self.playing()) || self.dragging.is_some() || self.menu.is_some() || keys;
         let bar = self.seek_bar(cx);
         let buttons = self.buttons(cx);
         let id = self.id.clone();

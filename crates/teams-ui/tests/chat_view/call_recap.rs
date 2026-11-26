@@ -310,3 +310,48 @@ fn a_transcript_has_its_card_until_a_recording_of_its_call_holds_it() {
     assert_eq!(kinds, ["timed-event", "transcript", "timed-event"]);
     assert!(cx.update(|_, cx| view.read(cx).has_call_recaps()));
 }
+
+#[test]
+fn the_keyboard_reaches_a_recaps_thumbnail_and_enter_plays_the_recording() {
+    let rig = rig_with(call_messages());
+    let (view, cx) = chat_window(&rig);
+    let told: Rc<RefCell<Vec<ChatViewEvent>>> = Rc::default();
+    let kept = Rc::clone(&told);
+    cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, event: &ChatViewEvent, _| {
+            kept.borrow_mut().push(event.clone());
+        })
+        .detach();
+    });
+    cx.update(|window, cx| view.read(cx).focus_handle().clone().focus(window, cx));
+    cx.simulate_keystrokes("enter");
+    draw(cx);
+    let mut reached = false;
+    for _ in 0..12 {
+        if cx.debug_bounds("recap-card-ring-5").is_some() {
+            reached = true;
+            break;
+        }
+        // as the kit's root moves the keys in the app's window, which the test's has not
+        cx.update(gpui::Window::focus_next);
+        draw(cx);
+    }
+    assert!(reached, "Tab reaches the thumbnail, ringed");
+    // down and up, as a person presses it: the thumbnail is clicked on the key's release
+    let enter = gpui::Keystroke::parse("enter").unwrap();
+    cx.simulate_event(gpui::KeyDownEvent {
+        keystroke: enter.clone(),
+        is_held: false,
+        prefer_character_input: false,
+    });
+    cx.simulate_event(gpui::KeyUpEvent { keystroke: enter });
+    cx.run_until_parked();
+    assert_eq!(
+        told.borrow().last(),
+        Some(&ChatViewEvent::OpenRecap {
+            recording: Some(LINK.to_owned()),
+            transcribed: None,
+            open: RecapOpen::Play,
+        })
+    );
+}

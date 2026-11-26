@@ -22,8 +22,8 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    App, ElementId, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, KeystrokeEvent, RenderOnce,
-    Stateful, Styled as _, Window, rgb,
+    App, ElementId, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, KeystrokeEvent,
+    ParentElement as _, RenderOnce, Stateful, Styled as _, Window, rgb,
 };
 
 use crate::theme::Palette;
@@ -33,12 +33,15 @@ pub mod row;
 pub use row::Row;
 
 /// How a stop shows that the keyboard is on it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ring {
     /// Its background lights, as a hovered row's does.
     Fill,
     /// Its border takes the brand colour: a card or a chip, which has one.
     Edge,
+    /// A line inside its edge, drawn over it: a picture, whose fill and border don't show
+    /// ([`crate::files::focus_ring`]). Its test selector is `<selector>`.
+    Outline(gpui::SharedString),
 }
 
 /// A clickable `div` the keyboard reaches ([`stop`]).
@@ -69,6 +72,13 @@ impl Stop {
     #[must_use]
     pub fn edge(mut self) -> Self {
         self.ring = Ring::Edge;
+        self
+    }
+
+    /// Draws a line inside its edge instead of filling it ([`Ring::Outline`]), its test selector `selector`.
+    #[must_use]
+    pub fn outline(mut self, selector: impl Into<gpui::SharedString>) -> Self {
+        self.ring = Ring::Outline(selector.into());
         self
     }
 
@@ -108,6 +118,10 @@ impl RenderOnce for Stop {
         element.track_focus(&handle).map(|element| match ring {
             Ring::Fill => element.focus_visible(move |style| style.bg(rgb(palette.hover))),
             Ring::Edge => element.focus_visible(move |style| style.border_color(rgb(palette.brand))),
+            Ring::Outline(selector) => {
+                let outline = crate::files::focus_ring(&handle, selector.to_string(), palette, window, cx);
+                element.relative().children(outline)
+            }
         })
     }
 }

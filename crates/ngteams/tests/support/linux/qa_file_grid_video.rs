@@ -2,8 +2,8 @@
 //!
 //! - **A video alone**: c sends a message whose only file is a video. Its card is two columns wide with its location
 //!   whole, shows the video's thumbnail, and a click on it plays the video; its frames move. Teams Light and Dark.
-//! - **The keyboard**: Tab (and Shift+Tab) reach the card, and Enter plays the video; Escape after it. No file card is
-//!   a tab stop yet: the walk logs that gap and does not fail on it.
+//! - **The keyboard**: Escape in the box, Enter into the list, then Tab reach the card, and Enter plays the video;
+//!   Escape pauses it.
 //! - **A refused link**: Graph refuses the file also with `Prefer: redeemSharingLink`. A click on its card says "This
 //!   video can't be opened here" (the player's `Unavailable`), not a load that never ends.
 //! - **The Recap tab**: a meeting whose recap names no drive or item of its recording, and the recording's link in the
@@ -13,7 +13,6 @@
 //! Every name, id, link and byte is made up.
 
 use super::*;
-use ui_sandbox::input::Modifier;
 
 /// A video c sends alone (task 793).
 pub(super) const LONE_CLIP: MadeUpFile = MadeUpFile {
@@ -88,7 +87,7 @@ const PANE_LEFT: u32 = 460;
 /// Where the window's content starts: under its title bar.
 const HEADER_TOP: u32 = 50;
 
-/// How many Tab presses the keyboard check tries in each direction.
+/// The most Tab presses the keyboard check tries.
 const TABS: u32 = 10;
 
 // --- the service ---
@@ -325,23 +324,20 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// Tab (then Shift+Tab) `n` times from the chat as it opens, then Enter: the lone video plays at some `n`.
+    /// From the chat as it opens: Escape (the box gives the keys to the list), Enter (into the list), Tab `n` times,
+    /// then Enter: the lone video plays at some `n`. Escape then pauses it and gives the keys back to its card.
     fn keyboard(&mut self) -> SandboxResult {
         let mut reached = None;
-        for (back, presses) in [false, true]
-            .into_iter()
-            .flat_map(|back| (1..=TABS).map(move |presses| (back, presses)))
-        {
-            if self.keys_play(back, presses)? {
-                reached = Some((back, presses));
+        for presses in 0..=TABS {
+            if self.keys_play(presses)? {
+                reached = Some(presses);
                 break;
             }
         }
-        let Some((back, presses)) = reached else {
+        let Some(presses) = reached else {
             self.run.shot(self.sandbox, "qa793-keyboard-unreached-light.png")?;
-            // a gap from before task 793, logged, not failed: docs/backlog/file-card-keyboard-focus.md
-            step(&format!(
-                "KNOWN GAP: the keyboard does not reach the lone video's card: 1 to {TABS} Tab or Shift+Tab presses, then Enter, \
+            note(format!(
+                "the keyboard does not reach the lone video's card: Escape, Enter, 0 to {TABS} Tab presses, then Enter, \
                  play nothing"
             ));
             return Ok(());
@@ -351,22 +347,35 @@ impl Walk<'_> {
         thread::sleep(SETTLE);
         let closed = self.player_of("lone-video")?;
         self.run.shot(self.sandbox, "qa793-keyboard-escape-light.png")?;
+        if closed.as_deref().is_some_and(|state| state.contains("Playing")) {
+            note(format!("Escape in the playing video does not pause it: {closed:?}"));
+        }
+        // the keys are back on the card: its ring, in both themes
+        for look in [LIGHT, DARK] {
+            self.run.theme(look.dark)?;
+            thread::sleep(SETTLE);
+            self.run
+                .shot(self.sandbox, &format!("qa849-card-focused-{}.png", look.name))?;
+        }
+        self.run.theme(false)?;
         step(&format!(
-            "the keyboard reaches the card: {presses} {} then Enter plays it; Escape: {closed:?}",
-            if back { "Shift+Tab" } else { "Tab" }
+            "the keyboard reaches the card: Escape, Enter, {presses} Tab, then Enter plays it; Escape: {closed:?}"
         ));
         Ok(())
     }
 
-    /// Opens the lone video's chat afresh, presses Tab (Shift+Tab when `back`) `presses` times, then Enter; whether
-    /// the video started.
-    fn keys_play(&mut self, back: bool, presses: u32) -> SandboxResult<bool> {
+    /// Opens the lone video's chat afresh, presses Escape, Enter, Tab `presses` times, then Enter; whether the video
+    /// started.
+    fn keys_play(&mut self, presses: u32) -> SandboxResult<bool> {
         self.open_message("one")?;
         self.open_message("lone-video")?;
         let before = self.player_of("lone-video")?;
-        let modifiers: &[Modifier] = if back { &[Modifier::Shift] } else { &[] };
+        self.run.input.key(keys::ESC)?;
+        thread::sleep(Duration::from_millis(120));
+        self.run.input.key(keys::ENTER)?;
+        thread::sleep(Duration::from_millis(120));
         for _ in 0..presses {
-            self.run.input.key_with(modifiers, keys::TAB)?;
+            self.run.input.key(keys::TAB)?;
             thread::sleep(Duration::from_millis(120));
         }
         self.run.input.key(keys::ENTER)?;

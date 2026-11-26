@@ -40,11 +40,13 @@ pub fn initial_bounds(preferred: Size<Pixels>, cx: &App) -> WindowBounds {
 pub type KitRoot = gpui_component::Root;
 
 /// Sets the app up for the views, once per app: the UI kit with our theme ([`theme::init`]), the shell's keys
-/// ([`shell::init`]) and the picture viewer's ([`picture_viewer::init`]).
+/// ([`shell::init`]), the picture viewer's ([`picture_viewer::init`]) and the video player's
+/// ([`crate::video_player::bind`]).
 pub fn init(cx: &mut App) {
     theme::init(cx);
     shell::init(cx);
     picture_viewer::init(cx);
+    crate::video_player::bind(cx);
 }
 
 /// Opens the main window, titled `title`, with app id `app_id`: the kit's root ([`KitRoot`]) holding our root view,

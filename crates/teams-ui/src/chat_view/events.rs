@@ -37,6 +37,9 @@ const RECAP_WIDTH: f32 = 680.0;
 /// The recap card's thumbnail, px.
 const THUMB_WIDTH: f32 = 142.0;
 const THUMB_HEIGHT: f32 = 80.0;
+
+/// The recap thumbnail's name for a screen reader: a click or Enter plays the recording.
+pub const PLAY_RECORDING: &str = "Play recording";
 /// What Teams' unverified mark says.
 pub const UNVERIFIED: &str = "Unverified";
 
@@ -499,11 +502,23 @@ impl ChatView {
             .bg(tint(palette.foreground, 0.08))
             .child(shown)
             .children(badge);
-        if first.is_some() {
+        let picture = if first.is_some() {
             picture = picture
                 .cursor_pointer()
+                .role(gpui::accesskit::Role::Button)
+                .aria_label(PLAY_RECORDING)
                 .on_click(recap_opener(card, RecapOpen::Play, cx));
-        }
+            // a stop on Tab, as Teams' is: Enter or Space plays the recording in the recap, as a click does
+            crate::keyboard::stop(
+                SharedString::from(format!("recap-card-play-{}", item.id)),
+                picture,
+                palette,
+            )
+            .outline(format!("recap-card-ring-{}", item.id))
+            .into_any_element()
+        } else {
+            picture.into_any_element()
+        };
         div()
             .flex_none()
             .flex()

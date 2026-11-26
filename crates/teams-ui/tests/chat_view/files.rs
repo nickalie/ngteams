@@ -1080,3 +1080,146 @@ fn a_file_without_a_sharepoint_link_is_a_card_without_actions_beside_the_good_on
     }
     assert!(bounds(cx, &format!("file-thumbnail-none-{ID}-2")).is_some());
 }
+
+/// Whether the keyboard's ring is on the card of file `at`.
+fn ringed(cx: &mut VisualTestContext, at: usize) -> bool {
+    bounds(cx, &format!("file-card-ring-{ID}-{at}")).is_some()
+}
+
+/// Each key of `keys` down and up, as a person presses it: a focused card is clicked on the key's release. Tab and
+/// Shift+Tab move as the kit's root moves them in the app's window, which the test's has not.
+fn press(cx: &mut VisualTestContext, keys: &str) {
+    for key in keys.split(' ') {
+        if key == "tab" || key == "shift-tab" {
+            cx.update(|window, cx| {
+                if key == "tab" {
+                    window.focus_next(cx);
+                } else {
+                    window.focus_prev(cx);
+                }
+            });
+            draw(cx);
+            continue;
+        }
+        let keystroke = gpui::Keystroke::parse(key).unwrap();
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(gpui::KeyUpEvent { keystroke });
+        draw(cx);
+    }
+}
+
+/// The keys into the list (Enter on it, as from Escape in the box), then Tab until the card of file `at` has them: how
+/// many presses that took.
+fn tab_to_card(view: &Entity<ChatView>, cx: &mut VisualTestContext, at: usize) -> usize {
+    cx.update(|window, cx| view.read(cx).focus_handle().clone().focus(window, cx));
+    press(cx, "enter");
+    for presses in 0..30 {
+        if ringed(cx, at) {
+            return presses;
+        }
+        press(cx, "tab");
+    }
+    panic!("Tab never reaches the card of file {at}");
+}
+
+#[test]
+fn the_keyboard_reaches_each_card_in_order_and_enter_opens_a_document() {
+    let (_rig, view, cx) = shown_with_thumbnail();
+    let shares = share_urls();
+    let to_video = tab_to_card(&view, cx, 0);
+    assert!(!ringed(cx, 1), "one card at a time");
+    // the video's card, then its Share and "More options", then (the player's controls, shown while they have the
+    // keys) the document's card
+    let mut presses = 0;
+    while !ringed(cx, 1) {
+        press(cx, "tab");
+        presses += 1;
+        assert!(presses < 30, "Tab goes on to the document's card");
+    }
+    assert!(presses >= 3, "the video card's buttons come between: {presses}");
+    assert!(!ringed(cx, 0));
+    press(cx, "enter");
+    assert_eq!(cx.opened_url().as_deref(), Some(shares[1].as_str()), "Enter opens it");
+    // Shift+Tab goes back the same way
+    for _ in 0..presses {
+        press(cx, "shift-tab");
+    }
+    assert!(
+        ringed(cx, 0),
+        "back on the video's card ({to_video} presses to it first)"
+    );
+}
+
+#[test]
+fn space_on_an_images_preview_opens_it_and_shows_more_options() {
+    let rig = rig_with(vec![image_message()]);
+    rig.core
+        .pictures
+        .lock()
+        .unwrap()
+        .insert(PREVIEW_SRC.to_owned(), thumbnail());
+    let shares = share_urls();
+    let (written_trace, _) = trace();
+    let (view, cx) = chat_window(&rig, written_trace);
+    draw(cx);
+    tab_to_card(&view, cx, 0);
+    assert!(cx.opened_url().is_none());
+    press(cx, "space");
+    assert_eq!(cx.opened_url().as_deref(), Some(shares[0].as_str()));
+    press(cx, "tab");
+    assert!(!ringed(cx, 0), "its More options has the keys");
+    press(cx, "enter");
+    assert!(
+        bounds(cx, &format!("file-menu-copy-{ID}-0")).is_some(),
+        "Enter on More options opens it"
+    );
+}
+
+#[test]
+fn enter_plays_a_video_in_its_card_and_escape_gives_the_keys_back_to_the_card() {
+    let (rig, view, cx) = shown_with_thumbnail();
+    tab_to_card(&view, cx, 0);
+    assert!(bounds(cx, &format!("video-controls-{ID}-0 on-hover")).is_some());
+    press(cx, "enter");
+    assert!(!ringed(cx, 0), "the keys went into the player");
+    assert!(
+        bounds(cx, &format!("video-controls-{ID}-0 shown")).is_some(),
+        "its controls show while it has the keys"
+    );
+    // the player asks the engine for the file's bytes: it was started
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !rig.core.asked().contains(&"file_stream") {
+        assert!(std::time::Instant::now() < until, "the video was never started");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        cx.run_until_parked();
+    }
+    press(cx, "escape");
+    assert!(ringed(cx, 0), "Escape gives the keys back to the card");
+    assert!(bounds(cx, &format!("video-controls-{ID}-0 on-hover")).is_some());
+    // the ring stays while the pointer moves, as a browser's does
+    cx.simulate_mouse_move(gpui::point(px(5.0), px(5.0)), None, Modifiers::none());
+    assert!(ringed(cx, 0), "the pointer's move leaves the ring");
+    // a second Escape, on the card, leaves it for the list, as from any control in it
+    press(cx, "escape");
+    assert!(!ringed(cx, 0));
+    assert!(cx.update(|window, cx| view.read(cx).focus_handle().is_focused(window)));
+}
+
+#[test]
+fn a_cards_screen_reader_name_is_the_files_name_and_kind() {
+    let files = shared_files(Some(
+        &serde_json::from_str::<Value>(FIXTURE).unwrap()["read_back"]["properties"]["files"],
+    ))
+    .files;
+    let spoken: Vec<String> = files.iter().map(teams_ui::files::spoken_name).collect();
+    assert_eq!(spoken.len(), 2);
+    assert!(
+        spoken[0].starts_with(&files[0].name) && spoken[0].ends_with(", Video"),
+        "{spoken:?}"
+    );
+    assert!(spoken[1].starts_with(&files[1].name), "{spoken:?}");
+}
