@@ -290,7 +290,6 @@ async fn test_activity(run: &Running) {
 /// A card's plain `Action.Submit`, pressed through the engine's own invoke: the SDK gets a message carrying the
 /// card's data and answers, and its answer comes back in the chat.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "needs the server's bot invokes (part 8, 230, team/bots-8): remove at the rebase after it lands"]
 async fn sdk_bots_in_containers_answer_a_card_submit() {
     let Some(sdks) = sdks() else {
         eprintln!("skipped: {IMAGES} is not set");
@@ -336,7 +335,7 @@ async fn submit(run: &Running, sdk: &Sdk) {
     let answer = ada.engine().bot_invoke(ask).await.unwrap();
     eprintln!("  the invoke's answer: {answer:?}");
     let expected = format!(
-        "submitted from {}: comment=because (synthetic) choice=yes sdk={}",
+        "submitted from {}: choice=yes comment=because (synthetic) sdk={}",
         sdk.name, sdk.name
     );
     answered(ada, chat, bot, &expected, container).await;
