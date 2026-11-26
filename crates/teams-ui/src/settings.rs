@@ -63,6 +63,7 @@ use crate::sounds::{self, PackInfo, SoundPlayer, SoundSettings, SoundSource};
 use crate::theme::{self, Appearance};
 use crate::translate;
 
+pub mod captions_height;
 mod message_bar;
 pub mod noise;
 mod toolbar;
@@ -425,6 +426,9 @@ pub struct Settings {
     /// The noise suppression level of each account's calls, by the account's MRI ([`noise`]); an account that isn't
     /// here has Auto.
     pub noise_suppression: BTreeMap<String, NoiseSuppression>,
+    /// The height of each account's live captions area in calls, px, by the account's MRI ([`captions_height`]); an
+    /// account that isn't here has [`captions_height::DEFAULT`].
+    pub caption_heights: BTreeMap<String, u32>,
     /// Which sound plays for each event, how loud, and the pack they come from ([`crate::sounds`]).
     pub sounds: SoundSettings,
 }
@@ -512,6 +516,25 @@ impl Settings {
             self.noise_suppression.remove(account);
         } else {
             self.noise_suppression.insert(account.to_owned(), level);
+        }
+    }
+
+    /// The height of `account`'s live captions area in calls, px.
+    #[must_use]
+    pub fn caption_height_of(&self, account: &str) -> u32 {
+        self.caption_heights
+            .get(account)
+            .copied()
+            .unwrap_or(captions_height::DEFAULT)
+    }
+
+    /// Sets the height of `account`'s live captions area in calls, kept inside its limits.
+    pub fn set_caption_height(&mut self, account: &str, height: u32) {
+        let height = captions_height::clamp(height);
+        if height == captions_height::DEFAULT {
+            self.caption_heights.remove(account);
+        } else {
+            self.caption_heights.insert(account.to_owned(), height);
         }
     }
 
@@ -623,6 +646,7 @@ impl Settings {
         }
         self.accounts.remove(account);
         self.noise_suppression.remove(account);
+        self.caption_heights.remove(account);
         self.chat_languages.retain(|kept| kept.account != account);
     }
 
@@ -713,6 +737,7 @@ impl Default for Settings {
             compose_shown: Vec::new(),
             message_bar: BTreeMap::new(),
             noise_suppression: BTreeMap::new(),
+            caption_heights: BTreeMap::new(),
             sounds: SoundSettings::default(),
         }
     }
@@ -780,6 +805,8 @@ pub mod keys {
     pub const MESSAGE_BAR: &str = "message_bar";
     /// The noise suppression level of each account's calls: a table of level names, by the account's MRI.
     pub const NOISE_SUPPRESSION: &str = "noise_suppression";
+    /// The height of each account's live captions area: a table of px, by the account's MRI.
+    pub const CAPTION_HEIGHT: &str = "caption_height";
     /// The sound pack chosen as a whole (`builtin/<key>` or `added/<id>`), "Play sounds when I'm busy", every sound's
     /// volume, and each event's sound: a table of tables, by the event's name.
     pub const SOUND_PACK: &str = "sound_pack";
@@ -824,6 +851,15 @@ pub fn parse(text: &str) -> Result<(Settings, Vec<Problem>), &'static str> {
 }
 
 /// Takes one key's value into `settings`.
+/// An account's own setting of its calls: its noise suppression or its captions' height.
+fn take_calls(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem> {
+    if key == keys::CAPTION_HEIGHT {
+        captions_height::take(&mut settings.caption_heights, value)
+    } else {
+        noise::take(&mut settings.noise_suppression, value)
+    }
+}
+
 fn take(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem> {
     let bad = |key: &'static str, why: &'static str| Problem::BadValue { key, why };
     match key {
@@ -896,7 +932,7 @@ fn take(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem
         keys::COMPOSE_HIDDEN => settings.compose_hidden = toolbar::take(keys::COMPOSE_HIDDEN, false, value)?,
         keys::COMPOSE_SHOWN => settings.compose_shown = toolbar::take(keys::COMPOSE_SHOWN, true, value)?,
         keys::MESSAGE_BAR => message_bar::take(&mut settings.message_bar, value)?,
-        keys::NOISE_SUPPRESSION => noise::take(&mut settings.noise_suppression, value)?,
+        keys::NOISE_SUPPRESSION | keys::CAPTION_HEIGHT => take_calls(settings, key, value)?,
         keys::FIRST_ACCOUNT => {
             settings.first_account = Some(chat_id(value).ok_or(bad(keys::FIRST_ACCOUNT, "not an account's MRI"))?);
         }
@@ -1339,6 +1375,7 @@ pub fn render(settings: &Settings) -> String {
     toolbar::render(&settings.compose_hidden, &settings.compose_shown, &mut table);
     message_bar::render(&settings.message_bar, &mut table);
     noise::render(&settings.noise_suppression, &mut table);
+    captions_height::render(&settings.caption_heights, &mut table);
     sounds::render(&settings.sounds, &mut table);
     table.to_string()
 }

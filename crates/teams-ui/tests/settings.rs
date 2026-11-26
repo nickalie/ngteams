@@ -130,8 +130,11 @@ fn changed() -> Settings {
         compose_shown: vec![ComposeTool::Translate],
         message_bar: changed_bar(),
         noise_suppression: changed_noise(),
+        caption_heights: [(LAB_ACCOUNT.to_owned(), 420)].into(),
     }
 }
+
+const LAB_ACCOUNT: &str = "8:orgid:00000000-0000-4000-8000-00000000000a";
 
 fn changed_noise() -> std::collections::BTreeMap<String, teams_media::processing::NoiseSuppression> {
     let account = "8:orgid:00000000-0000-4000-8000-00000000000a".to_owned();

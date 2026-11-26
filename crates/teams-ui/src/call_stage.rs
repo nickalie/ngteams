@@ -57,6 +57,7 @@
 //! `call-participant self` for the account's own; the tiles' `video-tile` lines; `call-window ended` with the call's
 //! number, why it ended and what it offers: `call-back`, `rejoin` or `none`), never a name.
 
+mod caption_area;
 mod captions;
 mod chat_pane;
 pub use chat_pane::BUBBLE_FOR;
@@ -308,7 +309,8 @@ pub struct CallStage {
     grid_traced: Option<CallView>,
     /// The window's title as last set.
     titled: Option<SharedString>,
-    caption_scroll: gpui::ScrollHandle,
+    /// The live captions area's scroll and size ([`caption_area`]).
+    caption_area: caption_area::CaptionArea,
     caption_font: f32,
     caption_top: bool,
     caption_language: Option<String>,
@@ -445,7 +447,7 @@ impl CallStage {
             results: None,
             grid_traced: None,
             titled: None,
-            caption_scroll: gpui::ScrollHandle::new(),
+            caption_area: caption_area::CaptionArea::new(cx),
             caption_font: 18.0,
             caption_top: false,
             caption_language: None,
@@ -670,7 +672,6 @@ impl CallStage {
     /// The calls changed: the participants read, the duration ticking while connected; once the call ended its frames
     /// go and a test call's devices are named as they were.
     fn changed(&mut self, cx: &mut Context<Self>) {
-        self.caption_scroll.scroll_to_bottom();
         let live = self.live(cx);
         self.translate(live.as_ref(), cx);
         if let Some(active) = &live {
@@ -1217,12 +1218,22 @@ impl CallStage {
     }
 }
 
-impl Render for CallStage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = theme::current(cx);
-        let live = self.live(cx);
-        let ended = self.ended(cx);
-        let title = match (&live, &ended) {
+impl CallStage {
+    /// The stage's room under the captions or over them: never less than [`MIN_STAGE_HEIGHT`], measured while
+    /// the captions show, as their edge's limit.
+    fn stage_room(&self, body: impl IntoElement, captions_shown: bool) -> gpui::Div {
+        div()
+            .relative()
+            .flex_1()
+            .min_h(px(MIN_STAGE_HEIGHT))
+            .overflow_hidden()
+            .child(body)
+            .children(captions_shown.then(|| self.caption_area.measure(false)))
+    }
+
+    /// The window's title: who the call is with while it is up, else how it ended.
+    fn window_title(&mut self, live: Option<&ActiveCall>, ended: Option<&Ended>, cx: &App) -> SharedString {
+        match (live, ended) {
             (Some(active), _) => {
                 let title = self.title(active, cx);
                 self.with = Some(title.clone());
@@ -1231,7 +1242,16 @@ impl Render for CallStage {
             (None, Some(ended)) if ended.check.is_some() => SharedString::from("Test call"),
             (None, Some(ended)) => self.ended_title(ended, cx),
             (None, None) => SharedString::from("Call"),
-        };
+        }
+    }
+}
+
+impl Render for CallStage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = theme::current(cx);
+        let live = self.live(cx);
+        let ended = self.ended(cx);
+        let title = self.window_title(live.as_ref(), ended.as_ref(), cx);
         self.retitle(&title, window);
         self.follow_invite_box(window, cx);
         self.place_people_keys(live.as_ref(), window, cx);
@@ -1240,7 +1260,8 @@ impl Render for CallStage {
         let body = self.framed_body((live.as_ref(), ended.as_ref()), &title, palette, window, cx);
         self.keep_people_focus(live.as_ref(), window, cx);
         let header = self.header(live.as_ref(), title, palette, cx);
-        let mut captions = live.as_ref().and_then(|_| self.caption_pane(palette, cx));
+        let mut captions = live.as_ref().and_then(|_| self.caption_pane(palette, window, cx));
+        let captions_shown = captions.is_some();
         // a refusal while the call is up, or of a call back from its end
         let refused = (live.is_some() || ended.as_ref().is_some_and(|ended| ended.check.is_none()))
             .then(|| self.refused(palette, cx))
@@ -1257,7 +1278,7 @@ impl Render for CallStage {
                     .and_then(|active| gallery::connection_banner(active, palette)),
             )
             .children(if self.caption_top { captions.take() } else { None })
-            .child(div().flex_1().min_h(px(MIN_STAGE_HEIGHT)).overflow_hidden().child(body))
+            .child(self.stage_room(body, captions_shown))
             .children(captions);
         let confirmation = self.end_confirmation(palette, cx);
         let lock = self.lock_confirmation(palette, cx);
@@ -1293,6 +1314,11 @@ impl Render for CallStage {
             .flex_col()
             .bg(theme::frame(palette))
             .text_color(rgb(palette.foreground))
+            .on_mouse_move(cx.listener(Self::caption_dragged))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.caption_drag_ended(cx)),
+            )
             .child(header)
             .child(sheet)
             .children(confirmation)

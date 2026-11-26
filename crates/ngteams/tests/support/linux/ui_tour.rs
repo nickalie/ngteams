@@ -205,7 +205,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 374 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 378 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -2485,8 +2485,26 @@ const STEPS: [Step; 5 + 374 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
             );
         });
     }),
+    // a tall live captions area, resized by its edge, its lines scrolled to the newest, a scroll bar beside them
+    ("call-window-captions-tall-dark", |shell, _, cx| {
+        captions_area(shell, 520, None, cx);
+    }),
+    // and the shortest: the header and the newest line
+    ("call-window-captions-short-dark", |shell, _, cx| {
+        captions_area(shell, 100, None, cx);
+    }),
+    // both in Teams Light
+    ("call-window-captions-tall", |shell, _, cx| {
+        captions_area(shell, 520, Some(teams_ui::theme::LIGHT_KEY), cx);
+    }),
+    ("call-window-captions-short", |shell, _, cx| {
+        captions_area(shell, 100, Some(teams_ui::theme::LIGHT_KEY), cx);
+    }),
     // the call window in Teams Dark (the captions hidden again, translating off)
     ("call-window-dark", |shell, _, cx| {
+        with_stage(cx, |stage, cx| {
+            stage.resize_captions(teams_ui::settings::captions_height::DEFAULT, cx);
+        });
         let models = shell.read(cx).models().clone();
         models.apply(
             teams_core::Event::CallCaptions {
@@ -4192,6 +4210,70 @@ fn translated_captions(shell: &Entity<Shell>, cx: &mut App) {
         // still spoken: sent once its text settles
         line(3, bee, "Before that I still want to", false),
     ];
+    let models = shell.read(cx).models().clone();
+    models.apply(
+        teams_core::Event::CallCaptions {
+            call: teams_core::CallId::for_tests(FAKE_CALL),
+            captions: teams_core::CallCaptions {
+                phase: teams_core::CaptionPhase::On,
+                spoken_language: "en-us".to_owned(),
+                error: None,
+                lines,
+            },
+        },
+        cx,
+    );
+}
+
+/// The live captions area `height` px tall for the call's account, with more lines than it holds, as spoken (no
+/// translation); `theme` changes the theme too.
+fn captions_area(shell: &Entity<Shell>, height: u32, theme: Option<&'static str>, cx: &mut App) {
+    let model = shell.read(cx).settings().clone();
+    model.update(cx, |model, cx| {
+        model.change(
+            |settings| {
+                settings.caption_translate_to = None;
+                if let Some(theme) = theme {
+                    settings.appearance.theme = theme;
+                }
+            },
+            cx,
+        );
+    });
+    with_stage(cx, |stage, cx| stage.resize_captions(height, cx));
+    let said = [
+        "Good morning, everyone. Let's go through the release plan.",
+        "The Acme build passed overnight, so we can ship on Thursday.",
+        "Does the support team know about the new settings page?",
+        "Yes, I sent them the notes yesterday afternoon.",
+        "Good. Then the last point is the training for the new hires.",
+        "I can run it on Monday if the room is free.",
+        "The room is free all morning. Let's book it now.",
+        "Done. I added it to the team calendar.",
+        "Thanks, everyone. Let's meet again on Friday.",
+    ];
+    let lines = said
+        .iter()
+        .zip(1_u64..)
+        .map(|(text, stamp)| {
+            let who = if stamp % 2 == 0 {
+                (LAB_C, "Lab Sea")
+            } else {
+                (LAB_B, "Lab Bee")
+            };
+            teams_core::Caption {
+                id: format!("made-up/area/{stamp}"),
+                speaker: Some(who.0.to_owned()),
+                display_name: Some(who.1.to_owned()),
+                text: (*text).to_owned(),
+                final_result: true,
+                spoken_language: "en-us".to_owned(),
+                track_language: "en-us".to_owned(),
+                audio_timestamp: stamp * 100,
+                duration: 10,
+            }
+        })
+        .collect();
     let models = shell.read(cx).models().clone();
     models.apply(
         teams_core::Event::CallCaptions {

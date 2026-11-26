@@ -8,6 +8,8 @@ use teams_proto::captions::SPOKEN_LANGUAGES;
 
 /// The shortest the captions pane gets in a short window, px: its header and one caption line.
 const MIN_CAPTIONS_HEIGHT: f32 = 100.0;
+/// The least height of the pane while it asks to confirm a language, px: the question and its actions.
+const CONFIRM_HEIGHT: f32 = 380.0;
 /// The shortest the language confirmation gets, px: its Cancel and Update row.
 const CONFIRM_ACTIONS_HEIGHT: f32 = 49.0;
 
@@ -49,8 +51,10 @@ pub(super) fn more(
 }
 
 impl CallStage {
-    pub(super) fn caption_pane(&self, palette: Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.calls.read(cx).captions_shown() {
+    pub(super) fn caption_pane(&self, palette: Palette, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let shown = self.calls.read(cx).captions_shown();
+        self.caption_area.follow(shown);
+        if !shown {
             return None;
         }
         let state = self.calls.read(cx).captions().clone();
@@ -60,15 +64,10 @@ impl CallStage {
         let status_now = self.translation.read(cx).status().clone();
         let translation_failed = Self::translation_notice(&status_now, palette, cx);
         let lines = self.caption_lines(&state.lines, palette, cx);
-        let transcript = div()
-            .id("call-caption-text")
-            .debug_selector(|| "call-caption-text".to_owned())
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&self.caption_scroll)
-            .children(lines);
+        let transcript = self.caption_text(lines, palette, window, cx);
         let confirmation = self.caption_confirmation(palette, cx);
+        let height = self.caption_height(cx);
+        let edge = self.caption_edge(palette, window, cx);
         let language_error = (state.phase == CaptionPhase::On)
             .then_some(state.error)
             .flatten()
@@ -97,18 +96,26 @@ impl CallStage {
         Some(
             div()
                 .debug_selector(|| "call-captions".to_owned())
+                .relative()
                 // shrinks before the stage goes below MIN_STAGE_HEIGHT in a short window
                 .flex_initial()
-                .h(px(if confirmation.is_some() { 380.0 } else { 244.0 }))
+                .h(px(if confirmation.is_some() {
+                    height.max(CONFIRM_HEIGHT)
+                } else {
+                    height
+                }))
                 .min_h(px(MIN_CAPTIONS_HEIGHT))
                 .flex()
                 .flex_col()
                 .bg(rgb(palette.surface))
-                .border_t_1()
+                .when(self.caption_top, gpui::Styled::border_b_1)
+                .when(!self.caption_top, gpui::Styled::border_t_1)
                 .border_color(rgb(palette.border))
                 .child(header.flex_none())
                 .child(body)
                 .children(confirmation)
+                .child(self.caption_area.measure(true))
+                .child(edge)
                 .into_any_element(),
         )
     }
@@ -118,12 +125,14 @@ impl CallStage {
         lines
             .iter()
             .filter(|line| !line.text.is_empty())
-            .map(|line| {
+            .enumerate()
+            .map(|(index, line)| {
                 let (text, waiting) = match translation.shown(line) {
                     Shown::Translated(text) | Shown::Spoken(text) => (text, false),
                     Shown::Waiting(text) => (text, true),
                 };
                 div()
+                    .debug_selector(move || format!("call-caption-line-{index}"))
                     .flex()
                     .flex_col()
                     .gap_0p5()

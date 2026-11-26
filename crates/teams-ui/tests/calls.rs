@@ -14,6 +14,9 @@
 #[expect(dead_code, reason = "the shared fake CLI helper serves several test harnesses")]
 mod fake_tool;
 
+/// The live captions area: its scroll, its follow of the newest line and its resize.
+#[path = "calls/caption_area.rs"]
+mod caption_area;
 /// A channel's running meeting: its post's Join, and the meeting's own title on the header's Join.
 #[path = "calls/channel_meeting.rs"]
 mod channel_meeting;
