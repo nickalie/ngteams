@@ -359,11 +359,16 @@ fn the_language_confirmation_s_taller_floor_is_never_saved() {
         "a drag up grows the area from its drawn height at once: {} from {floor}",
         height(window)
     );
-    let grown = height(window);
+    window.simulate_keystrokes("down down");
+    assert!(
+        (height(window) - floor).abs() < 1.0,
+        "the area stays drawn at its floor while the saved height goes below it: {}",
+        height(window)
+    );
     window.simulate_keystrokes("up");
     assert!(
-        (height(window) - (grown + 20.0)).abs() < 1.0,
-        "an Up grows the area from its drawn height at once: {} from {grown}",
+        (height(window) - (floor + 20.0)).abs() < 1.0,
+        "an Up grows the area from its drawn height at once: {} from {floor}",
         height(window)
     );
 }
