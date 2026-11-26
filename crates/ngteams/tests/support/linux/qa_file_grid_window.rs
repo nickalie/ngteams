@@ -1938,6 +1938,7 @@ fn on_shell(shell: &Entity<Shell>, verb: &str, window: &mut Window, cx: &mut App
         }
         "tab" => json!(format!("{:?}", shell.read(cx).chat_tab())),
         "focus" => json!(focus_of(shell, window, cx)),
+        "control" => json!(control_of(window, cx)),
         other => json!(format!("unknown {other}")),
     }
     .to_string()
@@ -1955,6 +1956,36 @@ fn focus_of(shell: &Entity<Shell>, window: &Window, cx: &App) -> &'static str {
         }
     }
     if window.focused(cx).is_some() { "other" } else { "none" }
+}
+
+/// The control of a video player that has the keys (`play`, `fullscreen`..), `player` for another place in a player
+/// (its picture, "More options"), else `outside`.
+fn control_of(window: &Window, cx: &App) -> &'static str {
+    const NAMES: [&str; 9] = [
+        "play",
+        "back",
+        "forward",
+        "mute",
+        "captions",
+        "speed",
+        "settings",
+        "fullscreen",
+        "open",
+    ];
+    let mut place = "outside";
+    for player in teams_ui::video_player::players(cx) {
+        let player = player.read(cx);
+        if let Some(name) = NAMES
+            .into_iter()
+            .find(|name| player.control_focus(name, cx).is_focused(window))
+        {
+            return name;
+        }
+        if player.holds_keys(window, cx) {
+            place = "player";
+        }
+    }
+    place
 }
 
 /// The view `which` names: the channel's `posts`, its `thread`, else the chat open.

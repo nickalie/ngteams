@@ -16,7 +16,9 @@
 //!   player shows them while it doesn't play too. Space plays or pauses, Left and Right go 10 s back or forward, M
 //!   mutes. In a card, Escape pauses it and gives the keys back to its card ([`VideoPlayer::return_to`]), which a
 //!   card's Enter or Space moved into it ([`VideoPlayer::play_from_keys`]); the controls show while the keyboard has the
-//!   keys in it, until the pointer presses in it.
+//!   keys in it, until the pointer presses in it. Tab goes through each control in the order of the bar, ringed as the
+//!   kit's buttons are; Enter or Space presses the control that has the keys, and the keys stay on it (in full screen
+//!   too). A press of the pointer on a control leaves the keys where they are.
 //! - **Its states**: loading and buffering show a spinner over the picture; a video that can't be played here (a
 //!   format no installed `GStreamer` plugin plays, a file the account can't read, the network) says so and offers the
 //!   browser.
@@ -50,6 +52,7 @@ use gpui::{
     ObjectFit, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
     StyledImage as _, Task, WeakEntity, Window, anchored, canvas, deferred, div, hsla, img, point, px, relative,
 };
+use gpui_component::ThemeStyled as _;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_component::tooltip::Tooltip;
@@ -64,6 +67,7 @@ use teams_proto::chat::{FileKind, SharedFile};
 use crate::files::{self, COPY_LINK, DOWNLOAD, OPEN_IN_BROWSER, PICTURE_RATIO};
 use crate::icons::{Glyph, selected_by};
 use crate::inline::{PictureSource, PictureState, thumbnail};
+use crate::keyboard::Handles;
 use crate::theme;
 use crate::video::Picture;
 
@@ -96,6 +100,10 @@ pub fn bind(cx: &mut App) {
         gpui::KeyBinding::new("right", SkipForward, Some(CONTEXT)),
     ]);
 }
+
+/// The skip buttons' names.
+const BACK: &str = "Back 10 seconds";
+const FORWARD: &str = "Forward 10 seconds";
 
 /// How far back and forward the skip buttons go.
 pub const SKIP: Duration = Duration::from_secs(10);
@@ -408,6 +416,8 @@ pub struct VideoPlayer {
     menu: Option<Menu>,
     focus: FocusHandle,
     keys: Keys,
+    /// Each control's focus handle, by its name: the keyboard reaches every one of them.
+    controls: Handles,
     _woken: Task<()>,
 }
 
@@ -466,6 +476,7 @@ impl VideoPlayer {
             menu: None,
             focus: cx.focus_handle(),
             keys: Keys::default(),
+            controls: Handles::default(),
             _woken: task,
         }
     }
@@ -611,7 +622,12 @@ impl VideoPlayer {
             (None, _) => false,
         };
         self.menu = (!open).then_some(menu);
-        window.focus(&self.focus, cx);
+        let button = match menu {
+            Menu::Captions => "captions",
+            Menu::Speed => "speed",
+            Menu::Settings(_) => "settings",
+        };
+        self.take_keys(button, window, cx);
         cx.notify();
     }
 
@@ -831,8 +847,49 @@ impl VideoPlayer {
             }
             full.made = false;
         }
-        window.focus(&self.focus, cx);
+        self.take_keys("fullscreen", window, cx);
         cx.notify();
+    }
+
+    /// Brings the keys into it, for its Escape, unless its control `button` has them: the keyboard pressed it, and the
+    /// keys stay on it. Another place in it may not be drawn again where it is now (the kit's "More options" as the
+    /// video goes full screen), so the keys move to its picture from there.
+    fn take_keys(&self, button: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.controls.get(button, cx).is_focused(window) {
+            window.focus(&self.focus, cx);
+        }
+    }
+
+    /// Whether the keys are in it: on its picture or on one of its controls.
+    #[must_use]
+    pub fn holds_keys(&self, window: &Window, cx: &App) -> bool {
+        self.focus.contains_focused(window, cx)
+    }
+
+    /// The focus handle of its control `what` (a [`control`]'s name).
+    #[must_use]
+    pub fn control_focus(&self, what: &str, cx: &App) -> FocusHandle {
+        self.controls.get(what, cx)
+    }
+
+    /// `control` as the keyboard reaches it: a Tab stop named `tip` for a screen reader, ringed as the kit's buttons
+    /// are while it has the keys. Enter or Space presses it (GPUI's keyboard click).
+    fn reached(
+        &self,
+        what: &str,
+        tip: &'static str,
+        control: gpui::Stateful<Div>,
+        window: &Window,
+        cx: &App,
+    ) -> AnyElement {
+        let focus = self.controls.get(what, cx).tab_stop(true);
+        let ringed = focus.is_focused(window);
+        control
+            .track_focus(&focus)
+            .role(gpui::accesskit::Role::Button)
+            .aria_label(tip)
+            .when(ringed, |control| control.focus_ring_style(window, cx))
+            .into_any_element()
     }
 
     /// A card that goes while its video fills the screen (the chat switched, the list moved) puts the window back as it
@@ -941,7 +998,7 @@ impl VideoPlayer {
             .caption(cx)
             .map(|text| captions::caption(&id, text, CaptionStyle::current(cx)));
         let keys = self.has_keys(window, cx);
-        let controls = self.controls(&group, keys, cx);
+        let controls = self.controls(&group, keys, window, cx);
         let shift = if self.file.open_link().is_some() { 0.0 } else { 32.0 };
         let menu = self.menu_panel(shift, cx);
         div()
@@ -1097,10 +1154,10 @@ impl VideoPlayer {
     /// The seek bar and the buttons over the box's bottom, on a shade: while the pointer is on the video, or always
     /// while they are used (see the module docs). Its test selector says which: `video-controls-<id> shown` or
     /// `video-controls-<id> on-hover`.
-    fn controls(&mut self, group: &SharedString, keys: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn controls(&mut self, group: &SharedString, keys: bool, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let always = (self.fill && !self.playing()) || self.dragging.is_some() || self.menu.is_some() || keys;
         let bar = self.seek_bar(cx);
-        let buttons = self.buttons(cx);
+        let buttons = self.buttons(window, cx);
         let id = self.id.clone();
         let shown = if always { "shown" } else { "on-hover" };
         div()
@@ -1210,18 +1267,18 @@ impl VideoPlayer {
     }
 
     /// Play, back, forward and mute on the left; "More options", full screen and the browser on the right.
-    fn buttons(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn buttons(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex()
             .items_center()
             .justify_between()
-            .child(self.left_buttons(cx))
-            .child(self.right_buttons(cx))
+            .child(self.left_buttons(window, cx))
+            .child(self.right_buttons(window, cx))
             .into_any_element()
     }
 
     /// Play, back, forward and mute.
-    fn left_buttons(&self, cx: &mut Context<Self>) -> Div {
+    fn left_buttons(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let id = &self.id;
         let (play_glyph, play_tip) = if self.playing() {
             (Glyph::PAUSE, "Pause")
@@ -1241,42 +1298,93 @@ impl VideoPlayer {
             .flex()
             .items_center()
             .gap_1()
-            .child(control(
-                id,
+            .child(self.reached(
                 "play",
-                play_glyph,
                 play_tip,
-                None,
-                cx.listener(|this, _, _, cx| this.toggle(cx)),
+                control(
+                    id,
+                    "play",
+                    play_glyph,
+                    play_tip,
+                    None,
+                    cx.listener(|this, _, _, cx| this.toggle(cx)),
+                ),
+                window,
+                cx,
             ))
-            .child(control(
-                id,
+            .child(self.reached(
                 "back",
-                Glyph::SKIP_BACK,
-                "Back 10 seconds",
-                Some("10"),
-                cx.listener(|this, _, _, cx| this.skip(true, cx)),
+                BACK,
+                control(
+                    id,
+                    "back",
+                    Glyph::SKIP_BACK,
+                    BACK,
+                    Some("10"),
+                    cx.listener(|this, _, _, cx| this.skip(true, cx)),
+                ),
+                window,
+                cx,
             ))
-            .child(control(
-                id,
+            .child(self.reached(
                 "forward",
-                Glyph::SKIP_FORWARD,
-                "Forward 10 seconds",
-                Some("10"),
-                cx.listener(|this, _, _, cx| this.skip(false, cx)),
+                FORWARD,
+                control(
+                    id,
+                    "forward",
+                    Glyph::SKIP_FORWARD,
+                    FORWARD,
+                    Some("10"),
+                    cx.listener(|this, _, _, cx| this.skip(false, cx)),
+                ),
+                window,
+                cx,
             ))
-            .child(self.sound(volume_glyph, volume_tip, cx))
+            .child(self.sound(volume_glyph, volume_tip, window, cx))
             .children(self.times())
     }
 
     /// The sound's button and, while the pointer is on it (or it is dragged), its volume slider, as Teams' player has
     /// them.
-    fn sound(&self, glyph: Glyph, tip: &'static str, cx: &mut Context<Self>) -> Div {
+    fn sound(&self, glyph: Glyph, tip: &'static str, window: &Window, cx: &mut Context<Self>) -> Div {
         let group = SharedString::from(format!("video-sound-{}", self.id));
+        let slider = self.volume_slider(cx);
+        let shown = self.volume.adjusting;
+        div()
+            .group(group.clone())
+            .flex()
+            .items_center()
+            .child(self.reached(
+                "mute",
+                tip,
+                control(
+                    &self.id,
+                    "mute",
+                    glyph,
+                    tip,
+                    None,
+                    cx.listener(|this, _, _, cx| this.toggle_mute(cx)),
+                ),
+                window,
+                cx,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .overflow_hidden()
+                    .w(px(if shown { 72.0 } else { 0.0 }))
+                    .group_hover(group, |style| style.w(px(72.0)))
+                    .child(slider),
+            )
+    }
+
+    /// The sound's volume slider, beside its button.
+    fn volume_slider(&self, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let level = if self.muted { 0.0 } else { self.volume.level };
         let bar = Rc::clone(&self.volume.bar);
         let id = self.id.clone();
-        let slider = div()
+        div()
             .id("video-volume")
             .debug_selector(move || format!("video-volume-{id}"))
             .relative()
@@ -1325,28 +1433,6 @@ impl VideoPlayer {
                     .size(px(10.0))
                     .rounded_full()
                     .bg(gpui::rgb(ON_VIDEO)),
-            );
-        let shown = self.volume.adjusting;
-        div()
-            .group(group.clone())
-            .flex()
-            .items_center()
-            .child(control(
-                &self.id,
-                "mute",
-                glyph,
-                tip,
-                None,
-                cx.listener(|this, _, _, cx| this.toggle_mute(cx)),
-            ))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .overflow_hidden()
-                    .w(px(if shown { 72.0 } else { 0.0 }))
-                    .group_hover(group, |style| style.w(px(72.0)))
-                    .child(slider),
             )
     }
 
@@ -1378,7 +1464,7 @@ impl VideoPlayer {
     }
 
     /// "More options" (a recap's: captions, the speed and the settings), full screen and the browser.
-    fn right_buttons(&self, cx: &mut Context<Self>) -> Div {
+    fn right_buttons(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let id = &self.id;
         let (screen_glyph, screen_tip) = if self.full_screen.on {
             (Glyph::SHRINK, "Exit full screen")
@@ -1391,17 +1477,23 @@ impl VideoPlayer {
             .items_center()
             .gap_1()
             .when(!self.fill, |buttons| buttons.child(self.more()))
-            .when(self.fill, |buttons| buttons.children(self.recap_buttons(cx)))
-            .child(control(
-                id,
+            .when(self.fill, |buttons| buttons.children(self.recap_buttons(window, cx)))
+            .child(self.reached(
                 "fullscreen",
-                screen_glyph,
                 screen_tip,
-                None,
-                cx.listener(|this, _, window, cx| this.toggle_fullscreen(window, cx)),
+                control(
+                    id,
+                    "fullscreen",
+                    screen_glyph,
+                    screen_tip,
+                    None,
+                    cx.listener(|this, _, window, cx| this.toggle_fullscreen(window, cx)),
+                ),
+                window,
+                cx,
             ))
             .children(open.map(|link| {
-                control(
+                let open = control(
                     id,
                     "open",
                     Glyph::POP_OUT,
@@ -1410,26 +1502,28 @@ impl VideoPlayer {
                     move |_, _, cx: &mut App| {
                         cx.open_url(&link);
                     },
-                )
+                );
+                self.reached("open", OPEN_IN_BROWSER, open, window, cx)
             }))
     }
 
     /// A recap's captions (when it has them), speed and settings buttons, as Teams' Recap player has them.
-    fn recap_buttons(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn recap_buttons(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let id = &self.id;
         let open = self.menu;
         let mut buttons = Vec::new();
         if self.captions.is_some() {
-            buttons.push(menu_control(
+            let captions = menu_control(
                 id,
                 "captions",
                 Glyph::CAPTIONS.icon().size(px(18.0)).into_any_element(),
                 "Captions",
                 open == Some(Menu::Captions),
                 cx.listener(|this, _, window, cx| this.toggle_menu(Menu::Captions, window, cx)),
-            ));
+            );
+            buttons.push(self.reached("captions", "Captions", captions, window, cx));
         }
-        buttons.push(menu_control(
+        let speed = menu_control(
             id,
             "speed",
             div()
@@ -1440,15 +1534,17 @@ impl VideoPlayer {
             "Playback speed",
             open == Some(Menu::Speed),
             cx.listener(|this, _, window, cx| this.toggle_menu(Menu::Speed, window, cx)),
-        ));
-        buttons.push(menu_control(
+        );
+        buttons.push(self.reached("speed", "Playback speed", speed, window, cx));
+        let settings = menu_control(
             id,
             "settings",
             Glyph::SETTINGS.icon().size(px(18.0)).into_any_element(),
             "Settings",
             matches!(open, Some(Menu::Settings(_))),
             cx.listener(|this, _, window, cx| this.toggle_menu(Menu::Settings(Page::Main), window, cx)),
-        ));
+        );
+        buttons.push(self.reached("settings", "Settings", settings, window, cx));
         buttons
     }
 
@@ -1496,7 +1592,7 @@ fn control(
     tip: &'static str,
     mark: Option<&'static str>,
     click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-) -> AnyElement {
+) -> gpui::Stateful<Div> {
     let selector = format!("video-{what}-{card}");
     div()
         .id(SharedString::from(selector.clone()))
@@ -1510,7 +1606,11 @@ fn control(
         .cursor_pointer()
         .hover(|style| style.bg(hsla(0.0, 0.0, 1.0, 0.15)))
         .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        // a press of the pointer leaves the keys where they are, as on the kit's buttons
+        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+        })
         .on_click(move |event, window, cx| {
             cx.stop_propagation();
             click(event, window, cx);
@@ -1529,7 +1629,6 @@ fn control(
                 .text_color(gpui::rgb(ON_VIDEO))
                 .child(mark)
         }))
-        .into_any_element()
 }
 
 /// A button that opens a menu over the picture (a recap's captions, speed and settings): its face in white, underlined
@@ -1541,7 +1640,7 @@ fn menu_control(
     tip: &'static str,
     open: bool,
     click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-) -> AnyElement {
+) -> gpui::Stateful<Div> {
     let selector = format!("video-{what}-{card}");
     div()
         .id(SharedString::from(selector.clone()))
@@ -1560,7 +1659,11 @@ fn menu_control(
         .when(!open, |button| {
             button.tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
         })
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        // a press of the pointer leaves the keys where they are, as on the kit's buttons
+        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+        })
         .on_click(move |event, window, cx| {
             cx.stop_propagation();
             click(event, window, cx);
@@ -1577,7 +1680,6 @@ fn menu_control(
                     .bg(gpui::rgb(ON_VIDEO)),
             )
         })
-        .into_any_element()
 }
 
 /// A "More options" row: its icon and words.

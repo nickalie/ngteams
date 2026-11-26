@@ -1104,3 +1104,259 @@ fn left_and_right_skip_in_a_card_s_player_before_the_list_around_it_takes_them()
     });
     assert_eq!(positions, [Some(Duration::from_secs(5)), Some(Duration::from_secs(15))]);
 }
+
+/// A chat's player's controls (its own `div`s) in the order Tab reaches them: the kit's "More options" comes between
+/// mute and full screen.
+const CARD_CONTROLS: [&str; 6] = ["play", "back", "forward", "mute", "fullscreen", "open"];
+
+/// Which of `controls` has the keys: `Some("")` when another place in the player has them.
+fn focused_control(
+    view: &Entity<VideoPlayer>,
+    controls: &[&'static str],
+    cx: &mut gpui::VisualTestContext,
+) -> Option<&'static str> {
+    cx.update(|window, cx| {
+        let player = view.read(cx);
+        let named = controls
+            .iter()
+            .find(|what| player.control_focus(what, cx).is_focused(window))
+            .copied();
+        named.or_else(|| player.holds_keys(window, cx).then_some(""))
+    })
+}
+
+/// Tab (or Shift+Tab) as the kit's root moves it in the app's window, which the test's has not.
+fn tab(cx: &mut gpui::VisualTestContext, back: bool) {
+    cx.update(|window, cx| {
+        if back {
+            window.focus_prev(cx);
+        } else {
+            window.focus_next(cx);
+        }
+    });
+    draw(cx);
+}
+
+/// `key` down and up, as a person presses it: a focused control is clicked on its release.
+fn press(cx: &mut gpui::VisualTestContext, key: &str) {
+    let keystroke = gpui::Keystroke::parse(key).unwrap();
+    cx.simulate_event(gpui::KeyDownEvent {
+        keystroke: keystroke.clone(),
+        is_held: false,
+        prefer_character_input: false,
+    });
+    cx.simulate_event(gpui::KeyUpEvent { keystroke });
+    draw(cx);
+}
+
+/// `key` down and up in one update, so a player's status can't change between them.
+fn press_now(window: &mut Window, cx: &mut App, key: &str) {
+    let keystroke = gpui::Keystroke::parse(key).unwrap();
+    window.dispatch_event(
+        gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        }),
+        cx,
+    );
+    window.dispatch_event(gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }), cx);
+}
+
+/// The keys on control `what` of `view`.
+fn focus_control(view: &Entity<VideoPlayer>, what: &str, cx: &mut gpui::VisualTestContext) {
+    cx.update(|window, cx| view.read(cx).control_focus(what, cx).focus(window, cx));
+    draw(cx);
+}
+
+#[test]
+fn tab_goes_through_each_control_of_a_card_s_player_in_their_order_and_back() {
+    let mut app = gpui::TestAppContext::single();
+    let (view, _card, cx) = in_card(&mut app);
+    // the keys in its picture, where the card's Enter puts them, without playing it
+    cx.update(|window, cx| {
+        view.update(cx, |player, _| player.keys.from_keyboard = true);
+        view.read(cx).focus.clone().focus(window, cx);
+    });
+    draw(cx);
+    let mut reached = Vec::new();
+    for _ in 0..=CARD_CONTROLS.len() {
+        tab(cx, false);
+        reached.push(focused_control(&view, &CARD_CONTROLS, cx));
+    }
+    let more = Some("");
+    let expected = [
+        Some("play"),
+        Some("back"),
+        Some("forward"),
+        Some("mute"),
+        more,
+        Some("fullscreen"),
+        Some("open"),
+    ];
+    assert_eq!(reached, expected, "\"More options\" is the kit's button");
+    assert!(
+        cx.debug_bounds("video-controls-card shown").is_some(),
+        "the controls show while the keyboard is on them"
+    );
+    let mut back = Vec::new();
+    for _ in 0..CARD_CONTROLS.len() {
+        tab(cx, true);
+        back.push(focused_control(&view, &CARD_CONTROLS, cx));
+    }
+    let mut reversed = expected[..CARD_CONTROLS.len()].to_vec();
+    reversed.reverse();
+    assert_eq!(back, reversed, "Shift+Tab goes back the same way");
+}
+
+#[test]
+fn enter_or_space_on_play_and_the_skips_press_only_that_control() {
+    let _playing = playing_slot();
+    let mut app = gpui::TestAppContext::single();
+    let (view, _card, cx) = in_card(&mut app);
+    focus_control(&view, "play", cx);
+    press(cx, "space");
+    assert_eq!(
+        cx.update(|_, cx| view.read(cx).asked),
+        Asked::Play,
+        "Space on Play plays it"
+    );
+    press(cx, "enter");
+    assert_eq!(
+        cx.update(|_, cx| view.read(cx).asked),
+        Asked::Pause,
+        "Enter on Pause pauses it"
+    );
+    assert_eq!(focused_control(&view, &CARD_CONTROLS, cx), Some("play"));
+    wait_state(&view, cx, State::Paused);
+    // one update, so the player's report of the movie's real length can't overwrite the status between keys
+    let positions = cx.update(|window, cx| {
+        view.update(cx, |player, _| {
+            player.status = Some(Status {
+                state: State::Paused,
+                position: Duration::from_secs(15),
+                duration: Duration::from_secs(30),
+                sound: false,
+                rate: 1.0,
+            });
+        });
+        let mut after = |what: &str, key: &str| {
+            view.read(cx).control_focus(what, cx).focus(window, cx);
+            press_now(window, cx, key);
+            view.read(cx).status.map(|status| status.position)
+        };
+        [after("back", "space"), after("forward", "enter")]
+    });
+    assert_eq!(positions, [Some(Duration::from_secs(5)), Some(Duration::from_secs(15))]);
+    assert_eq!(
+        cx.update(|_, cx| view.read(cx).asked),
+        Asked::Pause,
+        "the skips leave it paused"
+    );
+}
+
+#[test]
+fn enter_or_space_on_mute_full_screen_and_the_browser_press_only_that_control() {
+    let mut app = gpui::TestAppContext::single();
+    let (view, card, cx) = in_card(&mut app);
+    focus_control(&view, "mute", cx);
+    press(cx, "space");
+    assert!(cx.update(|_, cx| view.read(cx).muted));
+    press(cx, "enter");
+    assert!(!cx.update(|_, cx| view.read(cx).muted));
+    focus_control(&view, "fullscreen", cx);
+    press(cx, "enter");
+    assert!(cx.update(|_, cx| view.read(cx).full_screen.on));
+    assert_eq!(
+        focused_control(&view, &CARD_CONTROLS, cx),
+        Some("fullscreen"),
+        "the keys stay on the button, over the whole window"
+    );
+    press(cx, "escape");
+    assert!(
+        !cx.update(|_, cx| view.read(cx).full_screen.on),
+        "Escape ends full screen first"
+    );
+    assert_eq!(focused_control(&view, &CARD_CONTROLS, cx), Some("fullscreen"));
+    assert!(cx.opened_url().is_none());
+    focus_control(&view, "open", cx);
+    press(cx, "space");
+    assert_eq!(cx.opened_url().as_deref(), movie_file().open_link());
+    assert!(cx.update(|_, cx| view.read(cx).player.is_none()), "no key played it");
+    press(cx, "escape");
+    assert!(
+        cx.update(|window, _| card.is_focused(window)),
+        "then Escape gives the keys back to the card"
+    );
+}
+
+#[test]
+fn a_pointer_s_click_on_a_control_leaves_the_keys_where_they_are() {
+    let mut app = gpui::TestAppContext::single();
+    let (view, card, cx) = in_card(&mut app);
+    cx.update(|window, cx| card.focus(window, cx));
+    click(cx, "video-mute-card");
+    assert!(cx.update(|_, cx| view.read(cx).muted), "the click pressed it");
+    assert!(
+        cx.update(|window, _| card.is_focused(window)),
+        "the keys stayed on the card"
+    );
+    assert_eq!(focused_control(&view, &CARD_CONTROLS, cx), None);
+}
+
+#[test]
+fn tab_goes_through_each_control_of_a_recap_s_player_in_their_order() {
+    let mut app = gpui::TestAppContext::single();
+    let (view, cx) = captioned(&mut app);
+    let controls = [
+        "play",
+        "back",
+        "forward",
+        "mute",
+        "captions",
+        "speed",
+        "settings",
+        "fullscreen",
+        "open",
+    ];
+    cx.update(|window, cx| view.read(cx).focus.clone().focus(window, cx));
+    draw(cx);
+    let mut reached = Vec::new();
+    for _ in 0..controls.len() {
+        tab(cx, false);
+        reached.push(focused_control(&view, &controls, cx));
+    }
+    assert_eq!(reached, controls.map(Some));
+    focus_control(&view, "speed", cx);
+    press(cx, "enter");
+    assert_eq!(
+        cx.update(|_, cx| view.read(cx).menu()),
+        Some(Menu::Speed),
+        "Enter opens its menu"
+    );
+    assert_eq!(
+        focused_control(&view, &controls, cx),
+        Some("speed"),
+        "the keys stay on its button"
+    );
+    press(cx, "escape");
+    assert_eq!(cx.update(|_, cx| view.read(cx).menu()), None, "Escape closes it");
+}
+
+#[test]
+fn full_screen_from_the_pointer_takes_the_keys_from_another_control_so_escape_ends_it() {
+    let mut app = gpui::TestAppContext::single();
+    let (view, _card, cx) = in_card(&mut app);
+    focus_control(&view, "mute", cx);
+    click(cx, "video-fullscreen-card");
+    assert!(cx.update(|_, cx| view.read(cx).full_screen.on));
+    assert!(
+        cx.update(|window, cx| view.read(cx).focus.is_focused(window)),
+        "the keys go to its picture, which full screen draws again"
+    );
+    press(cx, "escape");
+    assert!(
+        !cx.update(|_, cx| view.read(cx).full_screen.on),
+        "Escape ends full screen"
+    );
+}

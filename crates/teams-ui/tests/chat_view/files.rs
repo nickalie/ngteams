@@ -1239,3 +1239,55 @@ fn a_cards_keys_stay_when_its_message_is_no_longer_the_newest() {
     assert_eq!(items(&view, cx).len(), 2);
     assert!(ringed(cx, 0), "the card keeps the keys and its ring");
 }
+
+/// Which control of the card's player has the keys, of those Tab passes before "More options".
+fn player_control(cx: &mut VisualTestContext) -> Option<&'static str> {
+    cx.update(|window, cx| {
+        let players = teams_ui::video_player::players(cx);
+        ["play", "back", "forward", "mute", "fullscreen", "open"]
+            .into_iter()
+            .find(|what| {
+                players
+                    .iter()
+                    .any(|player| player.read(cx).control_focus(what, cx).is_focused(window))
+            })
+    })
+}
+
+#[test]
+fn tab_in_a_cards_player_goes_through_each_of_its_controls() {
+    let (_rig, view, cx) = shown_with_thumbnail();
+    tab_to_card(&view, cx, 0);
+    press(cx, "enter");
+    let mut reached = Vec::new();
+    for _ in 0..7 {
+        press(cx, "tab");
+        reached.push(player_control(cx));
+    }
+    assert_eq!(
+        reached,
+        [
+            Some("play"),
+            Some("back"),
+            Some("forward"),
+            Some("mute"),
+            None,
+            Some("fullscreen"),
+            Some("open")
+        ],
+        "\"More options\" comes between mute and full screen"
+    );
+    assert!(!ringed(cx, 0));
+    assert!(
+        bounds(cx, &format!("video-controls-{ID}-0 shown")).is_some(),
+        "the controls show while the keyboard is on them"
+    );
+    for _ in 0..2 {
+        press(cx, "shift-tab");
+    }
+    assert_eq!(player_control(cx), None, "Shift+Tab goes back to More options");
+    press(cx, "shift-tab");
+    assert_eq!(player_control(cx), Some("mute"));
+    press(cx, "escape");
+    assert!(ringed(cx, 0), "Escape from a control gives the keys back to the card");
+}

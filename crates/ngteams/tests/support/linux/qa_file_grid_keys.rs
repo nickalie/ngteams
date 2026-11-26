@@ -10,7 +10,9 @@
 //!   card with the keys in the player; on the recap's thumbnail, Enter shows the Recap tab and plays the recording.
 //! - **Escape**: in the player, it pauses and the ring comes back to the video's card; a second Escape gives the keys to
 //!   the list. A menu of the player closes first, then full screen ends.
-//! - **The player's controls**: Space on a control presses only that control (only Play plays the video).
+//! - **The player's controls**: Tab goes through Play, Back 10 seconds, Forward 10 seconds, Mute, More options, Full
+//!   screen and Open in browser in that order; Space and Enter on each press only that control (only Play plays the
+//!   video, only Full screen fills the window, only More options opens a menu, only Open in browser opens the link).
 //! - **The image's More options** shows while the keys are on the image, and Enter on it opens its menu.
 //! - **The pointer**: a press on a card leaves the keys in the box; a click on the image still opens it.
 //!
@@ -49,8 +51,9 @@ const PANE: (u32, u32) = (460, 50);
 /// The most Tab presses the walk gives to pass every card of the chat.
 const STEPS: u32 = 40;
 
-/// The most controls of a card's player the walk tries.
-const CONTROLS: u32 = 8;
+/// The controls of a card's player in the order Tab reaches them, as the walk's app names them ("More options" is the
+/// kit's button, which it calls `player`).
+const PLAYER_CONTROLS: [&str; 7] = ["play", "back", "forward", "mute", "player", "fullscreen", "open"];
 
 /// The pause after a key.
 const KEY_GAP: Duration = Duration::from_millis(250);
@@ -173,10 +176,18 @@ impl Walk<'_> {
 
     /// The keyboard's chat afresh with the keys on `stop`; whether its ring shows (a finding when not).
     fn keys_on(&mut self, stop: Stop, what: &str) -> SandboxResult<bool> {
-        self.fresh()?;
-        self.tabs(stop.presses)?;
-        self.run.shot(self.sandbox, &format!("qa849-{what}-on-light.png"))?;
-        let ringed = has_ring(&self.run.last, LIGHT, stop.ring);
+        let mut ringed = false;
+        // a second try: a loaded host can drop a Tab press while the chat opens
+        for _ in 0..2 {
+            self.fresh()?;
+            self.tabs(stop.presses)?;
+            thread::sleep(SETTLE);
+            self.run.shot(self.sandbox, &format!("qa849-{what}-on-light.png"))?;
+            ringed = has_ring(&self.run.last, LIGHT, stop.ring);
+            if ringed {
+                break;
+            }
+        }
         if !ringed {
             note(format!(
                 "{what}: after {} Tab presses no ring on the card at {:?}",
@@ -281,8 +292,9 @@ impl Walk<'_> {
     /// Each card ringed, in Teams Light and Teams Dark.
     fn ring_shots(&mut self, stops: &[Stop; 4]) -> SandboxResult {
         for (stop, kind) in stops.iter().zip(KINDS) {
-            self.fresh()?;
-            self.tabs(stop.presses)?;
+            if !self.keys_on(*stop, kind)? {
+                continue;
+            }
             for look in [LIGHT, DARK] {
                 self.run.theme(look.dark)?;
                 thread::sleep(SETTLE);
@@ -357,8 +369,10 @@ impl Walk<'_> {
             ));
         }
         self.key(keys::TAB)?;
+        thread::sleep(SETTLE);
         let on_more = load(&self.run.shot(self.sandbox, "qa849-image-more-focused-light.png")?)?;
         self.key(keys::ENTER)?;
+        thread::sleep(SETTLE);
         let opened = load(&self.run.shot(self.sandbox, "qa849-image-more-open-light.png")?)?;
         let menu = changed_box(&on_more, &opened, corner.grown(MENU_REACH), corner)
             .filter(|menu| menu.height() > 20 && menu.width() > 60);
@@ -451,79 +465,95 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// Space on each control of the player after the video ended: only Play plays it. The number of Tab presses from
-    /// the player to its full screen button, if one went full screen.
+    /// Enter and Space on each control of the player after the video ended, Tab bringing the keys to it in the order
+    /// of the bar: each presses only its own control (only Play plays the video). The number of Tab presses from the
+    /// player to "More options".
     fn player_controls(&mut self, stop: Stop) -> SandboxResult<Option<u32>> {
-        let mut played = Vec::new();
-        let mut fullscreen = None;
-        let mut menu = None;
-        for control in 1..=CONTROLS {
-            if !self.keys_on(stop, "video-controls")? {
-                return Ok(None);
+        let mut pressed = Vec::new();
+        for (presses, name) in (1..).zip(PLAYER_CONTROLS) {
+            for (key, key_name) in [(keys::SPACE, "Space"), (keys::ENTER, "Enter")] {
+                if !self.keys_on(stop, "video-controls")? {
+                    continue;
+                }
+                self.key(keys::ENTER)?;
+                let ended = self.video_until(|state| state.contains("Ended") || state.contains("Paused"))?;
+                self.tabs(presses)?;
+                let control = self.control()?;
+                if control != name {
+                    note(format!(
+                        "Tab {presses} times into the player reaches {control}, not {name}"
+                    ));
+                    continue;
+                }
+                let shot = format!("qa849-control-{presses}-{name}");
+                if key == keys::SPACE && matches!(name, "play" | "fullscreen") {
+                    self.dark_shot(&format!("{shot}-focused-dark.png"))?;
+                }
+                let before = load(&self.run.shot(self.sandbox, &format!("{shot}-focused-light.png"))?)?;
+                let opened_before = self.sandbox.opened()?.len();
+                self.key(key)?;
+                thread::sleep(QUIET);
+                let after = self.video_state()?;
+                let opened = self
+                    .sandbox
+                    .opened()?
+                    .get(opened_before)
+                    .and_then(|opened| opened.args.last().cloned());
+                let pressed_shot = load(&self.run.shot(self.sandbox, &format!("{shot}-{key_name}-light.png"))?)?;
+                let whole = Rect {
+                    x0: 0,
+                    y0: PANE.1,
+                    x1: pressed_shot.width(),
+                    y1: pressed_shot.height(),
+                };
+                let changed = changed_in(&before, &pressed_shot, whole);
+                let area = usize::try_from(whole.width() * whole.height()).unwrap_or(usize::MAX);
+                let played = after
+                    .as_deref()
+                    .is_some_and(|state| state.contains("Playing") || state.contains("Loading"));
+                let full = changed * 2 > area;
+                let menu = (5_000..area / 10).contains(&changed);
+                let wanted = match name {
+                    "play" => played && !full,
+                    "player" => menu && !played && !full,
+                    "fullscreen" => full && !played,
+                    "open" => opened.as_deref() == Some(share_url(&CLIP_A).as_str()) && !played && !full,
+                    // a skip changes the picture, as a menu does: only what it must not do is checked
+                    _ => !played && !full && opened.is_none(),
+                };
+                if !wanted {
+                    note(format!(
+                        "{key_name} on the player's {name}: {ended:?} -> {after:?}, {changed} of {area} pixels \
+                         changed, opened {opened:?}"
+                    ));
+                }
+                pressed.push(format!("{name} {key_name} {}", if wanted { "ok" } else { "wrong" }));
+                for _ in 0..3 {
+                    self.key(keys::ESC)?;
+                }
+                thread::sleep(SETTLE);
             }
-            self.key(keys::ENTER)?;
-            let ended = self.video_until(|state| state.contains("Ended") || state.contains("Paused"))?;
-            self.tabs(control)?;
-            let focus = self.focus()?;
-            if focus == "box" {
-                break;
-            }
-            let before = load(
-                &self
-                    .run
-                    .shot(self.sandbox, &format!("qa849-control-{control}-focused-light.png"))?,
-            )?;
-            self.key(keys::SPACE)?;
-            thread::sleep(QUIET);
-            let after = self.video_state()?;
-            let shot = load(
-                &self
-                    .run
-                    .shot(self.sandbox, &format!("qa849-control-{control}-space-light.png"))?,
-            )?;
-            let whole = Rect {
-                x0: 0,
-                y0: PANE.1,
-                x1: shot.width(),
-                y1: shot.height(),
-            };
-            let changed = changed_in(&before, &shot, whole);
-            let area = usize::try_from(whole.width() * whole.height()).unwrap_or(usize::MAX);
-            if changed * 2 > area {
-                fullscreen.get_or_insert(control);
-            } else if focus == "other" && (5_000..area / 10).contains(&changed) {
-                menu.get_or_insert(control);
-            }
-            if after
-                .as_deref()
-                .is_some_and(|state| state.contains("Playing") || state.contains("Loading"))
-            {
-                played.push(control);
-            }
-            step(&format!(
-                "control {control} (focus {focus}): {ended:?} -> Space -> {after:?}, {changed} of {area} pixels changed"
-            ));
-            for _ in 0..3 {
-                self.key(keys::ESC)?;
-            }
-            thread::sleep(SETTLE);
         }
-        if played.len() != 1 {
-            note(format!(
-                "Tab from the player does not reach Play: Space on the controls Tab reaches plays the video at \
-                 {played:?} Tab presses"
-            ));
-        }
-        if fullscreen.is_none() {
-            note(
-                "Tab from the player does not reach Full screen: Space on no control shows the video full screen"
-                    .to_owned(),
-            );
-        }
-        step(&format!(
-            "the player's controls: Space plays at {played:?}, full screen at {fullscreen:?}, a menu at {menu:?}"
-        ));
-        Ok(menu)
+        step(&format!("the player's controls: {pressed:?}"));
+        Ok((1..)
+            .zip(PLAYER_CONTROLS)
+            .find(|(_, name)| *name == "player")
+            .map(|(presses, _)| presses))
+    }
+
+    /// A shot `name` in Teams Dark, then Teams Light again.
+    fn dark_shot(&mut self, name: &str) -> SandboxResult {
+        self.run.theme(true)?;
+        thread::sleep(SETTLE);
+        self.run.shot(self.sandbox, name)?;
+        self.run.theme(false)?;
+        thread::sleep(SETTLE);
+        Ok(())
+    }
+
+    /// Which control of a player has the keys: its name, `player` for another place in it, else `outside`.
+    fn control(&mut self) -> SandboxResult<String> {
+        Ok(self.run.question("control")?.trim_matches('"').to_owned())
     }
 
     /// In the video's player: its menu (Tab to it, Enter), then full screen (the pointer: no key reaches it); then
@@ -539,6 +569,7 @@ impl Walk<'_> {
         self.key(keys::ENTER)?;
         let _ = self.video_until(|state| state.contains("Ended") || state.contains("Paused"))?;
         self.tabs(menu_at)?;
+        thread::sleep(SETTLE);
         let before_menu = load(&self.run.shot(self.sandbox, "qa849-escape-0-more-focused-light.png")?)?;
         self.key(keys::ENTER)?;
         let menu = load(&self.run.shot(self.sandbox, "qa849-escape-1-menu-light.png")?)?;
