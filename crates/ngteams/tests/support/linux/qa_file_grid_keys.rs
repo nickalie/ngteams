@@ -445,7 +445,8 @@ impl Walk<'_> {
                 ));
             }
             self.key(keys::ESC)?;
-            let after = self.video_state()?;
+            // The player takes the pause on its media thread, after the key.
+            let after = self.video_until(|state| !state.contains("Playing"))?;
             self.run
                 .shot(self.sandbox, &format!("qa849-video-{name}-escape-light.png"))?;
             if after.as_deref().is_some_and(|state| state.contains("Playing")) {
