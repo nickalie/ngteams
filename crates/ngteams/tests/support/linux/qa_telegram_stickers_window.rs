@@ -17,6 +17,8 @@
 //! - **The keyboard**: Tab, Shift+Tab, Enter, Space and Escape in the panel.
 //! - **a sends** the imported animated sticker; **b sees** it play.
 //! - **No regression**: text in the box after the panel, the emoji tab. Teams Light and Dark shots of the panel.
+//! - **Video stickers** (task 655, `qa_telegram_video.rs`): in the picker, sent to b, bad `.webm` files, and a third
+//!   run of the app with no VP8 or VP9 decoder.
 //!
 //! The app's secret store is the in-memory one (`AppSecrets::in_memory`): the sandbox has no Secret Service. The
 //! restart puts the token that the first run kept back in it, as a keyring keeps it.
@@ -91,6 +93,9 @@ use zbus::zvariant::{OwnedObjectPath, Value as Variant};
 )]
 mod support;
 use support::{Alias, display_name};
+
+#[path = "qa_telegram_video.rs"]
+mod video_checks;
 
 const CHILD_ENV: &str = "QA651_CHILD";
 const ONLY_ENV: &str = "QA651_ONLY";
@@ -216,12 +221,13 @@ fn wanted(name: &str) -> bool {
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
 /// The first run of the app.
-const FIRST: [Check; 13] = [
+const FIRST: [Check; 16] = [
     ("import_folder", import_folder),
     ("menu_rows", menu_rows),
     ("import_zip", import_zip),
     ("import_chosen_files", import_chosen_files),
     ("animated_shows_in_picker", animated_shows_in_picker),
+    ("video_shows_in_picker", video_checks::video_shows_in_picker),
     ("panel_link_and_token_problems", panel_link_and_token_problems),
     ("panel_telegram_failures", panel_telegram_failures),
     ("panel_good_import", panel_good_import),
@@ -229,11 +235,17 @@ const FIRST: [Check; 13] = [
     ("token_replace_keep_remove", token_replace_keep_remove),
     ("panel_keyboard", panel_keyboard),
     ("send_animated_b_sees_it_play", send_animated_b_sees_it_play),
+    ("send_video_b_sees_it_play", video_checks::send_video_b_sees_it_play),
+    // last: its pack would hide the Telegram pack behind "See all"
+    ("bad_video_files_skip", video_checks::bad_video_files_skip),
     ("no_regression_and_themes", no_regression_and_themes),
 ];
 
 /// The second run of the app over the same settings, store and kept token.
 const RESTART: [Check; 1] = [("token_kept_after_restart", token_kept_after_restart)];
+
+/// A third run, with every VP8 and VP9 decoder hidden from `GStreamer` (task 655).
+const NO_DECODER: [Check; 1] = [("no_decoder_skip", video_checks::no_decoder_skip)];
 
 #[derive(Default)]
 struct Tally {
@@ -278,6 +290,7 @@ fn parent() -> SandboxResult {
     let chooser = Chooser::start(sandbox.bus().address())?;
     let sources = tempfile::tempdir()?;
     make_sources(sources.path())?;
+    video_checks::make_sources(sources.path())?;
     let dir = tempfile::tempdir()?;
     let world = World {
         sandbox: &sandbox,
@@ -307,7 +320,11 @@ fn dead_origin() -> SandboxResult<String> {
 fn run_all(world: &World<'_>) -> SandboxResult<Tally> {
     let mut tally = Tally::default();
     let mut quits = Vec::new();
-    for (run, checks) in [("first", &FIRST[..]), ("restart", &RESTART[..])] {
+    for (run, checks) in [
+        ("first", &FIRST[..]),
+        ("restart", &RESTART[..]),
+        (video_checks::NO_DECODER_RUN, &NO_DECODER[..]),
+    ] {
         if !checks.iter().any(|(name, _)| wanted(name)) {
             continue;
         }
@@ -657,22 +674,24 @@ impl AppUnderTest {
         let tokens = tokens.join(" ");
         let dir = world.dir.to_string_lossy().into_owned();
         let seed = world.dir.join("kept-token").to_string_lossy().into_owned();
-        let child = world.sandbox.spawn_with_fds(
-            &std::env::current_exe()?,
-            &[],
-            &[
-                (CHILD_ENV, run),
-                (TRACE_FD_ENV, &fd),
-                (ORIGIN_ENV, &world.mock.origin()),
-                (TROUTER_ENV, world.trouter),
-                (TOKENS_ENV, &tokens),
-                (DIR_ENV, &dir),
-                (BOT_ENV, &world.bot.origin()),
-                (DEAD_BOT_ENV, world.dead_bot),
-                (SEED_ENV, &seed),
-            ],
-            &[writer.as_fd()],
-        )?;
+        let (origin, bot) = (world.mock.origin(), world.bot.origin());
+        let mut envs: Vec<(&str, &str)> = vec![
+            (CHILD_ENV, run),
+            (TRACE_FD_ENV, &fd),
+            (ORIGIN_ENV, &origin),
+            (TROUTER_ENV, world.trouter),
+            (TOKENS_ENV, &tokens),
+            (DIR_ENV, &dir),
+            (BOT_ENV, &bot),
+            (DEAD_BOT_ENV, world.dead_bot),
+            (SEED_ENV, &seed),
+        ];
+        if run == video_checks::NO_DECODER_RUN {
+            envs.push(("GST_PLUGIN_FEATURE_RANK", video_checks::NO_VP9_RANKS));
+        }
+        let child = world
+            .sandbox
+            .spawn_with_fds(&std::env::current_exe()?, &[], &envs, &[writer.as_fd()])?;
         drop(writer);
         let mut running = Running::new(child)?;
         let mut trace = TraceReader::start(reader);
@@ -1186,6 +1205,8 @@ impl User<'_> {
         let state = self.open_stickers_by_keys()?;
         if !has_item(&state, item) {
             self.key_pick("sticker-pack-add")?;
+            // a loaded machine opens the menu late
+            self.until("the Add a sticker pack menu", |state| has_item(state, item))?;
         }
         self.key_pick(item)
     }
