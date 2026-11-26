@@ -353,17 +353,17 @@ fn the_language_confirmation_s_taller_floor_is_never_saved() {
         "a drag down saves a shorter height than before"
     );
     let floor = height(window);
-    window.simulate_keystrokes("up");
+    drag_edge(window, -20.0);
     assert!(
         (height(window) - (floor + 20.0)).abs() < 1.0,
-        "an Up grows the area from its drawn height at once: {}",
+        "a drag up grows the area from its drawn height at once: {} from {floor}",
         height(window)
     );
     let grown = height(window);
-    drag_edge(window, -20.0);
+    window.simulate_keystrokes("up");
     assert!(
         (height(window) - (grown + 20.0)).abs() < 1.0,
-        "a drag up grows the area from its drawn height at once: {} from {grown}",
+        "an Up grows the area from its drawn height at once: {} from {grown}",
         height(window)
     );
 }

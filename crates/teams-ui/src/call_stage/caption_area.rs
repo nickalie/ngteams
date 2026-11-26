@@ -163,8 +163,8 @@ impl CallStage {
             .unwrap_or_else(|| self.settings.read(cx).settings().caption_height_of(self.core.me()) as f32)
     }
 
-    /// The height that a drag or a key starts from: the saved height, as a short window shrinks it. The language
-    /// confirmation's taller floor is not part of it, so a resize never saves that floor.
+    /// The height that a shrink starts from: the saved height, as a short window shrinks it, so a shrink never saves
+    /// the language confirmation's taller floor.
     fn caption_start_height(&self, cx: &App) -> f32 {
         self.caption_height(cx).min(self.caption_room())
     }
@@ -173,6 +173,10 @@ impl CallStage {
     /// first step moves the edge.
     fn caption_grow_height(&self, cx: &App) -> f32 {
         let start = self.caption_start_height(cx);
+        // the laid height can be one frame old: use it only for the confirmation's taller floor
+        if self.caption_language.is_none() {
+            return start;
+        }
         self.caption_area.laid.get().map_or(start, |(area, _)| area.max(start))
     }
 
