@@ -312,7 +312,7 @@ fn ask_now(target: &Target, ask: Ask, cx: &mut App) -> Result<(Settle, oneshot::
     }
     if ask == Ask::Answer && calls.read(cx).ring_opens_prejoin() {
         // a meeting's Request to join: its Accept opens the pre-join, whose Join now answers, as `--now` joins a meeting
-        calls::ask(calls, &target.account.core, &target.trace, Ask::Answer, cx);
+        calls::accept_meeting_ring(calls, &target.account.core, &target.trace, cx);
         calls::join_now_then(calls, &target.account.core, &target.trace, cx, move |taken, _| {
             let _ = told.send(if taken { Answered::Taken } else { Answered::Refused });
         });

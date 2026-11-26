@@ -16,8 +16,8 @@
 //!   ([`join_now`]); what its switches say is the user's, and turns into the call's mute and camera once the call can
 //!   take them ([`Calls::next_choice`]).
 //! - **A meeting's Request to join** opens that meeting's pre-join on Accept, as Teams does, and nothing goes out
-//!   ([`Prejoin::ring`]). Its Join now answers the ring while it rings, and joins the meeting by its link after the
-//!   ring ended. Its Cancel lets the ring ring on until it ends (Teams' Cancel was not captured).
+//!   ([`Prejoin::ring`]). Its Join now answers the ring while it rings, and after the ring ended joins the meeting by
+//!   the organizer and tenant the ring named. Its Cancel lets the ring ring on until it ends (Teams' Cancel was not captured).
 //! - **The asks** ([`Ask`]): a call from a chat, the test call (the echo service's MRI the app gave), a join, a
 //!   meeting's join (started or not), the answer or the decline of the invitation that rings, a hang-up, mute or unmute, the camera on or off (off when a
 //!   call starts; a 1:1 call's video, M3 Task 18). Each is the user's: a button, a key, the switcher's command or the
@@ -1116,6 +1116,12 @@ impl Calls {
             .filter(|_| !self.answering() && !self.ring_in_prejoin())
     }
 
+    /// The invitation the call bar shows: the one that rings, unless its Accept opened its meeting's pre-join.
+    #[must_use]
+    pub fn banner_ring(&self) -> Option<&IncomingCall> {
+        self.ringing.as_ref().filter(|_| !self.ring_in_prejoin())
+    }
+
     /// Whether the call devices are still being discovered, so a call waits before it goes.
     #[must_use]
     pub fn devices_preparing(&self) -> bool {
@@ -1301,14 +1307,29 @@ impl Calls {
         Some(ringing.call)
     }
 
-    /// The meeting's name, read for the pre-join that Accept on the ring `ring` opened.
-    fn title_ring_prejoin(&mut self, ring: CallId, title: String, cx: &mut Context<Self>) {
+    /// The meeting's name, read for the pre-join that Accept on the ring `ring` in `chat` opened: also the title of
+    /// the meeting its Join now already went into, and of that meeting's call.
+    fn title_ring_prejoin(&mut self, ring: CallId, chat: &str, title: String, cx: &mut Context<Self>) {
         if let Some(prejoin) = &mut self.prejoin
             && prejoin.ring == Some(ring)
             && let MeetingToJoin::Chat { title: current, .. } = &mut prejoin.to_join
             && *current != title
         {
-            *current = title;
+            current.clone_from(&title);
+            cx.notify();
+        }
+        if let Some(MeetingToJoin::Chat {
+            chat: joined,
+            title: current,
+            ..
+        }) = &mut self.meeting
+            && joined == chat
+            && current == crate::meeting_alert::NO_TITLE
+        {
+            current.clone_from(&title);
+            if let Some(active) = self.call.as_mut().filter(|active| Some(active.id) == self.meeting_call) {
+                active.title = Some(title);
+            }
             cx.notify();
         }
     }
@@ -1379,7 +1400,7 @@ impl Calls {
     }
 
     /// The ring that Accept opened a pre-join for ended (timed out, or its caller gave up): the pre-join stays, and its
-    /// Join now joins the meeting by its link.
+    /// Join now joins the meeting by the organizer and tenant the ring named.
     fn ring_ended_in_prejoin(&mut self, call: CallId) {
         if let Some(prejoin) = self.prejoin.as_mut().filter(|prejoin| prejoin.ring == Some(call)) {
             prejoin.ring = None;
@@ -1453,9 +1474,12 @@ impl Calls {
             }
             Event::RingEnded { call, end } => {
                 if self.ringing.as_ref().is_some_and(|ringing| ringing.call == *call) {
+                    // a ring whose Accept opened its pre-join was not missed: Join now still goes into its meeting
+                    if !self.ring_in_prejoin() {
+                        self.rang_out = Some((*call, end.by.clone()));
+                    }
                     self.ringing = None;
                     self.answering = None;
-                    self.rang_out = Some((*call, end.by.clone()));
                 }
                 self.ring_ended_in_prejoin(*call);
             }
@@ -2395,7 +2419,7 @@ pub fn ask_then(
 
 /// Accept on a meeting's Request to join, as Teams' Accept: the meeting's pre-join in its own window, titled with the
 /// meeting's name once read. Nothing goes out, and the ring rings on, silent, until Join now answers it.
-fn accept_meeting_ring(calls: &Entity<Calls>, core: &Arc<dyn Core>, trace: &Arc<ViewTrace>, cx: &mut App) {
+pub fn accept_meeting_ring(calls: &Entity<Calls>, core: &Arc<dyn Core>, trace: &Arc<ViewTrace>, cx: &mut App) {
     let shown = calls.read(cx).ring_in_prejoin();
     let opened = calls.update(cx, |calls, cx| {
         calls.open_ring_prejoin(crate::meeting_alert::NO_TITLE, cx)
@@ -2418,7 +2442,7 @@ fn accept_meeting_ring(calls: &Entity<Calls>, core: &Arc<dyn Core>, trace: &Arc<
     let (core, weak) = (Arc::clone(core), calls.downgrade());
     cx.spawn(async move |cx: &mut AsyncApp| {
         let title = crate::meeting_alert::chat_name(&*core, &chat).await;
-        let _ = weak.update(cx, |calls, cx| calls.title_ring_prejoin(ring, title, cx));
+        let _ = weak.update(cx, |calls, cx| calls.title_ring_prejoin(ring, &chat, title, cx));
     })
     .detach();
 }

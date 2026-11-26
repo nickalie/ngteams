@@ -143,11 +143,11 @@ async fn qa810_a_hosts_request_to_join_rings_with_the_meeting_and_a_decline_is_t
     }
 }
 
-/// Task 831: the invitee's pre-join, as its actions reach the own server. Accept sends nothing, so the ring rings on
-/// while the pre-join shows. Join now answers the ring, and Cora is in the meeting. When the ring ended before Join
-/// now (here Cora declines it), Join now is the meeting's own join, by the organizer and tenant the ring named.
+/// Task 831: the engine side of the invitee's pre-join on the own server. The ring names the calendar's meeting, and
+/// its Answer puts Cora in the meeting. After the ring ended (here Cora declines it), the meeting's own join, by the
+/// organizer and tenant the ring named, puts her in the meeting. The pre-join itself is the UI's tests'.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn qa831_an_invitee_joins_through_the_pre_join_by_the_rings_answer_or_after_the_ring_by_its_meeting() {
+async fn qa831_a_meeting_ring_names_its_meeting_and_its_answer_or_that_meetings_join_puts_the_invitee_in() {
     for backend in backends() {
         let mixed = Mixed::start(backend).await;
         let mut ada = Person::new(&mixed, "Ada", A_TONE).await;
@@ -171,8 +171,6 @@ async fn qa831_an_invitee_joins_through_the_pre_join_by_the_rings_answer_or_afte
         let meeting = ringing.meeting.clone().expect("the ring names its meeting");
         assert_eq!(meeting.organizer_id, ada.id());
         assert_eq!(Some(&meeting), event.meeting.as_ref(), "the meeting the calendar names");
-        // the pre-join shows: nothing goes out, and the ring rings on
-        tokio::time::sleep(Duration::from_secs(2)).await;
         let c_call = cora.engine.call(CallAction::Answer { call: ringing.call }).await;
         assert_eq!(c_call, ringing.call, "Join now answers the ring that still rings");
         cora.engine.status(c_call, &CallStatus::Connected).await;
@@ -181,16 +179,16 @@ async fn qa831_an_invitee_joins_through_the_pre_join_by_the_rings_answer_or_afte
         cora.engine.ended(c_call).await;
         ada.engine.view(a_call, |view| !cora_in(view)).await;
 
-        // asked again; the ring ends while the pre-join shows; Join now joins by the meeting the ring named
+        // asked again; after the ring ended, the join by the meeting the ring named
         ada.engine.call(ask_cora).await;
         let ringing = cora.engine.incoming().await;
         cora.engine.call(CallAction::Decline { call: ringing.call }).await;
         cora.engine.ended(ringing.call).await;
-        let by_link = CallAction::JoinMeeting {
+        let by_meeting = CallAction::JoinMeeting {
             chat: chat.clone(),
             meeting: ringing.meeting.clone().expect("the ring names its meeting"),
         };
-        let c_call = joined(&mut cora, &by_link).await;
+        let c_call = joined(&mut cora, &by_meeting).await;
         ada.engine.view(a_call, cora_in).await;
         leave_all(&mut [&mut cora, &mut ada], &[c_call, a_call]).await;
         shut_down(vec![ada, cora], mixed).await;

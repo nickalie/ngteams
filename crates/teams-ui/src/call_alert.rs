@@ -1,6 +1,7 @@
 //! The incoming call on the desktop (M3 Task 17): while an invitation the engine offered rings, its ringtone on the
 //! default output ([`Ringer`]) and a notification with Answer and Decline on the bus the app is given, both gone once
-//! the ring ends (answered, declined, cancelled, answered elsewhere, timed out) or the user answers it here. The
+//! the ring ends (answered, declined, cancelled, answered elsewhere, timed out), the user answers it here, or its Accept
+//! opens its meeting's pre-join (back on the pre-join's Cancel). The
 //! notification shows the caller's picture when the engine has it stored ([`crate::notify::picture`]). Answer and Decline on the notification
 //! are the user's asks, as the banner's buttons are ([`calls::ask`]); its body shows the window, where the banner is.
 //!

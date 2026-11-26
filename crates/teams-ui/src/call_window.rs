@@ -193,16 +193,10 @@ impl CallWindows {
             .map(|account| &account.parts.models.calls)
     }
 
-    /// The pre-join's window follows the calls: open while one shows and no call is up.
+    /// The pre-join's window follows the calls: open while one shows and no call is up. A ring's pre-join comes
+    /// first, as its ring is silent while it shows; then the one already open.
     fn follow_prejoin(&mut self, call_up: bool, cx: &mut Context<Self>) {
-        let wanted = (!call_up)
-            .then(|| {
-                self.accounts
-                    .iter()
-                    .find(|account| account.parts.models.calls.read(cx).prejoin().is_some())
-                    .map(|account| account.key.clone())
-            })
-            .flatten();
+        let wanted = (!call_up).then(|| self.prejoin_wanted(cx)).flatten();
         if self.prejoin.as_ref().map(|open| open.key.as_str()) == wanted.as_deref() {
             return;
         }
@@ -212,6 +206,23 @@ impl CallWindows {
         if let Some(key) = wanted {
             self.open_prejoin(&key, cx);
         }
+    }
+
+    /// The account whose pre-join the window shows (see [`Self::follow_prejoin`]).
+    fn prejoin_wanted(&self, cx: &App) -> Option<String> {
+        let shows = |account: &&Followed| account.parts.models.calls.read(cx).prejoin().is_some();
+        let open = self.prejoin.as_ref().map(|open| open.key.as_str());
+        self.accounts
+            .iter()
+            .find(|account| account.parts.models.calls.read(cx).ring_in_prejoin())
+            .or_else(|| {
+                self.accounts
+                    .iter()
+                    .filter(shows)
+                    .find(|account| Some(account.key.as_str()) == open)
+            })
+            .or_else(|| self.accounts.iter().find(shows))
+            .map(|account| account.key.clone())
     }
 
     /// Opens the pre-join's window of account `key`, the keyboard on it.

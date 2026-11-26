@@ -1,6 +1,6 @@
 //! A meeting's Request to join on the invitee's side: Accept opens the meeting's pre-join and sends nothing, Join now
 //! answers the ring into the meeting, Cancel lets the ring ring on, and a ring that ends while the pre-join shows
-//! leaves Join now to join the meeting by its link. Every name and id is made up.
+//! leaves Join now to join the meeting by the organizer and tenant the ring named. Every name and id is made up.
 
 use std::sync::Arc;
 
@@ -9,9 +9,9 @@ use teams_core::{CallAction, CallActionError, CallStatus, EngineError, Event, In
 use teams_store::ConversationKind;
 
 use super::{
-    AB, CALLER_NAME, CallKind, FakeRinger, FakeServer, MEETING_CHAT, Rig, actions, alert, call, call_windows, calling,
-    calls_of, chat, click, drawn, invitation, join_meeting_action, lines, meeting_to_join, no_name_in, prejoin_window,
-    registered, shell_window, status, trace,
+    AB, CALLER_NAME, CallKind, FakeRinger, FakeServer, LAB_A, LAB_B, MEETING_CHAT, Rig, TRIO, actions, alert, call,
+    call_windows, calling, calls_of, chat, click, drawn, invitation, join_meeting_action, lines, meeting_to_join,
+    no_name_in, prejoin_window, registered, shell_window, status, trace,
 };
 
 /// The made-up meeting's title, as its chat's row names it.
@@ -197,7 +197,7 @@ fn cancel_on_a_meeting_rings_pre_join_sends_nothing_and_the_ring_rings_on_until_
 }
 
 #[test]
-fn a_meeting_ring_that_ends_while_its_pre_join_shows_leaves_join_now_to_join_the_meeting_by_its_link() {
+fn a_meeting_ring_that_ends_while_its_pre_join_shows_is_not_missed_and_join_now_joins_its_meeting() {
     let rig = calling();
     listed_meeting(&rig);
     let (trace, _) = trace();
@@ -215,6 +215,11 @@ fn a_meeting_ring_that_ends_while_its_pre_join_shows_leaves_join_now_to_join_the
     rig.cx.run_until_parked();
     let kept = prejoin(&rig).expect("the pre-join stays");
     assert_eq!((kept.ring, kept.joining), (None, false));
+    assert_eq!(
+        rig.cx.read(|cx| calls_of(&rig).read(cx).missed(LAB_A)),
+        None,
+        "an accepted ring is not missed"
+    );
     assert!(drawn(window, "prejoin-join"));
     click(window, "prejoin-join");
     assert_eq!(actions(&rig), [join_meeting_action()]);
@@ -224,7 +229,7 @@ fn a_meeting_ring_that_ends_while_its_pre_join_shows_leaves_join_now_to_join_the
 }
 
 #[test]
-fn a_refused_answer_leaves_join_now_to_answer_again_and_a_ring_that_ends_meanwhile_to_join_by_the_link() {
+fn a_refused_answer_leaves_join_now_to_answer_again_and_a_ring_that_ends_meanwhile_to_join_its_meeting() {
     let rig = calling();
     listed_meeting(&rig);
     let (trace, _) = trace();
@@ -274,6 +279,23 @@ fn a_meeting_ring_that_names_no_meeting_and_a_group_ring_are_answered_at_once() 
     let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
     let (windows, _) = call_windows(&rig, &shell, &trace);
     registered(&rig);
+    // a group chat's ring, even one that names a meeting, is not a meeting's Request to join
+    rig.send(Event::IncomingCall(IncomingCall {
+        meeting: meeting_to_join().meeting().cloned(),
+        ..invitation(8, Some(CALLER_NAME), Some(TRIO))
+    }));
+    rig.cx.run_until_parked();
+    assert!(!rig.cx.read(|cx| calls_of(&rig).read(cx).ring_opens_prejoin()));
+    click(cx, "call-answer");
+    assert_eq!(actions(&rig), [CallAction::Answer { call: call(8) }]);
+    assert!(rig.cx.read(|cx| windows.read(cx).prejoin_window().is_none()));
+    drop((shell, windows));
+
+    let rig = calling();
+    let (trace, _) = super::trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
     rig.send(Event::IncomingCall(invitation(
         7,
         Some(CALLER_NAME),
@@ -284,4 +306,77 @@ fn a_meeting_ring_that_names_no_meeting_and_a_group_ring_are_answered_at_once() 
     click(cx, "call-answer");
     assert_eq!(actions(&rig), [CallAction::Answer { call: call(7) }]);
     assert!(rig.cx.read(|cx| windows.read(cx).prejoin_window().is_none()));
+}
+
+#[test]
+fn join_now_in_the_same_turn_as_accept_titles_the_meetings_call_once_its_name_is_read() {
+    let rig = calling();
+    listed_meeting(&rig);
+    let (trace, _) = trace();
+    let (shell, _cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (_windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    rig.send(Event::IncomingCall(meeting_ring(9)));
+    let core: Arc<dyn teams_ui::Core> = rig.core.clone();
+    // as `ngteamsctl answer` does: Accept, then Join now, before the meeting's name is read
+    rig.cx.update(|cx| {
+        teams_ui::calls::accept_meeting_ring(&calls_of(&rig), &core, &trace, cx);
+        teams_ui::calls::join_now(&calls_of(&rig), &core, &trace, cx);
+    });
+    rig.cx.run_until_parked();
+    assert_eq!(actions(&rig), [CallAction::Answer { call: call(9) }]);
+    status(&rig, 9, CallStatus::Connected);
+    rig.cx.run_until_parked();
+    let active = rig.cx.read(|cx| calls_of(&rig).read(cx).call().cloned()).unwrap();
+    assert_eq!((active.kind, active.title.as_deref()), (CallKind::Meeting, Some(TITLE)));
+    let meeting = rig.cx.read(|cx| calls_of(&rig).read(cx).meeting_to_join().cloned());
+    assert_eq!(
+        meeting.map(|to_join| to_join.title().to_owned()).as_deref(),
+        Some(TITLE)
+    );
+}
+
+#[test]
+fn an_accepted_ring_shows_its_pre_join_over_another_accounts_calendar_pre_join() {
+    let rig = calling();
+    listed_meeting(&rig);
+    let (trace, _) = trace();
+    let (shell, _cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    rig.cx
+        .update(|cx| calls_of(&rig).update(cx, |calls, cx| calls.open_prejoin(meeting_to_join(), cx)));
+    let _first = prejoin_window(&rig, &windows);
+
+    let other = Arc::new(super::common::FakeCore {
+        me: LAB_B.to_owned().into(),
+        ..super::common::FakeCore::default()
+    });
+    let core: Arc<dyn teams_ui::Core> = other.clone();
+    let models = rig.cx.update(|cx| teams_ui::Models::with_calls(None, cx));
+    let parts = teams_ui::shell::ShellParts {
+        core: Arc::clone(&core),
+        models: models.clone(),
+        settings: rig.cx.read(|cx| shell.read(cx).settings().clone()),
+        trace: Arc::clone(&trace),
+    };
+    rig.cx
+        .update(|cx| windows.update(cx, |windows, cx| windows.add(parts, cx)));
+    rig.cx.update(|cx| {
+        models.calls.update(cx, |calls, cx| {
+            calls.apply(&Event::IncomingCall(meeting_ring(10)), cx);
+        });
+        teams_ui::calls::ask(&models.calls, &core, &trace, teams_ui::calls::Ask::Answer, cx);
+    });
+    rig.cx.run_until_parked();
+    assert!(rig.cx.read(|cx| models.calls.read(cx).ring_in_prejoin()));
+    let window = prejoin_window(&rig, &windows);
+    window.simulate_keystrokes("enter");
+    window.run_until_parked();
+    assert_eq!(
+        *other.call_actions.lock().unwrap(),
+        [CallAction::Answer { call: call(10) }],
+        "Join now on the window shown answers the accepted ring"
+    );
+    assert!(actions(&rig).is_empty(), "the other account's meeting is not joined");
 }

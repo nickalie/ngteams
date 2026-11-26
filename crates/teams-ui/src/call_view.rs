@@ -376,7 +376,7 @@ impl CallBar {
             };
             self.trace.record(&TraceLine::new("calling", change));
         }
-        let ringing = model.ringing().filter(|_| !model.ring_in_prejoin()).cloned();
+        let ringing = model.banner_ring().cloned();
         let shown = model.call().map(|active| self.bar_of(active));
         let ended = model.ended().cloned();
         let answering = model.answering();
@@ -522,7 +522,7 @@ impl CallBar {
     #[must_use]
     pub fn said(&self, cx: &App) -> Option<(SharedString, Option<&'static str>)> {
         let model = self.calls.read(cx);
-        if let Some(ringing) = model.ringing().filter(|_| !model.ring_in_prejoin()) {
+        if let Some(ringing) = model.banner_ring() {
             let text = self.banner_text(ringing, model.answering(), cx);
             return Some((text, Some(answer_look(ringing).1)));
         }
@@ -943,7 +943,7 @@ impl Render for CallBar {
         let palette = theme::current(cx);
         let model = self.calls.read(cx);
         // a ring whose Accept opened its meeting's pre-join shows there, as Teams' toast goes on Accept
-        let ringing = model.ringing().filter(|_| !model.ring_in_prejoin()).cloned();
+        let ringing = model.banner_ring().cloned();
         let (shows, active) = (model.shows(), model.call().cloned());
         let banner = ringing
             .filter(|_| shows)
