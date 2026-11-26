@@ -4,9 +4,11 @@
 //! for a stream with alpha, or `vp9dec` (gst-plugins-good) for one without. Its plugins are the ones the app's packages
 //! already install.
 //!
-//! Only a file that starts like a Matroska file reaches `GStreamer`. A stream with alpha is decoded only when
-//! `vp9alphadecodebin` is installed, and a stream is decoded only when the frame size it declares is in the caller's
-//! limit; the appsink takes no larger frame, so a frame size the stream changes to is never converted either. Each
+//! Only a file that starts like a Matroska file reaches `GStreamer`. A stream with alpha (VP8 or VP9) is decoded only
+//! when the alpha decoders are installed, and a stream is decoded only when the frame size it declares is in the
+//! caller's limit; the appsink takes no larger frame, so a frame size the stream changes to is never converted either.
+//! The decoder itself takes the size from the bitstream (`vp9parse` keeps the declared one), so a file that declares
+//! a smaller size than it holds is decoded at its real size before it is refused. Each
 //! frame goes to the caller as it is decoded, so a caller that keeps a smaller copy never holds the whole video; the
 //! caller stops the read when it has enough. Past [`DEADLINE`] the read stops whatever it does, so a file made to
 //! stall holds nothing up. A stream that is not video (a sound track) goes to a `fakesink`; a file with no video ends
@@ -28,8 +30,8 @@ use crate::player::start_gstreamer;
 
 /// The longest one file is worked on.
 pub const DEADLINE: Duration = crate::decoding::DEADLINE;
-/// The decoder that keeps a VP9 stream's alpha (gst-plugins-bad); `vp9dec` alone drops it.
-const ALPHA_DECODER: &str = "vp9alphadecodebin";
+/// The decoders that keep a stream's alpha (codecalpha, gst-plugins-bad); `vp8dec` and `vp9dec` alone drop it.
+const ALPHA_DECODERS: [&str; 2] = ["vp8alphadecodebin", "vp9alphadecodebin"];
 
 /// Why a video file gave no frames.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -69,7 +71,7 @@ pub fn is_webm(bytes: &[u8]) -> bool {
 struct Limits {
     /// The longest side a frame may have.
     max_side: u32,
-    /// Whether [`ALPHA_DECODER`] is installed.
+    /// Whether [`ALPHA_DECODERS`] are installed.
     alpha_decoder: bool,
 }
 
@@ -89,7 +91,7 @@ impl Limits {
             return Some(VideoFileError::TooBig);
         }
         let alpha = structure.get::<bool>("codec-alpha").unwrap_or(false);
-        (structure.name() == "video/x-vp9" && alpha && !self.alpha_decoder).then_some(VideoFileError::NoDecoder)
+        (alpha && !self.alpha_decoder).then_some(VideoFileError::NoDecoder)
     }
 
     /// The appsink's caps: RGBA frames no larger than the limit, so a larger frame is never converted.
@@ -252,7 +254,9 @@ pub fn decode_webm(
     start_gstreamer().map_err(|_| VideoFileError::NoDecoder)?;
     let limits = Limits {
         max_side,
-        alpha_decoder: gst::ElementFactory::find(ALPHA_DECODER).is_some(),
+        alpha_decoder: ALPHA_DECODERS
+            .iter()
+            .all(|factory| gst::ElementFactory::find(factory).is_some()),
     };
     read(bytes, limits, frame)
 }

@@ -216,6 +216,8 @@ fn the_limits_refuse_a_large_or_an_alpha_stream_only() {
     assert_eq!(without.refuses(&vp9(64, true)), Some(VideoFileError::NoDecoder));
     assert_eq!(without.refuses(&vp9(65, false)), Some(VideoFileError::TooBig));
     assert_eq!(Limits { max_side: 64, ..ANY }.refuses(&vp9(64, true)), None);
+    let vp8 = gst::Caps::builder("video/x-vp8").field("codec-alpha", true).build();
+    assert_eq!(without.refuses(&vp8), Some(VideoFileError::NoDecoder));
     let raw = gst::Caps::builder("video/x-raw").field("height", 65_i32).build();
     assert_eq!(without.refuses(&raw), Some(VideoFileError::TooBig));
     assert_eq!(without.refuses(&gst::Caps::new_empty()), None);
@@ -250,4 +252,28 @@ fn a_webm_with_no_video_ends_at_once() {
     let started = Instant::now();
     assert_eq!(all_frames(&bytes).unwrap_err(), VideoFileError::Damaged);
     assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+}
+
+#[test]
+fn a_frame_size_the_stream_changes_to_past_the_limit_is_too_big() {
+    let limits = Limits { max_side: 64, ..ANY };
+    let decoding = decoding(&synthetic_webm(), &["videoconvert"], || limits.sink_caps(), 4).unwrap();
+    let verdict = Verdict::default();
+    link_video(&decoding, limits, &verdict);
+    decoding.target.set_active(true).unwrap();
+    let raw = |width: i32| {
+        gst::event::Caps::new(
+            &gst::Caps::builder("video/x-raw")
+                .field("format", "I420")
+                .field("width", width)
+                .field("height", 64_i32)
+                .build(),
+        )
+    };
+    let _ = decoding.target.send_event(gst::event::StreamStart::new("video"));
+    let _ = decoding.target.send_event(raw(64));
+    assert_eq!(verdict.get(), None);
+    let _ = decoding.target.send_event(raw(65));
+    assert_eq!(verdict.get(), Some(VideoFileError::TooBig));
+    let _ = decoding.pipeline.set_state(gst::State::Null);
 }

@@ -705,9 +705,9 @@ reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-
 context = { "crates/teams-ui/src/stickers/caption.rs" = "933c2529beab64da0c7791675905c37b35512d2ee03bd7990f7a31d26d3a2451" }
 
 [unmapped_sources."crates/teams-media/src/video_file_tests.rs"]
-sha256 = "982cb536c0f5712b89691a86716037966b07b8250d242f9dcb1e3cfa2e37d394"
+sha256 = "5f0a7b122732386b7d5007a75464e07eb89bf5fff892711add4afe8725387945"
 reason = "unit-test module included only under cfg(test); omitted by cargo-llvm-cov default tests.rs/_tests.rs filename filter; executable parent remains measured"
-context = { "crates/teams-media/src/video_file.rs" = "5cbb1613067e49f6f741e50918f2074bc3477cbeaecf5549eefa591cc70d7c80" }
+context = { "crates/teams-media/src/video_file.rs" = "b2b0b0bfe3898a032379c598faecab1db49965096e531e3c6469f868128a3b66" }
 
 [unmapped_sources."crates/teams-ui/src/stickers/video_tests.rs"]
 sha256 = "aa35d163e6b57dbc1ec2e2c4c056fb9ae67b9dcb1f3c17557b67577e2f0a6ac8"
