@@ -33,13 +33,12 @@
 //!   (`crate::recording_download`). Each runs to its end, also when the other one starts while it runs. A line under
 //!   the card tells how far the last one got.
 //! - **The keyboard** reaches each card as Teams' does: a card is a Tab stop in its message's order, ringed while the
-//!   keyboard is on it ([`focus_ring`]), then its own buttons. Enter or Space does what a click does: it opens the file,
+//!   keyboard is on it ([`crate::keyboard::outline_ring`]), then its own buttons. Enter or Space does what a click does: it opens the file,
 //!   or plays a video in its card, the keys going into the player; Escape there pauses it and gives the keys back to
 //!   the card (`crate::video_player`). A screen reader names a card by the file's name and kind ([`spoken_name`]):
 //!   no capture gives a file's size, so the name has none.
 //! - Colours come from the palette but for the file types' own, fixed in every theme as Teams' file icons are.
 
-use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
@@ -58,6 +57,7 @@ use teams_proto::chat::{FileKind, SharedFile};
 
 use crate::icons::{Glyph, icon_button, selected_by};
 use crate::inline::{PictureSource, PictureState, picture, thumbnail};
+use crate::keyboard::outline_ring;
 use crate::recording_download::{self, Failure, Progress, Then, download_of};
 use crate::rich_text::tint;
 use crate::theme::{self, Palette};
@@ -200,7 +200,7 @@ pub const fn kind_glyph(kind: FileKind) -> Glyph {
     }
 }
 
-/// A file type as a screen reader names it, in Teams' words.
+/// A file type as a screen reader names it (our words: no capture gives Teams').
 #[must_use]
 pub const fn kind_name(kind: FileKind) -> &'static str {
     match kind {
@@ -221,35 +221,6 @@ pub const fn kind_name(kind: FileKind) -> &'static str {
 #[must_use]
 pub fn spoken_name(file: &SharedFile) -> String {
     format!("{}, {}", file.name, kind_name(file.kind()))
-}
-
-/// The ring over a card (or a recap's picture) while the keyboard is on it, as Teams draws a focused card: a 2 px line
-/// of the text's colour inside its edge. `None` when the keys are elsewhere or came from the pointer. Once the keyboard
-/// brought the keys, the ring stays until they leave, as a browser's does (GPUI's own focus-visible goes off at any
-/// move of the pointer).
-#[must_use]
-pub fn focus_ring(
-    focus: &FocusHandle,
-    selector: String,
-    palette: Palette,
-    window: &mut Window,
-    cx: &mut App,
-) -> Option<AnyElement> {
-    let from_keys = window.use_keyed_state(SharedString::from(format!("{selector}-keys")), cx, |_, _| {
-        Cell::new(false)
-    });
-    let ringed = focus.is_focused(window) && (from_keys.read(cx).get() || window.last_input_was_keyboard());
-    from_keys.read(cx).set(ringed);
-    ringed.then(|| {
-        div()
-            .debug_selector(move || selector.clone())
-            .absolute()
-            .inset_0()
-            .rounded_lg()
-            .border_2()
-            .border_color(rgb(palette.foreground))
-            .into_any_element()
-    })
 }
 
 /// What a card's Share calls with its file: the view that drew it opening "Share this file" (`crate::share_file`).
@@ -340,7 +311,7 @@ impl RenderOnce for FileCard {
             Some(player) => player.clone().into_any_element(),
             None => self.picture(kind, cx),
         };
-        let ring = focus_ring(&focus, format!("file-card-ring-{}", self.id), self.palette, window, cx);
+        let ring = outline_ring(&focus, format!("file-card-ring-{}", self.id), self.palette, window, cx);
         let id = self.id.clone();
         self.keyed(
             div().id(SharedString::from(format!("file-card-box-{id}"))),
@@ -447,8 +418,11 @@ impl FileCard {
         let group = SharedString::from(format!("file-preview-{id}"));
         // shown while the keyboard is on the card or on it too, so Tab never lands on a button no one sees
         let keys = focus.contains_focused(window, cx);
+        let more_shown = if keys { "shown" } else { "on-hover" };
+        let more_selector = format!("file-more-wrap-{id} {more_shown}");
         let more = self.more(FileKind::Image).map(|more| {
             div()
+                .debug_selector(move || more_selector.clone())
                 .absolute()
                 .top_1()
                 .right_1()
@@ -459,7 +433,7 @@ impl FileCard {
                 })
                 .child(more)
         });
-        let ring = focus_ring(focus, format!("file-card-ring-{id}"), self.palette, window, cx);
+        let ring = outline_ring(focus, format!("file-card-ring-{id}"), self.palette, window, cx);
         let picture = open_on_click(
             div()
                 .id(SharedString::from(format!("file-picture-{id}")))

@@ -22,7 +22,7 @@ use teams_ui::chat_view::{ChatView, ChatViewEvent, Place, UnshownParts};
 use teams_ui::settings::Settings;
 
 use super::common::{LAB_A, LAB_B, Rig};
-use super::{NOON, chat_window, draw, items, message, rig_with, trace};
+use super::{NOON, arrive, chat_window, draw, items, message, rig_with, trace};
 
 const FIXTURE: &str = include_str!("../../../../tests/fixtures/chatsvc/files.json");
 const GRID: &str = include_str!("../../../../tests/fixtures/chatsvc/files-grid.json");
@@ -1166,12 +1166,19 @@ fn space_on_an_images_preview_opens_it_and_shows_more_options() {
     let (written_trace, _) = trace();
     let (view, cx) = chat_window(&rig, written_trace);
     draw(cx);
+    let more = |shown: &str| format!("file-more-wrap-{ID}-0 {shown}");
+    assert!(bounds(cx, &more("on-hover")).is_some(), "under the pointer only");
     tab_to_card(&view, cx, 0);
+    assert!(
+        bounds(cx, &more("shown")).is_some(),
+        "shown while the keyboard is on the card"
+    );
     assert!(cx.opened_url().is_none());
     press(cx, "space");
     assert_eq!(cx.opened_url().as_deref(), Some(shares[0].as_str()));
     press(cx, "tab");
     assert!(!ringed(cx, 0), "its More options has the keys");
+    assert!(bounds(cx, &more("shown")).is_some(), "and shows");
     press(cx, "enter");
     assert!(
         bounds(cx, &format!("file-menu-copy-{ID}-0")).is_some(),
@@ -1222,4 +1229,13 @@ fn a_cards_screen_reader_name_is_the_files_name_and_kind() {
         "{spoken:?}"
     );
     assert!(spoken[1].starts_with(&files[1].name), "{spoken:?}");
+}
+
+#[test]
+fn a_cards_keys_stay_when_its_message_is_no_longer_the_newest() {
+    let (rig, view, cx) = shown_with_thumbnail();
+    tab_to_card(&view, cx, 0);
+    arrive(&rig, cx, &message("302", LAB_B, "<p>made-up next</p>", NOON + 60_000));
+    assert_eq!(items(&view, cx).len(), 2);
+    assert!(ringed(cx, 0), "the card keeps the keys and its ring");
 }

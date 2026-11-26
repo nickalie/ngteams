@@ -4231,12 +4231,14 @@ impl ChatView {
             Some(Item::Message(item)) => {
                 let item = item.clone();
                 let row = self.message_row(&item, palette, cx);
+                let id = SharedString::from(format!("message-in-{}", item.id));
                 // someone else's newest message rises in (the account's own rose as it was sent, below)
-                if index + 1 == self.items.len() && !item.own {
-                    let id = SharedString::from(format!("message-in-{}", item.id));
+                if index + 1 == self.items.len() && !item.own && crate::motion::on(cx) {
                     crate::motion::rise(div().w_full().child(row), id, 12.0, cx)
                 } else {
-                    row
+                    // the same id as the rise's: the state kept in the row (a file card's focus, its player) stays
+                    // when the message is no longer the newest
+                    div().id(id).w_full().child(row).into_any_element()
                 }
             }
             Some(Item::Pending(pending)) => {

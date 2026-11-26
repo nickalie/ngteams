@@ -508,7 +508,7 @@ impl ChatView {
                 .role(gpui::accesskit::Role::Button)
                 .aria_label(PLAY_RECORDING)
                 .on_click(recap_opener(card, RecapOpen::Play, cx));
-            // a stop on Tab, as Teams' is: Enter or Space plays the recording in the recap, as a click does
+            // a stop on Tab: Enter or Space plays the recording in the recap, as a click does
             crate::keyboard::stop(
                 SharedString::from(format!("recap-card-play-{}", item.id)),
                 picture,

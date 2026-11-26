@@ -2,8 +2,8 @@
 //!
 //! - **A video alone**: c sends a message whose only file is a video. Its card is two columns wide with its location
 //!   whole, shows the video's thumbnail, and a click on it plays the video; its frames move. Teams Light and Dark.
-//! - **The keyboard**: Escape in the box, Enter into the list, then Tab reach the card, and Enter plays the video;
-//!   Escape pauses it.
+//! - **The keyboard**: Escape in the box, Enter into the list, then as many Tab presses as it takes (none when the
+//!   list gives the keys to the lone card itself) reach the card, and Enter plays the video; Escape pauses it.
 //! - **A refused link**: Graph refuses the file also with `Prefer: redeemSharingLink`. A click on its card says "This
 //!   video can't be opened here" (the player's `Unavailable`), not a load that never ends.
 //! - **The Recap tab**: a meeting whose recap names no drive or item of its recording, and the recording's link in the

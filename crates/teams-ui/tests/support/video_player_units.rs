@@ -970,3 +970,127 @@ fn the_full_screen_video_takes_the_window_s_clicks_alone() {
         "a click on the full-screen video never reaches the page under it"
     );
 }
+
+gpui::actions!(units, [ListKey]);
+
+/// A message's file card around a chat's player: the focus that the player's Escape gives back. Its list takes Left
+/// and Right as the chat's does, and keeps them.
+struct CardPage {
+    card: FocusHandle,
+    player: Entity<VideoPlayer>,
+}
+
+impl Render for CardPage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("card-page")
+            .key_context("CardPage")
+            .on_action(|_: &ListKey, _, _| {})
+            .track_focus(&self.card)
+            .size_full()
+            .child(div().w(px(320.0)).child(self.player.clone()))
+    }
+}
+
+/// A chat's player in its card, the card's focus given to it as the card does.
+fn in_card(app: &mut gpui::TestAppContext) -> (Entity<VideoPlayer>, FocusHandle, &mut gpui::VisualTestContext) {
+    app.update(|cx| {
+        crate::window::init(cx);
+        cx.bind_keys(["left", "right"].map(|key| gpui::KeyBinding::new(key, ListKey, Some("CardPage"))));
+    });
+    let source = PictureSource::of(Arc::new(Files::default()));
+    let (page, cx) = app.add_window_view(|_, cx| {
+        let player = cx.new(|cx| VideoPlayer::new("card".to_owned(), movie_file(), source, cx));
+        let card = cx.focus_handle();
+        player.update(cx, |player, _| player.return_to(&card));
+        CardPage { card, player }
+    });
+    draw(cx);
+    let (player, card) = cx.update(|_, cx| {
+        let page = page.read(cx);
+        (page.player.clone(), page.card.clone())
+    });
+    (player, card, cx)
+}
+
+#[test]
+fn escape_in_a_card_s_player_closes_its_menu_then_pauses_it_and_gives_the_keys_back_to_the_card() {
+    let _playing = playing_slot();
+    let mut app = gpui::TestAppContext::single();
+    let (view, card, cx) = in_card(&mut app);
+    cx.update(|window, cx| view.update(cx, |player, cx| player.play_from_keys(window, cx)));
+    wait_state(&view, cx, State::Playing);
+    assert!(
+        cx.debug_bounds("video-controls-card shown").is_some(),
+        "the keyboard brought the keys"
+    );
+    cx.update(|_, cx| view.update(cx, |player, cx| player.show_menu(Some(Menu::Speed), cx)));
+    draw(cx);
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert_eq!(cx.update(|_, cx| view.read(cx).menu()), None, "the menu closes first");
+    assert!(
+        cx.update(|window, cx| view.read(cx).focus.is_focused(window)),
+        "the keys stay in the player"
+    );
+    assert_eq!(cx.update(|_, cx| view.read(cx).asked), Asked::Play);
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert_eq!(cx.update(|_, cx| view.read(cx).asked), Asked::Pause, "Escape pauses it");
+    assert!(
+        cx.update(|window, _| card.is_focused(window)),
+        "the keys go back to the card"
+    );
+}
+
+#[test]
+fn a_pointer_s_click_on_a_card_s_video_leaves_its_controls_under_the_pointer_only() {
+    let _playing = playing_slot();
+    let mut app = gpui::TestAppContext::single();
+    let (view, _card, cx) = in_card(&mut app);
+    // the keyboard's keys pin them until the pointer presses in the player
+    cx.update(|window, cx| view.update(cx, |player, cx| player.play_from_keys(window, cx)));
+    draw(cx);
+    assert!(cx.debug_bounds("video-controls-card shown").is_some());
+    let screen = cx.debug_bounds("video-screen-card").unwrap();
+    cx.simulate_click(screen.origin + point(px(10.0), px(10.0)), gpui::Modifiers::none());
+    draw(cx);
+    assert!(
+        cx.update(|window, cx| view.read(cx).focus.is_focused(window)),
+        "the click gave it the keys"
+    );
+    cx.simulate_mouse_move(point(px(600.0), px(600.0)), None, gpui::Modifiers::none());
+    draw(cx);
+    assert!(
+        cx.debug_bounds("video-controls-card on-hover").is_some(),
+        "the pointer's keys don't pin them"
+    );
+}
+
+#[test]
+fn left_and_right_skip_in_a_card_s_player_before_the_list_around_it_takes_them() {
+    let _playing = playing_slot();
+    let mut app = gpui::TestAppContext::single();
+    let (view, _card, cx) = in_card(&mut app);
+    cx.update(|window, cx| view.update(cx, |player, cx| player.play_from_keys(window, cx)));
+    wait_state(&view, cx, State::Playing);
+    cx.update(|_, cx| view.update(cx, VideoPlayer::pause));
+    wait_state(&view, cx, State::Paused);
+    let position =
+        |cx: &mut gpui::VisualTestContext| cx.update(|_, cx| view.read(cx).status.map(|status| status.position));
+    cx.update(|_, cx| {
+        view.update(cx, |player, _| {
+            player.status = Some(Status {
+                state: State::Paused,
+                position: Duration::from_secs(15),
+                duration: Duration::from_secs(30),
+                sound: false,
+                rate: 1.0,
+            });
+        });
+    });
+    cx.simulate_keystrokes("left");
+    assert_eq!(position(cx), Some(Duration::from_secs(5)));
+    cx.simulate_keystrokes("right");
+    assert_eq!(position(cx), Some(Duration::from_secs(15)));
+}

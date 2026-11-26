@@ -16,14 +16,14 @@
 //! Tab and Shift+Tab are the kit's root's ([`gpui_component::Root`]), except in a [`row`] and the places around it: a
 //! dialog traps them with the kit's `focus_trap`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    App, ElementId, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, KeystrokeEvent,
-    ParentElement as _, RenderOnce, Stateful, Styled as _, Window, rgb,
+    AnyElement, App, ElementId, FocusHandle, InteractiveElement as _, IntoElement, KeyDownEvent, KeystrokeEvent,
+    ParentElement as _, RenderOnce, SharedString, Stateful, Styled as _, Window, rgb,
 };
 
 use crate::theme::Palette;
@@ -39,8 +39,8 @@ pub enum Ring {
     Fill,
     /// Its border takes the brand colour: a card or a chip, which has one.
     Edge,
-    /// A line inside its edge, drawn over it: a picture, whose fill and border don't show
-    /// ([`crate::files::focus_ring`]). Its test selector is `<selector>`.
+    /// A line inside its edge, drawn over it: a picture, whose fill and border don't show ([`outline_ring`]). Its test
+    /// selector is `<selector>`.
     Outline(gpui::SharedString),
 }
 
@@ -119,11 +119,40 @@ impl RenderOnce for Stop {
             Ring::Fill => element.focus_visible(move |style| style.bg(rgb(palette.hover))),
             Ring::Edge => element.focus_visible(move |style| style.border_color(rgb(palette.brand))),
             Ring::Outline(selector) => {
-                let outline = crate::files::focus_ring(&handle, selector.to_string(), palette, window, cx);
+                let outline = outline_ring(&handle, selector.to_string(), palette, window, cx);
                 element.relative().children(outline)
             }
         })
     }
+}
+
+/// The ring over a card or a picture while the keyboard is on it: a 2 px line of the text's colour inside its edge (our
+/// choice: no capture shows Teams' ring). `None` when the keys are elsewhere or came from the pointer. Once the keyboard
+/// brought the keys, the ring stays until they leave, as a browser's does (GPUI's own focus-visible goes off at any
+/// move of the pointer).
+#[must_use]
+pub fn outline_ring(
+    focus: &FocusHandle,
+    selector: String,
+    palette: Palette,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<AnyElement> {
+    let from_keys = window.use_keyed_state(SharedString::from(format!("{selector}-keys")), cx, |_, _| {
+        Cell::new(false)
+    });
+    let ringed = focus.is_focused(window) && (from_keys.read(cx).get() || window.last_input_was_keyboard());
+    from_keys.read(cx).set(ringed);
+    ringed.then(|| {
+        gpui::div()
+            .debug_selector(move || selector.clone())
+            .absolute()
+            .inset_0()
+            .rounded_lg()
+            .border_2()
+            .border_color(rgb(palette.foreground))
+            .into_any_element()
+    })
 }
 
 /// The kit's popup menu's key context.

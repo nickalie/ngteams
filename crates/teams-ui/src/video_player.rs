@@ -15,7 +15,8 @@
 //!   the video (or its seek bar is dragged, or a menu of it is open), whether it plays or not, as in Teams; a recap's
 //!   player shows them while it doesn't play too. Space plays or pauses, Left and Right go 10 s back or forward, M
 //!   mutes. In a card, Escape pauses it and gives the keys back to its card ([`VideoPlayer::return_to`]), which a
-//!   card's Enter or Space moved into it ([`VideoPlayer::play_from_keys`]); the controls show while the keys are in it.
+//!   card's Enter or Space moved into it ([`VideoPlayer::play_from_keys`]); the controls show while the keyboard has the
+//!   keys in it, until the pointer presses in it.
 //! - **Its states**: loading and buffering show a spinner over the picture; a video that can't be played here (a
 //!   format no installed `GStreamer` plugin plays, a file the account can't read, the network) says so and offers the
 //!   browser.
@@ -75,20 +76,25 @@ pub use menus::{KEYS, Menu, Page, rate_label};
 /// The player's key context: its Escape is taken before the list's or the recap's around it.
 pub const CONTEXT: &str = "VideoPlayer";
 
-gpui::actions!(teams_ui, [LeavePlayer]);
+gpui::actions!(teams_ui, [LeavePlayer, SkipBack, SkipForward]);
 
 /// Marks the player's key bindings as installed.
 struct Bound;
 
 impl Global for Bound {}
 
-/// Binds the player's Escape ([`LeavePlayer`]), once per app.
+/// Binds the player's Escape ([`LeavePlayer`]), Left and Right ([`SkipBack`], [`SkipForward`]), once per app: as
+/// actions, so that the keys of the list around it do not take them first.
 pub fn bind(cx: &mut App) {
     if cx.has_global::<Bound>() {
         return;
     }
     cx.set_global(Bound);
-    cx.bind_keys([gpui::KeyBinding::new("escape", LeavePlayer, Some(CONTEXT))]);
+    cx.bind_keys([
+        gpui::KeyBinding::new("escape", LeavePlayer, Some(CONTEXT)),
+        gpui::KeyBinding::new("left", SkipBack, Some(CONTEXT)),
+        gpui::KeyBinding::new("right", SkipForward, Some(CONTEXT)),
+    ]);
 }
 
 /// How far back and forward the skip buttons go.
@@ -330,6 +336,15 @@ struct FullScreen {
     hooked: bool,
 }
 
+/// The keys of a card's player.
+#[derive(Default)]
+struct Keys {
+    /// The card that holds it: where Escape gives the keys back.
+    card: Option<FocusHandle>,
+    /// The keyboard brought the keys into it: its controls stay until the keys leave or the pointer presses in it.
+    from_keyboard: bool,
+}
+
 /// What a player was last asked: to play (or to play once loaded), or to pause.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Asked {
@@ -392,8 +407,7 @@ pub struct VideoPlayer {
     /// The menu open over the picture.
     menu: Option<Menu>,
     focus: FocusHandle,
-    /// The card that holds it: where Escape gives the keys back.
-    card: Option<FocusHandle>,
+    keys: Keys,
     _woken: Task<()>,
 }
 
@@ -451,31 +465,34 @@ impl VideoPlayer {
             captions: None,
             menu: None,
             focus: cx.focus_handle(),
-            card: None,
+            keys: Keys::default(),
             _woken: task,
         }
     }
 
     /// Makes Escape in it give the keys back to its card's `card`.
     pub fn return_to(&mut self, card: &FocusHandle) {
-        if self.card.as_ref() != Some(card) {
-            self.card = Some(card.clone());
+        if self.keys.card.as_ref() != Some(card) {
+            self.keys.card = Some(card.clone());
         }
     }
 
     /// Enter or Space on its card: the keys go into it and it plays (it goes on playing if it does).
     pub fn play_from_keys(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
+        self.keys.from_keyboard = true;
         if !self.playing() {
             self.toggle(cx);
         }
         cx.notify();
     }
 
-    /// Whether the keys are in it: on its picture or on one of its controls.
-    #[must_use]
-    pub fn has_keys(&self, window: &Window, cx: &App) -> bool {
-        self.focus.contains_focused(window, cx)
+    /// Whether the keyboard has the keys in it, on its picture or on one of its controls: not when the pointer gave
+    /// them.
+    fn has_keys(&mut self, window: &Window, cx: &App) -> bool {
+        self.keys.from_keyboard =
+            self.focus.contains_focused(window, cx) && (self.keys.from_keyboard || window.last_input_was_keyboard());
+        self.keys.from_keyboard
     }
 
     /// Escape: an open menu closes, then full screen ends, then a card's player pauses and gives the keys back to its
@@ -485,7 +502,7 @@ impl VideoPlayer {
             self.show_menu(None, cx);
         } else if self.full_screen.on {
             self.toggle_fullscreen(window, cx);
-        } else if let Some(card) = self.card.clone() {
+        } else if let Some(card) = self.keys.card.clone() {
             self.pause(cx);
             window.focus(&card, cx);
             cx.notify();
@@ -849,8 +866,6 @@ impl VideoPlayer {
         match event.keystroke.key.as_str() {
             // Space on one of its controls presses that control
             "space" if self.focus.is_focused(window) => self.toggle(cx),
-            "left" => self.skip(true, cx),
-            "right" => self.skip(false, cx),
             "m" => self.toggle_mute(cx),
             "c" if self.captions.is_some() => {
                 let on = CaptionStyle::current(cx).on;
@@ -936,6 +951,9 @@ impl VideoPlayer {
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &LeavePlayer, window, cx| this.escape(window, cx)))
+            .on_action(cx.listener(|this, _: &SkipBack, _, cx| this.skip(true, cx)))
+            .on_action(cx.listener(|this, _: &SkipForward, _, cx| this.skip(false, cx)))
+            .capture_any_mouse_down(cx.listener(|this, _, _, _| this.keys.from_keyboard = false))
             .on_key_down(cx.listener(Self::key))
             .relative()
             .size_full()
