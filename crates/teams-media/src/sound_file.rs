@@ -1,26 +1,22 @@
 //! A sound file made elsewhere, and so untrusted, read as mono samples: WAV first by this crate's own reader
 //! ([`wav::decode_any`]), other WAV encodings, MP3 and Ogg by `GStreamer`, with the video player's restrictions
-//! (nothing that fetches: [`start_gstreamer`]). Its plugins are the ones the app's packages already install.
+//! (nothing that fetches: [`crate::player::start_gstreamer`]). Its plugins are the ones the app's packages already
+//! install. The pipeline is the one [`crate::video_file`] uses too (`decoding.rs`).
 //!
 //! The kind is told from the bytes, never from a name, and only a file that starts like a WAV, MP3 or Ogg ever reaches
 //! `GStreamer`. Reading stops once a file has run past the length its caller takes, so a small file that unpacks to
 //! hours costs no more than one that long, and past [`DEADLINE`] whatever it is doing, so a file made to stall holds
 //! nothing up.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use gstreamer as gst;
 use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 
+use crate::decoding::{DEADLINE, Decoding, Running, SetupError, caps_of, decoding, is_type, play, poll};
 use crate::devices::wav::{self, AnyWav};
 use crate::devices::{DeviceError, SAMPLE_RATE};
-use crate::player::start_gstreamer;
-
-/// The longest one file is worked on.
-const DEADLINE: Duration = Duration::from_secs(20);
-/// How long the appsink is waited on before the bus and the clock are looked at again.
-const POLL: Duration = Duration::from_millis(50);
 
 fn refused(why: &str) -> DeviceError {
     DeviceError::SoundFile(why.to_owned())
@@ -51,74 +47,39 @@ pub fn decode(bytes: &[u8], max_seconds: f64) -> Result<AnyWav, DeviceError> {
     compressed(bytes, max_seconds)
 }
 
-/// A pipeline set to nothing when dropped, on every way out.
-struct Running(gst::Pipeline);
-
-impl Drop for Running {
-    fn drop(&mut self) {
-        // a pipeline that won't stop has nothing more to say
-        let _ = self.0.set_state(gst::State::Null);
-    }
-}
-
-fn element(factory: &str) -> Result<gst::Element, DeviceError> {
-    gst::ElementFactory::make(factory)
-        .build()
-        .map_err(|_| refused("a GStreamer element is missing"))
+/// Why a pipeline was not made, as the user is told.
+fn not_set_up(error: SetupError) -> DeviceError {
+    refused(match error {
+        SetupError::NoGstreamer => "GStreamer can't start",
+        SetupError::Missing => "a GStreamer element is missing",
+        SetupError::Setup => "the decoder can't be set up",
+        SetupError::NotPlayed => "not a file GStreamer reads",
+    })
 }
 
 /// `bytes` through `decodebin` to an appsink of mono floats at the device's rate.
 fn pipeline(bytes: &[u8]) -> Result<(Running, gst_app::AppSink), DeviceError> {
-    start_gstreamer().map_err(|_| refused("GStreamer can't start"))?;
-    let pipeline = gst::Pipeline::new();
-    let source = gst_app::AppSrc::builder().format(gst::Format::Bytes).build();
-    let decode = element("decodebin")?;
-    let convert = element("audioconvert")?;
-    let resample = element("audioresample")?;
-    let caps = gst::Caps::builder("audio/x-raw")
-        .field("format", "F32LE")
-        .field("layout", "interleaved")
-        .field("channels", 1_i32)
-        .field("rate", i32::try_from(SAMPLE_RATE).unwrap_or(48_000))
-        .build();
-    let sink = gst_app::AppSink::builder()
-        .caps(&caps)
-        .sync(false)
-        .max_buffers(32)
-        .build();
-    let linked = (|| {
-        pipeline.add_many([source.upcast_ref(), &decode, &convert, &resample, sink.upcast_ref()])?;
-        source.link(&decode)?;
-        gst::Element::link_many([&convert, &resample, sink.upcast_ref()])
-    })();
-    linked.map_err(|_| refused("the decoder can't be set up"))?;
-    let target = convert
-        .static_pad("sink")
-        .ok_or_else(|| refused("the decoder can't be set up"))?;
+    let caps = || {
+        gst::Caps::builder("audio/x-raw")
+            .field("format", "F32LE")
+            .field("layout", "interleaved")
+            .field("channels", 1_i32)
+            .field("rate", i32::try_from(SAMPLE_RATE).unwrap_or(48_000))
+            .build()
+    };
+    let Decoding {
+        pipeline,
+        decode,
+        target,
+        sink,
+    } = decoding(bytes, &["audioconvert", "audioresample"], caps, 32).map_err(not_set_up)?;
     decode.connect_pad_added(move |_, pad| {
-        let audio = pad
-            .current_caps()
-            .or_else(|| Some(pad.query_caps(None)))
-            .and_then(|caps| caps.structure(0).map(|s| s.name().starts_with("audio/")))
-            .unwrap_or(false);
-        if audio && !target.is_linked() {
+        if is_type(&caps_of(pad), "audio/") && !target.is_linked() {
             // an unlinked pad ends as an error on the bus, which is told
             let _ = pad.link(&target);
         }
     });
-    let buffer = gst::Buffer::from_slice(bytes.to_vec());
-    source
-        .push_buffer(buffer)
-        .map_err(|_| refused("the decoder can't be set up"))?;
-    source
-        .end_of_stream()
-        .map_err(|_| refused("the decoder can't be set up"))?;
-    let running = Running(pipeline);
-    running
-        .0
-        .set_state(gst::State::Playing)
-        .map_err(|_| refused("not a file GStreamer reads"))?;
-    Ok((running, sink))
+    Ok((play(pipeline).map_err(not_set_up)?, sink))
 }
 
 fn compressed(bytes: &[u8], max_seconds: f64) -> Result<AnyWav, DeviceError> {
@@ -134,8 +95,7 @@ fn compressed(bytes: &[u8], max_seconds: f64) -> Result<AnyWav, DeviceError> {
         if bus.pop_filtered(&[gst::MessageType::Error]).is_some() {
             return Err(refused("a damaged file, or none GStreamer has a decoder for"));
         }
-        let timeout = gst::ClockTime::from_mseconds(u64::try_from(POLL.as_millis()).unwrap_or(50));
-        let Some(sample) = sink.try_pull_sample(timeout) else {
+        let Some(sample) = sink.try_pull_sample(poll()) else {
             if sink.is_eos() {
                 break;
             }

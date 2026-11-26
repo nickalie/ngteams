@@ -14,7 +14,9 @@ use image::{AnimationDecoder as _, Delay, Frame, ImageFormat, Rgba, RgbaImage};
 use std::sync::Arc;
 
 use teams_auth::secrets::Secret;
-use teams_mock::telegram::{BotApiMock, MockFault, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN};
+use teams_mock::telegram::{
+    BotApiMock, MockFault, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN, synthetic_webm,
+};
 use teams_ui::stickers::import::{
     self, Archive, Files, Folder, ImportError, ImportKind, KEPT_SIDE, MAX_FILE, MAX_FRAMES, MAX_TOTAL, Progress,
     SHOWN_SIDE, Skip, Source,
@@ -716,19 +718,6 @@ fn synthetic_tgs() -> Vec<u8> {
     encoder.finish().unwrap()
 }
 
-/// The synthetic, marked `.webm` video sticker of the fixtures: 64 by 64, 15 frames, its top right clear.
-fn webm() -> Vec<u8> {
-    let hex = include_str!("../../../tests/fixtures/telegram/synthetic-sticker.webm.hex");
-    let digits: String = hex.lines().filter(|line| !line.starts_with('#')).collect();
-    digits
-        .as_bytes()
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
-        .collect()
-}
-
 /// What a Telegram import made: each sticker in `files` (its `.gif` animated, its `.png` still), none skipped; the
 /// video sticker `video` (a file of `files`) a looping GIF of 14 or 15 frames (the alpha decoder often gives
 /// none for the last block) with its clear corner.
@@ -785,7 +774,7 @@ fn telegram_files_import_one_by_one_from_a_folder_and_from_a_zip() {
     let files = [
         ("hello.tgs", synthetic_tgs()),
         ("wave.webp", still(512, 512, [10, 200, 10], ImageFormat::WebP)),
-        ("party.webm", webm()),
+        ("party.webm", synthetic_webm().unwrap()),
     ];
     let source = tempfile::tempdir().unwrap();
     let pack = source.path().join("Telegram cats");
@@ -836,7 +825,7 @@ fn mock_cats() -> MockSet {
             MockSticker {
                 kind: MockKind::Video,
                 emoji: "\u{1f639}".to_owned(),
-                bytes: webm(),
+                bytes: synthetic_webm().unwrap(),
             },
         ],
     }
@@ -984,7 +973,7 @@ fn a_telegram_link_s_failures_each_say_what_to_do() {
         stickers: vec![MockSticker {
             kind: MockKind::Video,
             emoji: "\u{1f3ac}".to_owned(),
-            bytes: webm(),
+            bytes: synthetic_webm().unwrap(),
         }],
     };
     let mock = BotApiMock::start(vec![only_video]).unwrap();

@@ -13,6 +13,28 @@ use serde_json::{Value, json};
 /// The made-up bot token the mock takes: of `@BotFather`'s form, never a real bot's.
 pub const SYNTHETIC_BOT_TOKEN: &str = "123456789:SYNTHETIC_bot_token_made_up_000000";
 
+/// The synthetic, marked `.webm` video sticker of the fixtures (see its first line): 64 by 64, 15 frames at 30 fps,
+/// its top right clear. `None` if a pair of its digits is not hex.
+#[must_use]
+pub fn synthetic_webm() -> Option<Vec<u8>> {
+    hex_bytes(include_str!(
+        "../../../tests/fixtures/telegram/synthetic-sticker.webm.hex"
+    ))
+}
+
+/// The bytes of `text`'s hex digits, its `#` lines left out. `None` if a pair is not hex, or a digit has no pair.
+fn hex_bytes(text: &str) -> Option<Vec<u8>> {
+    let digits: String = text.lines().filter(|line| !line.starts_with('#')).collect();
+    let (pairs, rest) = digits.as_bytes().as_chunks::<2>();
+    if !rest.is_empty() {
+        return None;
+    }
+    pairs
+        .iter()
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect()
+}
+
 /// How a sticker of a mock pack is stored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MockKind {
@@ -336,4 +358,17 @@ fn file_info(id: &str, sets: &[MockSet]) -> (&'static str, &'static str, Vec<u8>
             },
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_hex_fixture_reads_strictly() {
+        assert!(synthetic_webm().is_some_and(|bytes| bytes.starts_with(&[0x1a, 0x45, 0xdf, 0xa3])));
+        assert_eq!(hex_bytes("# a comment\n1a4\n5\n"), Some(vec![0x1a, 0x45]));
+        assert_eq!(hex_bytes("1a4"), None, "a digit with no pair");
+        assert_eq!(hex_bytes("1g"), None, "a pair that is not hex");
+    }
 }

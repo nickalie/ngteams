@@ -8,9 +8,10 @@
 //!   is never held at its own size. A frame in the same [`MAX_FPS`] slot as the frame before it is dropped: a GIF's
 //!   frame time is in hundredths of a second, and browsers slow a faster frame down.
 //! - **Each frame's time** is the time to the next kept frame, cut from the video's own clock in hundredths, so the
-//!   whole loop keeps its length. The last frame lasts to the video's end: the end the file declares (the alpha
-//!   decoder often gives no frame for the last block), at most [`MAX_LAST_FRAME`] past the frame.
-//! - **What is read is capped**: each frame at [`super::import::MAX_SOURCE_SIDE`] on its longer side, the kept frames
+//!   whole loop keeps its length. The last frame lasts to the video's end: its own end, or the later end the file
+//!   declares (the alpha decoder often gives no frame for the last block), at most [`MAX_LAST_FRAME`] past its start.
+//! - **What is read is capped**: each frame at [`super::import::MAX_SOURCE_SIDE`] on its longer side (before the
+//!   decoder where the file declares its size, and before a frame is converted), the kept frames
 //!   at [`super::import::MAX_FRAMES`], the decode at [`teams_media::video_file::DEADLINE`].
 
 use std::ops::ControlFlow;
@@ -19,16 +20,12 @@ use std::time::Duration;
 use image::RgbaImage;
 use teams_media::video_file::{self, RgbaFrame, VideoFileError};
 
-use super::import::{MAX_FRAMES, MAX_SOURCE_SIDE, Skip, kept};
+use super::import::{MAX_FPS, MAX_FRAMES, MAX_SOURCE_SIDE, MIN_DELAY_MS, Skip, kept};
 
 pub use teams_media::video_file::is_webm;
 
-/// The most frames a second a video sticker keeps.
-pub const MAX_FPS: f64 = 30.0;
-/// The longest the last frame is held to reach the end a file declares.
+/// The longest the last frame is held past its start, to reach the video's end.
 const MAX_LAST_FRAME: Duration = Duration::from_secs(1);
-/// A frame's shortest time, in milliseconds (two hundredths: the shortest a browser plays as given).
-const MIN_DELAY_MS: u32 = 20;
 
 /// The frames kept so far, and why the read stopped early, if it did.
 #[derive(Default)]
@@ -90,7 +87,7 @@ impl Timed {
         }
         let declared = read.map_err(skip)?.unwrap_or_default();
         let last = self.frames.last().ok_or(Skip::Unreadable)?.1;
-        let end = self.end.max(declared.min(last + MAX_LAST_FRAME));
+        let end = self.end.max(declared).min(last + MAX_LAST_FRAME);
         let end = if end > last {
             end
         } else {
@@ -115,6 +112,7 @@ fn skip(error: VideoFileError) -> Skip {
     match error {
         VideoFileError::NotWebm => Skip::NotPicture,
         VideoFileError::NoDecoder => Skip::NoVideoDecoder,
+        VideoFileError::TooBig => Skip::TooBig,
         VideoFileError::Damaged | VideoFileError::TooSlow => Skip::Unreadable,
     }
 }
@@ -125,7 +123,7 @@ fn skip(error: VideoFileError) -> Skip {
 /// It is not a video this computer decodes, it is damaged, or it is too large.
 pub fn frames(bytes: &[u8]) -> Result<Vec<(RgbaImage, u32)>, Skip> {
     let mut timed = Timed::default();
-    let read = video_file::decode_webm(bytes, &mut |frame| timed.take(frame));
+    let read = video_file::decode_webm(bytes, MAX_SOURCE_SIDE, &mut |frame| timed.take(frame));
     timed.finish(read)
 }
 

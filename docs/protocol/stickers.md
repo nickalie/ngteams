@@ -49,15 +49,16 @@ A `.webm` sticker has one VP9 video track with `AlphaMode` 1. Each block holds t
 
 The import decodes it with `GStreamer`, which the app links already for the chat's videos: `matroskademux` gives the
 alpha to `vp9alphadecodebin` (gst-plugins-bad), which decodes both streams with `vp9dec` (gst-plugins-good, libvpx)
-and joins them. The app's packages install both plugin sets. A computer without them skips the sticker and says so.
-Only a file that starts with the Matroska bytes reaches `GStreamer`, with the same restrictions as the chat's videos
+and joins them. The app's packages install both plugin sets. A computer without them skips the sticker and says so:
+a stream with alpha is not given to `vp9dec` alone, which would drop the alpha and give an opaque square. Only a file that starts with the Matroska bytes reaches `GStreamer`, with the same restrictions as the chat's videos
 (no element that fetches, no hardware decoder). The decode stops after 20 s.
 
 Each frame is scaled down to 250 px as it comes, at most 30 frames a second are kept (a frame in the same 1/30 s as
 the one before it is dropped), and each frame's time is the time to the next kept frame, cut on hundredths of a
-second. The last frame lasts to the video's end. A 3-second sticker at 30 frames a second becomes 90 frames of 30 or
+second. The last frame lasts to the video's end, at most 1 s past its start. A 3-second sticker at 30 frames a second becomes 90 frames of 30 or
 40 ms, 3 s in all. The limits and the hard transparency of a GIF are those of the `.tgs` path: a frame at most 4096 px
-on a side, at most 200 frames.
+on a side, at most 200 frames. A larger frame size, as the file declares it or as the stream changes to, stops the
+decode before a frame of that size is converted.
 
 ## A pack from its link: the Bot API
 

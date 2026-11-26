@@ -53,7 +53,9 @@ use teams_auth::token::TokenError;
 use teams_core::engine::{self, EngineHandle, EngineOptions, Parts, Push};
 use teams_core::telegram::BotApi;
 use teams_core::{CallFloor, Outbox};
-use teams_mock::telegram::{BotApiMock, MockKind, MockRequest, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN};
+use teams_mock::telegram::{
+    BotApiMock, MockKind, MockRequest, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN, synthetic_webm,
+};
 use teams_mock::{
     AB_CHAT, AMS_BASE, CHAT_BASE, CSA_BASE, ChatServiceMock, LAB_A, LAB_B, LAB_C, MIDDLE_TIER_BASE, PRESENCE_BASE,
     PROVISIONING_BASE, USER_PROFILE_BASE,
@@ -148,6 +150,7 @@ const MASK_TWO: &str = "999999999:mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm";
 const GOOD_SET: &str = "QaSyntheticBlobs";
 const GOOD_TITLE: &str = "QA synthetic blobs";
 const MISSING_SET: &str = "QaNoSuchPack";
+const BROKEN_VIDEO_SET: &str = "QaBrokenVideo";
 /// The still stickers of the good pack, beside its animated and its video sticker: enough for a progress line.
 const GOOD_STILLS: usize = 10;
 
@@ -466,16 +469,8 @@ fn disc_webp(colour: Rgb) -> SandboxResult<Vec<u8>> {
 }
 
 /// The synthetic, marked `.webm` video sticker of the fixtures.
-fn video() -> Vec<u8> {
-    let hex = include_str!("../../../../../tests/fixtures/telegram/synthetic-sticker.webm.hex");
-    let digits: String = hex.lines().filter(|line| !line.starts_with('#')).collect();
-    digits
-        .as_bytes()
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .filter_map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
-        .collect()
+fn video() -> SandboxResult<Vec<u8>> {
+    synthetic_webm().ok_or_else(|| "the .webm fixture has a digit pair that is not hex".into())
 }
 
 fn bot_sets() -> SandboxResult<Vec<MockSet>> {
@@ -488,7 +483,7 @@ fn bot_sets() -> SandboxResult<Vec<MockSet>> {
         MockSticker {
             kind: MockKind::Video,
             emoji: VIDEO_EMOJI.to_owned(),
-            bytes: video(),
+            bytes: video()?,
         },
     ];
     for _ in 0..GOOD_STILLS {
@@ -498,11 +493,23 @@ fn bot_sets() -> SandboxResult<Vec<MockSet>> {
             bytes: disc_webp(DISC)?,
         });
     }
-    Ok(vec![MockSet {
-        name: GOOD_SET.to_owned(),
-        title: GOOD_TITLE.to_owned(),
-        stickers: good,
-    }])
+    let broken_video = vec![MockSticker {
+        kind: MockKind::Video,
+        emoji: VIDEO_EMOJI.to_owned(),
+        bytes: vec![0x1a, 0x45, 0xdf, 0xa3],
+    }];
+    Ok(vec![
+        MockSet {
+            name: GOOD_SET.to_owned(),
+            title: GOOD_TITLE.to_owned(),
+            stickers: good,
+        },
+        MockSet {
+            name: BROKEN_VIDEO_SET.to_owned(),
+            title: "QA broken video".to_owned(),
+            stickers: broken_video,
+        },
+    ])
 }
 
 /// The three of a kind each source holds: an animated `.tgs`, a still `.webp` and a `.webm` video.
@@ -510,7 +517,7 @@ fn three(prefix: &str) -> SandboxResult<Vec<(String, Vec<u8>)>> {
     Ok(vec![
         (format!("{prefix}_ball.tgs"), synthetic_tgs()?),
         (format!("{prefix}_disc.webp"), disc_webp(DISC)?),
-        (format!("{prefix}_clip.webm"), video()),
+        (format!("{prefix}_clip.webm"), video()?),
     ])
 }
 
@@ -1579,13 +1586,13 @@ type FailureCase = (
     &'static [&'static str],
 );
 
-/// A refused token, a missing pack and a Bot API that can't be reached: each import
-/// ends in the user's words, keeps no pack and asks Telegram only what it must.
+/// A refused token, a missing pack, a pack of only a damaged video sticker and a Bot API that can't be reached: each
+/// import ends in the user's words, keeps no pack and asks Telegram only what it must.
 fn panel_telegram_failures(user: &mut User<'_>) -> SandboxResult {
     let sent_before = user.messages_sent();
     let packs_before = user.state()?["shelf"]["packs"].as_array().map_or(0, Vec::len);
     let mut faults = Vec::new();
-    let cases: [FailureCase; 3] = [
+    let cases: [FailureCase; 4] = [
         (
             "refused-token",
             GOOD_LINK,
@@ -1599,6 +1606,13 @@ fn panel_telegram_failures(user: &mut User<'_>) -> SandboxResult {
             Some(SYNTHETIC_BOT_TOKEN),
             "Telegram has no sticker pack at that link.",
             &["getStickerSet"],
+        ),
+        (
+            "broken-video",
+            "t.me/addstickers/QaBrokenVideo",
+            None,
+            "No PNG, WebP or GIF picture or Telegram sticker there could be made a sticker.",
+            &["getStickerSet", "getFile", "download"],
         ),
         (
             "dead-bot-api",
@@ -1627,7 +1641,7 @@ fn panel_telegram_failures(user: &mut User<'_>) -> SandboxResult {
         user.ask("close-import")?;
         user.ask("bot live")?;
     }
-    let _ = MISSING_SET;
+    let _ = (MISSING_SET, BROKEN_VIDEO_SET);
     let state = user.state()?;
     let packs = state["shelf"]["packs"].as_array().map_or(0, Vec::len);
     if packs != packs_before {

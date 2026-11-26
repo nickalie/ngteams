@@ -17,16 +17,12 @@ use std::io::Read as _;
 use flate2::read::GzDecoder;
 use image::RgbaImage;
 
-use super::import::{KEPT_SIDE, MAX_FRAMES, MAX_SOURCE_SIDE, Skip, fit};
+use super::import::{KEPT_SIDE, MAX_FPS, MAX_FRAMES, MAX_SOURCE_SIDE, MIN_DELAY_MS, Skip, fit};
 
-/// The most frames a second a rendered animation keeps.
-pub const MAX_FPS: f64 = 30.0;
 /// The largest unpacked animation read, in bytes.
 pub const MAX_JSON: u64 = 8 * 1024 * 1024;
 /// The highest frame rate an animation may declare.
 const MAX_DECLARED_FPS: f64 = 240.0;
-/// A frame's shortest time, in milliseconds (two hundredths: the shortest a browser plays as given).
-const MIN_DELAY_MS: u32 = 20;
 
 /// An animation opened by a [`Renderer`].
 pub trait Animation {

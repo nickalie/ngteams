@@ -60,8 +60,10 @@ pub const DEFAULT_PACK_NAME: &str = "My stickers";
 
 /// The memory a picture's decoder may take, in bytes.
 const MAX_DECODE_ALLOC: u64 = 512 * 1024 * 1024;
-/// A frame's shortest time, in milliseconds: browsers slow a faster GIF frame to a tenth of a second.
-const MIN_DELAY_MS: u32 = 20;
+/// A frame's shortest time, in milliseconds (two hundredths): browsers slow a faster GIF frame to a tenth of a second.
+pub const MIN_DELAY_MS: u32 = 20;
+/// The most frames a second an animated sticker keeps: a GIF's frame time is in hundredths of a second.
+pub const MAX_FPS: f64 = 30.0;
 /// A frame's time when its file gives none, in milliseconds.
 const DEFAULT_DELAY_MS: u32 = 100;
 /// The GIF encoder's speed (1 best, 30 fastest): good colours at a sticker's size.

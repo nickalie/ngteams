@@ -120,19 +120,6 @@ impl Lab {
 }
 
 /// `lines.json` (synthetic-from-capture), its placeholders filled with the mock's made-up ids.
-/// The synthetic, marked `.webm` video sticker of the fixtures.
-fn synthetic_webm() -> Vec<u8> {
-    let hex = include_str!("../../../tests/fixtures/telegram/synthetic-sticker.webm.hex");
-    let digits: String = hex.lines().filter(|line| !line.starts_with('#')).collect();
-    digits
-        .as_bytes()
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
-        .collect()
-}
-
 fn lines_fixture() -> Value {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fixtures/chatsvc/lines.json");
     let oid = |mri: &str| mri.trim_start_matches("8:orgid:").to_owned();
@@ -507,7 +494,7 @@ impl Walk {
     /// was made (the `.tgs`'s, the `.webm`'s).
     fn an_animated_telegram_sticker_from_its_link(&mut self) {
         use std::io::Write as _;
-        use teams_mock::telegram::{BotApiMock, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN};
+        use teams_mock::telegram::{BotApiMock, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN, synthetic_webm};
         use teams_ui::stickers::telegram::{BotApis, BotToken};
         use teams_ui::stickers::{ImportState, Shelf};
 
@@ -526,7 +513,7 @@ impl Walk {
                 MockSticker {
                     kind: MockKind::Video,
                     emoji: "\u{1f639}".to_owned(),
-                    bytes: synthetic_webm(),
+                    bytes: synthetic_webm().unwrap(),
                 },
             ],
         }])

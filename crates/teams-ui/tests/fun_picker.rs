@@ -21,7 +21,7 @@ use common::{LAB_A, LAB_B, Rig, Written};
 use gpui::{AppContext as _, Entity, Modifiers, VisualTestContext, px, size};
 use image::{ImageFormat, Rgba, RgbaImage};
 use teams_core::{Action, EngineError};
-use teams_mock::telegram::{BotApiMock, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN};
+use teams_mock::telegram::{BotApiMock, MockKind, MockSet, MockSticker, SYNTHETIC_BOT_TOKEN, synthetic_webm};
 use teams_proto::chat::MessageText;
 use teams_store::Member;
 use teams_ui::chat_view::ChatView;
@@ -1535,19 +1535,6 @@ fn synthetic_tgs() -> Vec<u8> {
     encoder.finish().unwrap()
 }
 
-/// The synthetic, marked `.webm` video sticker of the fixtures.
-fn synthetic_webm() -> Vec<u8> {
-    let hex = include_str!("../../../tests/fixtures/telegram/synthetic-sticker.webm.hex");
-    let digits: String = hex.lines().filter(|line| !line.starts_with('#')).collect();
-    digits
-        .as_bytes()
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
-        .collect()
-}
-
 /// A mock Bot API holding a pack of an animated, a still and a video sticker, made the app's Bot API.
 fn telegram_mock(cx: &mut VisualTestContext) -> BotApiMock {
     let mock = BotApiMock::start(vec![MockSet {
@@ -1567,7 +1554,7 @@ fn telegram_mock(cx: &mut VisualTestContext) -> BotApiMock {
             MockSticker {
                 kind: MockKind::Video,
                 emoji: "\u{1f639}".to_owned(),
-                bytes: synthetic_webm(),
+                bytes: synthetic_webm().unwrap(),
             },
         ],
     }])

@@ -3,21 +3,10 @@ use std::io::Cursor;
 use image::AnimationDecoder as _;
 use image::codecs::gif::GifDecoder;
 
+use teams_mock::telegram::synthetic_webm;
+
 use super::*;
 use crate::stickers::import;
-
-/// The synthetic, marked video sticker of the fixtures (see its first line).
-fn synthetic_webm() -> Vec<u8> {
-    let hex = include_str!("../../../../tests/fixtures/telegram/synthetic-sticker.webm.hex");
-    let digits: String = hex.lines().filter(|line| !line.starts_with('#')).collect();
-    digits
-        .as_bytes()
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
-        .collect()
-}
 
 fn made_up(side: u32, at_ms: u64, length_ms: Option<u64>) -> RgbaFrame {
     at_nanos(side, at_ms * 1_000_000, length_ms.map(|ms| ms * 1_000_000))
@@ -49,7 +38,7 @@ fn delays(frames: &[(RgbaImage, u32)]) -> Vec<u32> {
 
 #[test]
 fn the_synthetic_sticker_keeps_its_frames_times_and_clear_corner() {
-    let frames = frames(&synthetic_webm()).unwrap();
+    let frames = frames(&synthetic_webm().unwrap()).unwrap();
     let mut wanted = vec![30, 40, 30, 30, 40, 30, 30, 40, 30, 30, 40, 30, 30];
     // the alpha decoder often gives no frame for the last block: the frame before it lasts to the declared end
     wanted.extend(if frames.len() == 15 { &[40, 30][..] } else { &[70][..] });
@@ -63,7 +52,7 @@ fn the_synthetic_sticker_keeps_its_frames_times_and_clear_corner() {
 
 #[test]
 fn the_synthetic_sticker_becomes_a_looping_gif_with_a_clear_corner() {
-    let converted = import::convert(&synthetic_webm()).unwrap();
+    let converted = import::convert(&synthetic_webm().unwrap()).unwrap();
     assert!(converted.animated);
     assert_eq!(converted.own, (64, 64));
     let decoder = GifDecoder::new(Cursor::new(&converted.bytes)).unwrap();
@@ -127,6 +116,12 @@ fn a_large_frame_is_scaled_down_and_the_last_frame_lasts_to_the_end() {
         "a declared end before the frames' own is passed over"
     );
     assert_eq!(declared(60_000), [40, 1000], "at most a second past the last frame");
+    let long_last = timed([made_up(8, 0, Some(40)), made_up(8, 40, Some(60_000))]).unwrap();
+    assert_eq!(
+        delays(&long_last),
+        [40, 1000],
+        "a frame's own long time is held to a second too"
+    );
 }
 
 #[test]
@@ -155,6 +150,7 @@ fn each_decode_failure_is_a_skip() {
         (VideoFileError::NoDecoder, Skip::NoVideoDecoder),
         (VideoFileError::Damaged, Skip::Unreadable),
         (VideoFileError::TooSlow, Skip::Unreadable),
+        (VideoFileError::TooBig, Skip::TooBig),
     ] {
         let mut timed = Timed::default();
         let _ = timed.take(made_up(1, 0, None));

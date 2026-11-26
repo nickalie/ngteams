@@ -28,6 +28,7 @@
 use std::io;
 
 pub mod captions;
+mod decoding;
 pub mod devices;
 pub mod health;
 pub use teams_sdp::mcp;
