@@ -81,6 +81,8 @@ pub struct CallWindows {
     accounts: Vec<Followed>,
     open: Option<Open>,
     prejoin: Option<OpenPrejoin>,
+    /// The accounts whose pre-join showed when the calls last changed: one that shows since is the one opened last.
+    prejoins: Vec<String>,
     /// The call whose window the user closed: not opened again by itself.
     closed: Option<(String, CallId)>,
     namer: Option<AccountNamer>,
@@ -140,6 +142,7 @@ impl CallWindows {
             accounts: Vec::new(),
             open: None,
             prejoin: None,
+            prejoins: Vec::new(),
             closed: None,
             namer: None,
             _closing: closing,
@@ -194,9 +197,16 @@ impl CallWindows {
     }
 
     /// The pre-join's window follows the calls: open while one shows and no call is up. A ring's pre-join comes
-    /// first, as its ring is silent while it shows; then the one already open.
+    /// first, as its ring is silent while it shows; then the one opened last.
     fn follow_prejoin(&mut self, call_up: bool, cx: &mut Context<Self>) {
-        let wanted = (!call_up).then(|| self.prejoin_wanted(cx)).flatten();
+        let showing: Vec<String> = self
+            .accounts
+            .iter()
+            .filter(|account| account.parts.models.calls.read(cx).prejoin().is_some())
+            .map(|account| account.key.clone())
+            .collect();
+        let wanted = (!call_up).then(|| self.prejoin_wanted(&showing, cx)).flatten();
+        self.prejoins = showing;
         if self.prejoin.as_ref().map(|open| open.key.as_str()) == wanted.as_deref() {
             return;
         }
@@ -208,21 +218,17 @@ impl CallWindows {
         }
     }
 
-    /// The account whose pre-join the window shows (see [`Self::follow_prejoin`]).
-    fn prejoin_wanted(&self, cx: &App) -> Option<String> {
-        let shows = |account: &&Followed| account.parts.models.calls.read(cx).prejoin().is_some();
-        let open = self.prejoin.as_ref().map(|open| open.key.as_str());
+    /// The account whose pre-join the window shows, of the accounts `showing` one (see [`Self::follow_prejoin`]).
+    fn prejoin_wanted(&self, showing: &[String], cx: &App) -> Option<String> {
+        let open = self.prejoin.as_ref().map(|open| &open.key);
         self.accounts
             .iter()
             .find(|account| account.parts.models.calls.read(cx).ring_in_prejoin())
-            .or_else(|| {
-                self.accounts
-                    .iter()
-                    .filter(shows)
-                    .find(|account| Some(account.key.as_str()) == open)
-            })
-            .or_else(|| self.accounts.iter().find(shows))
-            .map(|account| account.key.clone())
+            .map(|account| &account.key)
+            .or_else(|| showing.iter().find(|key| !self.prejoins.contains(key)))
+            .or_else(|| showing.iter().find(|key| Some(*key) == open))
+            .or_else(|| showing.first())
+            .cloned()
     }
 
     /// Opens the pre-join's window of account `key`, the keyboard on it.

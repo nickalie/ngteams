@@ -318,15 +318,29 @@ fn join_now_in_the_same_turn_as_accept_titles_the_meetings_call_once_its_name_is
     registered(&rig);
     rig.send(Event::IncomingCall(meeting_ring(9)));
     let core: Arc<dyn teams_ui::Core> = rig.core.clone();
-    // as `ngteamsctl answer` does: Accept, then Join now, before the meeting's name is read
+    // as `ngteamsctl answer` does: Accept, then Join now, and its call told before the meeting's name is read
     rig.cx.update(|cx| {
         teams_ui::calls::accept_meeting_ring(&calls_of(&rig), &core, &trace, cx);
         teams_ui::calls::join_now(&calls_of(&rig), &core, &trace, cx);
+        calls_of(&rig).update(cx, |calls, cx| {
+            calls.apply(
+                &Event::Call {
+                    call: call(9),
+                    status: CallStatus::Joining,
+                },
+                cx,
+            );
+        });
+        let told = calls_of(&rig).read(cx).call().cloned().expect("the answered call");
+        assert_eq!(
+            told.title.as_deref(),
+            Some(teams_ui::meeting_alert::NO_TITLE),
+            "its name not read yet"
+        );
     });
     rig.cx.run_until_parked();
     assert_eq!(actions(&rig), [CallAction::Answer { call: call(9) }]);
     status(&rig, 9, CallStatus::Connected);
-    rig.cx.run_until_parked();
     let active = rig.cx.read(|cx| calls_of(&rig).read(cx).call().cloned()).unwrap();
     assert_eq!((active.kind, active.title.as_deref()), (CallKind::Meeting, Some(TITLE)));
     let meeting = rig.cx.read(|cx| calls_of(&rig).read(cx).meeting_to_join().cloned());
@@ -344,32 +358,14 @@ fn an_accepted_ring_shows_its_pre_join_over_another_accounts_calendar_pre_join()
     let (shell, _cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
     let (windows, _) = call_windows(&rig, &shell, &trace);
     registered(&rig);
-    rig.cx
-        .update(|cx| calls_of(&rig).update(cx, |calls, cx| calls.open_prejoin(meeting_to_join(), cx)));
-    let _first = prejoin_window(&rig, &windows);
-
-    let other = Arc::new(super::common::FakeCore {
-        me: LAB_B.to_owned().into(),
-        ..super::common::FakeCore::default()
-    });
+    let (other, calls) = second_account(&rig, &shell, &windows, &trace);
     let core: Arc<dyn teams_ui::Core> = other.clone();
-    let models = rig.cx.update(|cx| teams_ui::Models::with_calls(None, cx));
-    let parts = teams_ui::shell::ShellParts {
-        core: Arc::clone(&core),
-        models: models.clone(),
-        settings: rig.cx.read(|cx| shell.read(cx).settings().clone()),
-        trace: Arc::clone(&trace),
-    };
-    rig.cx
-        .update(|cx| windows.update(cx, |windows, cx| windows.add(parts, cx)));
     rig.cx.update(|cx| {
-        models.calls.update(cx, |calls, cx| {
-            calls.apply(&Event::IncomingCall(meeting_ring(10)), cx);
-        });
-        teams_ui::calls::ask(&models.calls, &core, &trace, teams_ui::calls::Ask::Answer, cx);
+        calls.update(cx, |calls, cx| calls.apply(&Event::IncomingCall(meeting_ring(10)), cx));
+        teams_ui::calls::ask(&calls, &core, &trace, teams_ui::calls::Ask::Answer, cx);
     });
     rig.cx.run_until_parked();
-    assert!(rig.cx.read(|cx| models.calls.read(cx).ring_in_prejoin()));
+    assert!(rig.cx.read(|cx| calls.read(cx).ring_in_prejoin()));
     let window = prejoin_window(&rig, &windows);
     window.simulate_keystrokes("enter");
     window.run_until_parked();
@@ -379,4 +375,128 @@ fn an_accepted_ring_shows_its_pre_join_over_another_accounts_calendar_pre_join()
         "Join now on the window shown answers the accepted ring"
     );
     assert!(actions(&rig).is_empty(), "the other account's meeting is not joined");
+}
+
+/// Account a's calendar pre-join open and a second account `LAB_B` followed by the same windows: its core and calls.
+fn second_account(
+    rig: &Rig,
+    shell: &gpui::Entity<teams_ui::shell::Shell>,
+    windows: &gpui::Entity<teams_ui::call_window::CallWindows>,
+    trace: &Arc<teams_ui::ViewTrace>,
+) -> (Arc<super::common::FakeCore>, gpui::Entity<teams_ui::calls::Calls>) {
+    rig.cx
+        .update(|cx| calls_of(rig).update(cx, |calls, cx| calls.open_prejoin(meeting_to_join(), cx)));
+    let _first = prejoin_window(rig, windows);
+    let other = Arc::new(super::common::FakeCore {
+        me: LAB_B.to_owned().into(),
+        ..super::common::FakeCore::default()
+    });
+    let core: Arc<dyn teams_ui::Core> = other.clone();
+    let models = rig.cx.update(|cx| teams_ui::Models::with_calls(None, cx));
+    let parts = teams_ui::shell::ShellParts {
+        core,
+        models: models.clone(),
+        settings: rig.cx.read(|cx| shell.read(cx).settings().clone()),
+        trace: Arc::clone(trace),
+    };
+    rig.cx
+        .update(|cx| windows.update(cx, |windows, cx| windows.add(parts, cx)));
+    (other, models.calls)
+}
+
+#[test]
+fn an_accepted_rings_pre_join_stays_over_another_accounts_calendar_pre_join_after_its_ring_ends() {
+    let rig = calling();
+    listed_meeting(&rig);
+    let (trace, _) = trace();
+    let (shell, _cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    let (other, calls) = second_account(&rig, &shell, &windows, &trace);
+    let core: Arc<dyn teams_ui::Core> = other.clone();
+    rig.cx.update(|cx| {
+        calls.update(cx, |calls, cx| calls.apply(&Event::IncomingCall(meeting_ring(10)), cx));
+        teams_ui::calls::ask(&calls, &core, &trace, teams_ui::calls::Ask::Answer, cx);
+    });
+    rig.cx.run_until_parked();
+    rig.cx.update(|cx| {
+        calls.update(cx, |calls, cx| {
+            calls.apply(
+                &Event::RingEnded {
+                    call: call(10),
+                    end: RemoteEnd::default(),
+                },
+                cx,
+            );
+        });
+    });
+    rig.cx.run_until_parked();
+    assert!(rig.cx.read(|cx| !calls.read(cx).ring_in_prejoin()));
+    let window = prejoin_window(&rig, &windows);
+    window.simulate_keystrokes("enter");
+    window.run_until_parked();
+    assert_eq!(
+        *other.call_actions.lock().unwrap(),
+        [join_meeting_action()],
+        "Join now on the window shown joins the ended ring's meeting"
+    );
+    assert!(actions(&rig).is_empty(), "the other account's meeting is not joined");
+}
+
+#[test]
+fn a_calendar_pre_join_opened_last_shows_over_another_accounts_open_one() {
+    let rig = calling();
+    let (trace, _) = trace();
+    let (shell, _cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    let (other, calls) = second_account(&rig, &shell, &windows, &trace);
+    rig.cx.update(|cx| {
+        assert!(teams_ui::calls::show_prejoin(
+            &calls,
+            &trace,
+            meeting_to_join(),
+            false,
+            cx
+        ));
+    });
+    let window = prejoin_window(&rig, &windows);
+    window.simulate_keystrokes("enter");
+    window.run_until_parked();
+    assert_eq!(
+        *other.call_actions.lock().unwrap(),
+        [join_meeting_action()],
+        "Join now on the window shown joins the pre-join opened last"
+    );
+    assert!(
+        actions(&rig).is_empty(),
+        "the account whose pre-join opened first joins nothing"
+    );
+}
+
+#[test]
+fn a_ring_that_ends_before_its_meetings_name_is_read_leaves_its_pre_join_titled_with_the_name() {
+    let rig = calling();
+    listed_meeting(&rig);
+    let (trace, _) = trace();
+    let (shell, _cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (_windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    rig.send(Event::IncomingCall(meeting_ring(6)));
+    let core: Arc<dyn teams_ui::Core> = rig.core.clone();
+    rig.cx.update(|cx| {
+        teams_ui::calls::accept_meeting_ring(&calls_of(&rig), &core, &trace, cx);
+        calls_of(&rig).update(cx, |calls, cx| {
+            calls.apply(
+                &Event::RingEnded {
+                    call: call(6),
+                    end: RemoteEnd::default(),
+                },
+                cx,
+            );
+        });
+    });
+    rig.cx.run_until_parked();
+    let kept = prejoin(&rig).expect("the pre-join stays");
+    assert_eq!((kept.ring, kept.to_join.title()), (None, TITLE));
 }

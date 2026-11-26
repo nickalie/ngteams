@@ -928,7 +928,8 @@ pub struct Calls {
     answering: Option<CallId>,
     /// Where the call devices' discovery is, as [`follow_devices`] last saw it.
     devices: teams_media::devices::catalog::DeviceStatus,
-    /// The invitation that last stopped ringing without being answered here, and who ended it.
+    /// The invitation that last stopped ringing without being answered here, and who ended it, unless its Accept had
+    /// opened its meeting's pre-join.
     rang_out: Option<(CallId, Option<Mri>)>,
     call: Option<ActiveCall>,
     /// The kind and chat of a start or a join asked for, until its call is told (the engine tells every call it
@@ -1307,13 +1308,16 @@ impl Calls {
         Some(ringing.call)
     }
 
-    /// The meeting's name, read for the pre-join that Accept on the ring `ring` in `chat` opened: also the title of
-    /// the meeting its Join now already went into, and of that meeting's call.
-    fn title_ring_prejoin(&mut self, ring: CallId, chat: &str, title: String, cx: &mut Context<Self>) {
-        if let Some(prejoin) = &mut self.prejoin
-            && prejoin.ring == Some(ring)
-            && let MeetingToJoin::Chat { title: current, .. } = &mut prejoin.to_join
-            && *current != title
+    /// The meeting's name, read for the pre-join that Accept on a ring in `chat` opened (its ring can have ended since):
+    /// also the title of the meeting its Join now already went into, and of that meeting's call.
+    fn title_ring_prejoin(&mut self, chat: &str, title: String, cx: &mut Context<Self>) {
+        if let Some(MeetingToJoin::Chat {
+            chat: shown,
+            title: current,
+            ..
+        }) = self.prejoin.as_mut().map(|prejoin| &mut prejoin.to_join)
+            && shown == chat
+            && current == crate::meeting_alert::NO_TITLE
         {
             current.clone_from(&title);
             cx.notify();
@@ -2442,7 +2446,7 @@ pub fn accept_meeting_ring(calls: &Entity<Calls>, core: &Arc<dyn Core>, trace: &
     let (core, weak) = (Arc::clone(core), calls.downgrade());
     cx.spawn(async move |cx: &mut AsyncApp| {
         let title = crate::meeting_alert::chat_name(&*core, &chat).await;
-        let _ = weak.update(cx, |calls, cx| calls.title_ring_prejoin(ring, &chat, title, cx));
+        let _ = weak.update(cx, |calls, cx| calls.title_ring_prejoin(&chat, title, cx));
     })
     .detach();
 }
