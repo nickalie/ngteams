@@ -21,7 +21,7 @@ const FOLLOW_WITHIN: f32 = 0.01;
 /// The edge's height, px: a thin strip inside the area that the pointer can catch.
 const EDGE_HEIGHT: f32 = 6.0;
 /// The area's border, px: the measure inside it does not see it.
-const BORDER: f32 = 1.0;
+pub(super) const BORDER: f32 = 1.0;
 /// The scroll bar's width, px.
 const SCROLLBAR_WIDTH: f32 = 12.0;
 
@@ -162,13 +162,10 @@ impl CallStage {
             .unwrap_or_else(|| self.settings.read(cx).settings().caption_height_of(self.core.me()) as f32)
     }
 
-    /// The height the area has on the screen: a short window or the language confirmation can make it differ from the
-    /// saved height, and a drag or a key starts from what the user sees.
-    fn caption_drawn_height(&self, cx: &App) -> f32 {
-        self.caption_area
-            .laid
-            .get()
-            .map_or_else(|| self.caption_height(cx).min(self.caption_room()), |(area, _)| area)
+    /// The height that a drag or a key starts from: the saved height, as a short window shrinks it. The language
+    /// confirmation's taller floor is not part of it, so a resize never saves that floor.
+    fn caption_start_height(&self, cx: &App) -> f32 {
+        self.caption_height(cx).min(self.caption_room())
     }
 
     /// The tallest the area gets in this window: the area and the stage as laid out, less the stage's least room.
@@ -296,7 +293,7 @@ impl CallStage {
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    let height = this.caption_drawn_height(cx);
+                    let height = this.caption_start_height(cx);
                     this.caption_area.drag = Some(Drag {
                         from: event.position.y,
                         height,
@@ -331,7 +328,7 @@ impl CallStage {
     }
 
     fn caption_edge_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        let height = self.caption_drawn_height(cx);
+        let height = self.caption_start_height(cx);
         let Some(height) = size_key(event, height, self.caption_room(), self.caption_top) else {
             return;
         };

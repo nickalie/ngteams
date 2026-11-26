@@ -296,24 +296,59 @@ fn a_saved_height_taller_than_the_window_resizes_from_the_drawn_height() {
         drawn_height < 1200.0,
         "the window keeps the stage's room: {drawn_height}"
     );
+    drag_edge(window, 40.0);
+    assert!(
+        (height(window) - (drawn_height - 40.0)).abs() < 1.0,
+        "the first drag down makes the drawn area shorter at once: {}",
+        height(window)
+    );
     tab_to(window, "call-caption-resize-keys");
     window.simulate_keystrokes("down");
     assert!(
-        (height(window) - (drawn_height - 20.0)).abs() < 1.0,
-        "the first Down makes the drawn area shorter: {}",
-        height(window)
-    );
-    let edge = bounds(window, "call-caption-resize-keys").unwrap().center();
-    let to = point(edge.x, edge.y + px(40.0));
-    window.simulate_mouse_down(edge, MouseButton::Left, Modifiers::none());
-    window.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
-    window.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
-    draw(window);
-    assert!(
         (height(window) - (drawn_height - 60.0)).abs() < 1.0,
-        "a drag down makes it shorter at once: {}",
+        "a Down then makes it shorter: {}",
         height(window)
     );
     let saved = f64::from(saved_height(&shell, &rig));
     assert!((saved - f64::from(height(window))).abs() < 1.0);
+}
+
+#[test]
+fn the_language_confirmation_s_taller_floor_is_never_saved() {
+    let rig = calling();
+    let (shell, window) = captions_shown(&rig, Settings::default());
+    let start = f64::from(saved_height(&shell, &rig));
+    super::caption_language_menu(window);
+    click(window, "call-caption-language-sq-al");
+    draw(window);
+    assert!(drawn(window, "call-caption-language-confirm"));
+    assert!(
+        f64::from(height(window)) > start + 1.0,
+        "the confirmation draws the area taller: {}",
+        height(window)
+    );
+    tab_to(window, "call-caption-resize-keys");
+    window.simulate_keystrokes("down");
+    assert!(
+        (f64::from(saved_height(&shell, &rig)) - (start - 20.0)).abs() < 1.0,
+        "a Down saves a shorter height than before"
+    );
+    drag_edge(window, 40.0);
+    assert!(
+        (f64::from(saved_height(&shell, &rig)) - (start - 60.0)).abs() < 1.0,
+        "a drag down saves a shorter height than before"
+    );
+}
+
+/// A drag of the edge down by `dy` px. The edge has its keyboard selector while it has the focus.
+fn drag_edge(window: &mut VisualTestContext, dy: f32) {
+    let edge = bounds(window, "call-caption-resize-keys")
+        .or_else(|| bounds(window, "call-caption-resize"))
+        .unwrap()
+        .center();
+    let to = point(edge.x, edge.y + px(dy));
+    window.simulate_mouse_down(edge, MouseButton::Left, Modifiers::none());
+    window.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+    window.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
+    draw(window);
 }
