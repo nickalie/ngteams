@@ -1,7 +1,7 @@
 {
-  "version": "0.1.0.193",
+  "version": "0.1.0.198",
   "x86_64-linux": {
-    "url": "https://github.com/nickalie/ngteams/releases/download/v0.1.0.193/ngteams-0.1.0.193-linux-x86_64.tar.gz",
-    "hash": "sha256-HHU8nNk3kNASN9VF1dcreFg1/WT3Rhuefzri02tmbTY="
+    "url": "https://github.com/nickalie/ngteams/releases/download/v0.1.0.198/ngteams-0.1.0.198-linux-x86_64.tar.gz",
+    "hash": "sha256-gmMkRdB3hlqvqgD5I8IlySf7b2w9SjpfnxmRShqGRPs="
   }
 }
