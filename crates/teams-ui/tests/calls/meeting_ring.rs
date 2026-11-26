@@ -754,7 +754,7 @@ impl teams_media::devices::Devices for NoCamera {
 fn while_its_answer_goes_the_pre_join_takes_no_choice_and_its_preview_comes_back_if_the_answer_fails() {
     let rig = calling();
     listed_meeting(&rig);
-    let (trace, _) = trace();
+    let (trace, written) = trace();
     let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
     let (windows, _) = call_windows(&rig, &shell, &trace);
     cx.update(|_, cx| {
@@ -786,11 +786,36 @@ fn while_its_answer_goes_the_pre_join_takes_no_choice_and_its_preview_comes_back
     status(&rig, 12, CallStatus::Answering);
     rig.cx.run_until_parked();
     assert!(!previewing(&rig), "the call takes the camera");
+    let switched = |written: &super::Written| {
+        ["camera", "microphone", "audio"].map(|change| lines(written, "prejoin", change).len())
+    };
+    let at_join_traced = switched(&written);
+    assert_eq!(at_join_traced, [1, 0, 0]);
 
     window.simulate_keystrokes("ctrl-shift-o ctrl-shift-m");
     click(window, "prejoin-audio-none");
     click(window, "prejoin-effects");
+    rig.cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.set_camera(false, cx);
+            view.set_microphone(false, cx);
+            view.set_audio(false, cx);
+        });
+    });
     assert_eq!(seen(&rig), at_join, "the choices hold what Join now saw");
+    assert_eq!(switched(&written), at_join_traced, "no switch is traced as changed");
+    // a call asked from the main window meanwhile is refused as busy, and leaves the answer under way
+    let core: Arc<dyn teams_ui::Core> = rig.core.clone();
+    let chat = teams_ui::calls::Ask::Call { chat: AB.to_owned() };
+    rig.cx
+        .update(|cx| teams_ui::calls::ask(&calls_of(&rig), &core, &trace, chat, cx));
+    rig.cx.run_until_parked();
+    assert_eq!(
+        rig.cx
+            .read(|cx| calls_of(&rig).read(cx).refused().map(|refused| refused.why)),
+        Some("busy")
+    );
+    assert!(prejoin(&rig).is_some_and(|prejoin| prejoin.joining));
     assert!(!previewing(&rig), "no preview starts while the call takes the camera");
     assert!(
         !drawn(window, "prejoin-effects-pane"),

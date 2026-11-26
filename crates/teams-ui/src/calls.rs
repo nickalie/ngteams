@@ -981,6 +981,17 @@ pub struct Calls {
     taken_back: bool,
     /// The meeting's Request to join that a pre-join's Join now answered: its call is the meeting's.
     answers_meeting: Option<CallId>,
+    /// What the pre-join's Join now waits for once it went: only its refusal unlocks the pre-join.
+    prejoin_went: Option<PrejoinWent>,
+}
+
+/// The ask a pre-join's Join now went as, once it is under way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrejoinWent {
+    /// The start or join with this number.
+    Start(u64),
+    /// The answer to its ring.
+    Answer,
 }
 
 impl Calls {
@@ -1364,10 +1375,11 @@ impl Calls {
     }
 
     /// The subject a Meet now's pre-join gives its new meeting (Teams' `Meeting in "<channel>"` until edited): the
-    /// meeting's post is titled so once the service posted it.
+    /// meeting's post is titled so once the service posted it. It is locked once Join now went, as it went with the start.
     pub fn set_prejoin_title(&mut self, title: String, cx: &mut Context<Self>) {
         if let Some(prejoin) = &mut self.prejoin
             && prejoin.entry == PrejoinEntry::MeetNow
+            && !prejoin.joining
             && let MeetingToJoin::Chat { title: current, .. } = &mut prejoin.to_join
             && *current != title
         {
@@ -2151,18 +2163,25 @@ impl Calls {
         }
         self.asked = None;
         self.gave_up.insert(start);
-        self.refuse(ask, "not-told", local_refusal_text("not-told"), cx);
+        self.refuse(ask, Some(start), "not-told", local_refusal_text("not-told"), cx);
         true
     }
 
-    fn refuse(&mut self, ask: &Ask, why: &'static str, text: String, cx: &mut Context<Self>) {
+    /// `ask` (the start or join numbered `start`) is refused: said, and a pre-join whose own Join now it was is unlocked.
+    fn refuse(&mut self, ask: &Ask, start: Option<u64>, why: &'static str, text: String, cx: &mut Context<Self>) {
         if !self.shown {
             return;
         }
         if let Some(chat) = ask.chat().filter(|_| why == "not-joinable") {
             self.running.remove(chat);
         }
-        if let Some(prejoin) = &mut self.prejoin {
+        // another ask refused as busy meanwhile leaves the pre-join's Join now under way
+        let its_own = match self.prejoin_went {
+            None => true,
+            Some(PrejoinWent::Start(went)) => start == Some(went),
+            Some(PrejoinWent::Answer) => *ask == Ask::Answer,
+        };
+        if let Some(prejoin) = self.prejoin.as_mut().filter(|_| its_own) {
             prejoin.joining = false;
         }
         if *ask == Ask::Answer {
@@ -2257,7 +2276,7 @@ impl Calls {
                         active.check.camera_failed = true;
                     }
                 }
-                self.refuse(ask, refusal_kind(&error), refusal_text(&error), cx);
+                self.refuse(ask, start, refusal_kind(&error), refusal_text(&error), cx);
             }
         }
     }
@@ -2437,7 +2456,9 @@ pub fn ask_then(
         Ok(action) => action,
         Err(why) => {
             refused(trace, &ask, why);
-            calls.update(cx, |calls, cx| calls.refuse(&ask, why, local_refusal_text(why), cx));
+            calls.update(cx, |calls, cx| {
+                calls.refuse(&ask, None, why, local_refusal_text(why), cx);
+            });
             cx.defer(move |cx| then(Answered::Refused, cx));
             return;
         }
@@ -2572,6 +2593,7 @@ pub fn join_now_then(
     let asked = calls.update(cx, |calls, cx| {
         let prejoin = calls.prejoin.as_mut().filter(|prejoin| !prejoin.joining)?;
         prejoin.joining = true;
+        calls.prejoin_went = None;
         let ring = prejoin
             .ring
             .filter(|ring| calls.ringing.as_ref().is_some_and(|ringing| ringing.call == *ring));
@@ -2606,8 +2628,18 @@ pub fn join_now_then(
         (Ask::MeetNow { channel }, Some(title)) if !title.trim().is_empty() => Some((channel.clone(), title)),
         _ => None,
     };
+    let answers = asked == Ask::Answer;
     ask_then(calls, core, trace, asked, cx, move |answered, cx| {
         then(answered == Answered::Taken, cx);
+    });
+    calls.update(cx, |calls, _| {
+        if calls.prejoin.as_ref().is_some_and(|prejoin| prejoin.joining) {
+            calls.prejoin_went = if answers {
+                Some(PrejoinWent::Answer)
+            } else {
+                calls.asked.is_some().then_some(PrejoinWent::Start(calls.starts))
+            };
+        }
     });
     // as Teams' pre-join does: its subject titles the new meeting's post once the service posted it (the engine
     // looks for the post, and titles nothing when the meeting didn't start); a Meet now refused here asks nothing,
@@ -2653,7 +2685,9 @@ pub fn refuse_here(calls: &Entity<Calls>, trace: &Arc<ViewTrace>, ask: &Ask, why
     }
     trace.record(&TraceLine::new("call", "asked").kind(ask.name()));
     refused(trace, ask, why);
-    calls.update(cx, |calls, cx| calls.refuse(ask, why, local_refusal_text(why), cx));
+    calls.update(cx, |calls, cx| {
+        calls.refuse(ask, None, why, local_refusal_text(why), cx);
+    });
 }
 
 fn refused(trace: &ViewTrace, ask: &Ask, why: &'static str) {

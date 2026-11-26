@@ -3060,6 +3060,22 @@ fn a_meet_nows_subject_is_edited_in_its_pre_join_and_titles_the_new_meeting() {
         titles,
         [(channel.to_owned(), "Meeting in \"General\" and more".to_owned())]
     );
+    rig.cx.update(|cx| {
+        calls_of(&rig).update(cx, |calls, cx| {
+            calls.set_prejoin_title("Edited too late".to_owned(), cx);
+        });
+    });
+    let subject = rig.cx.read(|cx| {
+        calls_of(&rig)
+            .read(cx)
+            .prejoin()
+            .map(|prejoin| prejoin.to_join.title().to_owned())
+    });
+    assert_eq!(
+        subject.as_deref(),
+        Some("Meeting in \"General\" and more"),
+        "the subject that went with Join now stays"
+    );
     no_name_in(&written);
 }
 
