@@ -60,6 +60,20 @@ fn lines(rig: &Rig, count: usize) {
     rig.cx.run_until_parked();
 }
 
+/// The captions stop, as the engine says when the user hides them.
+fn captions_off(rig: &Rig) {
+    rig.send(Event::CallCaptions {
+        call: call(1),
+        captions: teams_core::CallCaptions {
+            phase: teams_core::CaptionPhase::Off,
+            spoken_language: "en-us".into(),
+            error: None,
+            lines: Vec::new(),
+        },
+    });
+    rig.cx.run_until_parked();
+}
+
 fn bounds(window: &mut VisualTestContext, selector: &str) -> Option<gpui::Bounds<gpui::Pixels>> {
     draw(window);
     window.debug_bounds(Box::leak(selector.to_owned().into_boxed_str()))
@@ -126,6 +140,12 @@ fn the_captions_follow_the_newest_line_until_scrolled_up() {
     assert!(at_end(window, 40), "the wheel goes back to the end");
     lines(&rig, 42);
     assert!(at_end(window, 41), "at the end again: it follows");
+    wheel(window, 400.0);
+    assert!(!at_end(window, 41));
+    captions_off(&rig);
+    assert!(!drawn(window, "call-captions"), "hidden");
+    lines(&rig, 43);
+    assert!(at_end(window, 42), "shown again: at the newest line");
 }
 
 #[test]
@@ -260,4 +280,40 @@ fn the_edge_at_the_top_resizes_the_other_way() {
         324,
         "a drag down makes the area at the top taller"
     );
+}
+
+#[test]
+fn a_saved_height_taller_than_the_window_resizes_from_the_drawn_height() {
+    let rig = calling();
+    let me = rig.cx.read(|cx| rig.bridge.read(cx).core().me().to_owned());
+    let settings = Settings {
+        caption_heights: BTreeMap::from([(me, 1200)]),
+        ..Settings::default()
+    };
+    let (shell, window) = captions_shown(&rig, settings);
+    let drawn_height = height(window);
+    assert!(
+        drawn_height < 1200.0,
+        "the window keeps the stage's room: {drawn_height}"
+    );
+    tab_to(window, "call-caption-resize-keys");
+    window.simulate_keystrokes("down");
+    assert!(
+        (height(window) - (drawn_height - 20.0)).abs() < 1.0,
+        "the first Down makes the drawn area shorter: {}",
+        height(window)
+    );
+    let edge = bounds(window, "call-caption-resize-keys").unwrap().center();
+    let to = point(edge.x, edge.y + px(40.0));
+    window.simulate_mouse_down(edge, MouseButton::Left, Modifiers::none());
+    window.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+    window.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
+    draw(window);
+    assert!(
+        (height(window) - (drawn_height - 60.0)).abs() < 1.0,
+        "a drag down makes it shorter at once: {}",
+        height(window)
+    );
+    let saved = f64::from(saved_height(&shell, &rig));
+    assert!((saved - f64::from(height(window))).abs() < 1.0);
 }

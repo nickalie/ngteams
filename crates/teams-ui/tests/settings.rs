@@ -801,10 +801,12 @@ fn an_account_removed_leaves_nothing_of_its_own_and_the_next_takes_the_first_s_p
     settings.set_manual_status(FIRST, ManualStatus::Busy);
     settings.set_selected_chat(OTHER, Some("19:other@thread.v2".to_owned()));
     settings.set_manual_status(OTHER, ManualStatus::DoNotDisturb);
+    settings.set_caption_height(OTHER, 400);
     // the other one removed: its table goes
     let mut removed = settings.clone();
     removed.forget_account(OTHER, None);
     assert!(removed.accounts.is_empty());
+    assert!(removed.caption_heights.is_empty(), "its captions height goes too");
     assert_eq!(removed.selected_chat_of(FIRST), Some("19:first@thread.v2"));
     // the first one removed: the other takes the top level, and nothing of the first stays
     settings.forget_account(FIRST, Some(OTHER));

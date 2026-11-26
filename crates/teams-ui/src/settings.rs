@@ -850,7 +850,6 @@ pub fn parse(text: &str) -> Result<(Settings, Vec<Problem>), &'static str> {
     Ok((settings, problems))
 }
 
-/// Takes one key's value into `settings`.
 /// An account's own setting of its calls: its noise suppression or its captions' height.
 fn take_calls(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem> {
     if key == keys::CAPTION_HEIGHT {
@@ -860,6 +859,7 @@ fn take_calls(settings: &mut Settings, key: &str, value: &Value) -> Result<(), P
     }
 }
 
+/// Takes one key's value into `settings`.
 fn take(settings: &mut Settings, key: &str, value: &Value) -> Result<(), Problem> {
     let bad = |key: &'static str, why: &'static str| Problem::BadValue { key, why };
     match key {

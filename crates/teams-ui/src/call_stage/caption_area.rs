@@ -20,6 +20,8 @@ const SIZE_PAGE: f32 = 100.0;
 const FOLLOW_WITHIN: f32 = 0.01;
 /// The edge's height, px: a thin strip inside the area that the pointer can catch.
 const EDGE_HEIGHT: f32 = 6.0;
+/// The area's border, px: the measure inside it does not see it.
+const BORDER: f32 = 1.0;
 /// The scroll bar's width, px.
 const SCROLLBAR_WIDTH: f32 = 12.0;
 
@@ -63,7 +65,7 @@ impl CaptionArea {
             move |bounds, _, _| {
                 let height = f32::from(bounds.size.height);
                 let (area, stage) = laid.get().unwrap_or((height, height));
-                laid.set(Some(if pane { (height, stage) } else { (area, height) }));
+                laid.set(Some(if pane { (height + BORDER, stage) } else { (area, height) }));
             },
             |_, (), _, _| {},
         )
@@ -133,7 +135,7 @@ pub(super) fn size_key(event: &KeyDownEvent, height: f32, room: f32, at_top: boo
 }
 
 #[expect(clippy::cast_precision_loss, reason = "the limits are a few hundred px")]
-fn min_height() -> f32 {
+pub(super) fn min_height() -> f32 {
     captions_height::MIN as f32
 }
 
@@ -160,6 +162,15 @@ impl CallStage {
             .unwrap_or_else(|| self.settings.read(cx).settings().caption_height_of(self.core.me()) as f32)
     }
 
+    /// The height the area has on the screen: a short window or the language confirmation can make it differ from the
+    /// saved height, and a drag or a key starts from what the user sees.
+    fn caption_drawn_height(&self, cx: &App) -> f32 {
+        self.caption_area
+            .laid
+            .get()
+            .map_or_else(|| self.caption_height(cx).min(self.caption_room()), |(area, _)| area)
+    }
+
     /// The tallest the area gets in this window: the area and the stage as laid out, less the stage's least room.
     fn caption_room(&self) -> f32 {
         let room = self.caption_area.laid.get().map_or(
@@ -169,7 +180,8 @@ impl CallStage {
         room.min(max_height())
     }
 
-    /// Sets the live captions area's height for the call's account, px, inside its limits, as its edge does.
+    /// Sets the live captions area's height for the call's account, px, inside [`captions_height::MIN`] and
+    /// [`captions_height::MAX`].
     pub fn resize_captions(&mut self, height: u32, cx: &mut Context<Self>) {
         let account = self.core.me().to_owned();
         self.settings.update(cx, |settings, cx| {
@@ -284,7 +296,7 @@ impl CallStage {
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    let height = this.caption_height(cx);
+                    let height = this.caption_drawn_height(cx);
                     this.caption_area.drag = Some(Drag {
                         from: event.position.y,
                         height,
@@ -319,7 +331,7 @@ impl CallStage {
     }
 
     fn caption_edge_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        let height = self.caption_height(cx);
+        let height = self.caption_drawn_height(cx);
         let Some(height) = size_key(event, height, self.caption_room(), self.caption_top) else {
             return;
         };

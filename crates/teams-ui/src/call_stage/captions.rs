@@ -6,8 +6,6 @@ use crate::translate::{self, CaptionTranslation, Shown, Status};
 use teams_core::CaptionPhase;
 use teams_proto::captions::SPOKEN_LANGUAGES;
 
-/// The shortest the captions pane gets in a short window, px: its header and one caption line.
-const MIN_CAPTIONS_HEIGHT: f32 = 100.0;
 /// The least height of the pane while it asks to confirm a language, px: the question and its actions.
 const CONFIRM_HEIGHT: f32 = 380.0;
 /// The shortest the language confirmation gets, px: its Cancel and Update row.
@@ -104,7 +102,7 @@ impl CallStage {
                 } else {
                     height
                 }))
-                .min_h(px(MIN_CAPTIONS_HEIGHT))
+                .min_h(px(super::caption_area::min_height()))
                 .flex()
                 .flex_col()
                 .bg(rgb(palette.surface))
