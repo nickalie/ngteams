@@ -62,6 +62,16 @@ pub struct PrejoinParts {
     pub trace: Arc<ViewTrace>,
 }
 
+/// Whether one of the audio's choices takes a click.
+#[derive(Clone, Copy)]
+enum Choice {
+    Open,
+    /// Join now went: the choice holds what it saw.
+    Locked,
+    /// The account has no such audio (Phone audio).
+    Unavailable,
+}
+
 /// The pre-join (see the module docs). A GPUI entity, the window's root view.
 pub struct PrejoinView {
     core: Arc<dyn Core>,
@@ -93,8 +103,9 @@ impl PrejoinView {
         retitle(&calls, window, cx);
         // the title follows the model, not the next draw: a window the compositor draws no frame for keeps its title
         let observing = [
-            cx.observe_in(&calls, window, |_, calls, window, cx| {
+            cx.observe_in(&calls, window, |this, calls, window, cx| {
                 retitle(&calls, window, cx);
+                this.follow_camera(cx);
                 cx.notify();
             }),
             cx.observe(&settings, |_, _, cx| cx.notify()),
@@ -134,8 +145,16 @@ impl PrejoinView {
         self.session.is_some()
     }
 
+    /// Whether Join now went and its answer or join still goes: the choices hold what Join now saw.
+    fn joining(&self, cx: &App) -> bool {
+        self.calls.read(cx).prejoin().is_some_and(|prejoin| prejoin.joining)
+    }
+
     /// The camera's switch: the preview follows it (the user's click, never by itself).
     pub fn set_camera(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.joining(cx) {
+            return;
+        }
         self.trace
             .record(&TraceLine::new("prejoin", "camera").kind(if on { "on" } else { "off" }));
         self.calls.update(cx, |calls, cx| calls.set_prejoin_camera(on, cx));
@@ -144,7 +163,7 @@ impl PrejoinView {
     }
 
     /// The preview runs while the switch is on, unless the filters' pane took the camera over or Join now gave the
-    /// camera to the call.
+    /// camera to the call; it starts again if that join fails.
     fn follow_camera(&mut self, cx: &mut Context<Self>) {
         let wanted = self
             .calls
@@ -166,6 +185,9 @@ impl PrejoinView {
 
     /// The microphone's switch.
     pub fn set_microphone(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.joining(cx) {
+            return;
+        }
         self.trace
             .record(&TraceLine::new("prejoin", "microphone").kind(if on { "on" } else { "off" }));
         self.calls.update(cx, |calls, cx| calls.set_prejoin_muted(!on, cx));
@@ -173,6 +195,9 @@ impl PrejoinView {
 
     /// The audio to use: the computer's, or none ("Don't use audio": the call is joined muted).
     pub fn set_audio(&mut self, computer: bool, cx: &mut Context<Self>) {
+        if self.joining(cx) {
+            return;
+        }
         self.trace
             .record(&TraceLine::new("prejoin", "audio").kind(if computer { "computer" } else { "none" }));
         self.calls
@@ -181,7 +206,7 @@ impl PrejoinView {
 
     /// Background filters: the pane opens or closes.
     pub fn show_effects(&mut self, open: bool, cx: &mut Context<Self>) {
-        self.effects = open.then(|| {
+        self.effects = (open && !self.joining(cx)).then(|| {
             let (settings, trace) = (self.settings.clone(), Arc::clone(&self.trace));
             cx.new(|cx| EffectsPicker::new(settings, trace, PickerPlace::CallPane, cx))
         });
@@ -299,6 +324,7 @@ impl PrejoinView {
                     .icon(Glyph::SPARKLES.icon())
                     .label("Background filters")
                     .selected(open)
+                    .disabled(prejoin.joining)
                     .on_click(cx.listener(move |this, _, _, cx| this.show_effects(!open, cx))),
             ))
     }
@@ -307,6 +333,7 @@ impl PrejoinView {
     /// out: this app joins by no phone), Don't use audio.
     fn audio(&self, prejoin: &Prejoin, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
         let computer = prejoin.audio == calls::PrejoinAudio::Computer;
+        let open = if prejoin.joining { Choice::Locked } else { Choice::Open };
         let devices = computer.then(|| self.computer_audio(prejoin, palette, cx));
         let caption = (!computer).then(|| {
             div()
@@ -329,7 +356,7 @@ impl PrejoinView {
                         "prejoin-audio-computer",
                         "Computer audio",
                         computer,
-                        true,
+                        open,
                         palette,
                         cx,
                     ))
@@ -339,7 +366,7 @@ impl PrejoinView {
                 "prejoin-audio-phone",
                 "Phone audio",
                 false,
-                false,
+                Choice::Unavailable,
                 palette,
                 cx,
             )))
@@ -349,7 +376,7 @@ impl PrejoinView {
                         "prejoin-audio-none",
                         "Don't use audio",
                         !computer,
-                        true,
+                        open,
                         palette,
                         cx,
                     ))
@@ -387,13 +414,13 @@ impl PrejoinView {
             .flex_col()
     }
 
-    /// One of the audio's choices: a radio mark and its name; a choice not `enabled` is drawn greyed out and takes no
-    /// click, as Teams draws Phone audio for an account without it.
+    /// One of the audio's choices: a radio mark and its name; a choice not [`Choice::Open`] is drawn greyed out and
+    /// takes no click, as Teams draws Phone audio for an account without it.
     fn audio_choice(
         id: &'static str,
         name: &'static str,
         picked: bool,
-        enabled: bool,
+        choice: Choice,
         palette: Palette,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
@@ -422,10 +449,15 @@ impl PrejoinView {
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .child(mark)
             .child(name);
-        if !enabled {
-            return row.opacity(0.45).tooltip(|window, cx| {
-                gpui_component::tooltip::Tooltip::new("Phone audio isn't available for your account").build(window, cx)
-            });
+        match choice {
+            Choice::Open => {}
+            Choice::Locked => return row.opacity(0.45),
+            Choice::Unavailable => {
+                return row.opacity(0.45).tooltip(|window, cx| {
+                    gpui_component::tooltip::Tooltip::new("Phone audio isn't available for your account")
+                        .build(window, cx)
+                });
+            }
         }
         let computer = id == "prejoin-audio-computer";
         row.cursor_pointer()

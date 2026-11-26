@@ -734,3 +734,75 @@ fn the_pre_joins_switches_are_locked_while_its_answer_goes_and_the_call_takes_wh
         "no camera or mute goes"
     );
 }
+
+/// A camera that is never there: the pre-join's preview starts and shows its failure, enough to see it run.
+struct NoCamera;
+
+impl teams_media::devices::Devices for NoCamera {
+    fn microphone(&self) -> Result<Box<dyn teams_media::devices::AudioSource>, teams_media::devices::DeviceError> {
+        Err(teams_media::devices::DeviceError::Closed)
+    }
+    fn speaker(&self) -> Result<Box<dyn teams_media::devices::AudioSink>, teams_media::devices::DeviceError> {
+        Err(teams_media::devices::DeviceError::Closed)
+    }
+    fn camera(&self) -> Result<Box<dyn teams_media::devices::VideoSource>, teams_media::devices::DeviceError> {
+        Err(teams_media::devices::DeviceError::Closed)
+    }
+}
+
+#[test]
+fn while_its_answer_goes_the_pre_join_takes_no_choice_and_its_preview_comes_back_if_the_answer_fails() {
+    let rig = calling();
+    listed_meeting(&rig);
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    cx.update(|_, cx| {
+        let settings = shell.read(cx).settings().clone();
+        let preview = teams_ui::effects::CameraPreview::new(Arc::new(NoCamera));
+        teams_ui::settings::attach_camera_preview(&settings, preview, cx);
+    });
+    registered(&rig);
+    rig.send(Event::IncomingCall(meeting_ring(12)));
+    rig.cx.run_until_parked();
+    click(cx, "call-answer");
+    let window = prejoin_window(&rig, &windows);
+    let root = rig.cx.read(|cx| windows.read(cx).prejoin_window()).unwrap();
+    let view = rig.cx.update(|cx| {
+        root.read(cx)
+            .unwrap()
+            .view()
+            .clone()
+            .downcast::<teams_ui::prejoin::PrejoinView>()
+            .unwrap()
+    });
+    let previewing = |rig: &Rig| rig.cx.read(|cx| view.read(cx).previewing());
+    click(window, "prejoin-camera");
+    assert!(previewing(&rig));
+    let seen = |rig: &Rig| prejoin(rig).map(|prejoin| (prejoin.camera, prejoin.muted, prejoin.audio));
+    let at_join = seen(&rig);
+    assert_eq!(at_join, Some((true, false, teams_ui::calls::PrejoinAudio::Computer)));
+    click(window, "prejoin-join");
+    status(&rig, 12, CallStatus::Answering);
+    rig.cx.run_until_parked();
+    assert!(!previewing(&rig), "the call takes the camera");
+
+    window.simulate_keystrokes("ctrl-shift-o ctrl-shift-m");
+    click(window, "prejoin-audio-none");
+    click(window, "prejoin-effects");
+    assert_eq!(seen(&rig), at_join, "the choices hold what Join now saw");
+    assert!(!previewing(&rig), "no preview starts while the call takes the camera");
+    assert!(
+        !drawn(window, "prejoin-effects-pane"),
+        "the filters' pane opens no preview of its own"
+    );
+
+    status(&rig, 12, CallStatus::Leaving);
+    status(&rig, 12, CallStatus::Ended(teams_core::End::Failed("accept")));
+    rig.cx.run_until_parked();
+    assert!(prejoin(&rig).is_some_and(|prejoin| !prejoin.joining && prejoin.camera));
+    assert!(
+        previewing(&rig),
+        "the camera's switch is still on, so its preview comes back"
+    );
+}
