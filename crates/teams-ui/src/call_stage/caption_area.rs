@@ -25,11 +25,12 @@ pub(super) const BORDER: f32 = 1.0;
 /// The scroll bar's width, px.
 const SCROLLBAR_WIDTH: f32 = 12.0;
 
-/// A drag of the edge: where the pointer and the height were when it started.
+/// A drag of the edge: where the pointer was when it started, and the heights that a shrink and a growth start from.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Drag {
     from: Pixels,
     height: f32,
+    drawn: f32,
 }
 
 /// The captions area's scroll and size state.
@@ -168,6 +169,13 @@ impl CallStage {
         self.caption_height(cx).min(self.caption_room())
     }
 
+    /// The height that a growth starts from: the drawn height when the language confirmation makes it taller, so the
+    /// first step moves the edge.
+    fn caption_grow_height(&self, cx: &App) -> f32 {
+        let start = self.caption_start_height(cx);
+        self.caption_area.laid.get().map_or(start, |(area, _)| area.max(start))
+    }
+
     /// The tallest the area gets in this window: the area and the stage as laid out, less the stage's least room.
     fn caption_room(&self) -> f32 {
         let room = self.caption_area.laid.get().map_or(
@@ -293,10 +301,10 @@ impl CallStage {
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    let height = this.caption_start_height(cx);
                     this.caption_area.drag = Some(Drag {
                         from: event.position.y,
-                        height,
+                        height: this.caption_start_height(cx),
+                        drawn: this.caption_grow_height(cx),
                     });
                     cx.notify();
                 }),
@@ -328,10 +336,14 @@ impl CallStage {
     }
 
     fn caption_edge_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        let height = self.caption_start_height(cx);
-        let Some(height) = size_key(event, height, self.caption_room(), self.caption_top) else {
+        let room = self.caption_room();
+        let start = self.caption_start_height(cx);
+        let Some(mut height) = size_key(event, start, room, self.caption_top) else {
             return;
         };
+        if height > start {
+            height = size_key(event, self.caption_grow_height(cx), room, self.caption_top).unwrap_or(height);
+        }
         self.save_caption_height(height, cx);
         cx.stop_propagation();
         cx.notify();
@@ -347,11 +359,8 @@ impl CallStage {
             return;
         }
         let moved = f32::from(event.position.y - drag.from);
-        let height = if self.caption_top {
-            drag.height + moved
-        } else {
-            drag.height - moved
-        };
+        let grown = if self.caption_top { moved } else { -moved };
+        let height = if grown > 0.0 { drag.drawn } else { drag.height } + grown;
         let min = min_height();
         self.caption_area.dragged = Some(height.clamp(min, self.caption_room().max(min)));
         cx.notify();

@@ -282,31 +282,45 @@ fn the_edge_at_the_top_resizes_the_other_way() {
     );
 }
 
-#[test]
-fn a_saved_height_taller_than_the_window_resizes_from_the_drawn_height() {
-    let rig = calling();
+/// The captions shown with a saved height that the window cannot hold, and the height they are drawn at.
+fn too_tall_for_the_window(rig: &Rig) -> (gpui::Entity<Shell>, &'static mut VisualTestContext, f32) {
     let me = rig.cx.read(|cx| rig.bridge.read(cx).core().me().to_owned());
     let settings = Settings {
         caption_heights: BTreeMap::from([(me, 1200)]),
         ..Settings::default()
     };
-    let (shell, window) = captions_shown(&rig, settings);
+    let (shell, window) = captions_shown(rig, settings);
     let drawn_height = height(window);
     assert!(
         drawn_height < 1200.0,
         "the window keeps the stage's room: {drawn_height}"
     );
+    (shell, window, drawn_height)
+}
+
+#[test]
+fn a_saved_height_taller_than_the_window_drags_from_the_drawn_height() {
+    let rig = calling();
+    let (shell, window, drawn_height) = too_tall_for_the_window(&rig);
     drag_edge(window, 40.0);
     assert!(
         (height(window) - (drawn_height - 40.0)).abs() < 1.0,
         "the first drag down makes the drawn area shorter at once: {}",
         height(window)
     );
+    let saved = f64::from(saved_height(&shell, &rig));
+    assert!((saved - f64::from(height(window))).abs() < 1.0);
+}
+
+#[test]
+fn a_saved_height_taller_than_the_window_keys_from_the_drawn_height() {
+    let rig = calling();
+    let (shell, window, drawn_height) = too_tall_for_the_window(&rig);
     tab_to(window, "call-caption-resize-keys");
     window.simulate_keystrokes("down");
     assert!(
-        (height(window) - (drawn_height - 60.0)).abs() < 1.0,
-        "a Down then makes it shorter: {}",
+        (height(window) - (drawn_height - 20.0)).abs() < 1.0,
+        "the first Down makes the drawn area shorter at once: {}",
         height(window)
     );
     let saved = f64::from(saved_height(&shell, &rig));
@@ -337,6 +351,20 @@ fn the_language_confirmation_s_taller_floor_is_never_saved() {
     assert!(
         (f64::from(saved_height(&shell, &rig)) - (start - 60.0)).abs() < 1.0,
         "a drag down saves a shorter height than before"
+    );
+    let floor = height(window);
+    window.simulate_keystrokes("up");
+    assert!(
+        (height(window) - (floor + 20.0)).abs() < 1.0,
+        "an Up grows the area from its drawn height at once: {}",
+        height(window)
+    );
+    let grown = height(window);
+    drag_edge(window, -20.0);
+    assert!(
+        (height(window) - (grown + 20.0)).abs() < 1.0,
+        "a drag up grows the area from its drawn height at once: {} from {grown}",
+        height(window)
     );
 }
 
