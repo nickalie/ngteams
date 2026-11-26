@@ -22,10 +22,14 @@
 //! - **Whether the microphone hears anything** (before its processing, muted or not; held as speaking is): what the
 //!   speaking mark can't tell when the processing takes everything out, as it does an echo it cancels.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use teams_call::Participant;
-use teams_media::session::{AudioLevels, SourceRequest};
+#[cfg(feature = "calls")]
+use {
+    std::time::Instant,
+    teams_call::Participant,
+    teams_media::session::{AudioLevels, SourceRequest},
+};
 
 /// The RMS level (0 to 1) above which a side is speaking: about -34 dBFS, above a quiet room's noise.
 pub const SPEAKING_LEVEL: f32 = 0.02;
@@ -76,6 +80,7 @@ pub struct CallView {
 
 /// A running call's participants and lines (see the module docs).
 #[derive(Debug, Default)]
+#[cfg(feature = "calls")]
 pub(super) struct Gallery {
     /// A group call's: who speaks in it is the mixer's to say.
     group: bool,
@@ -101,6 +106,7 @@ pub(super) struct Gallery {
     told: Option<CallView>,
 }
 
+#[cfg(feature = "calls")]
 impl Gallery {
     /// A call's gallery; `group` for a group call's, `lines` for one whose video started (its receiving lines
     /// assigned).

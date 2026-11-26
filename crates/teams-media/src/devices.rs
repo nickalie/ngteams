@@ -22,20 +22,20 @@ use std::time::Duration;
 pub mod catalog;
 pub mod deferred;
 pub mod file;
-#[cfg(any(windows, target_os = "macos", test))]
+#[cfg(all(feature = "gstreamer", any(windows, target_os = "macos", test)))]
 mod native;
 pub mod pattern;
 #[cfg(target_os = "linux")]
 pub mod pipewire;
 #[cfg(target_os = "linux")]
 pub mod portal;
-#[cfg(windows)]
+#[cfg(all(feature = "gstreamer", windows))]
 pub use native::WindowsDevices;
 
-#[cfg(windows)]
+#[cfg(all(feature = "gstreamer", windows))]
 pub use native::WindowsDevices as SystemDevices;
 /// macOS's devices: the same `GStreamer` backend as Windows, over Core Audio and `AVFoundation`.
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "gstreamer", target_os = "macos"))]
 pub use native::WindowsDevices as SystemDevices;
 /// The native device backend selected at compile time; call sites share the same reach and device contracts.
 #[cfg(target_os = "linux")]

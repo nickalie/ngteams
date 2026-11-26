@@ -1,13 +1,17 @@
 //! Per-viewer ephemeral caption state. No speech or service credentials enter the persistent outbox.
-use std::future::pending;
-use std::time::{Duration, Instant};
+#[cfg(feature = "calls")]
+use {
+    super::{CallActionError, CallId, CallTried, Calling},
+    crate::engine::Event,
+    std::future::pending,
+    std::time::{Duration, Instant},
+    teams_proto::captions::CaptionWrite,
+    teams_proto::{Credentials, HttpError, Transport},
+};
 
-use teams_proto::captions::CaptionWrite;
-use teams_proto::{Credentials, HttpError, Transport};
-
-use super::{CallActionError, CallId, CallTried, Calling};
-use crate::engine::Event;
-
+#[cfg(not(feature = "calls"))]
+use super::Caption;
+#[cfg(feature = "calls")]
 pub use teams_media::captions::Caption;
 
 /// Local caption visibility and service readiness.
@@ -31,6 +35,7 @@ pub struct CallCaptions {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(feature = "calls")]
 pub(super) enum Operation {
     Invite,
     Start,
@@ -38,6 +43,7 @@ pub(super) enum Operation {
 }
 
 #[derive(Default)]
+#[cfg(feature = "calls")]
 pub(super) struct Captions {
     call: Option<CallId>,
     view: CallCaptions,
@@ -46,6 +52,7 @@ pub(super) struct Captions {
     deadline: Option<Instant>,
 }
 
+#[cfg(feature = "calls")]
 pub(super) async fn next(writing: Option<&mut (Operation, super::Attempt)>) -> (Operation, CallTried) {
     match writing {
         Some((operation, attempt)) => (*operation, attempt.await),
@@ -53,6 +60,7 @@ pub(super) async fn next(writing: Option<&mut (Operation, super::Attempt)>) -> (
     }
 }
 
+#[cfg(feature = "calls")]
 impl<C, T> Calling<C, T>
 where
     C: Credentials + 'static,
@@ -247,6 +255,7 @@ where
     }
 }
 
+#[cfg(feature = "calls")]
 fn update(lines: &mut Vec<Caption>, line: Caption) {
     if let Some(old) = lines.iter_mut().find(|old| {
         (old.id == line.id || (line.audio_timestamp != 0 && old.audio_timestamp == line.audio_timestamp))
@@ -266,6 +275,7 @@ fn update(lines: &mut Vec<Caption>, line: Caption) {
     }
 }
 
+#[cfg(feature = "calls")]
 fn older_result(next: &str, previous: &str) -> bool {
     let numbered = |value: &str| {
         value

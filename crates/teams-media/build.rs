@@ -9,6 +9,7 @@ const MODEL: &str = "assets/segmentation/selfie_segmenter_landscape.onnx";
 fn main() {
     println!("cargo::rerun-if-changed={MODEL}");
     require_objc_link_on_macos();
+    #[cfg(feature = "effects")]
     burn_onnx::ModelGen::new()
         .input(MODEL)
         .out_dir("model/")
