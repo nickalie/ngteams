@@ -1034,9 +1034,18 @@ fn escape_in_a_card_s_player_closes_its_menu_then_pauses_it_and_gives_the_keys_b
         "the keys stay in the player"
     );
     assert_eq!(cx.update(|_, cx| view.read(cx).asked), Asked::Play);
-    cx.simulate_keystrokes("escape");
+    // one update, so the 2 s movie can't end before the key comes
+    let asked = cx.update(|window, cx| {
+        view.update(cx, |player, _| {
+            if let Some(status) = player.status.as_mut() {
+                status.state = State::Playing;
+            }
+        });
+        window.dispatch_keystroke(gpui::Keystroke::parse("escape").unwrap(), cx);
+        view.read(cx).asked
+    });
     draw(cx);
-    assert_eq!(cx.update(|_, cx| view.read(cx).asked), Asked::Pause, "Escape pauses it");
+    assert_eq!(asked, Asked::Pause, "Escape pauses it");
     assert!(
         cx.update(|window, _| card.is_focused(window)),
         "the keys go back to the card"
@@ -1076,9 +1085,8 @@ fn left_and_right_skip_in_a_card_s_player_before_the_list_around_it_takes_them()
     wait_state(&view, cx, State::Playing);
     cx.update(|_, cx| view.update(cx, VideoPlayer::pause));
     wait_state(&view, cx, State::Paused);
-    let position =
-        |cx: &mut gpui::VisualTestContext| cx.update(|_, cx| view.read(cx).status.map(|status| status.position));
-    cx.update(|_, cx| {
+    // one update, so the player's report of the movie's real length can't overwrite the status between keys
+    let positions = cx.update(|window, cx| {
         view.update(cx, |player, _| {
             player.status = Some(Status {
                 state: State::Paused,
@@ -1088,9 +1096,11 @@ fn left_and_right_skip_in_a_card_s_player_before_the_list_around_it_takes_them()
                 rate: 1.0,
             });
         });
+        let mut after = |key: &str| {
+            window.dispatch_keystroke(gpui::Keystroke::parse(key).unwrap(), cx);
+            view.read(cx).status.map(|status| status.position)
+        };
+        [after("left"), after("right")]
     });
-    cx.simulate_keystrokes("left");
-    assert_eq!(position(cx), Some(Duration::from_secs(5)));
-    cx.simulate_keystrokes("right");
-    assert_eq!(position(cx), Some(Duration::from_secs(15)));
+    assert_eq!(positions, [Some(Duration::from_secs(5)), Some(Duration::from_secs(15))]);
 }
