@@ -14,7 +14,7 @@
 //! - **drag**: up and down; a drag saves once, when it ends; it stops at the least and the most. The tooltip on hover.
 //! - **window**: a shorter window keeps the stage's least room, and the saved height stays.
 //! - **hidden**: the captions hidden and shown again start at the end. The transcript pane still opens and fills.
-//! - **themes**: shots of a short and a tall area in Teams Light and Dark.
+//! - **themes**: shots of a short and a tall area in Teams Light and Dark, with the list's ring.
 //! - **restart**: the height survives a restart for a; b starts at the default and keeps its own.
 //!
 //! `QA867_EVIDENCE` names a directory that gets the screenshots and the notes too; the shots also go to
@@ -308,6 +308,11 @@ fn tab_walk(user: &mut User<'_>, prefix: &str) -> SandboxResult<Found> {
         if found.list.is_none() && width > 300 && tall > 40 {
             let ring = (changed.0, changed.1.midpoint(changed.3));
             found.list = Some((tab, ring));
+            check(
+                &format!("{prefix}: the list's ring shows on all four sides"),
+                ring_whole(&now, changed),
+                || format!("ring box {changed:?}"),
+            );
             user.shot(&format!("{prefix}-tab-list"))?;
         } else if found.edge.is_none() && width <= 48 && tall <= 10 {
             let centre = (changed.0.midpoint(changed.2), changed.1.midpoint(changed.3));
@@ -466,7 +471,7 @@ fn drag(user: &mut User<'_>, found: &Found) -> SandboxResult {
     Ok(())
 }
 
-/// A short and a tall area in Teams Light and Dark, the edge on hover too.
+/// A short and a tall area in Teams Light and Dark, the list's ring and the edge on hover too.
 fn themes(user: &mut User<'_>, found: &Found) -> SandboxResult {
     let Some((_, (x, _))) = found.edge else {
         return Ok(());
@@ -477,6 +482,9 @@ fn themes(user: &mut User<'_>, found: &Found) -> SandboxResult {
         user.keys(&["end"])?;
         user.park()?;
         user.shot(&format!("theme-{theme}-tall"))?;
+        user.focus_list(found)?;
+        user.shot(&format!("theme-{theme}-ring"))?;
+        user.focus_edge(found)?;
         user.keys(&["home"])?;
         user.shot(&format!("theme-{theme}-short"))?;
         let edge = user.window_height()? - FRAME - MIN + 3;
@@ -605,6 +613,15 @@ fn changed_in(a: &RgbImage, b: &RgbImage, (left, top, right, bottom): (u32, u32,
         }
     }
     count
+}
+
+/// Whether the box's four sides are brand lines, clear of the window's frame on the left and right.
+fn ring_whole(image: &RgbImage, (left, top, right, bottom): (u32, u32, u32, u32)) -> bool {
+    let (middle_x, middle_y) = (left.midpoint(right), top.midpoint(bottom));
+    let sides = [(left, middle_y), (right, middle_y), (middle_x, top), (middle_x, bottom)];
+    left > FRAME
+        && right + FRAME < image.width().saturating_sub(1)
+        && sides.iter().all(|&(x, y)| brandish(image.get_pixel(x, y).0))
 }
 
 fn brandish([r, g, b]: [u8; 3]) -> bool {

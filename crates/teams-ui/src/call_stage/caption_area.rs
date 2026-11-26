@@ -24,6 +24,8 @@ const EDGE_HEIGHT: f32 = 6.0;
 pub(super) const BORDER: f32 = 1.0;
 /// The scroll bar's width, px.
 const SCROLLBAR_WIDTH: f32 = 12.0;
+/// The gap around the list, px: its focus ring stays clear of the window's frame.
+const RING_INSET: f32 = 2.0;
 
 /// A drag of the edge: where the pointer was when it started, and the heights that a shrink and a growth start from.
 #[derive(Clone, Copy, Debug)]
@@ -233,11 +235,12 @@ impl CallStage {
             .track_scroll(&self.caption_area.scroll)
             .pr(px(SCROLLBAR_WIDTH))
             .children(lines);
+        // inside the list's border, so the scroll bar does not cover its focus ring
         let scrollbar = div()
             .absolute()
-            .top_0()
-            .bottom_0()
-            .right_0()
+            .top(px(RING_INSET + BORDER))
+            .bottom(px(RING_INSET + BORDER))
+            .right(px(RING_INSET + BORDER))
             .w(px(SCROLLBAR_WIDTH))
             .child(
                 Scrollbar::vertical(&self.caption_area.scroll)
@@ -256,6 +259,7 @@ impl CallStage {
             .relative()
             .flex_1()
             .min_h_0()
+            .p(px(RING_INSET))
             .child(list)
             .child(scrollbar)
     }
