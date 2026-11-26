@@ -372,6 +372,7 @@ fn call(shell: &Entity<Shell>, number: u64, chat: &str, cx: &mut App) {
             caller: Mri::new(LAB_B),
             caller_name: Some("Lab Bee".to_owned()),
             group_chat: Some(chat.to_owned()),
+            meeting: None,
         }),
         teams_core::Event::Call {
             call,
