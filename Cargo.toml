@@ -234,7 +234,7 @@ regex = "1.13.1"
 # a series' occurrences from its recurrence rule (ngteams-server's calendar)
 rrule = "0.14.0"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "http2"] }
-# the Trouter socket checks the server certificate as reqwest does (the system verifier)
+# teams-auth's TLS config (`tls`) for reqwest and the Trouter socket: an own CA first, then the system's verifier
 rustls-platform-verifier = "0.7.1"
 # the local store: SQLite built from source (`bundled`), so every machine runs the same version
 rusqlite = { version = "0.40.2", features = ["array", "bundled"] }

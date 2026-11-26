@@ -398,7 +398,8 @@ Windows-only runner/job sources have hash-checked Linux inventory entries and ar
 The [macOS portability workflow](../.github/workflows/macos.yml) runs on `macos-latest` (Apple silicon) for pushes to
 `main`, pull requests and merge groups. It installs GStreamer's pinned official macOS runtime into the runner's temp
 dir (`scripts/macos-gstreamer.sh`, no admin), then formats, checks and lints every workspace target (the Linux-only
-crates compile to nothing there) and runs the offline tests of the crates with macOS code of their own: files, logs,
+crates compile to nothing there), lints `teams-media` without its `gstreamer` and `effects` features (the stand-ins
+of `processing/no_model.rs` and `video/effects/no_model.rs`, and no native devices) and runs the offline tests of the crates with macOS code of their own: files, logs,
 stores, authentication with the Keychain store's round trip against the runner's unlocked login keychain
 (`NGTEAMS_KEYCHAIN_TESTS=1`), the control socket and CLI, the runner, updates, the sign-in guard and the native device
 backend's catalog, libwebrtc's factory with its H.264 codec list (a binary linked without the `-ObjC` of

@@ -22,6 +22,7 @@ fn only_an_own_server_trusts_a_certificate_authority_of_its_own() {
         "",
         "not a certificate",
         "-----BEGIN CERTIFICATE-----\nnot base64\n-----END CERTIFICATE-----\n",
+        "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
     ] {
         assert_eq!(own.clone().trusting(bad.as_bytes()), Err(InvalidRoots), "{bad:?}");
     }

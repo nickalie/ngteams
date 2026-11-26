@@ -68,6 +68,9 @@ jobs:
         run: cargo check --locked --workspace --all-targets --exclude ngteams-server
       - name: Lints
         run: cargo clippy --locked --workspace --all-targets --exclude ngteams-server -- -D warnings
+      # no build turns these features off yet: here they drop SystemDevices too, so it stays compiled
+      - name: Lints of teams-media without GStreamer and the model effects
+        run: cargo clippy --locked -p teams-media --no-default-features --lib -- -D warnings
       - name: Offline files, Keychain, control socket, runner, update and sign-in guard tests
         run: >-
           cargo test --locked -p teams-platform -p teams-log -p teams-store -p teams-auth -p teams-ctl -p teams-runner

@@ -87,13 +87,12 @@ impl Cloud {
     /// connections only. Microsoft's cloud never takes one.
     ///
     /// # Errors
-    /// [`InvalidRoots`] unless `pem` holds at least one certificate and every one of them parses.
+    /// [`InvalidRoots`] unless `pem` holds at least one certificate and every one of them is a readable authority.
     pub fn trusting(self, pem: &[u8]) -> Result<Self, InvalidRoots> {
         match self {
             Self::Microsoft => Err(InvalidRoots),
             Self::Own { origin } => {
-                let parsed = reqwest::Certificate::from_pem_bundle(pem).map_err(|_| InvalidRoots)?;
-                if parsed.is_empty() {
+                if !crate::tls::readable_authority(pem) {
                     return Err(InvalidRoots);
                 }
                 Ok(Self::Own {
@@ -120,13 +119,16 @@ impl Cloud {
         if self.extra_roots().is_none() {
             return builder;
         }
-        // checked when they were taken ([`Cloud::trusting`]): one that no longer parses adds nothing
         match crate::tls::client_config(self) {
             Ok(mut config) => {
                 config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
                 builder.use_preconfigured_tls(config)
             }
-            Err(_) => builder,
+            Err(error) => {
+                // the authority was read in `trusting`, so only the system verifier gets here; it fails closed
+                log::warn!("the own server's TLS config, the system's roots only: {error}");
+                builder
+            }
         }
     }
 

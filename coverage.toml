@@ -648,12 +648,12 @@ context = { "crates/teams-core/src/calling.rs" = "f21b4bda3f5c42d5cf742efbc4ed7a
 
 [unmapped_sources."crates/teams-media/src/processing/no_model.rs"]
 sha256 = "9421580aad9b3249b44360490d7e4c700b518d380cbcc17f95c765b9f4b8c609"
-reason = "noise suppression of the build without the effects feature (a no-op and an uninhabited type); selected by cfg(not(feature = \"effects\")) in processing.rs"
+reason = "noise suppression of the build without the effects feature (a no-op and an uninhabited type); selected by cfg(not(feature = \"effects\")) in processing.rs, checked by the macOS portability workflow"
 context = { "crates/teams-media/src/processing.rs" = "b6a1717fde886509db286dc4314edb1708e7599ce09c4212a46b0bc88288f3e6" }
 
 [unmapped_sources."crates/teams-media/src/video/effects/no_model.rs"]
 sha256 = "f9b66fb2d9c4991270f4a5861aa85a44923f0a0a1e5c507e4547c0960c80cb70"
-reason = "segmenter of the build without the effects feature (an all-background mask); selected by cfg(not(feature = \"effects\")) in effects.rs"
+reason = "segmenter of the build without the effects feature (an all-background mask); selected by cfg(not(feature = \"effects\")) in effects.rs, checked by the macOS portability workflow"
 context = { "crates/teams-media/src/video/effects.rs" = "7c4753841bcb551ab4210642856b58fef1f2696febbe662285cf6011c4db36dd" }
 
 [unmapped_sources."crates/teams-auth/src/secrets/macos.rs"]

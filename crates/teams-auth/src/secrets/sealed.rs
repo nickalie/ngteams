@@ -38,7 +38,13 @@ pub struct SealedFileStore {
     dir: PathBuf,
     application: String,
     sealer: Arc<dyn Sealer>,
-    serial: Mutex<()>,
+}
+
+// for the whole process, not each store: two stores of one directory write the same temporary file
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl std::fmt::Debug for SealedFileStore {
@@ -66,7 +72,6 @@ impl SealedFileStore {
             dir,
             application: application.into(),
             sealer,
-            serial: Mutex::new(()),
         })
     }
 
@@ -87,7 +92,7 @@ impl SealedFileStore {
 
     fn write(&self, key: &SecretKey, secret: &Secret) -> Result<(), SecretError> {
         let sealed = self.sealer.seal(secret.expose().as_bytes())?;
-        let _serial = self.serial.lock().unwrap_or_else(PoisonError::into_inner);
+        let _serial = serial();
         let temporary = self.path(key, "tmp");
         write_file(&temporary, &sealed)
             .and_then(|()| fs::rename(&temporary, self.path(key, "sealed")))
@@ -99,7 +104,7 @@ impl SealedFileStore {
 
     fn read(&self, key: &SecretKey) -> Result<Option<Secret>, SecretError> {
         let sealed = {
-            let _serial = self.serial.lock().unwrap_or_else(PoisonError::into_inner);
+            let _serial = serial();
             match fs::read(self.path(key, "sealed")) {
                 Ok(sealed) => sealed,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -112,7 +117,7 @@ impl SealedFileStore {
     }
 
     fn remove(&self, key: &SecretKey) -> Result<(), SecretError> {
-        let _serial = self.serial.lock().unwrap_or_else(PoisonError::into_inner);
+        let _serial = serial();
         match fs::remove_file(self.path(key, "sealed")) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),

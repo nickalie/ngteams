@@ -36,6 +36,11 @@ pub fn client_config(cloud: &Cloud) -> Result<ClientConfig, Error> {
         .with_no_client_auth())
 }
 
+/// Whether `pem` holds at least one certificate authority and every one of them can be read.
+pub(crate) fn readable_authority(pem: &[u8]) -> bool {
+    own_verifier(pem, Arc::new(crypto::aws_lc_rs::default_provider())).is_ok()
+}
+
 fn own_verifier(pem: &[u8], provider: Arc<CryptoProvider>) -> Result<Arc<WebPkiServerVerifier>, Error> {
     let unreadable = |error: &dyn std::fmt::Display| Error::General(format!("the certificate authority: {error}"));
     let mut roots = RootCertStore::empty();
@@ -67,9 +72,10 @@ impl ServerCertVerifier for OwnOrSystem {
     ) -> Result<ServerCertVerified, Error> {
         self.own
             .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
-            .or_else(|_| {
+            .or_else(|own| {
                 self.system
                     .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+                    .map_err(|system| more_telling(own, system))
             })
     }
 
@@ -96,6 +102,14 @@ impl ServerCertVerifier for OwnOrSystem {
     }
 }
 
+/// The own authority's error when the certificate chains to it (expired, wrong name), else the system's.
+fn more_telling(own: Error, system: Error) -> Error {
+    match own {
+        Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer) => system,
+        own => own,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +126,24 @@ mod tests {
                 error.to_string().contains("the certificate authority: "),
                 "{pem:?}: {error}"
             );
+            assert!(!readable_authority(pem.as_bytes()), "{pem:?}");
         }
+    }
+
+    #[test]
+    fn the_own_authority_error_wins_unless_it_does_not_know_the_issuer() {
+        use rustls::CertificateError::{Expired, UnknownIssuer};
+        let system = || Error::InvalidCertificate(UnknownIssuer);
+        assert_eq!(
+            more_telling(Error::InvalidCertificate(Expired), system()),
+            Error::InvalidCertificate(Expired)
+        );
+        assert_eq!(
+            more_telling(
+                Error::InvalidCertificate(UnknownIssuer),
+                Error::General("system".to_owned())
+            ),
+            Error::General("system".to_owned())
+        );
     }
 }

@@ -207,3 +207,28 @@ fn a_directory_that_cannot_be_made_is_reported() {
     assert!(matches!(error, SecretError::SealedFile(_)), "{error:?}");
     assert!(error.to_string().starts_with("sealed secret file: "));
 }
+
+#[test]
+fn two_stores_of_one_directory_never_leave_a_partial_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    let (first, sealer) = store(dir.path());
+    let second = SealedFileStore::new(dir.path(), "synthetic-sealed", sealer).unwrap();
+    let long = |mark: char| mark.to_string().repeat(64 * 1024);
+    std::thread::scope(|scope| {
+        for (store, mark) in [(&first, 'a'), (&second, 'b')] {
+            scope.spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+                for _ in 0..50 {
+                    runtime
+                        .block_on(store.put(&key(SPACES), &Secret::new(long(mark))))
+                        .unwrap();
+                    let read = runtime.block_on(store.get(&key(SPACES))).unwrap().unwrap();
+                    assert!(
+                        [long('a'), long('b')].iter().any(|whole| read.expose() == whole),
+                        "a whole secret, never part of one"
+                    );
+                }
+            });
+        }
+    });
+}
