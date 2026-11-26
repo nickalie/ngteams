@@ -38,7 +38,7 @@ added and removed lines. A patch with the status "ported" has changes for the 0.
 | gpui-pre-linux | 0007-activation-serial-of-the-last-press | dropped: upstream signs the activation token with the last key or pointer press and the surface of that press (`ActivationContext`, zed #64058). Under niri, a key press in one window lets it activate another window. |
 | gpui-pre-windows | 0001-atlas-inspection | here |
 | gpui-pre-windows | 0002-path-prompt-title-and-filters | here |
-| gpui-pre-windows | 0003-right-to-left-glyph-runs | ported. 0.3.14 splits a line at U+2028 and U+2029, thus the first strong letter of the whole line gives the direction of each part. A tab takes its place from the hit test of the layout. The Hebrew lines of the upstream test `tabs_preserve_native_advances_and_cursor` move to a new test that reads x in visual order. It needs `gpui::first_strong_direction` and `gpui::TextDirection` from the port of gpui-pre 0005. |
+| gpui-pre-windows | 0003-right-to-left-glyph-runs | ported. 0.3.14 splits a line at U+2028 and U+2029, thus the first strong letter of the whole line gives the direction of each part. A tab takes its place from the hit test of the layout. The Hebrew lines of the upstream test `tabs_preserve_native_advances_and_cursor` move to a new test that reads x in visual order, in Consolas and Segoe UI at 12 and 16 px. It checks that each tab ends at the next tab stop from the leading edge of the paragraph. It needs `gpui::first_strong_direction` and `gpui::TextDirection` from the port of gpui-pre 0005. |
 
 When all patches are ported or dropped, the bump moves these files to `build/patches/<crate>` and this set becomes
 the vendored set.
