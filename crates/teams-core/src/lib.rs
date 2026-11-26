@@ -73,10 +73,11 @@ mod workflows;
 
 pub use calendar::{EventWrite, EventWritten, Invitable, MeetingAvailability, Touched};
 pub use calling::{
-    CallAction, CallActionError, CallCaptions, CallHealth, CallMedia, CallParticipant, CallParts, CallRecording,
-    CallStatus, CallVideo, CallView, Caption, CaptionPhase, GROUP_SLOTS, IncomingCall, LobbyPerson, RecordingPhase,
-    RecordingProblem, Relay, START_WITHIN, VideoOutput,
+    CallAction, CallActionError, CallCaptions, CallHealth, CallParticipant, CallParts, CallRecording, CallStatus,
+    CallView, Caption, CaptionPhase, IncomingCall, LobbyPerson, RecordingPhase, RecordingProblem, START_WITHIN,
 };
+#[cfg(feature = "calls")]
+pub use calling::{CallMedia, CallVideo, GROUP_SLOTS, Relay, VideoOutput};
 pub use channels::{ChannelDraft, ChannelMade, ChannelProblem};
 pub use emoticons::Strip;
 pub use engine::{

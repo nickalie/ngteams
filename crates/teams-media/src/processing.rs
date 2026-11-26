@@ -26,6 +26,10 @@ use libwebrtc::native::apm::AudioProcessingModule;
 use crate::Error;
 use crate::devices::{AudioFrame, FRAME_SAMPLES, SAMPLE_RATE};
 
+#[cfg(feature = "effects")]
+pub mod deep;
+#[cfg(not(feature = "effects"))]
+#[path = "processing/no_model.rs"]
 pub mod deep;
 pub mod noise;
 

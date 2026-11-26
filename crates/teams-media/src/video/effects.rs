@@ -28,7 +28,12 @@ use crate::devices::{PixelFormat, VideoFrame};
 
 mod compose;
 mod edge;
+#[cfg(feature = "effects")]
 mod gpu;
+#[cfg(feature = "effects")]
+mod segment;
+#[cfg(not(feature = "effects"))]
+#[path = "effects/no_model.rs"]
 mod segment;
 
 pub use segment::{MODEL_HEIGHT, MODEL_WIDTH};
@@ -290,5 +295,5 @@ fn to_usize(value: u32) -> usize {
     usize::try_from(value).unwrap_or(usize::MAX)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "effects"))]
 mod tests;

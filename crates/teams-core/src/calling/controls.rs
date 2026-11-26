@@ -10,23 +10,29 @@
 //! [`CallAction::MeetingOption`]: super::CallAction::MeetingOption
 //! [`EngineRequests::call_meeting_options`]: crate::EngineRequests::call_meeting_options
 
-use std::sync::Arc;
+use teams_proto::{MeetingOption, MeetingOptions};
 
-use teams_call::{CallId, MeetingState};
-use teams_proto::{
-    Credentials, HttpError, MeetingOption, MeetingOptions, MeetingOptionsRead, SetMeetingOption, Transport,
+use crate::engine::Responder;
+#[cfg(feature = "calls")]
+use {
+    super::{Act, CallActionError, CallError, CallRetries, CallTried, Calling, Waiting},
+    crate::EngineError,
+    std::sync::Arc,
+    teams_call::{CallId, MeetingState},
+    teams_proto::{Credentials, HttpError, MeetingOptionsRead, SetMeetingOption, Transport},
 };
 
-use super::{Act, CallActionError, CallError, CallRetries, CallTried, Calling, Waiting};
-use crate::EngineError;
-use crate::engine::Responder;
-
 /// What is asked of a call's meeting options: their read (answered to its own responder), or a change.
+#[cfg_attr(
+    not(feature = "calls"),
+    expect(dead_code, reason = "without call media no calling reads a meeting option")
+)]
 pub(crate) enum Options {
     Read(Responder<Option<MeetingOptions>>),
     Change(MeetingOption),
 }
 
+#[cfg(feature = "calls")]
 impl<C, T> Calling<C, T>
 where
     C: Credentials + 'static,

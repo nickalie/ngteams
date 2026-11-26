@@ -71,52 +71,80 @@
 //!
 //! A call survives the calling socket's reconnect: its links stay as they were (the capture shows a dropped socket
 //! changes none), the socket registers again on the same endpoint, and the media runs on its own threads throughout.
+//!
+//! Without the `calls` feature (a phone's chats build, which links no call media) only the call data types build:
+//! `off` stands in for the calling, `Parts::calls` is always `None`, and every call action is refused
+//! ([`CallActionError::NoCalling`]).
 
 mod captions;
-pub use captions::{CallCaptions, Caption, CaptionPhase};
+#[cfg(feature = "calls")]
+pub use captions::Caption;
+pub use captions::{CallCaptions, CaptionPhase};
 mod recording;
 pub(crate) use recording::record_act;
 pub use recording::{CallRecording, RecordingPhase, RecordingProblem};
 mod gallery;
+#[cfg(feature = "calls")]
 mod health;
+#[cfg(feature = "calls")]
 pub use health::{CallHealth, MediaHealth, NetworkHealth, StreamHealth};
 mod controls;
 pub(crate) use controls::Options;
+#[cfg(feature = "calls")]
 mod media;
+#[cfg(not(feature = "calls"))]
+mod off;
+#[cfg(feature = "calls")]
 mod outcome;
+#[cfg(feature = "calls")]
 mod people;
+#[cfg(feature = "calls")]
 mod share;
+#[cfg(not(feature = "calls"))]
+pub(crate) use off::Calling;
+#[cfg(not(feature = "calls"))]
+pub use off::{CallHealth, CallParts, Caption};
+#[cfg(feature = "calls")]
 use share::OldShares;
 
 pub use gallery::{CallParticipant, CallView, HEARING_LEVEL, SPEAKING_HOLD, SPEAKING_LEVEL};
+#[cfg(feature = "calls")]
 pub use media::{CLOSED_GRACE, CONNECT_WITHIN, CallMedia, CallVideo, GROUP_SLOTS, RECOVER_WITHIN, Relay, VideoOutput};
 
-use std::collections::{HashMap, VecDeque};
-use std::future::{Future, pending};
-use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use teams_call::{
-    CallError, CallEvent, CallId, CallState, CallWrite, Calls, DeliveryKey, DeliveryReply, Effect, End, Identity,
-    Outcome, Participant, Placement, WriteId, WriteSink,
-};
-use teams_proto::Mri;
-use teams_proto::{
-    ChannelMeetup, ChannelParameters, Client, Credentials, EndpointRegistrar, HttpError, HttpTransport, MediaContent,
-    MeetingInfo, Request, Transport,
-};
-use teams_trouter::{CallResponder, CallResponse, Ignored, PushEvent, Trouter, TrouterCredentials, TrouterHandle};
+use teams_call::{CallError, CallId, End, Placement};
+use teams_proto::{ChannelMeetup, MeetingInfo, Mri};
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinSet;
 
-use crate::engine::{EngineError, Event, Push, emit_to};
-use crate::outbox::{CallRetries, CallTried, Outbox};
+use crate::engine::EngineError;
+#[cfg(feature = "calls")]
 use media::{LiveMedia, MediaChange, MediaDone, Prepared, Setup, VideoKind};
+#[cfg(feature = "calls")]
+use {
+    crate::engine::{Event, Push, emit_to},
+    crate::outbox::{CallRetries, CallTried, Outbox},
+    std::collections::{HashMap, VecDeque},
+    std::future::{Future, pending},
+    std::pin::Pin,
+    std::time::Instant,
+    teams_call::{
+        CallEvent, CallState, CallWrite, Calls, DeliveryKey, DeliveryReply, Effect, Identity, Outcome, Participant,
+        WriteId, WriteSink,
+    },
+    teams_proto::{
+        ChannelParameters, Client, Credentials, EndpointRegistrar, HttpError, HttpTransport, MediaContent, Request,
+        Transport,
+    },
+    teams_trouter::{CallResponder, CallResponse, Ignored, PushEvent, Trouter, TrouterCredentials, TrouterHandle},
+    tokio::task::JoinSet,
+};
 
 /// How long the engine, stopping, waits for a call's last writes (its `leave`, its decline).
 pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 /// How often a running call's media is looked at.
+#[cfg(feature = "calls")]
 const MEDIA_LOOK: Duration = Duration::from_millis(50);
 /// How long a start's, a join's or an answer's media may take to be set up (the relay's credentials read, the session
 /// made, its candidates gathered) before the action fails: a setup that never ends would hold the calling busy, every
@@ -132,12 +160,14 @@ pub const START_WITHIN: Duration = Duration::from_secs(15);
 /// The account's calling, built and not started: its calling socket (`Trouter::for_calls`, over the transport the
 /// outbox writes with, so its deliveries and the call writes feed one call registry), who the account is in its calls
 /// and what their media is made of.
+#[cfg(feature = "calls")]
 pub struct CallParts {
     push: Push,
     identity: Identity,
     media: CallMedia,
 }
 
+#[cfg(feature = "calls")]
 impl CallParts {
     /// The calling of `identity` (its `endpoint_id` taken from `trouter`, the calling endpoint it registers) on
     /// `trouter`, the calling stack's socket, its calls' media made of `media`.
@@ -156,6 +186,7 @@ impl CallParts {
     }
 }
 
+#[cfg(feature = "calls")]
 impl std::fmt::Debug for CallParts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CallParts")
@@ -385,6 +416,10 @@ pub enum CallActionError {
 pub(crate) type Waiting = oneshot::Sender<Result<CallId, EngineError>>;
 
 /// An action the engine resolved (a chat's call into its placement).
+#[cfg_attr(
+    not(feature = "calls"),
+    expect(dead_code, reason = "without call media no calling reads an action")
+)]
 pub(crate) enum Act {
     Captions(CallId, bool),
     CaptionLanguage(CallId, String),
@@ -420,10 +455,13 @@ pub(crate) enum Act {
     Health(CallId, crate::engine::Responder<Option<CallHealth>>),
 }
 
+#[cfg(feature = "calls")]
 type Attempt = Pin<Box<dyn Future<Output = CallTried>>>;
+#[cfg(feature = "calls")]
 type Again = Box<dyn FnMut() -> Attempt>;
 
 /// The one call write in flight: where it is, how to make another attempt, and the further attempts it has used.
+#[cfg(feature = "calls")]
 struct Writing {
     id: WriteId,
     name: &'static str,
@@ -434,6 +472,7 @@ struct Writing {
 }
 
 /// Where the write in flight is.
+#[cfg(feature = "calls")]
 enum Flight {
     /// An attempt is under way.
     Attempt(Attempt),
@@ -442,6 +481,7 @@ enum Flight {
 }
 
 /// What the write in flight came to.
+#[cfg(feature = "calls")]
 enum Landed {
     /// Its attempt is over.
     Tried(CallTried),
@@ -450,6 +490,7 @@ enum Landed {
 }
 
 /// Media being set up for an action, with the action's answer.
+#[cfg(feature = "calls")]
 struct Preparing {
     /// What it is set up for: a start or join (`None`), or the answer of an offered invitation.
     answering: Option<CallId>,
@@ -466,9 +507,11 @@ struct Preparing {
 }
 
 /// A call's media being set up again once it was let in from its meeting's lobby ([`Calling::rebuild`]).
+#[cfg(feature = "calls")]
 type Rebuilding = (CallId, Pin<Box<dyn Future<Output = Result<Prepared, String>>>>);
 
 /// What [`Calling::next`] found to do.
+#[cfg(feature = "calls")]
 enum CallStep {
     Push(Option<PushEvent>),
     Written(CallTried),
@@ -488,6 +531,7 @@ enum CallStep {
 }
 
 /// What the recording bot's write in flight (live captions' or a recording's) came to; never, while there is none.
+#[cfg(feature = "calls")]
 async fn service_written(
     captions: Option<&mut (captions::Operation, Attempt)>,
     recording: Option<&mut (recording::Operation, Attempt)>,
@@ -563,6 +607,7 @@ impl CallingTask {
 }
 
 /// The engine's calling (see the module docs).
+#[cfg(feature = "calls")]
 pub(crate) struct Calling<C, T> {
     calls: Calls,
     captions: captions::Captions,
@@ -615,11 +660,13 @@ pub(crate) struct Calling<C, T> {
 }
 
 /// The engine's sink for one call write: it keeps the write (to try again) and makes each attempt through the outbox.
+#[cfg(feature = "calls")]
 struct Sink<T> {
     outbox: Arc<Outbox<T>>,
     made: Option<(Attempt, Again, Option<String>)>,
 }
 
+#[cfg(feature = "calls")]
 impl<T: Transport<Error = HttpError> + 'static> WriteSink for Sink<T> {
     fn submit<R: Request + Clone + Send + 'static>(&mut self, _id: WriteId, write: R) {
         let url = write.call_url().map(ToString::to_string);
@@ -632,6 +679,7 @@ impl<T: Transport<Error = HttpError> + 'static> WriteSink for Sink<T> {
     }
 }
 
+#[cfg(feature = "calls")]
 impl<C, T> Calling<C, T>
 where
     C: Credentials + 'static,
@@ -1772,6 +1820,7 @@ where
 }
 
 /// The account's actions.
+#[cfg(feature = "calls")]
 impl<C, T> Calling<C, T>
 where
     C: Credentials + 'static,
@@ -2136,6 +2185,7 @@ where
 }
 
 /// A meeting uses the mixer's receiving lines even when its invitation has no local chat yet.
+#[cfg(feature = "calls")]
 fn placement_video(placement: &Placement) -> VideoKind {
     match placement {
         Placement::Chat { group_chat: None, .. } | Placement::TestCall { .. } | Placement::Transferred { .. } => {
@@ -2148,6 +2198,7 @@ fn placement_video(placement: &Placement) -> VideoKind {
 }
 
 /// The engine stopping.
+#[cfg(feature = "calls")]
 impl<C, T> Calling<C, T>
 where
     C: Credentials + 'static,
@@ -2192,6 +2243,7 @@ where
 
 /// Closes a call's media (the close joins the session's threads), its counts logged first: what went out and what came
 /// in, never what it carried.
+#[cfg(feature = "calls")]
 fn close(call: CallId, session: Arc<teams_media::session::MediaSession>) {
     let stats = session.stats();
     let video = stats.video;
@@ -2222,6 +2274,7 @@ fn close(call: CallId, session: Arc<teams_media::session::MediaSession>) {
 
 /// A group call's send capabilities once its camera is on (`applyChannelParameters` on its main video line `mid`, as
 /// the web client gives them, numbered `sequence`): the largest picture it sends, one stream (no simulcast).
+#[cfg(feature = "calls")]
 fn send_capabilities(mid: String, sequence: u64) -> ChannelParameters {
     let caps = serde_json::json!({"maxVideoSendCapabilities": {"caps": {
         "max-width": 1280, "max-height": 1280, "max-fps": 30, "max-streams": 1, "max-layers": 1,
@@ -2233,11 +2286,13 @@ fn send_capabilities(mid: String, sequence: u64) -> ChannelParameters {
     }
 }
 
+#[cfg(feature = "calls")]
 fn refuse(reply: Waiting, error: CallActionError) {
     let _ = reply.send(Err(EngineError::Call(error)));
 }
 
 /// The calling socket's next event; never, without one.
+#[cfg(feature = "calls")]
 async fn next_push(push: Option<&mut TrouterHandle>) -> Option<PushEvent> {
     match push {
         Some(push) => push.next().await,
@@ -2246,6 +2301,7 @@ async fn next_push(push: Option<&mut TrouterHandle>) -> Option<PushEvent> {
 }
 
 /// What the write in flight comes to next: its attempt over, or its wait for another; never, without one.
+#[cfg(feature = "calls")]
 async fn land(writing: Option<&mut Writing>) -> Landed {
     match writing.map(|writing| &mut writing.flight) {
         Some(Flight::Attempt(attempt)) => Landed::Tried(attempt.await),
@@ -2259,6 +2315,7 @@ async fn land(writing: Option<&mut Writing>) -> Landed {
 
 /// The media set up for an action; never, while none is.
 /// The media set up again for a call let in from its lobby, once it is; never, while none is.
+#[cfg(feature = "calls")]
 async fn rebuilt(rebuilding: Option<&mut Rebuilding>) -> (CallId, Result<Prepared, String>) {
     match rebuilding {
         Some((call, setup)) => (*call, setup.await),
@@ -2266,6 +2323,7 @@ async fn rebuilt(rebuilding: Option<&mut Rebuilding>) -> (CallId, Result<Prepare
     }
 }
 
+#[cfg(feature = "calls")]
 async fn prepared(preparing: Option<&mut Preparing>) -> Result<Prepared, CallActionError> {
     match preparing {
         Some(preparing) => (&mut preparing.setup).await,
@@ -2274,6 +2332,7 @@ async fn prepared(preparing: Option<&mut Preparing>) -> Result<Prepared, CallAct
 }
 
 /// The next look at the media; never, before the calling started.
+#[cfg(feature = "calls")]
 async fn look(look: Option<&mut tokio::time::Interval>) {
     match look {
         Some(look) => {

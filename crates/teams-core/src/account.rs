@@ -9,17 +9,22 @@ use teams_auth::authz::{AuthzClient, AuthzError, CHAT_BASE_GTM, Region};
 use teams_auth::secrets::SecretStore;
 use teams_auth::session::Session;
 use teams_auth::token::{TokenClient, TokenError};
-use teams_call::Identity;
 use teams_call::Tracker;
+#[cfg(feature = "calls")]
 use teams_media::video::codec::EncoderSettings;
+#[cfg(feature = "calls")]
 use teams_media::video::convert::MaxSize;
 use teams_proto::Mri;
 use teams_proto::{Author, BuildError, Client, ClientInfo, Cloud, Credentials, HttpTransport};
 use teams_store::{Store, StoreError};
-use teams_trouter::{CallStack, Trouter};
+use teams_trouter::Trouter;
+#[cfg(feature = "calls")]
+use {teams_call::Identity, teams_trouter::CallStack};
 
 use crate::Outbox;
-use crate::calling::{CallMedia, CallParts};
+#[cfg(feature = "calls")]
+use crate::calling::CallMedia;
+use crate::calling::CallParts;
 use crate::engine::{self, EngineError, EngineHandle, EngineOptions, Parts, Push};
 
 /// How an account describes its client in its calls: as the web client's calling stack does in the captures
@@ -46,6 +51,7 @@ pub const CALL_LANGUAGE: &str = "en-us";
 
 /// A call's video shown on `output`: the camera encoded at up to 1.5 Mb/s, 30 frames a second, no bigger than 1280 by
 /// 720.
+#[cfg(feature = "calls")]
 #[must_use]
 pub fn call_video(output: Arc<dyn crate::VideoOutput>) -> crate::CallVideo {
     crate::CallVideo {
@@ -59,6 +65,7 @@ pub fn call_video(output: Arc<dyn crate::VideoOutput>) -> crate::CallVideo {
 /// ([`crate::Relay::Teams`]: an own-server account's is the one its server names), the microphone processed as a
 /// call's is, their video `video` (none without), and the account describing its client as the web client does
 /// ([`web_client_info`], [`CALL_LANGUAGE`]).
+#[cfg(feature = "calls")]
 #[must_use]
 pub fn account_calls(
     devices: Arc<dyn teams_media::devices::Devices + Send + Sync>,
@@ -133,6 +140,7 @@ pub fn listening(read_only: bool, push: bool, calls: Option<AccountCalls>) -> (b
 /// An account's calling as the binary gives it: what its calls' media is made of, and how the account describes its
 /// client in them. The rest of the account in its calls comes from the account (its MRI, its name, its region and
 /// partition), the calling endpoint the socket registers, and its token (its tenant, read before its first test call).
+#[cfg(feature = "calls")]
 #[derive(Clone, Debug)]
 pub struct AccountCalls {
     pub media: CallMedia,
@@ -229,6 +237,9 @@ pub fn start_for_cloud<S: SecretStore + 'static>(
     } else {
         None
     };
+    #[cfg(not(feature = "calls"))]
+    let calls: Option<CallParts> = calls.map(|calls| match calls {});
+    #[cfg(feature = "calls")]
     let calls = match calls {
         Some(calls) => {
             let identity = Identity {
@@ -290,6 +301,12 @@ fn account_tracker(mri: &str, cloud: teams_proto::Cloud) -> Arc<Tracker> {
     Arc::new(Tracker::for_cloud(Mri::new(mri), cloud))
 }
 
+/// An account's calling, which a build without call media (the `calls` feature off) cannot make.
+#[cfg(not(feature = "calls"))]
+#[derive(Clone, Debug)]
+pub enum AccountCalls {}
+
+#[cfg(feature = "calls")]
 fn call_stack(tracker: &Arc<Tracker>, floor: &CallFloor) -> CallStack {
     let observed = Arc::clone(tracker);
     let floor = floor.clone();

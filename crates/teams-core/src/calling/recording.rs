@@ -5,18 +5,23 @@
 //! one attempt, never resent: a start whose outcome is unknown is told as failed, and the roster shows what runs
 //! ([`crate::MeetingState::recording`], [`crate::MeetingState::transcribing`]). Nothing here enters the persistent
 //! outbox.
-use std::future::pending;
-use std::time::{Duration, Instant};
+use teams_proto::captions::{RecordCommand, RecordStart};
 
-use teams_proto::captions::{CaptionWrite, RecordCommand, RecordStart};
-use teams_proto::{Credentials, HttpError, Transport};
-
-use super::{Act, CallAction, CallActionError, CallId, CallTried, Calling};
-use crate::engine::Event;
+use super::{Act, CallAction, CallActionError};
+#[cfg(feature = "calls")]
+use {
+    super::{CallId, CallTried, Calling},
+    crate::engine::Event,
+    std::future::pending,
+    std::time::{Duration, Instant},
+    teams_proto::captions::CaptionWrite,
+    teams_proto::{Credentials, HttpError, Transport},
+};
 
 /// How long a start may take, the recording bot's joining included, before it is told failed: about as long as the
 /// web client keeps trying (it tried a start whose request went unanswered every 20 s for 3 min 20 s before it gave up,
 /// `docs/protocol/calling.md`), as the bot took 15 to 27 s to join in the lab.
+#[cfg(feature = "calls")]
 const JOIN_WITHIN: Duration = Duration::from_secs(200);
 
 /// What the account's own recording or transcription action is doing.
@@ -47,6 +52,7 @@ pub struct CallRecording {
 }
 
 /// Why a start or a stop failed, for a recording and for a transcription alone.
+#[cfg(feature = "calls")]
 struct Problems {
     not_for_this_call: RecordingProblem,
     something_wrong: RecordingProblem,
@@ -57,9 +63,12 @@ struct Problems {
     stop_failed: RecordingProblem,
 }
 
+#[cfg(feature = "calls")]
 const START_FAILED: &str = "Couldn't start recording";
 /// What the web client says once it gave up on a start that went unanswered.
+#[cfg(feature = "calls")]
 const TIMED_OUT: &str = "Please try again. Contact your IT admin if this keeps happening.";
+#[cfg(feature = "calls")]
 const RECORDING: Problems = Problems {
     not_for_this_call: RecordingProblem {
         heading: START_FAILED,
@@ -88,7 +97,9 @@ const RECORDING: Problems = Problems {
 };
 
 // no capture showed a transcription's failure: its words follow the recording's
+#[cfg(feature = "calls")]
 const TRANSCRIBE_FAILED: &str = "Couldn't start transcription";
+#[cfg(feature = "calls")]
 const TRANSCRIPTION: Problems = Problems {
     not_for_this_call: RecordingProblem {
         heading: TRANSCRIBE_FAILED,
@@ -117,6 +128,7 @@ const TRANSCRIPTION: Problems = Problems {
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(feature = "calls")]
 pub(super) enum Operation {
     Invite,
     Start,
@@ -124,6 +136,7 @@ pub(super) enum Operation {
 }
 
 #[derive(Default)]
+#[cfg(feature = "calls")]
 pub(super) struct Recordings {
     call: Option<CallId>,
     view: CallRecording,
@@ -135,12 +148,14 @@ pub(super) struct Recordings {
     deadline: Option<Instant>,
 }
 
+#[cfg(feature = "calls")]
 impl Recordings {
     fn problems(&self) -> &'static Problems {
         if self.transcription { &TRANSCRIPTION } else { &RECORDING }
     }
 }
 
+#[cfg(feature = "calls")]
 pub(super) async fn next(writing: Option<&mut (Operation, super::Attempt)>) -> (Operation, CallTried) {
     match writing {
         Some((operation, attempt)) => (*operation, attempt.await),
@@ -193,6 +208,7 @@ pub(crate) fn record_act(action: CallAction) -> Result<Act, CallActionError> {
     })
 }
 
+#[cfg(feature = "calls")]
 impl<C, T> Calling<C, T>
 where
     C: Credentials + 'static,

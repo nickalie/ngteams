@@ -386,6 +386,7 @@ pub fn i420_to_bgra(frame: &VideoFrame) -> Option<Vec<u8>> {
 }
 
 /// RGB from BT.601 limited range.
+#[cfg(feature = "effects")]
 pub(crate) fn to_rgb(luma: u8, cb: u8, cr: u8) -> (u8, u8, u8) {
     let scaled = 298 * (i32::from(luma) - 16);
     let (cb, cr) = (i32::from(cb) - 128, i32::from(cr) - 128);

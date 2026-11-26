@@ -28,10 +28,12 @@
 use std::io;
 
 pub mod captions;
+#[cfg(feature = "gstreamer")]
 mod decoding;
 pub mod devices;
 pub mod health;
 pub use teams_sdp::mcp;
+#[cfg(feature = "gstreamer")]
 pub mod player;
 pub mod processing;
 mod queue;
@@ -39,6 +41,7 @@ pub mod relay;
 pub mod rtc;
 pub mod sdp;
 pub mod session;
+#[cfg(feature = "gstreamer")]
 pub mod sound_file;
 #[cfg(feature = "test-support")]
 pub mod stun;
@@ -48,6 +51,7 @@ pub mod test_signal;
 pub mod test_turn;
 pub mod tone;
 pub mod video;
+#[cfg(feature = "gstreamer")]
 pub mod video_file;
 
 /// Everything the media can fail with.
