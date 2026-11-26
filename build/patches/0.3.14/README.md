@@ -20,7 +20,7 @@ tells.
 
 | Crate | Patch | Status |
 |---|---|---|
-| gpui-pre | 0001-external-surfaces | ported: new offsets only |
+| gpui-pre | 0001-external-surfaces | here |
 | gpui-pre | 0002-no-break-after-opening-punctuation | to drop: upstream breaks lines by UAX #14 (`icu_segmenter`, zed #64624). Keep the `[[account]]` wrap test. |
 | gpui-pre | 0003-path-prompt-title-and-filters | here |
 | gpui-pre | 0004-file-drag-is-pointer-input | here |
