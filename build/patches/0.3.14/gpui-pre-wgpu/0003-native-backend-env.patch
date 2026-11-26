@@ -1,0 +1,16 @@
+Honor wgpu's existing WGPU_BACKEND selection for native instances. Without the variable the original Vulkan+GL
+mask remains unchanged. CPU-only CI can explicitly use Vulkan/Lavapipe, avoiding an unsupported GLES adapter probe
+on a machine with no DRM device; errors are still reported, and native windows continue to be rendered and tested.
+scripts/vendor-gpui.sh applies this to the verified crates.io archive after 0001 and 0002.
+
+--- a/src/wgpu_context.rs
++++ b/src/wgpu_context.rs
+@@ -491,7 +491,7 @@
+     #[cfg(not(target_family = "wasm"))]
+     pub fn instance(display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>) -> wgpu::Instance {
+         wgpu::Instance::new(wgpu::InstanceDescriptor {
+-            backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
++            backends: (wgpu::Backends::VULKAN | wgpu::Backends::GL).with_env(),
+             flags: wgpu::InstanceFlags::default(),
+             backend_options: wgpu::BackendOptions::default(),
+             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),

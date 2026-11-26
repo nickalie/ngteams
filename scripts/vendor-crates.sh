@@ -48,8 +48,15 @@
 # patched. Bump a VERSION and its sum together with the workspace's pin of that crate, run this, and check that the
 # patches still apply.
 #
-# Usage: scripts/vendor-crates.sh           (re)create vendor/<crate> for every crate below
-#        scripts/vendor-crates.sh --check   rebuild into a scratch dir and fail if a vendored crate differs
+# The next GPUI snapshot (NEXT_SNAPSHOT) has its archive versions and sums in NEXT_VERSION and NEXT_SHA256. Its patches
+# are in build/patches/<snapshot>/<crate>. The README there lists the patches that are not ported yet. The script never
+# vendors this snapshot, thus the workspace keeps the current pins. The bump moves NEXT_* into VERSION and SHA256, and
+# the patch directory into build/patches/<crate>.
+#
+# Usage: scripts/vendor-crates.sh            (re)create vendor/<crate> for every crate below
+#        scripts/vendor-crates.sh --check    rebuild into a scratch dir and fail if a vendored crate differs, or if the
+#                                            next snapshot's archives or patches do not verify
+#        scripts/vendor-crates.sh --next DIR write the next snapshot's crates, patched, to DIR/<crate> (for a port)
 set -euo pipefail
 shopt -s nullglob
 
@@ -73,6 +80,21 @@ declare -A SHA256=(
 )
 CRATES=(gpui-pre gpui-pre-wgpu gpui-pre-linux gpui-pre-windows libwebrtc webrtc-sys image-webp)
 
+NEXT_SNAPSHOT="0.3.14"
+declare -A NEXT_VERSION=(
+  [gpui-pre]="$NEXT_SNAPSHOT"
+  [gpui-pre-wgpu]="$NEXT_SNAPSHOT"
+  [gpui-pre-linux]="$NEXT_SNAPSHOT"
+  [gpui-pre-windows]="$NEXT_SNAPSHOT"
+)
+declare -A NEXT_SHA256=(
+  [gpui-pre]="ab22c23c1304a0b3f34f64568f59a4ce2abbfab3727273a90c66b37924d31089"
+  [gpui-pre-wgpu]="2bbfee2ae183cf4bf5b1ee3a73f2b8fd726f0b78861b0c950308f6e9d0a33f2c"
+  [gpui-pre-linux]="9515d52d8378c5dda95b3b2536d3d05ea2431bc25d1d8bb4cdeb32f21090f4a1"
+  [gpui-pre-windows]="8badbaa4129a88e4d2fdaa1615fc61b2a59d4ebb2ac36e5de51f75598f0dd992"
+)
+NEXT_CRATES=(gpui-pre gpui-pre-wgpu gpui-pre-linux gpui-pre-windows)
+
 root="$(cd "$(dirname "$0")/.." && pwd)"
 
 die() {
@@ -84,6 +106,13 @@ mode=vendor
 case "${1:-}" in
   "") ;;
   --check) mode=check ;;
+  --next)
+    mode=next
+    [[ -n "${2:-}" ]] || die "--next needs a directory (see --help)"
+    next_dir="$(realpath -m "$2")"
+    [[ "$next_dir/" != "$root/"* ]] || die "--next writes outside the repository: the workspace keeps the current pins"
+    mkdir -p "$next_dir"
+    ;;
   -h | --help) sed -n '1d; /^#/!q; s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; exit 0 ;;
   *) die "unknown argument: $1 (see --help)" ;;
 esac
@@ -91,28 +120,49 @@ esac
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/ngteams-vendor-XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 
-# The verified crates.io source of $1 with its patches applied, in $scratch/built/$1.
+# The verified crates.io archive of crate $1 at version $2 (sha256 $3), with the patches in $4 applied, in $5.
 built() {
-  local crate="$1" version="${VERSION[$1]}" archive sum patch
+  local crate="$1" version="$2" expected="$3" patches="$4" dest="$5" archive sum patch
   archive="$scratch/$crate-$version.crate"
-  curl -sSfL -A ngteams-dev -o "$archive" "https://static.crates.io/crates/$crate/$crate-$version.crate"
+  curl -sSfL --retry 3 --connect-timeout 30 --max-time 600 -A ngteams-dev -o "$archive" \
+    "https://static.crates.io/crates/$crate/$crate-$version.crate"
   sum="$(sha256sum "$archive" | cut -d' ' -f1)"
-  [[ "$sum" == "${SHA256[$crate]}" ]] || die "$crate $version: sha256 $sum, expected ${SHA256[$crate]}"
-  mkdir -p "$scratch/unpack" "$scratch/built"
+  [[ "$sum" == "$expected" ]] || die "$crate $version: sha256 $sum, expected $expected"
+  mkdir -p "$scratch/unpack" "$(dirname "$dest")"
   tar -xzf "$archive" -C "$scratch/unpack"
-  mv "$scratch/unpack/$crate-$version" "$scratch/built/$crate"
-  rm -f "$scratch/built/$crate/Cargo.lock"
+  mv "$scratch/unpack/$crate-$version" "$dest"
+  rm -f "$dest/Cargo.lock"
   if [[ "$crate" == gpui-pre ]]; then
-    rm -rf "$scratch/built/$crate/examples"
+    rm -rf "$dest/examples"
   fi
-  for patch in "$root/build/patches/$crate"/*.patch; do
-    patch -s -p1 -d "$scratch/built/$crate" <"$patch" || die "$(basename "$patch") does not apply to $crate $version"
+  for patch in "$patches"/*.patch; do
+    patch -s -p1 -d "$dest" <"$patch" || die "$(basename "$patch") does not apply to $crate $version"
   done
 }
 
+# Replace $2 with the directory $1.
+replace() {
+  rm -rf "$2.new"
+  mv "$1" "$2.new"
+  rm -rf "$2"
+  mv "$2.new" "$2"
+}
+
+next_patches="$root/build/patches/$NEXT_SNAPSHOT"
+
+if [[ "$mode" == next ]]; then
+  for crate in "${NEXT_CRATES[@]}"; do
+    version="${NEXT_VERSION[$crate]}"
+    built "$crate" "$version" "${NEXT_SHA256[$crate]}" "$next_patches/$crate" "$scratch/next/$crate"
+    replace "$scratch/next/$crate" "$next_dir/$crate"
+    echo "wrote $crate $version + build/patches/$NEXT_SNAPSHOT/$crate into $next_dir/$crate"
+  done
+  exit 0
+fi
+
 for crate in "${CRATES[@]}"; do
   version="${VERSION[$crate]}"
-  built "$crate"
+  built "$crate" "$version" "${SHA256[$crate]}" "$root/build/patches/$crate" "$scratch/built/$crate"
   target="$root/vendor/$crate"
   case "$mode" in
     check)
@@ -121,11 +171,16 @@ for crate in "${CRATES[@]}"; do
       ;;
     vendor)
       mkdir -p "$root/vendor"
-      rm -rf "$target.new"
-      mv "$scratch/built/$crate" "$target.new"
-      rm -rf "$target"
-      mv "$target.new" "$target"
+      replace "$scratch/built/$crate" "$target"
       echo "vendored $crate $version into $target"
       ;;
   esac
 done
+
+if [[ "$mode" == check ]]; then
+  for crate in "${NEXT_CRATES[@]}"; do
+    version="${NEXT_VERSION[$crate]}"
+    built "$crate" "$version" "${NEXT_SHA256[$crate]}" "$next_patches/$crate" "$scratch/next/$crate"
+    echo "$crate $version + build/patches/$NEXT_SNAPSHOT/$crate verifies"
+  done
+fi
