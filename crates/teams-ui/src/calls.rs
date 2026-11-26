@@ -17,7 +17,9 @@
 //!   take them ([`Calls::next_choice`]).
 //! - **A meeting's Request to join** opens that meeting's pre-join on Accept, as Teams does, and nothing goes out
 //!   ([`Prejoin::ring`]). Its Join now answers the ring while it rings, and after the ring ended joins the meeting by
-//!   the organizer and tenant the ring named. Its Cancel lets the ring ring on until it ends (Teams' Cancel was not captured).
+//!   the organizer and tenant the ring named. The pre-join shows until the answer is taken; an answer the service
+//!   refuses leaves it, with why, for a new Join now ([`Calls::answering_in_prejoin`]). Its Cancel lets the ring ring on
+//!   until it ends (Teams' Cancel was not captured).
 //! - **The asks** ([`Ask`]): a call from a chat, the test call (the echo service's MRI the app gave), a join, a
 //!   meeting's join (started or not), the answer or the decline of the invitation that rings, a hang-up, mute or unmute, the camera on or off (off when a
 //!   call starts; a 1:1 call's video, M3 Task 18). Each is the user's: a button, a key, the switcher's command or the
@@ -1419,6 +1421,10 @@ impl Calls {
     /// The ring that Accept opened a pre-join for ended (timed out, or its caller gave up): the pre-join stays, and its
     /// Join now joins the meeting by the organizer and tenant the ring named.
     fn ring_ended_in_prejoin(&mut self, call: CallId) {
+        // a ring that Join now's answer already took ends with its call
+        if self.call.as_ref().is_some_and(|active| active.id == call) {
+            return;
+        }
         if let Some(prejoin) = self.prejoin.as_mut().filter(|prejoin| prejoin.ring == Some(call)) {
             prejoin.ring = None;
             prejoin.joining = false;
@@ -1765,8 +1771,9 @@ impl Calls {
             self.call = Some(self.adopt(call));
             self.ended = None;
             self.refused = None;
-            // a call took over from the pre-join; what it chose is for the meeting's own call only
-            self.prejoin = None;
+            // a call took over from the pre-join (one that answers its ring once the answer is taken); what it chose is
+            // for the meeting's own call only
+            self.prejoin.take_if(|prejoin| prejoin.ring != Some(call));
             if self
                 .call
                 .as_ref()
@@ -1804,6 +1811,45 @@ impl Calls {
                 declined,
                 ..Ended::of(active, end.clone())
             });
+        }
+        self.answer_from_prejoin(call, status);
+    }
+
+    /// Whether the call is the answer that the pre-join's Join now gave its ring, not taken yet: the pre-join shows
+    /// until it is.
+    #[must_use]
+    pub fn answering_in_prejoin(&self) -> bool {
+        self.call.as_ref().is_some_and(|active| {
+            self.prejoin
+                .as_ref()
+                .is_some_and(|prejoin| prejoin.ring == Some(active.id))
+        })
+    }
+
+    /// The pre-join whose Join now answers its ring `call` goes once the answer is taken. If the call ends before
+    /// that (the service refused the `accept`), the pre-join stays, says so, and only a new Join now goes again: by
+    /// then the ring is over, so it joins the meeting.
+    fn answer_from_prejoin(&mut self, call: CallId, status: &CallStatus) {
+        let Some(prejoin) = self.prejoin.as_mut().filter(|prejoin| prejoin.ring == Some(call)) else {
+            return;
+        };
+        match status {
+            CallStatus::Preparing | CallStatus::Placing | CallStatus::Answering | CallStatus::Leaving => {}
+            CallStatus::Ended(end) => {
+                prejoin.ring = None;
+                prejoin.joining = false;
+                self.ended = None;
+                self.meeting_call = None;
+                self.choices = None;
+                if matches!(end, End::Failed(_)) {
+                    self.refused = Some(Refused {
+                        ask: Ask::Answer.name(),
+                        why: "not-joined",
+                        text: local_refusal_text("not-joined"),
+                    });
+                }
+            }
+            _ => self.prejoin = None,
         }
     }
 
@@ -2266,6 +2312,7 @@ fn local_refusal_text(why: &str) -> String {
         "unmute-blocked" => "the organizer doesn't let attendees unmute".to_owned(),
         "not-allowed" => "the organizer doesn't let attendees do that".to_owned(),
         "not-told" => "the call didn't start: the app got no answer from the calling service, try again".to_owned(),
+        "not-joined" => "the meeting couldn't be joined: try again".to_owned(),
         _ => "calls aren't available".to_owned(),
     }
 }

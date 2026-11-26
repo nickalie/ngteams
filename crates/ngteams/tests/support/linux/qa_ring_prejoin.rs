@@ -445,7 +445,8 @@ fn refused_with(user: &mut User<'_>, code: u16) -> SandboxResult {
         thread::sleep(SETTLE * 3);
         after_refusal(user, seen);
         let state = user.until("the pre-join or the call's end after the refused answer", |state| {
-            (state["prejoin"]["ring"] == true && state["prejoin"]["joining"] == false)
+            // the refused `accept` ended the ring's call: the pre-join stays, its Join now joins the meeting
+            (!state["prejoin"].is_null() && state["prejoin"]["joining"] == false)
                 || (state["prejoin"].is_null() && state["call"].is_null())
         })?;
         say(&format!("  after the refusal: {state}"));

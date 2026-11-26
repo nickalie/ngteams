@@ -10,7 +10,8 @@
 #                  right-to-left and mixed text by the Unicode Bidirectional Algorithm, wrapped in text order and drawn
 #                  and hit-tested in visual order per row, with a paragraph direction in the text style (0005);
 #                  a keystroke event that tells if it is a held key's repeat (0006), so the chat list drops the
-#                  repeats of a held Enter or Space
+#                  repeats of a held Enter or Space; the test platform's window title readable (0007), so a test
+#                  checks what a window is titled
 #   gpui-pre-wgpu  the renderer's side: dmabufs imported through wgpu-hal Vulkan and copied on the GPU, CPU pixels
 #                  uploaded into a texture kept per surface, by damaged rectangle (0001); and, our own, a weight or
 #                  style the family has no face of drawn anyway: a variable face at that weight, else synthesized (0002)
@@ -21,7 +22,9 @@
 #                  cancel key repeat when its focused window closes or its key is released without focus (0004);
 #                  the path prompt's title and filters on the file chooser portal (0005); a file drop accepted on
 #                  its enter with that enter's serial, read from a URI list or a sandboxed program's portal key, and
-#                  a drop that comes before the files were read delivered once they are (0006)
+#                  a drop that comes before the files were read delivered once they are (0006); a window's
+#                  activation signed with the last press's serial, a key's too, so niri raises a window for a
+#                  shortcut (0007)
 #   gpui-pre-windows our own: test-support `contains` on the DirectX atlas so atlas-inspection tests query
 #                  the real atlas (0001); the path prompt's title and filters on the file open dialog (0002); a
 #                  right-to-left glyph run placed where DirectWrite draws it, and a line whose first strong letter is

@@ -1,0 +1,44 @@
+Sign a window's activation token with the serial of the last press, a key's too, so a compositor that checks it
+against the keyboard's enter (niri) grants a raise that a shortcut asks for.
+
+diff --git a/src/linux/wayland/client.rs b/src/linux/wayland/client.rs
+index ddd73c2d..630574a8 100644
+--- a/src/linux/wayland/client.rs
++++ b/src/linux/wayland/client.rs
+@@ -763,6 +763,17 @@ impl WaylandClientStatePtr {
+         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
+     }
+ 
++    /// The serial of the last key or mouse press, 0 before any.
++    pub fn last_press_serial(&self) -> u32 {
++        self.0
++            .upgrade()
++            .unwrap()
++            .borrow()
++            .serial_tracker
++            .selection_serial()
++            .map_or(0, |serial| serial.as_raw())
++    }
++
+     pub fn start_external_drag(
+         &self,
+         surface: &wl_surface::WlSurface,
+diff --git a/src/linux/wayland/window.rs b/src/linux/wayland/window.rs
+index 8d92234e..8652bd52 100644
+--- a/src/linux/wayland/window.rs
++++ b/src/linux/wayland/window.rs
+@@ -1864,10 +1864,11 @@ impl PlatformWindow for WaylandWindow {
+         {
+             state.client.set_pending_activation(state.surface.id());
+             let token = activation.get_activation_token(&state.globals.qh, ());
+-            // The serial isn't exactly important here, since the activation is probably going to be rejected anyway.
+-            let serial = state.client.get_serial(SerialKind::MousePress);
++            // A compositor such as niri grants the activation only for a serial newer than the keyboard's enter:
++            // the last press, also a key's, so a raise that a shortcut asks for is not refused.
++            let serial = state.client.last_press_serial();
+             token.set_app_id(app_id);
+-            token.set_serial(serial.as_raw(), &state.globals.seat);
++            token.set_serial(serial, &state.globals.seat);
+             token.set_surface(&state.surface);
+             token.commit();
+         }

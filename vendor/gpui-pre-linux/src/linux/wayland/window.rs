@@ -1864,10 +1864,11 @@ impl PlatformWindow for WaylandWindow {
         {
             state.client.set_pending_activation(state.surface.id());
             let token = activation.get_activation_token(&state.globals.qh, ());
-            // The serial isn't exactly important here, since the activation is probably going to be rejected anyway.
-            let serial = state.client.get_serial(SerialKind::MousePress);
+            // A compositor such as niri grants the activation only for a serial newer than the keyboard's enter:
+            // the last press, also a key's, so a raise that a shortcut asks for is not refused.
+            let serial = state.client.last_press_serial();
             token.set_app_id(app_id);
-            token.set_serial(serial.as_raw(), &state.globals.seat);
+            token.set_serial(serial, &state.globals.seat);
             token.set_surface(&state.surface);
             token.commit();
         }

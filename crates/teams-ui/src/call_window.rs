@@ -254,7 +254,7 @@ impl CallWindows {
         let options = self.options(cx);
         let calls = parts.models.calls.clone();
         let opened = cx.open_window(options, |window, cx| {
-            let view = cx.new(|cx| PrejoinView::new(view_parts, cx));
+            let view = cx.new(|cx| PrejoinView::new(view_parts, window, cx));
             view.read(cx).focus_handle().focus(window, cx);
             window.on_window_should_close(cx, move |_, cx| {
                 calls.update(cx, Calls::cancel_prejoin);
@@ -278,10 +278,12 @@ impl CallWindows {
     /// The calls changed: the window opens for a call up (closing one of another call), and closes once its call
     /// ended by the user's hang-up (one that ended otherwise stays on its end, a test call's on its results).
     fn follow(&mut self, cx: &mut Context<Self>) {
-        // an invitation being declined is no call to show
+        // an invitation being declined is no call to show, nor an answer that the pre-join waits for
         let up = self.accounts.iter().find_map(|account| {
-            let active = account.parts.models.calls.read(cx).call()?;
-            (active.status != CallStatus::Declining).then(|| (account.key.clone(), active.id))
+            let calls = account.parts.models.calls.read(cx);
+            let active = calls.call()?;
+            (active.status != CallStatus::Declining && !calls.answering_in_prejoin())
+                .then(|| (account.key.clone(), active.id))
         });
         self.follow_prejoin(up.is_some(), cx);
         let Some((key, call)) = up else {

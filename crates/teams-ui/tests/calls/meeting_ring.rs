@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use gpui::VisualTestContext;
+use gpui::{AppContext as _, VisualTestContext};
 use teams_core::{CallAction, CallActionError, CallStatus, EngineError, Event, IncomingCall, RemoteEnd};
 use teams_store::ConversationKind;
 
@@ -580,4 +580,114 @@ fn a_ring_that_ends_before_its_meetings_name_is_read_leaves_its_pre_join_titled_
     rig.cx.run_until_parked();
     let kept = prejoin(&rig).expect("the pre-join stays");
     assert_eq!((kept.ring, kept.to_join.title()), (None, TITLE));
+}
+
+#[test]
+fn the_pre_joins_window_takes_the_meetings_name_as_it_is_read_with_no_draw_between() {
+    let rig = calling();
+    listed_meeting(&rig);
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    rig.send(Event::IncomingCall(meeting_ring(8)));
+    rig.cx.run_until_parked();
+    click(cx, "call-answer");
+    rig.cx.run_until_parked();
+    let window = rig
+        .cx
+        .read(|cx| windows.read(cx).prejoin_window())
+        .expect("the pre-join's window is open");
+    let title = rig
+        .cx
+        .update(|cx| cx.update_window(window.into(), |_, window, _| window.window_title()))
+        .unwrap();
+    assert_eq!(title, TITLE, "titled as the name is read, not at the next draw");
+}
+
+#[test]
+fn a_service_refused_answer_keeps_the_pre_join_with_why_and_its_join_now_joins_the_meeting() {
+    let rig = calling();
+    listed_meeting(&rig);
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    rig.send(Event::IncomingCall(meeting_ring(9)));
+    rig.cx.run_until_parked();
+    click(cx, "call-answer");
+    let window = prejoin_window(&rig, &windows);
+    click(window, "prejoin-join");
+    assert_eq!(actions(&rig), [CallAction::Answer { call: call(9) }]);
+    status(&rig, 9, CallStatus::Answering);
+    rig.cx.run_until_parked();
+    let shown = |rig: &Rig| {
+        rig.cx.read(|cx| {
+            let windows = windows.read(cx);
+            (windows.prejoin_window().is_some(), windows.window().is_some())
+        })
+    };
+    assert_eq!(shown(&rig), (true, false), "the pre-join shows while its answer goes");
+    assert!(prejoin(&rig).is_some_and(|prejoin| prejoin.joining));
+
+    // the service refuses the `accept`: the engine leaves the call, and it ends failed
+    status(&rig, 9, CallStatus::Leaving);
+    status(&rig, 9, CallStatus::Ended(teams_core::End::Failed("accept")));
+    rig.cx.run_until_parked();
+    assert_eq!(shown(&rig), (true, false), "the pre-join stays, no call window");
+    let kept = prejoin(&rig).expect("the pre-join stays");
+    assert_eq!((kept.ring, kept.joining), (None, false), "Join now can go again");
+    let calls = rig.cx.read(|cx| {
+        let calls = calls_of(&rig).read(cx);
+        (
+            calls.call().is_none(),
+            calls.ended().is_none(),
+            calls.refused().map(|refused| refused.text.clone()),
+        )
+    });
+    assert_eq!(
+        calls,
+        (true, true, Some("the meeting couldn't be joined: try again".to_owned()))
+    );
+    assert!(drawn(window, "prejoin-refused"));
+    assert_eq!(actions(&rig).len(), 1, "nothing goes again by itself");
+
+    // only the user's new Join now goes: the ring is over, so it joins the meeting
+    click(window, "prejoin-join");
+    assert_eq!(actions(&rig).last(), Some(&join_meeting_action()));
+    assert_eq!(actions(&rig).len(), 2);
+}
+
+#[test]
+fn an_answer_from_the_pre_join_that_is_taken_gives_way_to_the_call_window() {
+    let rig = calling();
+    listed_meeting(&rig);
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    rig.send(Event::IncomingCall(meeting_ring(10)));
+    rig.cx.run_until_parked();
+    click(cx, "call-answer");
+    let window = prejoin_window(&rig, &windows);
+    click(window, "prejoin-join");
+    status(&rig, 10, CallStatus::Answering);
+    rig.send(Event::RingEnded {
+        call: call(10),
+        end: RemoteEnd::default(),
+    });
+    rig.cx.run_until_parked();
+    assert_eq!(
+        prejoin(&rig).and_then(|prejoin| prejoin.ring),
+        Some(call(10)),
+        "the answered ring's end leaves the answer to its call"
+    );
+    status(&rig, 10, CallStatus::Connecting);
+    rig.cx.run_until_parked();
+    assert!(prejoin(&rig).is_none());
+    let (prejoin_open, call_open) = rig.cx.read(|cx| {
+        let windows = windows.read(cx);
+        (windows.prejoin_window().is_some(), windows.window().is_some())
+    });
+    assert_eq!((prejoin_open, call_open), (false, true));
 }

@@ -763,6 +763,17 @@ impl WaylandClientStatePtr {
         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
     }
 
+    /// The serial of the last key or mouse press, 0 before any.
+    pub fn last_press_serial(&self) -> u32 {
+        self.0
+            .upgrade()
+            .unwrap()
+            .borrow()
+            .serial_tracker
+            .selection_serial()
+            .map_or(0, |serial| serial.as_raw())
+    }
+
     pub fn start_external_drag(
         &self,
         surface: &wl_surface::WlSurface,

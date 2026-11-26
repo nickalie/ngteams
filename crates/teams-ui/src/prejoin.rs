@@ -83,15 +83,20 @@ pub struct PrejoinView {
 
 impl PrejoinView {
     /// The pre-join over `parts`.
-    pub fn new(parts: PrejoinParts, cx: &mut Context<Self>) -> Self {
+    pub fn new(parts: PrejoinParts, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let PrejoinParts {
             core,
             calls,
             settings,
             trace,
         } = parts;
+        retitle(&calls, window, cx);
+        // the title follows the model, not the next draw: a window the compositor draws no frame for keeps its title
         let observing = [
-            cx.observe(&calls, |_, _, cx| cx.notify()),
+            cx.observe_in(&calls, window, |_, calls, window, cx| {
+                retitle(&calls, window, cx);
+                cx.notify();
+            }),
             cx.observe(&settings, |_, _, cx| cx.notify()),
         ];
         let feed = settings.read(cx).camera_preview().map(|preview| preview.feed().clone());
@@ -623,6 +628,13 @@ impl PrejoinView {
     }
 }
 
+/// The pre-join's window titled with its meeting's title.
+fn retitle(calls: &Entity<Calls>, window: &mut Window, cx: &App) {
+    if let Some(prejoin) = calls.read(cx).prejoin() {
+        window.set_window_title(prejoin.to_join.title());
+    }
+}
+
 /// What a Meet now's pre-join says over the new meeting's subject, as Teams' does.
 const MEET_NOW_HEADING: &str = "Microsoft Teams meeting";
 
@@ -632,7 +644,6 @@ impl Render for PrejoinView {
         let Some(prejoin) = self.calls.read(cx).prejoin().cloned() else {
             return div().id("prejoin").size_full().bg(rgb(palette.background));
         };
-        window.set_window_title(prejoin.to_join.title());
         let refused = self.calls.read(cx).refused().map(|refused| {
             div()
                 .debug_selector(|| "prejoin-refused".to_owned())
