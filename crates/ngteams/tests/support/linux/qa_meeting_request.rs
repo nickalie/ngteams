@@ -23,7 +23,7 @@ use super::{
 use teams_mock::AddOutcome;
 
 /// The account's own object id: the made-up meeting's organizer.
-fn organizer() -> &'static str {
+pub(super) fn organizer() -> &'static str {
     LAB_A.rsplit(':').next().unwrap_or_default()
 }
 
@@ -424,7 +424,7 @@ pub(super) fn request_refusals(user: &mut User<'_>) -> SandboxResult {
 }
 
 /// The Answer of the banner: the largest solid green button of the window.
-fn answer_button(image: &RgbImage) -> Option<(i32, i32)> {
+pub(super) fn answer_button(image: &RgbImage) -> Option<(i32, i32)> {
     let within = Rect {
         x: 0,
         y: 0,
@@ -581,7 +581,7 @@ fn through_the_prejoin(user: &mut User<'_>) -> SandboxResult {
 }
 
 /// Accept on the ring's banner in the main window, as the user clicks it.
-fn accept(user: &mut User<'_>) -> SandboxResult {
+pub(super) fn accept(user: &mut User<'_>) -> SandboxResult {
     user.focus_main()?;
     let screen = user.screen()?;
     let answer = answer_button(&screen).ok_or("no Accept on the ring")?;

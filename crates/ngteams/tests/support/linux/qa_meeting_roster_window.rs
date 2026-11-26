@@ -30,6 +30,8 @@
 //!
 //! - **Request to join, task 810 QA round 1** (`request_states`, `request_keyboard`, `request_refusals`,
 //!   `invitee_ring`): see `qa_meeting_request.rs`.
+//! - **Accept on a meeting's ring opens its pre-join, task 831 QA round 1** (`ring_gone_after_leave`, `ring_keyboard`, `ring_close_decline`,
+//!   `ring_ends_in_prejoin`, `ring_refused_answer`, `ring_answers_at_once`): see `qa_ring_prejoin.rs`.
 //!
 //! `QA798_EVIDENCE` names a directory that gets the screenshots and the results too. `QA798_ONLY` runs only the named
 //! checks (comma-separated; the meeting checks need `meeting_alone` first). Screenshots also go to
@@ -94,6 +96,8 @@ mod pixels;
 use pixels::Rect;
 #[path = "qa_meeting_request.rs"]
 mod request;
+#[path = "qa_ring_prejoin.rs"]
+mod ring_prejoin;
 
 const CHILD_ENV: &str = "QA798_CHILD";
 const EVIDENCE_ENV: &str = "QA798_EVIDENCE";
@@ -188,7 +192,7 @@ fn i32_of(value: u32) -> i32 {
 
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
-const CHECKS: [Check; 14] = [
+const CHECKS: [Check; 20] = [
     ("meeting_alone", meeting_alone),
     ("b_joins_then_leaves", b_joins_then_leaves),
     ("not_people", not_people),
@@ -200,6 +204,12 @@ const CHECKS: [Check; 14] = [
     ("request_keyboard", request::request_keyboard),
     ("request_refusals", request::request_refusals),
     ("invitee_ring", request::invitee_ring),
+    ("ring_gone_after_leave", ring_prejoin::ring_gone_after_leave),
+    ("ring_keyboard", ring_prejoin::ring_keyboard),
+    ("ring_close_decline", ring_prejoin::ring_close_decline),
+    ("ring_ends_in_prejoin", ring_prejoin::ring_ends_in_prejoin),
+    ("ring_refused_answer", ring_prejoin::ring_refused_answer),
+    ("ring_answers_at_once", ring_prejoin::ring_answers_at_once),
     ("one_to_one_ringing", one_to_one_ringing),
     ("group_ringing", group_ringing),
     ("group_request_to_join", group_request_to_join),
@@ -1802,7 +1812,15 @@ fn state_of(shell: &Entity<Shell>, cx: &App) -> Value {
     };
     let calls = shell_ref.models().calls.read(cx);
     let prejoin = calls.prejoin().map(|prejoin| {
-        json!({"chat": prejoin.to_join.chat(), "title": prejoin.to_join.title(), "ring": prejoin.ring.is_some()})
+        json!({
+            "chat": prejoin.to_join.chat(),
+            "title": prejoin.to_join.title(),
+            "ring": prejoin.ring.is_some(),
+            "opened": prejoin.opened,
+            "muted": prejoin.muted,
+            "camera": prejoin.camera,
+            "joining": prejoin.joining,
+        })
     });
     let call = calls.call().map(|call| {
         let participants: Vec<Value> = call
@@ -1828,6 +1846,8 @@ fn state_of(shell: &Entity<Shell>, cx: &App) -> Value {
             "kind": format!("{:?}", call.kind),
             "meeting": call.is_meeting(),
             "stand_in": call.people_stand_in(),
+            "muted": call.muted,
+            "camera": call.camera,
             "participants": participants,
             "lobby": lobby,
             "invited": invited,
@@ -1842,6 +1862,7 @@ fn state_of(shell: &Entity<Shell>, cx: &App) -> Value {
         "main": main,
         "ringing": ringing,
         "prejoin": prejoin,
+        "alerting": calls.alerting().is_some(),
         "call": call,
     })
 }
