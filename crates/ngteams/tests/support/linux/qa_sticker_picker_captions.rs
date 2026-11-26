@@ -900,3 +900,98 @@ pub(super) fn caption_keyboard_and_back(user: &mut User<'_>) -> SandboxResult {
     say(&format!("  tab after Stickers: {}", picker(&state)["tab"]));
     faults_to_result(&faults)
 }
+
+/// QA round 2. A two-line paste in the caption keeps its line break as plain text (the picture draws it as a space, as
+/// Teams' canvas does); in a meme's line it becomes a space. The editor's top row: Shift+Tab from the caption goes to
+/// the search field, and a search typed there closes the editor and shows its results. Then the compose box, whose
+/// editor the caption now shares: typed words, a two-line paste, a mention picked by Enter, and Enter sends.
+pub(super) fn caption_search_and_compose(user: &mut User<'_>) -> SandboxResult {
+    let chat = user.world.captions_chat.to_owned();
+    user.open(&chat)?;
+    let mut faults = Vec::new();
+    user.open_editor_by_keys(MEME, "grumpy")?;
+    paste_text(user, "made up top\nmade up more")?;
+    if let Err(error) = user.until("a two-line paste in a meme's line: one line", |state| {
+        editor(state)["typed"] == json!(["made up top made up more", ""])
+    }) {
+        faults.push(error.to_string());
+    }
+    user.image("caption-meme-pasted")?;
+    user.press("escape")?;
+    user.until("back from the meme", |state| !editor_open(state))?;
+    user.open_editor_by_keys(SO_COOL, "so cool")?;
+    user.press("ctrl+a")?;
+    paste_text(user, "made up first line\nmade up second line")?;
+    if let Err(error) = user.until("a two-line paste in the caption, as plain text", |state| {
+        editor(state)["typed"] == json!(["made up first line\nmade up second line"])
+    }) {
+        faults.push(error.to_string());
+    }
+    user.image("caption-pasted")?;
+    user.press("shift+tab")?;
+    user.press("ctrl+a")?;
+    user.type_text("cool")?;
+    let cool = selector_of(SO_COOL);
+    if let Err(error) = user.until("a search from the editor's top row", |state| {
+        picker_open(state) && !editor_open(state) && has_item(state, &cool)
+    }) {
+        faults.push(error.to_string());
+    }
+    user.image("caption-top-row-search")?;
+    user.press("escape")?;
+    user.until("the picker closed", |state| !picker_open(state))?;
+    faults.extend(compose_faults(user)?);
+    faults_to_result(&faults)
+}
+
+/// Puts `text` on the sandbox's clipboard and pastes it with Ctrl+V.
+fn paste_text(user: &mut User<'_>, text: &str) -> SandboxResult {
+    user.world
+        .sandbox
+        .set_clipboard(vec![("text/plain;charset=utf-8".to_owned(), text.as_bytes().to_vec())])?;
+    user.press("ctrl+v")
+}
+
+/// The compose box: words typed, a two-line paste, a mention of b picked by Enter, then Enter sends one message.
+fn compose_faults(user: &mut User<'_>) -> SandboxResult<Vec<String>> {
+    let mut faults = Vec::new();
+    user.ask("focus-box")?;
+    let mark = user.mark();
+    user.type_text(&format!("{mark} typed words "))?;
+    paste_text(user, "pasted line one\npasted line two")?;
+    user.until("the paste in the box", |state| {
+        state["compose"]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("pasted line two"))
+    })?;
+    user.type_text(" @lab")?;
+    user.until("the mention list", |state| {
+        state["compose"]["mentioning"].as_u64() > Some(0)
+    })?;
+    user.press("enter")?;
+    let state = user.until("a mention in the box", |state| {
+        state["compose"]["mentions"].as_u64() > Some(0)
+    })?;
+    say(&format!("  the box before Send: {:?}", state["compose"]["text"]));
+    user.image("compose-before-send")?;
+    user.press("enter")?;
+    let body = user.wait_sent(&mark)?;
+    for part in [
+        "typed words",
+        "pasted line one",
+        "pasted line two",
+        "schema.skype.com/Mention",
+    ] {
+        if !body.contains(part) {
+            faults.push(format!("the sent message has no {part:?}: {body}"));
+        }
+    }
+    let sent = user.sent_with("POST", &mark).len();
+    if sent != 1 {
+        faults.push(format!("Enter sent {sent} messages"));
+    }
+    if let Err(error) = user.until("the box empty after Send", |state| state["compose"]["text"] == "") {
+        faults.push(error.to_string());
+    }
+    Ok(faults)
+}

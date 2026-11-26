@@ -609,7 +609,7 @@ context = { "crates/teams-signin/src/lib.rs" = "a7b946e05829938c67d8c83c2f95877b
 [unmapped_sources_windows."crates/teams-ui/src/notify/linux.rs"]
 sha256 = "e8c66c3caa1e08455c4fc7999bef41a82cb04232806c3c6ffa7f8f7f6993fba7"
 reason = "Linux-only freedesktop notification D-Bus transport; notify.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
-context = { "crates/teams-ui/src/lib.rs" = "38f5a687eb2ae5be960d8024ecf2de994e6d6395c5b16d368ba7e36f9de52670", "crates/teams-ui/src/notify.rs" = "7a1fd788213e6394f7868c775f88814768d3eb0b242986828020d82b083ea6d8" }
+context = { "crates/teams-ui/src/lib.rs" = "cbbc4d71057cf5cd5fd62b695d2b1c4ebe5461f93c808374228a97c27911f37f", "crates/teams-ui/src/notify.rs" = "7a1fd788213e6394f7868c775f88814768d3eb0b242986828020d82b083ea6d8" }
 
 [unmapped_sources_windows."crates/teams-ui/src/tray/linux.rs"]
 sha256 = "ceed6565f30d059be5e8b6c0901fcba714248fe4ba0998e40c912d90db539ade"

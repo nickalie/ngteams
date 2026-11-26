@@ -25,7 +25,7 @@
 //!   own-server account.
 //! - **Edit sticker** (task 650, `qa_sticker_picker_captions.rs`): the pencil marks, the editor opened by a click,
 //!   a typed caption that redraws the picture, Done, Send and what b sees; a long and an empty caption; a meme; the
-//!   keyboard, Cancel and back.
+//!   keyboard, Cancel and back; the search field of its top row, a paste, and the compose box after it.
 //!
 //! The checks run in order and build on each other (the imports first). `QA653_ONLY` (a comma list of check names)
 //! runs only those. `QA653_EVIDENCE` names a directory that gets the screenshots and the results too. Screenshots also
@@ -210,7 +210,7 @@ fn wanted(name: &str) -> bool {
 type Check = (&'static str, fn(&mut User<'_>) -> SandboxResult);
 
 /// The first run of the app.
-const FIRST: [Check; 27] = [
+const FIRST: [Check; 28] = [
     ("opens_by_button_and_keys", opens_by_button_and_keys),
     ("teams_all_before_imports", teams::teams_all_before_imports),
     ("import_folder", import_folder),
@@ -237,6 +237,7 @@ const FIRST: [Check; 27] = [
     ("caption_long_and_empty", captions::caption_long_and_empty),
     ("caption_meme", captions::caption_meme),
     ("caption_keyboard_and_back", captions::caption_keyboard_and_back),
+    ("caption_search_and_compose", captions::caption_search_and_compose),
     ("remember_before_restart", remember_before_restart),
 ];
 
@@ -2530,6 +2531,14 @@ fn compose_state(compose: &Entity<Compose>, window: &Window, cx: &App) -> Value 
         "pictures": pictures,
         "problem": compose.problem().map(ToString::to_string),
         "focused": compose.focused(window, cx),
+        "mentioning": compose.picker().map_or(0, |picker| picker.matches.len()),
+        "mentions": editor
+            .doc()
+            .blocks
+            .iter()
+            .flat_map(|block| &block.runs)
+            .filter(|run| run.attrs.mention.is_some())
+            .count(),
     })
 }
 
