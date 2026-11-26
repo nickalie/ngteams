@@ -30,7 +30,7 @@
 //!
 //! Without weston 15, niri or `dbus-daemon` it says so and passes, unless `GPUI_SMOKE_REQUIRE=1`.
 
-use std::io::{BufRead as _, BufReader, Write as _};
+use std::io::{BufReader, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _, RawFd};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -46,6 +46,8 @@ mod compose_edge;
 mod file_drop;
 #[path = "../window.rs"]
 mod support;
+#[path = "ui_tour_transcript_qa.rs"]
+mod transcript_qa;
 use ngteams::descriptors::adopt_trace;
 use support::Alias;
 use support::display_name;
@@ -4143,19 +4145,9 @@ fn language_menu(shell: &Entity<Shell>, query: Option<&str>, window: &mut Window
 
 /// The made-up call's captions shown and translated into German by [`FAKE_CLAUDE`]: two lines said, one still spoken.
 fn translated_captions(shell: &Entity<Shell>, cx: &mut App) {
-    use std::os::unix::fs::PermissionsExt as _;
-    let program = std::env::temp_dir().join(format!("tour-claude-{}", std::process::id()));
-    let written = fs::write(&program, FAKE_CLAUDE)
-        .and_then(|()| fs::set_permissions(&program, fs::Permissions::from_mode(0o755)));
-    if let Err(error) = written {
-        eprintln!("tour translator: {error}");
-        cx.quit();
+    if !fake_claude_tools(cx) {
         return;
     }
-    cx.set_global(teams_ui::local_ai::Tools::with(vec![(
-        teams_ui::translate::Backend::Claude,
-        program,
-    )]));
     let model = shell.read(cx).settings().clone();
     model.update(cx, |model, cx| {
         model.change(
@@ -4208,6 +4200,24 @@ fn translated_captions(shell: &Entity<Shell>, cx: &mut App) {
         },
         cx,
     );
+}
+
+/// [`FAKE_CLAUDE`] as the only local AI tool; false (the app quit) when it can't be written.
+fn fake_claude_tools(cx: &mut App) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    let program = std::env::temp_dir().join(format!("tour-claude-{}", std::process::id()));
+    let written = fs::write(&program, FAKE_CLAUDE)
+        .and_then(|()| fs::set_permissions(&program, fs::Permissions::from_mode(0o755)));
+    if let Err(error) = written {
+        eprintln!("tour translator: {error}");
+        cx.quit();
+        return false;
+    }
+    cx.set_global(teams_ui::local_ai::Tools::with(vec![(
+        teams_ui::translate::Backend::Claude,
+        program,
+    )]));
+    true
 }
 
 /// Who waits in the made-up call's lobby, told to a's models as the engine would tell it.
@@ -4435,6 +4445,7 @@ fn tour_steps() -> Vec<Step> {
     let filter = std::env::var("NGTEAMS_TOUR_FILTER").unwrap_or_default();
     let steps: Vec<Step> = STEPS
         .into_iter()
+        .chain(transcript_qa::STEPS)
         .filter(|(name, _)| filter.is_empty() || filter.split(',').any(|wanted| wanted == *name))
         .collect();
     assert!(!steps.is_empty(), "the tour filter selected no steps");
@@ -4458,8 +4469,9 @@ fn tour(sandbox: &Sandbox) -> SandboxResult {
     // the child holds the only writer from here, so the trace ends when it exits
     drop(writer);
     let mut running = Running::new(child)?;
-    // the trace is read only to keep its pipe from filling
-    thread::spawn(move || for _ in BufReader::new(reader).lines() {});
+    // the trace is read to keep its pipe from filling, and for the caption asks the transcript's QA counts
+    let asks = transcript_qa::Asks::read(BufReader::new(reader));
+    let mut checker = transcript_qa::Checker::default();
     running
         .line_where(STARTUP, |line| line == "ready")
         .map_err(|error| running.fail(&format!("no ready line: {error:?}")))?;
@@ -4486,6 +4498,9 @@ fn tour(sandbox: &Sandbox) -> SandboxResult {
                 .map_err(|error| running.fail(&format!("no files said for {name}: {error:?}")))?;
             file_drop::check(&said).map_err(|error| running.fail(&format!("{name}: {error}")))?;
         }
+        if transcript_qa::ours(name) {
+            checker.step(&mut running, name, &asks, &shots_dir()?)?;
+        }
         running
             .line_where(WAIT, |line| line == format!("shot {name}"))
             .map_err(|error| running.fail(&format!("no shot {name}: {error:?}")))?;
@@ -4505,6 +4520,8 @@ fn tour(sandbox: &Sandbox) -> SandboxResult {
         if let Some(held) = held {
             file_drop::release(held).map_err(|error| running.fail(&format!("{name}: {error}")))?;
         }
+        transcript_qa::after_shot(sandbox, name, &png, &shots_dir()?)
+            .map_err(|error| running.fail(&format!("{name}: {error}")))?;
         fs::write(sandbox.dir().join(NEXT), "")?;
     }
     running
@@ -5339,6 +5356,11 @@ fn walk(window: WindowHandle<KitRoot>, cx: &mut App) {
                         .ok()
                 });
                 say(&said.unwrap_or_else(|| format!("{}none", file_drop::BOX)));
+            }
+            if transcript_qa::ours(name) {
+                let said = shown(window, cx)
+                    .and_then(|shell| window.update(cx, |_, _, cx| transcript_qa::said(name, &shell, cx)).ok());
+                say(&said.unwrap_or_else(|| format!("{}{name} none", transcript_qa::PREFIX)));
             }
             say(&format!("shot {name}"));
             while fs::remove_file(&next).is_err() {
