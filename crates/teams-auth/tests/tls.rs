@@ -68,15 +68,24 @@ async fn serve(
     (address, serving)
 }
 
-async fn handshake(cloud: &Cloud, authority: &Authority, versions: &[&'static SupportedProtocolVersion]) -> bool {
+async fn connect(
+    cloud: &Cloud,
+    authority: &Authority,
+    versions: &[&'static SupportedProtocolVersion],
+    name: &'static str,
+) -> std::io::Result<()> {
     let (address, serving) = serve(authority, versions).await;
     let stream = tokio::net::TcpStream::connect(address).await.unwrap();
     let connected = tokio_rustls::TlsConnector::from(Arc::new(client_config(cloud).unwrap()))
-        .connect(ServerName::try_from("localhost").unwrap(), stream)
+        .connect(ServerName::try_from(name).unwrap(), stream)
         .await
-        .is_ok();
+        .map(drop);
     serving.abort();
     connected
+}
+
+async fn handshake(cloud: &Cloud, authority: &Authority, versions: &[&'static SupportedProtocolVersion]) -> bool {
+    connect(cloud, authority, versions, "localhost").await.is_ok()
 }
 
 #[tokio::test]
@@ -92,6 +101,29 @@ async fn only_the_cloud_that_names_the_authority_trusts_it_over_tls_12_and_13() 
             "{versions:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_wrong_name_under_the_own_authority_is_told_as_a_wrong_name() {
+    use rustls::CertificateError::{NotValidForName, NotValidForNameContext};
+    let authority = authority();
+    let trusting = Cloud::own("https://localhost")
+        .unwrap()
+        .trusting(authority.pem.as_bytes())
+        .unwrap();
+    let error = connect(&trusting, &authority, &[&rustls::version::TLS13], "elsewhere.invalid")
+        .await
+        .unwrap_err();
+    let error = error.get_ref().and_then(|inner| inner.downcast_ref::<rustls::Error>());
+    assert!(
+        matches!(
+            error,
+            Some(rustls::Error::InvalidCertificate(
+                NotValidForName | NotValidForNameContext { .. }
+            ))
+        ),
+        "{error:?}"
+    );
 }
 
 #[test]
