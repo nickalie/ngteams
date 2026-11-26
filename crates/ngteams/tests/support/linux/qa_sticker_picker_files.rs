@@ -39,9 +39,10 @@ pub const ALL: [Rgb; 8] = [SUNNY, MINTY, ROSY, TANGY, PLUMMY, CYAN, LIME, TAN];
 /// The side of each made-up picture, px; the face's radius.
 const SIDE: u32 = 240;
 const RADIUS: i64 = 100;
-/// The slow GIFs in the folder, and their frames.
+/// The slow GIFs in the folder, and their frames: enough work that the import still runs when the QA asks for a
+/// second one, a few seconds later, on a fast machine too.
 pub const FILLERS: usize = 8;
-const FILLER_FRAMES: usize = 12;
+const FILLER_FRAMES: usize = 48;
 
 /// The packs, as the import names them (the folder's or the file's name) and gives them an id.
 pub const ZORBLETS: &str = "Qa zorblets";

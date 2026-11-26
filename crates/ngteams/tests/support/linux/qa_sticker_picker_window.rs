@@ -1143,9 +1143,13 @@ impl User<'_> {
     }
 
     /// While an import runs, the user asks for a second one (the spare folder): the faults in how the app refuses it.
-    fn second_import(&mut self) -> SandboxResult<Vec<String>> {
+    fn second_import(&mut self, started: Instant) -> SandboxResult<Vec<String>> {
         // The progress check: a fast import can end before `finish_import` polls, so it cannot see the line.
         self.until("the import runs", |state| state["shelf"]["import"]["running"] == true)?;
+        say(&format!(
+            "  the import runs {:?} after the user started it",
+            started.elapsed()
+        ));
         self.shot("import-folder-progress")?;
         self.open_import_menu()?;
         self.world.chooser.queue(Answer::Pick(self.world.sources.spare.clone()));
@@ -1154,6 +1158,10 @@ impl User<'_> {
             let import = &state["shelf"]["import"];
             import["refused"] == true || import["running"] != true
         })?;
+        say(&format!(
+            "  the second import answered {:?} after the user started the first",
+            started.elapsed()
+        ));
         if state["shelf"]["import"]["refused"] != true {
             let fault = format!(
                 "the second import was not refused while the first ran: {}",
@@ -1207,9 +1215,14 @@ fn summary_faults(state: &Value) -> Vec<String> {
 fn import_folder(user: &mut User<'_>) -> SandboxResult {
     user.open(AB_CHAT)?;
     let source = user.world.sources.zorblets.clone();
+    let started = Instant::now();
     user.start_import(&source, false)?;
-    let mut faults = user.second_import()?;
+    let mut faults = user.second_import(started)?;
     let (running, state) = user.finish_import("import-folder")?;
+    say(&format!(
+        "  the import ended by {:?} after the user started it",
+        started.elapsed()
+    ));
     user.image("import-folder-summary")?;
     faults.extend(spare_faults(&state));
     faults.extend(summary_faults(&state));

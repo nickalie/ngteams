@@ -53,6 +53,13 @@ const FACE: usize = 30;
 const NOT_BEFORE: Duration = Duration::from_millis(850);
 /// A move shows this late after it is due, at the latest (a busy machine, the shot's own time).
 const LATE: Duration = Duration::from_millis(1_800);
+/// The hold ends this soon after its first speaker's start, at the earliest (the settle time and the hold), less a
+/// margin: a read that ends later can show the second speaker moved after a hold that held.
+const HOLD_ENDS: Duration = Duration::from_millis(3_900);
+/// The rounds of the hold the QA tries when each read ends too late to prove it.
+const HOLD_ROUNDS: usize = 3;
+/// The wait after a move until the order may change again: the hold and a margin.
+const HOLD_GAP: Duration = Duration::from_millis(3_500);
 
 /// The QA's made-up person `index`: another set than the other steps', so its pictures are read fresh.
 pub(super) fn qa_mri(index: usize) -> String {
@@ -398,63 +405,117 @@ fn holds_still(rig: &mut Rig<'_>, presenter: usize) -> SandboxResult {
         );
     }
     say("qa666: a 0.5 s sound of Mo (page 4) moved nothing for 3 s");
-    // the hold: Flo speaks and moves up after a second; Kai starts 1.2 s after Flo. Without the hold Kai would move
-    // 2.2 s after Flo's start; with it only 3 s after Flo's move (about 4 s after Flo's start). A read between 2.7 s
-    // and 3.9 s shows Flo moved and Kai not yet.
+    let mut pair = (5, 9);
+    for _ in 0..HOLD_ROUNDS {
+        match hold_round(rig, presenter, pair, after_first_move)? {
+            Hold::Shown => return Ok(()),
+            Hold::Late(read_to) => {
+                say(&format!(
+                    "qa666: the hold read ended {read_to:?} after the first speaker's start, past the hold's earliest \
+                     end, and shows the second moved: it proves nothing, so two others speak again"
+                ));
+                // the second speaker's move starts a new hold
+                thread::sleep(HOLD_GAP);
+                pair = out_of_sight_pair(rig, presenter)?;
+            }
+        }
+    }
+    fail(
+        rig,
+        "hold-late",
+        format!("each of {HOLD_ROUNDS} hold reads ended after {HOLD_ENDS:?}: the hold was never seen"),
+    )
+}
+
+/// What one round of the hold showed.
+enum Hold {
+    /// The order held, and the second speaker moved after it.
+    Shown,
+    /// The read ended after the hold could end, and showed the second speaker moved: no proof either way.
+    Late(Duration),
+}
+
+/// Two people on a later page of the strip (never the presenter), for a new round of the hold.
+fn out_of_sight_pair(rig: &mut Rig<'_>, presenter: usize) -> SandboxResult<(usize, usize)> {
+    let first = strip(rig)?.persons();
+    let mut away = (0..PEOPLE)
+        .rev()
+        .filter(|index| *index != presenter && !first.contains(index));
+    match (away.next(), away.next()) {
+        (Some(second), Some(first_speaker)) => Ok((first_speaker, second)),
+        _ => Err(format!("fewer than two people past the first page: {first:?}").into()),
+    }
+}
+
+/// The hold: `first` speaks and moves up after a second; `second` starts 1.2 s after. Without the hold `second` would
+/// move 2.2 s after the first's start; with it only 3 s after the first's move (about 4 s after the start). A read
+/// between 2.7 s and [`HOLD_ENDS`] shows the first moved and the second not yet.
+fn hold_round(
+    rig: &mut Rig<'_>,
+    presenter: usize,
+    (first, second): (usize, usize),
+    after_first_move: Instant,
+) -> SandboxResult<Hold> {
     rig.park()?;
     let start = Instant::now();
-    speak(rig, &[5])?;
+    speak(rig, &[first])?;
     thread::sleep(Duration::from_millis(1_200).saturating_sub(start.elapsed()));
-    speak(rig, &[9])?;
+    speak(rig, &[second])?;
     thread::sleep(Duration::from_millis(2_700).saturating_sub(start.elapsed()));
     let read_from = start.elapsed();
     let between = quick_strip(rig)?;
     let read_to = start.elapsed();
     let middle = between.persons();
     say(&format!(
-        "qa666: the hold: the read from {read_from:?} to {read_to:?} after Flo's start shows {middle:?}"
+        "qa666: the hold of {first} and {second}: the read from {read_from:?} to {read_to:?} after the first's start \
+         shows {middle:?}"
     ));
     save_page(rig, &between, "qa666-share-hold-middle")?;
-    if middle.get(1) == Some(&9) {
-        return fail(
+    if middle.get(1) == Some(&second) {
+        if read_to > HOLD_ENDS {
+            speak(rig, &[])?;
+            return Ok(Hold::Late(read_to));
+        }
+        fail(
             rig,
             "hold",
-            format!("Kai moved by {read_to:?} after Flo's start: the order did not hold 3 s after Flo's move"),
-        );
+            format!("{second} moved by {read_to:?} after {first}'s start: the order did not hold 3 s after the move"),
+        )?;
     }
-    if middle.get(1) != Some(&5) {
-        return fail(
+    if middle.get(1) != Some(&first) {
+        fail(
             rig,
-            "hold-flo",
-            format!("Flo did not move up by {read_to:?}: {middle:?}"),
-        );
+            "hold-first",
+            format!("{first} did not move up by {read_to:?}: {middle:?}"),
+        )?;
     }
-    if read_to > Duration::from_millis(3_900) {
-        say("qa666: the hold read ended after 3.9 s: it shows the hold, but not that Kai was ready before it");
-    }
-    let kai = wait_order(
+    let moved = wait_order(
         rig,
         start,
-        |page| page.persons().get(1) == Some(&9),
-        "Kai to the first page",
+        |page| page.persons().get(1) == Some(&second),
+        "the second speaker to the first page",
     )?;
     say(&format!(
-        "qa666: Kai moved {kai:?} after Flo's start (the hold ends about 4 s after it; {:?} since Jo's)",
+        "qa666: {second} moved {moved:?} after {first}'s start (the hold ends about 4 s after it; {:?} since Jo's)",
         after_first_move.elapsed()
     ));
     rig.save("qa666-share-hold")?;
-    check_window(kai, Duration::from_secs(4), "Kai's move after the hold")?;
+    check_window(
+        moved,
+        Duration::from_secs(4),
+        "the second speaker's move after the hold",
+    )?;
     speak(rig, &[])?;
     let order = strip(rig)?.people();
     say(&format!("qa666: the first page now {order:?}"));
-    if order.get(..3) != Some(&[Seen::Person(presenter), Seen::Person(9), Seen::Person(5)][..]) {
-        return fail(
+    if order.get(..3) != Some(&[Seen::Person(presenter), Seen::Person(second), Seen::Person(first)][..]) {
+        fail(
             rig,
             "speakers-order",
-            format!("wanted the presenter, Kai, Flo: {order:?}"),
-        );
+            format!("wanted the presenter, {second}, {first}: {order:?}"),
+        )?;
     }
-    Ok(())
+    Ok(Hold::Shown)
 }
 
 /// Waits for the strip to satisfy `done`, from `start` (see [`wait_page`]).
