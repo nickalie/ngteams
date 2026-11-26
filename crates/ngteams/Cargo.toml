@@ -264,6 +264,11 @@ name = "qa_bar_customize_window"
 harness = false
 
 [[test]]
+# QA of task 867: the live captions area scrolls and resizes, in the call window over the mock
+name = "qa_captions_area_window"
+harness = false
+
+[[test]]
 # QA of task 844: the noise suppression level in Settings and in a call's audio menu, in the UI sandbox on the mock
 name = "qa_noise_window"
 harness = false
