@@ -30,15 +30,15 @@ added and removed lines. A patch with the status "ported" has changes for the 0.
 | gpui-pre-wgpu | 0002-font-weight-and-style-synthesis | here |
 | gpui-pre-wgpu | 0003-native-backend-env | here |
 | gpui-pre-linux | 0001-html-clipboard | here |
-| gpui-pre-linux | 0002-local-clipboard-ownership | to port (Linux and Windows platform task) |
-| gpui-pre-linux | 0003-clipboard-pictures-and-files | to port after 0002 (Linux and Windows platform task) |
+| gpui-pre-linux | 0002-local-clipboard-ownership | here. The same added and removed lines, with 3 lines of context. The 0.3.9 patch has no context lines, thus `patch` can put an added line at a wrong place. |
+| gpui-pre-linux | 0003-clipboard-pictures-and-files | here |
 | gpui-pre-linux | 0004-cancel-key-repeat-on-focus-loss | here |
 | gpui-pre-linux | 0005-path-prompt-title-and-filters | here |
 | gpui-pre-linux | 0006-file-drops-from-every-file-manager | here. The fuzz was in a context line of an import (`ActivationContext` is new upstream). |
-| gpui-pre-linux | 0007-activation-serial-of-the-last-press | to drop, probably: upstream signs the activation token with the last key or pointer press and its surface (`ActivationContext`, zed #64058). The Linux and Windows platform task must confirm this with niri. |
+| gpui-pre-linux | 0007-activation-serial-of-the-last-press | dropped: upstream signs the activation token with the last key or pointer press and the surface of that press (`ActivationContext`, zed #64058). Under niri, a key press in one window lets it activate another window. |
 | gpui-pre-windows | 0001-atlas-inspection | here |
 | gpui-pre-windows | 0002-path-prompt-title-and-filters | here |
-| gpui-pre-windows | 0003-right-to-left-glyph-runs | to port (Linux and Windows platform task) |
+| gpui-pre-windows | 0003-right-to-left-glyph-runs | ported. 0.3.14 splits a line at U+2028 and U+2029, thus the first strong letter of the whole line gives the direction of each part. A tab takes its place from the hit test of the layout. It needs `gpui::first_strong_direction` and `gpui::TextDirection` from the port of gpui-pre 0005. |
 
 When all patches are ported or dropped, the bump moves these files to `build/patches/<crate>` and this set becomes
 the vendored set.

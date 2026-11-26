@@ -1,0 +1,67 @@
+Wayland clipboard reads keep every form an offer holds: its text (with its HTML), its picture (PNG, JPEG, GIF,
+WebP, ...) and the local files a text/uri-list names, as one item's entries, so a paste can choose among them
+(a screenshot, a browser's copied image beside its HTML, a file manager's copied files beside their paths).
+
+--- a/src/linux/wayland/clipboard.rs
++++ b/src/linux/wayland/clipboard.rs
+@@ -13,7 +13,10 @@ use wayland_client::{Connection, protocol::wl_data_offer::WlDataOffer};
+ use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
+ 
+ use crate::linux::platform::{PIPE_READ_TIMEOUT, read_fd_with_timeout};
+-use gpui::{ClipboardEntry, ClipboardItem, Image, ImageFormat, hash};
++use gpui::{ClipboardEntry, ClipboardItem, ExternalPaths, Image, ImageFormat, hash};
++use http_client::Url;
++use smallvec::SmallVec;
++use std::path::PathBuf;
+ 
+ /// Text mime types that we'll offer to other programs.
+ pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
+@@ -133,7 +136,22 @@ impl<T: ReceiveData> Selection<T> {
+         if let Some(cached) = self.cached_read.clone() {
+             return Some(cached);
+         }
+-        let mut item = offer.read_text(connection).or_else(|| offer.read_image(connection))?;
++        // ngteams: every form the offer holds, so a paste can choose among them: its text (with its HTML), its
++        // picture and the files it names (a file manager's copy)
++        let mut entries = Vec::new();
++        if let Some(text) = offer.read_text(connection) {
++            entries.extend(text.entries);
++        }
++        if let Some(image) = offer.read_image(connection) {
++            entries.extend(image.entries);
++        }
++        if let Some(paths) = offer.read_paths(connection) {
++            entries.push(ClipboardEntry::ExternalPaths(paths));
++        }
++        if entries.is_empty() {
++            return None;
++        }
++        let mut item = ClipboardItem { entries };
+         // A manager may persist all advertised MIME types. Keep rich metadata private, but recover the last
+         // local snapshot only for its exact per-copy marker and the text actually supplied by that offer.
+         if exact_local_marker {
+@@ -261,6 +279,24 @@ impl<T: ReceiveData> DataOffer<T> {
+         }
+     }
+ 
++    /// ngteams: the local files a `text/uri-list` names (`file://` URIs; comments and other schemes left out).
++    fn read_paths(&self, connection: &Connection) -> Option<ExternalPaths> {
++        if !self.has_mime_type(FILE_LIST_MIME_TYPE) {
++            return None;
++        }
++        let bytes = self.read_bytes(connection, FILE_LIST_MIME_TYPE)?;
++        let list = String::from_utf8(bytes).ok()?;
++        let paths: SmallVec<[PathBuf; 2]> = list
++            .lines()
++            .map(str::trim)
++            .filter(|line| !line.is_empty() && !line.starts_with('#'))
++            .filter_map(|line| Url::parse(line).ok())
++            .filter(|url| url.scheme() == "file")
++            .filter_map(|url| url.to_file_path().ok())
++            .collect();
++        (!paths.is_empty()).then(|| ExternalPaths(paths))
++    }
++
+     fn read_image(&self, connection: &Connection) -> Option<ClipboardItem> {
+         for format in ImageFormat::iter() {
+             let mime_type = format.mime_type();
