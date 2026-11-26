@@ -95,10 +95,11 @@ impl CallStage {
 
     /// The captions run while a transcription runs, for the transcript's words: asked as it starts (and again a few
     /// times, apart, after they failed or ended unseen), and stopped as it stops unless the user shows them or they are
-    /// saved.
+    /// saved. A reconnect keeps the hold; the captions are asked only while the call is connected.
     pub(super) fn hold_transcript_captions(&mut self, active: &ActiveCall, cx: &mut Context<Self>) {
+        let connected = active.status == CallStatus::Connected;
         let want = active.meeting.transcribing.is_some()
-            && matches!(active.status, CallStatus::Connected | CallStatus::Reconnecting)
+            && (connected || active.status == CallStatus::Reconnecting)
             && active.kind != CallKind::TestCall
             && !self.core.read_only()
             && self.core.capabilities().captions;
@@ -108,9 +109,13 @@ impl CallStage {
             teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
         );
         if calls.transcript_captions() == want {
-            if want {
+            if want && connected {
                 self.retry_transcript_captions(running, cx);
             }
+            return;
+        }
+        // the hold starts once connected: the captions can be asked for only then
+        if want && !connected {
             return;
         }
         self.record.transcript_retries = 0;
@@ -125,7 +130,8 @@ impl CallStage {
     }
 
     /// The captions held for the transcript stopped unseen (failed, or ended by the service): asked for again after a
-    /// while, a few times, unless the user shows them (their failure shows) or the saved transcript retries them.
+    /// while, a few times, unless the user shows them (their failure shows). A try that finds the call reconnecting
+    /// is not counted.
     fn retry_transcript_captions(&mut self, running: bool, cx: &mut Context<Self>) {
         if running && self.calls.read(cx).captions().phase == teams_core::CaptionPhase::On {
             self.record.transcript_retries = 0;
@@ -133,7 +139,6 @@ impl CallStage {
         let calls = self.calls.read(cx);
         if running
             || calls.captions_shown()
-            || calls.saving_captions()
             || self.record.transcript_retrying
             || self.record.transcript_retries >= crate::call_transcript::RETRIES
         {
@@ -147,13 +152,21 @@ impl CallStage {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.record.transcript_retrying = false;
+                let connected = this
+                    .live(cx)
+                    .is_some_and(|active| active.status == CallStatus::Connected);
                 let calls = this.calls.read(cx);
                 let stopped = !matches!(
                     calls.captions().phase,
                     teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
                 );
-                if calls.transcript_captions() && stopped {
+                if !calls.transcript_captions() || !stopped {
+                    return;
+                }
+                if connected {
                     this.ask(Ask::RecordCaptions(true), cx);
+                } else {
+                    this.record.transcript_retries = this.record.transcript_retries.saturating_sub(1);
                 }
             });
         })

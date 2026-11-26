@@ -126,17 +126,78 @@ fn speech_already_in_the_target_language_shows_as_spoken_and_goes_as_context() {
 }
 
 #[test]
-fn a_full_queue_sends_its_oldest_as_context_only() {
+fn a_full_queue_sends_its_older_lines_after_the_newer_ones_newest_first() {
     let now = Instant::now();
     let mut schedule = Schedule::new("de");
     let lines: Vec<Caption> = (1..=(MAX_QUEUE as u64 + 2))
         .map(|stamp| line(stamp, &format!("Line {stamp}."), true))
         .collect();
     schedule.observe(&lines, now);
+    let mut order = Vec::new();
+    while let Next::Send(job) = schedule.next(now) {
+        assert!(job.said.is_empty(), "no line goes as context only");
+        order.push(job.source.clone());
+        schedule.done(job, "x".into());
+    }
+    assert_eq!(order.len(), lines.len());
+    assert_eq!(order[..MAX_QUEUE].first().map(String::as_str), Some("Line 3."));
+    assert_eq!(&order[MAX_QUEUE..], ["Line 2.", "Line 1."]);
+    assert!(lines.iter().all(|line| schedule.text(line) == Some("x")));
+}
+
+#[test]
+fn the_backlog_goes_while_an_interim_text_settles_and_drops_lines_gone() {
+    let now = Instant::now();
+    let mut schedule = Schedule::new("de");
+    let mut lines: Vec<Caption> = (1..=(MAX_QUEUE as u64 + 2))
+        .map(|stamp| line(stamp, &format!("Line {stamp}."), true))
+        .collect();
+    lines.push(line(99, "Still spea", false));
+    schedule.observe(&lines, now);
+    for _ in 0..MAX_QUEUE {
+        let job = sent(schedule.next(now));
+        schedule.done(job, "x".into());
+    }
     let job = sent(schedule.next(now));
-    assert_eq!(job.source, "Line 3.");
-    let said: Vec<&str> = job.said.iter().map(|said| said.text.as_str()).collect();
-    assert_eq!(said, ["Line 1.", "Line 2."]);
+    assert_eq!(job.source, "Line 2.", "the backlog before the interim is due");
+    schedule.done(job, "x".into());
+    schedule.observe(&lines[2..], now);
+    assert!(matches!(schedule.next(now), Next::At(_)), "Line 1. is gone");
+}
+
+#[test]
+fn a_new_schedule_into_the_same_language_keeps_the_translations() {
+    let now = Instant::now();
+    let mut first = Schedule::new("de");
+    let kept = line(1, "One.", true);
+    first.observe(std::slice::from_ref(&kept), now);
+    let job = sent(first.next(now));
+    first.done(job, "Eins.".into());
+    let mut again = Schedule::new("de");
+    again.resume(first);
+    again.observe(std::slice::from_ref(&kept), now);
+    assert_eq!(again.text(&kept), Some("Eins."));
+    assert_eq!(again.next(now), Next::Idle);
+    let mut other = Schedule::new("fr");
+    other.resume(again);
+    other.observe(std::slice::from_ref(&kept), now);
+    assert_eq!(other.text(&kept), None, "another language starts anew");
+}
+
+#[test]
+fn the_context_one_caption_carries_is_bounded() {
+    let now = Instant::now();
+    let mut schedule = Schedule::new("en");
+    let mut lines: Vec<Caption> = (1..=(MAX_SAID as u64 + 5))
+        .map(|stamp| line(stamp, &format!("Line {stamp}."), true))
+        .collect();
+    let mut german = line(500, "Hallo.", true);
+    german.track_language = "de-de".into();
+    lines.push(german);
+    schedule.observe(&lines, now);
+    let job = sent(schedule.next(now));
+    assert_eq!(job.said.len(), MAX_SAID);
+    assert_eq!(job.said[0].text, "Line 6.", "the newest are kept");
 }
 
 #[test]

@@ -153,6 +153,8 @@ pub struct CaptionTranslation {
     config: Option<(&'static str, AiChoice)>,
     status: Status,
     schedule: Option<Schedule>,
+    /// The last schedule stopped, whose answers a new one into the same language starts from.
+    stopped: Option<Schedule>,
     session: Option<Session>,
     limits: Limits,
     /// The captions shown (bounded by the captions' own history), to start again from on a change or Try again.
@@ -172,6 +174,7 @@ impl CaptionTranslation {
             config: None,
             status: Status::Off,
             schedule: None,
+            stopped: None,
             session: None,
             limits: Limits::default(),
             lines: Vec::new(),
@@ -240,7 +243,9 @@ impl CaptionTranslation {
             self.session = None;
             self.receiving = None;
             self.waking = None;
-            self.schedule = None;
+            if let Some(schedule) = self.schedule.take() {
+                self.stopped = Some(schedule);
+            }
             self.status = Status::Off;
             if let Some((target, choice)) = want {
                 self.begin(target, choice, cx);
@@ -261,7 +266,11 @@ impl CaptionTranslation {
         let Some((code, language)) = language(target) else {
             return;
         };
-        self.schedule = Some(Schedule::new(code));
+        let mut schedule = Schedule::new(code);
+        if let Some(stopped) = self.stopped.take() {
+            schedule.resume(stopped);
+        }
+        self.schedule = Some(schedule);
         let picked = match crate::local_ai::pick(&choice.tool, cx) {
             Ok(picked) => picked,
             Err(failure) => {

@@ -2,14 +2,15 @@
 //! request per fragment:
 //!
 //! - **one caption at a time**: the tool answers in order, so the next goes when the last came back;
-//! - **finals first**, in order, every one (a queue of at most [`MAX_QUEUE`]: the oldest beyond it goes as context
-//!   only, shown as spoken);
+//! - **finals first**, in order, every one (a queue of at most [`MAX_QUEUE`]: the older ones beyond it wait in a
+//!   backlog, sent newest first when nothing newer is due, so a transcript's earlier lines get their translation too);
 //! - **interim text debounced**: an utterance still being spoken goes once its text held for [`SETTLE`], or every
 //!   [`REFRESH`] while it keeps changing, only its latest text, and never when its final is queued;
-//! - **a cache** of the last [`CACHE`] texts translated (a final repeating its last interim text costs nothing);
-//! - **the whole call as context**: every final caption not sent for translation (already in the target language,
-//!   answered from the cache, dropped from a full queue) goes with the next one sent, and the call's brief (title and
-//!   people) whenever it changed, so the tool's conversation holds the whole call.
+//! - **a cache** of the last [`CACHE`] texts translated (a final repeating its last interim text costs nothing), kept
+//!   when the translation stops and starts again into the same language, so a line keeps its translation;
+//! - **the call as context**: the newest [`MAX_SAID`] final captions not sent for translation (already in the target
+//!   language, answered from the cache) go with the next one sent, and the call's brief (title and people) whenever it
+//!   changed, so the tool's conversation holds the call.
 //!
 //! Translations are kept per utterance ([`LineKey`]) for the captions shown, in memory only.
 
@@ -28,7 +29,9 @@ pub const SETTLE: Duration = Duration::from_millis(450);
 /// How often an interim text that keeps changing goes.
 pub const REFRESH: Duration = Duration::from_millis(1200);
 /// How many translations the cache keeps.
-pub const CACHE: usize = 256;
+pub const CACHE: usize = 2048;
+/// The most final captions one caption sent carries as context.
+pub const MAX_SAID: usize = 24;
 
 /// An utterance, as the caption service updates it in place: its speaker, track and audio timestamp (or its id when
 /// it has no timestamp).
@@ -86,6 +89,8 @@ pub struct Schedule {
     target: &'static str,
     shown: HashMap<LineKey, Shown>,
     finals: VecDeque<Job>,
+    /// Finals beyond [`MAX_QUEUE`], oldest first.
+    backlog: VecDeque<Job>,
     interim: Option<Pending>,
     busy: bool,
     /// Final captions already accounted for (sent, queued or said), so none goes twice.
@@ -105,6 +110,7 @@ impl Schedule {
             target,
             shown: HashMap::new(),
             finals: VecDeque::new(),
+            backlog: VecDeque::new(),
             interim: None,
             busy: false,
             noted: HashSet::new(),
@@ -113,6 +119,14 @@ impl Schedule {
             cached: VecDeque::new(),
             brief: String::new(),
             brief_sent: None,
+        }
+    }
+
+    /// Starts from the translations `stopped` got, when it translated into the same language.
+    pub fn resume(&mut self, stopped: Schedule) {
+        if stopped.target == self.target {
+            self.cache = stopped.cache;
+            self.cached = stopped.cached;
         }
     }
 
@@ -138,6 +152,7 @@ impl Schedule {
         let keys: HashSet<LineKey> = lines.iter().map(LineKey::of).collect();
         self.shown.retain(|key, _| keys.contains(key));
         self.noted.retain(|(key, _)| keys.contains(key));
+        self.backlog.retain(|job| keys.contains(&job.key));
     }
 
     /// Whether `line`'s text already has its translation shown.
@@ -171,6 +186,9 @@ impl Schedule {
                 speaker: line.display_name.clone(),
                 text: line.text.clone(),
             });
+            if self.said.len() > MAX_SAID {
+                self.said.remove(0);
+            }
         }
     }
 
@@ -179,17 +197,15 @@ impl Schedule {
             return;
         }
         self.finals.retain(|job| job.key != key);
+        self.backlog.retain(|job| job.key != key);
         if self.interim.as_ref().is_some_and(|pending| pending.key == key) {
             self.interim = None;
         }
         self.finals
             .push_back(job(key, line.text.clone(), true, line.display_name.clone()));
         while self.finals.len() > MAX_QUEUE {
-            if let Some(dropped) = self.finals.pop_front() {
-                self.said.push(Said {
-                    speaker: dropped.speaker,
-                    text: dropped.source,
-                });
+            if let Some(older) = self.finals.pop_front() {
+                self.backlog.push_back(older);
             }
         }
     }
@@ -226,11 +242,17 @@ impl Schedule {
             return Next::Send(self.sending(job));
         }
         let Some(pending) = &self.interim else {
-            return Next::Idle;
+            return self
+                .backlog
+                .pop_back()
+                .map_or(Next::Idle, |job| Next::Send(self.sending(job)));
         };
         let due = (pending.changed + SETTLE).min(pending.since + REFRESH);
         if now < due {
-            return Next::At(due);
+            return match self.backlog.pop_back() {
+                Some(job) => Next::Send(self.sending(job)),
+                None => Next::At(due),
+            };
         }
         let Some(pending) = self.interim.take() else {
             return Next::Idle;

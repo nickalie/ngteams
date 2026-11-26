@@ -841,13 +841,14 @@ impl CallStage {
     fn translate(&self, live: Option<&ActiveCall>, cx: &mut Context<Self>) {
         let calls = self.calls.read(cx);
         let captions = calls.captions();
-        // captions are translated while their pane or the Transcript pane shows them
+        let running = matches!(
+            captions.phase,
+            teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
+        );
+        // the transcript keeps its words after the captions stop, so it keeps their translation too
         let showing = live.is_some()
-            && (calls.captions_shown() || self.transcript_shown())
-            && matches!(
-                captions.phase,
-                teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
-            );
+            && ((calls.captions_shown() && running)
+                || (self.transcript_shown() && (running || !calls.spoken().is_empty())));
         let lines = if self.transcript_shown() {
             transcript::translated_lines(calls.spoken(), &captions.lines)
         } else {

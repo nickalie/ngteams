@@ -5307,6 +5307,24 @@ fn the_transcript_leaves_out_earlier_words_and_its_captions_outlast_a_failure_an
 }
 
 #[test]
+fn a_transcription_started_during_a_reconnect_asks_its_captions_once_connected() {
+    let rig = calling();
+    let _stage = group_call_up(&rig);
+    let asked = caption_asks(&rig);
+    status(&rig, 1, CallStatus::Reconnecting);
+    rig.cx.run_until_parked();
+    meeting(&rig, transcribing_by(LAB_B, false));
+    assert_eq!(caption_asks(&rig), asked, "nothing asked while reconnecting");
+    let refused = rig.cx.read(|cx| rig.models.calls.read(cx).refused().is_some());
+    assert!(!refused, "nothing refused");
+    status(&rig, 1, CallStatus::Connected);
+    rig.cx.run_until_parked();
+    let mut again = asked.clone();
+    again.push(true);
+    assert_eq!(caption_asks(&rig), again, "asked once connected");
+}
+
+#[test]
 fn a_recording_and_transcription_records_the_audio_alone_from_more_options() {
     let rig = calling();
     let stage = group_call_up(&rig);

@@ -209,6 +209,13 @@ fn captions_are_translated_only_once_a_language_is_picked_and_while_they_show() 
         translation.follow(&[], false, String::new(), cx);
     });
     translation.read_with(&app, |translation, _| assert_eq!(translation.status(), &Status::Off));
+    // shown again: what was translated shows at once
+    translation.update(&mut app, |translation, cx| {
+        translation.follow(&lines, true, "Title: Synthetic".into(), cx);
+    });
+    translation.read_with(&app, |translation, _| {
+        assert_eq!(translation.shown(&lines[0]), Shown::Translated("DE Synthetic hello."));
+    });
     translate_to(&mut app, &settings, None);
 }
 
