@@ -5439,6 +5439,29 @@ fn saved_captions_that_fail_are_tried_again_by_their_saving_alone() {
 }
 
 #[test]
+fn a_retry_of_an_earlier_saving_of_the_call_asks_nothing() {
+    let rig = calling();
+    let stage = group_call_up_saving(&rig, true);
+    meeting(&rig, transcribing_by(LAB_B, false));
+    captions_in(&rig, teams_core::CaptionPhase::Failed);
+    stage.executor().advance_clock(std::time::Duration::from_secs(5));
+    status(&rig, 1, CallStatus::Reconnecting);
+    rig.cx.run_until_parked();
+    status(&rig, 1, CallStatus::Connected);
+    rig.cx.run_until_parked();
+    captions_in(&rig, teams_core::CaptionPhase::Failed);
+    let waiting = caption_asks(&rig);
+    stage.executor().advance_clock(std::time::Duration::from_secs(16));
+    rig.cx.run_until_parked();
+    assert_eq!(caption_asks(&rig), waiting, "the earlier saving's timer asks nothing");
+    stage.executor().advance_clock(std::time::Duration::from_secs(5));
+    rig.cx.run_until_parked();
+    let mut again = waiting;
+    again.push(true);
+    assert_eq!(caption_asks(&rig), again, "the new saving's timer asks once");
+}
+
+#[test]
 fn a_transcription_started_during_a_reconnect_asks_its_captions_once_connected() {
     let rig = calling();
     let _stage = group_call_up(&rig);

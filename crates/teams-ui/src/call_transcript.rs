@@ -259,7 +259,8 @@ struct Saving {
     /// Its captions were asked for (and how many times again after they failed, whether a try waits).
     asked: bool,
     retries: u32,
-    retrying: bool,
+    /// The turn of the try that waits: a timer of an earlier saving of the same call never matches it.
+    retrying: Option<u64>,
     /// Its transcript, once the store opened it; whether that was asked.
     transcript: Option<i64>,
     opening: bool,
@@ -276,6 +277,7 @@ pub struct Recorder {
     settings: Entity<SettingsModel>,
     trace: Arc<ViewTrace>,
     saving: Option<Saving>,
+    retry_turns: u64,
     _following: [Subscription; 2],
 }
 
@@ -326,6 +328,7 @@ impl Recorder {
             settings,
             trace,
             saving: None,
+            retry_turns: 0,
             _following: following,
         };
         recorder.follow(cx);
@@ -343,7 +346,7 @@ impl Recorder {
     pub fn retries_captions(&self) -> bool {
         self.saving
             .as_ref()
-            .is_some_and(|saving| saving.retrying || saving.retries < RETRIES)
+            .is_some_and(|saving| saving.retrying.is_some() || saving.retries < RETRIES)
     }
 
     /// The calls or the settings changed: the captions of the call up are saved as the setting says.
@@ -386,7 +389,7 @@ impl Recorder {
                 connected_at: chrono::Utc::now().timestamp_millis(),
                 asked: false,
                 retries: 0,
-                retrying: false,
+                retrying: None,
                 transcript: None,
                 opening: false,
                 heard: BTreeMap::new(),
@@ -405,16 +408,17 @@ impl Recorder {
         if phase == teams_core::CaptionPhase::On {
             saving.retries = 0;
         }
-        if saving.retrying {
+        if saving.retrying.is_some() {
             return;
         }
         if phase == teams_core::CaptionPhase::Failed && saving.asked && !shown && saving.retries < RETRIES {
+            self.retry_turns += 1;
+            let turn = self.retry_turns;
             saving.retries += 1;
-            saving.retrying = true;
-            let call = saving.call;
+            saving.retrying = Some(turn);
             cx.spawn(async move |this, cx: &mut AsyncApp| {
                 cx.background_executor().timer(RETRY_AFTER).await;
-                let _ = this.update(cx, |this, cx| this.retry(call, cx));
+                let _ = this.update(cx, |this, cx| this.retry(turn, cx));
             })
             .detach();
             return;
@@ -429,11 +433,11 @@ impl Recorder {
         calls::ask(&self.calls, &self.core, &self.trace, Ask::RecordCaptions(true), cx);
     }
 
-    /// The captions of `call` are asked for again, when it is still the call saved.
-    fn retry(&mut self, call: CallId, cx: &mut Context<Self>) {
-        if let Some(saving) = self.saving.as_mut().filter(|saving| saving.call == call) {
+    /// The captions are asked for again, when the try of `turn` still waits.
+    fn retry(&mut self, turn: u64, cx: &mut Context<Self>) {
+        if let Some(saving) = self.saving.as_mut().filter(|saving| saving.retrying == Some(turn)) {
             saving.asked = false;
-            saving.retrying = false;
+            saving.retrying = None;
             self.follow(cx);
         }
     }
