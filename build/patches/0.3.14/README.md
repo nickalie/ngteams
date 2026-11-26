@@ -5,9 +5,11 @@ with `build/patches/<crate>`. `scripts/vendor-crates.sh` reads `NEXT_VERSION` an
 
 - `scripts/vendor-crates.sh --check` verifies the 0.3.14 archives and applies these patches in a scratch directory.
 - `scripts/vendor-crates.sh --next DIR` writes the patched 0.3.14 crates to `DIR/<crate>`. `DIR` must be outside
-  the repository. Use it to port a patch: apply the 0.3.9 patch there, fix the rejects, and write the new patch here.
+  the repository and the main checkout, and no `DIR/<crate>` can exist yet, so a second run never deletes port work.
+  Use it to port a patch: apply the 0.3.9 patch there, fix the rejects, and write the new patch here.
 
-The script applies the patches of a crate in name order. A ported patch keeps its 0.3.9 name and number. A dropped
+The script applies the patches of a crate in name order, with no fuzz and no backup files: a patch that needs fuzz
+fails, because this set has no vendored tree to compare with. A ported patch keeps its 0.3.9 name and number. A dropped
 patch leaves a gap in the numbers.
 
 ## Status

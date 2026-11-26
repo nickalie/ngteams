@@ -57,6 +57,7 @@
 #        scripts/vendor-crates.sh --check    rebuild into a scratch dir and fail if a vendored crate differs, or if the
 #                                            next snapshot's archives or patches do not verify
 #        scripts/vendor-crates.sh --next DIR write the next snapshot's crates, patched, to DIR/<crate> (for a port)
+#                                            DIR is outside the repository, and no DIR/<crate> exists yet
 set -euo pipefail
 shopt -s nullglob
 
@@ -95,7 +96,7 @@ declare -A NEXT_SHA256=(
 )
 NEXT_CRATES=(gpui-pre gpui-pre-wgpu gpui-pre-linux gpui-pre-windows)
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(cd "$(dirname "$0")/.." && pwd -P)"
 
 die() {
   echo "$*" >&2
@@ -110,7 +111,14 @@ case "${1:-}" in
     mode=next
     [[ -n "${2:-}" ]] || die "--next needs a directory (see --help)"
     next_dir="$(realpath -m "$2")"
-    [[ "$next_dir/" != "$root/"* ]] || die "--next writes outside the repository: the workspace keeps the current pins"
+    # A worktree is inside the main checkout, so DIR must be outside both.
+    main_root="$(cd "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)/.." && pwd -P)"
+    for repo in "$root" "$main_root"; do
+      [[ "$next_dir/" != "$repo/"* ]] || die "--next writes outside the repository: the workspace keeps the current pins"
+    done
+    for crate in "${NEXT_CRATES[@]}"; do
+      [[ ! -e "$next_dir/$crate" ]] || die "$next_dir/$crate exists: move it or use a new DIR, so no port work is lost"
+    done
     mkdir -p "$next_dir"
     ;;
   -h | --help) sed -n '1d; /^#/!q; s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; exit 0 ;;
@@ -121,8 +129,10 @@ scratch="$(mktemp -d "${TMPDIR:-/tmp}/ngteams-vendor-XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 
 # The verified crates.io archive of crate $1 at version $2 (sha256 $3), with the patches in $4 applied, in $5.
+# Extra arguments go to patch.
 built() {
   local crate="$1" version="$2" expected="$3" patches="$4" dest="$5" archive sum patch
+  shift 5
   archive="$scratch/$crate-$version.crate"
   curl -sSfL --retry 3 --connect-timeout 30 --max-time 600 -A ngteams-dev -o "$archive" \
     "https://static.crates.io/crates/$crate/$crate-$version.crate"
@@ -136,9 +146,12 @@ built() {
     rm -rf "$dest/examples"
   fi
   for patch in "$patches"/*.patch; do
-    patch -s -p1 -d "$dest" <"$patch" || die "$(basename "$patch") does not apply to $crate $version"
+    patch -s -p1 "$@" -d "$dest" <"$patch" || die "$(basename "$patch") does not apply to $crate $version"
   done
 }
+
+# The next snapshot has no vendored tree to compare with, so its patches must apply exactly.
+strict=(--fuzz=0 --no-backup-if-mismatch)
 
 # Replace $2 with the directory $1.
 replace() {
@@ -153,7 +166,7 @@ next_patches="$root/build/patches/$NEXT_SNAPSHOT"
 if [[ "$mode" == next ]]; then
   for crate in "${NEXT_CRATES[@]}"; do
     version="${NEXT_VERSION[$crate]}"
-    built "$crate" "$version" "${NEXT_SHA256[$crate]}" "$next_patches/$crate" "$scratch/next/$crate"
+    built "$crate" "$version" "${NEXT_SHA256[$crate]}" "$next_patches/$crate" "$scratch/next/$crate" "${strict[@]}"
     replace "$scratch/next/$crate" "$next_dir/$crate"
     echo "wrote $crate $version + build/patches/$NEXT_SNAPSHOT/$crate into $next_dir/$crate"
   done
@@ -180,7 +193,7 @@ done
 if [[ "$mode" == check ]]; then
   for crate in "${NEXT_CRATES[@]}"; do
     version="${NEXT_VERSION[$crate]}"
-    built "$crate" "$version" "${NEXT_SHA256[$crate]}" "$next_patches/$crate" "$scratch/next/$crate"
+    built "$crate" "$version" "${NEXT_SHA256[$crate]}" "$next_patches/$crate" "$scratch/next/$crate" "${strict[@]}"
     echo "$crate $version + build/patches/$NEXT_SNAPSHOT/$crate verifies"
   done
 fi
