@@ -584,15 +584,19 @@ fn a_ring_that_ends_before_its_meetings_name_is_read_leaves_its_pre_join_titled_
 
 #[test]
 fn the_pre_joins_window_takes_the_meetings_name_as_it_is_read_with_no_draw_between() {
-    let rig = calling();
+    let mut rig = calling();
     listed_meeting(&rig);
     let (trace, _) = trace();
-    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (shell, _cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
     let (windows, _) = call_windows(&rig, &shell, &trace);
     registered(&rig);
     rig.send(Event::IncomingCall(meeting_ring(8)));
     rig.cx.run_until_parked();
-    click(cx, "call-answer");
+    // a title that only a draw sets stays unset
+    rig.cx.skip_drawing();
+    let core: Arc<dyn teams_ui::Core> = rig.core.clone();
+    rig.cx
+        .update(|cx| teams_ui::calls::accept_meeting_ring(&calls_of(&rig), &core, &trace, cx));
     rig.cx.run_until_parked();
     let window = rig
         .cx

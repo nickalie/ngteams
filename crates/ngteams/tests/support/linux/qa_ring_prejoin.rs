@@ -446,7 +446,7 @@ fn refused_with(user: &mut User<'_>, code: u16) -> SandboxResult {
         after_refusal(user, seen);
         let state = user.until("the pre-join or the call's end after the refused answer", |state| {
             // the refused `accept` ended the ring's call: the pre-join stays, its Join now joins the meeting
-            (!state["prejoin"].is_null() && state["prejoin"]["joining"] == false)
+            (!state["prejoin"].is_null() && state["prejoin"]["ring"] == false && state["prejoin"]["joining"] == false)
                 || (state["prejoin"].is_null() && state["call"].is_null())
         })?;
         say(&format!("  after the refusal: {state}"));
@@ -467,6 +467,13 @@ fn refused_with(user: &mut User<'_>, code: u16) -> SandboxResult {
         let call = user.state()?["call"].clone();
         ensure(call["kind"] == "Meeting" && call["chat"] == MEETING, || {
             format!("the second Join now went into {call}")
+        })?;
+        let accepts = sent_by_a(user)
+            .iter()
+            .filter(|(op, _, id)| op == "accept" && *id == ring)
+            .count();
+        ensure(accepts == 1, || {
+            format!("a sent {accepts} accepts of the ring, not one")
         })
     })();
     finish(user, &ring, outcome).map_err(|error| format!("{code}: {error}").into())

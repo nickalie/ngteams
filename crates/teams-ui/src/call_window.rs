@@ -15,7 +15,8 @@
 //! - **The lab app** opens it on the same display as its main window: inside the UI sandbox, where its main window is.
 //!
 //! - **A meeting's pre-join** ([`PrejoinView`]) has its own window of the same size, open while the pre-join shows and
-//!   no call is up: Join now's call takes over in the call window, and closing it is Cancel.
+//!   no call is up other than the answer that its Join now gave its ring, until that answer is taken: Join now's call
+//!   takes over in the call window, and closing it is Cancel.
 //!
 //! What it does is traced on its account's trace: `call-window opened` (the call's number and kind), `call-window
 //! raised`, `call-window closed` (the call's number, and `left` when its closing left the call).
@@ -197,7 +198,8 @@ impl CallWindows {
             .map(|account| &account.parts.models.calls)
     }
 
-    /// The pre-join's window follows the calls: open while one shows and no call is up. A ring's pre-join comes
+    /// The pre-join's window follows the calls: open while one shows and no call is up (an answer that the pre-join
+    /// waits for is not up, see [`Calls::answering_in_prejoin`]). A ring's pre-join comes
     /// first, as its ring is silent while it shows; then the one opened last.
     fn follow_prejoin(&mut self, call_up: bool, cx: &mut Context<Self>) {
         let showing: Vec<(String, u64)> = self
