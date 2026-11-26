@@ -426,7 +426,7 @@ impl Walk<'_> {
             let before = self.video_state()?;
             self.key(key)?;
             let started = self.video_until(|state| ["Playing", "Ended"].iter().any(|seen| state.contains(seen)))?;
-            let focus = self.focus()?;
+            let focus = self.control()?;
             self.run
                 .shot(self.sandbox, &format!("qa849-video-{name}-playing-light.png"))?;
             if started == before
@@ -439,7 +439,7 @@ impl Walk<'_> {
                 ));
                 continue;
             }
-            if focus != "other" || has_ring(&self.run.last, LIGHT, stop.ring) {
+            if focus == "outside" || has_ring(&self.run.last, LIGHT, stop.ring) {
                 note(format!(
                     "{name} on the video's card: the keys are not in the player (focus {focus})"
                 ));
@@ -498,13 +498,7 @@ impl Walk<'_> {
                 let before = load(&self.run.shot(self.sandbox, &format!("{shot}-focused-light.png"))?)?;
                 let opened_before = self.sandbox.opened()?.len();
                 self.key(key)?;
-                thread::sleep(QUIET);
-                let after = self.video_state()?;
-                let opened = self
-                    .sandbox
-                    .opened()?
-                    .get(opened_before)
-                    .and_then(|opened| opened.args.last().cloned());
+                let (after, opened) = self.pressed_outcome(name, opened_before)?;
                 let pressed_shot = load(&self.run.shot(self.sandbox, &format!("{shot}-{key_name}-light.png"))?)?;
                 let whole = Rect {
                     x0: 0,
@@ -520,9 +514,9 @@ impl Walk<'_> {
                 let full = changed * 2 > area;
                 let menu = (5_000..area / 10).contains(&changed);
                 let wanted = match name {
-                    "play" => played && !full,
-                    "player" => menu && !played && !full,
-                    "fullscreen" => full && !played,
+                    "play" => played && !full && opened.is_none(),
+                    "player" => menu && !played && !full && opened.is_none(),
+                    "fullscreen" => full && !played && opened.is_none(),
                     "open" => opened.as_deref() == Some(share_url(&CLIP_A).as_str()) && !played && !full && !menu,
                     // a skip changes the picture, as a menu does: only what it must not do is checked
                     _ => !played && !full && opened.is_none(),
@@ -542,6 +536,23 @@ impl Walk<'_> {
         }
         step(&format!("the player's controls: {pressed:?}"));
         Ok(())
+    }
+
+    /// The video's state and the link opened after a press on the control `name`: a wait for the state that the
+    /// control must make, else [`QUIET`] for what it must not do.
+    fn pressed_outcome(&mut self, name: &str, opened_before: usize) -> SandboxResult<(Option<String>, Option<String>)> {
+        let after = if name == "play" {
+            self.video_until(|state| state.contains("Playing") || state.contains("Loading"))?
+        } else {
+            thread::sleep(QUIET);
+            self.video_state()?
+        };
+        let opened = if name == "open" {
+            wait_until(QUIET * 2, || self.sandbox.opened().ok()?.get(opened_before).cloned())
+        } else {
+            self.sandbox.opened()?.get(opened_before).cloned()
+        };
+        Ok((after, opened.and_then(|opened| opened.args.last().cloned())))
     }
 
     /// A shot `name` in Teams Dark, then Teams Light again.
@@ -588,7 +599,7 @@ impl Walk<'_> {
         .filter(|menu| menu.height() > 20 && menu.width() > 60);
         self.key(keys::ESC)?;
         let closed = load(&self.run.shot(self.sandbox, "qa849-escape-2-menu-closed-light.png")?)?;
-        let focus_after_menu = self.focus()?;
+        let focus_after_menu = self.control()?;
         if let Some(opened) = opened
             && changed_in(&before_menu, &closed, opened) > 200
         {
@@ -596,7 +607,7 @@ impl Walk<'_> {
                 "Escape in the player does not close its More options menu first ({opened:?})"
             ));
         }
-        if focus_after_menu != "other" || has_ring(&self.run.last, LIGHT, stop.ring) {
+        if focus_after_menu == "outside" || has_ring(&self.run.last, LIGHT, stop.ring) {
             note(format!(
                 "Escape on the player's menu: the keys leave the player (focus {focus_after_menu})"
             ));
@@ -643,11 +654,11 @@ impl Walk<'_> {
         }
         self.key(keys::ESC)?;
         let back = load(&self.run.shot(self.sandbox, "qa849-escape-5-windowed-light.png")?)?;
-        let focus_after_full = self.focus()?;
+        let focus_after_full = self.control()?;
         if changed_in(&windowed, &back, whole) * 4 > area {
             note("Escape in full screen does not end full screen".to_owned());
         }
-        if focus_after_full != "other" || has_ring(&back, LIGHT, stop.ring) {
+        if focus_after_full == "outside" || has_ring(&back, LIGHT, stop.ring) {
             note(format!(
                 "Escape in full screen: the keys leave the player (focus {focus_after_full})"
             ));
