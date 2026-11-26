@@ -174,21 +174,20 @@ async fn card_dialog(case: &Case, card: &str) {
         case.got(&case.bea, "task/submit").await.activity["value"]["data"]["answer"],
         "coffee"
     );
-    assert_eq!(
-        case.connector()
-            .await
-            .send(
-                &case.chat,
-                json!({"type": "message", "attachments": [attachment("Coffee poll")]})
-            )
-            .await
-            .0,
-        200
-    );
+    let (status, posted) = case
+        .connector()
+        .await
+        .send(
+            &case.chat,
+            json!({"type": "message", "attachments": [attachment("Coffee poll")]}),
+        )
+        .await;
+    assert_eq!(status, 200);
+    let id = posted["id"].as_str().unwrap();
     assert!(
         synced(&case.ada, &case.chat)
             .await
             .iter()
-            .any(|m| m.message_type == "RichText/Media_Card")
+            .any(|m| m.id == id && m.message_type == "RichText/Media_Card")
     );
 }

@@ -445,9 +445,7 @@ where
         message_repo::Updated::Denied => Ok(BotChange::Denied),
         message_repo::Updated::Unchanged(_) => Ok(BotChange::Done),
         message_repo::Updated::Message(changed) => {
-            for objects in shown.into_inner().unwrap_or_default().chunks(crate::media::RELEASED) {
-                crate::media::release(app, bot, objects).await;
-            }
+            crate::media::release(app, bot, &shown.into_inner().unwrap_or_default()).await;
             events::tell(
                 app,
                 "MessageUpdate",

@@ -1,7 +1,8 @@
 //! A person's invoke of a bot (`POST /api/chatsvc/<region>/v1/agents/28:<bot>/invoke`, `docs/protocol/bots.md`): a
-//! synchronous proxy. The server checks that the person may use the bot's app and that both are in the conversation,
-//! posts the invoke activity to the bot once through the address guard ([`crate::outbound`]), and hands back the
-//! bot's answer in the chat service's envelope. Nothing is kept, so any node serves it.
+//! synchronous proxy. The server checks that the person may use the bot's app and, when the request names a
+//! conversation, that both are in it (with none, the activity names their 1:1 chat). It posts the invoke activity
+//! to the bot once through the address guard ([`crate::outbound`]), and hands back the bot's answer in the chat
+//! service's envelope. Nothing is kept, so any node serves it.
 //!
 //! Only `name`, `value`, the conversation, the message and a `messageBack`'s `text` pass from the request into the
 //! activity: a `userAadToken` a client sends is never read, so no person's token reaches a bot. A bot's `401`, `403`
@@ -194,24 +195,24 @@ fn activity(
     bot: &Bot,
     conversation: &Conversation,
 ) -> Value {
-    let at = crate::chatsvc::now();
-    let time = crate::chatsvc::iso(at);
-    let (kind, is_group) = match &conversation.place {
-        InvokePlace::Channel { .. } => ("channel", true),
-        InvokePlace::Chat { personal: false } => ("groupChat", true),
-        _ => ("personal", false),
+    let kind = match &conversation.place {
+        InvokePlace::Channel { .. } => "channel",
+        InvokePlace::Chat { personal: false } => "groupChat",
+        _ => "personal",
     };
-    let mut activity = json!({
-        "id": format!("f:{}", uuid::Uuid::new_v4().simple()),
-        "timestamp": time, "localTimestamp": time,
-        "channelId": crate::apps::keys::CHANNEL, "locale": super::activity::LOCALE,
-        "from": {"id": format!("29:{}", person.id), "name": person.display_name, "aadObjectId": person.id},
-        "recipient": {"id": format!("28:{}", bot.id), "name": bot.name},
-        "conversation": {"id": conversation.id, "conversationType": kind, "isGroup": is_group},
-        "channelData": {"source": {"name": "message"}},
-        "entities": [{"type": "clientInfo", "locale": super::activity::LOCALE}],
-        "value": asked.value,
-    });
+    let from = super::activity::Sender {
+        id: &person.id,
+        name: &person.display_name,
+    };
+    let to = super::activity::Recipient {
+        id: &bot.id,
+        name: &bot.name,
+    };
+    let mut activity = super::activity::envelope(kind, &conversation.id, &from, &to, crate::chatsvc::now());
+    activity["id"] = format!("f:{}", uuid::Uuid::new_v4().simple()).into();
+    activity["channelData"]["source"] = json!({"name": "message"});
+    activity["entities"] = super::activity::client_info();
+    activity["value"] = asked.value.clone();
     if asked.name == "message" {
         activity["type"] = "message".into();
         activity["text"] = asked.text.clone().unwrap_or_default().into();

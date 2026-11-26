@@ -15,7 +15,7 @@ pub(crate) const HTML: &str = "RichText/Html";
 pub(crate) const CARD: &str = "RichText/Media_Card";
 
 /// The locale activities name: the server has no account locale yet.
-pub(crate) const LOCALE: &str = "en-US";
+const LOCALE: &str = "en-US";
 
 /// The bot an activity goes to.
 pub(crate) struct Recipient<'a> {
@@ -73,18 +73,29 @@ impl Event<'_> {
     }
 }
 
-/// The activity for `event`, without the parts [`addressed`] adds.
-pub(crate) fn pending(event: &Event<'_>, place: &Place<'_>, from: &Sender<'_>, to: &Recipient<'_>, at: i64) -> Value {
+/// The parts every activity has: when, from whom, to which bot and in which conversation (`kind`: `personal`,
+/// `groupChat` or `channel`).
+pub(crate) fn envelope(kind: &str, conversation: &str, from: &Sender<'_>, to: &Recipient<'_>, at: i64) -> Value {
     let time = crate::chatsvc::iso(at);
-    let mut activity = json!({
-        "type": event.kind(),
+    json!({
         "timestamp": time, "localTimestamp": time, "channelId": crate::apps::keys::CHANNEL, "locale": LOCALE,
         "from": {"id": format!("29:{}", from.id), "name": from.name, "aadObjectId": from.id},
         "recipient": {"id": format!("28:{}", to.id), "name": to.name},
-        "conversation": {"id": place.id, "conversationType": if place.personal { "personal" } else { "groupChat" },
-            "isGroup": !place.personal},
+        "conversation": {"id": conversation, "conversationType": kind, "isGroup": kind != "personal"},
         "channelData": {},
-    });
+    })
+}
+
+/// The `entities` of an activity a person's client started.
+pub(crate) fn client_info() -> Value {
+    json!([{"type": "clientInfo", "locale": LOCALE}])
+}
+
+/// The activity for `event`, without the parts [`addressed`] adds.
+pub(crate) fn pending(event: &Event<'_>, place: &Place<'_>, from: &Sender<'_>, to: &Recipient<'_>, at: i64) -> Value {
+    let kind = if place.personal { "personal" } else { "groupChat" };
+    let mut activity = envelope(kind, place.id, from, to, at);
+    activity["type"] = event.kind().into();
     match event {
         Event::Message { id, body } | Event::Edited { id, body } => {
             activity["id"] = id.to_string().into();
@@ -92,7 +103,7 @@ pub(crate) fn pending(event: &Event<'_>, place: &Place<'_>, from: &Sender<'_>, t
             activity["textFormat"] = "plain".into();
             activity["text"] = plain(html).into();
             activity["attachments"] = json!([{"contentType": "text/html", "content": html}]);
-            activity["entities"] = json!([{"type": "clientInfo", "locale": LOCALE}]);
+            activity["entities"] = client_info();
             if matches!(event, Event::Edited { .. }) {
                 activity["channelData"]["eventType"] = "editMessage".into();
             }

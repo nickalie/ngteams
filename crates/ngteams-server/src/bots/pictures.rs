@@ -108,9 +108,7 @@ pub(super) struct Taken {
 
 impl Taken {
     pub async fn release(&self, app: &App, bot: &Bot) {
-        for objects in self.created.chunks(crate::media::RELEASED) {
-            crate::media::release(app, &bot.id, objects).await;
-        }
+        crate::media::release(app, &bot.id, &self.created).await;
     }
 }
 

@@ -243,15 +243,21 @@ async fn clear(storage: &dyn crate::storage::Storage, key: &str) {
 }
 
 /// The most pictures one cleanup batch releases.
-pub(crate) const RELEASED: usize = 64;
+const RELEASED: usize = 64;
 
-/// Frees pictures of `owner` that no message names after a change. Processes at most [`RELEASED`] objects.
-/// Callers must split longer lists into batches. The change stands if cleanup fails. The owner or operator can
-/// still delete the object. The transaction reduces the owner's usage. A separate task clears the stored bytes.
-/// The request does not wait for storage. A node waits for that task before it stops ([`Clearing`]).
+/// Frees pictures of `owner` that no message names after a change, in batches of [`RELEASED`]. The change stands
+/// if cleanup fails. The owner or operator can still delete the object. The transaction reduces the owner's usage.
+/// A separate task clears the stored bytes. The request does not wait for storage. A node waits for that task
+/// before it stops ([`Clearing`]).
 pub(crate) async fn release(app: &App, owner: &str, objects: &[String]) {
+    for batch in objects.chunks(RELEASED) {
+        release_batch(app, owner, batch).await;
+    }
+}
+
+async fn release_batch(app: &App, owner: &str, objects: &[String]) {
     let mut unread = Vec::new();
-    for id in objects.iter().take(RELEASED) {
+    for id in objects {
         match ams::release(&app.db, owner, id).await {
             Ok(key) => unread.extend(key),
             Err(error) => tracing::warn!(%error, "a picture no message shows wasn't freed"),

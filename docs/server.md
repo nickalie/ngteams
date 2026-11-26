@@ -657,8 +657,9 @@ paging of the lists (a list is whole, without `nextLink`).
 
 The server becomes a Bot Connector for bots built with the Bot Framework, Teams or Microsoft 365 Agents SDKs. It
 registers apps and bots, gives each bot its credentials and the keys to check the server with, delivers chat events
-to bots as activities, serves the connector routes a bot answers on (1:1 bot chats) and passes a person's invokes to
-the bot ([below](#invokes)). Installs, group chats and channels are not served yet.
+to bots as activities, serves the connector routes a bot answers on and passes a person's invokes to the bot
+([below](#invokes)). Invokes, reactions and replies work in any chat the bot is in. Installs, and a bot's own start of
+a group chat or channel conversation, are not served yet.
 
 **A bot is a principal in chats**: a `users` row of kind `app` with the bot's id, MRI `28:<id>`, no password and no
 sign-in. No people read finds it: not the admin's account list or account changes, not a sign-in, not a profile
