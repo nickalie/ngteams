@@ -49,15 +49,10 @@ const NO_DECODER_NOTE: &str = "is a video sticker, and this computer has no deco
 const LONG: &str = include_str!("../../../../../tests/fixtures/telegram/synthetic-sticker-long.webm.hex");
 const WIDE: &str = include_str!("../../../../../tests/fixtures/telegram/synthetic-sticker-wide.webm.hex");
 
-/// The bytes of a hex fixture, its `#` lines left out.
+/// The bytes of a hex fixture.
 fn hex(text: &str) -> SandboxResult<Vec<u8>> {
-    let digits: String = text.lines().filter(|line| !line.starts_with('#')).collect();
-    let bytes: Option<Vec<u8>> = digits
-        .as_bytes()
-        .chunks(2)
-        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
-        .collect();
-    bytes.ok_or_else(|| "a hex fixture has a pair that is not hex".into())
+    teams_mock::telegram::hex_bytes(text)
+        .ok_or_else(|| "a hex fixture has a pair that is not hex, or an odd digit".into())
 }
 
 /// An animated GIF of two frames: a magenta square that moves, on a clear ground.

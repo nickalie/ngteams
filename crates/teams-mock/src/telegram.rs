@@ -23,7 +23,8 @@ pub fn synthetic_webm() -> Option<Vec<u8>> {
 }
 
 /// The bytes of `text`'s hex digits, its `#` lines left out. `None` if a pair is not hex, or a digit has no pair.
-fn hex_bytes(text: &str) -> Option<Vec<u8>> {
+#[must_use]
+pub fn hex_bytes(text: &str) -> Option<Vec<u8>> {
     let digits: String = text.lines().filter(|line| !line.starts_with('#')).collect();
     let (pairs, rest) = digits.as_bytes().as_chunks::<2>();
     if !rest.is_empty() {
