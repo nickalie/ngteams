@@ -41,7 +41,7 @@ ngteams-server = { lines = 93, functions = 92, regions = 90 }
 # Individually inspected sources LLVM does not map. Any content change invalidates the review.
 # These entries never suppress coverage counts when LLVM supplies a mapping for the file.
 [unmapped_sources."crates/teams-auth/src/lib.rs"]
-sha256 = "694db7114b006c69772cd024e8d6a87347ce1b3591d84c6ef89734e334cd5f12"
+sha256 = "cde8d041519369cf92c0270ae28c4b020e747219f9ef42604df9af07b07c4804"
 reason = "module declarations and documentation only; no executable items"
 
 [unmapped_sources."crates/ngteams-server/src/lib.rs"]
@@ -77,7 +77,7 @@ context = { "crates/teams-call/src/track.rs" = "6d4e8692460da51c26997e85f500f483
 [unmapped_sources."crates/teams-media/src/video/effects/tests.rs"]
 sha256 = "cb1ce19ec37268fed2b9c4e2472156b7a71691003811ca451d8a6144722e5370"
 reason = "unit-test module included only by effects.rs cfg(test); omitted by cargo-llvm-cov's test-file filter"
-context = { "crates/teams-media/src/video/effects.rs" = "787856448e591791db31587af3f5763f8c20b33d87758bf4d12da6f248635848" }
+context = { "crates/teams-media/src/video/effects.rs" = "7c4753841bcb551ab4210642856b58fef1f2696febbe662285cf6011c4db36dd" }
 
 
 [unmapped_sources."crates/teams-proto/src/chat/mod.rs"]
@@ -102,11 +102,11 @@ sha256 = "eac1126557b554aae9c187daa89a44640a3a08fae132c60468def9156fd01f70"
 reason = "module declarations and documentation only; no executable bodies"
 
 [unmapped_sources."crates/teams-core/src/lib.rs"]
-sha256 = "4db81f87c8fec8e742df8f2822847589b2525b24a3e52ca807bb39b530804f83"
+sha256 = "0f7139e9fde996fa5771555828e546ab5bf8dd4d9eeb3f220cd351ba6b9779ad"
 reason = "module declarations, re-exports and documentation only; no executable bodies"
 
 [unmapped_sources."crates/teams-media/src/lib.rs"]
-sha256 = "0874fa7b075ed2dda8617c50ea1234ac95f0e7975a53b7fd2ffd0a6602bcb626"
+sha256 = "2b0ab18157391af1d2d9c9cdf346f017e72c07b0a3bf15b2ce13fc4dd4bb8dc8"
 reason = "module declarations and derived error type only; no authored executable bodies"
 
 [unmapped_sources."crates/teams-media/src/video.rs"]
@@ -559,27 +559,27 @@ context = { "crates/proto-lab/src/lib.rs" = "8d3871c865c472e3b5bcd76d93027c67ff8
 [unmapped_sources_windows."crates/teams-media/src/devices/pipewire.rs"]
 sha256 = "466fedaf426d315e5d4fdfbb821d4d079f413029dbd604b0a5968e1947f954a3"
 reason = "Linux-only PipeWire device and loop-thread backend, selected by the cfg(target_os = \"linux\") module in devices.rs; absent from native Windows compilation and still required by the Linux inventory."
-context = { "crates/teams-media/src/devices.rs" = "9b461fd70a2b616f3d3e8fa68929334f773521ad4f59fafd121c33252f5a5942" }
+context = { "crates/teams-media/src/devices.rs" = "c83d5f121ae6f2da5c51d853d2afbf7a7a0a18ed95285bda6cdd4478aa35c8d5" }
 
 [unmapped_sources_windows."crates/teams-media/src/devices/pipewire/listing.rs"]
 sha256 = "b8ad34b4f46e935c7ed2b28a92ee32dc8eed5cd564170b99ddf307ed0e8e30ea"
 reason = "Linux-only PipeWire registry and default-device watcher, reached through the Linux-selected pipewire module; both module roots are hash-pinned and Linux still requires this source."
-context = { "crates/teams-media/src/devices.rs" = "9b461fd70a2b616f3d3e8fa68929334f773521ad4f59fafd121c33252f5a5942", "crates/teams-media/src/devices/pipewire.rs" = "466fedaf426d315e5d4fdfbb821d4d079f413029dbd604b0a5968e1947f954a3" }
+context = { "crates/teams-media/src/devices.rs" = "c83d5f121ae6f2da5c51d853d2afbf7a7a0a18ed95285bda6cdd4478aa35c8d5", "crates/teams-media/src/devices/pipewire.rs" = "466fedaf426d315e5d4fdfbb821d4d079f413029dbd604b0a5968e1947f954a3" }
 
 [unmapped_sources_windows."crates/teams-media/src/devices/pipewire/serve.rs"]
 sha256 = "f8dee682c0c58b16a9edb653a8fa6853bd17f4a14c974ccec8937f710e508781"
 reason = "Linux-only PipeWire loop-thread command handler, reached through the Linux-selected pipewire module; both module roots are hash-pinned and Linux still requires this source."
-context = { "crates/teams-media/src/devices.rs" = "9b461fd70a2b616f3d3e8fa68929334f773521ad4f59fafd121c33252f5a5942", "crates/teams-media/src/devices/pipewire.rs" = "466fedaf426d315e5d4fdfbb821d4d079f413029dbd604b0a5968e1947f954a3" }
+context = { "crates/teams-media/src/devices.rs" = "c83d5f121ae6f2da5c51d853d2afbf7a7a0a18ed95285bda6cdd4478aa35c8d5", "crates/teams-media/src/devices/pipewire.rs" = "466fedaf426d315e5d4fdfbb821d4d079f413029dbd604b0a5968e1947f954a3" }
 
 [unmapped_sources_windows."crates/teams-media/src/devices/pipewire/streams.rs"]
 sha256 = "21f93a9c7adb2d9837beb72855ed97e4b11b180dffff28e23fb73ad07ad05c95"
 reason = "Linux-only PipeWire audio/video stream callbacks, reached through the Linux-selected pipewire module; both module roots are hash-pinned and Linux still requires this source."
-context = { "crates/teams-media/src/devices.rs" = "9b461fd70a2b616f3d3e8fa68929334f773521ad4f59fafd121c33252f5a5942", "crates/teams-media/src/devices/pipewire.rs" = "466fedaf426d315e5d4fdfbb821d4d079f413029dbd604b0a5968e1947f954a3" }
+context = { "crates/teams-media/src/devices.rs" = "c83d5f121ae6f2da5c51d853d2afbf7a7a0a18ed95285bda6cdd4478aa35c8d5", "crates/teams-media/src/devices/pipewire.rs" = "466fedaf426d315e5d4fdfbb821d4d079f413029dbd604b0a5968e1947f954a3" }
 
 [unmapped_sources_windows."crates/teams-media/src/devices/portal.rs"]
 sha256 = "0bfffc1309a9cea78bdcdfd4d00e8847097a758fa6fc3b87dff8ea8b2b0e9b44"
 reason = "Linux-only D-Bus camera and screen-cast portal boundary, selected by cfg(target_os = \"linux\") in devices.rs; absent from native Windows compilation and still required by the Linux inventory."
-context = { "crates/teams-media/src/devices.rs" = "9b461fd70a2b616f3d3e8fa68929334f773521ad4f59fafd121c33252f5a5942" }
+context = { "crates/teams-media/src/devices.rs" = "c83d5f121ae6f2da5c51d853d2afbf7a7a0a18ed95285bda6cdd4478aa35c8d5" }
 
 [unmapped_sources_windows."crates/teams-signin/src/engine.rs"]
 sha256 = "4770ca42f017d9a03fe9782ba5b624a7eef7f67d8831178a0a3eb6cd0fd22c8b"
@@ -635,6 +635,26 @@ context = { "crates/teams-platform/src/private.rs" = "8a7f837c30e65f5b168acdfcb0
 sha256 = "6c7a65cfcf521ac630b1540f91f14f1737c485ee5c549ece03de32e97978cc3e"
 reason = "Unix-only domain socket transport, selected by cfg(unix) in transport.rs; absent from native Windows compilation. Linux continues to require its LLVM mapping."
 context = { "crates/teams-ctl/src/transport.rs" = "b82f8babf1f6097107ebd061f21f4d48281a45b2ab89f62ad5c78c9b5303c562" }
+
+[unmapped_sources."crates/teams-auth/src/secrets/android.rs"]
+sha256 = "122a40b0907d6c62825d11c60db7d5ed001f2894567c6d3bab6076fcc9180398"
+reason = "Android-only secret store: a newtype over secrets::sealed, whose host tests measure its code; selected by cfg(target_os = \"android\") in secrets.rs, checked by the Android check workflow"
+context = { "crates/teams-auth/src/secrets.rs" = "dae5e102d122c2fc60597399657a2ff7562a0736e4c6c28c3a64e227b42de0e8" }
+
+[unmapped_sources."crates/teams-core/src/calling/off.rs"]
+sha256 = "fd221193af7809788b28a23d903fc4a5d3313bb891a00c8edb6928a774ec18d4"
+reason = "stand-ins of the build without the calls feature (uninhabited types, no reachable body); selected by cfg(not(feature = \"calls\")) in calling.rs, checked by the Android check workflow"
+context = { "crates/teams-core/src/calling.rs" = "f21b4bda3f5c42d5cf742efbc4ed7a952513b0ee1661c53a677b099f8c1ddaa4" }
+
+[unmapped_sources."crates/teams-media/src/processing/no_model.rs"]
+sha256 = "9421580aad9b3249b44360490d7e4c700b518d380cbcc17f95c765b9f4b8c609"
+reason = "noise suppression of the build without the effects feature (a no-op and an uninhabited type); selected by cfg(not(feature = \"effects\")) in processing.rs"
+context = { "crates/teams-media/src/processing.rs" = "b6a1717fde886509db286dc4314edb1708e7599ce09c4212a46b0bc88288f3e6" }
+
+[unmapped_sources."crates/teams-media/src/video/effects/no_model.rs"]
+sha256 = "f9b66fb2d9c4991270f4a5861aa85a44923f0a0a1e5c507e4547c0960c80cb70"
+reason = "segmenter of the build without the effects feature (an all-background mask); selected by cfg(not(feature = \"effects\")) in effects.rs"
+context = { "crates/teams-media/src/video/effects.rs" = "7c4753841bcb551ab4210642856b58fef1f2696febbe662285cf6011c4db36dd" }
 
 [unmapped_sources."crates/teams-auth/src/secrets/macos.rs"]
 sha256 = "16567d5d2542516f7e22cff100a28da238e36f5fadea33d4266375ed372b5b32"
