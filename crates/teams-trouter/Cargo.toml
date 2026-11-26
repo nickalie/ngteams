@@ -26,8 +26,6 @@ log = { workspace = true, features = ["max_level_debug", "release_max_level_debu
 getrandom.workspace = true
 # the connect URL's `tc` query value, encoded as the web client encodes it
 percent-encoding.workspace = true
-# the server certificate checked against the system's roots, as the HTTP transport (reqwest) checks it
-rustls-platform-verifier.workspace = true
 serde_json.workspace = true
 # the `ic3` token with its expiry, the renewal notifications and the clock
 teams-auth.workspace = true

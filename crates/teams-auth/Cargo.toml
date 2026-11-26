@@ -14,11 +14,17 @@ httpdate.workspace = true
 # session outcomes and credential-redacted HTTP exchanges in the app's diagnostic log
 log.workspace = true
 reqwest.workspace = true
+# one TLS client config for reqwest and the Trouter socket (`tls`): the system's verifier, and an own server's
+# certificate authority checked beside it on every platform (Android's system verifier takes no extra roots)
+rustls.workspace = true
+rustls-platform-verifier.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 # full token/authz HTTP exchanges at debug, with credential redaction owned by the logger
 teams-log.workspace = true
+# the sealed secret files' private directory and files (`secrets::sealed`, the store on Android)
+teams-platform.workspace = true
 # the session: one refresh per audience however many callers wait on it, and its renewal notifications; the broker:
 # its server reads and writes any async stream (`io-util`) and watches it close while a store call waits (`macros`),
 # its client's blocking socket runs on the blocking pool (`rt`)
@@ -40,7 +46,6 @@ security-framework-sys.workspace = true
 [target.'cfg(windows)'.dependencies]
 interprocess = { workspace = true, features = ["tokio"] }
 keyring-core.workspace = true
-teams-platform.workspace = true
 widestring.workspace = true
 windows-native-keyring-store.workspace = true
 
@@ -57,6 +62,8 @@ tempfile.workspace = true
 # the broker's tests: its server on a socket pair's end, a deadline on its end (`time`)
 tokio = { workspace = true, features = ["macros", "net", "rt", "time"] }
 wiremock.workspace = true
+# the loopback TLS server that an own server's certificate authority signed (`tests/tls.rs`)
+tokio-rustls.workspace = true
 # a made-up certificate authority for an own server's extra roots
 rcgen = { workspace = true, features = ["pem"] }
 

@@ -29,8 +29,8 @@ use teams_proto::{CLIENT_BUILD, FrameText, FrameWriter, TROUTER_DOMAIN, TROUTER_
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
+use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::rustls::pki_types::ServerName;
-use tokio_rustls::rustls::{ClientConfig, crypto};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
@@ -218,30 +218,12 @@ pub enum ConnectError {
     Refused(Option<u16>),
 }
 
-/// The TLS client config: the system's certificate verifier on `aws-lc-rs`, as the HTTP transport's (reqwest's),
-/// trusting `cloud`'s own certificate authorities beside the system's when it names some.
+/// The TLS client config: the HTTP transport's ([`teams_auth::tls`]), without ALPN.
 ///
 /// # Errors
 /// When the system verifier can't be set up, or a certificate authority `cloud` names can't be read.
 pub(crate) fn tls_config(cloud: &Cloud) -> Result<Arc<ClientConfig>, tokio_rustls::rustls::Error> {
-    use tokio_rustls::rustls::pki_types::CertificateDer;
-    use tokio_rustls::rustls::pki_types::pem::PemObject as _;
-    let provider = Arc::new(crypto::aws_lc_rs::default_provider());
-    let verifier = match cloud.extra_roots() {
-        Some(pem) => {
-            let roots = CertificateDer::pem_slice_iter(pem)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| tokio_rustls::rustls::Error::General(format!("the certificate authority: {error}")))?;
-            rustls_platform_verifier::Verifier::new_with_extra_roots(roots, Arc::clone(&provider))?
-        }
-        None => rustls_platform_verifier::Verifier::new(Arc::clone(&provider))?,
-    };
-    let config = ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()?
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(verifier))
-        .with_no_client_auth();
-    Ok(Arc::new(config))
+    teams_auth::tls::client_config(cloud).map(Arc::new)
 }
 
 /// Every URL a client on a mock origin was asked to open, as it was built and checked (before the mock took its
@@ -443,15 +425,16 @@ mod tests {
         let key = rcgen::KeyPair::generate().unwrap();
         let leaf = rcgen::CertificateParams::new(vec!["localhost".to_owned()]).unwrap();
         let cert = leaf.signed_by(&key, authority).unwrap();
-        let server = ServerConfig::builder_with_provider(Arc::new(crypto::aws_lc_rs::default_provider()))
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![cert.der().clone()],
-                PrivateKeyDer::try_from(key.serialize_der()).unwrap(),
-            )
-            .unwrap();
+        let server =
+            ServerConfig::builder_with_provider(Arc::new(tokio_rustls::rustls::crypto::aws_lc_rs::default_provider()))
+                .with_safe_default_protocol_versions()
+                .unwrap()
+                .with_no_client_auth()
+                .with_single_cert(
+                    vec![cert.der().clone()],
+                    PrivateKeyDer::try_from(key.serialize_der()).unwrap(),
+                )
+                .unwrap();
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
         let address = listener.local_addr()?;
         let accepting = tokio::spawn(async move {

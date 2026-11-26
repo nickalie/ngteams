@@ -1,8 +1,8 @@
 //! Secret storage for refresh tokens and skypetokens, one secret per account and audience.
 //!
-//! [`KeyringSecretStore`] keeps them in the platform credential service; [`MemorySecretStore`] is the
-//! in-memory backend for tests; a sandboxed process reaches one account's items through the credential broker
-//! ([`crate::broker::BrokerSecretStore`]). A [`Secret`] never shows its value in `Debug` and has no `Display`: the only way to the
+//! [`KeyringSecretStore`] keeps them in the platform credential service (on Android, in [`sealed`] files);
+//! [`MemorySecretStore`] is the in-memory backend for tests; a sandboxed process reaches one account's items through
+//! the credential broker ([`crate::broker::BrokerSecretStore`]). A [`Secret`] never shows its value in `Debug` and has no `Display`: the only way to the
 //! value is [`Secret::expose`], so a token can't reach a log by accident.
 
 use std::collections::BTreeMap;
@@ -88,6 +88,12 @@ pub enum SecretError {
     KeychainWorker,
     #[error("the stored secret is not UTF-8")]
     NotUtf8,
+    /// A sealed secret's file could not be read, written or removed ([`sealed`]): its I/O error's kind.
+    #[error("sealed secret file: {0}")]
+    SealedFile(std::io::ErrorKind),
+    /// The sealer of sealed secrets ([`sealed::Sealer`]) refused.
+    #[error("secret sealer: {0}")]
+    Sealer(&'static str),
     /// The credential broker's store ([`crate::broker::BrokerSecretStore`]) didn't do it.
     #[error(transparent)]
     Broker(#[from] crate::broker::BrokerError),
@@ -220,6 +226,12 @@ mod platform;
 #[cfg(windows)]
 #[path = "secrets/windows.rs"]
 mod platform;
+#[cfg(target_os = "android")]
+#[path = "secrets/android.rs"]
+mod platform;
+
+#[path = "secrets/sealed.rs"]
+pub mod sealed;
 
 pub use platform::KeyringSecretStore;
 

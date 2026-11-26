@@ -115,15 +115,18 @@ impl Cloud {
         }
     }
 
-    /// `builder` trusting this cloud's extra certificate authorities beside the system's.
+    /// `builder` trusting this cloud's extra certificate authorities beside the system's ([`crate::tls`]).
     pub fn trust(&self, builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
+        if self.extra_roots().is_none() {
+            return builder;
+        }
         // checked when they were taken ([`Cloud::trusting`]): one that no longer parses adds nothing
-        match self
-            .extra_roots()
-            .and_then(|pem| reqwest::Certificate::from_pem_bundle(pem).ok())
-        {
-            Some(roots) => builder.tls_certs_merge(roots),
-            None => builder,
+        match crate::tls::client_config(self) {
+            Ok(mut config) => {
+                config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+                builder.use_preconfigured_tls(config)
+            }
+            Err(_) => builder,
         }
     }
 
