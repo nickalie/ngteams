@@ -1863,8 +1863,9 @@ fn summary(headline: String, skipped: &[crate::stickers::Skipped], palette: Pale
         let count = skipped.len();
         let plural = if count == 1 { "" } else { "s" };
         lines = lines.child(format!("Skipped {count} file{plural}:"));
-        lines = lines.children(skipped.iter().take(SKIPPED_SHOWN).map(|skipped| {
+        lines = lines.children(skipped.iter().take(SKIPPED_SHOWN).enumerate().map(|(index, skipped)| {
             div()
+                .debug_selector(move || format!("sticker-import-skipped-{index}"))
                 .text_xs()
                 .text_color(rgb(palette.muted_foreground))
                 .whitespace_normal()

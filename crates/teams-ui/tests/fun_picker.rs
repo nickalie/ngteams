@@ -550,6 +550,48 @@ fn a_folder_imported_from_the_picker_shows_its_progress_and_summary_then_its_pac
     the_pack_is_there_after_a_restart(&place);
 }
 
+#[test]
+fn a_long_skip_line_wraps_inside_the_picker() {
+    let place = Setup::new();
+    let folder = pack_folder(place.sources.path(), "Lab cats");
+    let long = "a note about the lab cats with a name much longer than the picker is wide, so its line wraps.txt";
+    std::fs::write(folder.join(long), b"made up").unwrap();
+    let rig = new_rig();
+    let (view, cx) = chat_window(&rig, &place);
+    click(cx, "compose-emoji");
+    click(cx, "fun-tab-stickers");
+    let picker = picker(&view, cx).unwrap();
+    cx.update(|_, cx| picker.update(cx, |picker, cx| picker.import_from(folder, ImportKind::Folder, cx)));
+    draw(cx);
+    let content = cx.debug_bounds("fun-content").expect("the content is drawn");
+    let summary = cx.debug_bounds("sticker-import-summary").expect("the summary is drawn");
+    assert!(
+        summary.left() >= content.left() && summary.right() <= content.right() + px(0.5),
+        "the summary {summary:?} stays in the content {content:?}"
+    );
+    let lines: Vec<_> = (0..2)
+        .map(|index| {
+            cx.debug_bounds(format!("sticker-import-skipped-{index}").leak())
+                .unwrap_or_else(|| panic!("skip line {index} is drawn"))
+        })
+        .collect();
+    let short = lines
+        .iter()
+        .map(|line| line.size.height)
+        .fold(px(f32::MAX), gpui::Pixels::min);
+    let tall = lines
+        .iter()
+        .map(|line| line.size.height)
+        .fold(px(0.0), gpui::Pixels::max);
+    assert!(tall > short * 1.5, "the long skip line wraps: {lines:?}");
+    for line in &lines {
+        assert!(
+            line.right() <= content.right() + px(0.5),
+            "{line:?} is cut at {content:?}"
+        );
+    }
+}
+
 /// A second import while one runs: refused, and the user told, until the first ends.
 fn a_second_import_is_refused_while_one_runs(
     picker: &Entity<FunPicker>,
