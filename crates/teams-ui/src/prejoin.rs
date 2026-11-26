@@ -29,7 +29,7 @@ use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::menu::{DropdownMenu as _, PopupMenu};
 use gpui_component::switch::Switch;
-use gpui_component::{Selectable as _, Sizable as _};
+use gpui_component::{Disableable as _, Selectable as _, Sizable as _};
 use teams_media::devices::catalog::DeviceKind;
 
 use crate::bridge::Core;
@@ -143,9 +143,14 @@ impl PrejoinView {
         cx.notify();
     }
 
-    /// The preview runs while the switch is on, unless the filters' pane took the camera over.
+    /// The preview runs while the switch is on, unless the filters' pane took the camera over or Join now gave the
+    /// camera to the call.
     fn follow_camera(&mut self, cx: &mut Context<Self>) {
-        let wanted = self.calls.read(cx).prejoin().is_some_and(|prejoin| prejoin.camera);
+        let wanted = self
+            .calls
+            .read(cx)
+            .prejoin()
+            .is_some_and(|prejoin| prejoin.camera && !prejoin.joining);
         if wanted && self.effects.is_none() {
             if self.session.is_none() {
                 self.session = self
@@ -267,12 +272,12 @@ impl PrejoinView {
     fn camera_row(&self, prejoin: &Prejoin, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
         let glyph = if prejoin.camera { Glyph::VIDEO } else { Glyph::VIDEO_OFF };
         let weak = cx.entity().downgrade();
-        let switch =
-            Switch::new("prejoin-camera")
-                .checked(prejoin.camera)
-                .on_click(move |on: &bool, _, cx: &mut App| {
-                    let _ = weak.update(cx, |this, cx| this.set_camera(*on, cx));
-                });
+        let switch = Switch::new("prejoin-camera")
+            .checked(prejoin.camera)
+            .disabled(prejoin.joining)
+            .on_click(move |on: &bool, _, cx: &mut App| {
+                let _ = weak.update(cx, |this, cx| this.set_camera(*on, cx));
+            });
         let open = self.effects.is_some();
         div()
             .h(px(48.0))
@@ -431,12 +436,12 @@ impl PrejoinView {
     /// The computer's audio: the microphone's device and switch, and the speaker's device.
     fn computer_audio(&self, prejoin: &Prejoin, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
         let weak = cx.entity().downgrade();
-        let switch =
-            Switch::new("prejoin-microphone")
-                .checked(!prejoin.muted)
-                .on_click(move |on: &bool, _, cx: &mut App| {
-                    let _ = weak.update(cx, |this, cx| this.set_microphone(*on, cx));
-                });
+        let switch = Switch::new("prejoin-microphone")
+            .checked(!prejoin.muted)
+            .disabled(prejoin.joining)
+            .on_click(move |on: &bool, _, cx: &mut App| {
+                let _ = weak.update(cx, |this, cx| this.set_microphone(*on, cx));
+            });
         let mic = if prejoin.muted { Glyph::MIC_OFF } else { Glyph::MIC };
         let named = |kind: DeviceKind, cx: &App| -> SharedString {
             let settings = self.settings.read(cx);

@@ -789,7 +789,8 @@ pub struct Prejoin {
     pub camera: bool,
     /// The audio picked: the computer's, or "Don't use audio" (the call is joined muted, as Teams joins it).
     pub audio: PrejoinAudio,
-    /// Join now was asked, and its call isn't told yet.
+    /// Join now was asked, and its call isn't told yet (a ring's answer: isn't taken yet, see
+    /// [`Calls::answering_in_prejoin`]). Its switches are locked meanwhile.
     pub joining: bool,
     /// What Join now does: go into the meeting, or start a new one in the channel `to_join.chat` (its Meet now).
     pub entry: PrejoinEntry,
@@ -1375,17 +1376,17 @@ impl Calls {
         }
     }
 
-    /// The pre-join's microphone switch.
+    /// The pre-join's microphone switch; it is locked once Join now went, as its choice already went with the call.
     pub fn set_prejoin_muted(&mut self, muted: bool, cx: &mut Context<Self>) {
-        if let Some(prejoin) = &mut self.prejoin {
+        if let Some(prejoin) = self.prejoin.as_mut().filter(|prejoin| !prejoin.joining) {
             prejoin.muted = muted;
             cx.notify();
         }
     }
 
-    /// The pre-join's audio: the computer's (`false`), or none ("Don't use audio").
+    /// The pre-join's audio: the computer's (`false`), or none ("Don't use audio"); locked once Join now went.
     pub fn set_prejoin_no_audio(&mut self, no_audio: bool, cx: &mut Context<Self>) {
-        if let Some(prejoin) = &mut self.prejoin {
+        if let Some(prejoin) = self.prejoin.as_mut().filter(|prejoin| !prejoin.joining) {
             prejoin.audio = if no_audio {
                 PrejoinAudio::None
             } else {
@@ -1395,9 +1396,9 @@ impl Calls {
         }
     }
 
-    /// The pre-join's camera switch.
+    /// The pre-join's camera switch; locked once Join now went, as the microphone's is.
     pub fn set_prejoin_camera(&mut self, camera: bool, cx: &mut Context<Self>) {
-        if let Some(prejoin) = &mut self.prejoin {
+        if let Some(prejoin) = self.prejoin.as_mut().filter(|prejoin| !prejoin.joining) {
             prejoin.camera = camera;
             cx.notify();
         }

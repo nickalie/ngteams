@@ -695,3 +695,42 @@ fn an_answer_from_the_pre_join_that_is_taken_gives_way_to_the_call_window() {
     });
     assert_eq!((prejoin_open, call_open), (false, true));
 }
+
+#[test]
+fn the_pre_joins_switches_are_locked_while_its_answer_goes_and_the_call_takes_what_join_now_saw() {
+    let rig = calling();
+    listed_meeting(&rig);
+    let (trace, _) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    rig.send(Event::IncomingCall(meeting_ring(11)));
+    rig.cx.run_until_parked();
+    click(cx, "call-answer");
+    let window = prejoin_window(&rig, &windows);
+    let seen = |rig: &Rig| prejoin(rig).map(|prejoin| (prejoin.camera, prejoin.muted, prejoin.audio));
+    let at_join = seen(&rig);
+    assert_eq!(at_join, Some((false, false, teams_ui::calls::PrejoinAudio::Computer)));
+    click(window, "prejoin-join");
+    status(&rig, 11, CallStatus::Answering);
+    rig.cx.run_until_parked();
+
+    click(window, "prejoin-microphone");
+    rig.cx.update(|cx| {
+        calls_of(&rig).update(cx, |calls, cx| {
+            calls.set_prejoin_camera(true, cx);
+            calls.set_prejoin_muted(true, cx);
+            calls.set_prejoin_no_audio(true, cx);
+        });
+    });
+    assert_eq!(seen(&rig), at_join, "the switches hold what Join now saw");
+
+    status(&rig, 11, CallStatus::Connecting);
+    status(&rig, 11, CallStatus::Connected);
+    rig.cx.run_until_parked();
+    assert_eq!(
+        actions(&rig),
+        [CallAction::Answer { call: call(11) }],
+        "no camera or mute goes"
+    );
+}
