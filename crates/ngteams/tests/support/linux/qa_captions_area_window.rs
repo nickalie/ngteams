@@ -13,7 +13,8 @@
 //!   room that leaves the stage 180 px, at most 1200 px), each saved at once.
 //! - **drag**: up and down; a drag saves once, when it ends; it stops at the least and the most. The tooltip on hover.
 //! - **window**: a shorter window keeps the stage's least room, and the saved height stays.
-//! - **hidden**: the captions hidden and shown again start at the end. The transcript pane still opens and fills.
+//! - **hidden**: the captions hidden at the top of their lines and shown again start at the end. The transcript pane
+//!   still opens and draws its new lines.
 //! - **themes**: shots of a short and a tall area in Teams Light and Dark, with the list's ring.
 //! - **restart**: the height survives a restart for a; b starts at the default and keeps its own.
 //!
@@ -58,6 +59,8 @@ const DEFAULT: u32 = 244;
 const SCREEN: (u32, u32) = (1280, 800);
 /// The most Tab presses that look for the list and the edge.
 const TABS: usize = 40;
+/// The transcript pane's width, px.
+const PANE_WIDTH: u32 = 320;
 /// How many pixels of the lines must change to say that they moved.
 const MOVED: usize = 200;
 
@@ -186,7 +189,7 @@ fn first_run(user: &mut User<'_>) -> SandboxResult {
     drag(user, &found)?;
     themes(user, &found)?;
     window_resize(user, &found)?;
-    hidden_and_shown(user)?;
+    hidden_and_shown(user, &found)?;
     transcript(user)?;
     // a known height for the next runs: the least, then up twice by a page
     let found = tab_walk(user, "a-after-transcript")?;
@@ -536,12 +539,11 @@ fn window_resize(user: &mut User<'_>, found: &Found) -> SandboxResult {
     Ok(())
 }
 
-/// The captions hidden while scrolled up (Alt+Shift+C; the engine tells them off), then shown again (Alt+Shift+C; the
-/// engine tells new lines): the area starts at the end.
-fn hidden_and_shown(user: &mut User<'_>) -> SandboxResult {
-    let (x, y) = user.lines_point()?;
-    user.input.scroll(x, y, -5)?;
-    thread::sleep(SETTLE);
+/// The captions hidden while at the top of their lines (Alt+Shift+C; the engine tells them off), then shown again
+/// (Alt+Shift+C; the engine tells new lines): the area starts at the end.
+fn hidden_and_shown(user: &mut User<'_>, found: &Found) -> SandboxResult {
+    user.focus_list(found)?;
+    user.keys(&["home"])?;
     user.park()?;
     user.keys(&["alt+shift+c"])?;
     user.ask("captions-off")?;
@@ -549,7 +551,8 @@ fn hidden_and_shown(user: &mut User<'_>) -> SandboxResult {
     note(&format!("hidden: {state}"));
     user.shot("a-hidden")?;
     user.keys(&["alt+shift+c"])?;
-    user.say_more(30)?;
+    // fewer lines than the engine keeps: a new line then drops no old one, so only a scroll to the end moves them
+    user.say_more(40)?;
     user.until("captions shown", |state| state["shown"] == Value::Bool(true))?;
     thread::sleep(SETTLE);
     user.shot("a-shown-again")?;
@@ -560,16 +563,25 @@ fn hidden_and_shown(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// The transcript pane of task 868 still opens and fills beside the area.
+/// The transcript pane of task 868 still opens and fills beside the area: its new lines draw in the pane.
 fn transcript(user: &mut User<'_>) -> SandboxResult {
     user.ask("transcribe")?;
     let state = user.until("the transcript pane", |state| state["transcript"] == Value::Bool(true))?;
     let before = state["spoken"].as_u64().unwrap_or(0);
+    thread::sleep(SETTLE);
+    let pane = user.pane_box()?;
+    let drawn_before = user.image()?;
     user.say_more(3)?;
+    thread::sleep(SETTLE);
+    let drawn_after = user.image()?;
+    let drawn = changed_in(&drawn_before, &drawn_after, pane);
     let state = user.state()?;
     let after = state["spoken"].as_u64().unwrap_or(0);
     check("the transcript pane opens and fills", after >= before + 3, || {
         format!("spoken {before} -> {after}, {state}")
+    });
+    check("the transcript pane draws its new lines", drawn >= MOVED, || {
+        format!("{drawn} px changed in the pane {pane:?}")
     });
     user.shot("a-transcript")?;
     // the transcription stops: its captions are asked to stop, the engine tells them off, and new ones show again
@@ -798,6 +810,17 @@ impl<'a> User<'a> {
             FRAME + 4,
             window - FRAME - height + 40,
             SCREEN.0 - FRAME - 24,
+            window - FRAME - 4,
+        ))
+    }
+
+    /// The transcript pane's box: the right column of the stage, under the window's header.
+    fn pane_box(&mut self) -> SandboxResult<(u32, u32, u32, u32)> {
+        let window = self.window_height()?;
+        Ok((
+            SCREEN.0 - FRAME - PANE_WIDTH + 4,
+            HEADER + FRAME,
+            SCREEN.0 - FRAME - 4,
             window - FRAME - 4,
         ))
     }
