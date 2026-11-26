@@ -39,11 +39,12 @@ pub(super) const MEETING: &str = "19:meeting_MadeUpRecapQa793@thread.v2";
 pub(super) const MCPS_BASE: &str = "https://teams.microsoft.com/api/mcps/us/";
 
 /// The recording's sharing link: the short form of a link for specific people.
-const RECORDING: &str = "https://contoso-my.sharepoint.com/:v:/p/made_up_user_contoso_test/MadeUpRecapShare0201";
+pub(super) const RECORDING: &str =
+    "https://contoso-my.sharepoint.com/:v:/p/made_up_user_contoso_test/MadeUpRecapShare0201";
 
 /// The drive and the item Graph names for [`RECORDING`]; the recap names neither.
-const RECORDING_DRIVE: &str = "b!madeuprecap";
-const RECORDING_ITEM: &str = "MADEUPRECAPITEM";
+pub(super) const RECORDING_DRIVE: &str = "b!madeuprecap";
+pub(super) const RECORDING_ITEM: &str = "MADEUPRECAPITEM";
 
 /// The recording's presentation, as the media transform service's MPD has it (the parts below, 3 s).
 const MPD: &str = r#"<MPD type="static" mediaPresentationDuration="PT0H0M3.000S" xmlns="urn:mpeg:DASH:schema:MPD:2011">

@@ -23,6 +23,8 @@
 //!   SharePoint link, a list encoded twice.
 //! - **A video opened** (task 793, `qa_file_grid_video.rs`): a video alone, a link Graph refuses, the keyboard, and
 //!   the Recap tab of a meeting whose recap names no drive or item of its recording.
+//! - **The keyboard on the cards** (task 849, `qa_file_grid_keys.rs`): Tab, Shift+Tab, Enter, Space and Escape on a
+//!   document, an image, a video and a recap's thumbnail.
 //!
 //! Every name, id and text is made up. Screenshots go to `target/ui-shots/qa525-*.png`, and also to the directory
 //! `QA_FILE_GRID_EVIDENCE` names. Without weston 15, niri or `dbus-daemon` it says so and passes, unless
@@ -62,6 +64,8 @@ use tokio::sync::broadcast;
 use ui_sandbox::input::{VirtualInput, keys};
 use ui_sandbox::{Running, Sandbox, SandboxOptions, SandboxResult, sandbox_or_skip, wait_until};
 
+#[path = "qa_file_grid_keys.rs"]
+mod card_keys;
 #[path = "../window.rs"]
 mod support;
 #[path = "qa_file_grid_video.rs"]
@@ -187,7 +191,8 @@ fn walk(sandbox: &Sandbox, service: &Service, dir: &Path) -> SandboxResult {
         ctx.odd_shapes()?;
         ctx.narrow()?;
         ctx.thread()?;
-        ctx.videos_open()
+        ctx.videos_open()?;
+        ctx.card_keys()
     })();
     if let Err(error) = outcome {
         return Err(run.fail(sandbox, &*error));
@@ -1235,6 +1240,7 @@ impl Service {
             let id = post_files(&mock, &chat, html, files)?;
             posted.push(Posted { key, chat, id, cards });
         }
+        posted.extend(card_keys::post(&mock, runtime)?);
         let channel_post = channel_post(&mock)?;
         for (at, file) in [&CLIP_A, &CLIP_B, &CLIP_C, &LONE_CLIP].into_iter().enumerate() {
             serve_file(&mock, runtime, file, at)?;
@@ -1931,9 +1937,24 @@ fn on_shell(shell: &Entity<Shell>, verb: &str, window: &mut Window, cx: &mut App
             json!(states)
         }
         "tab" => json!(format!("{:?}", shell.read(cx).chat_tab())),
+        "focus" => json!(focus_of(shell, window, cx)),
         other => json!(format!("unknown {other}")),
     }
     .to_string()
+}
+
+/// Where the keys are: the open chat's `list` or `box`, another element, or `none`.
+fn focus_of(shell: &Entity<Shell>, window: &Window, cx: &App) -> &'static str {
+    if let Some(chat) = shell.read(cx).chat() {
+        let chat = chat.read(cx);
+        if chat.focus_handle().is_focused(window) {
+            return "list";
+        }
+        if chat.compose().read(cx).focused(window, cx) {
+            return "box";
+        }
+    }
+    if window.focused(cx).is_some() { "other" } else { "none" }
 }
 
 /// The view `which` names: the channel's `posts`, its `thread`, else the chat open.
