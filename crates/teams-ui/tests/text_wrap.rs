@@ -1,14 +1,19 @@
-//! Text wrapping as GPUI does it with the vendored patch `build/patches/gpui-pre/0002`: no line ends right after
-//! opening punctuation (UAX #14 LB14), as in Teams, in the drawn wrap, the line wrapper and the clamped label's
-//! truncation alike.
+//! Text wrapping as GPUI does it, by UAX #14 (`icu_segmenter`): no line ends right after opening punctuation (LB14),
+//! as in Teams, in the drawn wrap, the line wrapper and the clamped label's truncation alike.
 
 use gpui::{IndentAdjustment, LineFragment, ParentElement as _, Styled as _, TestAppContext, TruncateFrom, px};
 
 const TEXT: &str = "Add it to an [[account]] entry: 彼は「こんにちは」と言った, 他说‘你好’, 【【注意】】 （ｘ） \
     „Zitat“ and ((nested (brackets))) as ((((((((((((((((((((((((((((((((((((((((";
 
-fn opening(c: char) -> bool {
-    "([{‘“«„‚（［｛｟「『【〔〈《〖〘〚｢".contains(c)
+/// Whether the line that ends at byte `at` of `text` ends on an opening mark: a mark of the set with its content after
+/// it. A `“` with a space after it closes a quote („Zitat“), and a line can end there.
+fn ends_opening(text: &str, at: usize) -> bool {
+    let opens = text[..at]
+        .chars()
+        .next_back()
+        .is_some_and(|ends| "([{‘“«„‚（［｛｟「『【〔〈《〖〘〚｢".contains(ends));
+    opens && text[at..].chars().next().is_some_and(|next| !next.is_whitespace())
 }
 
 /// Where each line of `text` ends when drawn `width` wide: shaped, then wrapped, as a text element does.
@@ -40,12 +45,11 @@ fn no_line_ends_on_an_opening_bracket_or_quote_cjk_ones_too(cx: &mut TestAppCont
     let run = TEXT.find(" ((((").unwrap() + 1;
     for width in (120..=720u16).step_by(8) {
         for at in drawn_breaks(cx, TEXT, f32::from(width)).unwrap() {
-            let ends = TEXT[..at].chars().next_back().unwrap();
             // a run of brackets longer than the line breaks inside itself rather than overflow it
             let in_the_run = at > run + 4;
             assert!(
-                !opening(ends) || in_the_run,
-                "a line ends on {ends:?} at byte {at}, {width} px wide"
+                !ends_opening(TEXT, at) || in_the_run,
+                "a line ends on an opening mark at byte {at}, {width} px wide"
             );
         }
     }
@@ -75,10 +79,9 @@ fn the_line_wrapper_ends_no_line_on_an_opening_bracket_or_quote(cx: &mut TestApp
             .map(|boundary| boundary.ix)
             .collect::<Vec<_>>();
         for at in breaks {
-            let ends = TEXT[..at].chars().next_back().unwrap();
             assert!(
-                !opening(ends) || at > run + 4,
-                "a line ends on {ends:?} at byte {at}, {width} px wide"
+                !ends_opening(TEXT, at) || at > run + 4,
+                "a line ends on an opening mark at byte {at}, {width} px wide"
             );
         }
     }

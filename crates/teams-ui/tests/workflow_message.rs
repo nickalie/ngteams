@@ -603,11 +603,11 @@ fn a_tall_more_actions_list_fits_the_window_and_leaves_the_menu_in_it() {
     draw(cx);
     open_menu(cx);
     let menu = bounds(cx, "message-menu").expect("the menu");
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: menu.center(),
         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-3000.0))),
         touch_phase: gpui::TouchPhase::Moved,
-        ..gpui::ScrollWheelEvent::default()
+        ..gpui::ScrollEvent::default()
     });
     draw(cx);
     click(cx, "message-more-actions");
@@ -644,11 +644,11 @@ fn tall_more_actions(
 }
 
 fn wheel(cx: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>, down: f32) {
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: at,
         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-down))),
         touch_phase: gpui::TouchPhase::Moved,
-        ..gpui::ScrollWheelEvent::default()
+        ..gpui::ScrollEvent::default()
     });
     draw(cx);
 }

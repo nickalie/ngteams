@@ -1088,7 +1088,7 @@ fn ringed(cx: &mut VisualTestContext, at: usize) -> bool {
 
 /// Each key of `keys` down and up, as a person presses it: a focused card is clicked on the key's release. Tab and
 /// Shift+Tab move as the kit's root moves them in the app's window, which the test's has not.
-fn press(cx: &mut VisualTestContext, keys: &str) {
+fn press(cx: &mut VisualTestContext, keys: &'static str) {
     for key in keys.split(' ') {
         if key == "tab" || key == "shift-tab" {
             cx.update(|window, cx| {

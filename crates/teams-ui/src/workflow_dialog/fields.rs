@@ -88,28 +88,42 @@ impl WorkflowDialog {
                     }));
                 field.message = Some((editor, bar));
             }
-            Kind::StartDate => {
-                let today = chrono::Local::now().date_naive();
-                let picked = param.text().and_then(markup::parse_date).unwrap_or(today);
-                let earliest = picked.min(today);
-                let date = cx.new(|cx| {
-                    DatePickerState::new(window, cx)
-                        .date_format("%-m/%-d/%Y")
-                        .disabled_matcher(move |day: &chrono::NaiveDate| *day < earliest)
-                });
-                date.update(cx, |state, cx| {
-                    state.set_date(gpui_component::calendar::Date::Single(Some(picked)), window, cx);
-                });
-                field
-                    .subscriptions
-                    .push(cx.subscribe(&date, move |this, _, event: &DatePickerEvent, cx| {
-                        let DatePickerEvent::Change(picked) = event;
-                        this.date_picked(index, picked.start().map(|time| time.date()), cx);
-                    }));
-                field.date = Some(date);
-            }
+            Kind::StartDate => field = Self::start_date(param, index, field, window, cx),
             Kind::Fixed | Kind::WeekDays | Kind::Folder => {}
         }
+        field
+    }
+
+    /// The date picker of a start date, on the field's date or today; no day before the earlier of the two.
+    fn start_date(
+        param: &markup::Param,
+        index: usize,
+        mut field: Field,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Field {
+        let today = chrono::Local::now().date_naive();
+        let picked = param.text().and_then(markup::parse_date).unwrap_or(today);
+        let earliest = picked.min(today);
+        let date = cx.new(|cx| {
+            DatePickerState::new(window, cx)
+                .date_format("%-m/%-d/%Y")
+                .disabled_matcher(move |day: &jiff::civil::Date| {
+                    crate::kit_date::from_kit(*day).is_some_and(|day| day < earliest)
+                })
+        });
+        date.update(cx, |state, cx| {
+            let day = gpui_component::calendar::Date::Single(crate::kit_date::to_kit(picked));
+            state.set_date(day, window, cx);
+        });
+        field
+            .subscriptions
+            .push(cx.subscribe(&date, move |this, _, event: &DatePickerEvent, cx| {
+                let DatePickerEvent::Change(picked) = event;
+                let day = picked.start().and_then(|time| crate::kit_date::from_kit(time.date()));
+                this.date_picked(index, day, cx);
+            }));
+        field.date = Some(date);
         field
     }
 

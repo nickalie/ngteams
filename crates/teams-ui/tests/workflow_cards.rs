@@ -63,11 +63,12 @@ fn click(cx: &mut VisualTestContext, selector: &str) {
 /// Turns the wheel over the dialog's page: a negative `dy` goes down.
 fn scroll(cx: &mut VisualTestContext, dy: f32) {
     let page = bounds(cx, "workflow-scroll").expect("the page is drawn");
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: page.center(),
         delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(dy))),
         modifiers: Modifiers::none(),
         touch_phase: gpui::TouchPhase::Moved,
+        source: gpui::ScrollSource::Pointer,
     });
     cx.run_until_parked();
 }

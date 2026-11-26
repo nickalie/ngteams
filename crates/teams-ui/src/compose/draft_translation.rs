@@ -44,7 +44,7 @@ actions!(
 /// Binds the key of translating a draft: Ctrl+Shift+Y, ⌘⇧Y on macOS.
 pub(super) fn bind_keys(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(
-        "secondary-shift-y",
+        secondary!("shift-y"),
         TranslateDraft,
         Some(super::CONTEXT),
     )]);

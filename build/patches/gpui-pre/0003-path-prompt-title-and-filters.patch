@@ -6,7 +6,7 @@ gpui-pre-linux (0005) and gpui-pre-windows (0002). The macOS panel still shows e
 
 --- a/src/platform.rs
 +++ b/src/platform.rs
-@@ -2798,7 +2798,7 @@
+@@ -3021,7 +3021,7 @@
  }
  
  /// The options that can be configured for a file dialog prompt
@@ -15,7 +15,7 @@ gpui-pre-linux (0005) and gpui-pre-windows (0002). The macOS panel still shows e
  pub struct PathPromptOptions {
      /// Should the prompt allow files to be selected?
      pub files: bool,
-@@ -2808,6 +2808,21 @@
+@@ -3031,6 +3031,21 @@
      pub multiple: bool,
      /// The prompt to show to a user when selecting a path
      pub prompt: Option<SharedString>,
@@ -39,7 +39,7 @@ gpui-pre-linux (0005) and gpui-pre-windows (0002). The macOS panel still shows e
  /// What kind of prompt styling to show
 --- a/src/app/test_context.rs
 +++ b/src/app/test_context.rs
-@@ -1432,6 +1432,8 @@
+@@ -1525,6 +1525,8 @@
                  directories: true,
                  multiple: true,
                  prompt: None,
@@ -48,7 +48,7 @@ gpui-pre-linux (0005) and gpui-pre-windows (0002). The macOS panel still shows e
              })
          });
          assert!(cx.did_prompt_for_paths());
-@@ -1458,6 +1460,8 @@
+@@ -1551,6 +1553,8 @@
                  directories: false,
                  multiple: false,
                  prompt: None,

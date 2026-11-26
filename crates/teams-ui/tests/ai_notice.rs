@@ -17,7 +17,7 @@ use std::sync::Arc;
 use common::{LAB_B, Rig};
 use gpui::{
     AppContext as _, Bounds, Entity, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, MouseButton, Pixels, Point,
-    ScrollDelta, ScrollWheelEvent, TestAppContext, TouchPhase, VisualTestContext, point, px, size,
+    ScrollDelta, ScrollEvent, TestAppContext, TouchPhase, VisualTestContext, point, px, size,
 };
 use teams_core::{CallAction, CallId, CallStatus, Event, IncomingCall, RegistrationReport};
 use teams_proto::Mri;
@@ -75,7 +75,7 @@ fn bounds(cx: &mut VisualTestContext, selector: &str) -> Option<Bounds<Pixels>> 
 }
 
 /// Presses each key of `keys` (down and up, as a person does: a focused button is clicked on the key's release).
-fn press(cx: &mut VisualTestContext, keys: &str) {
+fn press(cx: &mut VisualTestContext, keys: &'static str) {
     for spec in keys.split(' ') {
         let keystroke = Keystroke::parse(spec).unwrap();
         draw(cx);
@@ -413,11 +413,12 @@ fn the_whole_notice_fits_the_window_at_the_largest_font_and_its_points_scroll() 
     let body = bounds(cx, "ai-notice-body").expect("the points");
     let later = bounds(cx, "ai-notice-later").expect("the last line");
     assert!(later.bottom() > body.bottom(), "the points are higher than their box");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: body.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-2000.0))),
         modifiers: Modifiers::none(),
         touch_phase: TouchPhase::Moved,
+        source: gpui::ScrollSource::Pointer,
     });
     let scrolled = bounds(cx, "ai-notice-later").expect("the last line");
     assert!(

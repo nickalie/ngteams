@@ -344,11 +344,12 @@ fn the_card_asks_for_the_frames_that_show_it_by_its_pill_and_take_it_away() {
         "measured, the card moved over its pill: {card:?} over {like:?}"
     );
     let list = bounds(cx, "chat-messages").unwrap();
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: list.center(),
         delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(1_000.0))),
         modifiers: Modifiers::none(),
         touch_phase: gpui::TouchPhase::Moved,
+        source: gpui::ScrollSource::Pointer,
     });
     frames_on_demand(cx);
     assert!(bounds(cx, "reaction-like").is_none(), "the pill is out of the list");

@@ -74,7 +74,7 @@ impl Notifications {
     /// Withdraws every notification this run still shows.
     pub(crate) fn withdraw_all(&self, cx: &App) {
         for tag in std::mem::take(&mut *self.shown()) {
-            cx.dismiss_system_notification(&tag);
+            cx.dismiss_system_notification(&tag).detach();
         }
         if let Some(files) = &self.files {
             files.clear();
@@ -269,7 +269,7 @@ fn notifications(desktop: &WeakEntity<Desktop>, files: Option<BannerFiles>, cx: 
         while let Ok(command) = queue.recv().await {
             cx.update(|cx| match command {
                 Command::Show(banner) => poster.post(&banner),
-                Command::Close(tag) => cx.dismiss_system_notification(&tag),
+                Command::Close(tag) => cx.dismiss_system_notification(&tag).detach(),
             });
         }
     })

@@ -674,14 +674,6 @@ impl SelectableText {
     }
 }
 
-impl IntoElement for SelectableText {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for SelectableText {
     type RequestLayoutState = ();
     type PrepaintState = Hitbox;

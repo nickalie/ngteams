@@ -587,18 +587,18 @@ fn colors(palette: Palette) -> ThemeConfigColors {
 #[must_use]
 pub fn config(spec: &ThemeSpec, appearance: &Appearance) -> ThemeConfig {
     let family = appearance.font_family.as_deref().unwrap_or(SYSTEM_FONT);
-    ThemeConfig {
-        is_default: false,
-        name: spec.name.into(),
-        mode: spec.mode(),
-        font_size: Some(f32::from(appearance.font_size)),
-        font_family: Some(SharedString::from(family.to_owned())),
-        radius: Some(RADIUS),
-        radius_lg: Some(RADIUS_LG),
-        shadow: Some(false),
-        colors: colors(spec.palette),
-        ..ThemeConfig::default()
-    }
+    // assigned one by one: the kit's config is non-exhaustive, so there is no struct literal
+    let mut config = ThemeConfig::default();
+    config.is_default = false;
+    config.name = spec.name.into();
+    config.mode = spec.mode();
+    config.font_size = Some(f32::from(appearance.font_size));
+    config.font_family = Some(SharedString::from(family.to_owned()));
+    config.radius = Some(RADIUS);
+    config.radius_lg = Some(RADIUS_LG);
+    config.shadow = Some(false);
+    config.colors = colors(spec.palette);
+    config
 }
 
 /// What the kit shows now: the user's choice, the system's appearance it was last told, and the theme they give.

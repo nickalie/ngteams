@@ -52,8 +52,8 @@ use std::sync::Arc;
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable as _,
     Global, InteractiveElement as _, IntoElement, KeyBinding, MouseDownEvent, MouseMoveEvent, ParentElement as _,
-    Render, ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
-    WeakEntity, Window, actions, div, prelude::FluentBuilder as _, px, rgb,
+    Render, ScrollEvent, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity,
+    Window, actions, div, prelude::FluentBuilder as _, px, rgb,
 };
 use gpui_component::Sizable as _;
 use gpui_component::avatar::Avatar;
@@ -215,37 +215,37 @@ pub fn init(cx: &mut App) {
     crate::new_chat::init(cx);
     crate::share_file::init(cx);
     cx.bind_keys([
-        KeyBinding::new("secondary-k", ToggleSwitcher, None),
+        KeyBinding::new(secondary!("k"), ToggleSwitcher, None),
         // Teams' desktop key for New message
-        KeyBinding::new("secondary-n", NewMessage, None),
-        KeyBinding::new("secondary-e", FocusSearch, None),
-        KeyBinding::new("secondary-shift-f", FocusSearch, None),
-        KeyBinding::new("secondary-alt-g", GoToChat, None),
+        KeyBinding::new(secondary!("n"), NewMessage, None),
+        KeyBinding::new(secondary!("e"), FocusSearch, None),
+        KeyBinding::new(secondary!("shift-f"), FocusSearch, None),
+        KeyBinding::new(secondary!("alt-g"), GoToChat, None),
         KeyBinding::new("alt-left", GoBack, None),
         KeyBinding::new("alt-right", GoForward, None),
-        KeyBinding::new("secondary-alt-down", NextAccount, None),
-        KeyBinding::new("secondary-alt-up", PreviousAccount, None),
+        KeyBinding::new(secondary!("alt-down"), NextAccount, None),
+        KeyBinding::new(secondary!("alt-up"), PreviousAccount, None),
         // Teams' zoom keys, on the base font size
-        KeyBinding::new("secondary-=", FontLarger, None),
-        KeyBinding::new("secondary-+", FontLarger, None),
-        KeyBinding::new("secondary--", FontSmaller, None),
-        KeyBinding::new("secondary-0", FontReset, None),
+        KeyBinding::new(secondary!("="), FontLarger, None),
+        KeyBinding::new(secondary!("+"), FontLarger, None),
+        KeyBinding::new(secondary!("-"), FontSmaller, None),
+        KeyBinding::new(secondary!("0"), FontReset, None),
         // Teams' keys for its apps on the rail
-        KeyBinding::new("secondary-1", ShowActivity, None),
-        KeyBinding::new("secondary-2", ShowChats, None),
-        KeyBinding::new("secondary-4", ShowCalendar, None),
-        KeyBinding::new("secondary-shift-c", CallChat, None),
-        KeyBinding::new("secondary-shift-j", JoinCall, None),
-        KeyBinding::new("secondary-shift-s", AnswerCall, None),
-        KeyBinding::new("secondary-shift-d", DeclineCall, None),
-        KeyBinding::new("secondary-shift-h", HangUpCall, None),
-        KeyBinding::new("secondary-shift-m", ToggleMuteCall, None),
-        KeyBinding::new("secondary-shift-e", OpenShareCall, None),
+        KeyBinding::new(secondary!("1"), ShowActivity, None),
+        KeyBinding::new(secondary!("2"), ShowChats, None),
+        KeyBinding::new(secondary!("4"), ShowCalendar, None),
+        KeyBinding::new(secondary!("shift-c"), CallChat, None),
+        KeyBinding::new(secondary!("shift-j"), JoinCall, None),
+        KeyBinding::new(secondary!("shift-s"), AnswerCall, None),
+        KeyBinding::new(secondary!("shift-d"), DeclineCall, None),
+        KeyBinding::new(secondary!("shift-h"), HangUpCall, None),
+        KeyBinding::new(secondary!("shift-m"), ToggleMuteCall, None),
+        KeyBinding::new(secondary!("shift-e"), OpenShareCall, None),
         KeyBinding::new("alt-shift-c", ToggleCaptionsCall, None),
         // Teams' own key for the camera
-        KeyBinding::new("secondary-shift-o", ToggleCameraCall, None),
+        KeyBinding::new(secondary!("shift-o"), ToggleCameraCall, None),
         // Teams' own key for Raise and Lower hand
-        KeyBinding::new("secondary-shift-k", ToggleHandCall, None),
+        KeyBinding::new(secondary!("shift-k"), ToggleHandCall, None),
     ]);
 }
 
@@ -3641,7 +3641,7 @@ fn no_chat(palette: Palette, cx: &App) -> gpui::Div {
                 .items_center()
                 .gap_1()
                 .child("Choose one from the list, or press")
-                .child(Kbd::new(gpui::Keystroke::parse("secondary-k").unwrap_or_default()).outline())
+                .child(Kbd::new(gpui::Keystroke::parse(secondary!("k")).unwrap_or_default()).outline())
                 .child("to find one"),
         );
     div()
@@ -3764,7 +3764,7 @@ impl Render for Shell {
             // the window's use, for the account's own presence (its keystrokes: `keystrokes_are_use`)
             .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, _, cx| this.used(cx)))
             .capture_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _, cx| this.used(cx)))
-            .on_scroll_wheel(cx.listener(|this, _: &ScrollWheelEvent, _, cx| this.used(cx)))
+            .on_scroll(cx.listener(|this, _: &ScrollEvent, _, cx| this.used(cx)))
             .map(|shell| Self::font_keys(shell, cx))
             // the shell's own keys stop while the AI notice waits
             .when(!modal, |shell| Self::shell_keys(shell, cx))

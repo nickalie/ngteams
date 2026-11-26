@@ -4,7 +4,7 @@ types.
 
 --- a/src/platform.rs
 +++ b/src/platform.rs
-@@ -1551,6 +1551,41 @@
+@@ -1605,6 +1605,41 @@
              folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;
          }
  

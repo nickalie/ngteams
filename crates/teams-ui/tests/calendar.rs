@@ -1145,11 +1145,12 @@ fn the_wheel_beside_a_peek_scrolls_the_hours_and_closes_it_the_wheel_on_it_keeps
     rig.core.calendar.lock().unwrap().events = vec![event("busy", 14)];
     let (view, cx, _) = window(&rig);
     let wheel = |cx: &mut VisualTestContext, at: gpui::Point<gpui::Pixels>| {
-        cx.simulate_event(gpui::ScrollWheelEvent {
+        cx.simulate_event(gpui::ScrollEvent {
             position: at,
             delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-200.0))),
             modifiers: Modifiers::none(),
             touch_phase: gpui::TouchPhase::Moved,
+            source: gpui::ScrollSource::Pointer,
         });
         draw(cx);
     };

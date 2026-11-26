@@ -141,7 +141,7 @@ impl CalendarView {
             .left_0()
             .size_full()
             .on_click(cx.listener(|this, _, _, cx| this.close_card(cx)))
-            .on_scroll_wheel(cx.listener(|this, _, _, cx| this.close_card(cx)))
+            .on_scroll(cx.listener(|this, _, _, cx| this.close_card(cx)))
             .child(gpui::deferred(placed).with_priority(1))
     }
 

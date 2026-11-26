@@ -32,7 +32,7 @@ diff -ruN a/Cargo.toml b/Cargo.toml
 +version = "0.38"
 +
  [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies.wgpu]
- version = "29.0"
+ version = "30.0.1"
  features = [
 diff -ruN a/src/external_surface/completion.rs b/src/external_surface/completion.rs
 --- a/src/external_surface/completion.rs
@@ -1554,7 +1554,7 @@ diff -ruN a/src/gpui_wgpu.rs b/src/gpui_wgpu.rs
 diff -ruN a/src/shaders.wgsl b/src/shaders.wgsl
 --- a/src/shaders.wgsl
 +++ b/src/shaders.wgsl
-@@ -1360,3 +1360,53 @@
+@@ -1505,3 +1505,49 @@
  
      return ycbcr_to_RGB * y_cb_cr;
  }
@@ -1579,7 +1579,6 @@ diff -ruN a/src/shaders.wgsl b/src/shaders.wgsl
 +struct ExternalSurfaceVarying {
 +    @builtin(position) position: vec4<f32>,
 +    @location(0) texture_position: vec2<f32>,
-+    @location(3) clip_distances: vec4<f32>,
 +}
 +
 +@vertex
@@ -1587,17 +1586,14 @@ diff -ruN a/src/shaders.wgsl b/src/shaders.wgsl
 +    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
 +
 +    var out = ExternalSurfaceVarying();
-+    out.position = to_device_position(unit_vertex, external_surface.bounds);
-+    out.texture_position = unit_vertex;
-+    out.clip_distances = distance_from_clip_rect(unit_vertex, external_surface.bounds, external_surface.content_mask);
++    let clipped = clip_to_mask(unit_vertex, external_surface.bounds, external_surface.content_mask);
++    out.position = to_device_position_impl(clipped.position);
++    out.texture_position = clipped.unit_vertex;
 +    return out;
 +}
 +
 +@fragment
 +fn fs_external_surface(input: ExternalSurfaceVarying) -> @location(0) vec4<f32> {
-+    if (any(input.clip_distances < vec4<f32>(0.0))) {
-+        return vec4<f32>(0.0);
-+    }
 +    let texel = textureSampleLevel(t_external, s_external, input.texture_position, 0.0);
 +    if (external_surface.opaque != 0u) {
 +        return vec4<f32>(texel.rgb, 1.0);
@@ -1611,7 +1607,7 @@ diff -ruN a/src/shaders.wgsl b/src/shaders.wgsl
 diff -ruN a/src/wgpu_context.rs b/src/wgpu_context.rs
 --- a/src/wgpu_context.rs
 +++ b/src/wgpu_context.rs
-@@ -296,6 +296,9 @@
+@@ -303,6 +303,9 @@
          color_texture_format: TextureFormat,
      ) -> Self {
          let errors = DeviceErrorState::install(&device);
@@ -1621,7 +1617,7 @@ diff -ruN a/src/wgpu_context.rs b/src/wgpu_context.rs
  
          log::info!(
              "Selected GPU adapter: {:?} ({:?})",
-@@ -448,17 +451,26 @@
+@@ -468,17 +471,26 @@
              .using_resolution(adapter.limits())
              .using_alignment(adapter.limits());
  
@@ -1662,18 +1658,18 @@ diff -ruN a/src/wgpu_context.rs b/src/wgpu_context.rs
 diff -ruN a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
 --- a/src/wgpu_renderer.rs
 +++ b/src/wgpu_renderer.rs
-@@ -134,6 +134,9 @@
-     poly_sprites: wgpu::RenderPipeline,
+@@ -132,6 +132,9 @@
      #[allow(dead_code)]
      surfaces: wgpu::RenderPipeline,
+     premultiplied_alpha: bool,
 +    /// External surfaces (agterm-rs patch): dmabufs and CPU pixels.
 +    #[cfg(target_os = "linux")]
 +    external_surfaces: wgpu::RenderPipeline,
  }
  
  /// One frame allocation of instance data, ready to bind.
-@@ -161,6 +164,8 @@
-     instances: wgpu::BindGroupLayout,
+@@ -174,6 +177,8 @@
+     path_tiles: wgpu::BindGroupLayout,
      texture: wgpu::BindGroupLayout,
      surfaces: wgpu::BindGroupLayout,
 +    #[cfg(target_os = "linux")]
@@ -1681,17 +1677,17 @@ diff -ruN a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
  }
  
  /// Shared GPU context reference, used to coordinate device recovery across multiple windows.
-@@ -194,6 +199,8 @@
-     path_intermediate_view: Option<wgpu::TextureView>,
-     path_msaa_texture: Option<wgpu::Texture>,
-     path_msaa_view: Option<wgpu::TextureView>,
+@@ -202,6 +207,8 @@
+     globals_buffer: wgpu::Buffer,
+     globals_bind_group: wgpu::BindGroup,
+     instance_data: InstanceData,
 +    #[cfg(target_os = "linux")]
 +    external_surfaces: crate::external_surface::ExternalSurfaces,
  }
  
  struct CachedTextureBindGroup {
-@@ -613,6 +620,8 @@
-             instances,
+@@ -680,6 +687,8 @@
+             path_tiles,
              texture,
              surfaces,
 +            #[cfg(target_os = "linux")]
@@ -1699,12 +1695,12 @@ diff -ruN a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
          }
      }
  
-@@ -925,6 +934,20 @@
+@@ -976,6 +985,20 @@
              &layouts.surfaces,
              None,
              wgpu::PrimitiveTopology::TriangleStrip,
 +            &[Some(color_target.clone())],
-+            1,
++            false,
 +            &shader_module,
 +        );
 +
@@ -1718,27 +1714,27 @@ diff -ruN a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
 +            None,
 +            wgpu::PrimitiveTopology::TriangleStrip,
              &[Some(color_target)],
-             1,
+             false,
              &shader_module,
-@@ -940,6 +963,8 @@
-             subpixel_sprites,
+@@ -992,6 +1015,8 @@
              poly_sprites,
              surfaces,
+             premultiplied_alpha,
 +            #[cfg(target_os = "linux")]
 +            external_surfaces,
          }
      }
- 
-@@ -1353,6 +1378,8 @@
-                 path_intermediate_view: None,
-                 path_msaa_texture: None,
-                 path_msaa_view: None,
+ }
+@@ -1280,6 +1305,8 @@
+                 globals_buffer,
+                 globals_bind_group,
+                 instance_data,
 +                #[cfg(target_os = "linux")]
 +                external_surfaces: Default::default(),
              },
              atlas,
-             path_globals_offset,
-@@ -1472,6 +1499,9 @@
+             gamma_offset,
+@@ -1362,6 +1389,9 @@
              .inspect_err(|_| {
                  // Queue writes are staged before encoding; flush them even if the frame fails.
                  self.resources.queue.submit(std::iter::empty());
@@ -1748,16 +1744,16 @@ diff -ruN a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
              })
      }
  
-@@ -1497,6 +1527,8 @@
-                 )
-             })?;
+@@ -1403,6 +1433,8 @@
+             bytemuck::bytes_of(&globals),
+         );
          self.prepare_texture_bind_groups(scene);
 +        #[cfg(target_os = "linux")]
 +        self.prepare_external_surfaces(scene);
- 
-         let mut encoder =
-             self.resources()
-@@ -1609,20 +1641,66 @@
+         self.ensure_depth_texture(size);
+         let depth_view = &self
+             .depth_texture
+@@ -1541,8 +1573,21 @@
                              &mut pass,
                          )?;
                      }
@@ -1779,7 +1775,9 @@ diff -ruN a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
 +                    }
 +                    #[cfg(not(target_os = "linux"))]
                      PrimitiveBatch::Surfaces(_surfaces) => {}
-                 }
+                     // Native views are only composited by the Metal renderer.
+                     PrimitiveBatch::NativeViews(_) => {}
+@@ -1550,10 +1595,29 @@
              }
          }
  
@@ -1808,6 +1806,10 @@ diff -ruN a/src/wgpu_renderer.rs b/src/wgpu_renderer.rs
 +                .after_submit(&resources.device, submission.clone(), completion);
 +        }
          Ok(submission)
+     }
+ 
+@@ -1592,6 +1656,20 @@
+         self.depth_texture = Some(DepthTexture { texture, view });
      }
  
 +    #[cfg(target_os = "linux")]

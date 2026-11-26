@@ -310,7 +310,7 @@ fn qa_tab_reaches_each_point_and_enter_plays_its_moment() {
 
 /// In a new window on the stored summary, its question moved to 0:04 and its pill clicked: `tabs` Tab presses (the
 /// summary pane stays shown), then `keys`; what the last key played.
-fn keyed(tabs: usize, keys: &str) -> Played {
+fn keyed(tabs: usize, keys: &'static str) -> Played {
     let (_shell, _stub, cx) = super::summary::keyed_summary(None);
     for _ in 0..tabs {
         press(cx, "tab");

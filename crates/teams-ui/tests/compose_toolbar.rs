@@ -1064,11 +1064,12 @@ fn the_message_list_is_one_stop_with_a_button_in_it() {
     rig.core.messages.lock().unwrap().insert(AB.to_owned(), many(100));
     let (view, compose, cx) = rooted_view(&rig, Settings::default(), 900.0);
     let list = cx.debug_bounds("chat-messages").expect("the message list is drawn");
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: list.center(),
         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(1_000.0))),
         modifiers: Modifiers::none(),
         touch_phase: gpui::TouchPhase::Moved,
+        source: gpui::ScrollSource::Pointer,
     });
     draw(cx);
     assert!(shown(cx, "jump-to-newest"), "scrolled up, the list holds a button");
@@ -1260,7 +1261,7 @@ fn enter_held_on_the_selected_card_does_not_press_its_button() {
     );
 }
 
-fn hold(cx: &mut VisualTestContext, key: &str) {
+fn hold(cx: &mut VisualTestContext, key: &'static str) {
     for _ in 0..3 {
         cx.simulate_event(gpui::KeyDownEvent {
             keystroke: gpui::Keystroke::parse(key).unwrap(),
@@ -2394,11 +2395,12 @@ fn card_input_in_a_long_chat(rig: &Rig) -> (Entity<ChatView>, &'static mut Visua
 fn scroll_the_card_out(cx: &mut VisualTestContext) {
     let list = cx.debug_bounds("chat-messages").expect("the message list is drawn");
     // near the list's top: a popup the card opened is not under the wheel
-    cx.simulate_event(gpui::ScrollWheelEvent {
+    cx.simulate_event(gpui::ScrollEvent {
         position: gpui::point(list.center().x, list.origin.y + px(20.0)),
         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(3_000.0))),
         modifiers: Modifiers::none(),
         touch_phase: gpui::TouchPhase::Moved,
+        source: gpui::ScrollSource::Pointer,
     });
     draw(cx);
     assert!(cx.debug_bounds("message-700").is_none(), "the card scrolled out");

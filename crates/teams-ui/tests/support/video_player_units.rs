@@ -1096,7 +1096,7 @@ fn left_and_right_skip_in_a_card_s_player_before_the_list_around_it_takes_them()
                 rate: 1.0,
             });
         });
-        let mut after = |key: &str| {
+        let mut after = |key: &'static str| {
             window.dispatch_keystroke(gpui::Keystroke::parse(key).unwrap(), cx);
             view.read(cx).status.map(|status| status.position)
         };
@@ -1138,7 +1138,7 @@ fn tab(cx: &mut gpui::VisualTestContext, back: bool) {
 }
 
 /// `key` down and up, as a person presses it: a focused control is clicked on its release.
-fn press(cx: &mut gpui::VisualTestContext, key: &str) {
+fn press(cx: &mut gpui::VisualTestContext, key: &'static str) {
     let keystroke = gpui::Keystroke::parse(key).unwrap();
     cx.simulate_event(gpui::KeyDownEvent {
         keystroke: keystroke.clone(),
@@ -1150,7 +1150,7 @@ fn press(cx: &mut gpui::VisualTestContext, key: &str) {
 }
 
 /// `key` down and up in one update, so a player's status can't change between them.
-fn press_now(window: &mut Window, cx: &mut App, key: &str) {
+fn press_now(window: &mut Window, cx: &mut App, key: &'static str) {
     let keystroke = gpui::Keystroke::parse(key).unwrap();
     window.dispatch_event(
         gpui::PlatformInput::KeyDown(gpui::KeyDownEvent {
@@ -1279,7 +1279,7 @@ fn enter_or_space_on_play_and_the_skips_press_only_that_control() {
                 rate: 1.0,
             });
         });
-        let mut after = |what: &str, key: &str| {
+        let mut after = |what: &str, key: &'static str| {
             view.read(cx).control_focus(what, cx).focus(window, cx);
             press_now(window, cx, key);
             view.read(cx).status.map(|status| status.position)

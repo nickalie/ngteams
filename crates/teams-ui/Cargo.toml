@@ -23,6 +23,8 @@ async-channel.workspace = true
 chrono.workspace = true
 # the scheduling form's start and end time zones
 chrono-tz.workspace = true
+# the kit's date pickers' dates, converted from and to Chrono at the boundary (`kit_date`)
+jiff.workspace = true
 # the scheduling form's desktop zone on both native platforms
 iana-time-zone.workspace = true
 # the bridge's drain: the engine's next event or the stop, whichever comes first

@@ -19,8 +19,8 @@ use std::time::Duration;
 
 use common::Rig;
 use gpui::{
-    AppContext as _, Entity, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ScrollDelta, ScrollWheelEvent,
-    TestAppContext, TouchPhase, VisualTestContext, point, px, size,
+    AppContext as _, Entity, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ScrollDelta, ScrollEvent, TestAppContext,
+    TouchPhase, VisualTestContext, point, px, size,
 };
 use teams_ui::ViewTrace;
 use teams_ui::recap_view::RecapView;
@@ -166,7 +166,7 @@ fn click(cx: &mut VisualTestContext, selector: &'static str) {
 }
 
 /// Presses each key of `keys`, down and up as a person does: a focused element is clicked on the key's release.
-fn press(cx: &mut VisualTestContext, keys: &str) {
+fn press(cx: &mut VisualTestContext, keys: &'static str) {
     for spec in keys.split(' ') {
         let keystroke = Keystroke::parse(spec).unwrap();
         cx.simulate_event(KeyDownEvent {
@@ -777,11 +777,12 @@ fn a_narrow_recap_scrolls_to_the_transcript_below_the_recording() {
     cx.update(|window, cx| shell.update(cx, |shell, cx| shell.show_chat_tab(ChatTab::Recap, window, cx)));
     draw(cx);
     let content = cx.debug_bounds("recap-content").expect("recap content");
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: content.center(),
         delta: ScrollDelta::Pixels(point(px(0.0), px(-600.0))),
         modifiers: Modifiers::none(),
         touch_phase: TouchPhase::Moved,
+        source: gpui::ScrollSource::Pointer,
     });
     draw(cx);
     let search = cx.debug_bounds("recap-search").expect("transcript search");

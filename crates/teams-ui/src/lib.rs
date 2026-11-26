@@ -71,8 +71,23 @@
 //!
 //! M2 Tasks 6–17 and 20 (`docs/plans/20261021-native-teams-m2-gpui-daily-driver.md`).
 
-/// The key a shortcut's hint names, as Teams names it: Ctrl, or Cmd on macOS. The shortcuts bind `secondary-`, which
-/// GPUI reads as Ctrl elsewhere and Cmd there; hints are put together with `concat!`.
+/// A shortcut's keystrokes with Ctrl, or Cmd on macOS, first: `secondary!("shift-y")`. GPUI's static key bindings
+/// no longer read `secondary-` (only the host-aware `KeyBinding::load` does), so the key is chosen at build time.
+#[cfg(target_os = "macos")]
+macro_rules! secondary {
+    ($keys:literal) => {
+        concat!("cmd-", $keys)
+    };
+}
+#[cfg(not(target_os = "macos"))]
+macro_rules! secondary {
+    ($keys:literal) => {
+        concat!("ctrl-", $keys)
+    };
+}
+
+/// The key a shortcut's hint names, as Teams names it: Ctrl, or Cmd on macOS. The shortcuts bind it with
+/// [`secondary!`]; hints are put together with `concat!`.
 #[cfg(target_os = "macos")]
 macro_rules! ctrl {
     () => {
@@ -142,6 +157,7 @@ pub mod icons;
 pub mod inline;
 pub mod join_team;
 pub mod keyboard;
+pub mod kit_date;
 pub mod link_preview;
 pub mod local_ai;
 pub mod manage_team;

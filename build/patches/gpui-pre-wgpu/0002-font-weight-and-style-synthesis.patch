@@ -12,7 +12,6 @@ otherwise (`Synthesis`, kept per face in `styled_font_ids`):
 Emoji fonts are never synthesized. A face drawn as it is keeps its `FontId`.
 scripts/vendor-gpui.sh applies this to the verified crates.io archive after 0001.
 
-diff -ruN a/src/cosmic_text_system.rs b/src/cosmic_text_system.rs
 --- a/src/cosmic_text_system.rs
 +++ b/src/cosmic_text_system.rs
 @@ -17,7 +17,7 @@
@@ -179,7 +178,7 @@ diff -ruN a/src/cosmic_text_system.rs b/src/cosmic_text_system.rs
      fn prewarm_fonts(&mut self, font_ids: &[FontId]) {
          for &font_id in font_ids {
              let Some(properties) = self.font_match_properties(font_id) else {
-@@ -439,6 +542,7 @@
+@@ -438,6 +541,7 @@
                  features: cosmic_features.clone(),
                  is_known_emoji_font: check_is_known_emoji_font(&postscript_name),
                  user_fallback_chain: Arc::clone(&user_fallback_chain),
@@ -187,7 +186,7 @@ diff -ruN a/src/cosmic_text_system.rs b/src/cosmic_text_system.rs
              });
              self.loaded_font_ids_by_key.insert(key, font_id);
          }
-@@ -517,6 +621,7 @@
+@@ -516,6 +620,7 @@
          let loaded_font = &self.loaded_fonts[params.font_id.0];
          let font_ref = loaded_font.font.as_swash();
          let pixel_size = f32::from(params.font_size);
@@ -195,7 +194,7 @@ diff -ruN a/src/cosmic_text_system.rs b/src/cosmic_text_system.rs
  
          let subpixel_offset = Vector::new(
              params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor,
-@@ -528,6 +633,13 @@
+@@ -527,6 +632,13 @@
              .builder(font_ref)
              .size(pixel_size * params.scale_factor)
              .hint(true)
@@ -209,7 +208,7 @@ diff -ruN a/src/cosmic_text_system.rs b/src/cosmic_text_system.rs
              .build();
  
          let sources: &[Source] = if params.is_emoji {
-@@ -541,6 +653,16 @@
+@@ -540,6 +652,16 @@
          };
  
          let mut renderer = Render::new(sources);
@@ -226,7 +225,7 @@ diff -ruN a/src/cosmic_text_system.rs b/src/cosmic_text_system.rs
          if params.subpixel_rendering {
              // There seems to be a bug in Swash where the B and R values are swapped.
              renderer
-@@ -588,6 +710,7 @@
+@@ -587,6 +709,7 @@
                  features: CosmicFontFeatures::new(),
                  is_known_emoji_font: check_is_known_emoji_font(&face.post_script_name),
                  user_fallback_chain: Arc::from(Vec::new()),

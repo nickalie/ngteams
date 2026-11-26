@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    Entity, Modifiers, MouseButton, MouseDownEvent, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualTestContext,
-    point, px, size,
+    Entity, Modifiers, MouseButton, MouseDownEvent, ScrollDelta, ScrollEvent, TestAppContext, VisualTestContext, point,
+    px, size,
 };
 use teams_core::{PictureBytes, Reply, Strip};
 use teams_ui::inline::{PictureEngine, PictureSource};
@@ -162,14 +162,14 @@ fn pointer_zoom_and_drag_preserve_bounds_and_double_click_returns_to_fit() {
     let (viewer, mut cx) = open(&app, viewing(&source, &["large"], 0));
     let stage = cx.debug_bounds("picture-viewer-stage").unwrap();
     let centre = stage.center();
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: centre,
         delta: ScrollDelta::Lines(point(0., 1.)),
         modifiers: Modifiers {
             control: true,
             ..Modifiers::none()
         },
-        ..ScrollWheelEvent::default()
+        ..ScrollEvent::default()
     });
     draw(&mut cx);
     assert!(cx.update(|_, cx| viewer.read(cx).placement().zoom.is_some()));

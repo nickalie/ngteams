@@ -166,7 +166,7 @@ fn input(item: &Value, index: usize, window: &mut Window, cx: &mut Context<Workf
                 if let Some(Element::Input(input)) = this.elements.get_mut(index)
                     && let Control::Date { picked: slot, .. } = &mut input.control
                 {
-                    *slot = picked.start().map(|time| time.date());
+                    *slot = picked.start().and_then(|time| crate::kit_date::from_kit(time.date()));
                     input.missing = false;
                     cx.notify();
                 }

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ExternalSurface, FocusHandle, FrameCompletion,
     InteractiveElement as _, IntoElement, KeyDownEvent, KeyUpEvent, Keystroke, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement as _, PixelFrame, PixelRect, PixelSurface, Pixels, Point, Render, ScrollWheelEvent,
+    MouseUpEvent, ParentElement as _, PixelFrame, PixelRect, PixelSurface, Pixels, Point, Render, ScrollEvent,
     Styled as _, Window, canvas, div, rgb,
 };
 use teams_auth::signin::SignInAnswer;
@@ -302,7 +302,7 @@ impl SignInView {
         self.pointer(PointerKind::Move, event.position, event.modifiers);
     }
 
-    fn scroll(&mut self, event: &ScrollWheelEvent, _: &mut Window, _: &mut Context<Self>) {
+    fn scroll(&mut self, event: &ScrollEvent, _: &mut Window, _: &mut Context<Self>) {
         let (Some((host, view)), Some(bounds)) = (self.engine(), self.bounds.get()) else {
             return;
         };
@@ -387,7 +387,7 @@ impl Render for SignInView {
             .on_any_mouse_down(cx.listener(Self::mouse_down))
             .capture_any_mouse_up(cx.listener(Self::mouse_up))
             .on_mouse_move(cx.listener(Self::mouse_move))
-            .on_scroll_wheel(cx.listener(Self::scroll))
+            .on_scroll(cx.listener(Self::scroll))
             .on_key_down(cx.listener(|view, event: &KeyDownEvent, _, cx| view.key(&event.keystroke, true, cx)))
             .on_key_up(cx.listener(|view, event: &KeyUpEvent, _, cx| view.key(&event.keystroke, false, cx)))
             .child(self.content());

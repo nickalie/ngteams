@@ -4,83 +4,147 @@ losing offers between this client's surfaces. Per-process-instance, per-selectio
 markers let a clipboard manager return the last private rich snapshot only after its real text matches.
 No rich metadata or mention identifiers are advertised; retired sources cannot serve the retained snapshot.
 
-diff --git a/src/linux/wayland/client.rs b/src/linux/wayland/client.rs
-index 84f4d0f..a3ff4d9 100644
 --- a/src/linux/wayland/client.rs
 +++ b/src/linux/wayland/client.rs
-@@ -512 +512 @@ pub(crate) enum DataSourceKind {
+@@ -514,7 +514,7 @@ where
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub(crate) enum DataSourceKind {
 -    Clipboard,
 +    Clipboard(u64),
-@@ -1441 +1440,0 @@ impl WaylandConnection {
+     Drag,
+ }
+ 
+@@ -1442,18 +1442,18 @@ impl WaylandConnection {
+             return;
+         };
+         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
 -            state.clipboard.set_primary(item);
-@@ -1448 +1447,2 @@ impl WaylandConnection {
+             let Some(serial) = state.serial_tracker.selection_serial() else {
+                 log::warn!(
+                     "Skipping Wayland primary selection ownership request because no keyboard or pointer press serial has been received"
+                 );
+                 return;
+             };
 -            let data_source = primary_selection_manager.create_source(&state.globals.qh, ());
 +            let (source, mime) = state.clipboard.set_primary(item);
 +            let data_source = primary_selection_manager.create_source(&state.globals.qh, source);
-@@ -1452 +1452 @@ impl WaylandConnection {
+             for mime_type in TEXT_MIME_TYPES {
+                 data_source.offer(mime_type.to_string());
+             }
 -            data_source.offer(state.clipboard.self_mime());
 +            data_source.offer(mime);
-@@ -1466 +1465,0 @@ impl WaylandConnection {
+             primary_selection.set_selection(Some(&data_source), serial.as_raw());
+         }
+     }
+@@ -1467,29 +1467,33 @@ impl WaylandConnection {
+             return;
+         };
+         if state.mouse_focused_window.is_some() || state.keyboard_focused_window.is_some() {
 -            state.clipboard.set(item);
-@@ -1472,0 +1472 @@ impl WaylandConnection {
+             let Some(serial) = state.serial_tracker.selection_serial() else {
+                 log::warn!(
+                     "Skipping Wayland clipboard ownership request because no keyboard or pointer press serial has been received"
+                 );
+                 return;
+             };
 +            let (source, mime) = state.clipboard.set(item);
-@@ -1474 +1474 @@ impl WaylandConnection {
+             let data_source = data_device_manager
 -                .create_data_source(&state.globals.qh, DataSourceKind::Clipboard);
 +                .create_data_source(&state.globals.qh, DataSourceKind::Clipboard(source));
-@@ -1478 +1478 @@ impl WaylandConnection {
+             for mime_type in TEXT_MIME_TYPES {
+                 data_source.offer(mime_type.to_string());
+             }
 -            data_source.offer(state.clipboard.self_mime());
 +            data_source.offer(mime);
-@@ -1484 +1484,3 @@ impl WaylandConnection {
+             data_device.set_selection(Some(&data_source), serial.as_raw());
+         }
+     }
+ 
+     pub(crate) fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
 -        self.0.borrow_mut().clipboard.read_primary()
 +        let mut state = self.0.borrow_mut();
 +        let focused = state.keyboard_focused_window.is_some();
 +        state.clipboard.read_primary(focused)
-@@ -1488 +1490,3 @@ impl WaylandConnection {
+     }
+ 
+     pub(crate) fn read_from_clipboard(&self) -> Option<gpui::ClipboardItem> {
 -        self.0.borrow_mut().clipboard.read()
 +        let mut state = self.0.borrow_mut();
 +        let focused = state.keyboard_focused_window.is_some();
 +        state.clipboard.read(focused)
-@@ -3047,2 +3051,2 @@ impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientSta
+     }
+ 
+     pub(crate) fn active_window(&self) -> Option<AnyWindowHandle> {
+@@ -3035,10 +3039,11 @@ impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientSta
+         let mut state = client.borrow_mut();
+ 
+         match (kind, event) {
 -            (DataSourceKind::Clipboard, wl_data_source::Event::Send { mime_type, fd }) => {
 -                state.clipboard.send(mime_type, fd);
 +            (DataSourceKind::Clipboard(source), wl_data_source::Event::Send { mime_type, fd }) => {
 +                state.clipboard.send(*source, mime_type, fd);
-@@ -3050 +3054,2 @@ impl Dispatch<wl_data_source::WlDataSource, DataSourceKind> for WaylandClientSta
+             }
 -            (DataSourceKind::Clipboard, wl_data_source::Event::Cancelled) => {
 +            (DataSourceKind::Clipboard(source), wl_data_source::Event::Cancelled) => {
 +                state.clipboard.cancelled(*source);
-@@ -3138 +3143 @@ impl Dispatch<zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()>
+                 data_source.destroy();
+             }
+             (DataSourceKind::Drag, wl_data_source::Event::Send { fd, .. }) => {
+@@ -3126,25 +3131,26 @@ impl Dispatch<zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1, ()>
+     }
+ }
+ 
 -impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
 +impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, u64>
-@@ -3145 +3150 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
+     for WaylandClientStatePtr
+ {
+     fn event(
+         this: &mut Self,
+         selection_source: &zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1,
+         event: zwp_primary_selection_source_v1::Event,
 -        _: &(),
 +        source: &u64,
-@@ -3150 +3155 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
+         _: &Connection,
+         _: &QueueHandle<Self>,
+     ) {
+         let client = this.get_client();
 -        let state = client.borrow_mut();
 +        let mut state = client.borrow_mut();
-@@ -3154 +3159 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
+ 
+         match event {
+             zwp_primary_selection_source_v1::Event::Send { mime_type, fd } => {
 -                state.clipboard.send_primary(mime_type, fd);
 +                state.clipboard.send_primary(*source, mime_type, fd);
-@@ -3156,0 +3162 @@ impl Dispatch<zwp_primary_selection_source_v1::ZwpPrimarySelectionSourceV1, ()>
+             }
+             zwp_primary_selection_source_v1::Event::Cancelled => {
 +                state.clipboard.primary_cancelled(*source);
-diff --git a/src/linux/wayland/clipboard.rs b/src/linux/wayland/clipboard.rs
-index 60ece55..4930823 100644
+                 selection_source.destroy();
+             }
+             _ => {}
 --- a/src/linux/wayland/clipboard.rs
 +++ b/src/linux/wayland/clipboard.rs
-@@ -1,0 +2 @@ use std::{
+@@ -1,5 +1,7 @@
+ use std::{
 +    collections::hash_map::RandomState,
-@@ -2,0 +4 @@ use std::{
+     fs::File,
 +    hash::BuildHasher as _,
-@@ -30 +31,0 @@ pub(crate) struct Clipboard {
+     io::{ErrorKind, Write},
+     os::fd::{AsRawFd, BorrowedFd, OwnedFd},
+ };
+@@ -27,17 +29,123 @@ const HTML_MIME_TYPE: &str = "text/html";
+ pub(crate) struct Clipboard {
+     connection: Connection,
+     loop_handle: LoopHandle<'static, ()>,
 -    self_mime: String,
-@@ -32,3 +33,3 @@ pub(crate) struct Clipboard {
+ 
 -    // Internal clipboard
 -    contents: Option<ClipboardItem>,
 -    primary_contents: Option<ClipboardItem>,
 +    selection: Selection<WlDataOffer>,
 +    primary: Selection<ZwpPrimarySelectionOfferV1>,
 +}
-@@ -36 +37,6 @@ pub(crate) struct Clipboard {
+ 
 -    // External clipboard
 +/// A local write is immediately readable, before the compositor echoes its offer. Authoritative replacements and
 +/// cancellation revoke that shortcut. Reads are withheld while unfocused, without dropping an offer between this
@@ -88,7 +152,7 @@ index 60ece55..4930823 100644
 +struct Selection<T: ReceiveData> {
 +    /// Last local snapshot, retained privately until the next copy; a cancelled source cannot serve it.
 +    contents: Option<ClipboardItem>,
-@@ -38,3 +44,105 @@ pub(crate) struct Clipboard {
+     cached_read: Option<ClipboardItem>,
 -    current_offer: Option<DataOffer<WlDataOffer>>,
 -    cached_primary_read: Option<ClipboardItem>,
 -    current_primary_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
@@ -197,7 +261,13 @@ index 60ece55..4930823 100644
 +        self.cached_read = Some(item.clone());
 +        Some(item)
 +    }
-@@ -175,0 +284,8 @@ impl Clipboard {
+ }
+ 
+ pub(crate) trait ReceiveData {
+@@ -173,93 +281,72 @@ impl<T: ReceiveData> DataOffer<T> {
+ 
+ impl Clipboard {
+     pub fn new(connection: Connection, loop_handle: LoopHandle<'static, ()>) -> Self {
 +        // This public association token contains no clipboard payload. RandomState's instance salt avoids
 +        // confusing a manager's history from a prior process with a new copy after PID reuse.
 +        let random = RandomState::new();
@@ -206,7 +276,9 @@ index 60ece55..4930823 100644
 +            random.hash_one(0_u8),
 +            random.hash_one(1_u8)
 +        );
-@@ -179,9 +295,2 @@ impl Clipboard {
+         Self {
+             connection,
+             loop_handle,
 -            self_mime: format!("pid/{}", std::process::id()),
 -
 -            contents: None,
@@ -218,45 +290,60 @@ index 60ece55..4930823 100644
 -            current_primary_offer: None,
 +            selection: Selection::new(format!("{prefix}-clipboard")),
 +            primary: Selection::new(format!("{prefix}-primary")),
-@@ -191,2 +300,2 @@ impl Clipboard {
+         }
+     }
+ 
 -    pub fn set(&mut self, item: ClipboardItem) {
 -        self.contents = Some(item);
 +    pub fn set(&mut self, item: ClipboardItem) -> (u64, String) {
 +        self.selection.set(item)
-@@ -195,2 +304,2 @@ impl Clipboard {
+     }
+ 
 -    pub fn set_primary(&mut self, item: ClipboardItem) {
 -        self.primary_contents = Some(item);
 +    pub fn set_primary(&mut self, item: ClipboardItem) -> (u64, String) {
 +        self.primary.set(item)
-@@ -200,2 +309 @@ impl Clipboard {
+     }
+ 
+     pub fn set_offer(&mut self, data_offer: Option<DataOffer<WlDataOffer>>) {
 -        self.cached_read = None;
 -        self.current_offer = data_offer;
 +        self.selection.set_offer(data_offer);
-@@ -205,2 +313 @@ impl Clipboard {
+     }
+ 
+     pub fn set_primary_offer(&mut self, data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>) {
 -        self.cached_primary_read = None;
 -        self.current_primary_offer = data_offer;
 +        self.primary.set_offer(data_offer);
-@@ -209,2 +316,2 @@ impl Clipboard {
+     }
+ 
 -    pub fn self_mime(&self) -> String {
 -        self.self_mime.clone()
 +    pub fn cancelled(&mut self, source: u64) {
 +        self.selection.cancelled(source);
-@@ -213,4 +320,2 @@ impl Clipboard {
+     }
+ 
 -    pub fn send(&self, _mime_type: String, fd: OwnedFd) {
 -        if let Some(text) = self.contents.as_ref().and_then(|contents| contents.text()) {
 -            self.send_bytes(fd, text.as_bytes().to_owned());
 -        }
 +    pub fn primary_cancelled(&mut self, source: u64) {
 +        self.primary.cancelled(source);
-@@ -219 +324 @@ impl Clipboard {
+     }
+ 
 -    pub fn send_primary(&self, _mime_type: String, fd: OwnedFd) {
 +    pub fn send(&self, source: u64, _mime_type: String, fd: OwnedFd) {
-@@ -221,2 +326,2 @@ impl Clipboard {
+         if let Some(text) = self
 -            .primary_contents
 -            .as_ref()
 +            .selection
 +            .contents_for_source(source)
-@@ -229,8 +334,7 @@ impl Clipboard {
+             .and_then(|contents| contents.text())
+         {
+             self.send_bytes(fd, text.as_bytes().to_owned());
+         }
+     }
+ 
 -    pub fn read(&mut self) -> Option<ClipboardItem> {
 -        let offer = self.current_offer.as_ref()?;
 -        if let Some(cached) = self.cached_read.clone() {
@@ -272,7 +359,7 @@ index 60ece55..4930823 100644
 +            .and_then(|contents| contents.text())
 +        {
 +            self.send_bytes(fd, text.as_bytes().to_owned());
-@@ -238,7 +341,0 @@ impl Clipboard {
+         }
 -
 -        let item = offer
 -            .read_text(&self.connection)
@@ -280,7 +367,8 @@ index 60ece55..4930823 100644
 -
 -        self.cached_read = Some(item.clone());
 -        Some(item)
-@@ -247,13 +344,3 @@ impl Clipboard {
+     }
+ 
 -    pub fn read_primary(&mut self) -> Option<ClipboardItem> {
 -        let offer = self.current_primary_offer.as_ref()?;
 -        if let Some(cached) = self.cached_primary_read.clone() {
@@ -297,12 +385,18 @@ index 60ece55..4930823 100644
 +    pub fn read(&mut self, focused: bool) -> Option<ClipboardItem> {
 +        self.selection.read(&self.connection, focused)
 +    }
-@@ -261,2 +348,2 @@ impl Clipboard {
+ 
 -        self.cached_primary_read = Some(item.clone());
 -        Some(item)
 +    pub fn read_primary(&mut self, focused: bool) -> Option<ClipboardItem> {
 +        self.primary.read(&self.connection, focused)
-@@ -293,0 +381,217 @@ impl Clipboard {
+     }
+ 
+     pub fn send_bytes(&self, fd: OwnedFd, bytes: Vec<u8>) {
+@@ -291,3 +378,220 @@ impl Clipboard {
+             .unwrap();
+     }
+ }
 +
 +#[cfg(test)]
 +mod local_selection_tests {

@@ -430,13 +430,13 @@ fn first_point_tabs() -> usize {
 
 /// In a new window on the stored summary, its question moved to 0:04: its pill clicked (the focus on it), `tabs` Tab
 /// presses, then `then`; the transcript line played, if the transcript shows.
-fn pressed(tabs: usize, then: &str) -> Option<&'static str> {
+fn pressed(tabs: usize, then: &'static str) -> Option<&'static str> {
     let (_shell, _stub, cx) = keyed_summary(None);
     tabbed(cx, tabs, then)
 }
 
 /// `tabs` Tab presses, then `then`; the transcript line played, if the transcript shows.
-fn tabbed(cx: &mut VisualTestContext, tabs: usize, then: &str) -> Option<&'static str> {
+fn tabbed(cx: &mut VisualTestContext, tabs: usize, then: &'static str) -> Option<&'static str> {
     for _ in 0..tabs {
         press(cx, "tab");
     }

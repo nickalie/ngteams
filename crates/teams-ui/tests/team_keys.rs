@@ -104,7 +104,7 @@ fn click(cx: &mut VisualTestContext, selector: &str) {
 }
 
 /// Presses each key of `keys` (down and up, as a person does: a focused control is clicked on the key's release).
-fn press(cx: &mut VisualTestContext, keys: &str) {
+fn press(cx: &mut VisualTestContext, keys: &'static str) {
     for spec in keys.split(' ') {
         let keystroke = Keystroke::parse(spec).unwrap();
         cx.update(|window, cx| {

@@ -420,7 +420,7 @@ mod tests {
     use super::*;
     use gpui::Keystroke;
 
-    fn key(spec: &str) -> KeyDownEvent {
+    fn key(spec: &'static str) -> KeyDownEvent {
         KeyDownEvent {
             keystroke: Keystroke::parse(spec).unwrap_or_else(|_| Keystroke {
                 modifiers: gpui::Modifiers::none(),
