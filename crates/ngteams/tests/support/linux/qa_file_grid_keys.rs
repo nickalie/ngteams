@@ -11,8 +11,9 @@
 //! - **Escape**: in the player, it pauses and the ring comes back to the video's card; a second Escape gives the keys to
 //!   the list. A menu of the player closes first, then full screen ends.
 //! - **The player's controls**: Tab goes through Play, Back 10 seconds, Forward 10 seconds, Mute, More options, Full
-//!   screen and Open in browser in that order; Space and Enter on each press only that control (only Play plays the
-//!   video, only Full screen fills the window, only More options opens a menu, only Open in browser opens the link).
+//!   screen and Open in browser in that order. Space and Enter on Play play the video, on More options open a menu, on
+//!   Full screen fill the window, and on Open in browser open the link and nothing else; on each other control they do
+//!   not play the video, fill the window or open a link.
 //! - **The image's More options** shows while the keys are on the image, and Enter on it opens its menu.
 //! - **The pointer**: a press on a card leaves the keys in the box; a click on the image still opens it.
 //!
@@ -54,6 +55,10 @@ const STEPS: u32 = 40;
 /// The controls of a card's player in the order Tab reaches them, as the walk's app names them ("More options" is the
 /// kit's button, which it calls `player`).
 const PLAYER_CONTROLS: [&str; 7] = ["play", "back", "forward", "mute", "player", "fullscreen", "open"];
+
+/// The Tab presses from the player's picture to "More options" (`player` in [`PLAYER_CONTROLS`]).
+const MORE_AT: u32 = 5;
+const _: () = assert!(matches!(PLAYER_CONTROLS[MORE_AT as usize - 1].as_bytes(), b"player"));
 
 /// The pause after a key.
 const KEY_GAP: Duration = Duration::from_millis(250);
@@ -137,8 +142,8 @@ impl Walk<'_> {
         self.doc_keys(stops[0])?;
         self.image_keys(stops[1])?;
         self.video_keys(stops[2])?;
-        let menu = self.player_controls(stops[2])?;
-        self.escape_order(stops[2], menu)?;
+        self.player_controls(stops[2])?;
+        self.escape_order(stops[2])?;
         self.recap_keys(stops[3])?;
         self.pointer(&stops)?;
         self.run.theme(false)
@@ -466,9 +471,8 @@ impl Walk<'_> {
     }
 
     /// Enter and Space on each control of the player after the video ended, Tab bringing the keys to it in the order
-    /// of the bar: each presses only its own control (only Play plays the video). The number of Tab presses from the
-    /// player to "More options".
-    fn player_controls(&mut self, stop: Stop) -> SandboxResult<Option<u32>> {
+    /// of the bar: each presses only its own control (only Play plays the video).
+    fn player_controls(&mut self, stop: Stop) -> SandboxResult {
         let mut pressed = Vec::new();
         for (presses, name) in (1..).zip(PLAYER_CONTROLS) {
             for (key, key_name) in [(keys::SPACE, "Space"), (keys::ENTER, "Enter")] {
@@ -517,7 +521,7 @@ impl Walk<'_> {
                     "play" => played && !full,
                     "player" => menu && !played && !full,
                     "fullscreen" => full && !played,
-                    "open" => opened.as_deref() == Some(share_url(&CLIP_A).as_str()) && !played && !full,
+                    "open" => opened.as_deref() == Some(share_url(&CLIP_A).as_str()) && !played && !full && !menu,
                     // a skip changes the picture, as a menu does: only what it must not do is checked
                     _ => !played && !full && opened.is_none(),
                 };
@@ -535,10 +539,7 @@ impl Walk<'_> {
             }
         }
         step(&format!("the player's controls: {pressed:?}"));
-        Ok((1..)
-            .zip(PLAYER_CONTROLS)
-            .find(|(_, name)| *name == "player")
-            .map(|(presses, _)| presses))
+        Ok(())
     }
 
     /// A shot `name` in Teams Dark, then Teams Light again.
@@ -556,19 +557,16 @@ impl Walk<'_> {
         Ok(self.run.question("control")?.trim_matches('"').to_owned())
     }
 
-    /// In the video's player: its menu (Tab to it, Enter), then full screen (the pointer: no key reaches it); then
-    /// Escape closes the menu, ends full screen, pauses and rings the card, then gives the keys to the list.
-    fn escape_order(&mut self, stop: Stop, menu_at: Option<u32>) -> SandboxResult {
-        let Some(menu_at) = menu_at else {
-            note("Tab from the player reaches no control that opens a menu".to_owned());
-            return Ok(());
-        };
+    /// In the video's player: its menu (Tab to it, Enter), then full screen from the pointer, with the keys on More
+    /// options, which full screen does not draw again; then Escape closes the menu, ends full screen, pauses and rings
+    /// the card, then gives the keys to the list.
+    fn escape_order(&mut self, stop: Stop) -> SandboxResult {
         if !self.keys_on(stop, "video-escape")? {
             return Ok(());
         }
         self.key(keys::ENTER)?;
         let _ = self.video_until(|state| state.contains("Ended") || state.contains("Paused"))?;
-        self.tabs(menu_at)?;
+        self.tabs(MORE_AT)?;
         thread::sleep(SETTLE);
         let before_menu = load(&self.run.shot(self.sandbox, "qa849-escape-0-more-focused-light.png")?)?;
         self.key(keys::ENTER)?;

@@ -18,7 +18,8 @@
 //!   card's Enter or Space moved into it ([`VideoPlayer::play_from_keys`]); the controls show while the keyboard has the
 //!   keys in it, until the pointer presses in it. Tab goes through each control in the order of the bar, ringed as the
 //!   kit's buttons are; Enter or Space presses the control that has the keys, and the keys stay on it (in full screen
-//!   too). A press of the pointer on a control leaves the keys where they are.
+//!   too), where Tab stays in the video. A press of the pointer on a control leaves the keys on the control that has
+//!   them; full screen and a recap's menus bring them into the player from another place, for its Escape.
 //! - **Its states**: loading and buffering show a spinner over the picture; a video that can't be played here (a
 //!   format no installed `GStreamer` plugin plays, a file the account can't read, the network) says so and offers the
 //!   browser.
@@ -52,10 +53,10 @@ use gpui::{
     ObjectFit, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
     StyledImage as _, Task, WeakEntity, Window, anchored, canvas, deferred, div, hsla, img, point, px, relative,
 };
-use gpui_component::ThemeStyled as _;
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_component::tooltip::Tooltip;
+use gpui_component::{FocusTrapElement as _, ThemeStyled as _};
 use teams_core::{EngineError, FileStream};
 use teams_media::devices::{PixelFormat, VideoFrame};
 use teams_media::player::{
@@ -335,13 +336,14 @@ impl PlayerOutput for Screen {
 }
 
 /// Whether a player's video fills the window, and what it did to the window for it.
-#[derive(Default)]
 struct FullScreen {
     on: bool,
     /// The window was made full screen by this player (and is put back when it leaves).
     made: bool,
     /// The window is put back from full screen when this player goes (registered at its first full screen).
     hooked: bool,
+    /// The video over the whole window, which keeps Tab in itself.
+    trap: FocusHandle,
 }
 
 /// The keys of a card's player.
@@ -463,7 +465,12 @@ impl VideoPlayer {
             drawn: None,
             muted: false,
             volume: Volume::default(),
-            full_screen: FullScreen::default(),
+            full_screen: FullScreen {
+                on: false,
+                made: false,
+                hooked: false,
+                trap: cx.focus_handle(),
+            },
             bar: Rc::new(Cell::new(None)),
             dragging: None,
             fill: false,
@@ -622,12 +629,7 @@ impl VideoPlayer {
             (None, _) => false,
         };
         self.menu = (!open).then_some(menu);
-        let button = match menu {
-            Menu::Captions => "captions",
-            Menu::Speed => "speed",
-            Menu::Settings(_) => "settings",
-        };
-        self.take_keys(button, window, cx);
+        self.take_keys(window, cx);
         cx.notify();
     }
 
@@ -847,15 +849,15 @@ impl VideoPlayer {
             }
             full.made = false;
         }
-        self.take_keys("fullscreen", window, cx);
+        self.take_keys(window, cx);
         cx.notify();
     }
 
-    /// Brings the keys into it, for its Escape, unless its control `button` has them: the keyboard pressed it, and the
-    /// keys stay on it. Another place in it may not be drawn again where it is now (the kit's "More options" as the
-    /// video goes full screen), so the keys move to its picture from there.
-    fn take_keys(&self, button: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.controls.get(button, cx).is_focused(window) {
+    /// Brings the keys into it, for its Escape, unless one of its controls has them: full screen draws each of them
+    /// again. Another place in it may not be drawn again where it is now (the kit's "More options" as the video goes
+    /// full screen), so the keys move to its picture from there.
+    fn take_keys(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.controls.focused(window).is_none() {
             window.focus(&self.focus, cx);
         }
     }
@@ -873,7 +875,8 @@ impl VideoPlayer {
     }
 
     /// `control` as the keyboard reaches it: a Tab stop named `tip` for a screen reader, ringed as the kit's buttons
-    /// are while it has the keys. Enter or Space presses it (GPUI's keyboard click).
+    /// are while it has the keys (its test selector `video-ring-<card> <what>: <tip>` then). Enter or Space presses it
+    /// (GPUI's keyboard click).
     fn reached(
         &self,
         what: &str,
@@ -888,7 +891,12 @@ impl VideoPlayer {
             .track_focus(&focus)
             .role(gpui::accesskit::Role::Button)
             .aria_label(tip)
-            .when(ringed, |control| control.focus_ring_style(window, cx))
+            .when(ringed, |control| {
+                let selector = format!("video-ring-{} {what}: {tip}", self.id);
+                control
+                    .focus_ring_style(window, cx)
+                    .child(div().debug_selector(move || selector.clone()))
+            })
             .into_any_element()
     }
 
@@ -972,7 +980,18 @@ impl Render for VideoPlayer {
                     .position_mode(gpui::AnchoredPositionMode::Window)
                     .position(point(px(0.0), px(0.0)))
                     // it takes every click, wheel and hover over the window: none reaches the page under it
-                    .child(div().w(viewport.width).h(viewport.height).occlude().child(screen)),
+                    .child(
+                        div()
+                            .w(viewport.width)
+                            .h(viewport.height)
+                            .occlude()
+                            .child(screen)
+                            // Tab stays on the video: the page under it is hidden
+                            .focus_trap(
+                                SharedString::from(format!("video-full-screen-{id}")),
+                                &self.full_screen.trap,
+                            ),
+                    ),
             )
             .with_priority(100)
         });

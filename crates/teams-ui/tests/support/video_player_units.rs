@@ -1163,6 +1163,30 @@ fn press_now(window: &mut Window, cx: &mut App, key: &str) {
     window.dispatch_event(gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke }), cx);
 }
 
+/// The ring drawn on the card's control `what`, by the name it has for a screen reader (`what: name`).
+fn ring(cx: &mut gpui::VisualTestContext, what: &str) -> Option<String> {
+    let names = [
+        "Play",
+        "Pause",
+        BACK,
+        FORWARD,
+        "Mute",
+        "Unmute",
+        "Full screen",
+        "Exit full screen",
+        OPEN_IN_BROWSER,
+    ];
+    let rings: Vec<String> = names
+        .into_iter()
+        .map(|name| format!("{what}: {name}"))
+        .filter(|ring| {
+            cx.debug_bounds(Box::leak(format!("video-ring-card {ring}").into_boxed_str()))
+                .is_some()
+        })
+        .collect();
+    (rings.len() == 1).then(|| rings.concat())
+}
+
 /// The keys on control `what` of `view`.
 fn focus_control(view: &Entity<VideoPlayer>, what: &str, cx: &mut gpui::VisualTestContext) {
     cx.update(|window, cx| view.read(cx).control_focus(what, cx).focus(window, cx));
@@ -1180,10 +1204,25 @@ fn tab_goes_through_each_control_of_a_card_s_player_in_their_order_and_back() {
     });
     draw(cx);
     let mut reached = Vec::new();
+    let mut ringed = Vec::new();
     for _ in 0..=CARD_CONTROLS.len() {
         tab(cx, false);
-        reached.push(focused_control(&view, &CARD_CONTROLS, cx));
+        let control = focused_control(&view, &CARD_CONTROLS, cx);
+        reached.push(control);
+        if let Some(what) = control.filter(|what| !what.is_empty()) {
+            ringed.push(ring(cx, what));
+        }
     }
+    let names = ["Play", BACK, FORWARD, "Mute", "Full screen", OPEN_IN_BROWSER];
+    let wanted: Vec<_> = CARD_CONTROLS
+        .iter()
+        .zip(names)
+        .map(|(what, name)| Some(format!("{what}: {name}")))
+        .collect();
+    assert_eq!(
+        ringed, wanted,
+        "each control is ringed while it has the keys, named for a screen reader"
+    );
     let more = Some("");
     let expected = [
         Some("play"),
@@ -1344,19 +1383,84 @@ fn tab_goes_through_each_control_of_a_recap_s_player_in_their_order() {
 }
 
 #[test]
-fn full_screen_from_the_pointer_takes_the_keys_from_another_control_so_escape_ends_it() {
+fn full_screen_from_the_pointer_leaves_the_keys_on_another_control_and_escape_ends_it() {
     let mut app = gpui::TestAppContext::single();
     let (view, _card, cx) = in_card(&mut app);
     focus_control(&view, "mute", cx);
     click(cx, "video-fullscreen-card");
     assert!(cx.update(|_, cx| view.read(cx).full_screen.on));
-    assert!(
-        cx.update(|window, cx| view.read(cx).focus.is_focused(window)),
-        "the keys go to its picture, which full screen draws again"
+    assert_eq!(
+        focused_control(&view, &CARD_CONTROLS, cx),
+        Some("mute"),
+        "the keys stay on Mute, which full screen draws again"
     );
     press(cx, "escape");
     assert!(
         !cx.update(|_, cx| view.read(cx).full_screen.on),
         "Escape ends full screen"
+    );
+    assert_eq!(focused_control(&view, &CARD_CONTROLS, cx), Some("mute"));
+}
+
+#[test]
+fn full_screen_from_the_pointer_brings_the_keys_from_outside_into_the_player() {
+    let mut app = gpui::TestAppContext::single();
+    let (view, card, cx) = in_card(&mut app);
+    cx.update(|window, cx| card.focus(window, cx));
+    click(cx, "video-fullscreen-card");
+    assert!(
+        cx.update(|window, cx| view.read(cx).focus.is_focused(window)),
+        "the keys go to its picture, for its Escape"
+    );
+    press(cx, "escape");
+    assert!(!cx.update(|_, cx| view.read(cx).full_screen.on));
+}
+
+/// A chat's player in its card in the kit's root, which takes Tab, as the app's window has it: the card is a Tab stop
+/// before the player's controls.
+fn in_root(app: &mut gpui::TestAppContext) -> (Entity<VideoPlayer>, &mut gpui::VisualTestContext) {
+    app.update(crate::window::init);
+    let source = PictureSource::of(Arc::new(Files::default()));
+    let (root, cx) = app.add_window_view(|window, cx| {
+        let page = cx.new(|cx| {
+            let player = cx.new(|cx| VideoPlayer::new("card".to_owned(), movie_file(), source, cx));
+            let card = cx.focus_handle().tab_stop(true);
+            player.update(cx, |player, _| player.return_to(&card));
+            CardPage { card, player }
+        });
+        crate::window::KitRoot::new(page, window, cx)
+    });
+    draw(cx);
+    let player = cx.update(|_, cx| {
+        let page = root.read(cx).view().clone().downcast::<CardPage>().unwrap();
+        page.read(cx).player.clone()
+    });
+    (player, cx)
+}
+
+#[test]
+fn tab_and_shift_tab_stay_in_a_full_screen_video() {
+    let mut app = gpui::TestAppContext::single();
+    let (view, cx) = in_root(&mut app);
+    focus_control(&view, "fullscreen", cx);
+    press(cx, "enter");
+    assert!(cx.update(|_, cx| view.read(cx).full_screen.on));
+    focus_control(&view, "open", cx);
+    press(cx, "tab");
+    assert_eq!(
+        focused_control(&view, &CARD_CONTROLS, cx),
+        Some("play"),
+        "Tab from the last control goes round to the first, not to the hidden page"
+    );
+    press(cx, "shift-tab");
+    assert_eq!(
+        focused_control(&view, &CARD_CONTROLS, cx),
+        Some("open"),
+        "Shift+Tab from the first goes round to the last"
+    );
+    press(cx, "escape");
+    assert!(
+        !cx.update(|_, cx| view.read(cx).full_screen.on),
+        "Escape still ends full screen"
     );
 }
