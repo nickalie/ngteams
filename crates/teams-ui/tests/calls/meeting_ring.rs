@@ -11,7 +11,7 @@ use teams_store::ConversationKind;
 use super::{
     AB, CALLER_NAME, CallKind, FakeRinger, FakeServer, LAB_A, LAB_B, MEETING_CHAT, Rig, TRIO, actions, alert, call,
     call_windows, calling, calls_of, chat, click, drawn, invitation, join_meeting_action, lines, meeting_to_join,
-    no_name_in, prejoin_window, registered, shell_window, status, trace,
+    no_name_in, prejoin, prejoin_window, registered, shell_window, status, trace,
 };
 
 /// The made-up meeting's title, as its chat's row names it.
@@ -45,10 +45,6 @@ fn said(
 fn ring(rig: &Rig) -> Option<u64> {
     rig.cx
         .read(|cx| calls_of(rig).read(cx).ringing().map(|ringing| ringing.call.get()))
-}
-
-fn prejoin(rig: &Rig) -> Option<teams_ui::calls::Prejoin> {
-    rig.cx.read(|cx| calls_of(rig).read(cx).prejoin().cloned())
 }
 
 #[test]
@@ -750,6 +746,32 @@ impl teams_media::devices::Devices for NoCamera {
     }
 }
 
+/// A call asked from the main window meanwhile, and the Answer key, are refused and leave the answer under way.
+fn other_asks_leave_the_answer_under_way(rig: &Rig, trace: &Arc<teams_ui::ViewTrace>) {
+    let core: Arc<dyn teams_ui::Core> = rig.core.clone();
+    let chat = teams_ui::calls::Ask::Call { chat: AB.to_owned() };
+    rig.cx
+        .update(|cx| teams_ui::calls::ask(&calls_of(rig), &core, trace, chat, cx));
+    rig.cx.run_until_parked();
+    assert_eq!(
+        rig.cx
+            .read(|cx| calls_of(rig).read(cx).refused().map(|refused| refused.why)),
+        Some("busy")
+    );
+    assert!(prejoin(rig).is_some_and(|prejoin| prejoin.joining));
+    // the Answer key meanwhile is refused here (nothing rings any more), and is not the pre-join's own answer
+    rig.cx.update(|cx| {
+        teams_ui::calls::ask(&calls_of(rig), &core, trace, teams_ui::calls::Ask::Answer, cx);
+    });
+    rig.cx.run_until_parked();
+    assert_eq!(
+        rig.cx
+            .read(|cx| calls_of(rig).read(cx).refused().map(|refused| refused.why)),
+        Some("not-ringing")
+    );
+    assert!(prejoin(rig).is_some_and(|prejoin| prejoin.joining));
+}
+
 #[test]
 fn while_its_answer_goes_the_pre_join_takes_no_choice_and_its_preview_comes_back_if_the_answer_fails() {
     let rig = calling();
@@ -804,18 +826,7 @@ fn while_its_answer_goes_the_pre_join_takes_no_choice_and_its_preview_comes_back
     });
     assert_eq!(seen(&rig), at_join, "the choices hold what Join now saw");
     assert_eq!(switched(&written), at_join_traced, "no switch is traced as changed");
-    // a call asked from the main window meanwhile is refused as busy, and leaves the answer under way
-    let core: Arc<dyn teams_ui::Core> = rig.core.clone();
-    let chat = teams_ui::calls::Ask::Call { chat: AB.to_owned() };
-    rig.cx
-        .update(|cx| teams_ui::calls::ask(&calls_of(&rig), &core, &trace, chat, cx));
-    rig.cx.run_until_parked();
-    assert_eq!(
-        rig.cx
-            .read(|cx| calls_of(&rig).read(cx).refused().map(|refused| refused.why)),
-        Some("busy")
-    );
-    assert!(prejoin(&rig).is_some_and(|prejoin| prejoin.joining));
+    other_asks_leave_the_answer_under_way(&rig, &trace);
     assert!(!previewing(&rig), "no preview starts while the call takes the camera");
     assert!(
         !drawn(window, "prejoin-effects-pane"),

@@ -990,8 +990,8 @@ pub struct Calls {
 enum PrejoinWent {
     /// The start or join with this number.
     Start(u64),
-    /// The answer to its ring.
-    Answer,
+    /// The answer to the ring of this call.
+    Answer(CallId),
 }
 
 impl Calls {
@@ -2163,12 +2163,26 @@ impl Calls {
         }
         self.asked = None;
         self.gave_up.insert(start);
-        self.refuse(ask, Some(start), "not-told", local_refusal_text("not-told"), cx);
+        self.refuse(
+            ask,
+            Some(PrejoinWent::Start(start)),
+            "not-told",
+            local_refusal_text("not-told"),
+            cx,
+        );
         true
     }
 
-    /// `ask` (the start or join numbered `start`) is refused: said, and a pre-join whose own Join now it was is unlocked.
-    fn refuse(&mut self, ask: &Ask, start: Option<u64>, why: &'static str, text: String, cx: &mut Context<Self>) {
+    /// `ask` (`went`: its start number or the call it answers, `None` when refused before it went) is refused: said,
+    /// and a pre-join whose own Join now it was is unlocked.
+    fn refuse(
+        &mut self,
+        ask: &Ask,
+        went: Option<PrejoinWent>,
+        why: &'static str,
+        text: String,
+        cx: &mut Context<Self>,
+    ) {
         if !self.shown {
             return;
         }
@@ -2176,11 +2190,7 @@ impl Calls {
             self.running.remove(chat);
         }
         // another ask refused as busy meanwhile leaves the pre-join's Join now under way
-        let its_own = match self.prejoin_went {
-            None => true,
-            Some(PrejoinWent::Start(went)) => start == Some(went),
-            Some(PrejoinWent::Answer) => *ask == Ask::Answer,
-        };
+        let its_own = self.prejoin_went.is_none_or(|prejoin_went| went == Some(prejoin_went));
         if let Some(prejoin) = self.prejoin.as_mut().filter(|_| its_own) {
             prejoin.joining = false;
         }
@@ -2276,7 +2286,11 @@ impl Calls {
                         active.check.camera_failed = true;
                     }
                 }
-                self.refuse(ask, start, refusal_kind(&error), refusal_text(&error), cx);
+                let went = match action {
+                    CallAction::Answer { call } => Some(PrejoinWent::Answer(*call)),
+                    _ => start.map(PrejoinWent::Start),
+                };
+                self.refuse(ask, went, refusal_kind(&error), refusal_text(&error), cx);
             }
         }
     }
@@ -2628,16 +2642,15 @@ pub fn join_now_then(
         (Ask::MeetNow { channel }, Some(title)) if !title.trim().is_empty() => Some((channel.clone(), title)),
         _ => None,
     };
-    let answers = asked == Ask::Answer;
+    let answers = calls.read(cx).answers_meeting.filter(|_| asked == Ask::Answer);
     ask_then(calls, core, trace, asked, cx, move |answered, cx| {
         then(answered == Answered::Taken, cx);
     });
     calls.update(cx, |calls, _| {
         if calls.prejoin.as_ref().is_some_and(|prejoin| prejoin.joining) {
-            calls.prejoin_went = if answers {
-                Some(PrejoinWent::Answer)
-            } else {
-                calls.asked.is_some().then_some(PrejoinWent::Start(calls.starts))
+            calls.prejoin_went = match answers {
+                Some(ring) => Some(PrejoinWent::Answer(ring)),
+                None => calls.asked.is_some().then_some(PrejoinWent::Start(calls.starts)),
             };
         }
     });

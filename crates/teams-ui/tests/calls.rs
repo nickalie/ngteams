@@ -2887,6 +2887,10 @@ fn join_meeting_action() -> CallAction {
     }
 }
 
+fn prejoin(rig: &Rig) -> Option<teams_ui::calls::Prejoin> {
+    rig.cx.read(|cx| calls_of(rig).read(cx).prejoin().cloned())
+}
+
 /// The pre-join's window `windows` have open, to draw and click in.
 fn prejoin_window(rig: &Rig, windows: &Entity<CallWindows>) -> &'static mut VisualTestContext {
     rig.cx.run_until_parked();
@@ -2937,6 +2941,54 @@ fn a_meetings_pre_join_sends_nothing_until_join_now_and_gives_way_to_its_call() 
     assert_eq!(active.title.as_deref(), Some("Synthetic meeting"));
     assert!(teams_ui::calls::status_text(&active).contains("Joining"));
     no_name_in(&written);
+}
+
+#[test]
+fn a_meetings_pre_join_is_unlocked_by_its_own_refusal_or_give_up_and_never_by_another_asks() {
+    let rig = calling();
+    let (trace, written) = trace();
+    let (shell, cx) = shell_window(&rig, Some(AB), Arc::clone(&trace));
+    let (windows, _) = call_windows(&rig, &shell, &trace);
+    registered(&rig);
+    cx.update(|_, cx| shell.update(cx, |shell, cx| shell.open_prejoin(meeting_to_join(), cx)));
+    let window = prejoin_window(&rig, &windows);
+    *rig.core.hold_calls.lock().unwrap() = true;
+    click(window, "prejoin-join");
+    assert_eq!(actions(&rig), [join_meeting_action()]);
+    assert!(prejoin(&rig).is_some_and(|prejoin| prejoin.joining));
+
+    // a call asked from the main window meanwhile is refused as busy, and leaves the join under way
+    let core: Arc<dyn teams_ui::Core> = rig.core.clone();
+    let chat = teams_ui::calls::Ask::Call { chat: AB.to_owned() };
+    rig.cx
+        .update(|cx| teams_ui::calls::ask(&calls_of(&rig), &core, &trace, chat, cx));
+    rig.cx.run_until_parked();
+    let refused = lines(&written, "call", "refused");
+    assert_eq!(kinds(refused.last().unwrap()), ["call", "busy"]);
+    assert!(prejoin(&rig).is_some_and(|prejoin| prejoin.joining));
+
+    // its own join refused by the engine unlocks it
+    let held = std::mem::take(&mut *rig.core.held_calls.lock().unwrap());
+    assert_eq!(held.len(), 1);
+    for answer in held {
+        answer.send(Err(EngineError::Call(CallActionError::Call(
+            teams_core::CallError::NotJoinable,
+        ))));
+    }
+    rig.cx.run_until_parked();
+    assert!(prejoin(&rig).is_some_and(|prejoin| !prejoin.joining));
+
+    // its own join never told is given up on, and that unlocks it too
+    draw(window);
+    click(window, "prejoin-join");
+    assert!(prejoin(&rig).is_some_and(|prejoin| prejoin.joining));
+    rig.cx
+        .executor()
+        .advance_clock(teams_ui::calls::START_TOLD_WITHIN + std::time::Duration::from_secs(1));
+    rig.cx.run_until_parked();
+    let refused = lines(&written, "call", "refused");
+    assert_eq!(kinds(refused.last().unwrap()), ["join-meeting", "not-told"]);
+    assert!(prejoin(&rig).is_some_and(|prejoin| !prejoin.joining));
 }
 
 #[test]
@@ -3025,6 +3077,33 @@ fn dont_use_audio_joins_the_meeting_muted_and_phone_audio_is_greyed_out() {
     );
 }
 
+/// The subject's box takes no typing while its start goes, so after a refusal it still shows the subject that went.
+fn typing_waits_for_a_refused_start(rig: &Rig, window: &mut VisualTestContext) {
+    click(window, "prejoin-subject");
+    window.simulate_input(" typed late");
+    window.run_until_parked();
+    let held = std::mem::take(&mut *rig.core.held_calls.lock().unwrap());
+    assert_eq!(held.len(), 1);
+    for answer in held {
+        answer.send(Err(EngineError::Call(CallActionError::Call(
+            teams_core::CallError::NotJoinable,
+        ))));
+    }
+    window.run_until_parked();
+    assert!(prejoin(rig).is_some_and(|prejoin| !prejoin.joining));
+    draw(window);
+    click(window, "prejoin-subject");
+    window.simulate_keystrokes("end");
+    window.simulate_input("!");
+    window.run_until_parked();
+    assert_eq!(
+        prejoin(rig)
+            .map(|prejoin| prejoin.to_join.title().to_owned())
+            .as_deref(),
+        Some("Meeting in \"General\" and more!")
+    );
+}
+
 #[test]
 fn a_meet_nows_subject_is_edited_in_its_pre_join_and_titles_the_new_meeting() {
     let rig = calling();
@@ -3048,6 +3127,7 @@ fn a_meet_nows_subject_is_edited_in_its_pre_join_and_titles_the_new_meeting() {
     window.simulate_input(" and more");
     window.run_until_parked();
     assert!(actions(&rig).is_empty(), "an edited subject sends nothing");
+    *rig.core.hold_calls.lock().unwrap() = true;
     click(window, "prejoin-join");
     assert_eq!(
         actions(&rig),
@@ -3076,6 +3156,7 @@ fn a_meet_nows_subject_is_edited_in_its_pre_join_and_titles_the_new_meeting() {
         Some("Meeting in \"General\" and more"),
         "the subject that went with Join now stays"
     );
+    typing_waits_for_a_refused_start(&rig, window);
     no_name_in(&written);
 }
 

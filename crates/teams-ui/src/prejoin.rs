@@ -660,7 +660,7 @@ impl PrejoinView {
                     .border_1()
                     .border_color(rgb(palette.border))
                     .bg(rgb(palette.surface))
-                    .child(Input::new(&input).appearance(false)),
+                    .child(Input::new(&input).appearance(false).disabled(prejoin.joining)),
             )
     }
 }
