@@ -11,11 +11,11 @@
 //!   captions show as spoken under a notice saying why, with Try again.
 //! - **Fast and bounded**: one tool process per call window, kept running ([`session`]), one caption at a time,
 //!   finals first, interim text debounced, answers cached ([`schedule`]); everything runs off the window's thread.
-//! - **The whole call as context**: the process's conversation holds the call's title and people and every caption
-//!   with its speaker; a long call's conversation is renewed with a glossary and the recent captions
+//! - **The whole call as context**: the process's conversation holds the call's title and people and the recent
+//!   captions with their speakers (at most [`schedule::MAX_SAID`] not sent with each caption sent); a long call's conversation is renewed with a glossary and the recent captions
 //!   ([`session`]'s docs).
-//! - **Private**: captions and translations stay in memory, are cleared with the captions, and are never logged or
-//!   traced.
+//! - **Private**: captions and translations stay in memory only, for the call window (the last answers are used
+//!   again when the translation starts again), and are never logged or traced.
 
 pub mod schedule;
 pub mod session;
@@ -157,7 +157,7 @@ pub struct CaptionTranslation {
     stopped: Option<Schedule>,
     session: Option<Session>,
     limits: Limits,
-    /// The captions shown (bounded by the captions' own history), to start again from on a change or Try again.
+    /// The captions or transcript lines shown, to start again from on a change or Try again.
     lines: Vec<Caption>,
     brief: String,
     showing: bool,

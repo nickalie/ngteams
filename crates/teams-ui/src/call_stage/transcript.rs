@@ -104,10 +104,8 @@ impl CallStage {
             && !self.core.read_only()
             && self.core.capabilities().captions;
         let calls = self.calls.read(cx);
-        let running = matches!(
-            calls.captions().phase,
-            teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting
-        );
+        let phase = calls.captions().phase;
+        let running = matches!(phase, teams_core::CaptionPhase::On | teams_core::CaptionPhase::Starting);
         if calls.transcript_captions() == want {
             if want && connected {
                 self.retry_transcript_captions(running, cx);
@@ -124,14 +122,14 @@ impl CallStage {
             .update(cx, |calls, cx| calls.set_transcript_captions(want, cx));
         if want && !running {
             self.ask(Ask::RecordCaptions(true), cx);
-        } else if !want && running && !kept {
+        } else if !want && phase != teams_core::CaptionPhase::Off && !kept {
             self.ask(Ask::RecordCaptions(false), cx);
         }
     }
 
     /// The captions held for the transcript stopped unseen (failed, or ended by the service): asked for again after a
-    /// while, a few times, unless the user shows them (their failure shows). A try that finds the call reconnecting
-    /// is not counted.
+    /// while, a few times, unless the user shows them (their failure shows) or they are saved and failed (the saving
+    /// tries them again). A try that finds the call reconnecting is not counted.
     fn retry_transcript_captions(&mut self, running: bool, cx: &mut Context<Self>) {
         if running && self.calls.read(cx).captions().phase == teams_core::CaptionPhase::On {
             self.record.transcript_retries = 0;
@@ -139,6 +137,7 @@ impl CallStage {
         let calls = self.calls.read(cx);
         if running
             || calls.captions_shown()
+            || (calls.saving_captions() && calls.captions().phase == teams_core::CaptionPhase::Failed)
             || self.record.transcript_retrying
             || self.record.transcript_retries >= crate::call_transcript::RETRIES
         {
@@ -173,13 +172,9 @@ impl CallStage {
         .detach();
     }
 
-    /// The transcript follows its newest line as one comes, unless the user scrolled up from it.
-    pub(super) fn follow_transcript(&mut self, cx: &App) {
-        let lines = self.calls.read(cx).spoken().len() + self.record.transcript.len();
-        if lines == self.record.transcript_lines {
-            return;
-        }
-        self.record.transcript_lines = lines;
+    /// The transcript stays at its end while it was there at the last frame: a new line, a translation or a longer
+    /// line keeps it there, a scroll up from the end stops it.
+    fn follow_transcript(&self) {
         let scroll = &self.record.transcript_scroll;
         if scroll.max_offset().y + scroll.offset().y <= px(FOLLOW_WITHIN) {
             scroll.scroll_to_bottom();
@@ -313,6 +308,7 @@ impl CallStage {
                     .on_click(cx.listener(|this, _, _, cx| this.show_transcript(false, cx))),
             ));
         let rows = self.transcript_rows(active, palette, cx);
+        self.follow_transcript();
         Some(
             people_pane::side_pane("call-transcript-pane", "Transcript", actions, palette)
                 .children((!self.record.transcript_tip_closed).then(|| Self::transcript_tip(palette, cx)))
@@ -571,8 +567,8 @@ impl CallStage {
     }
 }
 
-/// How near its end (px) the transcript must be scrolled to follow a new line.
-const FOLLOW_WITHIN: f32 = 24.0;
+/// How near its end (px) the transcript must be to follow: each frame follows, so only a sub-pixel rest counts.
+const FOLLOW_WITHIN: f32 = 1.0;
 
 /// What the translation follows while the Transcript pane shows: the whole call's words, then the captions' lines not
 /// final among them, so a line keeps its translation after the captions dropped it.
@@ -663,13 +659,12 @@ fn turn(
         .child(div().text_xs().font_weight(gpui::FontWeight::SEMIBOLD).child(name))
         .child(div().text_xs().text_color(rgb(palette.muted_foreground)).child(time));
     let said = lines.iter().map(|line| {
-        let text = match translation.shown(&line.caption) {
-            translate::Shown::Translated(text) | translate::Shown::Waiting(text) | translate::Shown::Spoken(text) => {
-                text
-            }
+        let (text, selector) = match translation.shown(&line.caption) {
+            translate::Shown::Translated(text) => (text, "call-transcript-translated"),
+            translate::Shown::Waiting(text) | translate::Shown::Spoken(text) => (text, "call-transcript-said"),
         };
         div()
-            .debug_selector(|| "call-transcript-said".to_owned())
+            .debug_selector(move || selector.to_owned())
             .pl(px(32.0))
             .text_sm()
             .text_color(rgb(palette.foreground))

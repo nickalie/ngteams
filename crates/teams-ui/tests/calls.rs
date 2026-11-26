@@ -5236,6 +5236,80 @@ fn the_transcript_shows_what_is_said_by_speaker_for_the_whole_call_while_a_trans
     );
 }
 
+#[test]
+fn the_transcript_keeps_its_translation_after_its_captions_stop() {
+    let rig = calling();
+    let stage = group_call_up(&rig);
+    let dir = tempfile::tempdir().unwrap();
+    let program = fake_tool::write(dir.path(), "claude", FAKE_CLAUDE);
+    rig.cx
+        .update(|cx| cx.set_global(Translators::with(vec![(Backend::Claude, program)])));
+    meeting(&rig, transcribing_by(LAB_B, false));
+    open_record_menu(stage, "call-transcript-toggle");
+    click(stage, "call-transcript-toggle");
+    click(stage, "call-transcript-translate");
+    click(stage, "call-transcript-translate-ar");
+    captions_on(&rig, vec![spoken("1", LAB_B, "Synthetic first words.", 100)]);
+    for _ in 0..500 {
+        if drawn(stage, "call-transcript-translated") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(drawn(stage, "call-transcript-translated"));
+    meeting(&rig, teams_core::MeetingState::default());
+    captions_in(&rig, teams_core::CaptionPhase::Off);
+    assert!(
+        drawn(stage, "call-transcript-translated"),
+        "the line keeps its translation"
+    );
+    assert!(!drawn(stage, "call-transcript-said"));
+}
+
+/// The newest turn of the transcript ends inside its pane.
+fn transcript_at_end(stage: &mut VisualTestContext, turn: usize) -> bool {
+    draw(stage);
+    let pane = stage.debug_bounds("call-transcript-pane").unwrap();
+    let last = stage
+        .debug_bounds(Box::leak(format!("call-transcript-turn-{turn}").into_boxed_str()))
+        .unwrap();
+    last.bottom() <= pane.bottom() + gpui::px(1.0)
+}
+
+#[test]
+fn the_transcript_follows_its_newest_line_until_scrolled_up() {
+    let rig = calling();
+    let stage = group_call_up(&rig);
+    meeting(&rig, transcribing_by(LAB_B, false));
+    open_record_menu(stage, "call-transcript-toggle");
+    click(stage, "call-transcript-toggle");
+    // each line another speaker's turn; the transcription's start is entry 0
+    let line = |index: u64, text: &str| {
+        let speaker = if index.is_multiple_of(2) { LAB_A } else { LAB_B };
+        spoken(&index.to_string(), speaker, text, index * 100)
+    };
+    let turns = 40;
+    for index in 1..=turns {
+        captions_on(&rig, vec![line(index, "Synthetic words.")]);
+        draw(stage);
+    }
+    assert!(transcript_at_end(stage, 40), "follows each new line");
+    // a line grown in place, with no new line, is followed too
+    let long = "Synthetic words that go on. ".repeat(30);
+    captions_on(&rig, vec![line(turns, &long)]);
+    assert!(transcript_at_end(stage, 40), "follows a longer line");
+    let pane = stage.debug_bounds("call-transcript-pane").unwrap();
+    stage.simulate_event(gpui::ScrollWheelEvent {
+        position: pane.center(),
+        delta: gpui::ScrollDelta::Pixels(gpui::point(gpui::px(0.0), gpui::px(400.0))),
+        modifiers: Modifiers::none(),
+        touch_phase: gpui::TouchPhase::Moved,
+    });
+    draw(stage);
+    captions_on(&rig, vec![line(turns + 1, "Synthetic words.")]);
+    assert!(!transcript_at_end(stage, 41), "scrolled up: stays where the user is");
+}
+
 fn captions_in(rig: &Rig, phase: teams_core::CaptionPhase) {
     rig.send(Event::CallCaptions {
         call: call(1),
@@ -5304,6 +5378,36 @@ fn the_transcript_leaves_out_earlier_words_and_its_captions_outlast_a_failure_an
     let mut again = asked.clone();
     again.push(true);
     assert_eq!(caption_asks(&rig), again, "tried again");
+}
+
+#[test]
+fn a_transcription_stop_clears_its_failed_captions() {
+    let rig = calling();
+    let stage = group_call_up(&rig);
+    meeting(&rig, transcribing_by(LAB_B, false));
+    captions_in(&rig, teams_core::CaptionPhase::Failed);
+    meeting(&rig, teams_core::MeetingState::default());
+    assert_eq!(caption_asks(&rig).last(), Some(&false), "the failure is put away");
+    captions_in(&rig, teams_core::CaptionPhase::Off);
+    assert!(!drawn(stage, "call-captions"));
+}
+
+#[test]
+fn saved_captions_that_fail_are_tried_again_by_their_saving_alone() {
+    let rig = calling();
+    let stage = group_call_up(&rig);
+    rig.cx.update(|cx| {
+        rig.models
+            .calls
+            .update(cx, |calls, cx| calls.set_saving_captions(true, cx));
+    });
+    meeting(&rig, transcribing_by(LAB_B, false));
+    captions_in(&rig, teams_core::CaptionPhase::Failed);
+    let mut again = caption_asks(&rig);
+    stage.executor().advance_clock(std::time::Duration::from_secs(21));
+    rig.cx.run_until_parked();
+    again.push(true);
+    assert_eq!(caption_asks(&rig), again, "tried again once");
 }
 
 #[test]

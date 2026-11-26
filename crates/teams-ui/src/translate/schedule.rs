@@ -22,7 +22,7 @@ use teams_core::Caption;
 use super::same_language;
 use super::session::{Job, Said};
 
-/// The most final captions waiting.
+/// The most final captions queued in order; the older ones beyond it wait in the backlog.
 pub const MAX_QUEUE: usize = 6;
 /// How long an interim text holds before it goes.
 pub const SETTLE: Duration = Duration::from_millis(450);

@@ -668,7 +668,6 @@ impl CallStage {
     /// go and a test call's devices are named as they were.
     fn changed(&mut self, cx: &mut Context<Self>) {
         self.caption_scroll.scroll_to_bottom();
-        self.follow_transcript(cx);
         let live = self.live(cx);
         self.translate(live.as_ref(), cx);
         if let Some(active) = &live {

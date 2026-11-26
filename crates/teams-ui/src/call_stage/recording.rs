@@ -99,8 +99,6 @@ pub(super) struct RecordUi {
     pub(super) transcript_tip_closed: bool,
     /// The transcript's scroll: it follows the newest line.
     pub(super) transcript_scroll: gpui::ScrollHandle,
-    /// How many lines the transcript had when it last followed the newest.
-    pub(super) transcript_lines: usize,
     /// The captions held for the transcript were asked for again this many times since they last ran.
     pub(super) transcript_retries: u32,
     /// A try again of those captions waits.

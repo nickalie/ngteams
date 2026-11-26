@@ -6,8 +6,8 @@
 //! or the Codex CLI, without tools, hooks, MCP servers or saved sessions.
 //!
 //! **The call's context**: the process keeps the conversation, so each caption is read against the whole call so far
-//! (the call's title and people, every caption with its speaker, what was said that wasn't sent, the translations it
-//! gave) without that being sent again. The conversation is bounded: after [`Limits::turns`] captions or
+//! (the call's title and people, the captions sent with their speakers, the recent ones that weren't sent, the
+//! translations it gave) without that being sent again. The conversation is bounded: after [`Limits::turns`] captions or
 //! [`Limits::chars`] characters sent, the tool is asked for the call's glossary (its names, terms and abbreviations
 //! with the renderings it used), and a new process starts with the call's brief, that glossary and the recent
 //! captions with their translations ([`Memory`]), so a long call stays consistent and each prompt stays small.
