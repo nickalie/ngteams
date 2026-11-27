@@ -150,11 +150,13 @@ async fn authz_refuses_a_disabled_account_as_teams_refuses_an_unlicensed_one() {
     server.stop().await;
 }
 
-/// The optional services the account bring-up tells the views of, against a server with `workflows` on or off.
-async fn capabilities_with(workflows: bool) -> teams_core::Capabilities {
+/// The optional services the account bring-up tells the views of, against a server with `workflows` and `apps` on
+/// or off.
+async fn capabilities_with(on: bool) -> teams_core::Capabilities {
     let server = TestServer::start_with(Backend::Sqlite, |config| {
         config.public_origin = url::Url::parse("https://own.example.test").unwrap();
-        config.workflows.enabled = workflows;
+        config.workflows.enabled = on;
+        config.apps.enabled = on;
     })
     .await;
     server.add_user(UPN, "Ada").await;
@@ -185,13 +187,10 @@ async fn capabilities_with(workflows: bool) -> teams_core::Capabilities {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_views_are_told_of_workflows_only_while_the_server_serves_them_and_of_no_service_it_lacks() {
+async fn the_views_are_told_of_workflows_and_apps_only_while_the_server_serves_them_and_of_no_service_it_lacks() {
     let on = capabilities_with(true).await;
-    assert!(on.workflows);
-    assert!(
-        !on.recap && !on.captions && !on.recording && !on.apps && !on.copilot,
-        "{on:?}"
-    );
+    assert!(on.workflows && on.apps, "{on:?}");
+    assert!(!on.recap && !on.captions && !on.recording && !on.copilot, "{on:?}");
     let off = capabilities_with(false).await;
-    assert!(!off.workflows, "{off:?}");
+    assert!(!off.workflows && !off.apps, "{off:?}");
 }

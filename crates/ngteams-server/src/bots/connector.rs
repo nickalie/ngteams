@@ -178,10 +178,11 @@ async fn route(app: &App, method: &Method, bot: &Bot, path: &[&str], body: &[u8]
     if is(path.get(1), "conversations") {
         return conversations(&caller, method, &path[2..], body).await;
     }
-    if is(path.get(1), "teams") && method == Method::GET {
-        if let Some(answer) = team(&caller, &path[2..]).await? {
-            return Ok(answer);
-        }
+    if is(path.get(1), "teams")
+        && method == Method::GET
+        && let Some(answer) = team(&caller, &path[2..]).await?
+    {
+        return Ok(answer);
     }
     if is(path.get(1), "attachments") && method == Method::GET {
         return super::pictures::read(app, bot, &path[2..])

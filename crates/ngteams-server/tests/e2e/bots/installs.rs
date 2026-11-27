@@ -75,36 +75,179 @@ impl Shop {
     }
 }
 
+/// An app that is off and one for listed people only, which are in nobody else's store; their ids.
+async fn hidden_apps(registry: &Registry) -> (String, String) {
+    // an app that is off, and one for listed people only, are in nobody else's store
+    let off = registry
+        .register("Off (synthetic)", "https://off.example.test/api")
+        .await;
+    let off = off["id"].as_str().unwrap().to_owned();
+    let (status, _) = registry
+        .call(Method::PATCH, &super::app_path(&off), Some(json!({"enabled": false})))
+        .await;
+    assert_eq!(status, 200);
+    let few = registry
+        .register("Few (synthetic)", "https://few.example.test/api")
+        .await;
+    let few = few["id"].as_str().unwrap().to_owned();
+    let (status, _) = registry
+        .call(
+            Method::PATCH,
+            &super::app_path(&few),
+            Some(json!({"everyone": false, "users": []})),
+        )
+        .await;
+    assert_eq!(status, 200);
+
+    (off, few)
+}
+
+/// What the packaged app's definition says, as the client reads it.
+fn polls_defined(definition: &AppDefinition) {
+    // the bot and its message extension's bot, as the client reads a Teams definition
+    assert_eq!(
+        definition.bots(),
+        [Mri::new(format!("28:{BOT}")), Mri::new(format!("28:{BOT}"))]
+    );
+    assert_eq!(definition.version(), Some("1.2.0"));
+    assert_eq!(
+        definition.long_description(),
+        Some("Runs quick polls in chats and channels. Synthetic.")
+    );
+    assert_eq!(definition.privacy_url(), Some("https://tools.example.test/privacy"));
+    assert_eq!(definition.terms_url(), Some("https://tools.example.test/terms"));
+    assert_eq!(definition.developer_url(), Some("https://tools.example.test"));
+    assert_eq!(
+        definition.capabilities(),
+        [AppCapability::Bot, AppCapability::Messaging]
+    );
+    let places = definition.places();
+    assert!(places.personal && places.chat && places.team, "{places:?}");
+    assert_eq!(definition.mentionable_bot(true), Some(Mri::new(format!("28:{BOT}"))));
+    let commands = definition.extension_commands();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(
+        (commands[0].id.as_str(), commands[0].title.as_str()),
+        ("searchPolls", "Search polls")
+    );
+}
+
+/// What the bot gets when its app is added to `team`.
+async fn told_of_team(bot: &TestBot, team: &str, group: &str) {
+    let got = bot.next_of("installationUpdate").await.activity;
+    assert_eq!(got["action"], "add", "{got}");
+    assert_eq!(got["conversation"]["id"], team);
+    assert_eq!(got["conversation"]["conversationType"], "channel");
+    assert_eq!(got["channelData"]["team"]["id"], team);
+    assert_eq!(got["channelData"]["team"]["name"], "Polling crew");
+    assert_eq!(got["channelData"]["team"]["aadGroupId"], group);
+    assert_eq!(got["channelData"]["channel"]["id"], team);
+    let members = bot.next_of("conversationUpdate").await.activity;
+    assert_eq!(members["channelData"]["eventType"], "teamMemberAdded", "{members}");
+    assert_eq!(members["membersAdded"][0]["id"], format!("28:{BOT}"));
+}
+
+/// The bot's team and its channels, through the connector.
+async fn team_routes(connector: &Connector, team: &str, group: &str, later: &str) {
+    // the bot's team, and a channel made after the add
+    let (status, details) = connector
+        .call(Method::GET, &format!("v3/teams/{}", encode(team)), None)
+        .await;
+    assert_eq!(status, 200, "{details}");
+    assert_eq!(
+        (details["name"].as_str(), details["aadGroupId"].as_str()),
+        (Some("Polling crew"), Some(group))
+    );
+    let (status, listed) = connector
+        .call(Method::GET, &format!("v3/teams/{}/conversations", encode(team)), None)
+        .await;
+    assert_eq!(status, 200, "{listed}");
+    let names: Vec<(&str, Option<&str>)> = listed["conversations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| (entry["id"].as_str().unwrap(), entry["name"].as_str()))
+        .collect();
+    assert!(
+        names.contains(&(team, None)) && names.contains(&(later, Some("Results"))),
+        "{names:?}"
+    );
+}
+
+/// A personal-only app, which no chat or team takes, uploaded; its definition and the packaged app's.
+async fn lone_app(shop: &Shop) -> (AppDefinition, AppDefinition) {
+    // a personal-only app, which no chat or team takes
+    let mut lone = super::manifest(
+        "8d3e4f60-5c0f-4e73-9a49-3b2c4d5e6f70",
+        "9e4f5061-6d10-4f84-8b5a-4c3d5e6f7081",
+        "1.0.0",
+    );
+    lone["bots"][0]["scopes"] = json!(["personal"]);
+    lone["name"]["short"] = json!("Lone (synthetic)");
+    let package = super::package(&lone, &png(192, 192), &png(32, 32), &[]);
+    let (status, answer) = shop
+        .registry
+        .upload(&format!("{}/package", super::APPS), Method::POST, package)
+        .await;
+    assert_eq!(status, 201, "{answer}");
+    let listing = shop.ada.engine.app_listing().await.unwrap();
+    let lone = listing
+        .app("8d3e4f60-5c0f-4e73-9a49-3b2c4d5e6f70")
+        .unwrap()
+        .definition
+        .clone();
+    let polls = listing.app(APP).unwrap().definition.clone();
+    (lone, polls)
+}
+
+/// Icons: an enabled app's only, its two files only.
+async fn icons(shop: &Shop, lone: &AppDefinition) {
+    let server = &shop.registry.server;
+    // icons: an enabled app's only, its two files only
+    let icon = lone.large_image_url().unwrap().to_owned();
+    let at = |path: &str| server.url(&path.replacen(ORIGIN, "", 1));
+    let get = |url: String| async move { reqwest::get(url).await.unwrap().status().as_u16() };
+    assert_eq!(get(at(&icon)).await, 200);
+    assert_eq!(get(at(&icon.replace("color.png", "outline.png"))).await, 200);
+    assert_eq!(get(at(&icon.replace("color.png", "other.png"))).await, 404);
+    assert_eq!(
+        get(server.url(&format!("/teamsappdata/apps/{}/color.png", shop.form))).await,
+        404
+    );
+    let (status, _) = shop
+        .registry
+        .call(
+            Method::PATCH,
+            &super::app_path("8d3e4f60-5c0f-4e73-9a49-3b2c4d5e6f70"),
+            Some(json!({"enabled": false})),
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(get(at(&icon)).await, 404);
+}
+
+/// `seat` adds the packaged app to `team`.
+async fn add_to_team(seat: &Seat, team: &str) {
+    let definition = polls(seat).await;
+    let written = seat
+        .engine
+        .team_write(
+            TeamWrite::AddApp {
+                team: team.to_owned(),
+                app: definition,
+            },
+            None,
+        )
+        .await;
+    assert!(written.is_ok(), "{written:?}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_engine_lists_the_store_reads_definitions_and_loads_an_apps_icon() {
     for backend in backends() {
         let shop = Shop::open(backend).await;
         let server = &shop.registry.server;
-        // an app that is off, and one for listed people only, are in nobody else's store
-        let off = shop
-            .registry
-            .register("Off (synthetic)", "https://off.example.test/api")
-            .await;
-        let off = off["id"].as_str().unwrap().to_owned();
-        let (status, _) = shop
-            .registry
-            .call(Method::PATCH, &super::app_path(&off), Some(json!({"enabled": false})))
-            .await;
-        assert_eq!(status, 200);
-        let few = shop
-            .registry
-            .register("Few (synthetic)", "https://few.example.test/api")
-            .await;
-        let few = few["id"].as_str().unwrap().to_owned();
-        let (status, _) = shop
-            .registry
-            .call(
-                Method::PATCH,
-                &super::app_path(&few),
-                Some(json!({"everyone": false, "users": []})),
-            )
-            .await;
-        assert_eq!(status, 200);
+        let (off, few) = hidden_apps(&shop.registry).await;
 
         let session = server.session("ada@own.test").await;
         session.skypetoken().await.unwrap();
@@ -123,32 +266,7 @@ async fn the_engine_lists_the_store_reads_definitions_and_loads_an_apps_icon() {
         assert_eq!(polls.app.accent, Some(0x004F_6BED));
         assert!(polls.has_bot);
         let definition = &polls.definition;
-        // the bot and its message extension's bot, as the client reads a Teams definition
-        assert_eq!(
-            definition.bots(),
-            [Mri::new(format!("28:{BOT}")), Mri::new(format!("28:{BOT}"))]
-        );
-        assert_eq!(definition.version(), Some("1.2.0"));
-        assert_eq!(
-            definition.long_description(),
-            Some("Runs quick polls in chats and channels. Synthetic.")
-        );
-        assert_eq!(definition.privacy_url(), Some("https://tools.example.test/privacy"));
-        assert_eq!(definition.terms_url(), Some("https://tools.example.test/terms"));
-        assert_eq!(definition.developer_url(), Some("https://tools.example.test"));
-        assert_eq!(
-            definition.capabilities(),
-            [AppCapability::Bot, AppCapability::Messaging]
-        );
-        let places = definition.places();
-        assert!(places.personal && places.chat && places.team, "{places:?}");
-        assert_eq!(definition.mentionable_bot(true), Some(Mri::new(format!("28:{BOT}"))));
-        let commands = definition.extension_commands();
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            (commands[0].id.as_str(), commands[0].title.as_str()),
-            ("searchPolls", "Search polls")
-        );
+        polls_defined(definition);
 
         let icon = definition.large_image_url().unwrap().to_owned();
         assert!(icon.starts_with(&format!("{ORIGIN}/teamsappdata/")), "{icon}");
@@ -365,30 +483,8 @@ async fn an_app_added_to_a_team_hears_mentions_in_its_channels_and_its_reply_joi
         let bea = Seat::new(&shop.registry.server, "bea@own.test", "Bea Lovelace").await;
         let (team, group) = shop.ada.make_team("Polling crew", false).await;
         shop.ada.add(&team, &group, &[&bea]).await;
-        let definition = polls(&shop.ada).await;
-        let written = shop
-            .ada
-            .engine
-            .team_write(
-                TeamWrite::AddApp {
-                    team: team.clone(),
-                    app: definition,
-                },
-                None,
-            )
-            .await;
-        assert!(written.is_ok(), "{written:?}");
-        let got = shop.bot.next_of("installationUpdate").await.activity;
-        assert_eq!(got["action"], "add", "{got}");
-        assert_eq!(got["conversation"]["id"], team);
-        assert_eq!(got["conversation"]["conversationType"], "channel");
-        assert_eq!(got["channelData"]["team"]["id"], team);
-        assert_eq!(got["channelData"]["team"]["name"], "Polling crew");
-        assert_eq!(got["channelData"]["team"]["aadGroupId"], group);
-        assert_eq!(got["channelData"]["channel"]["id"], team);
-        let members = shop.bot.next_of("conversationUpdate").await.activity;
-        assert_eq!(members["channelData"]["eventType"], "teamMemberAdded", "{members}");
-        assert_eq!(members["membersAdded"][0]["id"], format!("28:{BOT}"));
+        add_to_team(&shop.ada, &team).await;
+        told_of_team(&shop.bot, &team, &group).await;
 
         let apps = bea.engine.team_apps(team.clone()).await.unwrap();
         assert_eq!(apps.iter().map(|app| app.id.as_str()).collect::<Vec<_>>(), [APP]);
@@ -426,30 +522,8 @@ async fn an_app_added_to_a_team_hears_mentions_in_its_channels_and_its_reply_joi
         let synced = bea.engine.message(team.clone(), reply).await.unwrap().unwrap();
         assert_eq!(synced.sender.as_deref(), Some(format!("28:{BOT}").as_str()));
 
-        // the bot's team, and a channel made after the add
-        let (status, details) = connector
-            .call(Method::GET, &format!("v3/teams/{}", encode(&team)), None)
-            .await;
-        assert_eq!(status, 200, "{details}");
-        assert_eq!(
-            (details["name"].as_str(), details["aadGroupId"].as_str()),
-            (Some("Polling crew"), Some(group.as_str()))
-        );
         let later = shop.ada.make_channel(&team, &group, "Results", true).await;
-        let (status, listed) = connector
-            .call(Method::GET, &format!("v3/teams/{}/conversations", encode(&team)), None)
-            .await;
-        assert_eq!(status, 200, "{listed}");
-        let names: Vec<(&str, Option<&str>)> = listed["conversations"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|entry| (entry["id"].as_str().unwrap(), entry["name"].as_str()))
-            .collect();
-        assert!(
-            names.contains(&(team.as_str(), None)) && names.contains(&(later.as_str(), Some("Results"))),
-            "{names:?}"
-        );
+        team_routes(&connector, &team, &group, &later).await;
         let in_later = mention(&bea, &later, "results please").await;
         let message = shop.bot.next_of("message").await.activity;
         assert_eq!(message["conversation"]["id"], format!("{later};messageid={in_later}"));
@@ -486,27 +560,7 @@ async fn adds_the_account_may_not_make_are_refused_and_an_icon_is_only_an_enable
     for backend in backends() {
         let shop = Shop::open(backend).await;
         let server = &shop.registry.server;
-        // a personal-only app, which no chat or team takes
-        let mut lone = super::manifest(
-            "8d3e4f60-5c0f-4e73-9a49-3b2c4d5e6f70",
-            "9e4f5061-6d10-4f84-8b5a-4c3d5e6f7081",
-            "1.0.0",
-        );
-        lone["bots"][0]["scopes"] = json!(["personal"]);
-        lone["name"]["short"] = json!("Lone (synthetic)");
-        let package = super::package(&lone, &png(192, 192), &png(32, 32), &[]);
-        let (status, answer) = shop
-            .registry
-            .upload(&format!("{}/package", super::APPS), Method::POST, package)
-            .await;
-        assert_eq!(status, 201, "{answer}");
-        let listing = shop.ada.engine.app_listing().await.unwrap();
-        let lone = listing
-            .app("8d3e4f60-5c0f-4e73-9a49-3b2c4d5e6f70")
-            .unwrap()
-            .definition
-            .clone();
-        let polls = listing.app(APP).unwrap().definition.clone();
+        let (lone, polls) = lone_app(&shop).await;
 
         let bea = Seat::new(server, "bea@own.test", "Bea Lovelace").await;
         let cora = Seat::new(server, "cora@own.test", "Cora Lovelace").await;
@@ -580,27 +634,7 @@ async fn adds_the_account_may_not_make_are_refused_and_an_icon_is_only_an_enable
         assert!(refused(answer).contains("NotFound"));
         assert!(bea.engine.app_definition(APP.to_owned()).await.unwrap().is_none());
 
-        // icons: an enabled app's only, its two files only
-        let icon = lone.large_image_url().unwrap().to_owned();
-        let at = |path: &str| server.url(&path.replacen(ORIGIN, "", 1));
-        let get = |url: String| async move { reqwest::get(url).await.unwrap().status().as_u16() };
-        assert_eq!(get(at(&icon)).await, 200);
-        assert_eq!(get(at(&icon.replace("color.png", "outline.png"))).await, 200);
-        assert_eq!(get(at(&icon.replace("color.png", "other.png"))).await, 404);
-        assert_eq!(
-            get(server.url(&format!("/teamsappdata/apps/{}/color.png", shop.form))).await,
-            404
-        );
-        let (status, _) = shop
-            .registry
-            .call(
-                Method::PATCH,
-                &super::app_path("8d3e4f60-5c0f-4e73-9a49-3b2c4d5e6f70"),
-                Some(json!({"enabled": false})),
-            )
-            .await;
-        assert_eq!(status, 200);
-        assert_eq!(get(at(&icon)).await, 404);
+        icons(&shop, &lone).await;
         for seat in [bea, cora, outsider] {
             seat.stop();
         }

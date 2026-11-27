@@ -328,11 +328,7 @@ fn hash(installs: &[installs::Install]) -> String {
 /// `GET beta/chats/<chat>/apps/chatentitlements`: the apps added to a chat the account is in, with their definitions
 /// (a list).
 async fn chat_entitlements(State(app): State<Arc<App>>, me: Me, Path(chat): Path<String>) -> Answer<Json<Value>> {
-    if !crate::chatsvc::service::members(&app.db, &chat)
-        .await?
-        .iter()
-        .any(|member| *member == me.id)
-    {
+    if !crate::chatsvc::service::members(&app.db, &chat).await?.contains(&me.id) {
         return Err(Refusal::FORBIDDEN);
     }
     let records = usable_apps(&app.db, &me.id).await?;

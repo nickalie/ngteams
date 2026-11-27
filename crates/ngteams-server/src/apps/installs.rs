@@ -283,7 +283,7 @@ async fn remove_personal(State(app): State<Arc<App>>, me: Me, Path(id): Path<Str
 /// The group chat `chat` when the account is one of its people.
 async fn group_chat(app: &App, me: &Me, chat: &str) -> Answer<()> {
     let members = crate::chatsvc::service::members(&app.db, chat).await?;
-    if !members.iter().any(|member| *member == me.id) {
+    if !members.contains(&me.id) {
         return Err(Refusal::FORBIDDEN);
     }
     if crate::chatsvc::service::is_group(&app.db, chat).await? {
