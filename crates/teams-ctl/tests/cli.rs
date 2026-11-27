@@ -165,7 +165,7 @@ fn ctl(home: &Path, socket: &Path, args: &[&str]) -> Run {
 }
 
 /// [`ctl`], `input` (when given) on its stdin.
-fn ctl_fed(home: &Path, socket: &Path, args: &[&str], input: Option<&str>) -> Run {
+fn ctl_fed(home: &Path, socket: &Path, args: &[&str], input: Option<&[u8]>) -> Run {
     let mut child = Command::new(env!("CARGO_BIN_EXE_ngteamsctl"))
         .env_clear()
         // a coverage run counts the binary's runs too
@@ -183,7 +183,7 @@ fn ctl_fed(home: &Path, socket: &Path, args: &[&str], input: Option<&str>) -> Ru
         .unwrap();
     if let Some(input) = input {
         // dropped once written: its end of file
-        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        child.stdin.take().unwrap().write_all(input).unwrap();
     }
     // read as it comes, so an output past the pipe's buffer (a completion script) doesn't hold the binary up
     let stdout = drain(child.stdout.take().unwrap());
@@ -1007,6 +1007,29 @@ fn download_with_two_selections_is_a_usage_error_and_a_refusal_exits_1() {
     assert!(run.stderr.contains("file_exists: report.pdf"), "{}", run.stderr);
 }
 
+#[cfg(unix)]
+#[test]
+fn a_download_folder_that_is_not_utf_8_exits_2_before_connecting() {
+    use std::os::unix::ffi::OsStringExt as _;
+    let out = OsString::from_vec(b"/tmp/not-\xffutf-8".to_vec());
+    let cli = Cli::try_parse_from([
+        OsString::from("ngteamsctl"),
+        OsString::from("download"),
+        OsString::from("Lab chat"),
+        OsString::from("1"),
+        OsString::from("--out"),
+        out,
+    ])
+    .unwrap();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    assert_eq!(run(&cli, &Env::default(), &mut out, &mut err), Exit::NoApp);
+    assert!(out.is_empty());
+    assert_eq!(
+        String::from_utf8(err).unwrap(),
+        "ngteamsctl: the command couldn't be read: the folder's path isn't UTF-8\n"
+    );
+}
+
 #[test]
 fn a_download_is_waited_for_past_the_app_s_own_bound_on_it() {
     let parsed = Cli::try_parse_from(["ngteamsctl", "download", "Lab chat", "1", "--all"]).unwrap();
@@ -1146,7 +1169,7 @@ fn send_reads_its_text_from_stdin_with_a_dash() {
         server.dir.path(),
         &server.path,
         &["send", "Lab chat", "-"],
-        Some("piped\nlines\n"),
+        Some(b"piped\nlines\n"),
     );
     assert_eq!(run.code, 0, "{}", run.stderr);
     let requests = server.requests();
@@ -1158,6 +1181,25 @@ fn send_reads_its_text_from_stdin_with_a_dash() {
             wait: false,
         }]
     );
+}
+
+#[test]
+fn a_write_whose_stdin_is_not_utf_8_exits_2_before_connecting() {
+    let home = tempfile::tempdir().unwrap();
+    for args in [
+        &["send", "Lab chat", "-"][..],
+        &["edit", "Lab chat", "1700000000000", "-"],
+    ] {
+        let socket = home.path().join("nobody.sock");
+        let run = ctl_fed(home.path(), &socket, args, Some(b"not \xff utf-8"));
+        assert_eq!(run.code, 2, "{args:?}: {}", run.stderr);
+        assert!(
+            run.stderr
+                .starts_with("ngteamsctl: the command couldn't be read: stdin couldn't be read: "),
+            "{args:?}: {}",
+            run.stderr
+        );
+    }
 }
 
 #[test]
