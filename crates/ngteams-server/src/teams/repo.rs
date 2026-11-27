@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 use super::schema::{
     channel_roles, channels, conversation_folders, team_join_requests, team_members, team_tags, teams,
 };
+use crate::apps::schema::{app_installs, bots};
 use crate::chatsvc::repo::advance;
 use crate::chatsvc::schema::{chat_members, chat_messages, chat_properties, chats};
 use crate::db::schema::users;
@@ -757,14 +758,11 @@ pub(crate) async fn create_channel(db: &Db, channel: &Channel, creator: &str) ->
                 for person in &people {
                     join_chat!(conn, &channel.id, person, version);
                 }
-                let bots: Vec<String> = crate::apps::schema::bots::table
-                    .inner_join(
-                        crate::apps::schema::app_installs::table
-                            .on(crate::apps::schema::app_installs::app_id.eq(crate::apps::schema::bots::app_id)),
-                    )
-                    .filter(crate::apps::schema::app_installs::scope.eq("team"))
-                    .filter(crate::apps::schema::app_installs::target.eq(&channel.team_id))
-                    .select(crate::apps::schema::bots::id)
+                let bots: Vec<String> = bots::table
+                    .inner_join(app_installs::table.on(app_installs::app_id.eq(bots::app_id)))
+                    .filter(app_installs::scope.eq(crate::apps::installs::Scope::Team.as_str()))
+                    .filter(app_installs::target.eq(&channel.team_id))
+                    .select(bots::id)
                     .load(conn)
                     .await?;
                 for bot in &bots {
@@ -1141,4 +1139,13 @@ pub(crate) async fn message_bodies(
         ))
         .load(conn)
         .await?))
+}
+
+/// Whether a team's `settings` let its members do what the `userSettings` key `setting` names (Teams' "Allow members
+/// to …" boxes); a setting that isn't there lets them.
+pub(crate) fn members_may(settings: &str, setting: &str) -> bool {
+    serde_json::from_str::<Value>(settings)
+        .ok()
+        .and_then(|settings| settings["userSettings"][setting].as_bool())
+        .unwrap_or(true)
 }

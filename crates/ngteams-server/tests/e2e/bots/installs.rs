@@ -10,7 +10,7 @@ use reqwest::Method;
 use serde_json::json;
 use teams_core::engine::Action;
 use teams_proto::chat::{MessageText, Node, RichText};
-use teams_proto::{AppCapability, AppDefinition, Mri, TeamWrite};
+use teams_proto::{AppCapability, AppDefinition, Mri, TeamWrite, reply_chain_id};
 use teams_store::OutboxState;
 
 use super::connector::{loopback, personal_chat};
@@ -147,6 +147,49 @@ async fn told_of_team(bot: &TestBot, team: &str, group: &str) {
     assert_eq!(members["membersAdded"][0]["id"], format!("28:{BOT}"));
 }
 
+/// What the bot gets when its app is taken off: `conversationUpdate` (it is gone, with `event` as the team's
+/// `eventType`) before `installationUpdate`. `next_of` drops other kinds, so a wrong order fails on the second read.
+async fn told_of_removal(bot: &TestBot, conversation: &str, event: Option<&str>) {
+    let members = bot.next_of("conversationUpdate").await.activity;
+    assert_eq!(
+        members["membersRemoved"],
+        json!([{"id": format!("28:{BOT}")}]),
+        "{members}"
+    );
+    assert!(members["membersAdded"].is_null(), "{members}");
+    assert_eq!(members["conversation"]["id"], conversation);
+    assert_eq!(members["channelData"]["eventType"].as_str(), event, "{members}");
+    let got = bot.next_of("installationUpdate").await.activity;
+    assert_eq!(got["action"], "remove", "{got}");
+    assert_eq!(got["conversation"]["id"], conversation);
+}
+
+/// A mention in a reply under `post` names the post's chain, not the reply, and the bot's answer joins the same
+/// thread.
+async fn reply_in_thread(bot: &TestBot, bea: &Seat, connector: &Connector, team: &str, post: &str) {
+    let chain = reply_chain_id(team, post).unwrap();
+    let in_thread = mention(bea, &chain, "count me in").await;
+    assert_ne!(in_thread, post);
+    let message = bot.next_of("message").await.activity;
+    assert_eq!(message["id"], in_thread);
+    assert_eq!(
+        message["conversation"]["id"],
+        format!("{team};messageid={post}"),
+        "{message}"
+    );
+    let (status, answer) = connector
+        .send(
+            message["conversation"]["id"].as_str().unwrap(),
+            Connector::text("counted"),
+        )
+        .await;
+    assert_eq!(status, 200, "{answer}");
+    let counted = answer["id"].as_str().unwrap().to_owned();
+    bea.engine.sync_conversation(team.to_owned()).await.unwrap();
+    let roots = bea.engine.reply_roots(team.to_owned()).await.unwrap();
+    assert!(roots.contains(&(counted, post.to_owned())), "{roots:?}");
+}
+
 /// The bot's team and its channels, through the connector.
 async fn team_routes(connector: &Connector, team: &str, group: &str, later: &str) {
     // the bot's team, and a channel made after the add
@@ -224,6 +267,67 @@ async fn icons(shop: &Shop, lone: &AppDefinition) {
         .await;
     assert_eq!(status, 200);
     assert_eq!(get(at(&icon)).await, 404);
+}
+
+/// How `seat`'s add of `app` to `team`, then its removal of the packaged app, ended: `accepted` or the refusal.
+async fn team_answers(seat: &Seat, team: &str, app: &AppDefinition) -> (String, String) {
+    let refused = |answer: Result<teams_core::TeamWritten, teams_core::EngineError>| match answer {
+        Ok(_) => "accepted".to_owned(),
+        refused => crate::teams::refusal(refused).unwrap_or_default(),
+    };
+    let add = TeamWrite::AddApp {
+        team: team.to_owned(),
+        app: app.clone(),
+    };
+    let added = refused(seat.engine.team_write(add, None).await);
+    let remove = TeamWrite::RemoveApp {
+        team: team.to_owned(),
+        app: APP.into(),
+    };
+    (added, refused(seat.engine.team_write(remove, None).await))
+}
+
+/// Team adds and removals the account may not make: on a team it isn't on, by a member while the team's members may
+/// not add or remove apps (a closed custom-upload box alone doesn't stop them), and an app whose bot serves no team.
+async fn team_refusals(
+    shop: &Shop,
+    (bea, outsider): (&Seat, &Seat),
+    team: &str,
+    group_id: &str,
+    (polls, lone): (&AppDefinition, &AppDefinition),
+) {
+    let (added, removed) = team_answers(outsider, team, polls).await;
+    assert!(
+        added.contains("NotFound") && removed.contains("NotFound"),
+        "{added} {removed}"
+    );
+    assert!(outsider.engine.team_apps(team.to_owned()).await.unwrap().is_empty());
+    shop.ada.add(team, group_id, &[bea]).await;
+    members_may(&shop.ada, team, false).await;
+    let (added, removed) = team_answers(bea, team, polls).await;
+    assert!(
+        added.contains("Forbidden") && removed.contains("Forbidden"),
+        "{added} {removed}"
+    );
+    members_may(&shop.ada, team, true).await;
+    let (added, removed) = team_answers(bea, team, polls).await;
+    assert_eq!((added.as_str(), removed.as_str()), ("accepted", "accepted"));
+    let (added, _) = team_answers(&shop.ada, team, lone).await;
+    assert!(added.contains("BadRequest"), "{added}");
+}
+
+/// `owner` lets the members of `team` add and remove apps (`open`) or not; custom uploads stay closed either way.
+async fn members_may(owner: &Seat, team: &str, open: bool) {
+    let read = owner.engine.team_settings(team).await.unwrap().unwrap();
+    let mut settings: serde_json::Value = serde_json::from_str(&read).unwrap();
+    settings["userSettings"]["installApp"] = json!(open);
+    settings["userSettings"]["uninstallApp"] = json!(open);
+    settings["userSettings"]["uploadCustomApp"] = json!(false);
+    let write = TeamWrite::Settings {
+        team: team.to_owned(),
+        settings: settings.to_string(),
+    };
+    owner.engine.team_write(write, None).await.unwrap();
 }
 
 /// `seat` adds the packaged app to `team`.
@@ -380,6 +484,7 @@ async fn an_app_added_for_the_account_tells_its_bot_in_their_chat_and_lists_as_t
         say(&shop.ada, &chat, "hello polls").await;
         let message = shop.bot.next_of("message").await.activity;
         assert_eq!(message["text"], "hello polls");
+        let connector = shop.connector(message["serviceUrl"].as_str().unwrap()).await;
 
         let removed = shop
             .ada
@@ -387,9 +492,23 @@ async fn an_app_added_for_the_account_tells_its_bot_in_their_chat_and_lists_as_t
             .team_write(TeamWrite::RemovePersonalApp { app: APP.into() }, None)
             .await;
         assert!(removed.is_ok(), "{removed:?}");
-        let got = shop.bot.next_of("installationUpdate").await.activity;
-        assert_eq!(got["action"], "remove", "{got}");
+        told_of_removal(&shop.bot, &chat, None).await;
         assert!(shop.ada.engine.user_apps().await.unwrap().is_empty());
+        // removal stops delivery both ways: Ada keeps the chat, the bot hears and posts nothing there
+        say(&shop.ada, &chat, "still there?").await;
+        assert!(!reaches(&shop.bot).await, "a removed bot got a message in its 1:1 chat");
+        let (status, _) = connector.send(&chat, Connector::text("still here")).await;
+        assert_eq!(status, 403);
+        // added again, it is back in the chat
+        let definition = polls(&shop.ada).await;
+        let written = shop
+            .ada
+            .engine
+            .team_write(TeamWrite::AddPersonalApp { app: definition }, None)
+            .await;
+        assert!(written.is_ok(), "{written:?}");
+        say(&shop.ada, &chat, "welcome back").await;
+        assert_eq!(shop.bot.next_of("message").await.activity["text"], "welcome back");
         shop.stop();
     }
 }
@@ -464,8 +583,7 @@ async fn an_app_added_to_a_group_chat_seats_its_bot_which_gets_only_mentions_unt
             )
             .await;
         assert!(removed.is_ok(), "{removed:?}");
-        let got = shop.bot.next_of("installationUpdate").await.activity;
-        assert_eq!(got["action"], "remove", "{got}");
+        told_of_removal(&shop.bot, &chat, None).await;
         assert!(bea.engine.chat_apps(chat.clone()).await.unwrap().is_empty());
         mention(&shop.ada, &chat, "anyone there").await;
         assert!(!reaches(&shop.bot).await, "a removed bot got a mention");
@@ -521,6 +639,7 @@ async fn an_app_added_to_a_team_hears_mentions_in_its_channels_and_its_reply_joi
         );
         let synced = bea.engine.message(team.clone(), reply).await.unwrap().unwrap();
         assert_eq!(synced.sender.as_deref(), Some(format!("28:{BOT}").as_str()));
+        reply_in_thread(&shop.bot, &bea, &connector, &team, &post).await;
 
         let later = shop.ada.make_channel(&team, &group, "Results", true).await;
         team_routes(&connector, &team, &group, &later).await;
@@ -540,8 +659,7 @@ async fn an_app_added_to_a_team_hears_mentions_in_its_channels_and_its_reply_joi
             )
             .await;
         assert!(removed.is_ok(), "{removed:?}");
-        let got = shop.bot.next_of("installationUpdate").await.activity;
-        assert_eq!(got["action"], "remove", "{got}");
+        told_of_removal(&shop.bot, &team, Some("teamMemberRemoved")).await;
         assert!(bea.engine.team_apps(team.clone()).await.unwrap().is_empty());
         mention(&bea, &team, "still polling?").await;
         mention(&bea, &later, "anyone?").await;
@@ -604,17 +722,18 @@ async fn adds_the_account_may_not_make_are_refused_and_an_icon_is_only_an_enable
         let answer = outsider.engine.team_write(add_chat(&group, &polls), None).await;
         assert!(refused(answer).contains("Forbidden"));
         assert!(outsider.engine.chat_apps(group.clone()).await.unwrap().is_empty());
-        // a team the account isn't on, one whose members may not add apps, an app whose bot serves no team
+        // nor take an app off it
+        let remove_chat = TeamWrite::RemoveChatApp {
+            chat: group.clone(),
+            app: APP.into(),
+        };
+        let answer = outsider.engine.team_write(remove_chat, None).await;
+        assert!(refused(answer).contains("Forbidden"));
+        team_refusals(&shop, (&bea, &outsider), &team, &group_id, (&polls, &lone)).await;
         let add_team = |app: &AppDefinition| TeamWrite::AddApp {
             team: team.clone(),
             app: app.clone(),
         };
-        let answer = outsider.engine.team_write(add_team(&polls), None).await;
-        assert!(refused(answer).contains("NotFound"));
-        assert!(outsider.engine.team_apps(team.clone()).await.unwrap().is_empty());
-        shop.ada.add(&team, &group_id, &[&bea]).await;
-        let answer = shop.ada.engine.team_write(add_team(&lone), None).await;
-        assert!(refused(answer).contains("BadRequest"));
         // an app the account may not use
         let (status, _) = shop
             .registry

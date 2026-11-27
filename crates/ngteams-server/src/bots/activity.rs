@@ -29,15 +29,6 @@ pub(crate) struct Sender<'a> {
     pub name: &'a str,
 }
 
-/// The conversation of an event.
-pub(crate) struct Place<'a> {
-    pub id: &'a str,
-    /// A 1:1 chat (`personal`), or a group chat.
-    pub personal: bool,
-    /// In a team's channel: the channel and the post of the message's thread.
-    pub channel: Option<&'a InChannel>,
-}
-
 /// A team's channel an activity is about, as the `msteams` channel names it.
 #[derive(Clone, Debug)]
 pub(crate) struct InChannel {
@@ -67,25 +58,29 @@ impl InChannel {
     }
 }
 
-/// Where an app was added or taken off, for the events its bot gets.
-pub(crate) enum Installed<'a> {
-    /// For the person, in their 1:1 chat with the bot.
+/// The conversation of an activity: where an event happened, or where an app was added or taken off.
+pub(crate) enum Place<'a> {
+    /// A 1:1 chat with the bot.
     Personal(&'a str),
-    /// To a group chat.
+    /// A group chat.
     Group(&'a str),
-    /// To a team: its general channel names it.
-    Team(&'a InChannel),
+    /// A team's channel; for an app's add or removal, its general channel.
+    Channel(&'a InChannel),
 }
 
-impl Installed<'_> {
+impl Place<'_> {
+    const fn personal(&self) -> bool {
+        matches!(self, Self::Personal(_))
+    }
+
     fn envelope(&self, from: &Sender<'_>, to: &Recipient<'_>, at: i64) -> Value {
         let (kind, id) = match self {
             Self::Personal(chat) => ("personal", (*chat).to_owned()),
             Self::Group(chat) => ("groupChat", (*chat).to_owned()),
-            Self::Team(channel) => ("channel", channel.conversation()),
+            Self::Channel(channel) => ("channel", channel.conversation()),
         };
         let mut activity = envelope(kind, &id, from, to, at);
-        if let Self::Team(channel) = self {
+        if let Self::Channel(channel) = self {
             channel.mark(&mut activity);
         }
         activity
@@ -93,13 +88,7 @@ impl Installed<'_> {
 }
 
 /// `installationUpdate` for the bot `to`: its app `added` (or taken off) by `from`.
-pub(crate) fn installation(
-    place: &Installed<'_>,
-    from: &Sender<'_>,
-    to: &Recipient<'_>,
-    added: bool,
-    at: i64,
-) -> Value {
+pub(crate) fn installation(place: &Place<'_>, from: &Sender<'_>, to: &Recipient<'_>, added: bool, at: i64) -> Value {
     let mut activity = place.envelope(from, to, at);
     activity["type"] = "installationUpdate".into();
     activity["id"] = format!("install-{}", uuid::Uuid::new_v4().simple()).into();
@@ -110,7 +99,7 @@ pub(crate) fn installation(
 /// `conversationUpdate` for the bot `to`: `members` (MRIs: `28:<bot>`, `8:orgid:<id>`) `added` to the conversation
 /// (or gone from it) by `from`.
 pub(crate) fn members_changed(
-    place: &Installed<'_>,
+    place: &Place<'_>,
     from: &Sender<'_>,
     to: &Recipient<'_>,
     members: &[String],
@@ -122,7 +111,7 @@ pub(crate) fn members_changed(
     activity["id"] = format!("members-{}", uuid::Uuid::new_v4().simple()).into();
     let listed: Vec<Value> = members.iter().map(|mri| account_of(mri)).collect();
     activity[if added { "membersAdded" } else { "membersRemoved" }] = Value::Array(listed);
-    if matches!(place, Installed::Team(_)) {
+    if matches!(place, Place::Channel(_)) {
         let kind = if added { "teamMemberAdded" } else { "teamMemberRemoved" };
         activity["channelData"]["eventType"] = kind.into();
     }
@@ -204,18 +193,7 @@ pub(crate) fn client_info() -> Value {
 
 /// The activity for `event`, without the parts [`addressed`] adds.
 pub(crate) fn pending(event: &Event<'_>, place: &Place<'_>, from: &Sender<'_>, to: &Recipient<'_>, at: i64) -> Value {
-    let kind = match (place.personal, place.channel) {
-        (_, Some(_)) => "channel",
-        (true, None) => "personal",
-        (false, None) => "groupChat",
-    };
-    let conversation = place
-        .channel
-        .map_or_else(|| place.id.to_owned(), InChannel::conversation);
-    let mut activity = envelope(kind, &conversation, from, to, at);
-    if let Some(channel) = place.channel {
-        channel.mark(&mut activity);
-    }
+    let mut activity = place.envelope(from, to, at);
     activity["type"] = event.kind().into();
     match event {
         Event::Message { id, body } | Event::Edited { id, body } => {
@@ -223,7 +201,7 @@ pub(crate) fn pending(event: &Event<'_>, place: &Place<'_>, from: &Sender<'_>, t
             let html = body["content"].as_str().unwrap_or_default();
             activity["textFormat"] = "plain".into();
             activity["attachments"] = json!([{"contentType": "text/html", "content": html}]);
-            if place.personal {
+            if place.personal() {
                 activity["text"] = plain(html).into();
                 activity["entities"] = client_info();
             } else {
@@ -254,13 +232,8 @@ pub(crate) fn pending(event: &Event<'_>, place: &Place<'_>, from: &Sender<'_>, t
 /// The `entities` of a message in a group chat or channel: the client's, and each mention as the Bot Framework names
 /// it (`mentioned` the account, `text` its `<at>` span in the activity's text).
 fn mention_entities(body: &Value) -> Value {
-    let listed: Vec<Value> = match &body["properties"]["mentions"] {
-        Value::String(text) => serde_json::from_str(text).unwrap_or_default(),
-        Value::Array(items) => items.clone(),
-        _ => Vec::new(),
-    };
     let mut entities = vec![json!({"type": "clientInfo", "locale": LOCALE})];
-    for mention in &listed {
+    for mention in &crate::chatsvc::mentions(body) {
         let (Some(mri), Some(name)) = (mention["mri"].as_str(), mention["displayName"].as_str()) else {
             continue;
         };
@@ -434,11 +407,7 @@ mod tests {
         let body = json!({"content": "<p>Hello <b>bot</b> &amp; co</p>"});
         let activity = pending(
             &Event::Message { id: 42, body: &body },
-            &Place {
-                id: "19:a_b@unq.gbl.spaces",
-                personal: true,
-                channel: None,
-            },
+            &Place::Personal("19:a_b@unq.gbl.spaces"),
             &Sender { id: "u", name: "Ada" },
             &Recipient { id: "b", name: "Echo" },
             1_700_000_000_000,

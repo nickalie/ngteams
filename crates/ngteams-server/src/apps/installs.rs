@@ -10,7 +10,7 @@ use std::sync::Arc;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::response::IntoResponse;
 use axum::routing::{delete, post};
 use axum::{Json, Router};
 use diesel::prelude::*;
@@ -22,7 +22,7 @@ use super::repo::Record;
 use super::schema::{app_installs, apps};
 use crate::app::App;
 use crate::auth::extract::Spaces;
-use crate::bots::activity::{InChannel, Installed, Recipient, Sender, installation, members_changed};
+use crate::bots::activity::{InChannel, Place, Recipient, Sender, installation, members_changed};
 use crate::bots::outbox::Delivery;
 use crate::bots::schema::bot_deliveries;
 use crate::chatsvc::BotSeat;
@@ -44,7 +44,7 @@ pub(crate) enum Scope {
 }
 
 impl Scope {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Personal => "personal",
             Self::Chat => "chat",
@@ -142,12 +142,13 @@ fn fits(record: &Record, scope: Scope) -> bool {
             .any(|listed| listed.eq_ignore_ascii_case(scope.bot_scope()))
 }
 
-fn added(record: &Record, by: &str, at: i64) -> Response {
-    let value = json!({"id": record.app.id, "state": "Installed", "installedVersion": record.app.version,
-        "createdTime": crate::chatsvc::iso(at * 1000), "installedBy": by,
-        "installerIdentity": {"id": by, "type": "user"},
-        "botMetadata": record.bot.as_ref().map(|bot| json!({"botId": bot.id}))});
-    (StatusCode::CREATED, Json(json!({ "value": value }))).into_response()
+/// The add's answer: the app's entitlement as the listings show it, with its bot.
+async fn added(app: &App, record: &Record, scope: Scope, target: &str) -> Answer {
+    let installs = of(&app.db, scope, target).await?;
+    let install = installs.iter().find(|install| install.app == record.app.id);
+    let mut value = super::catalogue::entitlement(&record.app.id, "Installed", install);
+    value["botMetadata"] = record.bot.as_ref().map(|bot| json!({"botId": bot.id})).into();
+    Ok((StatusCode::CREATED, Json(json!({ "value": value }))).into_response())
 }
 
 /// An add or removal to record: where, and what the app's bot gets of it.
@@ -156,14 +157,24 @@ struct Change<'a> {
     scope: Scope,
     target: &'a str,
     by: &'a User,
-    /// Where the bot is told, and its conversation's id for the outbox.
-    place: Installed<'a>,
-    conversation: &'a str,
+    /// Where the bot is told.
+    place: Place<'a>,
     added: bool,
 }
 
+impl Change<'_> {
+    /// The conversation the bot's events are queued in, for the outbox's order: a team's general channel is the
+    /// team's own thread.
+    const fn target_chat(&self) -> &str {
+        match self.place {
+            Place::Personal(chat) | Place::Group(chat) => chat,
+            Place::Channel(_) => self.target,
+        }
+    }
+}
+
 /// Records `change` with its bot's events in one transaction; whether it changed anything.
-async fn record(app: &App, change: &Change<'_>) -> Result<bool, DbError> {
+async fn write_change(app: &App, change: &Change<'_>) -> Result<bool, DbError> {
     let at = now();
     let ms = crate::chatsvc::now();
     let activities: Vec<(String, Value)> = match &change.record.bot {
@@ -208,7 +219,7 @@ async fn record(app: &App, change: &Change<'_>) -> Result<bool, DbError> {
             };
             if changed > 0 {
                 for (seq, (bot, activity)) in (ms..).zip(&activities) {
-                    let row = Delivery::new(bot, change.conversation, seq, activity, false);
+                    let row = Delivery::new(bot, change.target_chat(), seq, activity, false);
                     diesel::insert_into(bot_deliveries::table)
                         .values(&row)
                         .execute(conn)
@@ -234,6 +245,9 @@ async fn bot_name(db: &Db, bot: &str, app_name: &str) -> Result<String, DbError>
 /// and the bot told there.
 async fn add_personal(State(app): State<Arc<App>>, me: Me, body: Bytes) -> Answer {
     let record = named(&app, &me, &body).await?;
+    if !fits(&record, Scope::Personal) {
+        return Err(Refusal::BAD);
+    }
     let by = account(&app, &me).await?;
     let chat = match &record.bot {
         Some(bot) => crate::chatsvc::service::bot_chat(&app, &me.id, &bot.id)
@@ -246,19 +260,18 @@ async fn add_personal(State(app): State<Arc<App>>, me: Me, body: Bytes) -> Answe
         scope: Scope::Personal,
         target: &me.id,
         by: &by,
-        place: Installed::Personal(&chat),
-        conversation: &chat,
+        place: Place::Personal(&chat),
         added: true,
     };
-    record_change(&app, &change).await?;
-    Ok(added(&record, &me.id, now()))
+    write_change(&app, &change).await?;
+    if let Some(bot) = &record.bot {
+        crate::chatsvc::service::seat_personal_bot(&app.db, &chat, &bot.id, true).await?;
+    }
+    added(&app, &record, Scope::Personal, &me.id).await
 }
 
-async fn record_change(app: &App, change: &Change<'_>) -> Answer<bool> {
-    Ok(record(app, change).await?)
-}
-
-/// `DELETE beta/users/apps/entitlements/<app>`: the account's own app taken off.
+/// `DELETE beta/users/apps/entitlements/<app>`: the account's own app taken off; its bot is told, then leaves their
+/// 1:1 chat, so it gets nothing more there and posts nothing.
 async fn remove_personal(State(app): State<Arc<App>>, me: Me, Path(id): Path<String>) -> Answer {
     let record = super::repo::get(&app.db, &id).await?.ok_or(Refusal::MISSING)?;
     let by = account(&app, &me).await?;
@@ -272,11 +285,14 @@ async fn remove_personal(State(app): State<Arc<App>>, me: Me, Path(id): Path<Str
         scope: Scope::Personal,
         target: &me.id,
         by: &by,
-        place: Installed::Personal(&chat),
-        conversation: &chat,
+        place: Place::Personal(&chat),
         added: false,
     };
-    record_change(&app, &change).await?;
+    if write_change(&app, &change).await?
+        && let Some(bot) = &record.bot
+    {
+        crate::chatsvc::service::seat_personal_bot(&app.db, &chat, &bot.id, false).await?;
+    }
     Ok(StatusCode::OK.into_response())
 }
 
@@ -319,12 +335,11 @@ async fn add_to_chat(State(app): State<Arc<App>>, me: Me, Path(chat): Path<Strin
         scope: Scope::Chat,
         target: &chat,
         by: &by,
-        place: Installed::Group(&chat),
-        conversation: &chat,
+        place: Place::Group(&chat),
         added: true,
     };
-    record_change(&app, &change).await?;
-    Ok(added(&record, &me.id, now()))
+    write_change(&app, &change).await?;
+    added(&app, &record, Scope::Chat, &chat).await
 }
 
 /// `DELETE beta/chats/<chat>/apps/entitlements/<app>`: the app taken off a group chat the account is in; its bot is
@@ -338,27 +353,30 @@ async fn remove_from_chat(State(app): State<Arc<App>>, me: Me, Path((chat, id)):
         scope: Scope::Chat,
         target: &chat,
         by: &by,
-        place: Installed::Group(&chat),
-        conversation: &chat,
+        place: Place::Group(&chat),
         added: false,
     };
-    record_change(&app, &change).await?;
+    write_change(&app, &change).await?;
     if let Some(bot) = &record.bot {
         seated(crate::chatsvc::seat_bot(&app, &chat, &by, &bot.id, false).await?)?;
     }
     Ok(StatusCode::OK.into_response())
 }
 
-/// The team `team` and its general channel, when the account may add apps to it: its owners, its members while the
-/// team's `uploadCustomApp` setting lets them (as for outgoing webhooks), and the server's administrators.
-async fn team_place(app: &App, me: &Me, team: &str) -> Answer<InChannel> {
+/// The team `team` and its general channel, when the account may add apps to it (`adding`) or take them off: its
+/// owners, its members while the team's `installApp` (or `uninstallApp`) setting lets them, and the server's
+/// administrators.
+async fn team_place(app: &App, me: &Me, team: &str, adding: bool) -> Answer<InChannel> {
     let found = crate::teams::repo::team(&app.db, team).await?.ok_or(Refusal::MISSING)?;
     let account = crate::db::users::by_id(&app.db, &me.id).await?;
     let admin = account.is_some_and(|account| account.is_admin);
     let may = match crate::teams::repo::membership(&app.db, team, &me.id).await? {
         None if !admin => return Err(Refusal::MISSING),
         None => true,
-        Some(member) => admin || member.owner || members_may(&found.settings),
+        Some(member) => {
+            let setting = if adding { "installApp" } else { "uninstallApp" };
+            admin || member.owner || crate::teams::repo::members_may(&found.settings, setting)
+        }
     };
     if !may {
         return Err(Refusal::FORBIDDEN);
@@ -378,19 +396,11 @@ async fn team_place(app: &App, me: &Me, team: &str) -> Answer<InChannel> {
     })
 }
 
-/// Whether the team's settings let its members add apps, as Teams' "Allow members to upload custom apps".
-fn members_may(settings: &str) -> bool {
-    serde_json::from_str::<Value>(settings)
-        .ok()
-        .and_then(|settings| settings["userSettings"]["uploadCustomApp"].as_bool())
-        .unwrap_or(true)
-}
-
 /// `POST beta/teams/<team>/apps/entitlements`: the app added to a team; its bot joins the team's standard channels
 /// and is told in the general one.
 async fn add_to_team(State(app): State<Arc<App>>, me: Me, Path(team): Path<String>, body: Bytes) -> Answer {
     let record = named(&app, &me, &body).await?;
-    let place = team_place(&app, &me, &team).await?;
+    let place = team_place(&app, &me, &team, true).await?;
     if !fits(&record, Scope::Team) {
         return Err(Refusal::BAD);
     }
@@ -403,18 +413,17 @@ async fn add_to_team(State(app): State<Arc<App>>, me: Me, Path(team): Path<Strin
         scope: Scope::Team,
         target: &team,
         by: &by,
-        place: Installed::Team(&place),
-        conversation: &team,
+        place: Place::Channel(&place),
         added: true,
     };
-    record_change(&app, &change).await?;
-    Ok(added(&record, &me.id, now()))
+    write_change(&app, &change).await?;
+    added(&app, &record, Scope::Team, &team).await
 }
 
 /// `DELETE beta/teams/<team>/apps/entitlements/<app>`: the app taken off a team; its bot is told, then leaves the
 /// team's channels.
 async fn remove_from_team(State(app): State<Arc<App>>, me: Me, Path((team, id)): Path<(String, String)>) -> Answer {
-    let place = team_place(&app, &me, &team).await?;
+    let place = team_place(&app, &me, &team, false).await?;
     let record = super::repo::get(&app.db, &id).await?.ok_or(Refusal::MISSING)?;
     let by = account(&app, &me).await?;
     let change = Change {
@@ -422,11 +431,10 @@ async fn remove_from_team(State(app): State<Arc<App>>, me: Me, Path((team, id)):
         scope: Scope::Team,
         target: &team,
         by: &by,
-        place: Installed::Team(&place),
-        conversation: &team,
+        place: Place::Channel(&place),
         added: false,
     };
-    record_change(&app, &change).await?;
+    write_change(&app, &change).await?;
     if let Some(bot) = &record.bot {
         crate::teams::repo::seat_bot(&app.db, &team, &bot.id, false).await?;
     }

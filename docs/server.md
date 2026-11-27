@@ -744,14 +744,14 @@ and for everyone or for it.
 | `POST beta/users/apps/aggregatedEntitlements` | the account's apps (`Installed`; the others `Featured`), every definition, and with team threads in the body each team's apps (`teamsEntitlements`) |
 | `POST beta/teams/apps/aggregatedEntitlements` | each asked team's apps the account is on, `Installed`, with the definitions |
 | `GET beta/chats/<chat>/apps/chatentitlements` | a chat's apps for one of its people (else 403), with their definitions as a list |
-| `POST beta/users/apps/entitlements`, `DELETE …/<app>` | the app for the account itself; its bot's 1:1 chat with the account is made |
+| `POST beta/users/apps/entitlements`, `DELETE …/<app>` | the app for the account itself; its bot's 1:1 chat with the account is made, or the bot put back in it. On removal the bot leaves that chat: the account keeps it, and the bot gets nothing of it and posts nothing there (403) until an add |
 | `POST beta/chats/<chat>/apps/entitlements`, `DELETE …/<app>` | the app on a group chat the account is in (a 1:1 chat or a channel is 400); its bot joins the chat as a person is added (`ThreadActivity/AddMember`), and leaves it on removal |
-| `POST beta/teams/<team>/apps/entitlements`, `DELETE …/<app>` | the app on a team, by its owners, its members while the team's `uploadCustomApp` setting lets them, and administrators; its bot joins the team's standard channels (and each one made later), and leaves every channel of the team on removal |
+| `POST beta/teams/<team>/apps/entitlements`, `DELETE …/<app>` | the app on a team, by its owners, its members while the team's `installApp` setting (`uninstallApp` for a removal) lets them, and administrators; its bot joins the team's standard channels (and each one made later), and leaves every channel of the team on removal |
 | `GET /teamsappdata/apps/<id>/color.png`, `outline.png` (no token) | an enabled app's icons from the file store, as Teams' CDN serves them |
 
 An add takes the app's definition as its body (its `id` names the app) and answers 201 `{"value": {"id", "state":
 "Installed", "installedVersion", "createdTime", "installedBy", "installerIdentity", "botMetadata"}}`; a removal answers 200.
-An app whose bot doesn't serve the place (`groupChat` for a chat, `team` for a team) is 400; an app the account may
+An app whose bot doesn't serve the place (`personal` for the account, `groupChat` for a chat, `team` for a team) is 400; an app the account may
 not use is 404. A definition is rendered from the app's manifest: `id`, `name`, `version`, `developerName`,
 `developerUrl`, `privacyUrl`, `termsOfUseUrl`, `shortDescription`, `longDescription`, `accentColor`, `bots` (`id`,
 `scopes`, `commandLists`, `isNotificationOnly`), `inputExtensions` (the manifest's `composeExtensions`),
@@ -765,7 +765,8 @@ activities in the outbox, so it gets them as it gets any other: on an add `insta
 with the bot (`personal`); for a group chat in the chat (`groupChat`); for a team in its general channel
 (`conversationType` `channel`, the team's thread as `conversation.id`, `channelData.team` `{"id", "name",
 "aadGroupId"}`, `channelData.channel`, `teamsTeamId`, `teamsChannelId`, and `channelData.eventType`
-`teamMemberAdded` or `teamMemberRemoved` on the `conversationUpdate`).
+`teamMemberAdded` or `teamMemberRemoved` on the `conversationUpdate`). A bot is not told yet when people join or leave
+a chat or team it is in, or when a channel is made there (`membersAdded` of people, `channelCreated`).
 
 **Groups and channels.** In a group chat or a channel the bot gets only a message that mentions it. In a channel the
 activity's `conversation.id` is the post's reply chain, `<channel>;messageid=<post>`, with the channel and team in

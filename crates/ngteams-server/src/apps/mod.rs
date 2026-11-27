@@ -11,7 +11,7 @@ mod api;
 mod catalogue;
 pub mod cli;
 mod credentials;
-mod installs;
+pub(crate) mod installs;
 pub mod keys;
 mod manifest;
 pub mod repo;

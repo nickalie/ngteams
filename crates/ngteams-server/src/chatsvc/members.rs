@@ -94,7 +94,7 @@ pub(super) async fn remove(
         let content = event_content("deletemember", &caller.mri(), version, gone, false, person_mri);
         event_body(&base, chat, version, "ThreadActivity/DeleteMember", &content)
     };
-    let outcome = member_repo::remove(&app.db, &found.id, &caller.id, target, &event).await?;
+    let outcome = member_repo::remove(&app.db, &found.id, &caller.id, (target, Joining::People), &event).await?;
     finish(&app, &caller, outcome).await
 }
 
@@ -185,7 +185,7 @@ pub(crate) async fn seat_bot(app: &App, chat: &str, actor: &User, bot: &str, add
             let content = event_content("deletemember", &caller.mri(), version, gone, false, bot_mri);
             event_body(&base, chat, version, "ThreadActivity/DeleteMember", &content)
         };
-        match member_repo::remove(&app.db, chat, &caller.id, bot, &event).await? {
+        match member_repo::remove(&app.db, chat, &caller.id, (bot, Joining::Bot), &event).await? {
             Outcome::Missing => Outcome::Unchanged,
             outcome => outcome,
         }

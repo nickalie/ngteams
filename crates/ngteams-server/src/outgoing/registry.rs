@@ -153,17 +153,9 @@ async fn access(db: &Db, user: &str, team: &str) -> Answer<Access> {
     let manage = match &member {
         None if !admin => return Err(Refusal::MISSING),
         None => true,
-        Some(member) => admin || member.owner || members_may(&team),
+        Some(member) => admin || member.owner || repo::members_may(&team.settings, "uploadCustomApp"),
     };
     Ok(Access { team, manage })
-}
-
-/// Whether the team's settings let its members add custom apps, as Teams' "Allow members to upload custom apps".
-fn members_may(team: &Team) -> bool {
-    serde_json::from_str::<Value>(&team.settings)
-        .ok()
-        .and_then(|settings| settings["userSettings"]["uploadCustomApp"].as_bool())
-        .unwrap_or(true)
 }
 
 impl Access {

@@ -115,10 +115,10 @@ macro_rules! enqueue {
             if let Some(name) = sender {
                 let event = $event;
                 let in_channel = $crate::bots::outbox::channel_of!($conn, $chat, event.message());
-                let place = $crate::bots::activity::Place {
-                    id: $chat,
-                    personal,
-                    channel: in_channel.as_ref(),
+                let place = match (&in_channel, personal) {
+                    (Some(channel), _) => $crate::bots::activity::Place::Channel(channel),
+                    (None, true) => $crate::bots::activity::Place::Personal($chat),
+                    (None, false) => $crate::bots::activity::Place::Group($chat),
                 };
                 let from = $crate::bots::activity::Sender {
                     id: $owner,
@@ -200,13 +200,7 @@ pub(crate) fn concerns(event: &super::activity::Event<'_>, personal: bool, bot: 
         return false;
     };
     let mention = format!("28:{bot}");
-    let mentions = &body["properties"]["mentions"];
-    let listed: Vec<serde_json::Value> = match mentions {
-        serde_json::Value::String(text) => serde_json::from_str(text).unwrap_or_default(),
-        serde_json::Value::Array(items) => items.clone(),
-        _ => Vec::new(),
-    };
-    listed
+    crate::chatsvc::mentions(body)
         .iter()
         .any(|entry| entry["mri"].as_str() == Some(mention.as_str()))
 }

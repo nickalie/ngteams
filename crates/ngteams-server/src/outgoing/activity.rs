@@ -9,12 +9,7 @@ const LOCALE: &str = "en-US";
 
 /// The webhook ids a message's body mentions (`28:<id>`), once each.
 pub(crate) fn mentioned(body: &Value) -> Vec<String> {
-    let listed: Vec<Value> = match &body["properties"]["mentions"] {
-        Value::String(text) => serde_json::from_str(text).unwrap_or_default(),
-        Value::Array(items) => items.clone(),
-        _ => Vec::new(),
-    };
-    let mut ids: Vec<String> = listed
+    let mut ids: Vec<String> = crate::chatsvc::mentions(body)
         .iter()
         .filter_map(|entry| entry["mri"].as_str()?.strip_prefix("28:"))
         .filter(|id| !id.is_empty())

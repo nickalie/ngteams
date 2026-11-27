@@ -218,13 +218,14 @@ pub(super) async fn add(
         .await)
 }
 
-/// Takes `target` out of the group chat for `actor` (themself: they leave). They keep what they could read until
-/// now, the event of their going included, and are told of it once.
+/// Takes `target` (a person, or for [`Joining::Bot`] an app's bot) out of the group chat for `actor` (themself: they
+/// leave). They keep what they could read until now, the event of their going included, and are told of it once. A
+/// bot leaves only with its app's removal, so a person's roster change never names one.
 pub(super) async fn remove(
     db: &Db,
     chat: &str,
     actor: &str,
-    target: &str,
+    (target, leaving): (&str, Joining),
     event: Event<'_>,
 ) -> Result<Outcome, DbError> {
     let at = super::wire::now();
@@ -232,6 +233,19 @@ pub(super) async fn remove(
         .transaction::<_, DbError, _>(async |conn| {
             let version: i64 = advance!(conn, at);
             let found = group!(conn, chat, actor);
+            let kind_fits: bool = match leaving {
+                Joining::People => {
+                    diesel::select(diesel::dsl::exists(
+                        users::table.find(target).filter(crate::db::users::person()),
+                    ))
+                    .get_result(conn)
+                    .await?
+                }
+                Joining::Bot => true,
+            };
+            if !kind_fits {
+                return Ok(Outcome::Missing);
+            }
             let gone = diesel::update(
                 chat_members::table
                     .find((chat, target))

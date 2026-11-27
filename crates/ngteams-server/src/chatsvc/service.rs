@@ -609,6 +609,39 @@ pub(crate) async fn bot_chat(app: &App, person: &str, bot: &str) -> Result<Optio
     }
 }
 
+/// The bot `bot` back in (`seated`) or out of its 1:1 chat `chat`: out of it, the bot gets nothing of the chat and
+/// posts nothing in it, while its person keeps the chat. A person's message doesn't seat it again; an add does.
+pub(crate) async fn seat_personal_bot(db: &Db, chat: &str, bot: &str, seated: bool) -> Result<(), DbError> {
+    let at = wire::now();
+    with_conn!(db, |conn| conn
+        .transaction::<_, DbError, _>(async |conn| {
+            let version: i64 = repo::advance!(conn, at);
+            let seat = chat_members::table.find((chat, bot));
+            let changed = if seated {
+                diesel::update(seat.filter(chat_members::left_at.is_not_null()))
+                    .set((
+                        chat_members::left_at.eq(None::<i64>),
+                        chat_members::joined_at.eq(version),
+                    ))
+                    .execute(conn)
+                    .await?
+            } else {
+                diesel::update(seat.filter(chat_members::left_at.is_null()))
+                    .set(chat_members::left_at.eq(Some(version)))
+                    .execute(conn)
+                    .await?
+            };
+            if changed > 0 {
+                diesel::update(chats::table.find(chat))
+                    .set((chats::version.eq(version), chats::roster_version.eq(version)))
+                    .execute(conn)
+                    .await?;
+            }
+            Ok(())
+        })
+        .await)
+}
+
 /// Where a person's invoke of a bot acts ([`invoke_place`]).
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum InvokePlace {

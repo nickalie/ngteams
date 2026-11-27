@@ -242,7 +242,7 @@ async fn definitions(State(app): State<Arc<App>>, me: Me, body: Bytes) -> Answer
 }
 
 /// An entitlement as the catalogue lists it.
-fn entitlement(id: &str, state: &str, install: Option<&installs::Install>) -> Value {
+pub(super) fn entitlement(id: &str, state: &str, install: Option<&installs::Install>) -> Value {
     let mut value = json!({"id": id, "state": state});
     if let Some(install) = install {
         value["installedVersion"] = install.version.clone().into();

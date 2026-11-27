@@ -500,7 +500,7 @@ fn number(value: &Value) -> i64 {
 }
 
 /// A message's mentions: `properties.mentions`, a list or its JSON text.
-fn mentions(body: &Value) -> Vec<Value> {
+pub(crate) fn mentions(body: &Value) -> Vec<Value> {
     match &body["properties"]["mentions"] {
         Value::Array(list) => list.clone(),
         Value::String(text) => serde_json::from_str(text).unwrap_or_default(),
