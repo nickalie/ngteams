@@ -755,8 +755,10 @@ impl Core for FakeCore {
     fn outgoing_webhooks(&self, team: String) -> Reply<Vec<teams_proto::OutgoingWebhook>> {
         let hooks = locked(&self.outgoing_webhooks).get(&team).cloned().unwrap_or_default();
         let mut bots = locked(&self.bot_apps);
-        for hook in &hooks {
-            bots.insert(hook.id.to_ascii_lowercase(), hook.app());
+        for app in hooks.iter().map(teams_proto::OutgoingWebhook::app) {
+            for bot in app.definition.bots() {
+                bots.insert(bot.as_str().trim_start_matches("28:").to_ascii_lowercase(), app.clone());
+            }
         }
         Reply::ready(Ok(hooks))
     }

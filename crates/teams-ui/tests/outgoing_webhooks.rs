@@ -357,6 +357,19 @@ fn a_webhook_others_manage_has_no_menu_and_the_read_only_mode_offers_nothing() {
     assert!(bounds(cx, "manage-webhook-more-0").is_none());
 
     let rig = Rig::start();
+    rig.core
+        .outgoing_webhooks
+        .lock()
+        .unwrap()
+        .insert(TEAM.to_owned(), vec![hook("Build bot", true, false)]);
+    let (_shell, cx) = window(&rig, true, false);
+    assert!(bounds(cx, "manage-webhook-0").is_some());
+    assert!(
+        bounds(cx, "manage-webhook-more-0").is_none(),
+        "only an owner edits or removes"
+    );
+
+    let rig = Rig::start();
     *rig.core.read_only.lock().unwrap() = true;
     rig.core
         .outgoing_webhooks
@@ -367,6 +380,46 @@ fn a_webhook_others_manage_has_no_menu_and_the_read_only_mode_offers_nothing() {
     assert!(bounds(cx, "manage-webhook-0").is_some());
     assert!(bounds(cx, "manage-webhook-more-0").is_none());
     assert!(bounds(cx, "manage-create-webhook").is_none());
+}
+
+#[test]
+fn save_waits_for_the_picked_picture_and_then_sends_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("synthetic.png");
+    std::fs::write(&file, PNG).unwrap();
+    let rig = Rig::start();
+    rig.core
+        .outgoing_webhooks
+        .lock()
+        .unwrap()
+        .insert(TEAM.to_owned(), vec![hook("Build bot", true, false)]);
+    *rig.core.team_written.lock().unwrap() = Some(TeamWritten::default());
+    let (shell, cx) = window(&rig, true, true);
+    click(cx, "manage-webhook-more-0");
+    click(cx, "manage-webhook-edit");
+    click(cx, "webhook-upload");
+    assert!(cx.did_prompt_for_paths());
+    type_in(cx, "webhook-name", "s");
+    click(cx, "webhook-send");
+    let dialog = dialog(&shell, cx).expect("the dialog");
+    cx.update(|_, cx| dialog.update(cx, WebhookDialog::send));
+    assert!(writes(&rig).is_empty(), "no Save while the picker is open");
+
+    cx.simulate_path_prompt_response(|_| Some(vec![file.clone()]));
+    cx.run_until_parked();
+    click(cx, "webhook-send");
+    assert_eq!(
+        writes(&rig),
+        [TeamWrite::ChangeOutgoingWebhook {
+            team: TEAM.to_owned(),
+            webhook: HOOK.to_owned(),
+            form: WebhookForm {
+                name: Some("Build bots".to_owned()),
+                picture: WebhookPicture::Set(PNG.to_vec()),
+                ..WebhookForm::default()
+            },
+        }]
+    );
 }
 
 fn message(id: i64, sender: &str, name: &str) -> teams_store::Message {

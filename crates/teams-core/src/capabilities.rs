@@ -1,8 +1,9 @@
 //! What an account's cloud serves of the services the views offer beside chats, teams, calls and people.
 //!
 //! Microsoft's cloud serves them all, but the client sends outgoing webhooks' requests only to an own server: their
-//! routes are the own server's design, and no capture showed Teams' form (`docs/protocol/bots.md`). An own server serves each only when its authz names the service's GTM
-//! (`docs/server.md`, "Optional services"): the views hide what it doesn't serve rather than offer something that fails.
+//! routes are the own server's design, and no capture showed Teams' form (`docs/protocol/bots.md`). An own server
+//! serves each only when its authz names the service's GTM (`docs/server.md`, "Optional services"): the views hide
+//! what it doesn't serve rather than offer something that fails.
 
 use teams_proto::Cloud;
 
@@ -44,7 +45,8 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    /// Every service: Microsoft's cloud.
+    /// Every service, as an own server may announce them all; Microsoft's cloud is this without outgoing webhooks
+    /// ([`Self::of`]).
     pub const ALL: Self = Self {
         workflows: true,
         recap: true,
