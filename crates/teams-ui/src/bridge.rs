@@ -555,6 +555,14 @@ pub trait Core: Send + Sync + 'static {
     fn mentionable_bots(&self, _place: String, _team: bool) -> Reply<Vec<StoreApp>> {
         Reply::ready(Ok(Vec::new()))
     }
+    /// A team's outgoing webhooks, each known as a bot from then on. A fake core has none.
+    fn outgoing_webhooks(&self, _team: String) -> Reply<Vec<teams_proto::OutgoingWebhook>> {
+        Reply::ready(Ok(Vec::new()))
+    }
+    /// An outgoing webhook's picture. A fake core has none.
+    fn outgoing_webhook_picture(&self, _picture: teams_proto::OutgoingWebhookPicture) -> Reply<Option<Vec<u8>>> {
+        Reply::ready(Ok(None))
+    }
     /// How a team's channel did. A fake core doesn't know.
     fn channel_analytics(
         &self,
@@ -875,6 +883,14 @@ impl Core for EngineRequests {
 
     fn mentionable_bots(&self, place: String, team: bool) -> Reply<Vec<StoreApp>> {
         EngineRequests::mentionable_bots(self, place, team)
+    }
+
+    fn outgoing_webhooks(&self, team: String) -> Reply<Vec<teams_proto::OutgoingWebhook>> {
+        EngineRequests::outgoing_webhooks(self, team)
+    }
+
+    fn outgoing_webhook_picture(&self, picture: teams_proto::OutgoingWebhookPicture) -> Reply<Option<Vec<u8>>> {
+        EngineRequests::outgoing_webhook_picture(self, picture)
     }
 
     fn channel_analytics(

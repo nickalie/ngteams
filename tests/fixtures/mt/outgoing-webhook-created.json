@@ -1,0 +1,15 @@
+{
+  "_synthetic": "made up: the create answer of an outgoing webhook in the own design of docs/protocol/bots.md; the token is not a real key",
+  "value": {
+    "id": "made-up-hook-3",
+    "mri": "28:made-up-hook-3",
+    "teamId": "19:synthetic-team@thread.tacv2",
+    "name": "Release notes",
+    "description": "Answers with the notes of a release.",
+    "canManage": true,
+    "createdBy": "8:orgid:made-up-a",
+    "createdTime": "2026-11-27T11:00:00.000Z",
+    "callbackUrl": "https://hooks.example.test/notes",
+    "securityToken": "U3ludGhldGljVG9rZW5Ob3RBUmVhbEtleQ=="
+  }
+}

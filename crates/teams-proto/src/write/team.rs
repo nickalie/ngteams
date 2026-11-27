@@ -149,6 +149,16 @@ pub enum TeamWrite {
         group: String,
         picture: RawBody,
     },
+    /// An outgoing webhook made on a team; the answer alone shows its security token.
+    CreateOutgoingWebhook { team: String, form: crate::WebhookForm },
+    /// A team's outgoing webhook changed: only the fields the form gives.
+    ChangeOutgoingWebhook {
+        team: String,
+        webhook: String,
+        form: crate::WebhookForm,
+    },
+    /// A team's outgoing webhook removed.
+    RemoveOutgoingWebhook { team: String, webhook: String },
     /// An app taken off a team, by its app id.
     RemoveApp { team: String, app: String },
     /// An app added to a team: its definition as the app catalogue gave it.
@@ -193,6 +203,11 @@ impl AppDefinition {
             }
         }
         Some(Self(definition))
+    }
+
+    /// A definition the crate made itself, taken as it is.
+    pub(crate) fn made(definition: serde_json::Map<String, Value>) -> Self {
+        Self(definition)
     }
 
     /// The value its definition holds under `key`.
@@ -371,6 +386,21 @@ impl TeamWrite {
                 headers: Vec::new(),
                 body: None,
             },
+            Self::CreateOutgoingWebhook { team, form } => middle_tier(
+                Method::Post,
+                ["beta", "teams", team.as_str(), "outgoingWebhooks"],
+                Some(form.body()),
+            ),
+            Self::ChangeOutgoingWebhook { team, webhook, form } => middle_tier(
+                Method::Put,
+                ["beta", "teams", team.as_str(), "outgoingWebhooks", webhook.as_str()],
+                Some(form.body()),
+            ),
+            Self::RemoveOutgoingWebhook { team, webhook } => middle_tier(
+                Method::Delete,
+                ["beta", "teams", team.as_str(), "outgoingWebhooks", webhook.as_str()],
+                None,
+            ),
             Self::RemoveApp { team, app } => middle_tier(
                 Method::Delete,
                 ["beta", "teams", team.as_str(), "apps", "entitlements", app.as_str()],

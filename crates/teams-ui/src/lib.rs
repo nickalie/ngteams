@@ -218,6 +218,7 @@ pub mod video;
 pub mod video_player;
 mod video_surface;
 pub mod view;
+pub mod webhook_dialog;
 pub mod window;
 pub mod workflow_dialog;
 pub mod workflow_run;

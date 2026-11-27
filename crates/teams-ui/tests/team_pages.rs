@@ -172,7 +172,7 @@ fn create_team_makes_a_private_team_by_default_and_goes_on_to_add_members() {
     let rig = Rig::start();
     *rig.core.team_written.lock().unwrap() = Some(TeamWritten {
         created: Some((OWNED.to_owned(), Some(GROUP.to_owned()))),
-        not_added: Vec::new(),
+        ..TeamWritten::default()
     });
     let (shell, cx) = shell_window(&rig, vec![team(MEMBER_OF, "Beta", false)]);
     open_page(&shell, cx);
@@ -670,7 +670,7 @@ fn create_failure_can_retry_with_the_first_channel_named_general() {
     click(cx, "create-team-retry");
     *rig.core.team_written.lock().unwrap() = Some(TeamWritten {
         created: Some(("19:new@thread.tacv2".to_owned(), Some(GROUP.to_owned()))),
-        not_added: Vec::new(),
+        ..TeamWritten::default()
     });
     click(cx, "create-team-create");
     let writes = rig.core.team_writes.lock().unwrap();
@@ -684,8 +684,8 @@ fn add_members_retries_only_people_the_service_did_not_add() {
     use teams_ui::team_menu::TeamChoice;
     let rig = Rig::start();
     *rig.core.team_written.lock().unwrap() = Some(TeamWritten {
-        created: None,
         not_added: vec!["8:orgid:ben".to_owned()],
+        ..TeamWritten::default()
     });
     let (shell, cx) = shell_window(&rig, vec![team(OWNED, "Alpha", true)]);
     cx.update(|window, cx| {

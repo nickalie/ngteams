@@ -1593,3 +1593,149 @@ async fn a_channel_whose_sections_can_t_be_read_isn_t_listed_hidden() {
         "no section write without a fresh hierarchy"
     );
 }
+
+/// A made-up PNG's first bytes: what the mock takes as a picture.
+const WEBHOOK_PNG: &[u8] = b"\x89PNG\r\n\x1a\nmade-up";
+
+fn webhook_form(name: &str) -> teams_proto::WebhookForm {
+    teams_proto::WebhookForm {
+        name: Some(name.to_owned()),
+        callback_url: Some("https://hooks.example.test/build".to_owned()),
+        description: Some("Tells the state of a build.".to_owned()),
+        picture: teams_proto::WebhookPicture::Set(WEBHOOK_PNG.to_vec()),
+    }
+}
+
+/// The webhook writes the mock took, by method and path below the middle tier.
+async fn webhook_writes(rig: &Rig) -> Vec<(String, String)> {
+    rig.sent(|path| path.contains("/outgoingWebhooks"))
+        .await
+        .into_iter()
+        .filter(|(method, _, _)| method != "GET")
+        .map(|(method, path, _)| (method, path.trim_start_matches(MT_PATH).to_owned()))
+        .collect()
+}
+
+/// A webhook write through the engine.
+async fn hook_write(rig: &Rig, write: TeamWrite) -> Result<teams_core::TeamWritten, EngineError> {
+    rig.handle.requests().team_write(write, None).await
+}
+
+/// "Build bot" made on the team: its token shown, the list giving it with its address, known as a bot from then on,
+/// its picture read.
+async fn made_with_its_token(rig: &Rig) -> teams_proto::OutgoingWebhook {
+    let requests = rig.handle.requests();
+    let written = hook_write(
+        rig,
+        TeamWrite::CreateOutgoingWebhook {
+            team: TEAM.to_owned(),
+            form: webhook_form("Build bot"),
+        },
+    )
+    .await
+    .unwrap();
+    let created = written.created_webhook.expect("the create answer's webhook and token");
+    assert_eq!(created.webhook.name, "Build bot");
+    assert!(!created.token.as_str().is_empty());
+    let listed = requests.outgoing_webhooks(TEAM).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    let hook = &listed[0];
+    assert_eq!((hook.name.as_str(), hook.can_manage), ("Build bot", true));
+    assert_eq!(hook.callback_url.as_deref(), Some("https://hooks.example.test/build"));
+    assert_eq!(hook.mri, format!("28:{}", created.webhook.id));
+
+    // the list makes it known as a bot, so its replies and the mention picker show its name
+    let known = requests.known_bot_app(hook.mri.clone()).await.unwrap();
+    assert_eq!(known.map(|app| app.app.name), Some("Build bot".to_owned()));
+    let picture = hook.app().definition.outgoing_webhook().expect("a webhook's app");
+    assert_eq!(
+        requests.outgoing_webhook_picture(picture).await.unwrap().as_deref(),
+        Some(WEBHOOK_PNG)
+    );
+    hook.clone()
+}
+
+#[tokio::test]
+async fn an_outgoing_webhook_is_made_with_its_token_shown_once_then_changed_and_removed() {
+    let rig = setup().await;
+    let requests = rig.handle.requests();
+    assert!(requests.outgoing_webhooks(TEAM).await.unwrap().is_empty());
+
+    let hook = &made_with_its_token(&rig).await;
+
+    let form = teams_proto::WebhookForm {
+        name: Some("Builds".to_owned()),
+        picture: teams_proto::WebhookPicture::Remove,
+        ..teams_proto::WebhookForm::default()
+    };
+    let webhook = hook.id.clone();
+    hook_write(
+        &rig,
+        TeamWrite::ChangeOutgoingWebhook {
+            team: TEAM.to_owned(),
+            webhook,
+            form,
+        },
+    )
+    .await
+    .unwrap();
+    let changed = requests.outgoing_webhooks(TEAM).await.unwrap();
+    assert_eq!(changed[0].name, "Builds");
+    assert_eq!(changed[0].picture_url, None);
+    assert_eq!(
+        changed[0].description, "Tells the state of a build.",
+        "a field not sent stays"
+    );
+
+    // a name the team has, in any case, is refused with Teams' code
+    let form = webhook_form("BUILDS");
+    let twice = hook_write(
+        &rig,
+        TeamWrite::CreateOutgoingWebhook {
+            team: TEAM.to_owned(),
+            form,
+        },
+    )
+    .await;
+    assert!(
+        matches!(&twice, Err(EngineError::TeamNotChanged { code: Some(code) }) if code == "OutgoingWebhookNameAlreadyExists"),
+        "{twice:?}"
+    );
+
+    let webhook = hook.id.clone();
+    hook_write(
+        &rig,
+        TeamWrite::RemoveOutgoingWebhook {
+            team: TEAM.to_owned(),
+            webhook,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(requests.outgoing_webhooks(TEAM).await.unwrap().is_empty());
+
+    let hooks = format!("/beta/teams/{TEAM}/outgoingWebhooks");
+    let one = format!("{hooks}/{}", hook.id);
+    assert_eq!(
+        webhook_writes(&rig).await,
+        [
+            ("POST".to_owned(), hooks.clone()),
+            ("PUT".to_owned(), one.clone()),
+            ("POST".to_owned(), hooks),
+            ("DELETE".to_owned(), one),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_webhook_list_the_service_refuses_is_nothing_and_a_member_sees_no_address() {
+    let rig = setup().await;
+    let requests = rig.handle.requests();
+    let _ = rig.mock.add_outgoing_webhook(TEAM, "Lunch", false);
+    let listed = requests.outgoing_webhooks(TEAM).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].can_manage);
+    assert_eq!(listed[0].callback_url, None);
+    rig.mock.refuse_next("GET", "outgoingWebhooks", 500).await;
+    assert!(requests.outgoing_webhooks(TEAM).await.unwrap().is_empty());
+}

@@ -48,6 +48,7 @@ use crate::theme::{self, Palette};
 use crate::trace::{TraceLine, ViewTrace};
 
 mod apps;
+mod webhooks;
 
 pub(crate) use apps::app_tile;
 pub use apps::{GIPHY_RATINGS, giphy_rating, with_giphy_rating};
@@ -121,6 +122,8 @@ pub enum ManageTeamEvent {
     ChangePicture(Team),
     /// The Apps tab's "Get more apps".
     AddApp(Team),
+    /// The Apps tab's "Create an outgoing webhook", or a webhook's Edit.
+    Webhook(Team, Option<Box<teams_proto::OutgoingWebhook>>),
 }
 
 impl EventEmitter<ManageTeamEvent> for ManageTeam {}
@@ -349,6 +352,10 @@ pub struct ManageTeam {
     app_query: String,
     app_menu: Option<String>,
     removing_app: Option<InstalledApp>,
+    // The team's outgoing webhooks, each with its face
+    webhooks: Option<Vec<webhooks::ShownWebhook>>,
+    webhook_menu: Option<String>,
+    removing_webhook: Option<teams_proto::OutgoingWebhook>,
     // Analytics of one channel
     analytics_channel: Option<(String, String)>,
     channel_menu_open: bool,
@@ -411,6 +418,9 @@ impl ManageTeam {
             app_query: String::new(),
             app_menu: None,
             removing_app: None,
+            webhooks: None,
+            webhook_menu: None,
+            removing_webhook: None,
             analytics_channel: None,
             channel_menu_open: false,
             giphy_open: false,
@@ -449,7 +459,7 @@ impl ManageTeam {
 
     /// Shows `tab`, reading what it shows.
     pub fn show_tab(&mut self, tab: ManageTab, cx: &mut Context<Self>) {
-        if tab == ManageTab::Apps && !self.core.capabilities().apps {
+        if tab == ManageTab::Apps && !self.apps_shown_at_all(cx) {
             return;
         }
         self.tab = tab;
@@ -504,7 +514,10 @@ impl ManageTeam {
             }
             ManageTab::Settings => self.read_settings(cx),
             ManageTab::Analytics => self.read_analytics(cx),
-            ManageTab::Apps => self.read_apps(cx),
+            ManageTab::Apps => {
+                self.read_apps(cx);
+                self.read_webhooks(cx);
+            }
             ManageTab::Tags => self.read_tags(cx),
         }
     }
@@ -755,7 +768,7 @@ impl ManageTeam {
     fn header(&self, team: &Team, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
         let avatar = self.teams.read(cx).avatar(team, 32.0, false, palette);
         let mut shown = tabs_of(team);
-        if !self.core.capabilities().apps {
+        if !self.apps_shown_at_all(cx) {
             shown.retain(|tab| *tab != ManageTab::Apps);
         }
         let tabs: Vec<keyboard::Stop> = shown

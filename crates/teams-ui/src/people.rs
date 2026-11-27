@@ -125,6 +125,13 @@ pub fn image_of(picture: &StoredPicture) -> Option<Picture> {
     Some(Picture(Arc::new(Image::from_bytes(format, picture.bytes.clone()))))
 }
 
+/// A picture given as bytes alone, told by its first bytes: PNG or JPEG.
+#[must_use]
+pub fn sniffed_image(bytes: &[u8]) -> Option<Picture> {
+    let format = crate::team_app_dialogs::picture_format(bytes)?;
+    Some(Picture(Arc::new(Image::from_bytes(format, bytes.to_vec()))))
+}
+
 /// The picture of an app's tile as the engine read it: PNG, JPEG and WebP.
 #[must_use]
 pub fn app_image(picture: &teams_proto::PastedPicture) -> Option<Picture> {

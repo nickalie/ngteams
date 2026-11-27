@@ -128,6 +128,8 @@ pub(crate) struct State {
     pub(crate) bots: crate::bots::Bots,
     /// The apps added for the account, to chats and to teams (`apps.rs`).
     pub(crate) apps: crate::apps::Installs,
+    /// A team's outgoing webhooks (`outgoing_webhooks.rs`).
+    pub(crate) outgoing_webhooks: crate::outgoing_webhooks::Hooks,
     /// Each account's own notes ([`NOTES`]), by owner MRI: none until the first note ([`State::with_notes`]).
     pub(crate) notes: BTreeMap<String, Conversation>,
     /// The accounts whose Favorites list their notes first in CSA's answer, as Teams lists them.
@@ -273,6 +275,7 @@ impl State {
             holds: Vec::new(),
             bots: crate::bots::Bots::default(),
             apps: crate::apps::Installs::default(),
+            outgoing_webhooks: crate::outgoing_webhooks::Hooks::default(),
             notes: BTreeMap::new(),
             notes_in_favorites: Vec::new(),
             clock: CLOCK_START,

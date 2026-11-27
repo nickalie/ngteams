@@ -60,8 +60,12 @@ pub fn with_giphy_rating(mut settings: Value, rating: u64) -> Value {
 }
 
 impl ManageTeam {
-    /// Reads the team's apps.
+    /// Reads the team's apps; none while the account's cloud serves no apps.
     pub(super) fn read_apps(&mut self, cx: &mut Context<Self>) {
+        if !self.core.capabilities().apps {
+            self.apps = Some(Vec::new());
+            return;
+        }
         let reply = self.core.team_apps(self.team.clone());
         self.reading
             .push(cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -309,19 +313,21 @@ impl ManageTeam {
         let find = self.app_find_box(window, cx);
         let can_write = team.owner && !team.archived && !self.core.read_only();
         let shown = self.apps_shown();
-        let rows: Vec<AnyElement> = shown
+        let mut rows: Vec<AnyElement> = shown
             .iter()
             .enumerate()
             .map(|(at, app)| self.app_row(at, app, can_write, palette, cx))
             .collect();
+        rows.extend(self.webhook_rows(team, palette, cx));
         let added = team.clone();
+        let store = self.core.capabilities().apps;
         let toolbar = div()
             .px_6()
             .py_3()
             .flex()
             .items_center()
             .gap_3()
-            .when(can_write, |bar| {
+            .when(can_write && store, |bar| {
                 bar.child(selected_by(
                     "manage-get-apps",
                     Button::new("manage-get-apps")
@@ -331,6 +337,7 @@ impl ManageTeam {
                         .on_click(cx.listener(move |_, _, _, cx| cx.emit(ManageTeamEvent::AddApp(added.clone())))),
                 ))
             })
+            .children(self.create_webhook_button(team, cx))
             .child(div().flex_1())
             .child(
                 div()
@@ -341,10 +348,14 @@ impl ManageTeam {
         let question = self
             .removing_app
             .clone()
-            .map(|app| Self::remove_question(&app, palette, cx));
+            .map(|app| Self::remove_question(&app, palette, cx))
+            .or_else(|| self.webhook_question(palette, cx));
+        let none_at_all = self.webhooks.as_ref().is_none_or(Vec::is_empty);
         let list: AnyElement = match &self.apps {
             None => centered("Loading…", palette),
-            Some(apps) if apps.is_empty() => centered("No apps have been added to this team yet.", palette),
+            Some(apps) if apps.is_empty() && none_at_all => {
+                centered("No apps have been added to this team yet.", palette)
+            }
             Some(_) if rows.is_empty() => centered("No apps match your search.", palette),
             Some(_) => div().flex().flex_col().px_2().children(rows).into_any_element(),
         };

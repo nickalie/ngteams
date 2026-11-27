@@ -1,0 +1,29 @@
+{
+  "_synthetic": "made up: a team's outgoing webhooks in the own design of docs/protocol/bots.md (no capture: lab accounts deleted, NEED_USER N17)",
+  "value": [
+    {
+      "id": "made-up-hook-1",
+      "mri": "28:made-up-hook-1",
+      "teamId": "19:synthetic-team@thread.tacv2",
+      "name": "Build bot",
+      "description": "Tells the team the state of a build.",
+      "canManage": true,
+      "createdBy": "8:orgid:made-up-a",
+      "createdTime": "2026-11-27T10:00:00.000Z",
+      "callbackUrl": "https://hooks.example.test/build",
+      "pictureUrl": "https://own.example.test/api/mt/part/own/beta/teams/19:synthetic-team@thread.tacv2/outgoingWebhooks/made-up-hook-1/picture?v=made-up-picture-1"
+    },
+    {
+      "id": "made-up-hook-2",
+      "mri": "28:made-up-hook-2",
+      "teamId": "19:synthetic-team@thread.tacv2",
+      "name": "Lunch",
+      "description": "",
+      "canManage": false,
+      "createdBy": "8:orgid:made-up-b",
+      "createdTime": "2026-11-26T09:30:00.000Z"
+    },
+    {"id": "no name, left out"},
+    {"name": "no id, left out"}
+  ]
+}

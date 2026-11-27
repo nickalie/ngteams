@@ -107,7 +107,7 @@ use gpui::{
 use gpui_component::Disableable as _;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{Selectable as _, Sizable as _, Size};
-use teams_core::{Action, Availability, Transient};
+use teams_core::{Action, Availability, Capabilities, Transient};
 use teams_proto::chat::{
     ComposeError, Marks, MessageText, MessageType, Node, Quote, RichText, parse_html, with_everyone_shown,
 };
@@ -819,8 +819,9 @@ async fn read_candidates(core: Arc<dyn Core>, conversation: String) -> Vec<Candi
 }
 
 /// The bots people can mention in `conversation` (a group chat, or a channel or a post's thread in one), each with
-/// its app, by name: the bots of the apps added to the chat, or to the channel's team.
-async fn read_bots(core: Arc<dyn Core>, conversation: String) -> Vec<Candidate> {
+/// its app, by name: the bots of the apps added to the chat, or to the channel's team, while `served` the apps; in a
+/// channel also the team's outgoing webhooks, while `served` them.
+async fn read_bots(core: Arc<dyn Core>, conversation: String, served: Capabilities) -> Vec<Candidate> {
     let place = if is_group_chat_id(&conversation) {
         Some((conversation, false))
     } else {
@@ -831,7 +832,14 @@ async fn read_bots(core: Arc<dyn Core>, conversation: String) -> Vec<Candidate> 
     let Some((place, team)) = place else {
         return Vec::new();
     };
-    let apps = core.mentionable_bots(place, team).await.unwrap_or_default();
+    let mut apps = Vec::new();
+    if team && served.outgoing_webhooks {
+        let hooks = core.outgoing_webhooks(place.clone()).await.unwrap_or_default();
+        apps.extend(hooks.iter().map(teams_proto::OutgoingWebhook::app));
+    }
+    if served.apps {
+        apps.extend(core.mentionable_bots(place, team).await.unwrap_or_default());
+    }
     let mut found = Vec::new();
     for app in apps {
         let Some(bot) = app.definition.mentionable_bot(team) else {
@@ -846,7 +854,7 @@ async fn read_bots(core: Arc<dyn Core>, conversation: String) -> Vec<Candidate> 
 }
 
 /// The team whose channel `conversation` is (or a post's thread in), by the team's thread id.
-async fn channel_team(core: &dyn Core, conversation: &str) -> Option<String> {
+pub(crate) async fn channel_team(core: &dyn Core, conversation: &str) -> Option<String> {
     let channel = conversation.split(';').next().unwrap_or(conversation);
     if !teams_proto::is_team_thread_id(channel) {
         return None;
@@ -1859,14 +1867,15 @@ impl Compose {
     }
 
     /// Reads the chat's members for the picker, once, and the bots people can mention there while the bots are shown
-    /// (`NGTEAMS_BOTS=1`) and the account's cloud serves apps.
+    /// (`NGTEAMS_BOTS=1`) and the account's cloud serves apps or outgoing webhooks.
     fn read_candidates(&mut self, cx: &mut Context<Self>) {
         if self.candidates.is_some() || self.reading.is_some() {
             return;
         }
         let read = read_candidates(Arc::clone(&self.core), self.conversation.clone());
-        let bots = (crate::bots_flag::bots_on(cx) && self.core.capabilities().apps)
-            .then(|| read_bots(Arc::clone(&self.core), self.conversation.clone()));
+        let served = self.core.capabilities();
+        let bots = (crate::bots_flag::bots_on(cx) && (served.apps || served.outgoing_webhooks))
+            .then(|| read_bots(Arc::clone(&self.core), self.conversation.clone(), served));
         self.reading = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
             let mut found = read.await;
             if let Some(bots) = bots {

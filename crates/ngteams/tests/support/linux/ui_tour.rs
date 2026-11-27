@@ -205,7 +205,7 @@ fn channel_meeting(mailbox: &str) -> Option<teams_core::FullEvent> {
 }
 
 /// The tour.
-const STEPS: [Step; 5 + 378 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
+const STEPS: [Step; 5 + 378 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5 + 11] = [
     ("no-chat", |_, _, _| {}),
     ("chat", |shell, window, cx| {
         // the mock answers no one's presence: b's as UPS would tell it, for the avatar's badge
@@ -3097,6 +3097,103 @@ const STEPS: [Step; 5 + 378 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5] = [
             shell.open_chat_apps(AB_CHAT.to_owned(), window, cx);
         });
     }),
+    // Manage team > Apps' "Create an outgoing webhook" (`NGTEAMS_BOTS=1`), filled in, in Teams Light and Dark
+    ("webhook-create", |shell, window, cx| {
+        cx.set_global(teams_ui::bots_flag::BotsFlag(true));
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        shell.update(cx, Shell::close_team_dialog);
+        shell.update(cx, |shell, cx| {
+            shell.open_manage_team(TEAM.to_owned(), teams_ui::manage_team::ManageTab::Apps, window, cx);
+            let team = shell.teams().read(cx).teams().and_then(|teams| teams.first().cloned());
+            if let Some(team) = team {
+                shell.open_webhook(team, None, window, cx);
+            }
+        });
+        with_team_dialog::<teams_ui::webhook_dialog::WebhookDialog>(shell, cx, |dialog, cx| {
+            dialog.fill(
+                (
+                    "Release notes",
+                    "https://hooks.example.test/notes",
+                    "Answers with the notes of a release.",
+                ),
+                window,
+                cx,
+            );
+        });
+    }),
+    ("webhook-create-dark", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    // Create sent to the mock: the token shown once, with Copy
+    ("webhook-token-dark", |shell, _, cx| {
+        with_team_dialog::<teams_ui::webhook_dialog::WebhookDialog>(
+            shell,
+            cx,
+            teams_ui::webhook_dialog::WebhookDialog::send,
+        );
+    }),
+    ("webhook-token", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+    }),
+    // Close: the tab lists the team's webhooks (`seed_webhooks`'s with its picture, and the new one) after its apps
+    ("webhook-list", |shell, _, cx| {
+        with_team_dialog::<teams_ui::webhook_dialog::WebhookDialog>(
+            shell,
+            cx,
+            teams_ui::webhook_dialog::WebhookDialog::close,
+        );
+    }),
+    ("webhook-list-dark", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    // a webhook's Edit: its fields filled in, its picture with Remove
+    ("webhook-edit", |shell, window, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        let hook = shell.read(cx).manage_team().and_then(|page| {
+            page.read(cx)
+                .webhooks()
+                .into_iter()
+                .find(|hook| hook.picture_url.is_some())
+        });
+        shell.update(cx, |shell, cx| {
+            let team = shell.teams().read(cx).teams().and_then(|teams| teams.first().cloned());
+            if let (Some(team), Some(hook)) = (team, hook) {
+                shell.open_webhook(team, Some(hook), window, cx);
+            }
+        });
+    }),
+    // the team's channel: the webhook's face among those who replied to the post (`seed_webhooks`)
+    ("webhook-channel", |shell, _, cx| {
+        shell.update(cx, Shell::close_team_dialog);
+        let list = shell.read(cx).list().clone();
+        list.update(cx, |list, cx| list.open(TEAM_CHANNEL.to_owned(), cx));
+    }),
+    // the post's thread: the webhook's replies with its name, its picture and the App mark, and its card
+    ("webhook-reply", |shell, window, cx| {
+        if let Some(channel) = shell.read(cx).channel().cloned() {
+            channel.update(cx, |channel, cx| {
+                channel.open_thread(CHANNEL_POST.to_owned(), window, cx);
+            });
+        }
+    }),
+    ("webhook-reply-dark", |shell, _, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
+    }),
+    // `@Bu` typed in the thread's box: the picker offers the team's webhook as a bot
+    ("webhook-mention", |shell, window, cx| {
+        fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
+        let thread = shell
+            .read(cx)
+            .channel()
+            .and_then(|channel| channel.read(cx).thread().map(|(_, view)| view.clone()));
+        if let Some(thread) = thread {
+            let compose = thread.read(cx).compose().clone();
+            compose.update(cx, |compose, cx| {
+                compose.focus(window, cx);
+                compose.editor().update(cx, |editor, cx| editor.insert("@Bu", cx));
+            });
+        }
+    }),
     // a group call rings while its chat is open, shot as the ring's first frame is drawn and the app is busy (the
     // start of a ring holds the main thread): the banner over the panes is whole at once, never an empty band (QA
     // 297's Q5)
@@ -5706,6 +5803,7 @@ impl MockLab {
         seed_activity(&mock)?;
         seed_forwards(&mock, &runtime)?;
         seed_cards(&mock)?;
+        seed_webhooks(&mock)?;
         seed_stickers(&mock, &runtime)?;
         seed_blocked(&mock)?;
         seed_profile_cards(&mock, &runtime);
@@ -6531,6 +6629,51 @@ fn write_made_up_sticker(out: &mut Vec<u8>) -> SandboxResult {
         let delay = image::Delay::from_numer_denom_ms(250, 1);
         encoder.encode_frame(image::Frame::from_parts(frame, 0, 0, delay))?;
     }
+    Ok(())
+}
+
+/// A webhook of the team (made up, with a picture) and its replies in `CHANNEL_POST`'s thread: a text and a card, as
+/// the own server posts a webhook's answer.
+fn seed_webhooks(mock: &ChatServiceMock) -> SandboxResult {
+    let id = mock.add_outgoing_webhook(TEAM, "Build bot", true);
+    // a square made-up picture: a white tick on green
+    let face = image::RgbaImage::from_fn(96, 96, |x, y| {
+        let (x, y) = (i64::from(x), i64::from(y));
+        let tick =
+            (y - (x + 20)).abs() < 6 && (28..50).contains(&x) || (y - (118 - x)).abs() < 6 && (44..76).contains(&x);
+        if tick {
+            image::Rgba([255, 255, 255, 255])
+        } else {
+            image::Rgba([46, 125, 50, 255])
+        }
+    });
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(face).write_to(&mut io::Cursor::new(&mut png), image::ImageFormat::Png)?;
+    mock.set_outgoing_webhook_picture(&id, png);
+    let thread = format!("{TEAM_CHANNEL};messageid={CHANNEL_POST}");
+    let from = format!("28:{id}");
+    mock.add_message(
+        &thread,
+        (&from, "Build bot"),
+        "RichText/Html",
+        "<p>Build 42 passed in 3 minutes.</p>",
+    )
+    .ok_or("the webhook's reply refused")?;
+    let card = serde_json::json!({
+        "type": "AdaptiveCard", "version": "1.4",
+        "body": [
+            {"type": "TextBlock", "text": "Build 42", "weight": "bolder", "wrap": true},
+            {"type": "FactSet", "facts": [{"title": "Branch", "value": "main"}, {"title": "Tests", "value": "1,204 passed"}]}
+        ],
+        "actions": [{"type": "Action.OpenUrl", "title": "Open the build", "url": "https://made-up.example.test/build/42"}]
+    });
+    mock.add_message(
+        &thread,
+        (&from, "Build bot"),
+        "RichText/Media_Card",
+        &card_content(&card)?,
+    )
+    .ok_or("the webhook's card refused")?;
     Ok(())
 }
 

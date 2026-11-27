@@ -210,6 +210,12 @@ pub struct FakeCore {
     pub team_writes: Mutex<Vec<(teams_proto::TeamWrite, Option<teams_core::TeamChange>)>>,
     /// What a team's write answers; refused when `None`.
     pub team_written: Mutex<Option<teams_core::TeamWritten>>,
+    /// The code a refused team write names.
+    pub team_refusal: Mutex<Option<String>>,
+    /// Each team's outgoing webhooks, by the team's id; a read makes each known as a bot, as the engine does.
+    pub outgoing_webhooks: Mutex<HashMap<String, Vec<teams_proto::OutgoingWebhook>>>,
+    /// The webhooks' pictures, by the webhook's id.
+    pub webhook_pictures: Mutex<HashMap<String, Vec<u8>>>,
     /// The account's own views of a team asked for, in order.
     pub team_views: Mutex<Vec<teams_proto::OwnTeamView>>,
     /// A team's people, as its roster answers.
@@ -730,8 +736,23 @@ impl Core for FakeCore {
         Reply::ready(
             locked(&self.team_written)
                 .clone()
-                .ok_or(EngineError::TeamNotChanged { code: None }),
+                .ok_or_else(|| EngineError::TeamNotChanged {
+                    code: locked(&self.team_refusal).clone(),
+                }),
         )
+    }
+
+    fn outgoing_webhooks(&self, team: String) -> Reply<Vec<teams_proto::OutgoingWebhook>> {
+        let hooks = locked(&self.outgoing_webhooks).get(&team).cloned().unwrap_or_default();
+        let mut bots = locked(&self.bot_apps);
+        for hook in &hooks {
+            bots.insert(hook.id.to_ascii_lowercase(), hook.app());
+        }
+        Reply::ready(Ok(hooks))
+    }
+
+    fn outgoing_webhook_picture(&self, picture: teams_proto::OutgoingWebhookPicture) -> Reply<Option<Vec<u8>>> {
+        Reply::ready(Ok(locked(&self.webhook_pictures).get(&picture.webhook).cloned()))
     }
 
     fn all_teams_analytics(&self, period: teams_proto::AnalyticsPeriod) -> Reply<Vec<teams_proto::TeamAnalytics>> {

@@ -153,7 +153,7 @@ pub(crate) fn title(words: impl Into<SharedString>) -> gpui::Div {
     div().text_xl().font_weight(gpui::FontWeight::BOLD).child(words.into())
 }
 
-fn label(words: &'static str, required: bool, palette: Palette) -> gpui::Div {
+pub(crate) fn label(words: &'static str, required: bool, palette: Palette) -> gpui::Div {
     div()
         .flex()
         .gap_1()
@@ -734,7 +734,7 @@ fn kind_key(public: bool) -> &'static str {
 }
 
 /// `element` with `selector` as its test selector, as wide as it can be.
-fn selected_by_full(selector: &'static str, element: impl IntoElement) -> gpui::Div {
+pub(crate) fn selected_by_full(selector: &'static str, element: impl IntoElement) -> gpui::Div {
     div()
         .debug_selector(move || selector.to_owned())
         .w_full()

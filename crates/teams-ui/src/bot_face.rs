@@ -34,12 +34,18 @@ pub fn is_bot(mri: &str) -> bool {
 }
 
 /// The app of `bot` (`28:<id>`) with its icon, as the engine finds it; `None` when no app names it or the account's
-/// cloud serves no apps.
+/// cloud serves neither apps nor outgoing webhooks. Without apps, only a webhook the engine read names it.
 pub async fn bot_app(core: &dyn Core, bot: &str) -> Option<BotApp> {
-    if !core.capabilities().apps || !is_bot(bot) {
+    let served = core.capabilities();
+    if !(served.apps || served.outgoing_webhooks) || !is_bot(bot) {
         return None;
     }
-    let app = core.bot_app(bot.to_owned()).await.ok().flatten()?;
+    let app = if served.apps {
+        core.bot_app(bot.to_owned())
+    } else {
+        core.known_bot_app(bot.to_owned())
+    };
+    let app = app.await.ok().flatten()?;
     Some(with_picture(core, app).await)
 }
 
@@ -53,8 +59,20 @@ pub async fn known_bot_app(core: &dyn Core, id: &str) -> Option<BotApp> {
     Some(with_picture(core, app).await)
 }
 
-/// `app` with its icon, read by the engine (once a run).
+/// `app` with its icon, read by the engine (once a run); an outgoing webhook's picture from its team's middle tier.
 pub async fn with_picture(core: &dyn Core, app: StoreApp) -> BotApp {
+    if let Some(read) = app.definition.outgoing_webhook() {
+        let picture = match read.version {
+            Some(_) => core
+                .outgoing_webhook_picture(read)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|bytes| people::sniffed_image(&bytes)),
+            None => None,
+        };
+        return BotApp { app, picture };
+    }
     let picture = match app.definition.large_image_url() {
         Some(url) => core
             .app_picture(url.to_owned())

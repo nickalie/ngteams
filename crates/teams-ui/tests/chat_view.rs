@@ -401,6 +401,7 @@ fn row(id: &str, sender: &str, at: i64) -> MessageItem {
         replies: None,
         translation: None,
         translate: None,
+        name_mark: teams_ui::chat_view::NameMark::Plain,
     }
 }
 

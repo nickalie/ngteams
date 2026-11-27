@@ -703,6 +703,17 @@ pub struct MessageItem {
     /// What its "More options" menu offers for its translation: "Translate", "See original message" or "See
     /// translation".
     pub translate: Option<chat_translate::Offer>,
+    /// What its sender's name carries: Teams' App mark on an outgoing webhook's reply.
+    pub name_mark: NameMark,
+}
+
+/// What a message's sender's name carries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NameMark {
+    #[default]
+    Plain,
+    /// An outgoing webhook's: Teams' "App" mark.
+    App,
 }
 
 /// Where a message stands in a channel's threads.
@@ -3249,7 +3260,18 @@ impl ChatView {
         }
         self.asks = ask;
         let core = Arc::clone(&self.core);
+        // a channel's webhooks are read first, so the bot index knows their replies' senders
+        let webhooks = (crate::bots_flag::bots_on(cx)
+            && core.capabilities().outgoing_webhooks
+            && teams_proto::is_team_thread_id(self.conversation.split(';').next().unwrap_or_default())
+            && asked.iter().any(|mri| crate::bot_face::is_bot(mri)))
+        .then(|| self.conversation.clone());
         cx.spawn(async move |this, cx: &mut AsyncApp| {
+            if let Some(channel) = webhooks
+                && let Some(team) = crate::compose::channel_team(core.as_ref(), &channel).await
+            {
+                let _ = core.outgoing_webhooks(team).await;
+            }
             let mut found = Vec::new();
             let mut bots = Vec::new();
             for mri in asked {
@@ -3354,6 +3376,16 @@ impl ChatView {
     /// A person as the engine last answered, if it has.
     fn shown(&self, mri: &str) -> Option<&Shown> {
         self.people.get(mri).and_then(|(_, shown)| shown.as_ref())
+    }
+
+    /// What `message`'s sender's name carries: the App mark when an outgoing webhook sent it.
+    fn name_mark(&self, message: &Message) -> NameMark {
+        let webhook = message
+            .sender
+            .as_deref()
+            .and_then(|sender| self.bot_faces.apps.get(sender))
+            .is_some_and(|app| app.app.definition.outgoing_webhook().is_some());
+        if webhook { NameMark::App } else { NameMark::Plain }
     }
 
     /// A message's sender's name and whether it is a name (not an MRI): a bot's app's, else their profile's, else
@@ -3617,6 +3649,7 @@ impl ChatView {
             .then(|| policy_notice::of(message.properties.as_deref(), own))
             .flatten();
         Some(MessageItem {
+            name_mark: self.name_mark(message),
             id: message.id.clone(),
             version: message.version,
             own,
@@ -5955,6 +5988,7 @@ fn header_line(
             None => name.into_any_element(),
         }
     });
+    let app = (item.name_mark == NameMark::App).then(|| app_mark(id, palette));
     div()
         .h(rems(HEADER_REMS))
         .flex()
@@ -5963,10 +5997,26 @@ fn header_line(
         .text_sm()
         .text_color(rgb(palette.muted_foreground))
         .children(name)
+        .children(app)
         .child(time)
         .children(item.edited.then(edited_mark))
         .children(mark)
         .into_any_element()
+}
+
+/// What a webhook's name carries: Teams' "App" mark, a small bordered label.
+pub const APP_MARK: &str = "App";
+
+fn app_mark(id: &str, palette: Palette) -> gpui::Div {
+    let id = id.to_owned();
+    div()
+        .debug_selector(move || format!("app-mark-{id}"))
+        .px_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(rgb(palette.border))
+        .text_xs()
+        .child(APP_MARK)
 }
 
 /// The top of an email post's card ([`email::head`]): its sender with its time and marks (Teams' "New" on a

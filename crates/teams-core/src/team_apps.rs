@@ -93,6 +93,15 @@ pub(crate) enum TeamAppsAsk {
         name: String,
         reply: Responder<Option<Vec<u8>>>,
     },
+    /// A team's outgoing webhooks, kept as bots ([`BotIndex`]).
+    OutgoingWebhooks {
+        team: String,
+        reply: Responder<Vec<teams_proto::OutgoingWebhook>>,
+    },
+    OutgoingWebhookPicture {
+        picture: teams_proto::OutgoingWebhookPicture,
+        reply: Responder<Option<Vec<u8>>>,
+    },
 }
 
 impl<C, T> Channels<C, T>
@@ -132,6 +141,27 @@ impl<C: Credentials + 'static> AppReads<C> {
         F: AsyncFnOnce(&teams_proto::Client<teams_proto::HttpTransport<C>>) -> V + 'static,
     {
         crate::team_admin::spawn_read(Arc::clone(&self.client), reply, read);
+    }
+
+    /// Answers a team's outgoing webhooks' asks: their list, each kept as a bot ([`BotIndex`]), and a picture.
+    fn answer_webhooks(&self, ask: TeamAppsAsk) {
+        match ask {
+            TeamAppsAsk::OutgoingWebhooks { team, reply } => {
+                let bots = Arc::clone(&self.bots);
+                self.spawn_read(reply, async move |client| {
+                    let read = teams_proto::OutgoingWebhooks { team };
+                    let hooks = read_body(client, &read)
+                        .await
+                        .map_or_else(Vec::new, |body| teams_proto::OutgoingWebhook::list_answer(&body));
+                    bots.keep(&hooks.iter().map(teams_proto::OutgoingWebhook::app).collect::<Vec<_>>());
+                    hooks
+                });
+            }
+            TeamAppsAsk::OutgoingWebhookPicture { picture, reply } => self.spawn_read(reply, async move |client| {
+                read_body(client, &picture).await.filter(|bytes| !bytes.is_empty())
+            }),
+            _ => {}
+        }
     }
 
     /// Answers `ask`.
@@ -212,6 +242,9 @@ impl<C: Credentials + 'static> AppReads<C> {
                     .await
                     .filter(|bytes| !bytes.is_empty())
             }),
+            ask @ (TeamAppsAsk::OutgoingWebhooks { .. } | TeamAppsAsk::OutgoingWebhookPicture { .. }) => {
+                self.answer_webhooks(ask);
+            }
         }
     }
 }

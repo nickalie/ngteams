@@ -113,6 +113,7 @@ pub mod media;
 mod meeting_options;
 #[cfg(feature = "media")]
 pub mod mixer;
+mod outgoing_webhooks;
 mod peers;
 mod reads;
 mod roster;
@@ -141,6 +142,7 @@ pub use drive::{DRIVE_HOST, DriveFile, DriveTwist};
 pub use fixtures::FixtureError;
 pub use front::Front;
 pub use loki::{LOKI_REGION, LokiCard};
+pub use outgoing_webhooks::MADE_UP_TOKEN;
 pub use startup::{Hold, MAX_HOLD, synthetic_chat, synthetic_history_text, synthetic_text, synthetic_topic};
 pub use trouter::{CALLING_APP, MESSAGING_APP, REGIONAL_NAME, Registration, SocketRecord, TrouterMock};
 pub use ups::{AvailabilityChange, OwnAvailability};
@@ -1182,6 +1184,18 @@ impl ChatServiceMock {
     /// wherever theirs are (the definitions read, and the account's, a chat's and a team's apps).
     pub fn add_app(&self, definition: Value) {
         self.lock().apps.defined.push(definition);
+    }
+
+    /// A webhook on `team` named `name` that someone else made, which the account may change only when
+    /// `can_manage` (`outgoing_webhooks.rs`); its id.
+    #[must_use]
+    pub fn add_outgoing_webhook(&self, team: &str, name: &str, can_manage: bool) -> String {
+        outgoing_webhooks::add(&mut self.lock().outgoing_webhooks, team, name, can_manage)
+    }
+
+    /// The webhook `id`'s picture (`outgoing_webhooks.rs`).
+    pub fn set_outgoing_webhook_picture(&self, id: &str, picture: Vec<u8>) {
+        outgoing_webhooks::set_picture(&mut self.lock().outgoing_webhooks, id, picture);
     }
 
     /// Adds the app `id` at `place`, as the add write does (`apps.rs`).

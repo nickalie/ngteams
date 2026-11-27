@@ -2016,6 +2016,9 @@ impl Shell {
                 ManageTeamEvent::Toast(words) => this.show_toast(words, cx),
                 ManageTeamEvent::ChangePicture(team) => this.open_team_picture(team.clone(), window, cx),
                 ManageTeamEvent::AddApp(team) => this.open_add_app(team.clone(), window, cx),
+                ManageTeamEvent::Webhook(team, hook) => {
+                    this.open_webhook(team.clone(), hook.as_deref().cloned(), window, cx);
+                }
             },
         );
         self.manage_team = Some((page, events));
@@ -2090,6 +2093,19 @@ impl Shell {
             .unwrap_or_default();
         let core = Arc::clone(&self.core);
         let dialog = cx.new(|cx| AddAppDialog::new(core, team, installed, window, cx));
+        self.show_team_dialog(&dialog, window, cx);
+    }
+
+    /// "Create an outgoing webhook" on `team`, or the Edit of `hook`.
+    pub fn open_webhook(
+        &mut self,
+        team: teams_store::Team,
+        hook: Option<teams_proto::OutgoingWebhook>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let core = Arc::clone(&self.core);
+        let dialog = cx.new(|cx| crate::webhook_dialog::WebhookDialog::new(core, team, hook, window, cx));
         self.show_team_dialog(&dialog, window, cx);
     }
 

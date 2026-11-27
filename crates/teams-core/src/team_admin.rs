@@ -235,6 +235,8 @@ pub struct TeamWritten {
     pub created: Option<(String, Option<String>)>,
     /// The people the answer says weren't added.
     pub not_added: Vec<String>,
+    /// A new outgoing webhook and its token, which no later read shows.
+    pub created_webhook: Option<teams_proto::CreatedWebhook>,
 }
 
 /// Someone on a team, as Manage team lists them. `Debug` leaves out everything but the MRI.
@@ -572,11 +574,15 @@ fn written(write: &TeamWrite, body: &[u8]) -> TeamWritten {
     match write {
         TeamWrite::Create(_) => TeamWritten {
             created: team_created(body),
-            not_added: Vec::new(),
+            ..TeamWritten::default()
         },
         TeamWrite::AddMembers { .. } => TeamWritten {
-            created: None,
             not_added: not_added(body),
+            ..TeamWritten::default()
+        },
+        TeamWrite::CreateOutgoingWebhook { .. } => TeamWritten {
+            created_webhook: teams_proto::CreatedWebhook::read_answer(body),
+            ..TeamWritten::default()
         },
         _ => TeamWritten::default(),
     }
@@ -956,7 +962,7 @@ mod tests {
     fn a_new_team_takes_the_thread_and_group_its_answer_names() {
         let written = TeamWritten {
             created: Some(("19:made@thread.tacv2".to_owned(), Some("group".to_owned()))),
-            not_added: Vec::new(),
+            ..TeamWritten::default()
         };
         let made = change_of(Some(&written), Some(TeamChange::Created(team("draft"))));
         let Some(TeamChange::Created(made)) = made else {

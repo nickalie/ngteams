@@ -11,6 +11,8 @@ use crate::account::MCPS_GTM;
 pub const WORKFLOWS_GTM: &str = "workflowsService";
 /// The GTM an own server names while it serves the app catalogue and bot invokes.
 pub const APPS_GTM: &str = "appsService";
+/// The GTM an own server names while it serves a team's outgoing webhooks (the middle tier's base).
+pub const OUTGOING_WEBHOOKS_GTM: &str = "outgoingWebhookService";
 /// The GTM an own server names while it serves a call's live captions.
 pub const CAPTIONS_GTM: &str = "captionsService";
 /// The GTM an own server names while it serves a call's recording and transcription.
@@ -34,6 +36,8 @@ pub struct Capabilities {
     pub apps: bool,
     /// Copilot: the AI workflows.
     pub copilot: bool,
+    /// A team's outgoing webhooks: Manage team's "Create an outgoing webhook" and their mentions.
+    pub outgoing_webhooks: bool,
     /// Teams' own sticker packs in the picker: Microsoft's, which no own server serves.
     pub teams_stickers: bool,
 }
@@ -47,6 +51,7 @@ impl Capabilities {
         recording: true,
         apps: true,
         copilot: true,
+        outgoing_webhooks: true,
         teams_stickers: true,
     };
 
@@ -63,6 +68,7 @@ impl Capabilities {
             recording: names(RECORDING_GTM),
             apps: names(APPS_GTM),
             copilot: names(COPILOT_GTM),
+            outgoing_webhooks: names(OUTGOING_WEBHOOKS_GTM),
             teams_stickers: false,
         }
     }
@@ -92,6 +98,7 @@ mod tests {
                 recording: false,
                 apps: false,
                 copilot: false,
+                outgoing_webhooks: false,
                 teams_stickers: false,
             }
         );
@@ -102,6 +109,8 @@ mod tests {
         assert!(Capabilities::of(&own, |gtm| gtm == CAPTIONS_GTM).captions);
         assert!(Capabilities::of(&own, |gtm| gtm == RECORDING_GTM).recording);
         assert!(Capabilities::of(&own, |gtm| gtm == COPILOT_GTM).copilot);
+        let hooks = Capabilities::of(&own, |gtm| gtm == OUTGOING_WEBHOOKS_GTM);
+        assert!(hooks.outgoing_webhooks && !hooks.apps);
         assert!(
             !Capabilities::of(&own, |_| true).teams_stickers,
             "no own server serves Teams' stickers"

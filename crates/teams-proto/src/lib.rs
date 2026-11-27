@@ -40,6 +40,7 @@ mod frame;
 mod giphy;
 mod http;
 mod meeting;
+mod outgoing_webhook;
 mod own;
 mod places;
 mod post_read;
@@ -110,6 +111,10 @@ pub use loki::{
     LokiPerson, LokiSchedule, LokiWorkingWith, Organization, OutOfOfficeState, PersonDetails, PersonaRef, Schedule,
 };
 pub use meeting::{MeetingCode, MeetingDetails, MeetingThread};
+pub use outgoing_webhook::{
+    CreatedWebhook, OUTGOING_WEBHOOK_MAKER, OutgoingWebhook, OutgoingWebhookPicture, OutgoingWebhooks, SecurityToken,
+    WebhookForm, WebhookPicture,
+};
 #[cfg(feature = "test-support")]
 pub use own::ProbeOwnState;
 pub use own::{

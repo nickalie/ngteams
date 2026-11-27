@@ -1766,6 +1766,17 @@ impl EngineRequests {
         })
     }
 
+    /// A team's outgoing webhooks, read now, each known as a bot from then on; none when unreadable.
+    pub fn outgoing_webhooks(&self, team: impl Into<String>) -> Reply<Vec<teams_proto::OutgoingWebhook>> {
+        let team = team.into();
+        self.ask(|reply| Request::TeamApps(Box::new(TeamAppsAsk::OutgoingWebhooks { team, reply })))
+    }
+
+    /// An outgoing webhook's picture, read now; `None` when it has none or it is unreadable.
+    pub fn outgoing_webhook_picture(&self, picture: teams_proto::OutgoingWebhookPicture) -> Reply<Option<Vec<u8>>> {
+        self.ask(|reply| Request::TeamApps(Box::new(TeamAppsAsk::OutgoingWebhookPicture { picture, reply })))
+    }
+
     /// The apps added to `place` (a chat, or a team when `team`) whose bot people can mention there, read now.
     pub fn mentionable_bots(&self, place: impl Into<String>, team: bool) -> Reply<Vec<StoreApp>> {
         let place = place.into();
