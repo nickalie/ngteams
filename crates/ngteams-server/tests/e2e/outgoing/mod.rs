@@ -3,6 +3,7 @@
 //! back to the real engine as the webhook's reply in the post's thread. Teams, people, webhooks and messages are
 //! synthetic.
 
+mod client;
 mod concurrency;
 mod delivery;
 pub(crate) mod receiver;

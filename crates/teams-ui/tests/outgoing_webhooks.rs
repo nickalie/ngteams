@@ -82,9 +82,13 @@ fn window(rig: &Rig, bots: bool, owner: bool) -> (Entity<Shell>, &'static mut Vi
 }
 
 fn shell_window(rig: &Rig, bots: bool, owner: bool) -> (Entity<Shell>, &'static mut VisualTestContext) {
+    shell_window_of(rig, bots, team(owner))
+}
+
+fn shell_window_of(rig: &Rig, bots: bool, team: Team) -> (Entity<Shell>, &'static mut VisualTestContext) {
     rig.cx.update(teams_ui::window::init);
     rig.cx.update(|cx| cx.set_global(BotsFlag(bots)));
-    *rig.core.teams.lock().unwrap() = Some(vec![team(owner)]);
+    *rig.core.teams.lock().unwrap() = Some(vec![team]);
     let parts = ShellParts {
         core: rig.cx.read(|cx| rig.bridge.read(cx).core()),
         models: rig.models.clone(),
@@ -420,6 +424,75 @@ fn save_waits_for_the_picked_picture_and_then_sends_it() {
             },
         }]
     );
+}
+
+// QA 412: an archived team's owner gets no Create, and no Edit or Remove on a webhook the server lets them manage.
+#[test]
+fn an_archived_team_offers_no_create_and_no_edit_or_remove() {
+    let rig = Rig::start();
+    rig.core
+        .outgoing_webhooks
+        .lock()
+        .unwrap()
+        .insert(TEAM.to_owned(), vec![hook("Build bot", true, false)]);
+    let archived = Team {
+        archived: true,
+        ..team(true)
+    };
+    let (shell, cx) = shell_window_of(&rig, true, archived);
+    cx.update(|window, cx| {
+        shell.update(cx, |shell, cx| {
+            shell.open_manage_team(TEAM.to_owned(), ManageTab::Apps, window, cx);
+        });
+    });
+    assert!(bounds(cx, "manage-webhook-0").is_some(), "the webhook is still listed");
+    assert!(bounds(cx, "manage-create-webhook").is_none());
+    assert!(bounds(cx, "manage-webhook-more-0").is_none());
+}
+
+/// The dialog's Upload, answered with `file`.
+fn upload(cx: &mut VisualTestContext, file: &std::path::Path) {
+    click(cx, "webhook-upload");
+    assert!(cx.did_prompt_for_paths());
+    let file = file.to_owned();
+    cx.simulate_path_prompt_response(move |_| Some(vec![file]));
+    cx.run_until_parked();
+}
+
+// QA 412: a picture that is not PNG or JPEG, or one over 1 MB, is told and never sent.
+#[test]
+fn a_wrong_or_too_big_picture_is_refused_with_words_and_not_sent() {
+    let directory = tempfile::tempdir().unwrap();
+    let gif = directory.path().join("synthetic.gif");
+    std::fs::write(&gif, b"GIF89a made-up").unwrap();
+    let big = directory.path().join("big.png");
+    std::fs::write(&big, [PNG, &vec![0; 1024 * 1024]].concat()).unwrap();
+    let rig = Rig::start();
+    *rig.core.team_written.lock().unwrap() = Some(TeamWritten::default());
+    let (shell, cx) = window(&rig, true, true);
+    click(cx, "manage-create-webhook");
+    type_in(cx, "webhook-name", "Build bot");
+    type_in(cx, "webhook-url", "https://hooks.example.test/build");
+
+    upload(cx, &gif);
+    assert_eq!(
+        problem(&shell, cx),
+        Some("That file can't be used. Choose a .png, .jpg or .jpeg picture.")
+    );
+    assert!(bounds(cx, "webhook-problem").is_some());
+    upload(cx, &big);
+    assert_eq!(
+        problem(&shell, cx),
+        Some("The picture is too large. Choose one under 1 MB.")
+    );
+
+    click(cx, "webhook-send");
+    let sent = writes(&rig);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    let TeamWrite::CreateOutgoingWebhook { form, .. } = &sent[0] else {
+        panic!("not a create: {sent:?}");
+    };
+    assert!(form.picture == WebhookPicture::Keep, "a refused picture is not sent");
 }
 
 fn message(id: i64, sender: &str, name: &str) -> teams_store::Message {

@@ -97,7 +97,7 @@ async fn thread(seat: &Seat, channel: &str, post: &str) -> Vec<Message> {
 }
 
 /// The replies from `hook` in the thread of `post`, waited for up to 10 s.
-async fn replies_from(seat: &Seat, channel: &str, post: &str, hook: &str, count: usize) -> Vec<Message> {
+pub(super) async fn replies_from(seat: &Seat, channel: &str, post: &str, hook: &str, count: usize) -> Vec<Message> {
     let mri = format!("28:{hook}");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {

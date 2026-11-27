@@ -118,6 +118,8 @@ diesel-async.workspace = true
 axum.workspace = true
 axum-server.workspace = true
 rustls.workspace = true
+# the HMAC an outgoing webhook's service checks (`tests/qa_outgoing_webhooks_window.rs`)
+aws-lc-rs.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
 # the updates' flow against a local fake release feed (`tests/support/update.rs`)
@@ -180,6 +182,11 @@ harness = false
 [[test]]
 # QA of task 229: an own server's user talks to a bot on the connector routes in the app's window, in the UI sandbox
 name = "qa_bot_connector_window"
+harness = false
+
+[[test]]
+# QA of task 412: a team owner makes an outgoing webhook and mentions it, against the real ngteams-server binary
+name = "qa_outgoing_webhooks_window"
 harness = false
 
 [[test]]
