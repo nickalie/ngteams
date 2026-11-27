@@ -132,6 +132,28 @@ async fn people_added_to_and_taken_out_of_a_group_chat_reach_its_bot_until_its_a
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_last_person_who_leaves_a_group_chat_still_reaches_its_bot() {
+    for backend in backends() {
+        let shop = Shop::open(backend).await;
+        let server = &shop.registry.server;
+        let bea = Seat::new(server, "bea@own.test", "Bea Lovelace").await;
+        let eve = Seat::new(server, "eve@own.test", "Eve Lovelace").await;
+        let chat = create_chat(&shop.ada, &[&bea, &eve], Some("Polls room")).await;
+        chat_app(&shop.ada, &chat, true).await;
+        assert_eq!(shop.bot.next_of("installationUpdate").await.activity["action"], "add");
+        shop.bot.next_of("conversationUpdate").await;
+
+        for seat in [&eve, &bea, &shop.ada] {
+            out_of_chat(seat, &chat, seat).await;
+            told(&shop.bot, &chat, seat, ("membersRemoved", person(seat))).await;
+        }
+        bea.stop();
+        eve.stop();
+        shop.stop();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn people_added_to_joining_and_leaving_a_team_reach_its_bot_in_the_teams_conversation() {
     for backend in backends() {
         let shop = Shop::open(backend).await;

@@ -64,9 +64,13 @@ impl Delivery {
 }
 
 /// In a transaction (`$conn`): the bots in `$chat` (their ids and names) that hear what `$owner` does there. A chat
-/// without a bot, a member whose app was deleted and the bot `$owner` itself make none.
+/// without a bot, a member whose app was deleted and the bot `$owner` itself make none; so does a chat of fewer than
+/// `$least` members (2 when not given).
 macro_rules! bots_in {
-    ($conn:expr, $chat:expr, $owner:expr) => {{
+    ($conn:expr, $chat:expr, $owner:expr) => {
+        $crate::bots::outbox::bots_in!($conn, $chat, $owner, 2)
+    };
+    ($conn:expr, $chat:expr, $owner:expr, $least:expr) => {{
         use $crate::chatsvc::schema::chat_members;
         use $crate::db::schema::users;
         let members: Vec<String> = chat_members::table
@@ -75,7 +79,7 @@ macro_rules! bots_in {
             .select(chat_members::user_id)
             .load($conn)
             .await?;
-        let registered: Vec<String> = if members.len() < 2 {
+        let registered: Vec<String> = if members.len() < $least {
             Vec::new()
         } else {
             $crate::apps::schema::bots::table
@@ -176,7 +180,8 @@ pub(crate) use enqueue;
 macro_rules! enqueue_members {
     ($conn:expr, $chat:expr, $by:expr, $people:expr, $added:expr, $at:expr) => {{
         use $crate::bots::schema::bot_deliveries;
-        let bots = $crate::bots::outbox::bots_in!($conn, $chat, $by);
+        // the last person who leaves still tells the bot that stays
+        let bots = $crate::bots::outbox::bots_in!($conn, $chat, $by, 1);
         let mut queued = false;
         if !bots.is_empty()
             && let Some(name) = $crate::bots::outbox::person_name!($conn, $by)
