@@ -19,6 +19,7 @@
 //!   second click pauses it; Share opens "Share this file" (task 543) and Escape closes it; the zip has no Share;
 //!   "More options" of a document: "Open in browser", "Download", "Share" (the dialog) and "Copy link"; of a video:
 //!   "Download", "Share" and "Copy link", no "Open in browser", as Teams on the web has them; Escape closes a menu.
+//!   "Download" saves the file in a's downloads folder through the engine (task 991), never through the browser.
 //! - **Odd shapes**, each beside good entries: a lone surrogate escape, an entry with no `@type`, an entry with no
 //!   SharePoint link, a list encoded twice.
 //! - **A video opened** (task 793, `qa_file_grid_video.rs`): a video alone, a link Graph refuses, the keyboard, and
@@ -192,7 +193,8 @@ fn walk(sandbox: &Sandbox, service: &Service, dir: &Path) -> SandboxResult {
         ctx.narrow()?;
         ctx.thread()?;
         ctx.videos_open()?;
-        ctx.card_keys()
+        ctx.card_keys()?;
+        ctx.downloads()
     })();
     if let Err(error) = outcome {
         return Err(run.fail(sandbox, &*error));
@@ -391,8 +393,41 @@ impl Walk<'_> {
         self.share(video)?;
         self.more(doc)?;
         self.video_more(video)?;
-        self.escape(zip)?;
+        self.escape(zip)
+    }
+
+    /// "Download" of the document, then of the video, on the message of five files. The line under a card after a
+    /// download (also on another card of the same file) makes a message taller and moves the cards, so this step is
+    /// the last, and the cards are found again after the first one.
+    fn downloads(&mut self) -> SandboxResult {
+        self.open_message("five")?;
+        let (_, cards) = self.shot_in("downloads", DARK)?;
+        let doc = doc_of(&cards)?;
+        if self
+            .run
+            .open_menu(self.sandbox, more_at(doc), "qa525-more-menu-dark.png")?
+            .is_none()
+        {
+            note("More options on the document's card opens no menu in Teams Dark".to_owned());
+        }
+        self.run.input.key(keys::ESC)?;
+        thread::sleep(SETTLE);
+        let doc = doc_of(&self.five_cards()?)?;
+        self.download(doc, 1, 4, &DOC, MADE_UP_DOCUMENT)?;
+        let video = video_of(&self.five_cards()?)?;
+        if let Some(menu) = self.download(video, 0, 3, &CLIP_A, MADE_UP_VIDEO)?
+            && menu.height() > 4 * 36
+        {
+            note(format!(
+                "More options on a video's card has more than three rows: {menu:?}"
+            ));
+        }
         Ok(())
+    }
+
+    /// The cards of the message of five files, as the screen shows them now.
+    fn five_cards(&mut self) -> SandboxResult<Vec<Rect>> {
+        Ok(self.shot_in("downloads", LIGHT)?.1)
     }
 
     /// A click on a card's name opens the file's link.
@@ -501,28 +536,21 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// "More options" on the document's card: each of its four items.
+    /// "More options" on the document's card: Open in browser, Share and Copy link (Download: [`Self::downloads`]).
     fn more(&mut self, doc: Rect) -> SandboxResult {
         let link = share_url(&DOC);
         let rows = 4;
-        for (row, what) in [(0, "Open in browser"), (1, "Download")] {
-            let Some(menu) = self
-                .run
-                .open_menu(self.sandbox, more_at(doc), "qa525-more-menu-light.png")?
-            else {
-                note("More options on the document's card opens no menu".to_owned());
-                return Ok(());
-            };
-            let (x, y) = row_at(menu, row, rows);
-            let opened = self.run.click_opens(self.sandbox, x, y)?;
-            let wanted = if row == 0 {
-                link.clone()
-            } else {
-                format!("{link}?download=1")
-            };
-            if opened != wanted {
-                note(format!("More options' {what} opens {opened}, expected {wanted}"));
-            }
+        let Some(menu) = self
+            .run
+            .open_menu(self.sandbox, more_at(doc), "qa525-more-menu-light.png")?
+        else {
+            note("More options on the document's card opens no menu".to_owned());
+            return Ok(());
+        };
+        let (x, y) = row_at(menu, 0, rows);
+        let opened = self.run.click_opens(self.sandbox, x, y)?;
+        if opened != link {
+            note(format!("More options' Open in browser opens {opened}, expected {link}"));
         }
         let Some(menu) = self
             .run
@@ -540,30 +568,53 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// "More options" on a video's card: Download, Share and Copy link, no "Open in browser".
+    /// "More options" on a video's card: Share and Copy link, no "Open in browser" (Download: [`Self::downloads`]).
     fn video_more(&mut self, video: Rect) -> SandboxResult {
-        let link = share_url(&CLIP_A);
         let rows = 3;
-        let Some(menu) = self
-            .run
-            .open_menu(self.sandbox, more_at(video), "qa525-video-more-light.png")?
-        else {
-            note("More options on a video's card opens no menu".to_owned());
-            return Ok(());
-        };
-        if menu.height() > 4 * 36 {
-            note(format!(
-                "More options on a video's card has more than three rows: {menu:?}"
-            ));
-        }
-        let (x, y) = row_at(menu, 0, rows);
-        let opened = self.run.click_opens(self.sandbox, x, y)?;
-        if opened != format!("{link}?download=1") {
-            note(format!("a video's More options' first row (Download) opens {opened}"));
-        }
         self.more_share(video, rows, 1, "a video")?;
         step("a video's More options: Download, Share and Copy link");
         Ok(())
+    }
+
+    /// "More options" → "Download" (row `row` of `rows`) on `card`: the engine reads `file` and saves its `bytes` in the
+    /// app's downloads folder; the browser opens nothing.
+    /// The menu it opened, if any.
+    fn download(
+        &mut self,
+        card: Rect,
+        row: u32,
+        rows: u32,
+        file: &MadeUpFile,
+        bytes: &[u8],
+    ) -> SandboxResult<Option<Rect>> {
+        let shot = format!("qa525-more-download-{}-light.png", file.extension);
+        let Some(menu) = self.run.open_menu(self.sandbox, more_at(card), &shot)? else {
+            note(format!("More options on {} opens no menu", file.name));
+            return Ok(None);
+        };
+        let before = self.sandbox.opened()?.len();
+        let (x, y) = row_at(menu, row, rows);
+        self.run.click(x, y)?;
+        self.run.input.move_to(self.run.rest.0, self.run.rest.1)?;
+        let target = self.run.dir.join("downloads").join(file.name);
+        let saved = wait_until(WAIT, || fs::read(&target).ok().filter(|read| read.len() == bytes.len()));
+        thread::sleep(SETTLE);
+        self.run
+            .shot(self.sandbox, &format!("qa525-downloaded-{}-light.png", file.extension))?;
+        match saved {
+            None => note(format!(
+                "Download of {} saves no file of {} bytes at {} in {WAIT:?}",
+                file.name,
+                bytes.len(),
+                target.display()
+            )),
+            Some(read) if read != bytes => note(format!("Download of {} saves other bytes", file.name)),
+            Some(_) => step(&format!("Download of {}: saved through the engine", file.name)),
+        }
+        if self.sandbox.opened()?.len() != before {
+            note(format!("Download of {} opened a link in the browser", file.name));
+        }
+        Ok(Some(menu))
     }
 
     /// "More options" → "Share" (row `row` of `rows`) on `card` opens "Share this file" (task 543).
@@ -1242,7 +1293,7 @@ impl Service {
         }
         posted.extend(card_keys::post(&mock, runtime)?);
         let channel_post = channel_post(&mock)?;
-        for (at, file) in [&CLIP_A, &CLIP_B, &CLIP_C, &LONE_CLIP].into_iter().enumerate() {
+        for (at, file) in [&CLIP_A, &CLIP_B, &CLIP_C, &LONE_CLIP, &DOC].into_iter().enumerate() {
             serve_file(&mock, runtime, file, at)?;
         }
         video::serve_refused(&mock, runtime)?;
@@ -1294,11 +1345,12 @@ fn serve_file(
     file: &MadeUpFile,
     at: usize,
 ) -> SandboxResult {
-    let Some((dark, light)) = file.frame else {
-        return Ok(());
-    };
     let read = teams_proto::FileThumbnails::of(&share_url(file)).ok_or("a made-up link no read names")?;
     let token = read.share();
+    let Some((dark, light)) = file.frame else {
+        serve_content(mock, runtime, file, token, at, MADE_UP_DOCUMENT);
+        return Ok(());
+    };
     let picture = format!("/transform/thumbnail/made-up-qa525-{at}");
     let list = json!({"value": [{"id": "0", "large": {
         "height": 450, "width": 800,
@@ -1312,11 +1364,24 @@ fn serve_file(
     let mut png = Vec::new();
     made_up_frame(dark, light).write_to(&mut io::Cursor::new(&mut png), image::ImageFormat::Png)?;
     runtime.block_on(mock.serve_bytes(&picture, "image/png", png));
+    serve_content(mock, runtime, file, token, at, MADE_UP_VIDEO);
+    Ok(())
+}
+
+/// The mock's item of `file` (its sharing token `token`) and its `bytes` at the download link the item gives.
+fn serve_content(
+    mock: &ChatServiceMock,
+    runtime: &tokio::runtime::Runtime,
+    file: &MadeUpFile,
+    token: &str,
+    at: usize,
+    bytes: &[u8],
+) {
     let download = format!("/personal/made_up_user_contoso_test/_layouts/15/download-qa525-{at}.aspx");
     let item = json!({
         "id": format!("made-up-item-{at}"),
         "name": file.name,
-        "size": MADE_UP_VIDEO.len(),
+        "size": bytes.len(),
         "@microsoft.graph.downloadUrl": format!("https://contoso-my.sharepoint.com{download}?UniqueId=made-up-{at}"),
     });
     runtime.block_on(mock.serve_redeemed(
@@ -1324,9 +1389,27 @@ fn serve_file(
         "application/json",
         item.to_string().into_bytes(),
     ));
-    runtime.block_on(mock.serve_ranged(&download, "video/mp4", MADE_UP_VIDEO.to_vec()));
-    Ok(())
+    runtime.block_on(mock.serve_ranged(&download, "application/octet-stream", bytes.to_vec()));
 }
+
+/// The document's card among the five cards (a zip, two videos, the document and a picture).
+fn doc_of(cards: &[Rect]) -> SandboxResult<Rect> {
+    cards
+        .get(3)
+        .copied()
+        .ok_or_else(|| format!("the five cards are not on the screen: {cards:?}").into())
+}
+
+/// The first video's card among the five cards.
+fn video_of(cards: &[Rect]) -> SandboxResult<Rect> {
+    cards
+        .get(1)
+        .copied()
+        .ok_or_else(|| format!("the five cards are not on the screen: {cards:?}").into())
+}
+
+/// Made-up bytes of the document (synthetic).
+const MADE_UP_DOCUMENT: &[u8] = b"made-up budget notes, every byte synthetic";
 
 /// A made-up test pattern video (synthetic).
 const MADE_UP_VIDEO: &[u8] = include_bytes!("../../../../teams-media/tests/fixtures/media/made-up-test-pattern.mp4");
@@ -1435,6 +1518,9 @@ impl AppRun {
         let token = service.mock.token(LAB_A).ok_or("the mock's token for a")?;
         let origin = service.mock.origin();
         let dir_text = dir.to_string_lossy().into_owned();
+        let downloads = dir.join("downloads");
+        fs::create_dir_all(&downloads)?;
+        let downloads_text = downloads.to_string_lossy().into_owned();
         let child = sandbox.spawn_with_fds(
             &std::env::current_exe()?,
             &[],
@@ -1445,6 +1531,7 @@ impl AppRun {
                 (TROUTER_ENV, service.trouter.origin()),
                 (TOKEN_ENV, &token),
                 (DIR_ENV, &dir_text),
+                ("XDG_DOWNLOAD_DIR", &downloads_text),
             ],
             &[writer.as_fd()],
         )?;
