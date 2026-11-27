@@ -1017,7 +1017,10 @@ fn a_code_stays_after_a_server_error_and_the_bots_error_then_signs_in() {
     click(cx, &format!("card-{ID}-c0a0"));
     type_code_and_verify_twice(cx, &code, "not-reached");
     assert!(bounds(cx, &code).is_some(), "the bot's error keeps the field");
-    assert!(answered(cx, ID, "code-failed"), "a blank error of the bot says the code failed");
+    assert!(
+        answered(cx, ID, "code-failed"),
+        "a blank error of the bot says the code failed"
+    );
     click(cx, &format!("{code}-verify"));
     cx.run_until_parked();
     draw(cx);
