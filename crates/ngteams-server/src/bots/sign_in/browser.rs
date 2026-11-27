@@ -42,11 +42,8 @@ async fn running(app: &App, id: Option<&str>) -> Result<Option<Running>, DbError
     let (Some(sealer), Some(id)) = (Sealer::of(&app.config), id) else {
         return Ok(None);
     };
-    let Some(found) = store::sign_in(&app.db, id).await?.filter(|found| found.token.is_none()) else {
-        return Ok(None);
-    };
-    let connection = connections::find(&app.db, &found.bot_id, &found.connection).await?;
-    Ok(connection.map(|connection| (found, connection, sealer)))
+    let found = store::running(&app.db, id).await?;
+    Ok(found.map(|(found, connection)| (found, connection, sealer)))
 }
 
 /// The page for a sign-in that doesn't run, or that the database couldn't find.

@@ -304,6 +304,24 @@ async fn renewal_failed(setup: &Setup, connector: &Connector, idp: &Idp) {
     );
     idp.fail_refreshes(None);
     assert_eq!(idp.issued(), (2, 2));
+    unreadable_renewal(setup, connector, idp).await;
+}
+
+/// An answer to a renewal that isn't the provider's outage signs the person out once the token ran out, so the bot
+/// shows its card again.
+async fn unreadable_renewal(setup: &Setup, connector: &Connector, idp: &Idp) {
+    idp.lifetime(1);
+    let link = link_for(setup, connector).await;
+    let (code, _) = idp::sign_in_in_browser(&link, ORIGIN, &setup.registry.server.origin).await;
+    let (status, token) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(&code))).await;
+    assert_eq!((status, &token["token"]), (200, &json!("idp-access-3")), "{token}");
+    idp.fail_refreshes(Some(RefreshFailure::Unreadable));
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let (status, answer) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
+    assert_eq!(status, 404, "{answer}");
+    assert!(!has_token(setup, connector).await, "the token that ran out went");
+    idp.fail_refreshes(None);
+    assert_eq!(idp.issued(), (3, 2));
 }
 
 #[tokio::test]
@@ -534,6 +552,10 @@ async fn another_provider_drops_tokens(setup: &Setup, connector: &Connector, idp
     let (code, _) = idp::sign_in_in_browser(&link, ORIGIN, &setup.registry.server.origin).await;
     let (status, token) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(&code))).await;
     assert_eq!(status, 200, "{token}");
+    // sign-ins under way when the provider changes: one with its code, one with only its link
+    let link = link_for(setup, connector).await;
+    let (waiting, _) = idp::sign_in_in_browser(&link, ORIGIN, &setup.registry.server.origin).await;
+    let unopened = link_for(setup, connector).await;
     let other = Idp::start().await;
     let (status, answer) = setup
         .registry
@@ -542,6 +564,10 @@ async fn another_provider_drops_tokens(setup: &Setup, connector: &Connector, idp
     assert_eq!(status, 200, "{answer}");
     let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
     assert_eq!(status, 404, "the old provider's token went with it");
+    let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(&waiting))).await;
+    assert_eq!(status, 404, "a code of the old provider signs no one in");
+    let status = idp::link_status(&unopened, ORIGIN, &setup.registry.server.origin).await;
+    assert_eq!(status, 404, "a link made for the old provider doesn't open");
     assert_eq!(other.issued(), (0, 0));
 }
 

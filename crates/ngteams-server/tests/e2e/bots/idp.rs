@@ -37,6 +37,8 @@ pub enum RefreshFailure {
     Unavailable,
     /// 400 `invalid_grant`: the refresh token is gone.
     InvalidGrant,
+    /// 200 with an error and no token (GitHub's `bad_refresh_token`): an answer the client can't read.
+    Unreadable,
 }
 
 /// The provider, stopped when dropped.
@@ -184,6 +186,7 @@ async fn token(
             match *shared.refresh_failure.lock().unwrap() {
                 Some(RefreshFailure::Unavailable) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
                 Some(RefreshFailure::InvalidGrant) => return refused("invalid_grant"),
+                Some(RefreshFailure::Unreadable) => return Json(json!({"error": "bad_refresh_token"})).into_response(),
                 None => {}
             }
             shared.refreshed.fetch_add(1, Ordering::SeqCst) + 101
@@ -221,6 +224,17 @@ pub async fn sign_in_in_browser(link: &str, origin: &str, loopback: &str) -> (St
         return (code_on(&page), page);
     }
     panic!("the sign-in never reached its page");
+}
+
+/// The status of the page a sign-in link opens, with no redirect followed.
+pub async fn link_status(link: &str, origin: &str, loopback: &str) -> u16 {
+    let browser = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap();
+    let response = browser.get(link.replacen(origin, loopback, 1)).send().await.unwrap();
+    response.status().as_u16()
 }
 
 /// The code a sign-in page shows (`<output id="code">123456</output>`).

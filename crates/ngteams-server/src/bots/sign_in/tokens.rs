@@ -200,18 +200,20 @@ fn seal_held(sealer: &Sealer, owner: Owner<'_>, held: &Held) -> Option<Vec<u8>> 
     sealer.seal(&token_context(owner), &plain).ok()
 }
 
-/// The owner's token, renewed first when it runs out within [`RENEW_BEFORE_MS`]. A token the provider refuses to
-/// renew signs them out of the connection, unless another request renewed it meanwhile; any other failure keeps it
-/// for the next request, and gives it while it still works.
+fn open_held(sealer: &Sealer, owner: Owner<'_>, locked: &[u8]) -> Option<Held> {
+    let plain = sealer.open(&token_context(owner), locked).ok()?;
+    serde_json::from_slice(&plain).ok()
+}
+
+/// The owner's token, renewed first when it runs out within [`RENEW_BEFORE_MS`]. When the renewal fails, a token
+/// that still works is given, unless the provider refused the grant. Otherwise the provider's availability gives
+/// `Later` and the token stays; any other failure signs the owner out of the connection, so the bot shows its card
+/// again. A token that another request changed meanwhile is read again.
 async fn held(app: &App, sealer: &Sealer, connection: &Connection, owner: Owner<'_>) -> Result<Lookup, DbError> {
     let Some(locked) = store::token(&app.db, owner).await? else {
         return Ok(Lookup::None);
     };
-    let Some(held) = sealer
-        .open(&token_context(owner), &locked)
-        .ok()
-        .and_then(|plain| serde_json::from_slice::<Held>(&plain).ok())
-    else {
+    let Some(held) = open_held(sealer, owner, &locked) else {
         return Ok(Lookup::None);
     };
     if held.expires_at.is_none_or(|at| at > now() + RENEW_BEFORE_MS) {
@@ -224,32 +226,36 @@ async fn held(app: &App, sealer: &Sealer, connection: &Connection, owner: Owner<
     let renewed = provider::renew(&app.outbound, connection, secret, &redirect_uri(&app.config), &held)
         .await
         .inspect_err(|error| tracing::info!(%error, connection = %connection.name, "a token wasn't renewed"));
-    match renewed {
+    let error = match renewed {
         Ok(renewed) => {
-            let Some(locked) = seal_held(sealer, owner, &renewed) else {
+            let Some(kept) = seal_held(sealer, owner, &renewed) else {
                 return Ok(Lookup::None);
             };
-            store::keep(&app.db, owner, &locked).await?;
-            Ok(Lookup::Token(renewed))
-        }
-        Err(error) if error.refused() => {
-            if store::refused(&app.db, owner, &locked).await? {
-                return Ok(Lookup::None);
+            if store::keep(&app.db, owner, &locked, &kept).await? {
+                return Ok(Lookup::Token(renewed));
             }
-            held_after_refusal(app, sealer, owner).await
+            return held_now(app, sealer, owner).await;
         }
-        Err(_) if held.expires_at.is_some_and(|at| at > now()) => Ok(Lookup::Token(held)),
-        Err(_) => Ok(Lookup::Later),
+        Err(error) => error,
+    };
+    if !error.refused() && held.expires_at.is_some_and(|at| at > now()) {
+        return Ok(Lookup::Token(held));
     }
+    if error.transient() {
+        return Ok(Lookup::Later);
+    }
+    if store::refused(&app.db, owner, &locked).await? {
+        return Ok(Lookup::None);
+    }
+    held_now(app, sealer, owner).await
 }
 
-/// The token another request renewed while this one's renewal was refused.
-async fn held_after_refusal(app: &App, sealer: &Sealer, owner: Owner<'_>) -> Result<Lookup, DbError> {
-    let renewed = store::token(&app.db, owner).await?.and_then(|locked| {
-        let plain = sealer.open(&token_context(owner), &locked).ok()?;
-        serde_json::from_slice::<Held>(&plain).ok()
-    });
-    Ok(renewed.map_or(Lookup::None, Lookup::Token))
+/// The owner's token as another request left it while this one renewed theirs.
+async fn held_now(app: &App, sealer: &Sealer, owner: Owner<'_>) -> Result<Lookup, DbError> {
+    let now_held = store::token(&app.db, owner)
+        .await?
+        .and_then(|locked| open_held(sealer, owner, &locked));
+    Ok(now_held.map_or(Lookup::None, Lookup::Token))
 }
 
 /// A `TokenResponse`.

@@ -929,13 +929,15 @@ at the provider (the authorization code grant with PKCE, through the address gua
 a six-digit code. Their client sends the code to the bot as `signin/verifyState`, and the bot redeems it for the
 token. The link works for 15 minutes; the code works once, for 15 minutes from when the page showed it, only for
 the person the link was made for; five wrong codes end the sign-in. A token within a minute of its end is renewed
-with its refresh token when the bot asks for it; one the provider refuses to renew (`invalid_grant`, or no refresh
-token) signs the person out of that connection, unless another request renewed it meanwhile; any other failure keeps
-it: the bot gets it while it still works, and a 503 after that.
+with its refresh token when the bot asks for it. When the renewal fails, the bot gets the token while it still works,
+unless the provider refused it (`invalid_grant`, or no refresh token). After that, a provider that isn't reached or
+answers `429` or `5xx` keeps the token and the bot gets a 503; any other failure, and a refusal, sign the person out
+of that connection, so the bot shows its card again. A renewal or a refusal changes only the token it read: a
+sign-out, a change of provider or another request's renewal meanwhile stays.
 
 | Request (the bot's) | Answers |
 |---|---|
-| `GET api/usertoken/GetToken?userId&connectionName&channelId[&code]` | 200 `{"channelId", "connectionName", "token", "expiration"}`, 404 with none, or 503 when a token that ran out wasn't renewed this time |
+| `GET api/usertoken/GetToken?userId&connectionName&channelId[&code]` | 200 `{"channelId", "connectionName", "token", "expiration"}`, 404 with none, or 503 when the provider wasn't available to renew a token that ran out |
 | `GET api/botsignin/GetSignInResource?state` | 200 `{"signInLink"}`; `state` is the SDK's base64 JSON (`connectionName`, the conversation reference's `user.id`, `msAppId`, in either letter case). 400 when it names another app, no connection of the bot's, or no one who may use the bot |
 | `GET api/botsignin/GetSignInUrl?state` | the same link as text |
 | `GET api/usertoken/GetTokenStatus?userId&channelId[&include]` | 200 `[{"channelId", "connectionName", "hasToken", "serviceProviderDisplayName"}]` |

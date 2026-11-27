@@ -4,6 +4,7 @@
 use diesel::prelude::*;
 use diesel_async::{AsyncConnection as _, RunQueryDsl};
 
+use super::connections::Connection;
 use super::now_ms as now;
 use super::schema::{bot_connections, bot_sign_ins, bot_user_tokens};
 use crate::db::{Db, DbError, with_conn};
@@ -58,13 +59,19 @@ pub(super) async fn begin(db: &Db, row: &SignIn) -> Result<(), DbError> {
         .await)
 }
 
-/// The sign-in `id`, while it runs.
-pub(super) async fn sign_in(db: &Db, id: &str) -> Result<Option<SignIn>, DbError> {
+/// The sign-in `id` and its connection, read together, while it runs and has no token yet.
+pub(super) async fn running(db: &Db, id: &str) -> Result<Option<(SignIn, Connection)>, DbError> {
     let at = now();
     with_conn!(db, |conn| Ok(bot_sign_ins::table
-        .find(id)
+        .inner_join(
+            bot_connections::table.on(bot_connections::bot_id
+                .eq(bot_sign_ins::bot_id)
+                .and(bot_connections::name.eq(bot_sign_ins::connection))),
+        )
+        .filter(bot_sign_ins::id.eq(id))
         .filter(bot_sign_ins::expires_at.gt(at))
-        .select(SignIn::as_select())
+        .filter(bot_sign_ins::token.is_null())
+        .select((SignIn::as_select(), Connection::as_select()))
         .first(conn)
         .await
         .optional()?))
@@ -125,17 +132,22 @@ pub(super) async fn missed(db: &Db, owner: Owner<'_>) -> Result<(), DbError> {
 macro_rules! put {
     ($conn:ident, $owner:expr, $token:expr) => {{
         let owner = $owner;
-        diesel::delete(bot_user_tokens::table.find((owner.bot, owner.connection, owner.user)))
-            .execute($conn)
-            .await?;
+        let at = now();
         diesel::insert_into(bot_user_tokens::table)
             .values((
                 bot_user_tokens::bot_id.eq(owner.bot),
                 bot_user_tokens::connection.eq(owner.connection),
                 bot_user_tokens::user_id.eq(owner.user),
                 bot_user_tokens::token.eq($token),
-                bot_user_tokens::updated_at.eq(now()),
+                bot_user_tokens::updated_at.eq(at),
             ))
+            .on_conflict((
+                bot_user_tokens::bot_id,
+                bot_user_tokens::connection,
+                bot_user_tokens::user_id,
+            ))
+            .do_update()
+            .set((bot_user_tokens::token.eq($token), bot_user_tokens::updated_at.eq(at)))
             .execute($conn)
             .await?;
     }};
@@ -155,14 +167,18 @@ pub(super) async fn redeem(db: &Db, id: &str, owner: Owner<'_>, token: &[u8]) ->
         .await)
 }
 
-/// Keeps `token` (sealed) as the owner's, in place of any they had.
-pub(super) async fn keep(db: &Db, owner: Owner<'_>, token: &[u8]) -> Result<(), DbError> {
-    with_conn!(db, |conn| conn
-        .transaction::<_, DbError, _>(async |conn| {
-            put!(conn, owner, token);
-            Ok(())
-        })
-        .await)
+/// Keeps the renewed `token` (sealed) in place of the owner's token `read`, unless a sign-out, a refusal, a change
+/// of provider or another renewal changed it meanwhile: whether it was kept.
+pub(super) async fn keep(db: &Db, owner: Owner<'_>, read: &[u8], token: &[u8]) -> Result<bool, DbError> {
+    let updated = with_conn!(db, |conn| diesel::update(
+        bot_user_tokens::table
+            .find((owner.bot, owner.connection, owner.user))
+            .filter(bot_user_tokens::token.eq(read))
+    )
+    .set((bot_user_tokens::token.eq(token), bot_user_tokens::updated_at.eq(now())))
+    .execute(conn)
+    .await)?;
+    Ok(updated == 1)
 }
 
 /// The owner's token, sealed.
@@ -257,4 +273,73 @@ pub(super) async fn purge(db: &Db, before: i64) -> Result<(), DbError> {
     .execute(conn)
     .await)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use diesel_async::SimpleAsyncConnection as _;
+
+    use super::*;
+
+    const OWNER: Owner<'static> = Owner {
+        bot: "b",
+        connection: "github",
+        user: "ada",
+    };
+
+    fn sign_in(id: &str) -> SignIn {
+        SignIn {
+            id: id.to_owned(),
+            bot_id: OWNER.bot.to_owned(),
+            connection: OWNER.connection.to_owned(),
+            user_id: OWNER.user.to_owned(),
+            verifier: Vec::new(),
+            code_hash: None,
+            token: None,
+            attempts: 0,
+            expires_at: now() + 60_000,
+            created_at: now(),
+        }
+    }
+
+    async fn sign_ins(db: &Db) -> Result<i64, DbError> {
+        with_conn!(db, |conn| Ok(bot_sign_ins::table.count().get_result(conn).await?))
+    }
+
+    #[tokio::test]
+    async fn a_renewal_or_refusal_changes_only_the_token_it_read() -> Result<(), DbError> {
+        let dir = tempfile::tempdir().map_err(|error| DbError::Pool(error.to_string()))?;
+        let db = Db::connect(&format!("sqlite://{}", dir.path().join("server.sqlite").display()), 1).await?;
+        // the owner's bot and connection aren't registered: this tests only the store's own conditions
+        with_conn!(db, |conn| conn.batch_execute("PRAGMA foreign_keys = OFF").await?);
+        begin(&db, &sign_in("first")).await?;
+        assert!(redeem(&db, "first", OWNER, b"x").await?);
+        begin(&db, &sign_in("second")).await?;
+        assert!(redeem(&db, "second", OWNER, b"y").await?);
+        assert_eq!(token(&db, OWNER).await?.as_deref(), Some(&b"y"[..]));
+
+        assert!(
+            !keep(&db, OWNER, b"x", b"z").await?,
+            "a renewal of a replaced token keeps nothing"
+        );
+        begin(&db, &sign_in("third")).await?;
+        assert!(
+            !refused(&db, OWNER, b"x").await?,
+            "a refusal of a replaced token signs no one out"
+        );
+        assert_eq!(token(&db, OWNER).await?.as_deref(), Some(&b"y"[..]));
+        assert_eq!(sign_ins(&db).await?, 1);
+
+        assert!(keep(&db, OWNER, b"y", b"z").await?);
+        assert_eq!(token(&db, OWNER).await?.as_deref(), Some(&b"z"[..]));
+        assert!(refused(&db, OWNER, b"z").await?);
+        assert_eq!(token(&db, OWNER).await?, None);
+        assert_eq!(sign_ins(&db).await?, 0, "a refusal ends the owner's sign-ins");
+        assert!(
+            !keep(&db, OWNER, b"z", b"w").await?,
+            "a renewal after a sign-out keeps nothing"
+        );
+        assert_eq!(token(&db, OWNER).await?, None);
+        Ok(())
+    }
 }
