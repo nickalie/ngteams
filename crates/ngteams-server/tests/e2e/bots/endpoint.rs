@@ -178,6 +178,8 @@ async fn receive(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: St
     let activity: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
     let script = shared.script.lock().unwrap().clone();
     let scripted = script.map(|script| script(&activity));
+    // Read before the send: the test may change the answer as soon as it sees the activity.
+    let status = shared.status.load(Ordering::SeqCst);
     let authorization = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
@@ -187,9 +189,7 @@ async fn receive(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: St
         authorization,
     });
     let Some(scripted) = scripted else {
-        return StatusCode::from_u16(shared.status.load(Ordering::SeqCst))
-            .unwrap_or(StatusCode::OK)
-            .into_response();
+        return StatusCode::from_u16(status).unwrap_or(StatusCode::OK).into_response();
     };
     tokio::time::sleep(scripted.delay).await;
     let status = StatusCode::from_u16(scripted.status).unwrap_or(StatusCode::OK);
