@@ -112,6 +112,22 @@ pub enum Line {
     Dialog,
 }
 
+impl Line {
+    /// What the line says, as a word a selector can hold.
+    #[must_use]
+    pub fn key(&self) -> &'static str {
+        match self {
+            Self::Note(text) if text == SIGNED_IN => "signed-in",
+            Self::Note(_) => "note",
+            Self::Error(text) if text == CODE_FAILED => "code-failed",
+            Self::Error(text) if text == NOT_REACHED => "not-reached",
+            Self::Error(_) => "error",
+            Self::SignIn => "sign-in",
+            Self::Dialog => "dialog",
+        }
+    }
+}
+
 /// Where a card's plain submit goes (see the module docs).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum SubmitTo {

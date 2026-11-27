@@ -547,6 +547,7 @@ pub fn bot_line(palette: Palette, selector: String, line: &Line, in_teams: Optio
         .then(|| in_teams.map(str::to_owned))
         .flatten();
     let id = SharedString::from(selector.clone());
+    let kind = format!("{selector}-{}", line.key());
     div()
         .debug_selector(move || selector)
         .id(id)
@@ -557,7 +558,7 @@ pub fn bot_line(palette: Palette, selector: String, line: &Line, in_teams: Optio
         .text_xs()
         .text_color(rgb(colour))
         .child(div().pt_0p5().child(glyph.icon().size(px(12.0))))
-        .child(div().flex_1().min_w_0().child(text))
+        .child(div().debug_selector(move || kind).flex_1().min_w_0().child(text))
         .when_some(opens, |row, opens| {
             row.cursor_pointer()
                 .hover(Styled::underline)

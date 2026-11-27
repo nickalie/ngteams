@@ -83,7 +83,7 @@ impl Asked {
     }
 }
 
-/// A request of `bot` under `api/` (`path` after it), with its query and body.
+/// A request of `bot` under `api/` (`path` after it), with its query.
 pub(crate) async fn serve(app: &App, bot: &Bot, method: Method, path: Vec<String>, query: Option<String>) -> Response {
     if !bot.enabled {
         return refused(StatusCode::FORBIDDEN, "Forbidden", "The bot may not do this.");

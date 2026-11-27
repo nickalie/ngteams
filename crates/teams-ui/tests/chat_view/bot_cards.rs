@@ -943,8 +943,13 @@ fn oauth_message(id: &str) -> Message {
     )
 }
 
-/// Types a code with a space in it, verifies it (refused: the field and a line stay), then verifies it again.
-fn type_code_and_verify_twice(cx: &mut VisualTestContext, code: &str) {
+/// The line under card 0 of message `id` says what `kind` names (`bot_card::Line::key`).
+fn answered(cx: &mut VisualTestContext, id: &str, kind: &str) -> bool {
+    bounds(cx, &format!("card-{id}-c0answer-{kind}")).is_some()
+}
+
+/// Types a code with a space in it, verifies it (refused: the field and a `refused` line stay), then verifies it again.
+fn type_code_and_verify_twice(cx: &mut VisualTestContext, code: &str, refused: &str) {
     click(cx, code);
     cx.simulate_input("123 456");
     draw(cx);
@@ -955,7 +960,7 @@ fn type_code_and_verify_twice(cx: &mut VisualTestContext, code: &str) {
     click(cx, &format!("{code}-verify"));
     cx.run_until_parked();
     draw(cx);
-    assert!(bounds(cx, &format!("card-{ID}-c0answer")).is_some());
+    assert!(answered(cx, ID, refused), "the line says {refused}");
     assert!(bounds(cx, code).is_some());
     click(cx, &format!("{code}-verify"));
     cx.run_until_parked();
@@ -980,7 +985,7 @@ fn a_sign_in_card_opens_its_page_then_sends_the_code_it_showed() {
     click(cx, &format!("{code}-verify"));
     assert!(bounds(cx, &format!("{code}-error")).is_some());
     assert!(rig.core.bot_asks.lock().unwrap().is_empty());
-    type_code_and_verify_twice(cx, &code);
+    type_code_and_verify_twice(cx, &code, "code-failed");
     let asks = rig.core.bot_asks.lock().unwrap().clone();
     assert_eq!(asks.len(), 2);
     for ask in &asks {
@@ -993,7 +998,7 @@ fn a_sign_in_card_opens_its_page_then_sends_the_code_it_showed() {
     }
     // taken: the field goes, the card says the user is signed in
     assert!(bounds(cx, &code).is_none());
-    assert!(bounds(cx, &format!("card-{ID}-c0answer")).is_some());
+    assert!(answered(cx, ID, "signed-in"));
 }
 
 #[test]
@@ -1010,14 +1015,15 @@ fn a_code_stays_after_a_server_error_and_the_bots_error_then_signs_in() {
     let (_view, cx) = tall_window(&rig);
     let code = format!("card-{ID}-c0-code");
     click(cx, &format!("card-{ID}-c0a0"));
-    type_code_and_verify_twice(cx, &code);
+    type_code_and_verify_twice(cx, &code, "not-reached");
     assert!(bounds(cx, &code).is_some(), "the bot's error keeps the field");
+    assert!(answered(cx, ID, "code-failed"), "a blank error of the bot says the code failed");
     click(cx, &format!("{code}-verify"));
     cx.run_until_parked();
     draw(cx);
     assert_eq!(rig.core.bot_asks.lock().unwrap().len(), 3);
     assert!(bounds(cx, &code).is_none(), "the third answer signs the user in");
-    assert!(bounds(cx, &format!("card-{ID}-c0answer")).is_some());
+    assert!(answered(cx, ID, "signed-in"));
 }
 
 #[test]
@@ -1084,7 +1090,7 @@ fn qa_enter_in_the_code_field_sends_the_code_and_signs_the_user_in() {
     draw(cx);
     assert_eq!(verify_asks(&rig), [("654321".to_owned(), AB.to_owned())]);
     assert!(bounds(cx, &code).is_none(), "the field goes");
-    assert!(bounds(cx, &format!("card-{ID}-c0answer")).is_some());
+    assert!(answered(cx, ID, "signed-in"));
 }
 
 #[test]
@@ -1117,16 +1123,13 @@ fn qa_after_a_sign_out_the_bots_next_card_takes_its_own_code() {
         click(cx, &format!("{second}-verify"));
         cx.run_until_parked();
         assert!(bounds(cx, &second).is_some(), "a {refusal} keeps the field");
-        assert!(bounds(cx, &format!("card-{NEXT}-c0answer")).is_some());
+        assert!(answered(cx, NEXT, "code-failed"), "a {refusal} says the code failed");
     }
     click(cx, &format!("{second}-verify"));
     cx.run_until_parked();
     assert!(bounds(cx, &second).is_none(), "the new card signed the user in");
-    assert!(
-        bounds(cx, &format!("card-{ID}-c0answer")).is_some(),
-        "the first card's line stays"
-    );
-    assert!(bounds(cx, &format!("card-{NEXT}-c0answer")).is_some());
+    assert!(answered(cx, ID, "signed-in"), "the first card's line stays");
+    assert!(answered(cx, NEXT, "signed-in"));
     let codes: Vec<String> = verify_asks(&rig).into_iter().map(|(code, _)| code).collect();
     assert_eq!(codes, ["111111", "222222", "222222", "222222"]);
 }

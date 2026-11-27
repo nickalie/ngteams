@@ -109,8 +109,8 @@ the lab tenant sends one within the lab rule. The card's text and buttons are dr
 The native client (`NGTEAMS_BOTS=1`) opens the link in the browser, then shows a code field and Verify under the
 card. The page at the end of the sign-in shows a code (the Bot Framework's token service shows it when the sign-in
 runs outside Teams' own window; the own server always does). Verify sends it as `signin/verifyState`, one attempt;
-the bot redeems it at its token service. A `404`, `412` or `400` from the bot says the code didn't work and keeps the
-field; a success takes the field away and says the person is signed in.
+the bot redeems it at its token service. A `400`, `401`, `403`, `404` or `412` (or the bot's own error) says the code
+didn't work; any failure keeps the field. A success takes the field away and says the person is signed in.
 
 No token of the account is involved beyond the invoke's own (the token rule above): the sign-in happens in the
 browser, between the person and the bot's identity provider. Single sign-on (`signin/tokenExchange`) is not sent.
