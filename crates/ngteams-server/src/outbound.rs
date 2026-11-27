@@ -249,7 +249,7 @@ impl Outbound {
 
     /// Sends `request` as it is (an OAuth client's token request): its method, headers and body, its
     /// `Authorization` kept out of any debug output. The answer with its status, its headers and at most
-    /// [`MAX_ANSWER`] bytes of its body.
+    /// [`MAX_ANSWER`] bytes of its body; an error answer with a longer body comes with no body.
     ///
     /// # Errors
     /// See [`OutboundError`].
@@ -267,11 +267,16 @@ impl Outbound {
         let request = self.client.request(parts.method, url).headers(headers).body(body);
         let exchange = async {
             let answer = request.send().await.map_err(|error| refusal(&error))?;
-            let mut response = axum::http::Response::builder().status(answer.status());
+            let status = answer.status();
+            let mut response = axum::http::Response::builder().status(status);
             for (name, value) in answer.headers() {
                 response = response.header(name, value);
             }
-            let body = read_capped(answer).await?;
+            let body = match read_capped(answer).await {
+                // An error answer's status tells the caller more than its oversized body.
+                Err(OutboundError::TooLarge) if !status.is_success() => Vec::new(),
+                body => body?,
+            };
             response.body(body).map_err(|_| OutboundError::Failed)
         };
         tokio::time::timeout(self.deadline, exchange)
@@ -536,6 +541,10 @@ mod tests {
             )
             .route("/large", post(|| async { vec![b'x'; MAX_ANSWER + 1] }))
             .route(
+                "/busy",
+                post(|| async { (StatusCode::SERVICE_UNAVAILABLE, vec![b'x'; MAX_ANSWER + 1]) }),
+            )
+            .route(
                 "/slow",
                 post(|| async { tokio::time::sleep(Duration::from_secs(5)).await }),
             );
@@ -550,6 +559,18 @@ mod tests {
         assert_eq!(answer.status, 307);
         let large = outbound.post_json(&format!("{origin}/large"), None, Vec::new()).await;
         assert_eq!(large.unwrap_err(), OutboundError::TooLarge);
+        let token = |path: &str| {
+            axum::http::Request::post(format!("{origin}{path}"))
+                .body(Vec::new())
+                .unwrap()
+        };
+        assert_eq!(
+            outbound.exchange(token("/large")).await.unwrap_err(),
+            OutboundError::TooLarge
+        );
+        let busy = outbound.exchange(token("/busy")).await.unwrap();
+        assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(busy.body().is_empty());
         let slow = outbound.post_json(&format!("{origin}/slow"), None, Vec::new()).await;
         assert_eq!(slow.unwrap_err(), OutboundError::Timeout);
         task.abort();

@@ -90,17 +90,30 @@ fn token_error(error: &TokenError, busy: bool) -> ProviderError {
         RequestTokenError::ServerResponse(answer) if *answer.error() == BasicErrorResponseType::InvalidGrant => {
             ProviderError::Refused(error.to_string())
         }
-        RequestTokenError::Request(
-            OutboundError::Unresolved
-            | OutboundError::ConnectionRefused
-            | OutboundError::Unreachable
-            | OutboundError::Closed
-            | OutboundError::Tls
-            | OutboundError::Timeout
-            | OutboundError::Failed,
-        ) => ProviderError::Unavailable(error.to_string()),
+        RequestTokenError::Request(outbound) if transport_down(outbound) => {
+            ProviderError::Unavailable(error.to_string())
+        }
+        RequestTokenError::Request(_) => ProviderError::Failed(error.to_string()),
         _ if busy => ProviderError::Unavailable(error.to_string()),
         _ => ProviderError::Failed(error.to_string()),
+    }
+}
+
+/// Whether the request didn't get through for a cause that can clear with no change; a guard refusal can't.
+const fn transport_down(error: &OutboundError) -> bool {
+    match error {
+        OutboundError::Unresolved
+        | OutboundError::ConnectionRefused
+        | OutboundError::Unreachable
+        | OutboundError::Closed
+        | OutboundError::Tls
+        | OutboundError::Timeout
+        | OutboundError::Failed => true,
+        OutboundError::Url
+        | OutboundError::Refused
+        | OutboundError::Metadata
+        | OutboundError::Certificate
+        | OutboundError::TooLarge => false,
     }
 }
 
@@ -273,8 +286,18 @@ mod tests {
         assert!(token_error(&answer(BasicErrorResponseType::InvalidGrant), true).refused());
         let client = token_error(&answer(BasicErrorResponseType::InvalidClient), false);
         assert!(!client.refused() && !client.transient());
-        let timeout = token_error(&RequestTokenError::Request(OutboundError::Timeout), false);
-        assert!(!timeout.refused() && timeout.transient());
+        for down in [
+            OutboundError::Unresolved,
+            OutboundError::ConnectionRefused,
+            OutboundError::Unreachable,
+            OutboundError::Closed,
+            OutboundError::Tls,
+            OutboundError::Timeout,
+            OutboundError::Failed,
+        ] {
+            let error = token_error(&RequestTokenError::Request(down), false);
+            assert!(!error.refused() && error.transient());
+        }
         for guarded in [
             OutboundError::Url,
             OutboundError::Refused,
@@ -282,7 +305,7 @@ mod tests {
             OutboundError::Certificate,
             OutboundError::TooLarge,
         ] {
-            let error = token_error(&RequestTokenError::Request(guarded), false);
+            let error = token_error(&RequestTokenError::Request(guarded), true);
             assert!(!error.refused() && !error.transient());
         }
         let busy = token_error(&RequestTokenError::Other("empty".to_owned()), true);
