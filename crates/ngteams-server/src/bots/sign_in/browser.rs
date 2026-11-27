@@ -118,9 +118,9 @@ async fn finish(
     .inspect_err(|error| tracing::warn!(%error, connection = %connection.name, "a sign-in got no token"))
     .ok()?;
     let plain = serde_json::to_vec(&held).ok()?;
-    let sealed = sealer.seal(&pending_context(&found.id), &plain).ok()?;
+    let locked = sealer.seal(&pending_context(&found.id), &plain).ok()?;
     let shown = new_code()?;
-    let taken = store::signed_in(&app.db, &found.id, &tokens::code_hash(&found.id, &shown), &sealed)
+    let taken = store::signed_in(&app.db, &found.id, &tokens::code_hash(&found.id, &shown), &locked)
         .await
         .ok()?;
     taken.then_some(shown)

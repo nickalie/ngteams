@@ -938,6 +938,22 @@ fn oauth_message(id: &str) -> Message {
     )
 }
 
+/// Types a code with a space in it, verifies it (refused: the field and a line stay), then verifies it again.
+fn type_code_and_verify_twice(cx: &mut VisualTestContext, code: &str) {
+    click(cx, code);
+    cx.simulate_input("123 456");
+    draw(cx);
+    assert!(bounds(cx, &format!("{code}-error")).is_none(), "typing takes the mark away");
+    click(cx, &format!("{code}-verify"));
+    cx.run_until_parked();
+    draw(cx);
+    assert!(bounds(cx, &format!("card-{ID}-c0answer")).is_some());
+    assert!(bounds(cx, code).is_some());
+    click(cx, &format!("{code}-verify"));
+    cx.run_until_parked();
+    draw(cx);
+}
+
 #[test]
 fn a_sign_in_card_opens_its_page_then_sends_the_code_it_showed() {
     let rig = bots_rig(vec![oauth_message(ID)]);
@@ -955,19 +971,7 @@ fn a_sign_in_card_opens_its_page_then_sends_the_code_it_showed() {
     click(cx, &format!("{code}-verify"));
     assert!(bounds(cx, &format!("{code}-error")).is_some());
     assert!(rig.core.bot_asks.lock().unwrap().is_empty());
-    click(cx, &code);
-    cx.simulate_input("123 456");
-    draw(cx);
-    assert!(bounds(cx, &format!("{code}-error")).is_none(), "typing takes the mark away");
-    // a code the bot doesn't take keeps the field and says so
-    click(cx, &format!("{code}-verify"));
-    cx.run_until_parked();
-    draw(cx);
-    assert!(bounds(cx, &format!("card-{ID}-c0answer")).is_some());
-    assert!(bounds(cx, &code).is_some());
-    click(cx, &format!("{code}-verify"));
-    cx.run_until_parked();
-    draw(cx);
+    type_code_and_verify_twice(cx, &code);
     let asks = rig.core.bot_asks.lock().unwrap().clone();
     assert_eq!(asks.len(), 2);
     for ask in &asks {

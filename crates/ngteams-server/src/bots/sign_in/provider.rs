@@ -130,7 +130,7 @@ pub(crate) async fn renew(
 }
 
 fn held(answer: &BasicTokenResponse, old_refresh: Option<String>) -> Held {
-    let lifetime = answer.expires_in().map(|left| left.min(Duration::from_secs(10 * 365 * 86_400)));
+    let lifetime = answer.expires_in().map(|left| left.min(Duration::from_hours(10 * 365 * 24)));
     Held {
         access_token: answer.access_token().secret().clone(),
         refresh_token: answer

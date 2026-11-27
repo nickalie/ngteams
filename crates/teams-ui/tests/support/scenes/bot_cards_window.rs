@@ -1,8 +1,8 @@
 //! A bot's cards in a chat with the bots shown (`NGTEAMS_BOTS=1`), rendered in the private UI sandbox over synthetic
 //! data in Teams Light and Dark: a card's inputs, a required one left empty, the bot's card in the card's place, its
 //! message, its error and its sign-in request under the card, the suggested actions over the compose box, the card in
-//! read-only mode, and "Refresh card" in a message's menu. Screenshots go to `target/ui-shots/bot-cards-*.png`. Never
-//! reaches a tenant.
+//! read-only mode, "Refresh card" in a message's menu, and a sign-in card with its code field. Screenshots go to
+//! `target/ui-shots/bot-cards-*.png`. Never reaches a tenant.
 #[expect(
     dead_code,
     clippy::unwrap_used,
@@ -48,7 +48,7 @@ const AB: &str = "19:00000000-0000-4000-8000-00000000000a_00000000-0000-4000-800
 /// A made-up bot.
 const BOT: &str = "28:00000000-0000-4000-8000-0000000000b0";
 const ID: &str = "1";
-const PAGES: [&str; 9] = [
+const PAGES: [&str; 10] = [
     "inputs",
     "invalid",
     "replaced",
@@ -58,6 +58,7 @@ const PAGES: [&str; 9] = [
     "suggested",
     "read-only",
     "refresh",
+    "oauth",
 ];
 
 pub(super) fn main() -> ExitCode {
@@ -241,11 +242,23 @@ fn suggesting() -> Value {
     })
 }
 
+/// A bot's sign-in prompt: an OAuth card with its Sign in button.
+fn oauth() -> Value {
+    json!({
+        "type": "message/card",
+        "attachments": [{"contentType": "application/vnd.microsoft.card.oauth", "content": {
+            "text": "Sign in to Synthetic Tools to see your tasks.", "connectionName": "tools",
+            "buttons": [{"type": "signin", "title": "Sign in", "value": "https://tools.example.invalid/sign-in"}]
+        }}]
+    })
+}
+
 /// The message a page shows, and what the bot answers its press.
 fn page_data(page: &str) -> (Message, Option<InvokeAnswer>) {
     match page {
         "inputs" | "invalid" | "read-only" => (bot_message(&adaptive(&form_card())), None),
         "suggested" => (bot_message(&suggesting()), None),
+        "oauth" => (bot_message(&oauth()), None),
         "replaced" => (
             bot_message(&adaptive(&status_card())),
             Some(InvokeAnswer::Card(confirmed_card())),
@@ -345,7 +358,7 @@ fn step(page: &str, chat: Entity<ChatView>, window: &mut Window) {
     let page = page.to_owned();
     after(window, 15, move |window, cx| {
         match page.as_str() {
-            "invalid" | "replaced" | "message" | "error" | "sign-in" => {
+            "invalid" | "replaced" | "message" | "error" | "sign-in" | "oauth" => {
                 chat.update(cx, |chat, cx| chat.press_card_action(ID, 0, 0, cx));
             }
             "refresh" => chat.update(cx, |chat, cx| chat.toggle_options(ID, cx)),

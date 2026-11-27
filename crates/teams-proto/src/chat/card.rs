@@ -696,9 +696,8 @@ fn attachment_card(attachment: &Value, inputs: bool) -> Option<Card> {
     match str_of(attachment, "contentType")? {
         ADAPTIVE => Some(adaptive(card, 0, inputs)),
         HERO => Some(hero(card, ImageSize::Stretch)),
-        THUMBNAIL => Some(hero(card, ImageSize::Medium)),
         // a sign-in card is its text and its buttons, as a hero card's
-        OAUTH | SIGN_IN => Some(hero(card, ImageSize::Medium)),
+        THUMBNAIL | OAUTH | SIGN_IN => Some(hero(card, ImageSize::Medium)),
         _ => None,
     }
 }

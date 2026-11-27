@@ -179,11 +179,25 @@ async fn sign_in_and_out(backend: Backend) {
     let link = synced_link(&setup).await;
     assert_eq!(link, sent_link);
 
-    let (code, page) = idp::sign_in_in_browser(&link, ORIGIN, &setup.registry.server.origin).await;
+    let code = browsed(&setup, &idp, &link).await;
+    verified(&setup, &code).await;
+    redeemed(&setup, &connector, &code).await;
+    renewed(&setup, &connector, &idp).await;
+    signed_out(&setup, &connector, &code).await;
+    setup.stop().await;
+}
+
+/// Ada signs in in her browser; the code the page shows, which holds no token.
+async fn browsed(setup: &Setup, idp: &Idp, link: &str) -> String {
+    let (code, page) = idp::sign_in_in_browser(link, ORIGIN, &setup.registry.server.origin).await;
     assert_eq!(code.len(), 6, "{page}");
     assert!(!page.contains("idp-access"), "{page}");
     assert_eq!(idp.scopes(), ["read:user", "repo"]);
+    code
+}
 
+/// Ada's engine sends the code; the bot gets it as `signin/verifyState`, with no token of Ada's.
+async fn verified(setup: &Setup, code: &str) {
     setup.bot.script(|activity| match activity["name"].as_str() {
         Some("signin/verifyState") => Scripted::empty(200),
         _ => Scripted::empty(404),
@@ -191,7 +205,7 @@ async fn sign_in_and_out(backend: Backend) {
     let ada_token = setup.registry.server.session("ada@own.test").await;
     let ada_token = teams_trouter::TrouterCredentials::ic3(&ada_token).await.unwrap();
     let answer = setup
-        .invoke(Some(&setup.chat()), InvokeKind::VerifyState { code: code.clone() })
+        .invoke(Some(&setup.chat()), InvokeKind::VerifyState { code: code.to_owned() })
         .await;
     assert_eq!(answer, InvokeAnswer::Done);
     let got = setup.bot.next_of("invoke").await;
@@ -200,27 +214,30 @@ async fn sign_in_and_out(backend: Backend) {
     assert_eq!(got.activity["from"]["id"], format!("29:{}", setup.ada));
     assert!(!holds(&got.activity, ada_token.token.expose()), "{}", got.activity);
     assert_eq!(got.token_claims().unwrap()["aud"], setup.bot_id.as_str());
+}
 
-    // the bot redeems the code once, then the token is the person's
-    let (status, token) = token_service(&setup, &connector, Method::GET, &get_token(&setup.ada, Some(&code))).await;
+/// The bot redeems the code once, then the token is the person's.
+async fn redeemed(setup: &Setup, connector: &Connector, code: &str) {
+    let (status, token) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(code))).await;
     assert_eq!(status, 200, "{token}");
     assert_eq!(token["token"], "idp-access-1");
     assert_eq!(token["connectionName"], CONNECTION);
     assert_eq!(token["channelId"], "msteams");
     assert!(token["expiration"].as_str().is_some_and(|at| at.ends_with('Z')), "{token}");
-    let (status, again) = token_service(&setup, &connector, Method::GET, &get_token(&setup.ada, None)).await;
+    let (status, again) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
     assert_eq!((status, &again["token"]), (200, &json!("idp-access-1")));
     let status_path = format!(
         "api/usertoken/GetTokenStatus?{}",
         query(&[("userId", &format!("29:{}", setup.ada)), ("channelId", "msteams")])
     );
-    let (status, statuses) = token_service(&setup, &connector, Method::GET, &status_path).await;
+    let (status, statuses) = token_service(setup, connector, Method::GET, &status_path).await;
     assert_eq!(status, 200, "{statuses}");
     assert_eq!(statuses[0]["connectionName"], CONNECTION);
     assert_eq!(statuses[0]["hasToken"], true);
+}
 
-    renewed(&setup, &connector, &idp).await;
-
+/// Sign-out: no token for the bot, and the redeemed code doesn't sign in again.
+async fn signed_out(setup: &Setup, connector: &Connector, code: &str) {
     let sign_out = format!(
         "api/usertoken/SignOut?{}",
         query(&[
@@ -229,13 +246,12 @@ async fn sign_in_and_out(backend: Backend) {
             ("channelId", "msteams"),
         ])
     );
-    let (status, _) = token_service(&setup, &connector, Method::DELETE, &sign_out).await;
+    let (status, _) = token_service(setup, connector, Method::DELETE, &sign_out).await;
     assert_eq!(status, 200);
-    let (status, _) = token_service(&setup, &connector, Method::GET, &get_token(&setup.ada, None)).await;
+    let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
     assert_eq!(status, 404, "signed out, the bot gets no token");
-    let (status, _) = token_service(&setup, &connector, Method::GET, &get_token(&setup.ada, Some(&code))).await;
+    let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(code))).await;
     assert_eq!(status, 404, "a redeemed code doesn't sign in again");
-    setup.stop().await;
 }
 
 /// A token past its time is renewed with its refresh token when the bot asks for it.
@@ -275,31 +291,7 @@ async fn a_wrong_code_signs_no_one_in_and_single_sign_on_is_refused() {
     let (status, _) = token_service(&setup, &connector, Method::GET, &get_token(&setup.ada, Some(&code))).await;
     assert_eq!(status, 404, "the sign-in ended after the wrong codes");
 
-    // single sign-on: the token service refuses an exchange, and an invoke for it never reaches the bot
-    let exchange = format!(
-        "api/usertoken/exchange?{}",
-        query(&[
-            ("userId", &format!("29:{}", setup.ada)),
-            ("connectionName", CONNECTION),
-            ("channelId", "msteams"),
-        ])
-    );
-    let (status, _) = reqwest::Client::new()
-        .post(setup.registry.server.url(&format!("/{exchange}")))
-        .bearer_auth(connector.token.as_deref().unwrap())
-        .json(&json!({"token": "synthetic-sso-token"}))
-        .send()
-        .await
-        .map(|response| (response.status().as_u16(), ()))
-        .unwrap();
-    assert_eq!(status, 412);
-    let hits = setup.bot.hits();
-    let body = json!({"name": "signin/tokenExchange", "appId": setup.bot_id,
-        "conversation": {"id": setup.chat()}, "value": {"id": "x", "connectionName": CONNECTION, "token": "t"}});
-    let (status, _) = setup.raw_invoke(&setup.bot_id, &body).await;
-    assert_eq!(status, 412);
-    assert_eq!(setup.bot.hits(), hits, "the bot got no single sign-on invoke");
-
+    single_sign_on_is_refused(&setup, &connector).await;
     // a person's token isn't the bot's: no bot token, no token service
     let (status, _) = super::call(
         &setup.registry.server,
@@ -346,6 +338,33 @@ async fn a_wrong_code_signs_no_one_in_and_single_sign_on_is_refused() {
     .await;
     assert_eq!(status, 404);
     setup.stop().await;
+}
+
+/// Single sign-on: the token service refuses an exchange, and an invoke for it never reaches the bot.
+async fn single_sign_on_is_refused(setup: &Setup, connector: &Connector) {
+    let exchange = format!(
+        "api/usertoken/exchange?{}",
+        query(&[
+            ("userId", &format!("29:{}", setup.ada)),
+            ("connectionName", CONNECTION),
+            ("channelId", "msteams"),
+        ])
+    );
+    let status = reqwest::Client::new()
+        .post(setup.registry.server.url(&format!("/{exchange}")))
+        .bearer_auth(connector.token.as_deref().unwrap())
+        .json(&json!({"token": "synthetic-sso-token"}))
+        .send()
+        .await
+        .map(|response| response.status().as_u16())
+        .unwrap();
+    assert_eq!(status, 412);
+    let hits = setup.bot.hits();
+    let body = json!({"name": "signin/tokenExchange", "appId": setup.bot_id,
+        "conversation": {"id": setup.chat()}, "value": {"id": "x", "connectionName": CONNECTION, "token": "t"}});
+    let (status, _) = setup.raw_invoke(&setup.bot_id, &body).await;
+    assert_eq!(status, 412);
+    assert_eq!(setup.bot.hits(), hits, "the bot got no single sign-on invoke");
 }
 
 #[tokio::test]

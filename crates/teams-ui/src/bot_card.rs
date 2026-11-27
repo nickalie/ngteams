@@ -259,11 +259,7 @@ impl CardBot {
             let state = cx.new(|cx| InputState::new(window, cx).placeholder(CODE_PLACEHOLDER));
             self.watched.push(cx.subscribe(&state, move |this, _, event: &InputEvent, cx| match event {
                 InputEvent::PressEnter { .. } => this.verify(at, cx),
-                InputEvent::Change => {
-                    if this.invalid.remove(&field_key(at, SIGN_IN_CODE)) {
-                        cx.notify();
-                    }
-                }
+                InputEvent::Change if this.invalid.remove(&field_key(at, SIGN_IN_CODE)) => cx.notify(),
                 _ => {}
             }));
             self.fields.insert(code, Field::Text(state));

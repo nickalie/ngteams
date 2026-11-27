@@ -164,17 +164,17 @@ async fn redeem_code(app: &App, sealer: &Sealer, owner: Owner<'_>, code: &str) -
     let Some(held) = pending_token(sealer, matched) else {
         return Ok(None);
     };
-    let Some(sealed) = seal_held(sealer, owner, &held) else {
+    let Some(locked) = seal_held(sealer, owner, &held) else {
         return Ok(None);
     };
-    Ok(store::redeem(&app.db, &matched.id, owner, &sealed)
+    Ok(store::redeem(&app.db, &matched.id, owner, &locked)
         .await?
         .then_some(held))
 }
 
 fn pending_token(sealer: &Sealer, sign_in: &SignIn) -> Option<Held> {
-    let sealed = sign_in.token.as_deref()?;
-    let plain = sealer.open(&pending_context(&sign_in.id), sealed).ok()?;
+    let locked = sign_in.token.as_deref()?;
+    let plain = sealer.open(&pending_context(&sign_in.id), locked).ok()?;
     serde_json::from_slice(&plain).ok()
 }
 
@@ -186,11 +186,11 @@ fn seal_held(sealer: &Sealer, owner: Owner<'_>, held: &Held) -> Option<Vec<u8>> 
 /// The owner's token, renewed first when it runs out within [`RENEW_BEFORE_MS`]; a token that can't be renewed
 /// signs them out of the connection.
 async fn held(app: &App, sealer: &Sealer, connection: &Connection, owner: Owner<'_>) -> Result<Option<Held>, DbError> {
-    let Some(sealed) = store::token(&app.db, owner).await? else {
+    let Some(locked) = store::token(&app.db, owner).await? else {
         return Ok(None);
     };
     let Some(held) = sealer
-        .open(&token_context(owner), &sealed)
+        .open(&token_context(owner), &locked)
         .ok()
         .and_then(|plain| serde_json::from_slice::<Held>(&plain).ok())
     else {
@@ -215,16 +215,14 @@ async fn held(app: &App, sealer: &Sealer, connection: &Connection, owner: Owner<
         .ok(),
         None => None,
     };
-    match renewed.and_then(|renewed| seal_held(sealer, owner, &renewed).map(|sealed| (renewed, sealed))) {
-        Some((renewed, sealed)) => {
-            store::keep(&app.db, owner, &sealed).await?;
-            Ok(Some(renewed))
-        }
-        None => {
-            store::sign_out(&app.db, owner.bot, Some(owner.connection), owner.user).await?;
-            Ok(None)
-        }
+    if let Some((renewed, locked)) =
+        renewed.and_then(|renewed| seal_held(sealer, owner, &renewed).map(|locked| (renewed, locked)))
+    {
+        store::keep(&app.db, owner, &locked).await?;
+        return Ok(Some(renewed));
     }
+    store::sign_out(&app.db, owner.bot, Some(owner.connection), owner.user).await?;
+    Ok(None)
 }
 
 /// A `TokenResponse`.

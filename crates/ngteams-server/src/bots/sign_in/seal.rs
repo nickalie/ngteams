@@ -96,20 +96,20 @@ mod tests {
     #[test]
     fn a_sealed_value_opens_only_with_its_key_and_its_context() {
         let sealer = Sealer::new(&key(7)).unwrap();
-        let sealed = sealer.seal("token|bot|github|ada", b"synthetic-idp-token").unwrap();
-        assert!(!sealed.windows(9).any(|window| window == b"synthetic"));
+        let closed = sealer.seal("token|bot|github|ada", b"synthetic-idp-token").unwrap();
+        assert!(!closed.windows(9).any(|window| window == b"synthetic"));
         assert_eq!(
-            sealer.open("token|bot|github|ada", &sealed).unwrap(),
+            sealer.open("token|bot|github|ada", &closed).unwrap(),
             b"synthetic-idp-token"
         );
-        assert_eq!(sealer.open("token|bot|github|bob", &sealed), Err(SealError));
+        assert_eq!(sealer.open("token|bot|github|bob", &closed), Err(SealError));
         assert_eq!(
-            Sealer::new(&key(8)).unwrap().open("token|bot|github|ada", &sealed),
+            Sealer::new(&key(8)).unwrap().open("token|bot|github|ada", &closed),
             Err(SealError)
         );
-        assert_eq!(sealer.open("token|bot|github|ada", &sealed[..5]), Err(SealError));
+        assert_eq!(sealer.open("token|bot|github|ada", &closed[..5]), Err(SealError));
         let again = sealer.seal("token|bot|github|ada", b"synthetic-idp-token").unwrap();
-        assert_ne!(again, sealed, "each seal takes a new nonce");
+        assert_ne!(again, closed, "each seal takes a new nonce");
     }
 
     #[test]

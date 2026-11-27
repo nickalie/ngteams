@@ -62,7 +62,7 @@ impl From<AppError> for ApiError {
                     "The server can't do this now.",
                 );
             }
-            AppError::NoSuchApp => (StatusCode::NOT_FOUND, "NotFound"),
+            AppError::NoSuchApp | AppError::NoSuchConnection => (StatusCode::NOT_FOUND, "NotFound"),
             AppError::AppExists => (StatusCode::CONFLICT, "AppExists"),
             AppError::BotExists => (StatusCode::CONFLICT, "BotExists"),
             AppError::BotChanged => (StatusCode::BAD_REQUEST, "BotChanged"),
@@ -76,7 +76,6 @@ impl From<AppError> for ApiError {
             AppError::Package(_) => (StatusCode::BAD_REQUEST, "InvalidPackage"),
             AppError::TooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "PackageTooLarge"),
             AppError::Connection => (StatusCode::BAD_REQUEST, "InvalidConnection"),
-            AppError::NoSuchConnection => (StatusCode::NOT_FOUND, "NotFound"),
             AppError::SignInNotConfigured => (StatusCode::CONFLICT, "SignInNotConfigured"),
         };
         refused(status, code, error.to_string())

@@ -406,6 +406,7 @@ async fn sign_in_card(run: &Running, count: usize) -> String {
 
 async fn sign_in(run: &Running, sdk: &Sdk) {
     use sha2::Digest as _;
+    use std::fmt::Write as _;
     let name = sdk.name;
     run.ada.send(&run.chat, "signin").await;
     let link = sign_in_card(run, 1).await;
@@ -419,11 +420,13 @@ async fn sign_in(run: &Running, sdk: &Sdk) {
     };
     let answer = run.ada.engine().bot_invoke(verify).await.unwrap();
     assert_eq!(answer, teams_proto::InvokeAnswer::Done, "{}", run.container.logs());
-    let digest: String = sha2::Sha256::digest(b"idp-access-1")
+    let hex = sha2::Sha256::digest(b"idp-access-1")
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>()[..12]
-        .to_owned();
+        .fold(String::new(), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        });
+    let digest = &hex[..12];
     answered(&run.ada, &run.chat, &run.bot, &format!("signed in to {name}: {digest}"), &run.container).await;
     ask(run, "signin", &format!("already signed in to {name}: {digest}")).await;
     ask(run, "signout", &format!("signed out of {name}")).await;
