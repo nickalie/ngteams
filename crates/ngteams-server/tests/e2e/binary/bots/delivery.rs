@@ -27,6 +27,7 @@ use reqwest::Method;
 use serde_json::{Value, json};
 use teams_auth::secrets::Secret;
 use teams_core::Outbox;
+use teams_core::account::AMS_GTM;
 use teams_core::engine::{self, Action, EngineHandle, EngineOptions, Parts};
 use teams_core::{Transient, TransientSent};
 use teams_proto::chat::MessageText;
@@ -268,6 +269,9 @@ impl Actor {
         let session = Arc::new(node.sign_in(upn, PASSWORD).await);
         let skype = session.skypetoken().await.unwrap();
         let mri = Mri::new(format!("8:{}", skype.skype_id.as_deref().unwrap()));
+        let ams = session.service_base(AMS_GTM).unwrap();
+        // The region names AMS on the shared public origin; this actor is pinned to its own node, as its chat base is.
+        let ams = format!("{}{}", node.endpoint, url::Url::parse(&ams).unwrap().path());
         let transport = || {
             HttpTransport::for_cloud(
                 Arc::clone(&session),
@@ -275,8 +279,7 @@ impl Actor {
                 Cloud::own(&node.endpoint).unwrap(),
             )
             .unwrap()
-            // The region names AMS on the shared public origin; this actor is pinned to its own node, as its chat base is.
-            .with_ams(&format!("{}/ams", node.endpoint))
+            .with_ams(&ams)
             .unwrap()
             .for_account(mri.clone())
         };

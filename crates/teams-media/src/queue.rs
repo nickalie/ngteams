@@ -1,5 +1,5 @@
-//! The bounded queues media crosses threads on: between the PipeWire backend's loop thread and the devices, and
-//! between a media session's capture thread and its network thread.
+//! The bounded queues media crosses threads on: between the PipeWire backend's loop thread and its devices, and
+//! between the native devices' (Windows/macOS) capture threads and their callers.
 //!
 //! A full queue drops its oldest entries, so whoever reads always gets the newest media: a reader that falls behind
 //! (or starts late) loses the backlog, not the present. The writing side closes it when it ends (the PipeWire loop
