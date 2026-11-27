@@ -144,9 +144,22 @@ async fn get_token(app: &App, bot: &Bot, asked: &Asked) -> Result<Response, DbEr
         return Ok(token_response(asked.channel(), &connection.name, &held));
     }
     Ok(match held(app, &sealer, &connection, owner).await? {
-        Some(held) => token_response(asked.channel(), &connection.name, &held),
-        None => not_found(),
+        Lookup::Token(held) => token_response(asked.channel(), &connection.name, &held),
+        Lookup::None => not_found(),
+        Lookup::Later => refused(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "ServiceError",
+            "The identity provider didn't renew the token now; try again later.",
+        ),
     })
+}
+
+/// The owner's token, as a request finds it.
+enum Lookup {
+    Token(Held),
+    None,
+    /// It ran out and the provider didn't renew it this time; it stays for the next request.
+    Later,
 }
 
 /// The token of the owner's sign-in whose code `code` is, which becomes theirs; a wrong code counts against their
@@ -188,24 +201,25 @@ fn seal_held(sealer: &Sealer, owner: Owner<'_>, held: &Held) -> Option<Vec<u8>> 
 }
 
 /// The owner's token, renewed first when it runs out within [`RENEW_BEFORE_MS`]. A token the provider refuses to
-/// renew signs them out of the connection; any other failure keeps it for the next request.
-async fn held(app: &App, sealer: &Sealer, connection: &Connection, owner: Owner<'_>) -> Result<Option<Held>, DbError> {
+/// renew signs them out of the connection, unless another request renewed it meanwhile; any other failure keeps it
+/// for the next request, and gives it while it still works.
+async fn held(app: &App, sealer: &Sealer, connection: &Connection, owner: Owner<'_>) -> Result<Lookup, DbError> {
     let Some(locked) = store::token(&app.db, owner).await? else {
-        return Ok(None);
+        return Ok(Lookup::None);
     };
     let Some(held) = sealer
         .open(&token_context(owner), &locked)
         .ok()
         .and_then(|plain| serde_json::from_slice::<Held>(&plain).ok())
     else {
-        return Ok(None);
+        return Ok(Lookup::None);
     };
     if held.expires_at.is_none_or(|at| at > now() + RENEW_BEFORE_MS) {
-        return Ok(Some(held));
+        return Ok(Lookup::Token(held));
     }
     let Some(secret) = connection.secret(sealer) else {
         tracing::warn!(connection = %connection.name, "a connection's secret didn't open");
-        return Ok(None);
+        return Ok(Lookup::None);
     };
     let renewed = provider::renew(&app.outbound, connection, secret, &redirect_uri(&app.config), &held)
         .await
@@ -213,17 +227,29 @@ async fn held(app: &App, sealer: &Sealer, connection: &Connection, owner: Owner<
     match renewed {
         Ok(renewed) => {
             let Some(locked) = seal_held(sealer, owner, &renewed) else {
-                return Ok(None);
+                return Ok(Lookup::None);
             };
             store::keep(&app.db, owner, &locked).await?;
-            Ok(Some(renewed))
+            Ok(Lookup::Token(renewed))
         }
         Err(error) if error.refused() => {
-            store::sign_out(&app.db, owner.bot, Some(owner.connection), owner.user).await?;
-            Ok(None)
+            if store::refused(&app.db, owner, &locked).await? {
+                return Ok(Lookup::None);
+            }
+            held_after_refusal(app, sealer, owner).await
         }
-        Err(_) => Ok(None),
+        Err(_) if held.expires_at.is_some_and(|at| at > now()) => Ok(Lookup::Token(held)),
+        Err(_) => Ok(Lookup::Later),
     }
+}
+
+/// The token another request renewed while this one's renewal was refused.
+async fn held_after_refusal(app: &App, sealer: &Sealer, owner: Owner<'_>) -> Result<Lookup, DbError> {
+    let renewed = store::token(&app.db, owner).await?.and_then(|locked| {
+        let plain = sealer.open(&token_context(owner), &locked).ok()?;
+        serde_json::from_slice::<Held>(&plain).ok()
+    });
+    Ok(renewed.map_or(Lookup::None, Lookup::Token))
 }
 
 /// A `TokenResponse`.

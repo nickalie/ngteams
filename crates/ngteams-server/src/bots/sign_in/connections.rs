@@ -1,7 +1,9 @@
 //! A bot's OAuth connections, as an administrator keeps them (`/api/admin/v1/apps/{id}/connections…`): an identity
 //! provider's authorize and token URLs, the client the server is there, and the scopes it asks for. The client
-//! secret is sealed and never shown again; a change without one keeps it. Deleting a connection drops its sign-ins
-//! and every person's token for it. Each change is audited, as the registry's are.
+//! secret is sealed and never shown again; a change without one keeps it, unless the token URL changes. A change of
+//! the provider (its authorize or token URL, or the client id) and a deletion drop the connection's sign-ins and
+//! every person's token for it: the provider's grants and codes go only back to it. Each change is audited, as the
+//! registry's are.
 
 use std::sync::Arc;
 
@@ -17,7 +19,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use url::Url;
 
-use super::schema::bot_connections;
+use super::schema::{bot_connections, bot_sign_ins, bot_user_tokens};
 use super::{Sealer, redirect_uri};
 use crate::admin::Actor;
 use crate::admin::api::{Admin, ApiError};
@@ -175,8 +177,10 @@ async fn save(
     let existing = find(&app.db, &bot, &name).await.map_err(AppError::from)?;
     let secret = match (request.client_secret.as_deref(), &existing) {
         (Some(secret), _) => field(secret)?,
-        (None, Some(existing)) => existing.secret(&sealer).ok_or(AppError::Random)?,
-        (None, None) => return Err(AppError::Connection.into()),
+        (None, Some(existing)) if existing.token_url == token_url => {
+            existing.secret(&sealer).ok_or(AppError::Random)?
+        }
+        (None, _) => return Err(AppError::Connection.into()),
     };
     let client_secret = sealer
         .seal(&secret_context(&bot, &name, &token_url), secret.as_bytes())
@@ -193,9 +197,17 @@ async fn save(
         created_at: existing.as_ref().map_or(at, |existing| existing.created_at),
         updated_at: at,
     };
-    let created = existing.is_none();
-    write(&app.db, Actor::account(&admin), &record, &row, created).await?;
-    let status = if created { StatusCode::CREATED } else { StatusCode::OK };
+    let change = match &existing {
+        None => Change::Add,
+        Some(existing) if same_provider(existing, &row) => Change::Keep,
+        Some(_) => Change::Provider,
+    };
+    write(&app.db, Actor::account(&admin), &record, &row, change).await?;
+    let status = if change == Change::Add {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
     Ok(answer(status, &shown(&app.config, &row)))
 }
 
@@ -231,16 +243,47 @@ async fn delete(db: &Db, actor: Actor<'_>, app: &AppRow, bot: &str, name: &str) 
         .await)
 }
 
-/// Adds the connection, or changes it in place: its sign-ins and people's tokens stay.
-async fn write(db: &Db, actor: Actor<'_>, app: &AppRow, row: &Connection, created: bool) -> Result<(), AppError> {
-    let action = if created {
+/// What a `PUT` does to a connection.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Change {
+    Add,
+    /// The same provider and client: the sign-ins and people's tokens stay.
+    Keep,
+    /// Another provider or client: the sign-ins and people's tokens go.
+    Provider,
+}
+
+fn same_provider(old: &Connection, new: &Connection) -> bool {
+    old.authorize_url == new.authorize_url && old.token_url == new.token_url && old.client_id == new.client_id
+}
+
+/// Adds the connection, or changes it in place.
+async fn write(db: &Db, actor: Actor<'_>, app: &AppRow, row: &Connection, change: Change) -> Result<(), AppError> {
+    let action = if change == Change::Add {
         "app.connection.add"
     } else {
         "app.connection.change"
     };
     with_conn!(db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
-            if created {
+            if change == Change::Provider {
+                let (bot, name) = (&row.bot_id, &row.name);
+                diesel::delete(
+                    bot_user_tokens::table
+                        .filter(bot_user_tokens::bot_id.eq(bot))
+                        .filter(bot_user_tokens::connection.eq(name)),
+                )
+                .execute(conn)
+                .await?;
+                diesel::delete(
+                    bot_sign_ins::table
+                        .filter(bot_sign_ins::bot_id.eq(bot))
+                        .filter(bot_sign_ins::connection.eq(name)),
+                )
+                .execute(conn)
+                .await?;
+            }
+            if change == Change::Add {
                 diesel::insert_into(bot_connections::table)
                     .values(row)
                     .execute(conn)
@@ -320,5 +363,52 @@ mod tests {
         assert!(checked_authorize(&config, "http://idp.example.test/authorize").is_ok());
         assert!(field(" ").is_err());
         assert_eq!(field(" id ").unwrap(), "id");
+    }
+
+    #[test]
+    fn a_secret_opens_only_for_its_token_url_and_a_new_provider_drops_the_grants() {
+        let key = super::super::SealKey::new(base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            [5_u8; 32],
+        ));
+        let sealer = Sealer::new(&key).unwrap();
+        let token_url = "https://idp.example.test/token";
+        let row = Connection {
+            bot_id: "b".to_owned(),
+            name: "github".to_owned(),
+            authorize_url: "https://idp.example.test/authorize".to_owned(),
+            token_url: token_url.to_owned(),
+            client_id: "client".to_owned(),
+            client_secret: sealer
+                .seal(&secret_context("b", "github", token_url), b"synthetic-secret")
+                .unwrap(),
+            scopes: String::new(),
+            created_at: 0,
+            updated_at: 0,
+        };
+        assert_eq!(row.secret(&sealer).as_deref(), Some("synthetic-secret"));
+        let moved = Connection {
+            token_url: "https://elsewhere.example.test/token".to_owned(),
+            ..row.clone()
+        };
+        assert!(moved.secret(&sealer).is_none());
+        assert!(!same_provider(&row, &moved));
+        let scoped = Connection {
+            scopes: "repo".to_owned(),
+            ..row.clone()
+        };
+        assert!(same_provider(&row, &scoped));
+        for other in [
+            Connection {
+                client_id: "other".to_owned(),
+                ..row.clone()
+            },
+            Connection {
+                authorize_url: "https://idp.example.test/other".to_owned(),
+                ..row.clone()
+            },
+        ] {
+            assert!(!same_provider(&row, &other));
+        }
     }
 }

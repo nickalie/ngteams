@@ -26,6 +26,17 @@ struct Shared {
     /// Seconds each access token is good for.
     lifetime: AtomicU64,
     scopes: std::sync::Mutex<Vec<String>>,
+    /// The answer every refresh gets instead of a token, while set.
+    refresh_failure: std::sync::Mutex<Option<RefreshFailure>>,
+}
+
+/// How the provider fails a refresh, when a test asks it to.
+#[derive(Clone, Copy, Debug)]
+pub enum RefreshFailure {
+    /// 503: it isn't there now.
+    Unavailable,
+    /// 400 `invalid_grant`: the refresh token is gone.
+    InvalidGrant,
 }
 
 /// The provider, stopped when dropped.
@@ -48,6 +59,7 @@ impl Idp {
             refreshed: AtomicUsize::new(0),
             lifetime: AtomicU64::new(3600),
             scopes: std::sync::Mutex::new(Vec::new()),
+            refresh_failure: std::sync::Mutex::new(None),
         });
         let router = Router::new()
             .route("/authorize", get(authorize))
@@ -72,6 +84,11 @@ impl Idp {
     /// From now on, access tokens are good for `seconds`.
     pub fn lifetime(&self, seconds: u64) {
         self.shared.lifetime.store(seconds, Ordering::SeqCst);
+    }
+
+    /// From now on, every refresh fails so, or, with none, succeeds again.
+    pub fn fail_refreshes(&self, failure: Option<RefreshFailure>) {
+        *self.shared.refresh_failure.lock().unwrap() = failure;
     }
 
     /// How many tokens it issued for a code, and for a refresh token.
@@ -164,6 +181,11 @@ async fn token(
             shared.issued.fetch_add(1, Ordering::SeqCst) + 1
         }
         "refresh_token" if field("refresh_token").starts_with("idp-refresh-") => {
+            match *shared.refresh_failure.lock().unwrap() {
+                Some(RefreshFailure::Unavailable) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+                Some(RefreshFailure::InvalidGrant) => return refused("invalid_grant"),
+                None => {}
+            }
             shared.refreshed.fetch_add(1, Ordering::SeqCst) + 101
         }
         _ => return refused("unsupported_grant_type"),

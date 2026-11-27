@@ -15,7 +15,7 @@ use teams_proto::chat::card::{ActionKind, Via};
 
 use super::connector::Setup;
 use super::endpoint::{Connector, ORIGIN, Scripted};
-use super::idp::{self, CLIENT_ID, CLIENT_SECRET, Idp};
+use super::idp::{self, CLIENT_ID, CLIENT_SECRET, Idp, RefreshFailure};
 use super::{app_path, error_code};
 use crate::support::{Backend, backends};
 
@@ -229,6 +229,11 @@ async fn redeemed(setup: &Setup, connector: &Connector, code: &str) {
     );
     let (status, again) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
     assert_eq!((status, &again["token"]), (200, &json!("idp-access-1")));
+    assert!(has_token(setup, connector).await);
+}
+
+/// Whether the token service says Ada has a token for the connection.
+async fn has_token(setup: &Setup, connector: &Connector) -> bool {
     let status_path = format!(
         "api/usertoken/GetTokenStatus?{}",
         query(&[("userId", &format!("29:{}", setup.ada)), ("channelId", "msteams")])
@@ -236,7 +241,7 @@ async fn redeemed(setup: &Setup, connector: &Connector, code: &str) {
     let (status, statuses) = token_service(setup, connector, Method::GET, &status_path).await;
     assert_eq!(status, 200, "{statuses}");
     assert_eq!(statuses[0]["connectionName"], CONNECTION);
-    assert_eq!(statuses[0]["hasToken"], true);
+    statuses[0]["hasToken"].as_bool().unwrap()
 }
 
 /// Sign-out: no token for the bot, and the redeemed code doesn't sign in again.
@@ -266,10 +271,39 @@ async fn renewed(setup: &Setup, connector: &Connector, idp: &Idp) {
     let (status, token) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(&code))).await;
     assert_eq!((status, &token["token"]), (200, &json!("idp-access-2")), "{token}");
     tokio::time::sleep(Duration::from_millis(2100)).await;
+    idp.lifetime(2);
     let (status, token) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
     assert_eq!((status, &token["token"]), (200, &json!("idp-access-101")), "{token}");
     assert_eq!(idp.issued(), (2, 1));
+    renewal_failed(setup, connector, idp).await;
     idp.lifetime(3600);
+}
+
+/// A provider that isn't there keeps the token: it is given while it works, then 503, and the next renewal works.
+/// A refused refresh token signs the person out.
+async fn renewal_failed(setup: &Setup, connector: &Connector, idp: &Idp) {
+    let path = get_token(&setup.ada, None);
+    let token = || token_service(setup, connector, Method::GET, &path);
+    idp.fail_refreshes(Some(RefreshFailure::Unavailable));
+    let (status, held) = token().await;
+    assert_eq!((status, &held["token"]), (200, &json!("idp-access-101")), "{held}");
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    let (status, answer) = token().await;
+    assert_eq!(status, 503, "{answer}");
+    assert!(has_token(setup, connector).await, "a provider outage signs no one out");
+    idp.fail_refreshes(None);
+    let (status, held) = token().await;
+    assert_eq!((status, &held["token"]), (200, &json!("idp-access-102")), "{held}");
+
+    idp.fail_refreshes(Some(RefreshFailure::InvalidGrant));
+    let (status, _) = token().await;
+    assert_eq!(status, 404);
+    assert!(
+        !has_token(setup, connector).await,
+        "a refused refresh token signs the person out"
+    );
+    idp.fail_refreshes(None);
+    assert_eq!(idp.issued(), (2, 2));
 }
 
 #[tokio::test]
@@ -444,6 +478,7 @@ async fn an_administrator_keeps_a_bots_connections_and_their_secret_stays_unread
     assert_eq!(status, 403);
 
     a_change_keeps_tokens_and_a_delete_drops_them(&setup, &connector, &idp, &code).await;
+    another_provider_drops_tokens(&setup, &connector, &idp).await;
     setup.stop().await;
 
     // without a key, no connection is made
@@ -483,6 +518,31 @@ async fn a_change_keeps_tokens_and_a_delete_drops_them(setup: &Setup, connector:
     assert_eq!(status, 201);
     let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
     assert_eq!(status, 404);
+}
+
+/// A change to another provider signs everyone out of the connection: its grants go only to the provider that gave
+/// them.
+async fn another_provider_drops_tokens(setup: &Setup, connector: &Connector, idp: &Idp) {
+    let path = connection_path(&setup.bot_id, CONNECTION);
+    // another token URL needs its secret again
+    let mut moved = connection_body(idp);
+    moved.as_object_mut().unwrap().remove("client_secret");
+    moved["token_url"] = json!(format!("{}/other-token", idp.base));
+    let (status, answer) = setup.registry.call(Method::PUT, &path, Some(moved)).await;
+    assert_eq!((status, error_code(&answer)), (400, "InvalidConnection"), "{answer}");
+    let link = link_for(setup, connector).await;
+    let (code, _) = idp::sign_in_in_browser(&link, ORIGIN, &setup.registry.server.origin).await;
+    let (status, token) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(&code))).await;
+    assert_eq!(status, 200, "{token}");
+    let other = Idp::start().await;
+    let (status, answer) = setup
+        .registry
+        .call(Method::PUT, &path, Some(connection_body(&other)))
+        .await;
+    assert_eq!(status, 200, "{answer}");
+    let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
+    assert_eq!(status, 404, "the old provider's token went with it");
+    assert_eq!(other.issued(), (0, 0));
 }
 
 #[tokio::test]

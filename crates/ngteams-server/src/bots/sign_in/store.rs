@@ -175,6 +175,34 @@ pub(super) async fn token(db: &Db, owner: Owner<'_>) -> Result<Option<Vec<u8>>, 
         .optional()?))
 }
 
+/// The provider refused to renew the owner's token `read` (sealed): signs them out of the connection, unless another
+/// request kept a new token meanwhile. Whether they were signed out.
+pub(super) async fn refused(db: &Db, owner: Owner<'_>, read: &[u8]) -> Result<bool, DbError> {
+    with_conn!(db, |conn| conn
+        .transaction::<_, DbError, _>(async |conn| {
+            let dropped = diesel::delete(
+                bot_user_tokens::table
+                    .find((owner.bot, owner.connection, owner.user))
+                    .filter(bot_user_tokens::token.eq(read)),
+            )
+            .execute(conn)
+            .await?;
+            if dropped == 0 {
+                return Ok(false);
+            }
+            diesel::delete(
+                bot_sign_ins::table
+                    .filter(bot_sign_ins::bot_id.eq(owner.bot))
+                    .filter(bot_sign_ins::connection.eq(owner.connection))
+                    .filter(bot_sign_ins::user_id.eq(owner.user)),
+            )
+            .execute(conn)
+            .await?;
+            Ok(true)
+        })
+        .await)
+}
+
 /// Signs `user` out of `bot`'s `connection`, or of all its connections: their tokens and sign-ins go.
 pub(super) async fn sign_out(db: &Db, bot: &str, connection: Option<&str>, user: &str) -> Result<(), DbError> {
     with_conn!(db, |conn| conn

@@ -216,6 +216,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_sealed_verifier_or_pending_token_opens_only_for_its_bot_connection_and_person() {
+        let key = super::super::SealKey::new(base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            [3_u8; 32],
+        ));
+        let sealer = Sealer::new(&key).unwrap();
+        let sign_in = SignIn {
+            id: "s".to_owned(),
+            bot_id: "b".to_owned(),
+            connection: "github".to_owned(),
+            user_id: "ada".to_owned(),
+            verifier: Vec::new(),
+            code_hash: None,
+            token: None,
+            attempts: 0,
+            expires_at: 0,
+            created_at: 0,
+        };
+        for context in [verifier_context, pending_context] {
+            let closed = sealer.seal(&context(&sign_in), b"synthetic").unwrap();
+            assert!(sealer.open(&context(&sign_in), &closed).is_ok());
+            let moved = [
+                SignIn {
+                    user_id: "bob".to_owned(),
+                    ..sign_in.clone()
+                },
+                SignIn {
+                    bot_id: "c".to_owned(),
+                    ..sign_in.clone()
+                },
+                SignIn {
+                    connection: "gitlab".to_owned(),
+                    ..sign_in.clone()
+                },
+                SignIn {
+                    id: "t".to_owned(),
+                    ..sign_in.clone()
+                },
+            ];
+            for other in moved {
+                assert!(sealer.open(&context(&other), &closed).is_err());
+            }
+        }
+        assert_ne!(verifier_context(&sign_in), pending_context(&sign_in));
+    }
+
+    #[test]
     fn a_code_is_six_digits_and_a_page_shows_it_unframed_and_uncached() {
         for _ in 0..50 {
             let code = new_code().unwrap();

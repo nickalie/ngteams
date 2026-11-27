@@ -917,7 +917,7 @@ that redirect with it.
 | Request | Does | Answers |
 |---|---|---|
 | `GET /api/admin/v1/apps/{id}/connections` | the app's bot's connections, by name, never a secret | 200 `{"value": [{"name", "authorize_url", "token_url", "client_id", "scopes", "redirect_uri", "created_at", "updated_at"}]}` |
-| `PUT /api/admin/v1/apps/{id}/connections/{name}` | `authorize_url`, `token_url`, `client_id`, `client_secret` (needed for a new one; a change without it keeps the old one), `scopes` (space-separated). A name has 1–64 letters, digits, `-`, `_` or `.`. A change keeps the connection's sign-ins and people's tokens | 201 new, 200 changed: the connection |
+| `PUT /api/admin/v1/apps/{id}/connections/{name}` | `authorize_url`, `token_url`, `client_id`, `client_secret` (needed for a new one and for a new `token_url`; a change without it keeps the old one), `scopes` (space-separated). A name has 1–64 letters, digits, `-`, `_` or `.`. A change of `scopes` or `client_secret` keeps the connection's sign-ins and people's tokens; a change of `authorize_url`, `token_url` or `client_id` drops them | 201 new, 200 changed: the connection |
 | `DELETE /api/admin/v1/apps/{id}/connections/{name}` | the connection, its sign-ins and every person's token for it | 204 |
 
 Refusals: 400 `InvalidConnection`, `EndpointNotAllowed`, `EndpointMetadata`; 404 `NotFound`; 409
@@ -930,11 +930,12 @@ a six-digit code. Their client sends the code to the bot as `signin/verifyState`
 token. The link works for 15 minutes; the code works once, for 15 minutes from when the page showed it, only for
 the person the link was made for; five wrong codes end the sign-in. A token within a minute of its end is renewed
 with its refresh token when the bot asks for it; one the provider refuses to renew (`invalid_grant`, or no refresh
-token) signs the person out of that connection; any other failure keeps it for the next request.
+token) signs the person out of that connection, unless another request renewed it meanwhile; any other failure keeps
+it: the bot gets it while it still works, and a 503 after that.
 
 | Request (the bot's) | Answers |
 |---|---|
-| `GET api/usertoken/GetToken?userId&connectionName&channelId[&code]` | 200 `{"channelId", "connectionName", "token", "expiration"}`, or 404 with none |
+| `GET api/usertoken/GetToken?userId&connectionName&channelId[&code]` | 200 `{"channelId", "connectionName", "token", "expiration"}`, 404 with none, or 503 when a token that ran out wasn't renewed this time |
 | `GET api/botsignin/GetSignInResource?state` | 200 `{"signInLink"}`; `state` is the SDK's base64 JSON (`connectionName`, the conversation reference's `user.id`, `msAppId`, in either letter case). 400 when it names another app, no connection of the bot's, or no one who may use the bot |
 | `GET api/botsignin/GetSignInUrl?state` | the same link as text |
 | `GET api/usertoken/GetTokenStatus?userId&channelId[&include]` | 200 `[{"channelId", "connectionName", "hasToken", "serviceProviderDisplayName"}]` |
