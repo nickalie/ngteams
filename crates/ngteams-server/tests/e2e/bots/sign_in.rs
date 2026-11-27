@@ -280,7 +280,6 @@ async fn renewed(setup: &Setup, connector: &Connector, idp: &Idp) {
 }
 
 /// A provider that isn't there keeps the token: it is given while it works, then 503, and the next renewal works.
-/// A refused refresh token signs the person out.
 async fn renewal_failed(setup: &Setup, connector: &Connector, idp: &Idp) {
     let path = get_token(&setup.ada, None);
     let token = || token_service(setup, connector, Method::GET, &path);
@@ -294,9 +293,14 @@ async fn renewal_failed(setup: &Setup, connector: &Connector, idp: &Idp) {
     idp.fail_refreshes(None);
     let (status, held) = token().await;
     assert_eq!((status, &held["token"]), (200, &json!("idp-access-102")), "{held}");
+    refused_renewal(setup, connector, idp).await;
+    unreadable_renewal(setup, connector, idp).await;
+}
 
+/// A refused refresh token signs the person out.
+async fn refused_renewal(setup: &Setup, connector: &Connector, idp: &Idp) {
     idp.fail_refreshes(Some(RefreshFailure::InvalidGrant));
-    let (status, _) = token().await;
+    let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
     assert_eq!(status, 404);
     assert!(
         !has_token(setup, connector).await,
@@ -304,7 +308,6 @@ async fn renewal_failed(setup: &Setup, connector: &Connector, idp: &Idp) {
     );
     idp.fail_refreshes(None);
     assert_eq!(idp.issued(), (2, 2));
-    unreadable_renewal(setup, connector, idp).await;
 }
 
 /// An answer to a renewal that isn't the provider's outage signs the person out once the token ran out, so the bot
@@ -548,10 +551,7 @@ async fn another_provider_drops_tokens(setup: &Setup, connector: &Connector, idp
     moved["token_url"] = json!(format!("{}/other-token", idp.base));
     let (status, answer) = setup.registry.call(Method::PUT, &path, Some(moved)).await;
     assert_eq!((status, error_code(&answer)), (400, "InvalidConnection"), "{answer}");
-    let link = link_for(setup, connector).await;
-    let (code, _) = idp::sign_in_in_browser(&link, ORIGIN, &setup.registry.server.origin).await;
-    let (status, token) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(&code))).await;
-    assert_eq!(status, 200, "{token}");
+    sign_in_once(setup, connector).await;
     // sign-ins under way when the provider changes: one with its code, one with only its link
     let link = link_for(setup, connector).await;
     let (waiting, _) = idp::sign_in_in_browser(&link, ORIGIN, &setup.registry.server.origin).await;
@@ -562,13 +562,24 @@ async fn another_provider_drops_tokens(setup: &Setup, connector: &Connector, idp
         .call(Method::PUT, &path, Some(connection_body(&other)))
         .await;
     assert_eq!(status, 200, "{answer}");
+    old_provider_grants_went(setup, connector, &waiting, &unopened).await;
+    assert_eq!(other.issued(), (0, 0));
+}
+
+async fn sign_in_once(setup: &Setup, connector: &Connector) {
+    let link = link_for(setup, connector).await;
+    let (code, _) = idp::sign_in_in_browser(&link, ORIGIN, &setup.registry.server.origin).await;
+    let (status, token) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(&code))).await;
+    assert_eq!(status, 200, "{token}");
+}
+
+async fn old_provider_grants_went(setup: &Setup, connector: &Connector, waiting: &str, unopened: &str) {
     let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
     assert_eq!(status, 404, "the old provider's token went with it");
-    let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(&waiting))).await;
+    let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(waiting))).await;
     assert_eq!(status, 404, "a code of the old provider signs no one in");
-    let status = idp::link_status(&unopened, ORIGIN, &setup.registry.server.origin).await;
+    let status = idp::link_status(unopened, ORIGIN, &setup.registry.server.origin).await;
     assert_eq!(status, 404, "a link made for the old provider doesn't open");
-    assert_eq!(other.issued(), (0, 0));
 }
 
 #[tokio::test]

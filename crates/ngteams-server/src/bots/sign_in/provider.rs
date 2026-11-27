@@ -90,7 +90,15 @@ fn token_error(error: &TokenError, busy: bool) -> ProviderError {
         RequestTokenError::ServerResponse(answer) if *answer.error() == BasicErrorResponseType::InvalidGrant => {
             ProviderError::Refused(error.to_string())
         }
-        RequestTokenError::Request(_) => ProviderError::Unavailable(error.to_string()),
+        RequestTokenError::Request(
+            OutboundError::Unresolved
+            | OutboundError::ConnectionRefused
+            | OutboundError::Unreachable
+            | OutboundError::Closed
+            | OutboundError::Tls
+            | OutboundError::Timeout
+            | OutboundError::Failed,
+        ) => ProviderError::Unavailable(error.to_string()),
         _ if busy => ProviderError::Unavailable(error.to_string()),
         _ => ProviderError::Failed(error.to_string()),
     }
@@ -267,6 +275,16 @@ mod tests {
         assert!(!client.refused() && !client.transient());
         let timeout = token_error(&RequestTokenError::Request(OutboundError::Timeout), false);
         assert!(!timeout.refused() && timeout.transient());
+        for guarded in [
+            OutboundError::Url,
+            OutboundError::Refused,
+            OutboundError::Metadata,
+            OutboundError::Certificate,
+            OutboundError::TooLarge,
+        ] {
+            let error = token_error(&RequestTokenError::Request(guarded), false);
+            assert!(!error.refused() && !error.transient());
+        }
         let busy = token_error(&RequestTokenError::Other("empty".to_owned()), true);
         assert!(!busy.refused() && busy.transient());
         assert!(!token_error(&RequestTokenError::Other("empty".to_owned()), false).transient());

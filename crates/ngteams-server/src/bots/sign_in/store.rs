@@ -191,8 +191,8 @@ pub(super) async fn token(db: &Db, owner: Owner<'_>) -> Result<Option<Vec<u8>>, 
         .optional()?))
 }
 
-/// The provider refused to renew the owner's token `read` (sealed): signs them out of the connection, unless another
-/// request kept a new token meanwhile. Whether they were signed out.
+/// The owner's token `read` (sealed) can't be renewed: signs them out of the connection, unless another request kept a
+/// new token meanwhile. Whether they were signed out.
 pub(super) async fn refused(db: &Db, owner: Owner<'_>, read: &[u8]) -> Result<bool, DbError> {
     with_conn!(db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
