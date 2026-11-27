@@ -584,7 +584,7 @@ async fn an_app_added_for_the_account_tells_its_bot_in_their_chat_and_lists_as_t
             .team_write(TeamWrite::AddPersonalApp { app: definition }, None)
             .await;
         assert!(written.is_ok(), "{written:?}");
-        // seated before it is told: its answer to the add is accepted
+        // the add seats it again: its answer to the add is accepted
         let got = shop.bot.next_of("installationUpdate").await.activity;
         assert_eq!(got["action"], "add", "{got}");
         let (status, _) = connector.send(&chat, Connector::text("thanks for adding me")).await;

@@ -641,17 +641,6 @@ macro_rules! seat_personal {
 }
 pub(crate) use seat_personal;
 
-/// [`seat_personal`] in a transaction of its own.
-pub(crate) async fn seat_personal_bot(db: &Db, chat: &str, bot: &str, seated: bool) -> Result<(), DbError> {
-    let at = wire::now();
-    with_conn!(db, |conn| conn
-        .transaction::<_, DbError, _>(async |conn| {
-            seat_personal!(conn, chat, bot, seated, at);
-            Ok(())
-        })
-        .await)
-}
-
 /// Where a person's invoke of a bot acts ([`invoke_place`]).
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum InvokePlace {

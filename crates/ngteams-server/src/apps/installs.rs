@@ -173,8 +173,8 @@ impl Change<'_> {
     }
 }
 
-/// Records `change` with its bot's events in one transaction, and a personal removal's unseat with them; a repeat
-/// changes nothing and queues nothing.
+/// Records `change` with its bot's events in one transaction, and a personal add's seat or removal's unseat with them;
+/// a repeat changes nothing and queues nothing.
 async fn write_change(app: &App, change: &Change<'_>) -> Result<(), DbError> {
     let at = now();
     let ms = crate::chatsvc::now();
@@ -218,6 +218,10 @@ async fn write_change(app: &App, change: &Change<'_>) -> Result<(), DbError> {
             } else {
                 diesel::delete(app_installs::table.find(key)).execute(conn).await?
             };
+            // In the add's transaction, so the bot is seated before it is told and can answer the add.
+            if let (true, Place::Personal(chat), Some(bot)) = (change.added, &change.place, &change.record.bot) {
+                crate::chatsvc::service::seat_personal!(conn, *chat, bot.id.as_str(), true, ms);
+            }
             if changed > 0 {
                 for (seq, (bot, activity)) in (ms..).zip(&activities) {
                     let row = Delivery::new(bot, change.target_chat(), seq, activity, false);
@@ -268,9 +272,6 @@ async fn add_personal(State(app): State<Arc<App>>, me: Me, body: Bytes) -> Answe
         place: Place::Personal(&chat),
         added: true,
     };
-    if let Some(bot) = &record.bot {
-        crate::chatsvc::service::seat_personal_bot(&app.db, &chat, &bot.id, true).await?;
-    }
     write_change(&app, &change).await?;
     added(&app, &record, Scope::Personal, &me.id).await
 }
