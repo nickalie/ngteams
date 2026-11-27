@@ -79,7 +79,7 @@ impl DirectWriteTextSystem {
         let mut locale = [0u16; LOCALE_NAME_MAX_LENGTH as usize];
         unsafe { GetUserDefaultLocaleName(&mut locale) };
         let locale = HSTRING::from_wide(&locale);
-        let text_renderer = TextRendererWrapper::new(locale.clone());
+        let text_renderer = TextRendererWrapper::new();
 
         let system_subpixel_rendering = get_system_subpixel_rendering();
         let system_ui_font_name = get_system_ui_font_name();
@@ -242,6 +242,45 @@ impl DirectWriteState {
         };
         let font_id = font_id?;
         self.font_to_font_id.insert(font.clone(), font_id);
+        Some(font_id)
+    }
+
+    /// The font of a face that DirectWrite shaped a glyph run with, often a fallback face.
+    /// The glyph ids belong to that exact face, its simulations included. A face selected again
+    /// by family, weight and style can be another one (an upright face with simulated oblique
+    /// selects the italic face of the family), and then the run draws wrong glyphs. Only faces
+    /// that `fonts` holds are keys of `font_info_cache`: a released address never names a font.
+    fn run_font_id(
+        &mut self,
+        components: &DirectWriteComponents,
+        font_face: &IDWriteFontFace3,
+    ) -> Option<FontId> {
+        let font_face_key = font_face.cast::<IUnknown>().ok()?.as_raw().addr();
+        if let Some(&font_id) = self.font_info_cache.get(&font_face_key) {
+            return Some(font_id);
+        }
+        let reference = unsafe { font_face.GetFontFaceReference() }.log_err()?;
+        let same_face = self.fonts.iter().position(|font| {
+            unsafe { font.font_face.GetFontFaceReference() }
+                .is_ok_and(|known| unsafe { known.Equals(&reference) }.as_bool())
+        });
+        if let Some(index) = same_face {
+            return Some(FontId(index));
+        }
+        let family_names = unsafe { font_face.GetFamilyNames() }.log_err()?;
+        let family = get_name(family_names, &components.locale).log_err()?;
+        let features =
+            unsafe { Self::generate_font_features(&components.factory, &FontFeatures::default()) }
+                .log_err()?;
+        let font_id = FontId(self.fonts.len());
+        self.fonts.push(FontInfo {
+            font_family_h: HSTRING::from(family),
+            font_face: font_face.clone(),
+            features,
+            fallbacks: None,
+            font_collection: self.system_font_collection.clone(),
+        });
+        self.font_info_cache.insert(font_face_key, font_id);
         Some(font_id)
     }
 
@@ -1191,22 +1230,13 @@ fn apply_alpha_correction(alpha: f32, brightness: f32, gamma_ratios: [f32; 4]) -
 struct TextRendererWrapper(IDWriteTextRenderer);
 
 impl TextRendererWrapper {
-    fn new(locale_str: HSTRING) -> Self {
-        let inner = TextRenderer::new(locale_str);
-        TextRendererWrapper(inner.into())
+    fn new() -> Self {
+        TextRendererWrapper(TextRenderer.into())
     }
 }
 
 #[implement(IDWriteTextRenderer)]
-struct TextRenderer {
-    locale: HSTRING,
-}
-
-impl TextRenderer {
-    fn new(locale: HSTRING) -> Self {
-        TextRenderer { locale }
-    }
-}
+struct TextRenderer;
 
 struct RendererContext<'t, 'a, 'b> {
     text_system: &'t mut DirectWriteState,
@@ -1350,33 +1380,10 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             ));
         };
 
-        let font_face_key = font_face.cast::<IUnknown>().unwrap().as_raw().addr();
         let font_id = context
             .text_system
-            .font_info_cache
-            .get(&font_face_key)
-            .copied()
-            // in some circumstances, we might be getting served a FontFace that we did not create ourselves
-            // so create a new font from it and cache it accordingly. The usual culprit here seems to be Segoe UI Symbol
-            .map_or_else(
-                || {
-                    let font = font_face_to_font(font_face, &self.locale)
-                        .ok_or_else(|| Error::new(DWRITE_E_NOFONT, "Failed to create font"))?;
-                    let font_id = match context.text_system.font_to_font_id.get(&font) {
-                        Some(&font_id) => font_id,
-                        None => context
-                            .text_system
-                            .select_and_cache_font(context.components, &font)
-                            .ok_or_else(|| Error::new(DWRITE_E_NOFONT, "Failed to create font"))?,
-                    };
-                    context
-                        .text_system
-                        .font_info_cache
-                        .insert(font_face_key, font_id);
-                    windows::core::Result::Ok(font_id)
-                },
-                Ok,
-            )?;
+            .run_font_id(context.components, font_face)
+            .ok_or_else(|| Error::new(DWRITE_E_NOFONT, "Failed to create font"))?;
 
         if let Some(text) = text {
             // Tabs have layout advances but no glyph advances. Keep invisible
@@ -1609,21 +1616,8 @@ fn font_style_to_dwrite(style: FontStyle) -> DWRITE_FONT_STYLE {
     }
 }
 
-fn font_style_from_dwrite(value: DWRITE_FONT_STYLE) -> FontStyle {
-    match value.0 {
-        0 => FontStyle::Normal,
-        1 => FontStyle::Italic,
-        2 => FontStyle::Oblique,
-        _ => unreachable!(),
-    }
-}
-
 fn font_weight_to_dwrite(weight: FontWeight) -> DWRITE_FONT_WEIGHT {
     DWRITE_FONT_WEIGHT(weight.0 as i32)
-}
-
-fn font_weight_from_dwrite(value: DWRITE_FONT_WEIGHT) -> FontWeight {
-    FontWeight(value.0 as f32)
 }
 
 fn get_font_names_from_collection(
@@ -1648,20 +1642,6 @@ fn get_font_names_from_collection(
 
         result
     }
-}
-
-fn font_face_to_font(font_face: &IDWriteFontFace3, locale: &HSTRING) -> Option<Font> {
-    let localized_family_name = unsafe { font_face.GetFamilyNames().log_err() }?;
-    let family_name = get_name(localized_family_name, locale).log_err()?;
-    let weight = unsafe { font_face.GetWeight() };
-    let style = unsafe { font_face.GetStyle() };
-    Some(Font {
-        family: family_name.into(),
-        features: FontFeatures::default(),
-        weight: font_weight_from_dwrite(weight),
-        style: font_style_from_dwrite(style),
-        fallbacks: None,
-    })
 }
 
 // https://learn.microsoft.com/en-us/windows/win32/api/dwrite/ne-dwrite-dwrite_font_feature_tag
@@ -1841,8 +1821,8 @@ mod tests {
     use crate::direct_write::ClusterAnalyzer;
     use anyhow::Result;
     use gpui::{
-        Font, FontRun, FontWeight, LineLayout, Pixels, PlatformTextSystem, TextRun, TextSystem,
-        WindowTextSystem, px,
+        Font, FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem,
+        TextRun, TextSystem, WindowTextSystem, px,
     };
     use std::sync::Arc;
     use windows::Win32::Graphics::DirectWrite::{DWRITE_FONT_STRETCH_NORMAL, DWRITE_TEXT_METRICS};
@@ -2262,6 +2242,52 @@ mod tests {
                 (line.width - distance).abs() < px(0.01),
                 "{family}, {font_size:?}, {text:?}: {line:?}"
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_italic_fallback_run_draws_the_glyphs_of_the_face_that_shaped_it() -> Result<()> {
+        let text_system = DirectWriteTextSystem::new()?;
+        let font_id = text_system.font_id(&Font {
+            family: "Segoe UI".into(),
+            style: FontStyle::Italic,
+            ..Default::default()
+        })?;
+        // Segoe UI Italic has no Japanese or Thai letters, thus a fallback face shapes them. These
+        // letters take no contextual forms: each glyph is the one that the cmap of its face gives.
+        for text in [
+            "\u{5d0}\u{5d1}\u{5d2}",
+            "\u{65e5}\u{672c}\u{8a9e}",
+            "\u{e01}\u{e02}\u{e04}",
+        ] {
+            let line = text_system.layout_line(
+                text,
+                px(16.),
+                &[FontRun {
+                    len: text.len(),
+                    font_id,
+                }],
+            );
+            assert_eq!(
+                line.runs.iter().map(|run| run.glyphs.len()).sum::<usize>(),
+                text.chars().count(),
+                "{text:?}: {line:?}"
+            );
+            let state = text_system.state.read();
+            for run in &line.runs {
+                let face = &state.fonts[run.font_id.0].font_face;
+                for glyph in &run.glyphs {
+                    let character = text[glyph.index..].chars().next().map_or(0, u32::from);
+                    let mut id = 0u16;
+                    unsafe { face.GetGlyphIndices(&character, 1, &mut id)? };
+                    assert!(
+                        id != 0 && glyph.id == GlyphId(u32::from(id)),
+                        "{text:?}: {glyph:?} drawn with face of {:?}, whose glyph is {id}",
+                        run.font_id
+                    );
+                }
+            }
         }
         Ok(())
     }

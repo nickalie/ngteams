@@ -25,7 +25,8 @@
 #   gpui-pre-windows our own: test-support `contains` on the DirectX atlas so atlas-inspection tests query
 #                  the real atlas (0001); the path prompt's title and filters on the file open dialog (0002); a
 #                  right-to-left glyph run placed where DirectWrite draws it, and a line whose first strong letter is
-#                  right to left laid out as a right-to-left paragraph (0003)
+#                  right to left laid out as a right-to-left paragraph (0003); a glyph run drawn with the face
+#                  DirectWrite shaped it with, so an italic fallback run keeps its glyphs (0004)
 #   libwebrtc      our own: `RtpTransceiver::set_direction`, which LiveKit's bindings leave out though `webrtc-sys`
 #                  binds it (0001): a group call's screen goes out on the mixer's sharing line, turned to send before
 #                  the answer (crates/teams-media/src/rtc.rs); preserve optional candidate-pair RTT (0002), so
