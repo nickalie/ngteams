@@ -173,8 +173,8 @@ impl Change<'_> {
     }
 }
 
-/// Records `change` with its bot's events in one transaction; whether it changed anything.
-async fn write_change(app: &App, change: &Change<'_>) -> Result<bool, DbError> {
+/// Records `change` with its bot's events in one transaction; a repeat changes nothing and queues nothing.
+async fn write_change(app: &App, change: &Change<'_>) -> Result<(), DbError> {
     let at = now();
     let ms = crate::chatsvc::now();
     let activities: Vec<(String, Value)> = match &change.record.bot {
@@ -232,7 +232,7 @@ async fn write_change(app: &App, change: &Change<'_>) -> Result<bool, DbError> {
     if changed && !activities.is_empty() {
         crate::bots::wake(app).await;
     }
-    Ok(changed)
+    Ok(())
 }
 
 async fn bot_name(db: &Db, bot: &str, app_name: &str) -> Result<String, DbError> {
@@ -263,10 +263,10 @@ async fn add_personal(State(app): State<Arc<App>>, me: Me, body: Bytes) -> Answe
         place: Place::Personal(&chat),
         added: true,
     };
-    write_change(&app, &change).await?;
     if let Some(bot) = &record.bot {
         crate::chatsvc::service::seat_personal_bot(&app.db, &chat, &bot.id, true).await?;
     }
+    write_change(&app, &change).await?;
     added(&app, &record, Scope::Personal, &me.id).await
 }
 
@@ -288,9 +288,9 @@ async fn remove_personal(State(app): State<Arc<App>>, me: Me, Path(id): Path<Str
         place: Place::Personal(&chat),
         added: false,
     };
-    if write_change(&app, &change).await?
-        && let Some(bot) = &record.bot
-    {
+    write_change(&app, &change).await?;
+    // Not gated on the row: a retry must still unseat the bot after a failed first unseat.
+    if let Some(bot) = &record.bot {
         crate::chatsvc::service::seat_personal_bot(&app.db, &chat, &bot.id, false).await?;
     }
     Ok(StatusCode::OK.into_response())
@@ -375,7 +375,7 @@ async fn team_place(app: &App, me: &Me, team: &str, adding: bool) -> Answer<InCh
         None => true,
         Some(member) => {
             let setting = if adding { "installApp" } else { "uninstallApp" };
-            admin || member.owner || crate::teams::repo::members_may(&found.settings, setting)
+            admin || member.owner || crate::teams::wire::members_may(&found, setting, true)
         }
     };
     if !may {

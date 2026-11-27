@@ -1140,12 +1140,3 @@ pub(crate) async fn message_bodies(
         .load(conn)
         .await?))
 }
-
-/// Whether a team's `settings` let its members do what the `userSettings` key `setting` names (Teams' "Allow members
-/// to …" boxes); a setting that isn't there lets them.
-pub(crate) fn members_may(settings: &str, setting: &str) -> bool {
-    serde_json::from_str::<Value>(settings)
-        .ok()
-        .and_then(|settings| settings["userSettings"][setting].as_bool())
-        .unwrap_or(true)
-}

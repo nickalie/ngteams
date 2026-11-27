@@ -35,6 +35,12 @@ pub(super) fn member_settings(team: &Team) -> Value {
     settings(team, "userSettings")
 }
 
+/// Whether the team's `userSettings` key `setting` lets its members do it (Teams' "Allow members to …" boxes);
+/// `default` when the key isn't there.
+pub(crate) fn members_may(team: &Team, setting: &str, default: bool) -> bool {
+    member_settings(team)[setting].as_bool().unwrap_or(default)
+}
+
 pub(super) fn iso(at: i64) -> String {
     chrono::DateTime::from_timestamp_millis(at)
         .unwrap_or(chrono::DateTime::UNIX_EPOCH)

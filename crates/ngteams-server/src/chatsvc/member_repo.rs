@@ -122,10 +122,10 @@ macro_rules! finish {
     }};
 }
 
-/// Who a roster add puts in a chat.
+/// Whose seat a roster add or removal changes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Joining {
-    /// People whose accounts are in use.
+    /// People (an add takes only accounts in use).
     People,
     /// The bot of an app added to the chat: an app's account, which never signs in.
     Bot,

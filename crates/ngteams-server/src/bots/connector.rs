@@ -593,7 +593,7 @@ struct CreateMember {
 }
 
 /// `POST v3/conversations`: the bot's 1:1 chat with a person who may use its app, made when it isn't there, with
-/// the activity posted in it when one is given.
+/// the activity posted in it when one is given; refused where the person took the app off.
 async fn create(caller: &Caller<'_>, body: &[u8]) -> Result<Response, Refusal> {
     let create: Create = serde_json::from_slice(body).map_err(|_| Refusal::bad("The body isn't a conversation."))?;
     let tenant = caller.app.issuer.tenant();
@@ -622,6 +622,9 @@ async fn create(caller: &Caller<'_>, body: &[u8]) -> Result<Response, Refusal> {
     let chat = chats::bot_chat(caller.app, &person, &caller.bot.id)
         .await?
         .ok_or_else(Refusal::forbidden)?;
+    if chats::bot_roster(caller.app, &chat, &caller.bot.id).await?.is_none() {
+        return Err(Refusal::forbidden());
+    }
     let mut answer = json!({"id": chat, "serviceUrl": super::service_url(caller.app, caller.bot)});
     if let Some(activity) = create.activity.filter(Value::is_object) {
         let id = post(caller, &chat, None, &activity).await?;

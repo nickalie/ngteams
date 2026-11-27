@@ -14,7 +14,7 @@ mod people;
 mod prov;
 pub(crate) mod repo;
 pub(crate) mod schema;
-mod wire;
+pub(crate) mod wire;
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -192,7 +192,7 @@ impl Seat {
 
     /// Whether the team's settings let its members do `permission` (`createTopic`, …); its owners always may.
     fn may(&self, permission: &str) -> bool {
-        self.member.owner || wire::member_settings(&self.team)[permission].as_bool() == Some(true)
+        self.member.owner || wire::members_may(&self.team, permission, false)
     }
 }
 

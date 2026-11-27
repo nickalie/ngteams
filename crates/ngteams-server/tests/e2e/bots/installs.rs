@@ -16,6 +16,7 @@ use teams_store::OutboxState;
 use super::connector::{loopback, personal_chat};
 use super::endpoint::{Connector, ORIGIN, TestBot, encode};
 use super::{Registry, good_package, png};
+use crate::chatsvc::members::RemoveMember;
 use crate::support::{Backend, backends};
 use crate::teams::Seat;
 
@@ -217,30 +218,41 @@ async fn team_routes(connector: &Connector, team: &str, group: &str, later: &str
     );
 }
 
-/// A personal-only app, which no chat or team takes, uploaded; its definition and the packaged app's.
-async fn lone_app(shop: &Shop) -> (AppDefinition, AppDefinition) {
-    // a personal-only app, which no chat or team takes
-    let mut lone = super::manifest(
-        "8d3e4f60-5c0f-4e73-9a49-3b2c4d5e6f70",
-        "9e4f5061-6d10-4f84-8b5a-4c3d5e6f7081",
-        "1.0.0",
-    );
-    lone["bots"][0]["scopes"] = json!(["personal"]);
-    lone["name"]["short"] = json!("Lone (synthetic)");
-    let package = super::package(&lone, &png(192, 192), &png(32, 32), &[]);
+/// An app `(id, bot)` named `name` whose bot serves only `scopes`, uploaded.
+async fn scoped_app(shop: &Shop, (id, bot): (&str, &str), name: &str, scopes: &[&str]) {
+    let mut manifest = super::manifest(id, bot, "1.0.0");
+    manifest["bots"][0]["scopes"] = json!(scopes);
+    manifest["name"]["short"] = json!(name);
+    let package = super::package(&manifest, &png(192, 192), &png(32, 32), &[]);
     let (status, answer) = shop
         .registry
         .upload(&format!("{}/package", super::APPS), Method::POST, package)
         .await;
     assert_eq!(status, 201, "{answer}");
+}
+
+/// A personal-only app, which no chat or team takes, and a group-chat-only app, which no account takes for itself,
+/// uploaded; their definitions and the packaged app's.
+async fn lone_app(shop: &Shop) -> (AppDefinition, AppDefinition, AppDefinition) {
+    const LONE: &str = "8d3e4f60-5c0f-4e73-9a49-3b2c4d5e6f70";
+    const ROOM: &str = "a0516172-7e21-4095-9c6b-5d4e6f708192";
+    scoped_app(
+        shop,
+        (LONE, "9e4f5061-6d10-4f84-8b5a-4c3d5e6f7081"),
+        "Lone (synthetic)",
+        &["personal"],
+    )
+    .await;
+    scoped_app(
+        shop,
+        (ROOM, "b1627283-8f32-41a6-8d7c-6e5f708192a3"),
+        "Room (synthetic)",
+        &["groupChat"],
+    )
+    .await;
     let listing = shop.ada.engine.app_listing().await.unwrap();
-    let lone = listing
-        .app("8d3e4f60-5c0f-4e73-9a49-3b2c4d5e6f70")
-        .unwrap()
-        .definition
-        .clone();
-    let polls = listing.app(APP).unwrap().definition.clone();
-    (lone, polls)
+    let defined = |id: &str| listing.app(id).unwrap().definition.clone();
+    (defined(LONE), defined(ROOM), defined(APP))
 }
 
 /// Icons: an enabled app's only, its two files only.
@@ -303,25 +315,36 @@ async fn team_refusals(
     );
     assert!(outsider.engine.team_apps(team.to_owned()).await.unwrap().is_empty());
     shop.ada.add(team, group_id, &[bea]).await;
-    members_may(&shop.ada, team, false).await;
+    member_steps(&shop.ada, bea, team, polls).await;
+    let (added, _) = team_answers(&shop.ada, team, lone).await;
+    assert!(added.contains("BadRequest"), "{added}");
+}
+
+/// A member's add and removal as the team's two boxes allow them: both closed, only adds open, both open.
+async fn member_steps(owner: &Seat, bea: &Seat, team: &str, polls: &AppDefinition) {
+    members_may(owner, team, (false, false)).await;
     let (added, removed) = team_answers(bea, team, polls).await;
     assert!(
         added.contains("Forbidden") && removed.contains("Forbidden"),
         "{added} {removed}"
     );
-    members_may(&shop.ada, team, true).await;
+    members_may(owner, team, (true, false)).await;
+    let (added, removed) = team_answers(bea, team, polls).await;
+    assert!(
+        added == "accepted" && removed.contains("Forbidden"),
+        "{added} {removed}"
+    );
+    members_may(owner, team, (true, true)).await;
     let (added, removed) = team_answers(bea, team, polls).await;
     assert_eq!((added.as_str(), removed.as_str()), ("accepted", "accepted"));
-    let (added, _) = team_answers(&shop.ada, team, lone).await;
-    assert!(added.contains("BadRequest"), "{added}");
 }
 
-/// `owner` lets the members of `team` add and remove apps (`open`) or not; custom uploads stay closed either way.
-async fn members_may(owner: &Seat, team: &str, open: bool) {
+/// `owner` lets the members of `team` add apps and remove them, or not; custom uploads stay closed either way.
+async fn members_may(owner: &Seat, team: &str, (install, uninstall): (bool, bool)) {
     let read = owner.engine.team_settings(team).await.unwrap().unwrap();
     let mut settings: serde_json::Value = serde_json::from_str(&read).unwrap();
-    settings["userSettings"]["installApp"] = json!(open);
-    settings["userSettings"]["uninstallApp"] = json!(open);
+    settings["userSettings"]["installApp"] = json!(install);
+    settings["userSettings"]["uninstallApp"] = json!(uninstall);
     settings["userSettings"]["uploadCustomApp"] = json!(false);
     let write = TeamWrite::Settings {
         team: team.to_owned(),
@@ -403,6 +426,32 @@ async fn the_engine_lists_the_store_reads_definitions_and_loads_an_apps_icon() {
         assert_eq!(bot_app.app.id, APP);
         shop.stop();
     }
+}
+
+/// A person's roster change never takes the bot out of `chat`; only its app's removal does.
+async fn roster_keeps_the_bot(shop: &Shop, bea: &Seat, chat: &str) {
+    let kicked = bea
+        .client
+        .write(RemoveMember {
+            chat: chat.to_owned(),
+            member: format!("8:orgid:{BOT}"),
+        })
+        .await
+        .unwrap();
+    assert_eq!(kicked.status(), 404);
+    mention(&shop.ada, chat, "still with us?").await;
+    assert_eq!(
+        shop.bot.next_of("message").await.activity["text"],
+        "<at>Polls (synthetic)</at> still with us?"
+    );
+}
+
+/// The chat `seat` makes with `others`; its id.
+async fn create_chat(seat: &Seat, others: &[&Seat], topic: Option<&str>) -> String {
+    let others = others.iter().map(|other| Mri::new(&other.mri)).collect();
+    let topic = topic.map(Into::into);
+    let made = seat.engine.write(Action::CreateChat { others, topic }).await.unwrap();
+    made.message_id.unwrap()
 }
 
 /// Ada's definition of the packaged app, as the store gave it.
@@ -499,6 +548,17 @@ async fn an_app_added_for_the_account_tells_its_bot_in_their_chat_and_lists_as_t
         assert!(!reaches(&shop.bot).await, "a removed bot got a message in its 1:1 chat");
         let (status, _) = connector.send(&chat, Connector::text("still here")).await;
         assert_eq!(status, 403);
+        let tenant = ngteams_server::db::meta::tenant(&shop.registry.server.app.db)
+            .await
+            .unwrap();
+        let create = json!({
+            "bot": {"id": format!("28:{BOT}")},
+            "members": [{"id": format!("29:{}", shop.ada.id)}],
+            "channelData": {"tenant": {"id": tenant}},
+            "isGroup": false,
+        });
+        let (status, answer) = connector.call(Method::POST, "v3/conversations", Some(create)).await;
+        assert_eq!(status, 403, "{answer}");
         // added again, it is back in the chat
         let definition = polls(&shop.ada).await;
         let written = shop
@@ -571,6 +631,7 @@ async fn an_app_added_to_a_group_chat_seats_its_bot_which_gets_only_mentions_unt
         let connector = shop.connector(message["serviceUrl"].as_str().unwrap()).await;
         let (status, answer) = connector.reply(&chat, &sent, Connector::text("poll started")).await;
         assert_eq!(status, 200, "{answer}");
+        roster_keeps_the_bot(&shop, &bea, &chat).await;
 
         let removed = bea
             .engine
@@ -678,32 +739,12 @@ async fn adds_the_account_may_not_make_are_refused_and_an_icon_is_only_an_enable
     for backend in backends() {
         let shop = Shop::open(backend).await;
         let server = &shop.registry.server;
-        let (lone, polls) = lone_app(&shop).await;
+        let (lone, room, polls) = lone_app(&shop).await;
 
         let bea = Seat::new(server, "bea@own.test", "Bea Lovelace").await;
         let cora = Seat::new(server, "cora@own.test", "Cora Lovelace").await;
-        let one = shop
-            .ada
-            .engine
-            .write(Action::CreateChat {
-                others: vec![Mri::new(&bea.mri)],
-                topic: None,
-            })
-            .await
-            .unwrap()
-            .message_id
-            .unwrap();
-        let group = shop
-            .ada
-            .engine
-            .write(Action::CreateChat {
-                others: vec![Mri::new(&bea.mri), Mri::new(&cora.mri)],
-                topic: Some("Refusals".into()),
-            })
-            .await
-            .unwrap()
-            .message_id
-            .unwrap();
+        let one = create_chat(&shop.ada, &[&bea], None).await;
+        let group = create_chat(&shop.ada, &[&bea, &cora], Some("Refusals")).await;
         let refused = |answer: Result<teams_core::TeamWritten, teams_core::EngineError>| {
             crate::teams::refusal(answer).unwrap_or_else(|| "accepted".to_owned())
         };
@@ -711,6 +752,13 @@ async fn adds_the_account_may_not_make_are_refused_and_an_icon_is_only_an_enable
             chat: chat.to_owned(),
             app: app.clone(),
         };
+        // an app whose bot serves no account for itself
+        let answer = shop
+            .ada
+            .engine
+            .team_write(TeamWrite::AddPersonalApp { app: room }, None)
+            .await;
+        assert!(refused(answer).contains("BadRequest"));
         // a 1:1 chat, an app whose bot serves no group chat
         let answer = shop.ada.engine.team_write(add_chat(&one, &polls), None).await;
         assert!(refused(answer).contains("BadRequest"));

@@ -153,7 +153,7 @@ async fn access(db: &Db, user: &str, team: &str) -> Answer<Access> {
     let manage = match &member {
         None if !admin => return Err(Refusal::MISSING),
         None => true,
-        Some(member) => admin || member.owner || repo::members_may(&team.settings, "uploadCustomApp"),
+        Some(member) => admin || member.owner || crate::teams::wire::members_may(&team, "uploadCustomApp", true),
     };
     Ok(Access { team, manage })
 }

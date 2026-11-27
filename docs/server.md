@@ -853,7 +853,7 @@ is 403.
 | `GET v3/conversations/{id}/members/{member}` | one, by `29:<id>`, `8:orgid:<id>`, id or address | 200 account |
 | `POST v3/conversations/{id}/attachments` | keeps a picture for the chat (`AttachmentData`: `type`, `name`, `originalBase64`; PNG, JPEG, GIF or WebP, limited by `media.max_picture_bytes` and the 4 MiB JSON request limit; base64 permits less than 3 MiB of picture bytes) as a media object of the bot's own, made for that chat | 200 `{"id"}` |
 | `GET v3/attachments/{id}`, `…/views/original` | a picture the bot made or one of a chat it is in: its `AttachmentInfo` (`name`, `type`, `views` `[{"viewId": "original", "size"}]`), or its bytes | 200 |
-| `POST v3/conversations` | the bot's 1:1 chat with one person (`members[0].id` `29:<id>` or `8:orgid:<id>`, or `aadObjectId`) who may use its app, with `activity` posted in it when given | 201 `{"id", "activityId", "serviceUrl"}` |
+| `POST v3/conversations` | the bot's 1:1 chat with one person (`members[0].id` `29:<id>` or `8:orgid:<id>`, or `aadObjectId`) who may use its app, with `activity` posted in it when given. 403 when the chat is there but the person removed the app | 201 `{"id", "activityId", "serviceUrl"}` |
 | `GET v3/teams/{id}` | the team of a bot in it: `TeamDetails` (`id`, `name`, `aadGroupId`, `type`, `channelCount`, `memberCount`) | 200 |
 | `GET v3/teams/{id}/conversations` | its standard channels, `{"conversations": [{"id", "name"}]}`, the general one without a name | 200 |
 | `v3/batch/…`, other `v3/teams/…`, `v1/meetings/…`, `…/history` | not served | 501 |
