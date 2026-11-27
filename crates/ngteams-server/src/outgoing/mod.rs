@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::App;
 
-pub(crate) use activity::{Author, Mention, mentioned};
+pub(crate) use activity::{Author, Mention, mentioned, text as mention_text};
 pub use delivery::Senders;
 pub(crate) use delivery::wake;
 

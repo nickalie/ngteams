@@ -114,7 +114,12 @@ macro_rules! enqueue {
                 .await?;
             if let Some(name) = sender {
                 let event = $event;
-                let place = $crate::bots::activity::Place { id: $chat, personal };
+                let in_channel = $crate::bots::outbox::channel_of!($conn, $chat, event.message());
+                let place = $crate::bots::activity::Place {
+                    id: $chat,
+                    personal,
+                    channel: in_channel.as_ref(),
+                };
                 let from = $crate::bots::activity::Sender {
                     id: $owner,
                     name: &name,
@@ -142,6 +147,45 @@ macro_rules! enqueue {
     }};
 }
 pub(crate) use enqueue;
+
+/// In a transaction (`$conn`): when `$chat` is a team's channel, the channel, its team and the post of the thread of
+/// the message `$message` (an `Option<i64>`).
+macro_rules! channel_of {
+    ($conn:expr, $chat:expr, $message:expr) => {{
+        use $crate::chatsvc::schema::chat_messages;
+        use $crate::teams::schema::{channels, teams};
+        let found: Option<(String, String, String)> = channels::table
+            .inner_join(teams::table)
+            .filter(channels::id.eq($chat))
+            .select((teams::id, teams::name, teams::group_id))
+            .first($conn)
+            .await
+            .optional()?;
+        match found {
+            None => None,
+            Some((team, team_name, group)) => {
+                let root: Option<i64> = match $message {
+                    Some(id) => chat_messages::table
+                        .find(($chat, id))
+                        .select(chat_messages::root_id)
+                        .first::<Option<i64>>($conn)
+                        .await
+                        .optional()?
+                        .flatten(),
+                    None => None,
+                };
+                Some($crate::bots::activity::InChannel {
+                    channel: $chat.to_owned(),
+                    team,
+                    team_name,
+                    group,
+                    root,
+                })
+            }
+        }
+    }};
+}
+pub(crate) use channel_of;
 
 /// Whether a bot in a chat gets `event`: a reaction when the message is the bot's own; otherwise in a 1:1 chat
 /// everything, in a group chat a message that mentions it.

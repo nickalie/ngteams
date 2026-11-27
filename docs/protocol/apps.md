@@ -106,5 +106,5 @@ nor a bot of a known app is with a person.
 An own-server account's definitions name their pictures on the server's own origin under `/teamsappdata/` (the CDN's
 folder): the native client reads them from there with no token (`AppPicture::of_in`), and never reads a tile off that
 origin for such an account. The store, entitlement reads and writes go to the account's own middle tier, as every
-middle-tier request does (the server's side is plan 214's part 9). The client offers the Store, an app's details and
+middle-tier request does; the server serves them ([server.md](../server.md#the-app-catalogue-and-installs)). The client offers the Store, an app's details and
 a chat's apps only while the server names `appsService` (`teams_core::Capabilities`), as Manage team's Apps tab.

@@ -123,7 +123,11 @@ async fn the_engine_lists_the_store_reads_definitions_and_loads_an_apps_icon() {
         assert_eq!(polls.app.accent, Some(0x004F_6BED));
         assert!(polls.has_bot);
         let definition = &polls.definition;
-        assert_eq!(definition.bots(), [Mri::new(format!("28:{BOT}"))]);
+        // the bot and its message extension's bot, as the client reads a Teams definition
+        assert_eq!(
+            definition.bots(),
+            [Mri::new(format!("28:{BOT}")), Mri::new(format!("28:{BOT}"))]
+        );
         assert_eq!(definition.version(), Some("1.2.0"));
         assert_eq!(
             definition.long_description(),
@@ -277,11 +281,12 @@ async fn an_app_added_to_a_group_chat_seats_its_bot_which_gets_only_mentions_unt
     for backend in backends() {
         let shop = Shop::open(backend).await;
         let bea = Seat::new(&shop.registry.server, "bea@own.test", "Bea Lovelace").await;
+        let cora = shop.registry.server.add_user("cora@own.test", "Cora Lovelace").await;
         let made = shop
             .ada
             .engine
             .write(Action::CreateChat {
-                others: vec![Mri::new(&bea.mri)],
+                others: vec![Mri::new(&bea.mri), Mri::new(format!("8:orgid:{cora}"))],
                 topic: Some("Polls room".into()),
             })
             .await
@@ -472,6 +477,133 @@ async fn an_app_added_to_a_team_hears_mentions_in_its_channels_and_its_reply_joi
             .await;
         assert_eq!(status, 403);
         bea.stop();
+        shop.stop();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn adds_the_account_may_not_make_are_refused_and_an_icon_is_only_an_enabled_apps() {
+    for backend in backends() {
+        let shop = Shop::open(backend).await;
+        let server = &shop.registry.server;
+        // a personal-only app, which no chat or team takes
+        let mut lone = super::manifest(
+            "8d3e4f60-5c0f-4e73-9a49-3b2c4d5e6f70",
+            "9e4f5061-6d10-4f84-8b5a-4c3d5e6f7081",
+            "1.0.0",
+        );
+        lone["bots"][0]["scopes"] = json!(["personal"]);
+        lone["name"]["short"] = json!("Lone (synthetic)");
+        let package = super::package(&lone, &png(192, 192), &png(32, 32), &[]);
+        let (status, answer) = shop
+            .registry
+            .upload(&format!("{}/package", super::APPS), Method::POST, package)
+            .await;
+        assert_eq!(status, 201, "{answer}");
+        let listing = shop.ada.engine.app_listing().await.unwrap();
+        let lone = listing
+            .app("8d3e4f60-5c0f-4e73-9a49-3b2c4d5e6f70")
+            .unwrap()
+            .definition
+            .clone();
+        let polls = listing.app(APP).unwrap().definition.clone();
+
+        let bea = Seat::new(server, "bea@own.test", "Bea Lovelace").await;
+        let cora = Seat::new(server, "cora@own.test", "Cora Lovelace").await;
+        let one = shop
+            .ada
+            .engine
+            .write(Action::CreateChat {
+                others: vec![Mri::new(&bea.mri)],
+                topic: None,
+            })
+            .await
+            .unwrap()
+            .message_id
+            .unwrap();
+        let group = shop
+            .ada
+            .engine
+            .write(Action::CreateChat {
+                others: vec![Mri::new(&bea.mri), Mri::new(&cora.mri)],
+                topic: Some("Refusals".into()),
+            })
+            .await
+            .unwrap()
+            .message_id
+            .unwrap();
+        let refused = |answer: Result<teams_core::TeamWritten, teams_core::EngineError>| {
+            crate::teams::refusal(answer).unwrap_or_else(|| "accepted".to_owned())
+        };
+        let add_chat = |chat: &str, app: &AppDefinition| TeamWrite::AddChatApp {
+            chat: chat.to_owned(),
+            app: app.clone(),
+        };
+        // a 1:1 chat, an app whose bot serves no group chat
+        let answer = shop.ada.engine.team_write(add_chat(&one, &polls), None).await;
+        assert!(refused(answer).contains("BadRequest"));
+        let answer = shop.ada.engine.team_write(add_chat(&group, &lone), None).await;
+        assert!(refused(answer).contains("BadRequest"));
+        // a chat the account isn't in
+        let (team, group_id) = shop.ada.make_team("Closed crew", false).await;
+        let outsider = Seat::new(server, "dan@own.test", "Dan Lovelace").await;
+        let answer = outsider.engine.team_write(add_chat(&group, &polls), None).await;
+        assert!(refused(answer).contains("Forbidden"));
+        assert!(outsider.engine.chat_apps(group.clone()).await.unwrap().is_empty());
+        // a team the account isn't on, one whose members may not add apps, an app whose bot serves no team
+        let add_team = |app: &AppDefinition| TeamWrite::AddApp {
+            team: team.clone(),
+            app: app.clone(),
+        };
+        let answer = outsider.engine.team_write(add_team(&polls), None).await;
+        assert!(refused(answer).contains("NotFound"));
+        assert!(outsider.engine.team_apps(team.clone()).await.unwrap().is_empty());
+        shop.ada.add(&team, &group_id, &[&bea]).await;
+        let answer = shop.ada.engine.team_write(add_team(&lone), None).await;
+        assert!(refused(answer).contains("BadRequest"));
+        // an app the account may not use
+        let (status, _) = shop
+            .registry
+            .call(
+                Method::PATCH,
+                &super::app_path(APP),
+                Some(json!({"everyone": false, "users": []})),
+            )
+            .await;
+        assert_eq!(status, 200);
+        let answer = bea.engine.team_write(add_team(&polls), None).await;
+        assert!(refused(answer).contains("NotFound"));
+        let answer = bea
+            .engine
+            .team_write(TeamWrite::AddPersonalApp { app: polls.clone() }, None)
+            .await;
+        assert!(refused(answer).contains("NotFound"));
+        assert!(bea.engine.app_definition(APP.to_owned()).await.unwrap().is_none());
+
+        // icons: an enabled app's only, its two files only
+        let icon = lone.large_image_url().unwrap().to_owned();
+        let at = |path: &str| server.url(&path.replacen(ORIGIN, "", 1));
+        let get = |url: String| async move { reqwest::get(url).await.unwrap().status().as_u16() };
+        assert_eq!(get(at(&icon)).await, 200);
+        assert_eq!(get(at(&icon.replace("color.png", "outline.png"))).await, 200);
+        assert_eq!(get(at(&icon.replace("color.png", "other.png"))).await, 404);
+        assert_eq!(
+            get(server.url(&format!("/teamsappdata/apps/{}/color.png", shop.form))).await,
+            404
+        );
+        let (status, _) = shop
+            .registry
+            .call(
+                Method::PATCH,
+                &super::app_path("8d3e4f60-5c0f-4e73-9a49-3b2c4d5e6f70"),
+                Some(json!({"enabled": false})),
+            )
+            .await;
+        assert_eq!(status, 200);
+        assert_eq!(get(at(&icon)).await, 404);
+        for seat in [bea, cora, outsider] {
+            seat.stop();
+        }
         shop.stop();
     }
 }

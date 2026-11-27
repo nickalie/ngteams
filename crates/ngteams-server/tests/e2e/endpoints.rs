@@ -156,11 +156,14 @@ fn only_a_note_that_starts_with_a_status_has_one() {
 }
 
 #[test]
-fn a_default_server_names_workflows_and_leaves_every_other_optional_service_off() {
-    let config = Config::default();
+fn a_default_server_names_workflows_and_apps_and_leaves_every_other_optional_service_off() {
+    let mut config = Config::default();
     assert_eq!(left_off(&config, "workflows"), Some(false));
-    for capability in ["recap", "captions", "recording", "apps", "copilot"] {
+    assert_eq!(left_off(&config, "apps"), Some(false));
+    for capability in ["recap", "captions", "recording", "copilot"] {
         assert_eq!(left_off(&config, capability), Some(true), "{capability}");
     }
+    config.apps.enabled = false;
+    assert_eq!(left_off(&config, "apps"), Some(true));
     assert_eq!(left_off(&config, "telepathy"), None);
 }

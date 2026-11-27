@@ -552,6 +552,40 @@ pub(crate) async fn put_member(db: &Db, team: &str, user: &str, owner: bool) -> 
         .await)
 }
 
+/// Puts the bot of an app added to the team into its standard channels (`add`), or takes it out of every channel of
+/// the team.
+pub(crate) async fn seat_bot(db: &Db, team: &str, bot: &str, add: bool) -> Result<(), DbError> {
+    let at = now();
+    with_conn!(db, |conn| conn
+        .transaction::<_, DbError, _>(async |conn| {
+            let version: i64 = advance!(conn, at);
+            let threads: Vec<String> = channels::table
+                .filter(channels::team_id.eq(team))
+                .select((channels::id, channels::private))
+                .load::<(String, bool)>(conn)
+                .await?
+                .into_iter()
+                .filter(|(_, private)| !add || !private)
+                .map(|(id, _)| id)
+                .collect();
+            if add {
+                for channel in &threads {
+                    join_chat!(conn, channel, bot, version);
+                }
+            } else {
+                diesel::delete(
+                    chat_members::table
+                        .filter(chat_members::chat_id.eq_any(&threads))
+                        .filter(chat_members::user_id.eq(bot)),
+                )
+                .execute(conn)
+                .await?;
+            }
+            Ok(())
+        })
+        .await)
+}
+
 /// What a change of someone's place on a team came to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Changed {
@@ -722,6 +756,19 @@ pub(crate) async fn create_channel(db: &Db, channel: &Channel, creator: &str) ->
                     .await?;
                 for person in &people {
                     join_chat!(conn, &channel.id, person, version);
+                }
+                let bots: Vec<String> = crate::apps::schema::bots::table
+                    .inner_join(
+                        crate::apps::schema::app_installs::table
+                            .on(crate::apps::schema::app_installs::app_id.eq(crate::apps::schema::bots::app_id)),
+                    )
+                    .filter(crate::apps::schema::app_installs::scope.eq("team"))
+                    .filter(crate::apps::schema::app_installs::target.eq(&channel.team_id))
+                    .select(crate::apps::schema::bots::id)
+                    .load(conn)
+                    .await?;
+                for bot in &bots {
+                    join_chat!(conn, &channel.id, bot, version);
                 }
             }
             touch_team!(conn, &channel.team_id, version);

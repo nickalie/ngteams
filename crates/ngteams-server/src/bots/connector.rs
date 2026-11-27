@@ -178,12 +178,56 @@ async fn route(app: &App, method: &Method, bot: &Bot, path: &[&str], body: &[u8]
     if is(path.get(1), "conversations") {
         return conversations(&caller, method, &path[2..], body).await;
     }
+    if is(path.get(1), "teams") && method == Method::GET {
+        if let Some(answer) = team(&caller, &path[2..]).await? {
+            return Ok(answer);
+        }
+    }
     if is(path.get(1), "attachments") && method == Method::GET {
         return super::pictures::read(app, bot, &path[2..])
             .await
             .map_err(|refused| picture_refused(&refused));
     }
     Err(unserved(path))
+}
+
+/// `GET v3/teams/{id}` (`TeamDetails`) and `GET v3/teams/{id}/conversations` (its standard channels, the general
+/// one without a name), for a team the bot is in; `None` for another operation under `v3/teams`.
+async fn team(caller: &Caller<'_>, path: &[&str]) -> Result<Option<Response>, Refusal> {
+    let (id, listing) = match path {
+        [id] => (*id, false),
+        [id, conversations] if conversations.eq_ignore_ascii_case("conversations") => (*id, true),
+        _ => return Ok(None),
+    };
+    if chats::bot_roster(caller.app, id, &caller.bot.id).await?.is_none() {
+        return Err(Refusal::forbidden());
+    }
+    let found = crate::teams::repo::team(&caller.app.db, id)
+        .await?
+        .ok_or_else(Refusal::missing)?;
+    let channels: Vec<_> = crate::teams::repo::channels_of(&caller.app.db, std::slice::from_ref(&found.id))
+        .await?
+        .into_iter()
+        .filter(|channel| !channel.private)
+        .collect();
+    if listing {
+        let conversations: Vec<Value> = channels
+            .iter()
+            .map(|channel| {
+                let name = (channel.id != found.id).then(|| channel.name.clone());
+                json!({"id": channel.id, "name": name})
+            })
+            .collect();
+        return Ok(Some(Json(json!({ "conversations": conversations })).into_response()));
+    }
+    let members = crate::teams::repo::roster(&caller.app.db, &found.id).await?.len();
+    Ok(Some(
+        Json(
+            json!({"id": found.id, "name": found.name, "aadGroupId": found.group_id, "type": "standard",
+            "channelCount": channels.len(), "memberCount": members}),
+        )
+        .into_response(),
+    ))
 }
 
 /// What isn't served: the Bot Framework's "not implemented" for its known routes, the token service's "no token",
@@ -277,12 +321,13 @@ async fn conversations(caller: &Caller<'_>, method: &Method, path: &[&str], body
             _ => Err(unserved(&["v3", "conversations"])),
         };
     };
+    let (conversation, under) = reply_chain(conversation)?;
     let rest = &path[1..];
     let Some(operation) = operation(method, rest) else {
         return Err(unserved(&[&["v3", "conversations", conversation], rest].concat()));
     };
     match operation {
-        Operation::Send => send(caller, conversation, body).await,
+        Operation::Send => send(caller, conversation, under, body).await,
         Operation::Update(id) => update(caller, conversation, id, body).await,
         Operation::Delete(id) => delete(caller, conversation, id).await,
         Operation::Roster => Ok(Json(roster(caller, conversation).await?).into_response()),
@@ -294,6 +339,21 @@ async fn conversations(caller: &Caller<'_>, method: &Method, path: &[&str], body
         Operation::Upload => super::pictures::upload(caller.app, caller.bot, conversation, body)
             .await
             .map_err(|refused| picture_refused(&refused)),
+    }
+}
+
+/// A conversation's thread and, for a channel post's reply chain (`<channel>;messageid=<post>`), the post.
+fn reply_chain(conversation: &str) -> Result<(&str, Option<i64>), Refusal> {
+    match conversation.split_once(";messageid=") {
+        None => Ok((conversation, None)),
+        Some((thread, post)) => {
+            let post = post
+                .parse::<i64>()
+                .ok()
+                .filter(|post| *post > 0)
+                .ok_or_else(|| Refusal::bad("The conversation names no post."))?;
+            Ok((thread, Some(post)))
+        }
     }
 }
 
@@ -376,6 +436,7 @@ fn bot_post<'a>(
         } else {
             &[]
         },
+        under: None,
     }
 }
 
@@ -384,11 +445,11 @@ fn resource(id: i64) -> Response {
 }
 
 /// `POST …/activities[/{replyTo}]`: a message or typing, as the bot.
-async fn send(caller: &Caller<'_>, conversation: &str, body: &[u8]) -> Result<Response, Refusal> {
+async fn send(caller: &Caller<'_>, conversation: &str, under: Option<i64>, body: &[u8]) -> Result<Response, Refusal> {
     let activity = parse(body)?;
     match activity["type"].as_str().unwrap_or("message") {
         "message" => {
-            let id = post(caller, conversation, &activity).await?;
+            let id = post(caller, conversation, under, &activity).await?;
             Ok(resource(id))
         }
         "typing" => {
@@ -403,17 +464,26 @@ async fn send(caller: &Caller<'_>, conversation: &str, body: &[u8]) -> Result<Re
 }
 
 /// Posts each message `activity` makes; the last one's id.
-async fn post(caller: &Caller<'_>, conversation: &str, activity: &Value) -> Result<i64, Refusal> {
+async fn post(caller: &Caller<'_>, conversation: &str, under: Option<i64>, activity: &Value) -> Result<i64, Refusal> {
     let prepared = made(caller, conversation, activity, Expect::Any).await?;
-    let result = post_messages(caller, conversation, &prepared).await;
+    let result = post_messages(caller, conversation, under, &prepared).await;
     prepared.pictures.release(caller.app, caller.bot).await;
     result
 }
 
-async fn post_messages(caller: &Caller<'_>, conversation: &str, prepared: &Prepared) -> Result<i64, Refusal> {
+async fn post_messages(
+    caller: &Caller<'_>,
+    conversation: &str,
+    under: Option<i64>,
+    prepared: &Prepared,
+) -> Result<i64, Refusal> {
     let mut last = None;
     for message in &prepared.messages {
-        let posted = match chats::bot_post(caller.app, bot_post(caller, conversation, prepared, message)).await {
+        let post = BotPost {
+            under,
+            ..bot_post(caller, conversation, prepared, message)
+        };
+        let posted = match chats::bot_post(caller.app, post).await {
             Err(DbError::Conflict) => return Err(Refusal::missing()),
             other => other?,
         };
@@ -553,7 +623,7 @@ async fn create(caller: &Caller<'_>, body: &[u8]) -> Result<Response, Refusal> {
         .ok_or_else(Refusal::forbidden)?;
     let mut answer = json!({"id": chat, "serviceUrl": super::service_url(caller.app, caller.bot)});
     if let Some(activity) = create.activity.filter(Value::is_object) {
-        let id = post(caller, &chat, &activity).await?;
+        let id = post(caller, &chat, None, &activity).await?;
         answer["activityId"] = id.to_string().into();
     }
     Ok((StatusCode::CREATED, Json(answer)).into_response())

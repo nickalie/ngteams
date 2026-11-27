@@ -122,12 +122,21 @@ macro_rules! finish {
     }};
 }
 
-/// Adds `invites` to the group chat for `actor`; `event` makes the body of the thread's event.
+/// Who a roster add puts in a chat.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Joining {
+    /// People whose accounts are in use.
+    People,
+    /// The bot of an app added to the chat: an app's account, which never signs in.
+    Bot,
+}
+
+/// Adds `invites` (all `joining`) to the group chat for `actor`; `event` makes the body of the thread's event.
 pub(super) async fn add(
     db: &Db,
     chat: &str,
     actor: &str,
-    invites: &[Invite],
+    (invites, joining): (&[Invite], Joining),
     event: Event<'_>,
 ) -> Result<Outcome, DbError> {
     let at = super::wire::now();
@@ -136,12 +145,26 @@ pub(super) async fn add(
         .transaction::<_, DbError, _>(async |conn| {
             let version: i64 = advance!(conn, at);
             let found = group!(conn, chat, actor);
-            let known: i64 = users::table
-                .filter(users::id.eq_any(&ids))
-                .filter(users::disabled.eq(false))
-                .count()
-                .get_result(conn)
-                .await?;
+            let known: i64 = match joining {
+                Joining::People => {
+                    users::table
+                        .filter(users::id.eq_any(&ids))
+                        .filter(users::disabled.eq(false))
+                        .filter(crate::db::users::person())
+                        .count()
+                        .get_result(conn)
+                        .await?
+                }
+                Joining::Bot => {
+                    users::table
+                        .filter(users::id.eq_any(&ids))
+                        .filter(users::kind.eq(crate::db::users::APP))
+                        .filter(users::deleted_at.is_null())
+                        .count()
+                        .get_result(conn)
+                        .await?
+                }
+            };
             if usize::try_from(known).ok() != Some(ids.len()) {
                 return Ok(Outcome::Unknown);
             }

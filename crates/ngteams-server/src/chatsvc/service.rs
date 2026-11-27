@@ -18,7 +18,7 @@ use crate::db::schema::users;
 use crate::db::users::User;
 use crate::db::{Db, DbError, with_conn};
 
-fn caller(app: &App, user: &User) -> Caller {
+pub(super) fn caller(app: &App, user: &User) -> Caller {
     Caller {
         id: user.id.clone(),
         tenant: app.issuer.tenant().to_owned(),
@@ -66,6 +66,15 @@ pub(crate) struct Post<'a> {
     pub properties: Map<String, Value>,
     /// In a channel: the post it replies under, or `None` for a post of its own.
     pub under: Option<i64>,
+}
+
+/// Whether `thread` is a group chat: not a 1:1 chat, a channel or a stream.
+pub(crate) async fn is_group(db: &Db, thread: &str) -> Result<bool, DbError> {
+    let Some(chat) = repo::chat(db, thread).await? else {
+        return Ok(false);
+    };
+    let channel = super::channels::place(db, thread).await?.is_some();
+    Ok(!chat.unique_roster && !channel && streams::name_of(thread).is_none())
 }
 
 /// Who is in the thread.
@@ -359,6 +368,8 @@ pub(crate) struct BotPost<'a> {
     pub kind: &'a str,
     pub content: &'a str,
     pub pictures: &'a [String],
+    /// In a channel: the post it replies under, or `None` for a post of its own.
+    pub under: Option<i64>,
 }
 
 /// Posts the message and tells the thread's people. Returns its id, or `None` if the bot is absent.
@@ -374,7 +385,12 @@ pub(crate) async fn bot_post(app: &App, post: BotPost<'_>) -> Result<Option<i64>
         "properties": {},
     });
     picture_references(&mut body, post.pictures);
-    let root_id = super::channels::root(&app.db, post.thread, None).await?;
+    if let Some(under) = post.under
+        && !message_repo::is_post(&app.db, post.thread, under).await?
+    {
+        return Err(DbError::Conflict);
+    }
+    let root_id = super::channels::root(&app.db, post.thread, post.under).await?;
     let draft = message_repo::Message {
         chat_id: post.thread.to_owned(),
         id: 0,

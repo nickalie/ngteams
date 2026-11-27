@@ -12,9 +12,11 @@ use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::member_repo::{self, Done, Invite, Outcome};
+use super::member_repo::{self, Done, Invite, Joining, Outcome};
 use super::{Caller, Error, events, member_of, reads, wire};
 use crate::app::App;
+use crate::db::DbError;
+use crate::db::users::User;
 
 type Params = HashMap<String, String>;
 
@@ -72,10 +74,10 @@ pub(super) async fn add(
     let invites = body.invites()?;
     let base = wire::base(&app);
     let event = |version: i64, added: &[(String, i64)]| {
-        let content = event_content("addmember", &caller.mri(), version, added, true);
+        let content = event_content("addmember", &caller.mri(), version, added, true, person_mri);
         event_body(&base, chat, version, "ThreadActivity/AddMember", &content)
     };
-    let outcome = member_repo::add(&app.db, &found.id, &caller.id, &invites, &event).await?;
+    let outcome = member_repo::add(&app.db, &found.id, &caller.id, (&invites, Joining::People), &event).await?;
     finish(&app, &caller, outcome).await
 }
 
@@ -89,7 +91,7 @@ pub(super) async fn remove(
     let (found, _) = member_of(&app, &caller, chat).await?;
     let base = wire::base(&app);
     let event = |version: i64, gone: &[(String, i64)]| {
-        let content = event_content("deletemember", &caller.mri(), version, gone, false);
+        let content = event_content("deletemember", &caller.mri(), version, gone, false, person_mri);
         event_body(&base, chat, version, "ThreadActivity/DeleteMember", &content)
     };
     let outcome = member_repo::remove(&app.db, &found.id, &caller.id, target, &event).await?;
@@ -114,15 +116,23 @@ pub(super) async fn finish(app: &App, caller: &Caller, outcome: Outcome) -> Resu
 
 /// A roster event's content, as Teams writes it: who did it, when, and each person it names. An added person's
 /// `sharehistorytime` is the first message they may read (`0`: all; the event's own time: none before it).
-fn event_content(tag: &str, initiator: &str, version: i64, people: &[(String, i64)], shares: bool) -> String {
+fn event_content(
+    tag: &str,
+    initiator: &str,
+    version: i64,
+    people: &[(String, i64)],
+    shares: bool,
+    mri: fn(&str) -> String,
+) -> String {
     let mut content = format!(
         "<{tag}><eventtime>{version}</eventtime><initiator>{initiator}</initiator>\
          <rosterVersion>{version}</rosterVersion>"
     );
     for (user, from) in people {
+        let target = mri(user);
         let _ = write!(
             content,
-            "<target>8:orgid:{user}</target><detailedtargetinfo><id>8:orgid:{user}</id>"
+            "<target>{target}</target><detailedtargetinfo><id>{target}</id>"
         );
         if shares {
             let _ = write!(content, "<sharehistorytime>{from}</sharehistorytime>");
@@ -131,6 +141,66 @@ fn event_content(tag: &str, initiator: &str, version: i64, people: &[(String, i6
     }
     let _ = write!(content, "</{tag}>");
     content
+}
+
+fn person_mri(id: &str) -> String {
+    format!("8:orgid:{id}")
+}
+
+fn bot_mri(id: &str) -> String {
+    format!("28:{id}")
+}
+
+/// What a bot's add to or removal from a group chat came to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BotSeat {
+    Done,
+    /// It was in the chat already (added), or not in it (removed).
+    Unchanged,
+    /// The one asking isn't in the chat.
+    Denied,
+    /// A 1:1 chat, a channel or a stream.
+    NotAGroup,
+    /// No such chat.
+    Missing,
+}
+
+/// The bot `bot` added to (`add`) or taken out of the group chat `chat` by `actor`, one of its people, as a person is
+/// added or taken out: the thread's event and its new roster told to its people.
+pub(crate) async fn seat_bot(app: &App, chat: &str, actor: &User, bot: &str, add: bool) -> Result<BotSeat, DbError> {
+    let caller = super::service::caller(app, actor);
+    let base = wire::base(app);
+    let outcome = if add {
+        let invites = [Invite {
+            user: bot.to_owned(),
+            share: -1,
+        }];
+        let event = |version: i64, added: &[(String, i64)]| {
+            let content = event_content("addmember", &caller.mri(), version, added, true, bot_mri);
+            event_body(&base, chat, version, "ThreadActivity/AddMember", &content)
+        };
+        member_repo::add(&app.db, chat, &caller.id, (&invites, Joining::Bot), &event).await?
+    } else {
+        let event = |version: i64, gone: &[(String, i64)]| {
+            let content = event_content("deletemember", &caller.mri(), version, gone, false, bot_mri);
+            event_body(&base, chat, version, "ThreadActivity/DeleteMember", &content)
+        };
+        match member_repo::remove(&app.db, chat, &caller.id, bot, &event).await? {
+            Outcome::Missing => Outcome::Unchanged,
+            outcome => outcome,
+        }
+    };
+    let done = match outcome {
+        Outcome::Denied => return Ok(BotSeat::Denied),
+        Outcome::NotAGroup | Outcome::Unknown => return Ok(BotSeat::NotAGroup),
+        Outcome::Missing => return Ok(BotSeat::Missing),
+        Outcome::Unchanged => return Ok(BotSeat::Unchanged),
+        Outcome::Done(done) => done,
+    };
+    events::tell(app, "NewMessage", &done.event.value()?, &done.readers, &[]).await;
+    let thread = wire::thread(app, &caller, &done.chat, &done.members);
+    events::publish(app, &done.members, "ThreadUpdate", &thread).await;
+    Ok(BotSeat::Done)
 }
 
 /// A thread's own event as a message: sent by the thread itself.

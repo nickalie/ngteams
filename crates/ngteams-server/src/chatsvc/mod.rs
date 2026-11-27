@@ -9,6 +9,7 @@ mod create;
 mod events;
 mod member_repo;
 mod members;
+pub(crate) use members::{BotSeat, seat_bot};
 pub(crate) mod message_repo;
 mod messages;
 mod mutations;

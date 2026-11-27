@@ -8,8 +8,10 @@
 //! its audience is [`BotsConfig::scope`], which no person's token is issued for.
 
 mod api;
+mod catalogue;
 pub mod cli;
 mod credentials;
+mod installs;
 pub mod keys;
 mod manifest;
 pub mod repo;
@@ -35,6 +37,9 @@ use crate::db::{Db, DbError, now};
 use crate::storage::{Storage, StorageError};
 
 pub use manifest::MAX_PACKAGE;
+
+/// The GTM authz names while the server serves the app catalogue and bots: the middle tier, where the catalogue is.
+pub const GTM: &str = "appsService";
 
 /// The Bot Framework's resource, which a bot asks its token for by default.
 pub const BOT_FRAMEWORK: &str = "https://api.botframework.com";
@@ -197,7 +202,10 @@ pub(crate) fn router(config: &Config) -> Router<Arc<App>> {
     if !config.apps.enabled {
         return Router::new();
     }
-    Router::new().merge(api::router()).merge(credentials::router())
+    Router::new()
+        .merge(api::router())
+        .merge(credentials::router())
+        .merge(catalogue::routes(config))
 }
 
 #[derive(Debug, thiserror::Error)]

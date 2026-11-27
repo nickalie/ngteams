@@ -18,6 +18,9 @@ pub fn region_gtms(config: &Config) -> BTreeMap<&'static str, String> {
     if config.workflows.enabled {
         gtms.insert(WORKFLOWS_GTM, format!("{origin}/workflows"));
     }
+    if config.apps.enabled {
+        gtms.insert(crate::apps::GTM, format!("{origin}{}", middle_tier_prefix(config)));
+    }
     if config.outgoing_webhooks.enabled {
         gtms.insert(crate::outgoing::GTM, format!("{origin}{}", middle_tier_prefix(config)));
     }

@@ -505,7 +505,7 @@ fn is_event(body: &Value) -> bool {
 }
 
 /// Whether `post` is a post of the channel that replies can go under: there, a post itself, not deleted.
-pub(super) async fn is_post(db: &Db, chat: &str, post: i64) -> Result<bool, DbError> {
+pub(crate) async fn is_post(db: &Db, chat: &str, post: i64) -> Result<bool, DbError> {
     let found: Option<Message> = with_conn!(db, |conn| chat_messages::table
         .find((chat, post))
         .select(Message::as_select())

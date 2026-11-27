@@ -148,7 +148,7 @@ takes a double underscore: `NGTEAMS_SERVER_TLS__CERT`, `NGTEAMS_SERVER_TOKENS__A
 | `mixer.heartbeat`, `mixer.dead_after` | `5`, `15` | seconds between the node's heartbeats in Redis; seconds without one after which it is dead and its calls end |
 | `mixer.media_timeout`, `mixer.connect_timeout` | `20`, `30` | seconds a party's media may stay down, or take to come up after its answer, before it is taken out of the call |
 | `mixer.reconcile`, `mixer.drain_timeout` | `30`, `300` | seconds between the node's looks at its rooms' calls; seconds a stopping node serves its rooms before it ends them |
-| `apps.enabled` | `true` | whether the server serves apps and bots ([below](#apps-and-bots)): the registry, a bot's credentials and the keys it checks with |
+| `apps.enabled` | `true` | whether the server serves apps and bots ([below](#apps-and-bots)): the registry, a bot's credentials and the keys it checks with, the catalogue and installs, and authz's `appsService` |
 | `bots.scope` | `https://api.botframework.com` | the resource a bot asks its token for (`<scope>/.default`) and that token's audience; never an audience a person's token is for (`audiences`, the public origin, Workflows') |
 | `bots.issuer`, `bots.service_url` | `<public_origin>/bot`, `<public_origin>/bot/` | the issuer of the tokens activities to bots carry; the `serviceUrl` activities name |
 | `bots.token_lifetime`, `bots.activity_token_lifetime` | `3600`, `3600` | seconds a bot's own token and an activity's token are valid |
@@ -660,8 +660,8 @@ paging of the lists (a list is whole, without `nextLink`).
 The server becomes a Bot Connector for bots built with the Bot Framework, Teams or Microsoft 365 Agents SDKs. It
 registers apps and bots, gives each bot its credentials and the keys to check the server with, delivers chat events
 to bots as activities, serves the connector routes a bot answers on and passes a person's invokes to the bot
-([below](#invokes)). Invokes, reactions and replies work in any chat the bot is in. Installs, and a bot's own start of
-a group chat or channel conversation, are not served yet.
+([below](#invokes)), and serves the app catalogue the client reads and the adds and removals it sends ([below](#the-app-catalogue-and-installs)). Invokes, reactions and replies work in any chat the bot is in. A bot's own start of a
+group chat or channel conversation is not served yet.
 
 **A bot is a principal in chats**: a `users` row of kind `app` with the bot's id, MRI `28:<id>`, no password and no
 sign-in. No people read finds it: not the admin's account list or account changes, not a sign-in, not a profile
@@ -729,6 +729,50 @@ A bot gets the server's token with MSAL's client-credentials request, unchanged:
   tenant. Wrong secrets count per bot as password attempts do (`login.max_failures` in `login.window`, across nodes
   with Redis); after that a wrong secret gets 429 `temporarily_unavailable` with `Retry-After` until the window ends.
   The right secret is never held off (a bot's id is public), and it clears the count.
+
+### The app catalogue and installs
+
+While `apps.enabled`, authz names `appsService` (the middle tier's base), so the client offers the Store, an app's
+details, a chat's and a team's apps and the bot buttons ([Optional services](#optional-services)). The middle tier
+serves the catalogue in Teams' shapes ([apps.md](protocol/apps.md)). An account sees only the apps it may use: enabled,
+and for everyone or for it.
+
+| Request | Answers |
+|---|---|
+| `POST beta/users/apps/store` | the apps, by name, in `appCategoriesDictionary.adminPreInstalledApps` ("Added by your org") and `popularApps` (which a team's "Add an app" reads); no ratings |
+| `POST beta/users/apps/batchedDefinitions` | the definitions of the asked ids, in their order |
+| `POST beta/users/apps/aggregatedEntitlements` | the account's apps (`Installed`; the others `Featured`), every definition, and with team threads in the body each team's apps (`teamsEntitlements`) |
+| `POST beta/teams/apps/aggregatedEntitlements` | each asked team's apps the account is on, `Installed`, with the definitions |
+| `GET beta/chats/<chat>/apps/chatentitlements` | a chat's apps for one of its people (else 403), with their definitions as a list |
+| `POST beta/users/apps/entitlements`, `DELETE …/<app>` | the app for the account itself; its bot's 1:1 chat with the account is made |
+| `POST beta/chats/<chat>/apps/entitlements`, `DELETE …/<app>` | the app on a group chat the account is in (a 1:1 chat or a channel is 400); its bot joins the chat as a person is added (`ThreadActivity/AddMember`), and leaves it on removal |
+| `POST beta/teams/<team>/apps/entitlements`, `DELETE …/<app>` | the app on a team, by its owners, its members while the team's `uploadCustomApp` setting lets them, and administrators; its bot joins the team's standard channels (and each one made later), and leaves every channel of the team on removal |
+| `GET /teamsappdata/apps/<id>/color.png`, `outline.png` (no token) | an enabled app's icons from the file store, as Teams' CDN serves them |
+
+An add takes the app's definition as its body (its `id` names the app) and answers 201 `{"value": {"id", "state":
+"Installed", "installedVersion", "createdTime", "installedBy", "installerIdentity", "botMetadata"}}`; a removal answers 200.
+An app whose bot doesn't serve the place (`groupChat` for a chat, `team` for a team) is 400; an app the account may
+not use is 404. A definition is rendered from the app's manifest: `id`, `name`, `version`, `developerName`,
+`developerUrl`, `privacyUrl`, `termsOfUseUrl`, `shortDescription`, `longDescription`, `accentColor`, `bots` (`id`,
+`scopes`, `commandLists`, `isNotificationOnly`), `inputExtensions` (the manifest's `composeExtensions`),
+`staticTabs`, `configurableTabs`, `permissions`, `validDomains`, and for a packaged app `largeImageUrl` and
+`smallImageUrl` on the origin (`?v=` the app's last change).
+
+**What the bot gets.** An add or a removal is a row of `app_installs`, written in one transaction with the bot's two
+activities in the outbox, so it gets them as it gets any other: on an add `installationUpdate` (`action` `add`) then
+`conversationUpdate` (`membersAdded` `[{"id": "28:<bot id>"}]`); on a removal `conversationUpdate`
+(`membersRemoved`) then `installationUpdate` (`action` `remove`). For the account itself they are in its 1:1 chat
+with the bot (`personal`); for a group chat in the chat (`groupChat`); for a team in its general channel
+(`conversationType` `channel`, the team's thread as `conversation.id`, `channelData.team` `{"id", "name",
+"aadGroupId"}`, `channelData.channel`, `teamsTeamId`, `teamsChannelId`, and `channelData.eventType`
+`teamMemberAdded` or `teamMemberRemoved` on the `conversationUpdate`).
+
+**Groups and channels.** In a group chat or a channel the bot gets only a message that mentions it. In a channel the
+activity's `conversation.id` is the post's reply chain, `<channel>;messageid=<post>`, with the channel and team in
+`channelData` as above. Its `text` names each mention as `<at>name</at>`, and `entities` holds each mention
+(`{"type": "mention", "mentioned": {"id", "name"}, "text": "<at>name</at>"}`) after the `clientInfo`. A bot replies
+in the post's thread by posting to that reply chain. A removed bot is in none of the chat or the team's channels, so
+it gets nothing more and posts nowhere there (403).
 
 ### Bot chats and delivery
 
@@ -800,7 +844,7 @@ is 403.
 
 | Request | Does | Answers |
 |---|---|---|
-| `POST v3/conversations/{id}/activities`, `…/activities/{replyToId}` | a `message` as the bot: `text` in `textFormat` `markdown` (the default; turned into HTML with pulldown-cmark), `plain` or `xml`, cleaned with ammonia (no scripts, styles, handlers or pictures; links `https`, `http`, `mailto`); card attachments (Adaptive, hero, thumbnail, up to 10, with `suggestedActions`) as one `RichText/Media_Card` message after the text. A `typing` activity is the bot typing | 200 `{"id"}` (the last message's) |
+| `POST v3/conversations/{id}/activities`, `…/activities/{replyToId}` | a `message` as the bot (in a channel, `{id}` `<channel>;messageid=<post>` puts it in the post's thread): `text` in `textFormat` `markdown` (the default; turned into HTML with pulldown-cmark), `plain` or `xml`, cleaned with ammonia (no scripts, styles, handlers or pictures; links `https`, `http`, `mailto`); card attachments (Adaptive, hero, thumbnail, up to 10, with `suggestedActions`) as one `RichText/Media_Card` message after the text. A `typing` activity is the bot typing | 200 `{"id"}` (the last message's) |
 | `PUT v3/conversations/{id}/activities/{activityId}` | replaces the bot's own message. If the activity has cards with text or pictures, the server returns 400 because it makes two messages. | 200 `{"id"}` |
 | `DELETE v3/conversations/{id}/activities/{activityId}` | the bot's own message, soft-deleted | 200 |
 | `GET v3/conversations/{id}/members`, `…/activities/{activityId}/members` | the chat's people as `TeamsChannelAccount` (`id` `29:<id>`, `name`, `aadObjectId`, `objectId`, `givenName`, `surname`, `email`, `userPrincipalName`, `tenantId`, `userRole`) | 200 list |
@@ -809,7 +853,9 @@ is 403.
 | `POST v3/conversations/{id}/attachments` | keeps a picture for the chat (`AttachmentData`: `type`, `name`, `originalBase64`; PNG, JPEG, GIF or WebP, limited by `media.max_picture_bytes` and the 4 MiB JSON request limit; base64 permits less than 3 MiB of picture bytes) as a media object of the bot's own, made for that chat | 200 `{"id"}` |
 | `GET v3/attachments/{id}`, `…/views/original` | a picture the bot made or one of a chat it is in: its `AttachmentInfo` (`name`, `type`, `views` `[{"viewId": "original", "size"}]`), or its bytes | 200 |
 | `POST v3/conversations` | the bot's 1:1 chat with one person (`members[0].id` `29:<id>` or `8:orgid:<id>`, or `aadObjectId`) who may use its app, with `activity` posted in it when given | 201 `{"id", "activityId", "serviceUrl"}` |
-| `v3/batch/…`, `v3/teams/…`, `v1/meetings/…`, `…/history` | not served | 501 |
+| `GET v3/teams/{id}` | the team of a bot in it: `TeamDetails` (`id`, `name`, `aadGroupId`, `type`, `channelCount`, `memberCount`) | 200 |
+| `GET v3/teams/{id}/conversations` | its standard channels, `{"conversations": [{"id", "name"}]}`, the general one without a name | 200 |
+| `v3/batch/…`, other `v3/teams/…`, `v1/meetings/…`, `…/history` | not served | 501 |
 
 A message's picture attachment (`contentType` `image/…`) names a picture the bot kept (its `contentUrl` the
 `…/v3/attachments/{id}/views/original` above) or carries one as a `data:` URL (kept then, as an upload is). The
@@ -984,7 +1030,7 @@ account starts on the region it has). Each optional service has a GTM that annou
 | A meeting's recap | `mcpService` | no | a meeting chat's Recap tab |
 | Live captions | `captionsService` | no | a call's Language and speech, the captions key and command, the saved captions |
 | Recording and transcription | `recordingService` | no | a call's Record and transcribe |
-| The app catalogue and bots | `appsService` | no | a team's Apps tab, Get more apps, a copied team's Apps, a bot card's buttons that send to the bot |
+| The app catalogue and bots | `appsService` | while `apps.enabled` | a team's Apps tab, Get more apps, a copied team's Apps, a bot card's buttons that send to the bot |
 | A team's outgoing webhooks | `outgoingWebhookService` | while `outgoing_webhooks.enabled` | Manage team's "Create an outgoing webhook" and the team's webhooks (client task 412) |
 
 `docs/protocol/endpoints.md` names for every request the client sends whether the server serves it, the client hides
