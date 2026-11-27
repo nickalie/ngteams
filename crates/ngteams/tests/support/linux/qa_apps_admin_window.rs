@@ -17,6 +17,10 @@
 //! - **A user who is no administrator**: Settings offer neither Manage users nor Manage apps.
 //! - **A server with `apps.enabled = false`**: its administrator gets Manage users and no Manage apps.
 //! - **A server with `bots.allow_unsigned`**: an unsigned bot is registered, marked and gets no token.
+//! - **A bot's delivery and its test activity** (task 524, a server whose `bots.allowed_networks` opens loopback): a
+//!   new bot's details say nothing was sent yet; "Send a test activity" reaches a loopback bot that takes it, one
+//!   that answers 500, and an endpoint where nothing listens, and the details say how each went; the details of an
+//!   app that is off and of an app without an endpoint show no test (the shots show the button off).
 //!
 //! Without the server binary, weston 15, niri or `dbus-daemon` it fails: this test is run on purpose. Every user, app
 //! and value is made up; nothing leaves loopback. Shots go to `target/ui-shots/qa-apps-admin-*.png`, each in Teams
@@ -150,11 +154,12 @@ fn parent() -> SandboxResult {
     };
     let binary = own_server_binary::binary()?.ok_or("no ngteams-server binary: cargo build -p ngteams-server")?;
     let mut tally = Tally::default();
-    let runs: [(&str, Run); 4] = [
+    let runs: [(&str, Run); 5] = [
         ("administrator", administrator),
         ("not_an_administrator", not_an_administrator),
         ("server_without_apps", server_without_apps),
         ("server_with_unsigned_bots", server_with_unsigned_bots),
+        ("delivery_and_test_activity", delivery_and_test_activity),
     ];
     for (name, run) in runs {
         say(&format!("run {name}"));
@@ -719,11 +724,13 @@ fn endpoint(qa: &mut Qa<'_>, _: &mut Tally) -> SandboxResult {
     qa.shot("endpoint-refused-plain-http-dark")?;
     qa.ask("theme light")?;
     qa.act("close")?;
-    // back to a good endpoint for the later flows
-    qa.act(&format!("open {BOT_NAME}"))?;
-    qa.act(&format!("endpoint {good}"))?;
-    qa.act("confirm")?;
-    qa.state_until("closed", |state| state["dialog"].is_null())?;
+    // back to a good endpoint for the later flows, when a change was taken (with nothing to change, Save is off)
+    if qa.server_apps()?[BOT_NAME]["endpoint"] != good {
+        qa.act(&format!("open {BOT_NAME}"))?;
+        qa.act(&format!("endpoint {good}"))?;
+        qa.act("confirm")?;
+        qa.state_until("closed", |state| state["dialog"].is_null())?;
+    }
     ensure(failures.is_empty(), || failures.join("; "))
 }
 
@@ -1111,6 +1118,208 @@ fn server_with_unsigned_bots(sandbox: &Sandbox, binary: &Path, tally: &mut Tally
     qa.quit().map(|_| ())
 }
 
+// --- run 5: a bot's delivery and its test activity (QA of task 524) ---
+
+/// A bot on loopback that answers each request with `status`, and what it got.
+struct LoopbackBot {
+    url: String,
+    status: Arc<Mutex<u16>>,
+    got: Arc<Mutex<Vec<String>>>,
+}
+
+impl LoopbackBot {
+    fn start() -> SandboxResult<Self> {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let url = format!("http://{}/api/messages", listener.local_addr()?);
+        let status = Arc::new(Mutex::new(200_u16));
+        let got = Arc::new(Mutex::new(Vec::new()));
+        let (answer, seen) = (Arc::clone(&status), Arc::clone(&got));
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let request = read_request(&stream);
+                seen.lock().unwrap_or_else(PoisonError::into_inner).push(request);
+                let status = *answer.lock().unwrap_or_else(PoisonError::into_inner);
+                let mut stream = stream;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status} X\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                );
+            }
+        });
+        Ok(Self { url, status, got })
+    }
+
+    fn answer(&self, status: u16) {
+        *self.status.lock().unwrap_or_else(PoisonError::into_inner) = status;
+    }
+
+    fn got(&self) -> Vec<String> {
+        self.got.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+}
+
+/// One HTTP request's head and body, as text.
+fn read_request(stream: &std::net::TcpStream) -> String {
+    use std::io::{BufRead as _, Read as _};
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let mut reader = io::BufReader::new(stream);
+    let mut head = String::new();
+    let mut length = 0_usize;
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
+            length = value.trim().parse().unwrap_or(0);
+        }
+        head.push_str(&line);
+    }
+    let mut body = vec![0; length];
+    let _ = reader.read_exact(&mut body);
+    format!("{head}\r\n{}", String::from_utf8_lossy(&body))
+}
+
+const TAKES: &str = "Synthetic Taker Bot";
+const FAILS: &str = "Synthetic Failing Bot";
+const NOBODY: &str = "Synthetic Gone Bot";
+const OFF: &str = "Synthetic Off Bot";
+const BARE: &str = "Synthetic Bare Bot";
+
+fn added_id(said: &str) -> SandboxResult<String> {
+    said.lines()
+        .find_map(|line| line.strip_prefix("added "))
+        .and_then(|rest| rest.split_whitespace().next())
+        .map(str::to_owned)
+        .ok_or_else(|| format!("app add said {said}").into())
+}
+
+fn delivery_and_test_activity(sandbox: &Sandbox, binary: &Path, tally: &mut Tally) -> SandboxResult {
+    let taker = LoopbackBot::start()?;
+    let failing = LoopbackBot::start()?;
+    failing.answer(500);
+    let gone = free_closed_port()?;
+    let server = BinaryServer::start_with(
+        binary,
+        "\n[bots]\nallow_http_endpoints = true\nallowed_networks = [\"127.0.0.0/8\"]\n",
+    )?;
+    server.add_admin(ADMIN, "Ada Admin (synthetic)")?;
+    for (name, endpoint) in [
+        (TAKES, taker.url.clone()),
+        (FAILS, failing.url.clone()),
+        (NOBODY, format!("http://127.0.0.1:{gone}/api/messages")),
+        (OFF, taker.url.clone()),
+    ] {
+        let said = server.run(&["app", "add", "--name", name, "--endpoint", &endpoint], None)?;
+        if name == OFF {
+            server.run(&["app", "disable", &added_id(&said)?], None)?;
+        }
+    }
+    server.run(&["app", "add", "--name", BARE], None)?;
+    let mut qa = Qa::start(sandbox, &server, "delivery", ADMIN)?;
+    qa.state_until("Manage apps offered", |state| {
+        state["pages"]
+            .as_array()
+            .is_some_and(|pages| pages.iter().any(|page| page == "apps"))
+    })?;
+    qa.act("settings")?;
+    qa.state_until("the page, read", |state| state["loaded"] == true)?;
+    qa.shots("delivery-list")?;
+
+    let outcome = test_activity_taken(&mut qa, &taker);
+    tally.outcome("a_new_bot_says_nothing_sent_and_takes_a_test_activity", outcome);
+    let outcome = test_activity_refused(&mut qa, FAILS, "500", "delivery-test-500");
+    tally.outcome("a_bot_that_answers_500_shows_it_did_not_take_the_test", outcome);
+    let outcome = test_activity_refused(&mut qa, NOBODY, "", "delivery-test-unreachable");
+    tally.outcome("an_endpoint_where_nothing_listens_shows_why_the_test_failed", outcome);
+    for (name, shot, check) in [
+        (OFF, "delivery-off", "an_app_that_is_off_offers_no_test"),
+        (BARE, "delivery-no-endpoint", "an_app_without_an_endpoint_offers_no_test"),
+    ] {
+        let outcome = no_test_offered(&mut qa, name, shot);
+        tally.outcome(check, outcome);
+    }
+    let log = server.log();
+    let outcome = ensure(!log.contains("ngteams/testActivity\""), || {
+        "the server's info log carries the test activity's payload".to_owned()
+    });
+    tally.outcome("the_test_activity_logs_no_payload", outcome);
+    qa.quit().map(|_| ())
+}
+
+/// A port on loopback where nothing listens.
+fn free_closed_port() -> SandboxResult<u16> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    Ok(listener.local_addr()?.port())
+}
+
+fn open_details(qa: &mut Qa<'_>, name: &str) -> SandboxResult<Value> {
+    qa.act("close")?;
+    qa.act(&format!("open {name}"))?;
+    qa.state_until("the details", |state| {
+        dialog_is(state, "details") && state["dialog"]["health"].is_string()
+    })
+}
+
+fn test_activity_taken(qa: &mut Qa<'_>, taker: &LoopbackBot) -> SandboxResult {
+    let state = open_details(qa, TAKES)?;
+    let health = state["dialog"]["health"].as_str().unwrap_or_default();
+    ensure(health == "Nothing sent to the bot yet.", || format!("a new bot's health says {health}"))?;
+    qa.shots("delivery-new")?;
+    qa.act("test")?;
+    let state = qa.state_until("the test's answer", |state| state["dialog"]["test"].is_object())?;
+    let test = &state["dialog"]["test"];
+    let words = test["words"].as_str().unwrap_or_default();
+    ensure(test["took"] == true && words.starts_with("The bot took it (200) in "), || {
+        format!("the test says {test}")
+    })?;
+    qa.shots("delivery-test-taken")?;
+    let got = taker.got();
+    ensure(got.len() == 1, || format!("the bot got {} requests", got.len()))?;
+    let request = &got[0];
+    ensure(request.starts_with("POST /api/messages "), || format!("the bot got {request}"))?;
+    ensure(request.contains("\"ngteams/testActivity\"") && request.contains("\"event\""), || {
+        format!("the bot got {request}")
+    })?;
+    ensure(request.to_ascii_lowercase().contains("authorization: bearer "), || {
+        "a signed bot's test activity carries no token".to_owned()
+    })?;
+    ensure(!request.contains("userAadToken") && !request.contains("\"token\""), || {
+        "the test activity carries a user token".to_owned()
+    })?;
+    // the test is no delivery: the health stays new
+    qa.act("reload")?;
+    let state = open_details(qa, TAKES)?;
+    let health = state["dialog"]["health"].as_str().unwrap_or_default();
+    ensure(health == "Nothing sent to the bot yet.", || {
+        format!("after a test the health says {health}")
+    })
+}
+
+fn test_activity_refused(qa: &mut Qa<'_>, name: &str, says: &str, shot: &str) -> SandboxResult {
+    open_details(qa, name)?;
+    qa.act("test")?;
+    let state = qa.state_until("the test's answer", |state| state["dialog"]["test"].is_object())?;
+    let test = &state["dialog"]["test"];
+    let words = test["words"].as_str().unwrap_or_default();
+    ensure(test["took"] == false && words.starts_with("The bot didn't take it: "), || {
+        format!("the test says {test}")
+    })?;
+    ensure(words.contains(says), || format!("the test says {words}, not {says}"))?;
+    qa.shots(shot)
+}
+
+/// The details of an app that can't be tested; the shot shows the button off and what to do.
+fn no_test_offered(qa: &mut Qa<'_>, name: &str, shot: &str) -> SandboxResult {
+    let state = open_details(qa, name)?;
+    ensure(state["dialog"]["test"].is_null() && state["dialog"]["testing"] == false, || {
+        format!("{name} was tested: {}", state["dialog"])
+    })?;
+    qa.shots(shot)
+}
+
 // --- the child: the app on the real server ---
 
 fn png(width: u32, height: u32) -> SandboxResult<Vec<u8>> {
@@ -1357,6 +1566,12 @@ fn dialog_json(dialog: &Entity<AppDialog>, cx: &App) -> Value {
         "settings_have_secret": settings.as_ref().is_some_and(|settings| !settings.text.contains(teams_ui::app_admin::sdk::SECRET_PLACEHOLDER)),
         "note": settings.as_ref().and_then(|settings| settings.note),
         "settings": settings.map(|settings| settings.text),
+        "health": read.app().map(|app| teams_ui::app_admin::health::summary(app.health.as_ref(), 0).0),
+        "testing": read.testing(),
+        "test": read.test_result().map(|result| {
+            let (words, took) = teams_ui::app_admin::health::went(result);
+            json!({"words": words, "took": took})
+        }),
     })
 }
 
@@ -1509,6 +1724,7 @@ fn dialog_act(
             dialog.update(cx, |dialog, cx| dialog.choose_package(format!("{arg}.zip"), bytes, cx));
         }
         "enabled" => dialog.update(cx, |dialog, cx| dialog.set_enabled(arg == "on", cx)),
+        "test" => dialog.update(cx, AppDialog::send_test),
         "mode" => {
             let mode = if arg == "unsigned" {
                 BotAuthMode::Unsigned
