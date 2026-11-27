@@ -22,6 +22,7 @@ mod limits;
 pub(crate) mod outbox;
 mod pictures;
 mod probe;
+pub mod sign_in;
 
 pub use outbox::{Delivery, FAILED, PENDING, SENT, deliveries};
 pub(crate) mod schema;
@@ -175,7 +176,9 @@ pub(crate) fn router(app: &Arc<App>) -> Router<Arc<App>> {
     if !app.config.apps.enabled {
         return Router::new();
     }
-    connector::router(app).merge(invoke::router())
+    connector::router(app)
+        .merge(invoke::router())
+        .merge(sign_in::router())
 }
 
 /// Typing by `user` in `chat` at the chat service's moment `at`, for the bots in it.
@@ -206,4 +209,5 @@ pub(crate) async fn purge(app: &App) {
     if let Err(error) = outbox::purge(&app.db, before).await {
         tracing::warn!(%error, "old bot deliveries weren't dropped");
     }
+    sign_in::purge(app).await;
 }

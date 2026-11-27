@@ -161,6 +161,7 @@ takes a double underscore: `NGTEAMS_SERVER_TLS__CERT`, `NGTEAMS_SERVER_TOKENS__A
 | `bots.send_timeout` | `10` | seconds a send to a bot may take, from connecting to the end of its answer |
 | `bots.send_rate`, `bots.send_burst` | `50`, `50` | activities a second the server sends one bot, and how many at once, on each node; a send over it waits its turn, which is no failed attempt |
 | `bots.connector_rate`, `bots.connector_burst` | `50`, `50` | requests a second one app's bot may make to the connector, and how many at once, on each node; more get 429 with `Retry-After` |
+| `bots.token_key` | none | 32 bytes in base64 (`openssl rand -base64 32`): the key the people's tokens from a bot's OAuth connections and those connections' client secrets are sealed with (AES-256-GCM). Without it no connection is made and no one signs in to a bot ([Sign-in cards](#sign-in-cards)); every node needs the same key |
 | `outgoing_webhooks.enabled` | `true` | whether the server serves a team's outgoing webhooks ([below](#outgoing-webhooks)): their routes, their mentions and authz's `outgoingWebhookService` |
 | `outgoing_webhooks.timeout_ms` | `5000` | milliseconds a webhook has for its answer, from connecting to its end: Teams' 5 seconds |
 | `outgoing_webhooks.max_picture_bytes` | `1048576` | the largest picture (PNG or JPEG) a webhook may have |
@@ -850,7 +851,7 @@ is 403.
 
 | Request | Does | Answers |
 |---|---|---|
-| `POST v3/conversations/{id}/activities`, `…/activities/{replyToId}` | a `message` as the bot (in a channel, `{id}` `<channel>;messageid=<post>` puts it in the post's thread): `text` in `textFormat` `markdown` (the default; turned into HTML with pulldown-cmark), `plain` or `xml`, cleaned with ammonia (no scripts, styles, handlers or pictures; links `https`, `http`, `mailto`); card attachments (Adaptive, hero, thumbnail, up to 10, with `suggestedActions`) as one `RichText/Media_Card` message after the text. A `typing` activity is the bot typing | 200 `{"id"}` (the last message's) |
+| `POST v3/conversations/{id}/activities`, `…/activities/{replyToId}` | a `message` as the bot (in a channel, `{id}` `<channel>;messageid=<post>` puts it in the post's thread): `text` in `textFormat` `markdown` (the default; turned into HTML with pulldown-cmark), `plain` or `xml`, cleaned with ammonia (no scripts, styles, handlers or pictures; links `https`, `http`, `mailto`); card attachments (Adaptive, hero, thumbnail, OAuth and sign-in cards, up to 10, with `suggestedActions`) as one `RichText/Media_Card` message after the text. A `typing` activity is the bot typing | 200 `{"id"}` (the last message's) |
 | `PUT v3/conversations/{id}/activities/{activityId}` | replaces the bot's own message. If the activity has cards with text or pictures, the server returns 400 because it makes two messages. | 200 `{"id"}` |
 | `DELETE v3/conversations/{id}/activities/{activityId}` | the bot's own message, soft-deleted | 200 |
 | `GET v3/conversations/{id}/members`, `…/activities/{activityId}/members` | the chat's people as `TeamsChannelAccount` (`id` `29:<id>`, `name`, `aadObjectId`, `objectId`, `givenName`, `surname`, `email`, `userPrincipalName`, `tenantId`, `userRole`) | 200 list |
@@ -901,6 +902,49 @@ delivery is; a card's plain submit (`name` `message`) is a `message` activity wi
 | 401, 403, 407, a redirect, a body that isn't JSON, no endpoint, a refused address | 502 |
 | none within `bots.send_timeout` | 504 |
 
+
+### Sign-in cards
+
+The server is a bot's token service (the Bot Framework's `OAuthUrl`, the Teams SDK's `tokenServiceUrl`): a signed
+bot calls it at the origin with its own token, an unsigned bot under its own `serviceUrl`
+(`<origin>/bot/u/<bot id>.<credential>/api/…`). It needs `bots.token_key`.
+
+**Connections.** An administrator gives a bot OAuth connections, by name, through the admin API: an identity
+provider's authorize and token URLs (the token URL passes the address guard, as a bot's endpoint does), the client id
+and secret the provider gave, and the scopes. The provider sends people back to `<origin>/api/oauth/callback`: register
+that redirect with it.
+
+| Request | Does | Answers |
+|---|---|---|
+| `GET /api/admin/v1/apps/{id}/connections` | the app's bot's connections, by name, never a secret | 200 `{"value": [{"name", "authorize_url", "token_url", "client_id", "scopes", "redirect_uri", "created_at", "updated_at"}]}` |
+| `PUT /api/admin/v1/apps/{id}/connections/{name}` | `authorize_url`, `token_url`, `client_id`, `client_secret` (needed for a new one; a change without it keeps the old one), `scopes` (space-separated). A name has 1–64 letters, digits, `-`, `_` or `.` | 201 new, 200 changed: the connection |
+| `DELETE /api/admin/v1/apps/{id}/connections/{name}` | the connection, its sign-ins and every person's token for it | 204 |
+
+Refusals: 400 `InvalidConnection`, `EndpointNotAllowed`, `EndpointMetadata`; 404 `NotFound`; 409
+`SignInNotConfigured` (no `bots.token_key`). Each change is audited (`app.connection.add`, `.change`, `.delete`).
+
+**The flow.** A bot's sign-in prompt (the Teams SDK's `signin`, botbuilder's `OAuthPrompt`) asks for the person's
+token; with none, it asks for a link and posts an OAuth card with it. The person opens the link in a browser, signs in
+at the provider (the authorization code grant with PKCE, through the address guard), and the server's page shows them
+a six-digit code. Their client sends the code to the bot as `signin/verifyState`, and the bot redeems it for the
+token. The code works once, for 15 minutes, only for the person the link was made for; five wrong codes end the
+sign-in. A token within a minute of its end is renewed with its refresh token when the bot asks for it; one that
+can't be renewed signs the person out of that connection.
+
+| Request (the bot's) | Answers |
+|---|---|
+| `GET api/usertoken/GetToken?userId&connectionName&channelId[&code]` | 200 `{"channelId", "connectionName", "token", "expiration"}`, or 404 with none |
+| `GET api/botsignin/GetSignInResource?state` | 200 `{"signInLink"}`; `state` is the SDK's base64 JSON (`connectionName`, the conversation reference's `user.id`, `msAppId`, in either letter case). 400 when it names another app, no connection of the bot's, or no one who may use the bot |
+| `GET api/botsignin/GetSignInUrl?state` | the same link as text |
+| `GET api/usertoken/GetTokenStatus?userId&channelId[&include]` | 200 `[{"channelId", "connectionName", "hasToken", "serviceProviderDisplayName"}]` |
+| `DELETE api/usertoken/SignOut?userId[&connectionName]&channelId` | 200: the person's tokens and sign-ins of that connection, or of all |
+| `POST api/usertoken/GetAadTokens` | 200 `{}` |
+| `POST api/usertoken/exchange` | 412: single sign-on isn't offered |
+
+Single sign-on is not built: no token of a person's account ever reaches a bot. A client's `signin/tokenExchange`
+invoke is answered 412 and never sent, which makes the SDKs fall back to their card. The tokens, the PKCE
+verifiers and the client secrets are sealed in the database (`bot_connections`, `bot_sign_ins`,
+`bot_user_tokens`); a code is kept only as its digest.
 
 ### The keys a bot checks activities with
 
@@ -1020,6 +1064,7 @@ hands out its GTM where it has one.
 | Power Apps connections | `workflowsService` announces it; requests go to the client's fixed base | `/workflow-connections/` | the account's Teams connections, while `workflows.enabled` |
 | A bot's token endpoint and metadata | (the bot's authority) | `/<tenant>/oauth2/v2.0/token`, `/<tenant>/v2.0/.well-known/`, `/adfs/` | while `apps.enabled` |
 | The keys bots check activities with | (the bot's settings) | `/bot/v1/.well-known/`, `/<tenant>/discovery/v2.0/keys` | while `apps.enabled` |
+| A bot's token service | (the bot's `OAuthUrl`) | `/api/usertoken/`, `/api/botsignin/`; the browser's `/api/oauth/signin`, `/api/oauth/callback` | while `apps.enabled` |
 | A team's outgoing webhooks | `outgoingWebhookService` (the middle tier's base) | `/api/mt/part/<partition>/beta/teams/<team>/outgoingWebhooks` | while `outgoing_webhooks.enabled` |
 
 ## Optional services

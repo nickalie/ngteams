@@ -353,6 +353,29 @@ fn reads_a_hero_cards_bot_buttons() {
     assert!(!message.cards[0].unshown);
 }
 
+#[test]
+fn reads_a_sign_in_and_an_oauth_card_as_their_text_and_sign_in_button() {
+    for kind in ["application/vnd.microsoft.card.oauth", "application/vnd.microsoft.card.signin"] {
+        let activity = json!({"attachments": [{"contentType": kind, "content": {
+            "text": "Sign in to Synthetic Tools", "connectionName": "tools",
+            "tokenExchangeResource": {"id": "x", "uri": "api://synthetic"},
+            "buttons": [
+                {"type": "signin", "title": "Sign in", "value": "https://tools.example.test/sign-in?x=1"},
+                {"type": "signin", "title": "Broken", "value": "javascript:alert(1)"}
+            ]
+        }}]});
+        let message = card_message(&content(&activity)).unwrap();
+        let card = &message.cards[0];
+        assert_eq!(plain_words(&message), ["Sign in to Synthetic Tools"], "{kind}");
+        assert_eq!(card.actions.len(), 1, "{kind}");
+        assert_eq!(card.actions[0].title, "Sign in");
+        assert!(matches!(&card.actions[0].kind, ActionKind::Submit(BotAction {
+            via: Via::SignIn(Some(page)), data: None, inputs: false, ..
+        }) if page == "https://tools.example.test/sign-in?x=1"));
+        assert!(card.unshown, "a button that isn't a link is said, not drawn");
+    }
+}
+
 /// The bot buttons of a card: `Action.Submit` with each `msteams` kind, `Action.Execute` with its verb.
 fn bot_buttons(card: &teams_proto::chat::card::Card) -> Vec<&BotAction> {
     card.actions

@@ -456,10 +456,27 @@ fn card_surface(draw: &Draw<'_>, at: usize, shown: &Card, cx: &mut App) -> AnyEl
     }
     .within(shown);
     let selector = draw.selector(&path);
+    let code = draw
+        .bot
+        .filter(|bot| bot.asks() && bot.shown.signing_in.contains(&at))
+        .map(|bot| inputs::sign_in_code(draw, bot, at));
     let line = draw
         .bot
         .and_then(|bot| bot.shown.lines.get(&at))
         .map(|line| answer_line(draw, &path, line));
+    let line = match (code, line) {
+        (None, line) => line,
+        (Some(code), line) => Some(
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(code)
+                .children(line)
+                .into_any_element(),
+        ),
+    };
     // a card that asks for answers is as wide as a card is, as Teams draws a form
     let form = draw.bot.is_some() && !draw.inputs.is_empty();
     if draw.bare {

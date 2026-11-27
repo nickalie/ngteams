@@ -62,6 +62,9 @@ pub enum InvokeKind {
     /// A card's plain `Action.Submit` or `messageBack`: the bot gets a message carrying `value`, and a `messageBack`'s
     /// `text` as its `text` (own design, unseen).
     Submit(CardInvoke),
+    /// `signin/verifyState`: the code the bot's sign-in page showed once the person signed in, which the bot redeems
+    /// for its own token at its token service (unseen).
+    VerifyState { code: String },
 }
 
 /// A card action's invoke: the card's message, the action's id and verb, and its data merged with the card's answers.
@@ -139,6 +142,7 @@ impl InvokeKind {
             Self::TaskFetch(_) => "task/fetch",
             Self::TaskSubmit(_) => "task/submit",
             Self::Submit(_) => "message",
+            Self::VerifyState { .. } => "signin/verifyState",
         }
     }
 
@@ -202,6 +206,7 @@ impl InvokeKind {
             }),
             Self::TaskFetch(card) | Self::TaskSubmit(card) => json!({"data": card.data, "context": context}),
             Self::Submit(card) => card.data.clone(),
+            Self::VerifyState { code } => json!({ "state": code }),
         }
     }
 }
@@ -603,6 +608,19 @@ mod tests {
         assert_eq!(made.body(Some(&token))["userAadToken"], "synthetic-spaces-token");
         assert!(made.body_without_token().get("userAadToken").is_none());
         assert!(made.body_without_token().get("conversation").is_none());
+    }
+
+    #[test]
+    fn a_sign_in_code_goes_as_the_verify_states_state_in_the_conversation() {
+        let verify = invoke(InvokeKind::VerifyState {
+            code: "402917".to_owned(),
+        })
+        .in_conversation("19:c@unq.gbl.spaces");
+        let body = verify.body_without_token();
+        assert_eq!(body["name"], "signin/verifyState");
+        assert_eq!(body["value"], json!({"state": "402917"}));
+        assert_eq!(body["conversation"]["id"], "19:c@unq.gbl.spaces");
+        assert!(body.get("messageId").is_none());
     }
 
     #[test]

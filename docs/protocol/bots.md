@@ -64,6 +64,7 @@ audience to the app) and any on-behalf-of token for an app.
 | `adaptiveCard/action` | a card's `Action.Execute` is pressed, or its `refresh` runs | `{"action": {"type": "Action.Execute", "id", "verb", "data"}, "trigger": "manual" \| "automatic"}` | unseen |
 | `task/fetch` | a card button whose `msteams.type` is `task/fetch` | `{"data": <the button's data>, "context"}` | unseen |
 | `task/submit` | a card dialog's submit | `{"data": <its data and answers>, "context"}` | unseen |
+| `signin/verifyState` | the code a bot's sign-in page showed, typed under its sign-in card once the page opened | `{"state": "<the code>"}` | unseen (the Bot Framework documents it for clients that can't finish a sign-in in a window of their own) |
 | `message` | a card's plain `Action.Submit` or `messageBack`: the bot gets a message activity carrying `value` | the data merged with the answers; a `messageBack`'s `text` goes as the body's `text` | **own design**, unseen |
 
 `messagePayload` describes the message an action command runs on: `id`, `replyToId` (a channel post's id; none in a
@@ -97,6 +98,22 @@ dialog card (`task` `continue`) that asks to add it, its `Action.Submit` `data` 
 `"msteams": {"justInTimeInstall": true}`. On that button Teams adds the app to the chat (`POST
 <middle tier>/beta/chats/<chat>/apps/entitlements`) and sends the `submitAction` again with that data, answered 200
 with an empty body. The app then posts its card as the user ("<name> via <app>"), with `properties.onbehalfof`.
+
+## Sign-in cards
+
+A bot that needs the person's token for another service sends an OAuth card
+(`application/vnd.microsoft.card.oauth`: `text`, `connectionName`, `buttons` with one `signin` button whose `value`
+is the sign-in link) or a sign-in card (`application/vnd.microsoft.card.signin`: `text`, `buttons`). Unseen: no bot in
+the lab tenant sends one within the lab rule. The card's text and buttons are drawn as a hero card's are.
+
+The native client (`NGTEAMS_BOTS=1`) opens the link in the browser, then shows a code field and Verify under the
+card. The page at the end of the sign-in shows a code (the Bot Framework's token service shows it when the sign-in
+runs outside Teams' own window; the own server always does). Verify sends it as `signin/verifyState`, one attempt;
+the bot redeems it at its token service. A `404`, `412` or `400` from the bot says the code didn't work and keeps the
+field; a success takes the field away and says the person is signed in.
+
+No token of the account is involved beyond the invoke's own (the token rule above): the sign-in happens in the
+browser, between the person and the bot's identity provider. Single sign-on (`signin/tokenExchange`) is not sent.
 
 ## Message extensions
 

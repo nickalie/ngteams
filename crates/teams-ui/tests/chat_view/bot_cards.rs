@@ -925,3 +925,72 @@ fn a_narrow_cards_answer_line_wraps_under_it_and_the_card_keeps_its_width() {
         assert!(line.size.height > px(20.0), "the line wraps: {line:?}");
     }
 }
+
+/// An OAuth card as an SDK's sign-in prompt sends it.
+fn oauth_message(id: &str) -> Message {
+    bot_message(
+        id,
+        &json!({"type": "message/card", "attachments": [
+            {"contentType": "application/vnd.microsoft.card.oauth", "content": {
+                "text": "Sign in to Synthetic Tools", "connectionName": "tools",
+                "buttons": [{"type": "signin", "title": "Sign in", "value": "https://example.invalid/sign-in"}]}}
+        ]}),
+    )
+}
+
+#[test]
+fn a_sign_in_card_opens_its_page_then_sends_the_code_it_showed() {
+    let rig = bots_rig(vec![oauth_message(ID)]);
+    rig.core.bot_answers.lock().unwrap().extend([
+        Ok(InvokeAnswer::Refused(404)),
+        Ok(InvokeAnswer::Done),
+    ]);
+    let (_view, cx) = tall_window(&rig);
+    let code = format!("card-{ID}-c0-code");
+    assert!(bounds(cx, &code).is_none(), "no code field before the page opens");
+    click(cx, &format!("card-{ID}-c0a0"));
+    assert_eq!(cx.opened_url().as_deref(), Some("https://example.invalid/sign-in"));
+    assert!(bounds(cx, &code).is_some(), "the code field shows");
+    // what isn't six digits goes nowhere
+    click(cx, &format!("{code}-verify"));
+    assert!(bounds(cx, &format!("{code}-error")).is_some());
+    assert!(rig.core.bot_asks.lock().unwrap().is_empty());
+    click(cx, &code);
+    cx.simulate_input("123 456");
+    draw(cx);
+    assert!(bounds(cx, &format!("{code}-error")).is_none(), "typing takes the mark away");
+    // a code the bot doesn't take keeps the field and says so
+    click(cx, &format!("{code}-verify"));
+    cx.run_until_parked();
+    draw(cx);
+    assert!(bounds(cx, &format!("card-{ID}-c0answer")).is_some());
+    assert!(bounds(cx, &code).is_some());
+    click(cx, &format!("{code}-verify"));
+    cx.run_until_parked();
+    draw(cx);
+    let asks = rig.core.bot_asks.lock().unwrap().clone();
+    assert_eq!(asks.len(), 2);
+    for ask in &asks {
+        assert!(
+            matches!(&ask.kind, InvokeKind::VerifyState { code } if code == "123456"),
+            "{ask:?}"
+        );
+        assert_eq!(ask.bot.as_str(), BOT);
+        assert_eq!(ask.conversation.as_deref(), Some(AB));
+    }
+    // taken: the field goes, the card says the user is signed in
+    assert!(bounds(cx, &code).is_none());
+    assert!(bounds(cx, &format!("card-{ID}-c0answer")).is_some());
+}
+
+#[test]
+fn without_the_bots_a_sign_in_card_opens_in_teams_and_offers_no_code() {
+    let rig = rig_with(vec![oauth_message(ID)]);
+    let (_view, cx) = tall_window(&rig);
+    click(cx, &format!("card-{ID}-c0a0"));
+    assert_eq!(
+        cx.opened_url(),
+        Some(teams_proto::workflow::MessageRun::link_to(AB, ID, None))
+    );
+    assert!(bounds(cx, &format!("card-{ID}-c0-code")).is_none());
+}

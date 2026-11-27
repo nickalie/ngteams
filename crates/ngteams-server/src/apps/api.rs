@@ -36,6 +36,7 @@ pub(super) fn router() -> Router<Arc<App>> {
         .route("/api/admin/v1/apps/{id}", get(read).patch(update).delete(remove))
         .route("/api/admin/v1/apps/{id}/secret", post(rotate))
         .route("/api/admin/v1/apps/{id}/test", post(test))
+        .merge(crate::bots::sign_in::admin_router())
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .merge(packages)
 }
@@ -74,17 +75,20 @@ impl From<AppError> for ApiError {
             AppError::UnknownUser => (StatusCode::BAD_REQUEST, "UnknownUser"),
             AppError::Package(_) => (StatusCode::BAD_REQUEST, "InvalidPackage"),
             AppError::TooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "PackageTooLarge"),
+            AppError::Connection => (StatusCode::BAD_REQUEST, "InvalidConnection"),
+            AppError::NoSuchConnection => (StatusCode::NOT_FOUND, "NotFound"),
+            AppError::SignInNotConfigured => (StatusCode::CONFLICT, "SignInNotConfigured"),
         };
         refused(status, code, error.to_string())
     }
 }
 
-fn answer(status: StatusCode, body: &Value) -> Response {
+pub(crate) fn answer(status: StatusCode, body: &Value) -> Response {
     (status, [(CACHE_CONTROL, "no-store")], axum::Json(body)).into_response()
 }
 
 /// A JSON body: anything that isn't the request's shape is a 400.
-fn body<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ApiError> {
+pub(crate) fn body<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, ApiError> {
     serde_json::from_slice(bytes).map_err(|error| refused(StatusCode::BAD_REQUEST, "InvalidRequest", error.to_string()))
 }
 

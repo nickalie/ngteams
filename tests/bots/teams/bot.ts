@@ -1,7 +1,9 @@
 // An echo-and-cards bot on the Teams SDK v2 (TypeScript) for ngteams-server's container tests. It runs against an own
 // server by configuration and one token callback: `cloud` points the SDK's checks of the server's activity tokens at
 // the server's keys and issuer; the SDK's msal-node takes no known authorities, so the bot gets its own token through
-// `token`, with msal-node told the server's host. All names and texts are synthetic.
+// `token`, with msal-node told the server's host. Its token service (`tokenServiceUrl`) is the server too: `signin`
+// runs the SDK's OAuth flow for the connection `synthetic-idp`. All names and texts are synthetic.
+import { createHash } from 'node:crypto';
 import { ConfidentialClientApplication } from '@azure/msal-node';
 import { PUBLIC, withOverrides } from '@microsoft/teams.api';
 import { App } from '@microsoft/teams.apps';
@@ -17,6 +19,9 @@ const tenant = env('TENANT');
 const scope = env('SCOPE');
 const clientId = env('BOT_ID');
 const name = 'teams-sdk';
+const connection = 'synthetic-idp';
+// what the bot says of a token: a digest, never the token
+const digest = (token: string): string => createHash('sha256').update(token).digest('hex').slice(0, 12);
 
 const msal = new ConfidentialClientApplication({
   auth: {
@@ -31,6 +36,7 @@ const app = new App({
   clientId,
   tenantId: tenant,
   serviceUrl: `${origin}/bot/`,
+  oauthFlows: [connection],
   cloud: withOverrides(PUBLIC, {
     // the SDK takes an issuer under its login endpoint for an Entra one: keep the two apart
     loginEndpoint: `${origin}/login`,
@@ -67,7 +73,13 @@ const sorted = (value: Record<string, unknown>): string =>
     .map((key) => `${key}=${String(value[key])}`)
     .join(' ');
 
-app.on('message', async ({ activity, send, api }) => {
+const signIn = app.getOAuthFlow(connection);
+signIn.onSignInComplete(async (ctx, token) => {
+  await ctx.send(`signed in to ${name}: ${digest(token.token)}`);
+});
+
+app.on('message', async (ctx) => {
+  const { activity, send, api } = ctx;
   const conversation = activity.conversation.id;
   const text = (activity.text ?? '').trim();
   if (activity.value && typeof activity.value === 'object' && !text) {
@@ -107,6 +119,15 @@ app.on('message', async ({ activity, send, api }) => {
       await send(`member from ${name}: ${member.name}`);
       return;
     }
+    case 'signin': {
+      const token = await signIn.signIn(ctx);
+      if (token) await send(`already signed in to ${name}: ${digest(token)}`);
+      return;
+    }
+    case 'signout':
+      await signIn.signOut(ctx);
+      await send(`signed out of ${name}`);
+      return;
     case 'proactive':
       setTimeout(() => {
         app.send(conversation, `proactive from ${name}`).catch((error: unknown) => console.error(error));

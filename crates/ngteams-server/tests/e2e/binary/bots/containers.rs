@@ -162,12 +162,19 @@ struct Running {
 }
 
 async fn running(sdk: &Sdk) -> Running {
+    running_with(sdk, "").await
+}
+
+/// [`running`], with `bots` holding `extra` too.
+async fn running_with(sdk: &Sdk, extra: &str) -> Running {
     let deployment = Deployment::new(Backend::Sqlite, true, None).await;
     let mut node = deployment.node("a");
     super::support::configure(
         &node,
         "",
-        "[bots]\nallow_http_endpoints = true\nallowed_networks = [\"127.0.0.0/8\"]\nretry_delays = [1, 1]\n",
+        &format!(
+            "[bots]\nallow_http_endpoints = true\nallowed_networks = [\"127.0.0.0/8\"]\nretry_delays = [1, 1]\n{extra}"
+        ),
     );
     node.cli(&["migrate"], "");
     node.add_user(ADA, PASSWORD);
@@ -339,4 +346,87 @@ async fn submit(run: &Running, sdk: &Sdk) {
         sdk.name, sdk.name
     );
     answered(ada, chat, bot, &expected, container).await;
+}
+
+/// The Teams SDK's OAuth flow against the test identity provider: the bot's card, the person's browser through the
+/// provider to the code, the engine's `signin/verifyState`, the bot signed in with the provider's token (it says a
+/// digest of it), then sign-out and a new card.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_sdk_bots_sign_in_prompt_completes_from_the_engine() {
+    let Some(sdks) = sdks() else {
+        eprintln!("skipped: {IMAGES} is not set");
+        return;
+    };
+    let Some(sdk) = sdks.iter().find(|sdk| sdk.name == "teams-sdk") else {
+        eprintln!("skipped: {IMAGES} names no teams image");
+        return;
+    };
+    if tls_parent("binary::bots::containers::an_sdk_bots_sign_in_prompt_completes_from_the_engine") {
+        return;
+    }
+    let idp = crate::bots::idp::Idp::start().await;
+    let key = crate::bots::sign_in::token_key();
+    let mut run = running_with(sdk, &format!("token_key = \"{key}\"\n")).await;
+    let path = format!("{}/connections/synthetic-idp", app_path(&run.bot));
+    let body = json!({"authorize_url": idp.authorize_url(), "token_url": idp.token_url(),
+        "client_id": crate::bots::idp::CLIENT_ID, "client_secret": crate::bots::idp::CLIENT_SECRET, "scopes": "read"});
+    let (status, answer) = call(&run.node, Method::PUT, &path, Some(&run.root), Some(body)).await;
+    assert_eq!(status, 201, "{answer}");
+    sign_in(&run, sdk).await;
+    run.node.stop().await;
+}
+
+/// The sign-in link of the newest OAuth card from the bot, once `count` came.
+async fn sign_in_card(run: &Running, count: usize) -> String {
+    let sender = format!("28:{}", run.bot);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let links: Vec<String> = synced(&run.ada, &run.chat)
+            .await
+            .into_iter()
+            .filter(|message| message.sender.as_deref() == Some(sender.as_str()))
+            .filter_map(|message| teams_proto::chat::card::card_message(&message.content))
+            .flat_map(|cards| cards.cards)
+            .flat_map(|card| card.actions)
+            .filter_map(|action| match action.kind {
+                teams_proto::chat::card::ActionKind::Submit(teams_proto::chat::card::BotAction {
+                    via: teams_proto::chat::card::Via::SignIn(Some(link)),
+                    ..
+                }) => Some(link),
+                _ => None,
+            })
+            .collect();
+        if links.len() >= count {
+            return links.last().unwrap().clone();
+        }
+        assert!(Instant::now() < deadline, "no sign-in card came: {}", run.container.logs());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
+async fn sign_in(run: &Running, sdk: &Sdk) {
+    use sha2::Digest as _;
+    let name = sdk.name;
+    run.ada.send(&run.chat, "signin").await;
+    let link = sign_in_card(run, 1).await;
+    let (code, page) = crate::bots::idp::sign_in_in_browser(&link, &run.node.endpoint, &run.node.endpoint).await;
+    assert_eq!(code.len(), 6, "{page}");
+    let verify = teams_core::bots::BotAsk {
+        bot: teams_proto::Mri::new(format!("28:{}", run.bot)),
+        app_id: run.bot.clone(),
+        conversation: Some(run.chat.clone()),
+        kind: teams_proto::InvokeKind::VerifyState { code },
+    };
+    let answer = run.ada.engine().bot_invoke(verify).await.unwrap();
+    assert_eq!(answer, teams_proto::InvokeAnswer::Done, "{}", run.container.logs());
+    let digest: String = sha2::Sha256::digest(b"idp-access-1")
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()[..12]
+        .to_owned();
+    answered(&run.ada, &run.chat, &run.bot, &format!("signed in to {name}: {digest}"), &run.container).await;
+    ask(run, "signin", &format!("already signed in to {name}: {digest}")).await;
+    ask(run, "signout", &format!("signed out of {name}")).await;
+    run.ada.send(&run.chat, "signin").await;
+    sign_in_card(run, 2).await;
 }

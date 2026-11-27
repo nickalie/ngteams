@@ -41,6 +41,7 @@ ipnet.workspace = true
 jsonwebtoken = { workspace = true, features = ["use_pem"] }
 libsqlite3-sys.workspace = true
 mime_guess.workspace = true
+oauth2.workspace = true
 object_store.workspace = true
 opus.workspace = true
 percent-encoding.workspace = true

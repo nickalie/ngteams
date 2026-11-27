@@ -7,7 +7,7 @@ use gpui::{
     ParentElement as _, SharedString, Styled, StyledText, div, px, rgb,
 };
 use gpui_component::Disableable as _;
-use gpui_component::button::Button;
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::date_picker::DatePicker;
 use gpui_component::input::{Input as TextInput, InputState, Textarea};
@@ -15,9 +15,9 @@ use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_component::radio::Radio;
 use teams_proto::chat::card::{Choice, ChoiceStyle, Input, InputKind};
 
-use super::Draw;
-use crate::bot_card::{CardBot, Field, error_of, field_key};
-use crate::icons::{Glyph, selected_by};
+use super::{BotDraw, Draw};
+use crate::bot_card::{self, CardBot, Field, error_of, field_key};
+use crate::icons::{Glyph, Spinning as _, selected_by};
 use crate::theme::{self, Palette};
 
 /// How tall a multi-line text input is, px.
@@ -85,6 +85,71 @@ pub(super) fn view(draw: &Draw<'_>, input: &Input) -> AnyElement {
                             .min_w_0()
                             .child(error_of(input)),
                     ),
+            )
+        })
+        .into_any_element()
+}
+
+/// Under sign-in card `at` once its page was opened: the code that page shows, and Verify, which sends it to the bot.
+pub(super) fn sign_in_code(draw: &Draw<'_>, bot: &BotDraw<'_>, at: usize) -> AnyElement {
+    let selector = draw.selector(&format!("c{at}-code"));
+    let key = field_key(at, bot_card::SIGN_IN_CODE);
+    let busy = bot.shown.busy.get(&at).map(String::as_str);
+    let verifying = busy == Some(format!("verify-{at}").as_str());
+    let field = match bot.shown.fields.get(&key) {
+        Some(Field::Text(state)) => keys_to(
+            selected_by(selector.clone(), TextInput::new(state).disabled(busy.is_some())),
+            state,
+            busy.is_some(),
+        )
+        .flex_1()
+        .min_w_0()
+        .into_any_element(),
+        // its control is made on the next frame
+        _ => div().flex_1().into_any_element(),
+    };
+    let entity = bot.entity.clone();
+    let verify = selected_by(
+        format!("{selector}-verify"),
+        Button::new(SharedString::from(format!("{selector}-verify")))
+            .label("Verify")
+            .primary()
+            .spinning(verifying)
+            .disabled(busy.is_some())
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                entity.update(cx, |bot, cx| bot.verify(at, cx));
+            }),
+    )
+    .flex_none();
+    let invalid = bot.shown.invalid.contains(&key);
+    let label_selector = format!("{selector}-label");
+    let error_selector = format!("{selector}-error");
+    div()
+        .debug_selector(move || label_selector)
+        .key_context(super::INPUT_CONTEXT)
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(draw.palette.foreground))
+                .child(bot_card::CODE_LABEL),
+        )
+        .child(div().w_full().flex().items_center().gap_2().child(field).child(verify))
+        .when(invalid, |column| {
+            column.child(
+                div()
+                    .debug_selector(move || error_selector)
+                    .flex()
+                    .items_start()
+                    .gap_1()
+                    .text_xs()
+                    .text_color(rgb(theme::DANGER))
+                    .child(div().pt_0p5().child(Glyph::CIRCLE_ALERT.icon().size(px(12.0))))
+                    .child(div().flex_1().min_w_0().child(bot_card::CODE_NEEDED)),
             )
         })
         .into_any_element()

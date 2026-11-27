@@ -254,6 +254,43 @@ impl Outbound {
     }
 }
 
+impl Outbound {
+    /// Sends `request` as it is (an OAuth client's token request): its method, headers and body, its
+    /// `Authorization` kept out of any debug output. The answer with its status, its headers and at most
+    /// [`MAX_ANSWER`] bytes of its body.
+    ///
+    /// # Errors
+    /// See [`OutboundError`].
+    pub async fn exchange(&self, request: axum::http::Request<Vec<u8>>) -> Result<axum::http::Response<Vec<u8>>, OutboundError> {
+        let (parts, body) = request.into_parts();
+        let url = Url::parse(&parts.uri.to_string()).map_err(|_| OutboundError::Url)?;
+        self.guard.check(&url)?;
+        let mut headers = parts.headers;
+        if let Some(value) = headers.get_mut(reqwest::header::AUTHORIZATION) {
+            value.set_sensitive(true);
+        }
+        let request = self.client.request(parts.method, url).headers(headers).body(body);
+        let exchange = async {
+            let mut answer = request.send().await.map_err(|error| refusal(&error))?;
+            let mut response = axum::http::Response::builder().status(answer.status());
+            for (name, value) in answer.headers() {
+                response = response.header(name, value);
+            }
+            let mut body = Vec::new();
+            while let Some(chunk) = answer.chunk().await.map_err(|_| OutboundError::Failed)? {
+                if body.len() + chunk.len() > MAX_ANSWER {
+                    return Err(OutboundError::TooLarge);
+                }
+                body.extend_from_slice(&chunk);
+            }
+            response.body(body).map_err(|_| OutboundError::Failed)
+        };
+        tokio::time::timeout(self.deadline, exchange)
+            .await
+            .map_err(|_| OutboundError::Timeout)?
+    }
+}
+
 fn sensitive_authorization(authorization: &str) -> Result<reqwest::header::HeaderValue, OutboundError> {
     let mut value = reqwest::header::HeaderValue::from_str(authorization).map_err(|_| OutboundError::Failed)?;
     value.set_sensitive(true);

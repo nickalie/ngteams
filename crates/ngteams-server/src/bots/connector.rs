@@ -11,7 +11,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Request, State};
-use axum::http::{HeaderMap, Method, StatusCode};
+use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
@@ -30,7 +30,10 @@ use crate::db::DbError;
 const MAX_BODY: usize = 4 * 1024 * 1024;
 
 pub(super) fn router(app: &Arc<App>) -> Router<Arc<App>> {
-    let routes = Router::new().route("/bot/{*rest}", any(dispatch));
+    let routes = Router::new()
+        .route("/bot/{*rest}", any(dispatch))
+        .route("/api/usertoken/{*rest}", any(token_service))
+        .route("/api/botsignin/{*rest}", any(token_service));
     let limited = match super::limits::connector(&app.config.bots) {
         Some(limit) => {
             routes.route_layer(GovernorLayer::new(limit).error_handler(|error| super::limits::refused(&error)))
@@ -152,14 +155,37 @@ async fn dispatch(
     Extension(found): Extension<Authenticated>,
     method: Method,
     Path(rest): Path<String>,
+    uri: Uri,
     body: Bytes,
 ) -> Response {
     let segments: Vec<&str> = rest.split('/').filter(|segment| !segment.is_empty()).collect();
     let path = &segments[found.skip.min(segments.len())..];
+    // an unsigned bot's token service is under its own `serviceUrl`
+    if is(path.first(), "api") {
+        let rest = path[1..].iter().map(|segment| (*segment).to_owned()).collect();
+        return super::sign_in::serve(&app, &found.bot, method, rest, uri.query().map(str::to_owned)).await;
+    }
     match route(&app, &method, &found.bot, path, &body).await {
         Ok(response) => response,
         Err(refusal) => refusal.into_response(),
     }
+}
+
+/// A signed bot's token service at the origin (`/api/usertoken/…`, `/api/botsignin/…`): its `OAuthUrl`.
+async fn token_service(
+    State(app): State<Arc<App>>,
+    Extension(found): Extension<Authenticated>,
+    method: Method,
+    uri: Uri,
+) -> Response {
+    let rest = uri
+        .path()
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .skip(1)
+        .map(str::to_owned)
+        .collect();
+    super::sign_in::serve(&app, &found.bot, method, rest, uri.query().map(str::to_owned)).await
 }
 
 /// Whether `segment` is the fixed segment `name`, in any letter case.

@@ -9,7 +9,8 @@
 //!   `Action.Execute` ask the bot through the engine (`Core::bot_invoke`), its data merged with the answers by input id;
 //!   `imBack` and `messageBack`'s `displayText` post a message as the user, through the ordinary write; `messageBack`'s
 //!   `text` goes to the bot with its value. While one goes, the buttons and inputs of its card wait; the other cards of
-//!   the message don't. `signin` opens its page in the browser. `task/fetch` asks the bot for its dialog, which the
+//!   the message don't. `signin` opens its page in the browser, and a field under the card then takes the code that
+//!   page shows, which goes to the bot as `signin/verifyState`. `task/fetch` asks the bot for its dialog, which the
 //!   view opens ([`CardBotEvent::Dialog`], [`crate::app_dialog`]).
 //! - **A card in an app's dialog** ([`CardBot::in_dialog`]): its plain submit goes to the dialog's command
 //!   (`composeExtension/submitAction`) or its button (`task/submit`), and the answer goes to the dialog
@@ -51,6 +52,18 @@ pub const SIGN_IN_NEEDED: &str = "Sign-in needed. Open this message in Teams on 
 pub const DIALOG_IN_TEAMS: &str = "The app continues in a dialog. Open this message in Teams on the web to go on.";
 /// What a required input left empty says, when its card gives no words of its own.
 pub const REQUIRED: &str = "This is required.";
+/// The id of a sign-in card's code field among its inputs' controls: no card input has it.
+pub const SIGN_IN_CODE: &str = "#sign-in-code";
+/// What a sign-in card's code field asks for.
+pub const CODE_LABEL: &str = "Enter the code from the sign-in page";
+/// The code field's placeholder.
+pub const CODE_PLACEHOLDER: &str = "Code";
+/// What a code that isn't six digits says.
+pub const CODE_NEEDED: &str = "Enter the six-digit code.";
+/// The line under a sign-in card once the bot took the code.
+pub const SIGNED_IN: &str = "You're signed in.";
+/// The line under a sign-in card whose bot didn't take the code.
+pub const CODE_FAILED: &str = "That code didn't work. Check it, or select Sign in again.";
 /// What an input whose answer doesn't fit says, when its card gives no words of its own.
 pub const NOT_VALID: &str = "Enter a valid value.";
 /// What a button that opens a dialog says in its tooltip.
@@ -150,6 +163,8 @@ pub struct CardBot {
     /// Per card, the key of the button whose ask is on its way.
     busy: HashMap<usize, String>,
     refreshed: HashSet<usize>,
+    /// The cards whose sign-in page was opened, which wait for its code.
+    signing_in: HashSet<usize>,
     submit_to: SubmitTo,
 }
 
@@ -165,6 +180,8 @@ pub struct Shown {
     pub busy: HashMap<usize, String>,
     /// The bot is known: a button that sends asks it.
     pub reaches: bool,
+    /// The cards that wait for a sign-in's code.
+    pub signing_in: HashSet<usize>,
 }
 
 impl CardBot {
@@ -182,6 +199,7 @@ impl CardBot {
             lines: HashMap::new(),
             busy: HashMap::new(),
             refreshed: HashSet::new(),
+            signing_in: HashSet::new(),
             submit_to: SubmitTo::Message,
         }
     }
@@ -221,6 +239,7 @@ impl CardBot {
             lines: self.lines.clone(),
             busy: self.busy.clone(),
             reaches: self.target.is_some(),
+            signing_in: self.signing_in.clone(),
         }
     }
 
@@ -235,6 +254,60 @@ impl CardBot {
                 self.fields.insert(key, field);
             }
         }
+        let code = field_key(at, SIGN_IN_CODE);
+        if self.signing_in.contains(&at) && !self.fields.contains_key(&code) {
+            let state = cx.new(|cx| InputState::new(window, cx).placeholder(CODE_PLACEHOLDER));
+            self.watched.push(cx.subscribe(&state, move |this, _, event: &InputEvent, cx| match event {
+                InputEvent::PressEnter { .. } => this.verify(at, cx),
+                InputEvent::Change => {
+                    if this.invalid.remove(&field_key(at, SIGN_IN_CODE)) {
+                        cx.notify();
+                    }
+                }
+                _ => {}
+            }));
+            self.fields.insert(code, Field::Text(state));
+        }
+    }
+
+    /// The code typed under sign-in card `at`, sent to the bot (`signin/verifyState`); a code that isn't six digits
+    /// is marked and goes nowhere.
+    pub fn verify(&mut self, at: usize, cx: &mut Context<Self>) {
+        let key = field_key(at, SIGN_IN_CODE);
+        if self.busy.contains_key(&at) {
+            return;
+        }
+        let typed = match self.fields.get(&key) {
+            Some(Field::Text(state)) => state.read(cx).value().to_string(),
+            _ => String::new(),
+        };
+        let code: String = typed.chars().filter(|c| !c.is_whitespace()).collect();
+        if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
+            self.invalid.insert(key);
+            cx.notify();
+            return;
+        }
+        self.invalid.remove(&key);
+        self.ask(at, &format!("verify-{at}"), InvokeKind::VerifyState { code }, false, cx);
+    }
+
+    /// The bot's answer to a sign-in code of card `at`: taken, the field goes and the card says so; refused, it stays.
+    fn verified(&mut self, at: usize, answer: Result<InvokeAnswer, teams_core::EngineError>) {
+        let line = match answer {
+            Ok(InvokeAnswer::Refused(400 | 401 | 403 | 404 | 412)) => Line::Error(CODE_FAILED.to_owned()),
+            Ok(InvokeAnswer::Error { message, .. }) => Line::Error(if message.trim().is_empty() {
+                CODE_FAILED.to_owned()
+            } else {
+                message
+            }),
+            Ok(InvokeAnswer::Refused(_)) | Err(_) => Line::Error(NOT_REACHED.to_owned()),
+            Ok(_) => {
+                self.signing_in.remove(&at);
+                self.fields.remove(&field_key(at, SIGN_IN_CODE));
+                Line::Note(SIGNED_IN.to_owned())
+            }
+        };
+        self.lines.insert(at, line);
     }
 
     fn field(&mut self, key: &str, input: &Input, window: &mut Window, cx: &mut Context<Self>) -> Field {
@@ -442,6 +515,9 @@ impl CardBot {
             Via::SignIn(page) => {
                 if let Some(page) = page.as_deref().filter(|page| teams_proto::chat::card::is_link(page)) {
                     cx.open_url(page);
+                    self.signing_in.insert(at);
+                    self.lines.remove(&at);
+                    cx.notify();
                 }
                 return;
             }
@@ -504,6 +580,7 @@ impl CardBot {
             return;
         };
         let fetching = matches!(kind, InvokeKind::TaskFetch(_));
+        let verifying = matches!(kind, InvokeKind::VerifyState { .. });
         let to_dialog = matches!(kind, InvokeKind::SubmitAction { .. } | InvokeKind::TaskSubmit(_));
         let reply = self.core.bot_invoke(BotAsk {
             bot: target.bot.clone(),
@@ -520,6 +597,7 @@ impl CardBot {
             let _ = this.update(cx, |this, cx| {
                 this.busy.remove(&at);
                 match answer {
+                    answer if verifying => this.verified(at, answer),
                     Ok(InvokeAnswer::Dialog(dialog)) if fetching => cx.emit(CardBotEvent::Dialog { target, dialog }),
                     answer if to_dialog => cx.emit(CardBotEvent::Answered(answer.map_err(|error| error.to_string()))),
                     answer => this.apply(at, answer, quiet),

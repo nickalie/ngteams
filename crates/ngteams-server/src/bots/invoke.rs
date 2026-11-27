@@ -4,6 +4,9 @@
 //! to the bot once through the address guard ([`crate::outbound`]), and hands back the bot's answer in the chat
 //! service's envelope. Nothing is kept, so any node serves it.
 //!
+//! Single sign-on (`signin/tokenExchange`) is answered `412` and never sent: it would hand the app a token of the
+//! person's account, and `412` is what makes an SDK fall back to its sign-in card ([`super::sign_in`]).
+//!
 //! Only `name`, `value`, the conversation, the message and a `messageBack`'s `text` pass from the request into the
 //! activity: a `userAadToken` a client sends is never read, so no person's token reaches a bot. A bot's `401`, `403`
 //! or `407`, or a redirect, reaches the client as `502`: they are the bot's, never a sign that the person's token was
@@ -42,6 +45,8 @@ pub(super) fn router() -> axum::Router<Arc<App>> {
 enum Failure {
     BadRequest,
     Denied,
+    /// Single sign-on (`signin/tokenExchange`): never sent, so the app falls back to its sign-in card.
+    SingleSignOn,
     Missing,
     /// The bot's answer can't be handed on, or it couldn't be reached.
     BadGateway,
@@ -61,6 +66,11 @@ impl IntoResponse for Failure {
         let (status, code, message) = match self {
             Self::BadRequest => (StatusCode::BAD_REQUEST, 201, "Invalid invoke"),
             Self::Denied => (StatusCode::FORBIDDEN, 209, "AclCheckFailed"),
+            Self::SingleSignOn => (
+                StatusCode::PRECONDITION_FAILED,
+                412,
+                "Single sign-on isn't offered; sign in with the app's card",
+            ),
             Self::Missing => (StatusCode::NOT_FOUND, 201, "NotFound"),
             Self::BadGateway => (StatusCode::BAD_GATEWAY, 502, "The app's answer can't be used"),
             Self::Timeout => (StatusCode::GATEWAY_TIMEOUT, 504, "The app didn't answer in time"),
@@ -143,6 +153,9 @@ async fn ask(app: &App, person_id: &str, bot: &str, body: &[u8]) -> Result<Respo
         .filter(|person| !person.disabled)
         .ok_or(Failure::Denied)?;
     let asked = read(body)?;
+    if asked.name.eq_ignore_ascii_case("signin/tokenExchange") {
+        return Err(Failure::SingleSignOn);
+    }
     let bot_id = bot.strip_prefix("28:").ok_or(Failure::Missing)?;
     let bot = super::bot(&app.db, bot_id).await?.ok_or(Failure::Missing)?;
     if asked.app_id != bot.app_id && asked.app_id != bot.id {

@@ -397,3 +397,38 @@ async fn the_accounts_apps_with_message_extensions_come_with_their_commands() {
         .unwrap();
     assert_eq!(found.map(|app| app.app.name), Some("Made-up Finder".to_owned()));
 }
+
+/// A sign-in card's code (`signin/verifyState`) against the mock: one attempt with the Teams token in the body as any
+/// invoke; a code the bot refuses comes back as its status, one it takes as done, with the bot's message after.
+#[tokio::test]
+async fn a_sign_in_code_goes_once_and_the_bots_answer_comes_back() {
+    let mock = ChatServiceMock::start().await.unwrap();
+    mock.script_bot(
+        BOT,
+        "Synthetic Bot",
+        &[(
+            "signin/verifyState",
+            BotReply::done().posting("RichText/Html", "<p>Signed in (synthetic)</p>"),
+        )],
+    );
+    let a = engine(&mock, &Cloud::Microsoft, false);
+    let verify = || InvokeKind::VerifyState {
+        code: "402917".to_owned(),
+    };
+    assert_eq!(
+        a.handle.bot_invoke(ask(Some(ABC_CHAT), verify())).await.unwrap(),
+        InvokeAnswer::Done
+    );
+    let taken = mock.bot_invokes();
+    assert_eq!(taken.len(), 1);
+    assert_eq!(taken[0].body["name"], "signin/verifyState");
+    assert_eq!(taken[0].body["value"], json!({"state": "402917"}));
+    assert_eq!(taken[0].body["conversation"]["id"], ABC_CHAT);
+    assert!(taken[0].body["userAadToken"].is_string(), "the Teams token, as every invoke");
+    mock.refuse_next("POST", "/invoke", 404).await;
+    assert_eq!(
+        a.handle.bot_invoke(ask(Some(ABC_CHAT), verify())).await.unwrap(),
+        InvokeAnswer::Refused(404)
+    );
+    a.handle.shutdown();
+}

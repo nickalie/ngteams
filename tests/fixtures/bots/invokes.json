@@ -1,5 +1,5 @@
 {
-  "_synthetic": "Made up (ids as <guid:name> placeholders a test fills in), in the shape of the bodies the web client posts to the chat service's POST v1/agents/28:<bot>/invoke (docs/protocol/bots.md), every value made up and no token: the userAadToken a Microsoft account's body carries is left out here and added by the transport. fetchCommands, fetchTask and submitAction take the shapes seen in the lab's Workflows runs of 2026-11-05 (team-manage); query, selectItem, adaptiveCard/action, task/fetch, task/submit and the plain submit (name message) follow the public Teams and Bot Framework documentation and are unseen.",
+  "_synthetic": "Made up (ids as <guid:name> placeholders a test fills in), in the shape of the bodies the web client posts to the chat service's POST v1/agents/28:<bot>/invoke (docs/protocol/bots.md), every value made up and no token: the userAadToken a Microsoft account's body carries is left out here and added by the transport. fetchCommands, fetchTask and submitAction take the shapes seen in the lab's Workflows runs of 2026-11-05 (team-manage); query, selectItem, adaptiveCard/action, task/fetch, task/submit, the plain submit (name message) and signin/verifyState (a sign-in card's code) follow the public Teams and Bot Framework documentation and are unseen.",
   "fetchCommands": {
     "name": "composeExtension/fetchCommands",
     "appId": "<guid:app>",
@@ -110,5 +110,6 @@
     "imdisplayname": "Lab A",
     "conversation": {"id": "19:<guid:a>_<guid:bot>@unq.gbl.spaces"},
     "messageId": "1700000000005"
-  }
+  },
+  "verifyState": {"name": "signin/verifyState", "appId": "<guid:app>", "value": {"state": "402917"}, "imdisplayname": "Lab A", "conversation": {"id": "19:<guid:a>_<guid:bot>@unq.gbl.spaces"}}
 }

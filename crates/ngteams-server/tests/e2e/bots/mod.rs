@@ -9,6 +9,7 @@ mod delivery;
 pub mod endpoint;
 mod guarded;
 mod health;
+pub mod idp;
 mod installs;
 mod installs_qa;
 mod invoke;
@@ -20,6 +21,7 @@ mod people;
 mod picture_races;
 mod qa_send_limits;
 mod registry;
+pub mod sign_in;
 
 use std::io::{Cursor, Write as _};
 use std::sync::Arc;

@@ -7,7 +7,7 @@
 //! shown once, and kept only as its SHA-256, as refresh tokens are. The bot's own token never passes for a person's:
 //! its audience is [`BotsConfig::scope`], which no person's token is issued for.
 
-mod api;
+pub(crate) mod api;
 mod catalogue;
 pub mod cli;
 mod credentials;
@@ -105,6 +105,9 @@ pub struct BotsConfig {
     pub connector_rate: u32,
     /// Requests one bot may make to the connector at once before [`Self::connector_rate`] holds.
     pub connector_burst: u32,
+    /// The key the people's tokens from a bot's OAuth connections and those connections' client secrets are sealed
+    /// with (AES-256-GCM), 32 bytes in base64. Without it no connection is made and no one signs in to a bot.
+    pub token_key: Option<crate::bots::sign_in::SealKey>,
 }
 
 impl Default for BotsConfig {
@@ -126,6 +129,7 @@ impl Default for BotsConfig {
             send_burst: 50,
             connector_rate: 50,
             connector_burst: 50,
+            token_key: None,
         }
     }
 }
@@ -158,8 +162,10 @@ impl BotsConfig {
                 .any(|audience| audience.trim_end_matches('/').eq_ignore_ascii_case(&self.scope));
         let issuer_ok = self.issuer.as_deref().is_none_or(|issuer| Url::parse(issuer).is_ok());
         let service_ok = self.service_url.as_ref().is_none_or(Url::has_host);
+        let key_ok = self.token_key.as_ref().is_none_or(crate::bots::sign_in::SealKey::usable);
         scope_ok
             && issuer_ok
+            && key_ok
             && service_ok
             && self.token_lifetime > 0
             && self.activity_token_lifetime > 0
@@ -247,6 +253,15 @@ pub enum AppError {
     TooLarge,
     #[error("the system's random source failed")]
     Random,
+    #[error(
+        "a connection is named with 1 to 64 letters, digits, '-', '_' or '.'; its authorize and token URLs are \
+         absolute https URLs without credentials, and a new one has its client id and secret"
+    )]
+    Connection,
+    #[error("no such connection")]
+    NoSuchConnection,
+    #[error("this server keeps no connection without bots.token_key")]
+    SignInNotConfigured,
 }
 
 impl From<diesel::result::Error> for AppError {
@@ -342,7 +357,7 @@ pub(crate) fn digest(secret: &str) -> String {
 }
 
 /// An endpoint as it is kept, when the server may send to it.
-fn checked_endpoint(config: &Config, endpoint: &str) -> Result<String, AppError> {
+pub(crate) fn checked_endpoint(config: &Config, endpoint: &str) -> Result<String, AppError> {
     let url = Url::parse(endpoint.trim()).map_err(|_| AppError::Endpoint)?;
     let scheme = url.scheme() == "https" || (url.scheme() == "http" && config.bots.allow_http_endpoints);
     let bare = url.username().is_empty() && url.password().is_none() && url.fragment().is_none();

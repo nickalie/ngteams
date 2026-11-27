@@ -394,7 +394,7 @@ pub enum ConfigError {
     #[error(
         "bots.scope must be an absolute URL without a trailing slash that no person's token is issued for, \
          bots.issuer and bots.service_url absolute URLs, the bots' lifetimes, key rotation, send timeout, rates and \
-         bursts above zero, and bots.delivery_lease longer than bots.send_timeout"
+         bursts above zero, bots.delivery_lease longer than bots.send_timeout, and bots.token_key 32 bytes in base64"
     )]
     Bots,
 }

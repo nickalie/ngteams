@@ -1,0 +1,195 @@
+//! The person's browser in a sign-in: the link a sign-in card opens sends it on to the identity provider, and the
+//! provider's callback ends at a page that shows the person their code. The pages run no script, load nothing,
+//! are never cached, framed or sent a referrer.
+
+use std::sync::Arc;
+
+use axum::Router;
+use axum::extract::{Query, State};
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use serde::Deserialize;
+
+use super::connections::{self, secret_context};
+use super::store::{self, SignIn};
+use super::{Sealer, provider, redirect_uri, tokens};
+use crate::app::App;
+
+pub(super) fn router() -> Router<Arc<App>> {
+    Router::new()
+        .route("/api/oauth/signin", get(start))
+        .route("/api/oauth/callback", get(callback))
+}
+
+#[derive(Deserialize)]
+struct Start {
+    signin: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Callback {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+}
+
+/// The sign-in a link or a callback names, with its connection and the sealer, while it runs and has no token yet.
+async fn running(app: &App, id: Option<&str>) -> Option<(SignIn, connections::Connection, Sealer)> {
+    let sealer = Sealer::of(&app.config)?;
+    let found = store::sign_in(&app.db, id?).await.ok().flatten()?;
+    if found.token.is_some() {
+        return None;
+    }
+    let connection = connections::find(&app.db, &found.bot_id, &found.connection)
+        .await
+        .ok()
+        .flatten()?;
+    Some((found, connection, sealer))
+}
+
+/// `GET /api/oauth/signin?signin=<id>`: on to the provider.
+async fn start(State(app): State<Arc<App>>, Query(query): Query<Start>) -> Response {
+    let Some((found, connection, sealer)) = running(&app, query.signin.as_deref()).await else {
+        return page(StatusCode::NOT_FOUND, GONE_TITLE, GONE_TEXT, None);
+    };
+    let opened = (
+        sealer.open(&verifier_context(&found.id), &found.verifier),
+        sealer.open(&secret_context(&connection.bot_id, &connection.name), &connection.client_secret),
+    );
+    let (Ok(verifier), Ok(secret)) = opened else {
+        tracing::warn!(connection = %connection.name, "a sign-in's sealed values didn't open");
+        return page(StatusCode::INTERNAL_SERVER_ERROR, FAILED_TITLE, FAILED_TEXT, None);
+    };
+    let url = provider::authorize_url(
+        &connection,
+        String::from_utf8_lossy(&secret).into_owned(),
+        &redirect_uri(&app.config),
+        &found.id,
+        &String::from_utf8_lossy(&verifier),
+    );
+    match url.ok().and_then(|url| HeaderValue::from_str(&url).ok()) {
+        Some(location) => {
+            let mut response = StatusCode::FOUND.into_response();
+            let headers = response.headers_mut();
+            headers.insert(header::LOCATION, location);
+            guarded(headers);
+            response
+        }
+        None => page(StatusCode::INTERNAL_SERVER_ERROR, FAILED_TITLE, FAILED_TEXT, None),
+    }
+}
+
+/// `GET /api/oauth/callback?code&state`: the provider's code redeemed, the person's code shown.
+async fn callback(State(app): State<Arc<App>>, Query(query): Query<Callback>) -> Response {
+    let Some((found, connection, sealer)) = running(&app, query.state.as_deref()).await else {
+        return page(StatusCode::NOT_FOUND, GONE_TITLE, GONE_TEXT, None);
+    };
+    let (Some(code), None) = (query.code, query.error) else {
+        return page(StatusCode::BAD_REQUEST, FAILED_TITLE, FAILED_TEXT, None);
+    };
+    match finish(&app, &found, &connection, &sealer, code).await {
+        Some(shown) => page(StatusCode::OK, DONE_TITLE, DONE_TEXT, Some(&shown)),
+        None => page(StatusCode::BAD_GATEWAY, FAILED_TITLE, FAILED_TEXT, None),
+    }
+}
+
+/// Redeems the provider's `code` and gives the sign-in its token and a new code: the code to show.
+async fn finish(
+    app: &App,
+    found: &SignIn,
+    connection: &connections::Connection,
+    sealer: &Sealer,
+    code: String,
+) -> Option<String> {
+    let verifier = sealer.open(&verifier_context(&found.id), &found.verifier).ok()?;
+    let secret = sealer
+        .open(&secret_context(&connection.bot_id, &connection.name), &connection.client_secret)
+        .ok()?;
+    let held = provider::redeem(
+        &app.outbound,
+        connection,
+        String::from_utf8_lossy(&secret).into_owned(),
+        &redirect_uri(&app.config),
+        code,
+        String::from_utf8_lossy(&verifier).into_owned(),
+    )
+    .await
+    .inspect_err(|error| tracing::warn!(%error, connection = %connection.name, "a sign-in got no token"))
+    .ok()?;
+    let plain = serde_json::to_vec(&held).ok()?;
+    let sealed = sealer.seal(&pending_context(&found.id), &plain).ok()?;
+    let shown = new_code()?;
+    let taken = store::signed_in(&app.db, &found.id, &tokens::code_hash(&found.id, &shown), &sealed)
+        .await
+        .ok()?;
+    taken.then_some(shown)
+}
+
+/// What a sign-in's verifier is sealed for.
+pub(super) fn verifier_context(id: &str) -> String {
+    format!("sign-in-verifier|{id}")
+}
+
+/// What a sign-in's token is sealed for until its code is redeemed.
+pub(super) fn pending_context(id: &str) -> String {
+    format!("sign-in-token|{id}")
+}
+
+/// Six random digits.
+fn new_code() -> Option<String> {
+    let mut bytes = [0_u8; 4];
+    aws_lc_rs::rand::fill(&mut bytes).ok()?;
+    Some(format!("{:06}", u32::from_le_bytes(bytes) % 1_000_000))
+}
+
+const DONE_TITLE: &str = "You're signed in";
+const DONE_TEXT: &str = "Enter this code in the app's card in your chat to finish signing in. It works once, for the \
+                         next 15 minutes.";
+const GONE_TITLE: &str = "This sign-in link doesn't work";
+const GONE_TEXT: &str = "It ran out or was used already. Ask the app to sign you in again.";
+const FAILED_TITLE: &str = "Sign-in didn't finish";
+const FAILED_TEXT: &str = "The sign-in service didn't complete it. Ask the app to sign you in again.";
+
+fn guarded(headers: &mut axum::http::HeaderMap) {
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"),
+    );
+}
+
+/// A page of `title` and `text`, with the code when there is one. Only fixed words and digits are written in it.
+fn page(status: StatusCode, title: &str, text: &str, code: Option<&str>) -> Response {
+    let code = code.map_or_else(String::new, |code| format!("<p><output id=\"code\">{code}</output></p>"));
+    let html = format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{title}</title>\
+         <meta name=\"viewport\" content=\"width=device-width\"><style>body{{font-family:sans-serif;max-width:32em;\
+         margin:4em auto;padding:0 1em}}output{{font-size:2.5em;letter-spacing:.2em;font-weight:600}}</style></head>\
+         <body><h1>{title}</h1>{code}<p>{text}</p></body></html>"
+    );
+    let mut response = (status, [(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response();
+    guarded(response.headers_mut());
+    response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_code_is_six_digits_and_a_page_shows_it_unframed_and_uncached() {
+        for _ in 0..50 {
+            let code = new_code().unwrap();
+            assert_eq!(code.len(), 6);
+            assert!(code.chars().all(|c| c.is_ascii_digit()));
+        }
+        let response = page(StatusCode::OK, DONE_TITLE, DONE_TEXT, Some("012345"));
+        let headers = response.headers();
+        assert_eq!(headers[header::CACHE_CONTROL], "no-store");
+        assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");
+        assert!(headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap().contains("default-src 'none'"));
+    }
+}

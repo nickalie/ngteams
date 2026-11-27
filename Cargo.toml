@@ -357,6 +357,9 @@ tower = "0.5.3"
 # its push socket: the upgrade taken from hyper, the WebSocket from the tokio-tungstenite the client already links
 # (axum's own `ws` would add a second tungstenite)
 hyper = { version = "1.12.0", default-features = false }
+# a bot's OAuth connection (sign-in cards): the authorization code grant with PKCE, its HTTP through the server's own
+# address guard, not oauth2's reqwest
+oauth2 = { version = "5.0.0", default-features = false }
 hyper-util = { version = "0.1.21", default-features = false, features = ["tokio"] }
 tower-http = { version = "0.6.11", features = ["limit", "timeout", "trace"] }
 # a group call's media node (crates/ngteams-server/src/mixer): str0m's WebRTC (its own DTLS on the workspace's aws-lc-rs,

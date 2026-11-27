@@ -14,6 +14,13 @@ use crate::workflows::hook::{CARD_KINDS, MAX_CARDS, activity_content, card};
 pub(crate) const HTML: &str = "RichText/Html";
 pub(crate) const CARD: &str = "RichText/Media_Card";
 
+/// The sign-in cards a bot may send besides the cards any post carries: an OAuth card (an SDK's sign-in prompt) and a
+/// sign-in card, each a text and its `signin` buttons.
+const SIGN_IN_CARDS: [&str; 2] = [
+    "application/vnd.microsoft.card.oauth",
+    "application/vnd.microsoft.card.signin",
+];
+
 /// The locale activities name: the server has no account locale yet.
 pub(super) const LOCALE: &str = "en-US";
 
@@ -294,7 +301,7 @@ pub(crate) fn messages(activity: &Value, origin: &str, has_pictures: bool) -> Re
             .map(|attachment| {
                 let kind = attachment["contentType"].as_str().ok_or(Refused::Attachment)?;
                 let content = &attachment["content"];
-                if CARD_KINDS.contains(&kind) && card(kind, content) {
+                if (CARD_KINDS.contains(&kind) || SIGN_IN_CARDS.contains(&kind)) && card(kind, content) {
                     Ok(json!({"contentType": kind, "content": content}))
                 } else {
                     Err(Refused::Attachment)

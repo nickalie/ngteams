@@ -44,6 +44,10 @@ pub const CARD_TYPE: &str = "RichText/Media_Card";
 pub const ADAPTIVE: &str = "application/vnd.microsoft.card.adaptive";
 /// A hero card attachment's `contentType`.
 pub const HERO: &str = "application/vnd.microsoft.card.hero";
+/// An OAuth card attachment's `contentType`: a bot's sign-in prompt.
+pub const OAUTH: &str = "application/vnd.microsoft.card.oauth";
+/// A sign-in card attachment's `contentType`.
+pub const SIGN_IN: &str = "application/vnd.microsoft.card.signin";
 /// A thumbnail card attachment's `contentType`.
 pub const THUMBNAIL: &str = "application/vnd.microsoft.card.thumbnail";
 /// How deep containers are read: an element deeper than this is left out and marks the card unshown.
@@ -693,6 +697,8 @@ fn attachment_card(attachment: &Value, inputs: bool) -> Option<Card> {
         ADAPTIVE => Some(adaptive(card, 0, inputs)),
         HERO => Some(hero(card, ImageSize::Stretch)),
         THUMBNAIL => Some(hero(card, ImageSize::Medium)),
+        // a sign-in card is its text and its buttons, as a hero card's
+        OAUTH | SIGN_IN => Some(hero(card, ImageSize::Medium)),
         _ => None,
     }
 }
@@ -1133,6 +1139,18 @@ impl Reader {
                     return None;
                 };
                 ActionKind::OpenUrl(url.to_owned())
+            }
+            Some("signin") => {
+                let Some(page) = str_of(button, "value").filter(|page| is_link(page)) else {
+                    self.unshown = true;
+                    return None;
+                };
+                ActionKind::Submit(BotAction {
+                    id: None,
+                    via: Via::SignIn(Some(page.to_owned())),
+                    data: None,
+                    inputs: false,
+                })
             }
             Some(kind @ ("imBack" | "messageBack" | "postBack" | "invoke")) => ActionKind::Submit(BotAction {
                 id: None,

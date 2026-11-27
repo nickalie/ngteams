@@ -154,6 +154,10 @@ fn documented_invokes_match_their_fixtures() {
         ..CardInvoke::default()
     });
     assert_eq!(invoke("Lab A", submit, bot_chat), fixture(INVOKES, "submit"));
+    let verify = InvokeKind::VerifyState {
+        code: "402917".to_owned(),
+    };
+    assert_eq!(invoke("Lab A", verify, bot_chat), fixture(INVOKES, "verifyState"));
 }
 
 fn answer(name: &str) -> InvokeAnswer {
