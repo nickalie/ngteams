@@ -9,6 +9,7 @@ mod delivery;
 pub mod endpoint;
 mod guarded;
 mod health;
+mod installs;
 mod invoke;
 mod keys;
 mod limits;
