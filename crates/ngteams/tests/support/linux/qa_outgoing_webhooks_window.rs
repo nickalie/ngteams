@@ -185,7 +185,8 @@ fn parent() -> SandboxResult {
 
 /// The server and its users, the app; then the walk.
 fn world(sandbox: &Sandbox, binary: &Path, service: &Service, dir: &Path) -> SandboxResult {
-    let server = start_server(binary, &dir.join("server"), &service.ca_file)?;
+    let server_dir = dir.join("server");
+    let server = start_server(binary, &server_dir, &service.ca_file)?;
     let user = server.add_user(USER_UPN, USER_NAME)?;
     let member = server.add_user(MEMBER_UPN, MEMBER_NAME)?;
     step(&format!(
@@ -206,6 +207,8 @@ fn world(sandbox: &Sandbox, binary: &Path, service: &Service, dir: &Path) -> San
             sandbox,
             service,
             dir: dir.to_owned(),
+            server_db: server_dir.join("server.sqlite"),
+            places: app_dir.join(PLACES),
             posts: Vec::new(),
         };
         walk.open_apps()?;
@@ -238,6 +241,10 @@ struct Walk<'a> {
     sandbox: &'a Sandbox,
     service: &'a Service,
     dir: PathBuf,
+    /// The own server's database, read beside it to check what it keeps.
+    server_db: PathBuf,
+    /// The child's [`PLACES`] file.
+    places: PathBuf,
     /// The ids of the user's two posts that mention the webhook.
     posts: Vec<String>,
 }
@@ -265,19 +272,23 @@ impl Walk<'_> {
         self.run.until_in("page", what, wanted)
     }
 
-    /// The names of the team's webhooks as the server lists them now; an error if the read fails.
-    fn server_hooks(&mut self) -> SandboxResult<Vec<String>> {
-        self.run.act("server-hooks")?;
-        let answer = self.run.until_in("server", "the server's list of webhooks", |answer| !answer.is_null())?;
-        if let Some(error) = answer["error"].as_str() {
-            return Err(format!("the server's list of webhooks: {error}").into());
+    /// The names of the team's webhooks in the server's database now; an error if the read fails or the server has
+    /// no such team.
+    // the engine's list read gives an empty list for a failed read, so the check reads the server's own store
+    fn server_hooks(&self) -> SandboxResult<Vec<String>> {
+        let places: Value = serde_json::from_str(&fs::read_to_string(&self.places)?)?;
+        let team = places["team"].as_str().ok_or("no team in the places file")?;
+        let db = rusqlite::Connection::open_with_flags(&self.server_db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        db.busy_timeout(WAIT)?;
+        let teams: i64 = db.query_row("SELECT count(*) FROM teams WHERE id = ?1", [team], |row| row.get(0))?;
+        if teams != 1 {
+            return Err(format!("the server has no team {team}").into());
         }
-        Ok(answer["hooks"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|name| name.as_str().map(str::to_owned))
-            .collect())
+        let mut names = db.prepare("SELECT name FROM outgoing_webhooks WHERE team_id = ?1 ORDER BY name")?;
+        let names = names
+            .query_map([team], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        Ok(names)
     }
 
     /// Types `text` with the keyboard.
@@ -1178,7 +1189,6 @@ fn on_shell(shell: &Entity<Shell>, verb: &str, places: &Places, window: &mut Win
         "thread" if argument.is_empty() => thread_state(shell, cx),
         "clipboard" => json!(cx.read_from_clipboard().and_then(|item| item.text())),
         "clipboard-is-token" => json!(clipboard_is_token(shell, cx)),
-        "server" => SERVER_HOOKS.lock().unwrap_or_else(PoisonError::into_inner).clone().unwrap_or(Value::Null),
         _ => done(act(shell, verb, argument, places, window, cx)),
     }
 }
@@ -1230,7 +1240,6 @@ fn act(
             page(shell, cx)?.update(cx, |page, cx| page.ask_remove_webhook(hook, cx));
         }
         "remove" => page(shell, cx)?.update(cx, teams_ui::manage_team::ManageTeam::remove_webhook),
-        "server-hooks" => read_server_hooks(places.team.clone(), cx)?,
         "channel" => {
             shell.update(cx, Shell::close_team_dialog);
             let channel = places.channel.clone();
@@ -1270,27 +1279,6 @@ fn webhook(shell: &Entity<Shell>, name: &str, cx: &App) -> Result<teams_proto::O
         .into_iter()
         .find(|hook| hook.name == name)
         .ok_or_else(|| format!("no webhook {name} is listed"))
-}
-
-/// The answer of the last [`read_server_hooks`]: `{"hooks": [names]}` or `{"error": ...}`; none while it runs.
-static SERVER_HOOKS: Mutex<Option<Value>> = Mutex::new(None);
-
-/// Reads the team's webhooks from the server through the account's engine, into [`SERVER_HOOKS`].
-fn read_server_hooks(team: String, cx: &mut App) -> Result<(), String> {
-    let core = app::bridges(cx)
-        .first()
-        .map(|bridge| bridge.read(cx).core())
-        .ok_or("no account runs")?;
-    *SERVER_HOOKS.lock().unwrap_or_else(PoisonError::into_inner) = None;
-    cx.spawn(async move |_: &mut AsyncApp| {
-        let answer = match core.outgoing_webhooks(team).await {
-            Ok(hooks) => json!({"hooks": hooks.iter().map(|hook| hook.name.clone()).collect::<Vec<_>>()}),
-            Err(error) => json!({"error": error.to_string()}),
-        };
-        *SERVER_HOOKS.lock().unwrap_or_else(PoisonError::into_inner) = Some(answer);
-    })
-    .detach();
-    Ok(())
 }
 
 /// Whether the clipboard holds the token the dialog shows.
