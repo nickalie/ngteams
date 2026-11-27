@@ -1296,9 +1296,10 @@ fn open_details(qa: &mut Qa<'_>, name: &str) -> SandboxResult<Value> {
 fn test_activity_taken(qa: &mut Qa<'_>, taker: &LoopbackBot) -> SandboxResult {
     let state = open_details(qa, TAKES)?;
     let health = state["dialog"]["health"].as_str().unwrap_or_default();
-    ensure(health == "Nothing sent to the bot yet.", || {
-        format!("a new bot's health says {health}")
-    })?;
+    ensure(
+        health == "Nothing sent to the bot yet." && state["dialog"]["can_test"] == true,
+        || format!("a new bot's details: {}", state["dialog"]),
+    )?;
     qa.shots("delivery-new")?;
     qa.act("test")?;
     let state = qa.state_until("the test's answer", |state| state["dialog"]["test"].is_object())?;
@@ -1352,6 +1353,11 @@ fn test_activity_refused(qa: &mut Qa<'_>, name: &str, says: &str, shot: &str) ->
 /// The details of an app that can't be tested; the shot shows the button off and what to do.
 fn no_test_offered(qa: &mut Qa<'_>, name: &str, shot: &str) -> SandboxResult {
     let state = open_details(qa, name)?;
+    ensure(state["dialog"]["can_test"] == false, || {
+        format!("{name} offers a test: {}", state["dialog"])
+    })?;
+    qa.act("test")?;
+    let state = qa.state_until("the details", |state| dialog_is(state, "details"))?;
     ensure(
         state["dialog"]["test"].is_null() && state["dialog"]["testing"] == false,
         || format!("{name} was tested: {}", state["dialog"]),
@@ -1607,6 +1613,7 @@ fn dialog_json(dialog: &Entity<AppDialog>, cx: &App) -> Value {
         "settings": settings.map(|settings| settings.text),
         "health": read.app().map(|app| teams_ui::app_admin::health::summary(app.health.as_ref(), 0).0),
         "testing": read.testing(),
+        "can_test": read.can_test(),
         "test": read.test_result().map(|result| {
             let (words, took) = teams_ui::app_admin::health::went(result);
             json!({"words": words, "took": took})

@@ -342,7 +342,7 @@ impl AppDialog {
 
     /// "Send a test activity" and how the bot answered the last one.
     fn test_row(&self, app: &AdminApp, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
-        let ready = app.enabled && app.bot.as_ref().is_some_and(|bot| bot.endpoint.is_some());
+        let ready = super::dialog::ready_to_test(app);
         let testing = self.testing.is_some();
         let said = match &self.test {
             Some(result) => {
@@ -379,7 +379,7 @@ impl AppDialog {
                     .outline()
                     .label("Send a test activity")
                     .spinning(testing)
-                    .disabled(self.busy || testing || !ready)
+                    .disabled(!self.can_test())
                     .on_click(cx.listener(|this, _, _, cx| this.send_test(cx))),
             ))
     }

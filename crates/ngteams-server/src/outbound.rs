@@ -36,11 +36,11 @@ pub enum OutboundError {
     Unresolved,
     #[error("the connection was refused")]
     ConnectionRefused,
-    #[error("the bot's host is not reachable")]
+    #[error("the host is not reachable")]
     Unreachable,
     #[error("the connection was closed")]
     Closed,
-    #[error("the bot's TLS certificate is not trusted")]
+    #[error("the TLS certificate is not trusted")]
     Certificate,
     #[error("the TLS handshake failed")]
     Tls,
@@ -134,9 +134,15 @@ impl Resolve for Guarded {
             if found.is_empty() {
                 return Err(failed(OutboundError::Unresolved));
             }
+            let only_metadata = found.iter().all(|address| is_metadata(canonical(address.ip())));
             let addresses: Vec<SocketAddr> = found.into_iter().filter(|address| guard.allows(address.ip())).collect();
             if addresses.is_empty() {
-                return Err(failed(OutboundError::Refused));
+                let refusal = if only_metadata {
+                    OutboundError::Metadata
+                } else {
+                    OutboundError::Refused
+                };
+                return Err(failed(refusal));
             }
             Ok(Box::new(addresses.into_iter()) as Addrs)
         })
@@ -180,7 +186,7 @@ impl Outbound {
     /// it. A name is checked when it is resolved.
     ///
     /// # Errors
-    /// [`OutboundError::Url`] or [`OutboundError::Refused`].
+    /// [`OutboundError::Url`], [`OutboundError::Metadata`] or [`OutboundError::Refused`].
     pub fn check(&self, url: &Url) -> Result<(), OutboundError> {
         self.guard.check(url)
     }
@@ -417,6 +423,18 @@ mod tests {
             .post_json("https://localhost:9/api/messages", None, b"{}".to_vec())
             .await;
         assert_eq!(refused.unwrap_err(), OutboundError::Refused);
+    }
+
+    #[tokio::test]
+    async fn a_name_that_resolves_only_to_metadata_addresses_says_so() {
+        let refusal = |guard: Guard, name: &str| Guarded(guard).resolve(name.parse().unwrap());
+        let metadata = refusal(guard(&["169.254.0.0/16"]), "169.254.169.254")
+            .await
+            .err()
+            .unwrap();
+        assert_eq!(*metadata.downcast::<OutboundError>().unwrap(), OutboundError::Metadata);
+        let refused = refusal(Guard::default(), "localhost").await.err().unwrap();
+        assert_eq!(*refused.downcast::<OutboundError>().unwrap(), OutboundError::Refused);
     }
 
     #[tokio::test]

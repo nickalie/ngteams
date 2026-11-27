@@ -108,7 +108,7 @@ async fn a_bot_that_answers_too_fast_waits_its_retry_after_and_the_person_reads_
     }
 }
 
-/// Posts `text` as the bot until the connector takes it, each time after the `Retry-After` of its 429; the refusals.
+/// Posts `text` as the bot, and once more after the `Retry-After` of a 429, which must then be taken; the refusals.
 async fn post_until_taken(connector: &Connector, path: &str, text: &str, backend: Backend) -> u32 {
     let mut refusals = 0;
     loop {
@@ -127,7 +127,10 @@ async fn post_until_taken(connector: &Connector, path: &str, text: &str, backend
             .unwrap_or_else(|| panic!("no Retry-After: {headers:?}"));
         assert!((1..=2).contains(&wait), "{backend:?} Retry-After {wait}");
         refusals += 1;
-        assert!(refusals < 20, "{backend:?}: the bot is never let through");
+        assert_eq!(
+            refusals, 1,
+            "{backend:?}: refused again after the Retry-After of {wait}s"
+        );
         tokio::time::sleep(Duration::from_secs(wait)).await;
     }
 }

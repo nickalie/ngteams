@@ -660,19 +660,17 @@ impl AppDialog {
         self.testing.is_some()
     }
 
+    /// Whether "Send a test activity" may be used now: the app is on, its bot has an endpoint, nothing else runs.
+    #[must_use]
+    pub fn can_test(&self) -> bool {
+        !self.busy && self.testing.is_none() && self.app.as_ref().is_some_and(ready_to_test)
+    }
+
     /// Sends the app's bot a test activity; how the bot answered shows in the details.
     pub fn send_test(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self
-            .app
-            .as_ref()
-            .filter(|app| app.bot.is_some())
-            .map(|app| app.id.clone())
-        else {
+        let Some(id) = self.app.as_ref().filter(|_| self.can_test()).map(|app| app.id.clone()) else {
             return;
         };
-        if self.testing.is_some() {
-            return;
-        }
         self.test = None;
         self.trace.record(&TraceLine::new("app-admin", "test"));
         let admin = Arc::clone(&self.admin);
@@ -805,6 +803,11 @@ fn read_package(path: &std::path::Path) -> Result<Vec<u8>, AppProblem> {
         return Err(AppProblem::PackageTooLarge);
     }
     std::fs::read(path).map_err(|error| AppProblem::File(error.kind().to_string()))
+}
+
+/// Whether the app is on and its bot has an endpoint, so a test activity can reach it.
+pub(super) fn ready_to_test(app: &AdminApp) -> bool {
+    app.enabled && app.bot.as_ref().is_some_and(|bot| bot.endpoint.is_some())
 }
 
 #[cfg(test)]
