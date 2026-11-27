@@ -296,16 +296,14 @@ fn put_post(
     html: &str,
     properties: &Value,
 ) -> SandboxResult<(String, Value)> {
-    let id = mock
-        .add_message(TEAM_CHANNEL, from, "RichText/Html", html)
-        .ok_or("no channel on the mock")?;
-    let client_id = (9_000_000_000_000_000_000_u64 + id.parse::<u64>()?).to_string();
     let mut stored = Value::Null;
-    let found = mock.change_message(TEAM_CHANNEL, &client_id, |message| {
-        message["properties"] = properties.clone();
-        stored = message.clone();
-    });
-    ensure(found, || format!("no post {id} on the mock"))?;
+    // the properties go in with the post: a delivery before a later change would show it plain
+    let id = mock
+        .add_message_with(TEAM_CHANNEL, from, "RichText/Html", html, |message| {
+            message["properties"] = properties.clone();
+            stored = message.clone();
+        })
+        .ok_or("no channel on the mock")?;
     let kept: Vec<_> = mock
         .take_events(LAB_A)
         .into_iter()

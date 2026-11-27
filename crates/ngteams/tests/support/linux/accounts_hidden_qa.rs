@@ -324,9 +324,9 @@ pub fn hidden_at(look: Look) -> SandboxResult {
     })
 }
 
-/// The capabilities an own server's account has: Workflows as the server serves it, nothing else.
+/// The capabilities an own server's account has: Workflows as the server serves it, the apps (on by default).
 fn own_capabilities(workflows: bool) -> String {
-    format!("workflows:{workflows},recap:false,captions:false,recording:false,apps:false,copilot:false")
+    format!("workflows:{workflows},recap:false,captions:false,recording:false,apps:true,copilot:false")
 }
 
 const ALL_CAPABILITIES: &str = "workflows:true,recap:true,captions:true,recording:true,apps:true,copilot:true";
@@ -366,7 +366,7 @@ fn own_account(run: &mut Run, server: &own::Own, reader: &str) -> SandboxResult 
     });
     run.step("message-menu-close")?;
     let facts = run.step_shot("manage-team-apps", "own-manage-team")?;
-    run.expect_fact(&facts, "manage_tab", "Channels", "own Manage team asked for Apps");
+    run.expect_fact(&facts, "manage_tab", "Apps", "own Manage team asked for Apps");
     let facts = run.step_shot("meeting-recap", "own-meeting-tabs")?;
     run.expect_fact(&facts, "chat_tab", "Chat", "own meeting chat asked for Recap");
     call_more(run, "own")?;

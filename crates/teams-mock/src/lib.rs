@@ -425,8 +425,22 @@ impl ChatServiceMock {
         message_type: &str,
         content: &str,
     ) -> Option<String> {
+        self.add_message_with(conversation, (from, name), message_type, content, |_| {})
+    }
+
+    /// As [`Self::add_message`], with `edit` applied to the message before it is stored and queued, so no delivery
+    /// carries it without the edit (its `properties`, say).
+    #[must_use = "None says no message was added"]
+    pub fn add_message_with(
+        &self,
+        conversation: &str,
+        (from, name): (&str, &str),
+        message_type: &str,
+        content: &str,
+        edit: impl FnOnce(&mut Value),
+    ) -> Option<String> {
         self.lock()
-            .add_message(conversation, (from, name), message_type, content)
+            .add_message(conversation, (from, name), message_type, content, edit)
     }
 
     /// `owner`'s own notes ([`NOTES`]) as a read gives them back, oldest first: none before the first note.

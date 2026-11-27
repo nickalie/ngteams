@@ -145,6 +145,7 @@ impl State {
         (from, name): (&str, &str),
         message_type: &str,
         content: &str,
+        edit: impl FnOnce(&mut Value),
     ) -> Option<String> {
         let link = format!("{}/v1/users/ME/conversations/{conversation}", self.chat_base());
         let conversation = conversation
@@ -152,7 +153,7 @@ impl State {
             .map_or(conversation, |(channel, _)| channel);
         let arrival = self.tick();
         let sequence = self.conversation(conversation)?.next_sequence();
-        let message = serde_json::json!({
+        let mut message = serde_json::json!({
             "sequenceId": sequence,
             "conversationid": conversation,
             "conversationLink": link,
@@ -169,6 +170,7 @@ impl State {
             "originalarrivaltime": iso_time(arrival, 7),
             "properties": {},
         });
+        edit(&mut message);
         let stored = self.conversation_mut(conversation)?;
         stored.messages.push(message.clone());
         stored.version = arrival;

@@ -202,7 +202,7 @@ pub(crate) fn invoke(state: &mut State, call: &Call<'_>, bot: &str) -> ResponseT
     };
     let speaker = script.name.clone();
     if let (Some((message_type, content)), Some(conversation)) = (&reply.post, &conversation) {
-        let _ = state.add_message(conversation, (bot, &speaker), message_type, content);
+        let _ = state.add_message(conversation, (bot, &speaker), message_type, content, |_| {});
     }
     match reply.body {
         Some(answer) => json(reply.status, &answer),

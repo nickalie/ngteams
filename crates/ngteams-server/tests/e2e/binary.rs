@@ -183,6 +183,7 @@ async fn check_region(session: &Session<MemorySecretStore>, origin: &str) {
         ("amsV2", "/ams"),
         ("presenceUPS", "/ups/own"),
         ("workflowsService", "/workflows"),
+        ("appsService", "/api/mt/part/own-01"),
         ("outgoingWebhookService", "/api/mt/part/own-01"),
     ];
     for (gtm, path) in bases {
