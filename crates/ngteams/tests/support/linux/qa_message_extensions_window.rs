@@ -358,30 +358,15 @@ impl Walk<'_> {
 /// A flyout's first list row's centre is this far under the flyout's top.
 const FIRST_ROW: u32 = 62;
 
+/// Where "Get more apps" is in an open flyout: near its bottom right corner.
+fn more_apps_point(flyout: Rect) -> (u32, u32) {
+    (flyout.x1.saturating_sub(70), flyout.y1.saturating_sub(30))
+}
+
 impl Walk<'_> {
     /// A click on the box's "+": once the account's apps are read, the flyout's bounds on the screen.
     fn open_flyout(&mut self, name: &str) -> SandboxResult<Rect> {
-        let before = load(&self.shot(&format!("{name}-closed"))?)?;
-        self.run.click(PLUS.0, PLUS.1)?;
-        let opened = self.run.until_chat("the flyout's apps read", |state| {
-            state["compose"]["flyout"]["loaded"] == true
-        });
-        if let Err(error) = opened {
-            return Err(format!(
-                "a click on the box's + ({}, {}) opens no flyout: {error}",
-                PLUS.0, PLUS.1
-            )
-            .into());
-        }
-        thread::sleep(SETTLE);
-        let after = load(&self.shot(name)?)?;
-        let region = Rect {
-            x0: 0,
-            y0: 0,
-            x1: after.width(),
-            y1: PLUS.1.saturating_sub(16),
-        };
-        changed_box(&before, &after, region).ok_or_else(|| format!("no flyout on the screen ({name})").into())
+        self.run.open_flyout(self.sandbox, name)
     }
 
     /// The names the open flyout lists.
@@ -491,8 +476,8 @@ impl Walk<'_> {
     /// "Get more apps" opens the store.
     fn more_apps(&mut self, flyout: Rect) -> SandboxResult {
         self.open_flyout("flyout-more")?;
-        self.run
-            .click(flyout.x1.saturating_sub(70), flyout.y1.saturating_sub(30))?;
+        let (x, y) = more_apps_point(flyout);
+        self.run.click(x, y)?;
         thread::sleep(SETTLE);
         let state = self.state()?;
         expect(state["main"].as_str().is_some_and(|main| main.contains("Apps")), || {
@@ -1567,18 +1552,10 @@ fn own_server(sandbox: &Sandbox, dir: &Path) -> SandboxResult {
     let server = own_server_binary::BinaryServer::start(&binary)?;
     server.add_user(OWN_UPN, "Dana Made-Up")?;
     server.add_user(OWN_B, "Erin Made-Up")?;
-    let added = server.run(
-        &[
-            "app",
-            "add",
-            "--name",
-            "Made-up Notes (synthetic)",
-            "--endpoint",
-            "https://bots.example.test/api/messages",
-            "--description",
-            "A made-up app an admin registered",
-        ],
-        None,
+    let added = server.add_app(
+        "Made-up Notes (synthetic)",
+        "https://bots.example.test/api/messages",
+        "A made-up app an admin registered",
     )?;
     step(&format!("own server: {}", added.lines().next().unwrap_or_default()));
     let env = vec![
@@ -1598,31 +1575,19 @@ fn own_server(sandbox: &Sandbox, dir: &Path) -> SandboxResult {
         let chat = rows["rows"][0]["id"].as_str().ok_or("no chat row")?.to_owned();
         run.open(&chat)?;
         thread::sleep(SETTLE);
-        let before = load(&run.shot(sandbox, "qa-me-own-chat-light.png")?)?;
-        run.click(PLUS.0, PLUS.1)?;
-        let state = run.until_chat("the own server's flyout read", |state| {
-            state["compose"]["flyout"]["loaded"] == true
-        })?;
-        let listed = strings(&state["compose"]["flyout"]["listed"]);
+        let flyout = run.open_flyout(sandbox, "own-plus")?;
+        let listed = strings(&run.state_in("chat")?["compose"]["flyout"]["listed"]);
         expect(listed.is_empty(), || {
             format!("an own server's flyout lists {listed:?}, but no app with a message extension is added")
         });
-        thread::sleep(SETTLE);
-        let after = load(&run.shot(sandbox, "qa-me-own-plus-light.png")?)?;
-        let region = Rect {
-            x0: 0,
-            y0: 0,
-            x1: after.width(),
-            y1: PLUS.1.saturating_sub(16),
-        };
-        let flyout = changed_box(&before, &after, region).ok_or("no flyout on the screen (own)")?;
         step(&format!("the own server's flyout: {flyout:?}"));
         run.theme(true)?;
         thread::sleep(SETTLE);
         run.shot(sandbox, "qa-me-own-plus-dark.png")?;
         run.theme(false)?;
         thread::sleep(SETTLE);
-        run.click(flyout.x1.saturating_sub(70), flyout.y1.saturating_sub(30))?;
+        let (x, y) = more_apps_point(flyout);
+        run.click(x, y)?;
         run.until_chat("the own server's Store from Get more apps", |state| {
             state["main"].as_str().is_some_and(|main| main.contains("Apps"))
         })?;
@@ -2248,6 +2213,31 @@ impl AppRun {
         };
         run.input.move_to(run.rest.0, run.rest.1)?;
         Ok(run)
+    }
+
+    /// A click on the box's "+": once the account's apps are read, the flyout's bounds on the screen.
+    fn open_flyout(&mut self, sandbox: &Sandbox, name: &str) -> SandboxResult<Rect> {
+        let before = load(&self.shot(sandbox, &format!("qa-me-{name}-closed-light.png"))?)?;
+        self.click(PLUS.0, PLUS.1)?;
+        let opened = self.until_chat("the flyout's apps read", |state| {
+            state["compose"]["flyout"]["loaded"] == true
+        });
+        if let Err(error) = opened {
+            return Err(format!(
+                "a click on the box's + ({}, {}) opens no flyout: {error}",
+                PLUS.0, PLUS.1
+            )
+            .into());
+        }
+        thread::sleep(SETTLE);
+        let after = load(&self.shot(sandbox, &format!("qa-me-{name}-light.png"))?)?;
+        let region = Rect {
+            x0: 0,
+            y0: 0,
+            x1: after.width(),
+            y1: PLUS.1.saturating_sub(16),
+        };
+        changed_box(&before, &after, region).ok_or_else(|| format!("no flyout on the screen ({name})").into())
     }
 
     fn request(&self, request: Request) -> SandboxResult {

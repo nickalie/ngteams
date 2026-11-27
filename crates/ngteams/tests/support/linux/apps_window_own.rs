@@ -39,18 +39,10 @@ pub fn run(sandbox: &Sandbox) -> SandboxResult<Outcome> {
     };
     let server = BinaryServer::start(&binary)?;
     server.add_user(UPN, NAME)?;
-    let added = server.run(
-        &[
-            "app",
-            "add",
-            "--name",
-            "Made-up Notes (synthetic)",
-            "--endpoint",
-            ENDPOINT,
-            "--description",
-            "A made-up app an admin registered",
-        ],
-        None,
+    let added = server.add_app(
+        "Made-up Notes (synthetic)",
+        ENDPOINT,
+        "A made-up app an admin registered",
     )?;
     say(&format!("own server: {}", added.lines().next().unwrap_or_default()));
     let dir = tempfile::tempdir()?;

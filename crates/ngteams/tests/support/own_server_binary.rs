@@ -158,7 +158,24 @@ impl BinaryServer {
         Ok(id.to_owned())
     }
 
-    /// `ngteams-server setup-code`: the new one-time setup code (its first line).
+    /// `ngteams-server app add --name <name> --endpoint <url> --description <text>`: what it printed.
+    pub fn add_app(&self, name: &str, endpoint: &str, description: &str) -> TestResult<String> {
+        self.run(
+            &[
+                "app",
+                "add",
+                "--name",
+                name,
+                "--endpoint",
+                endpoint,
+                "--description",
+                description,
+            ],
+            None,
+        )
+    }
+
+    /// `ngteams-server setup-code`:the new one-time setup code (its first line).
     pub fn setup_code(&self) -> TestResult<String> {
         let said = self.run(&["setup-code"], None)?;
         Ok(said.lines().next().ok_or("setup-code said nothing")?.trim().to_owned())

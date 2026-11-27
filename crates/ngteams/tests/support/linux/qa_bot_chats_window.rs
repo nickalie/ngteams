@@ -845,18 +845,10 @@ fn own_server(sandbox: &Sandbox, dir: &Path) -> SandboxResult {
     server.add_user(OWN_UPN, "Dana Made-Up")?;
     server.add_user(OWN_B, "Erin Made-Up")?;
     server.add_user(OWN_C, "Finn Made-Up")?;
-    let added = server.run(
-        &[
-            "app",
-            "add",
-            "--name",
-            "Made-up Notes (synthetic)",
-            "--endpoint",
-            "https://bots.example.test/api/messages",
-            "--description",
-            "A made-up app an admin registered",
-        ],
-        None,
+    let added = server.add_app(
+        "Made-up Notes (synthetic)",
+        "https://bots.example.test/api/messages",
+        "A made-up app an admin registered",
     )?;
     step(&format!("own server: {}", added.lines().next().unwrap_or_default()));
     let env = vec![

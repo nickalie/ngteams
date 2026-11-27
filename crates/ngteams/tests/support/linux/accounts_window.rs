@@ -73,6 +73,10 @@ mod own;
 #[path = "../own_server.rs"]
 mod own_server;
 #[path = "../own_server_binary.rs"]
+#[expect(
+    dead_code,
+    reason = "the own server's tests share this support; this one registers no app"
+)]
 mod own_server_binary;
 #[path = "../window.rs"]
 mod support;
