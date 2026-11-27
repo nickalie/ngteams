@@ -227,31 +227,17 @@ async fn serve_held(server: &MockServer, race_picture: PathBuf, gate: Arc<Gate>)
 }
 
 async fn serve_files(server: &MockServer) {
-    let item = json!({
-        "id": "made-up-file", "size": FILE_BYTES.len(),
-        "@microsoft.graph.downloadUrl": format!("https://contoso-my.sharepoint.com{DOWNLOAD}?UniqueId=made-up&tempauth=made-up"),
-    });
-    let item_path = format!("/v1.0/shares/{}/driveItem", FileDownload::of(SHARE).unwrap().share());
-    let range = format!("bytes 0-{}/{}", FILE_BYTES.len() - 1, FILE_BYTES.len());
-    for (at, response) in [
-        (item_path, ResponseTemplate::new(200).set_body_json(item)),
-        (
-            DOWNLOAD.to_owned(),
-            ResponseTemplate::new(206)
-                .insert_header("Content-Range", range)
-                .set_body_bytes(FILE_BYTES),
-        ),
-        (
-            format!("/v1/objects/{OBJECT}/views/imgo"),
-            ResponseTemplate::new(200).set_body_raw(PNG.to_vec(), "image/png"),
-        ),
-    ] {
-        Mock::given(method("GET"))
-            .and(path(at))
-            .respond_with(response)
-            .mount(server)
-            .await;
-    }
+    serve_item(server, SHARE, DOWNLOAD).await;
+    Mock::given(method("GET"))
+        .and(path(DOWNLOAD))
+        .respond_with(file_bytes())
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/v1/objects/{OBJECT}/views/imgo")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(PNG.to_vec(), "image/png"))
+        .mount(server)
+        .await;
 }
 
 /// The app of lab account a, its engine's reads on wiremock, serving its control socket.

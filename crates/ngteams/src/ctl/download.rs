@@ -220,14 +220,15 @@ pub async fn answer(
             .await
             .unwrap_or_else(|_| Err(CtlError::new(ErrorCode::Engine, "the download stopped")))
     };
-    within(DOWNLOAD_ANSWER, &late, saved, &executor).await
+    within(DOWNLOAD_ANSWER, &late, saved, &executor)
+        .await
+        .map(|files| Response::Downloaded { files })
 }
 
 /// Logs the end of a download that was answered `timeout`, as its client no longer hears it.
-fn log_late(outcome: &Result<Response, CtlError>) {
+fn log_late(outcome: &Result<Vec<SavedFile>, CtlError>) {
     match outcome {
-        Ok(Response::Downloaded { files }) => log::info!("a late download saved its {} files", files.len()),
-        Ok(_) => {}
+        Ok(files) => log::info!("a late download saved its {} files", files.len()),
         Err(error) => log::warn!("a late download failed: {:?}", error.code),
     }
 }
@@ -285,7 +286,7 @@ async fn save_all(
     folder: PathBuf,
     force: bool,
     cx: &mut AsyncApp,
-) -> Result<Response, CtlError> {
+) -> Result<Vec<SavedFile>, CtlError> {
     let planned = plan(&*core, chosen).await?;
     let targets: Vec<PathBuf> = planned
         .iter()
@@ -313,7 +314,7 @@ async fn save_all(
             Err(error) => return Err(failed_after(error, &files)),
         }
     }
-    Ok(Response::Downloaded { files })
+    Ok(files)
 }
 
 /// Fails with [`ErrorCode::FileExists`] when a file (or its `.part` file) is at one of `targets`.
@@ -384,11 +385,13 @@ async fn plan(core: &dyn Core, chosen: Vec<Attachment>) -> Result<Vec<Planned>, 
 }
 
 /// `name`, or with ` (<index>)` before its extension (then ` (<index>-2)` and on) when an earlier attachment of the
-/// download took it, also in another case (a file system that ignores case would save the two at one place).
+/// download took it, also in another case (a file system that ignores case would save the two at one place). The
+/// `.part` file of each name counts as taken too, as the save of one name must not write over another.
 fn unique(name: &str, index: u32, taken: &mut HashSet<String>) -> String {
+    let lower_part = |candidate: &str| format!("{}.part", candidate.to_lowercase());
     let mut candidate = name.to_owned();
     let mut round = 1_u32;
-    while taken.contains(&candidate.to_lowercase()) {
+    while taken.contains(&candidate.to_lowercase()) || taken.contains(&lower_part(&candidate)) {
         let tag = if round == 1 {
             index.to_string()
         } else {
@@ -401,6 +404,7 @@ fn unique(name: &str, index: u32, taken: &mut HashSet<String>) -> String {
         round += 1;
     }
     taken.insert(candidate.to_lowercase());
+    taken.insert(lower_part(&candidate));
     candidate
 }
 
@@ -524,5 +528,55 @@ mod tests {
         );
         assert_eq!(unique("notes", 5, &mut taken), "notes");
         assert_eq!(unique("Notes", 6, &mut taken), "Notes (6)");
+    }
+
+    #[test]
+    fn unique_never_gives_the_part_file_of_a_name_that_the_download_took() {
+        let mut taken = HashSet::new();
+        assert_eq!(unique("report.pdf.part", 1, &mut taken), "report.pdf.part");
+        assert_eq!(unique("report.pdf", 2, &mut taken), "report (2).pdf");
+        let mut taken = HashSet::new();
+        assert_eq!(unique("report.pdf", 1, &mut taken), "report.pdf");
+        assert_eq!(unique("REPORT.pdf.part", 2, &mut taken), "REPORT.pdf (2).part");
+    }
+
+    #[test]
+    fn a_late_download_logs_how_it_ended_with_no_payload() {
+        struct Capture;
+        thread_local! {
+            static LINES: std::cell::RefCell<Vec<(log::Level, String)>> =
+                const { std::cell::RefCell::new(Vec::new()) };
+        }
+        impl log::Log for Capture {
+            fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+                true
+            }
+            fn log(&self, record: &log::Record<'_>) {
+                LINES.with_borrow_mut(|lines| lines.push((record.level(), record.args().to_string())));
+            }
+            fn flush(&self) {}
+        }
+        log::set_logger(&Capture).unwrap();
+        log::set_max_level(log::LevelFilter::Info);
+        let saved = |index| SavedFile {
+            index,
+            name: format!("secret-{index}.pdf"),
+            path: format!("/made-up/secret-{index}.pdf"),
+            size: 7,
+        };
+        log_late(&Ok(vec![saved(1), saved(2)]));
+        log_late(&Err(CtlError::new(
+            ErrorCode::FileExists,
+            "/made-up/secret-3.pdf is there already",
+        )));
+        LINES.with_borrow(|lines| {
+            assert_eq!(
+                *lines,
+                [
+                    (log::Level::Info, "a late download saved its 2 files".to_owned()),
+                    (log::Level::Warn, "a late download failed: FileExists".to_owned()),
+                ]
+            );
+        });
     }
 }
