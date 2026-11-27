@@ -134,7 +134,7 @@ fn polls_defined(definition: &AppDefinition) {
 }
 
 /// What the bot gets when its app is added to `team`.
-async fn told_of_team(bot: &TestBot, team: &str, group: &str) {
+pub(super) async fn told_of_team(bot: &TestBot, team: &str, group: &str) {
     let got = bot.next_of("installationUpdate").await.activity;
     assert_eq!(got["action"], "add", "{got}");
     assert_eq!(got["conversation"]["id"], team);

@@ -11,6 +11,7 @@ mod guarded;
 mod health;
 mod installs;
 mod installs_qa;
+mod member_updates;
 mod invoke;
 mod keys;
 mod limits;
