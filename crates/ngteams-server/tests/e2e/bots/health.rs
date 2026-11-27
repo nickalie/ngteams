@@ -261,3 +261,40 @@ async fn a_test_activity_to_a_name_on_a_closed_network_is_refused_by_the_guard()
     assert_eq!(closed.hits(), 0);
     registry.server.stop().await;
 }
+
+/// A test activity that reaches no bot says why in a person's words: no raw error chain, no credential.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_test_activity_that_reaches_no_bot_says_why() {
+    let registry = super::Registry::open_with(Backend::Sqlite, super::connector::loopback).await;
+    let gone = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let plain = TestBot::start().await;
+    let cases = [
+        (
+            format!("http://127.0.0.1:{gone}/api/messages"),
+            "the connection was refused",
+        ),
+        (plain.url.replace("http://", "https://"), "the TLS handshake failed"),
+        (
+            "https://bot.ngteams.invalid/api/messages".to_owned(),
+            "the name did not resolve",
+        ),
+    ];
+    for (n, (endpoint, why)) in cases.iter().enumerate() {
+        let made = registry
+            .register(&format!("Unreachable {n} (synthetic)"), endpoint)
+            .await;
+        let path = format!("{}/test", app_path(made["id"].as_str().unwrap()));
+        let (status, answer) = registry.call(Method::POST, &path, None).await;
+        assert_eq!(status, 200, "{endpoint}: {answer}");
+        assert_eq!(
+            (&answer["delivered"], &answer["status"], &answer["error"]),
+            (&json!(false), &Value::Null, &json!(why)),
+            "{endpoint}: {answer}"
+        );
+    }
+    assert_eq!(plain.hits(), 0);
+    registry.server.stop().await;
+}

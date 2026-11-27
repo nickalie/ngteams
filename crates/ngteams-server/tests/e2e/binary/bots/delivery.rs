@@ -800,7 +800,13 @@ async fn closed_guard(node: &Node, root: &Secret, ada: &Actor, port: u16) -> Vec
         let body = json!({"name": "Guard (synthetic)", "endpoint": endpoint});
         let (status, answer) = call(node, Method::POST, APPS, Some(root), Some(body)).await;
         eprintln!("guard: {endpoint}: saved {status} {}", code(&answer));
-        if (status, code(&answer)) != (400, "EndpointNotAllowed") {
+        let metadata = ["169.254.169.254", "fd00:ec2::254", "100.100.100.200"];
+        let expected = if metadata.iter().any(|address| endpoint.contains(address)) {
+            "EndpointMetadata"
+        } else {
+            "EndpointNotAllowed"
+        };
+        if (status, code(&answer)) != (400, expected) {
             problems.push(format!("{endpoint}: saved {status} {answer}"));
         }
     }
@@ -844,7 +850,7 @@ async fn refused_for(node: &Node, name: &str, id: &str, reason: &str) -> Option<
 async fn metadata_closed(node: &Node, root: &Secret) -> Option<String> {
     let metadata = json!({"name": "Metadata (synthetic)", "endpoint": "https://169.254.169.254/latest/meta-data"});
     let (status, answer) = call(node, Method::POST, APPS, Some(root), Some(metadata)).await;
-    ((status, code(&answer)) != (400, "EndpointNotAllowed"))
+    ((status, code(&answer)) != (400, "EndpointMetadata"))
         .then(|| format!("metadata with link-local open: saved {status} {answer}"))
 }
 

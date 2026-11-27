@@ -172,14 +172,13 @@ async fn a_private_loopback_or_metadata_address_is_refused_unless_allowed() {
         .await;
         let bot = TestBot::start().await;
         // an address written in the endpoint is refused when it is saved
-        for literal in [bot.url.as_str(), "http://169.254.169.254/latest"] {
+        for (literal, code) in [
+            (bot.url.as_str(), "EndpointNotAllowed"),
+            ("http://169.254.169.254/latest", "EndpointMetadata"),
+        ] {
             let body = json!({"name": "Literal (synthetic)", "endpoint": literal});
             let (status, answer) = registry.call(Method::POST, super::APPS, Some(body)).await;
-            assert_eq!(
-                (status, super::error_code(&answer)),
-                (400, "EndpointNotAllowed"),
-                "{answer}"
-            );
+            assert_eq!((status, super::error_code(&answer)), (400, code), "{answer}");
         }
         // a name, when the server sends
         let local = bot.url.replace("127.0.0.1", "localhost");

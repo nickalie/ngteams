@@ -221,10 +221,14 @@ pub enum AppError {
     #[error("a bot's endpoint is an absolute https URL without credentials")]
     Endpoint,
     #[error(
-        "the endpoint's address is on a network the server doesn't send to: never a cloud metadata address; a \
-         private, loopback or link-local one only when bots.allowed_networks names it"
+        "the endpoint's address is on a private, loopback, link-local or reserved network; the server sends to it \
+         only when bots.allowed_networks names it"
     )]
     EndpointNetwork,
+    #[error(
+        "the endpoint's address is a cloud metadata address; the server never sends to it, and no setting opens it"
+    )]
+    EndpointMetadata,
     #[error("this server takes no bot without authentication (bots.allow_unsigned)")]
     Unsigned,
     #[error("no such user")]
@@ -341,6 +345,7 @@ fn checked_endpoint(config: &Config, endpoint: &str) -> Result<String, AppError>
     match crate::outbound::Guard::for_bots(&config.bots).check(&url) {
         Ok(()) => Ok(url.to_string()),
         Err(crate::outbound::OutboundError::Refused) => Err(AppError::EndpointNetwork),
+        Err(crate::outbound::OutboundError::Metadata) => Err(AppError::EndpointMetadata),
         Err(_) => Err(AppError::Endpoint),
     }
 }

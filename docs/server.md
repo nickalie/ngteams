@@ -698,7 +698,8 @@ audit entry holds it.
 
 | Status | `code` | When |
 |---|---|---|
-| 400 | `EndpointNotAllowed` | an endpoint whose written address is a cloud metadata address, or a private, loopback or link-local one that `bots.allowed_networks` doesn't name; a name is checked at each send |
+| 400 | `EndpointNotAllowed` | an endpoint whose written address is a private, loopback or link-local one that `bots.allowed_networks` doesn't name; a name is checked at each send |
+| 400 | `EndpointMetadata` | an endpoint whose written address is a cloud metadata address, which no setting opens |
 | 400 | `InvalidName`, `InvalidEndpoint`, `UnsignedNotAllowed`, `UnknownUser`, `NoBot`, `InvalidPackage`, `BotChanged`, `InvalidRequest` | `message` says what is wrong; `UnknownUser` also for a bot's id |
 | 404 | `NotFound` | no such app |
 | 409 | `AppExists`, `BotExists` | the app id is registered; the bot id is another app's bot, a person's or the Workflows bot's |
@@ -770,7 +771,8 @@ several API nodes lets a bot have that much from each.
 `event` activity, `name` `ngteams/testActivity`, `value` `{"sentAt"}`, from the administrator in their 1:1 chat with
 the bot, as any activity goes: to the registered endpoint through the address guard, signed when the bot is, within
 its send rate. The answer says whether the bot took it (2xx), its status and, when it didn't, why (the bot's status,
-or the guard's or the connection's reason). It is no chat event: no outbox row, and the bot's health stays as its
+or the guard's or the connection's reason in a person's words: for example "the connection was refused", "the name did
+not resolve", "the TLS handshake failed" or "the request timed out"). It is no chat event: no outbox row, and the bot's health stays as its
 deliveries left it. No account's token is in it.
 
 **The address guard.** A bot's endpoint is set by an administrator, and the server checks every send: `https` only
@@ -779,7 +781,8 @@ deliveries left it. No account's token is in it.
 check and another for the connection. Public addresses pass; a private, loopback, link-local, shared or otherwise
 reserved one passes only when it is in `bots.allowed_networks` (CIDR, for a self-hosted bot on a private network);
 a cloud metadata address (`169.254.169.254`, `fd00:ec2::254`, `100.100.100.200`) never. An address written in the
-endpoint is checked when an administrator saves it (400 `EndpointNotAllowed`); a name, which may resolve elsewhere
+endpoint is checked when an administrator saves it (400 `EndpointNotAllowed`, or `EndpointMetadata` for a metadata
+address); a name, which may resolve elsewhere
 later, at each send. A refused address fails the row at once.
 
 **Signed and unsigned.** A signed bot's activity carries the server's RS256 token (above); the bot answers with its own

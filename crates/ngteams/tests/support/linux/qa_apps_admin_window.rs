@@ -693,12 +693,24 @@ fn endpoint(qa: &mut Qa<'_>, _: &mut Tally) -> SandboxResult {
         format!("the server holds {server}")
     })?;
     let mut failures = Vec::new();
-    for (case, change) in [
-        ("private", "endpoint https://10.20.30.40/api/messages"),
-        ("metadata", "endpoint https://169.254.169.254/latest/meta-data"),
-        ("loopback", "endpoint https://127.0.0.1:3978/api/messages"),
-        ("plain-http", "endpoint http://bots.example.test/api/messages"),
-        ("unsigned", "mode unsigned"),
+    for (case, change, words) in [
+        (
+            "private",
+            "endpoint https://10.20.30.40/api/messages",
+            "private network",
+        ),
+        (
+            "metadata",
+            "endpoint https://169.254.169.254/latest/meta-data",
+            "cloud metadata address",
+        ),
+        (
+            "loopback",
+            "endpoint https://127.0.0.1:3978/api/messages",
+            "private network",
+        ),
+        ("plain-http", "endpoint http://bots.example.test/api/messages", ""),
+        ("unsigned", "mode unsigned", ""),
     ] {
         qa.act(&format!("open {BOT_NAME}"))?;
         qa.act(change)?;
@@ -711,7 +723,16 @@ fn endpoint(qa: &mut Qa<'_>, _: &mut Tally) -> SandboxResult {
             let server = qa.server_apps()?;
             failures.push(format!("{case}: taken, the server holds {}", server[BOT_NAME]));
         } else {
-            say(&format!("endpoint {case}: {}", state["dialog"]["problem"]));
+            let problem = state["dialog"]["problem"].as_str().unwrap_or_default();
+            say(&format!("endpoint {case}: {problem}"));
+            if !problem.contains(words) {
+                failures.push(format!("{case}: the refusal says {problem}, not {words}"));
+            }
+            if case == "metadata" && problem.contains("private network") {
+                failures.push(format!(
+                    "{case}: the refusal sends the operator to a setting: {problem}"
+                ));
+            }
             qa.shot(&format!("endpoint-refused-{case}"))?;
             qa.act("close")?;
         }
@@ -1232,11 +1253,20 @@ fn delivery_and_test_activity(sandbox: &Sandbox, binary: &Path, tally: &mut Tall
     tally.outcome("a_new_bot_says_nothing_sent_and_takes_a_test_activity", outcome);
     let outcome = test_activity_refused(&mut qa, FAILS, "500", "delivery-test-500");
     tally.outcome("a_bot_that_answers_500_shows_it_did_not_take_the_test", outcome);
-    let outcome = test_activity_refused(&mut qa, NOBODY, "", "delivery-test-unreachable");
+    let outcome = test_activity_refused(
+        &mut qa,
+        NOBODY,
+        "the connection was refused",
+        "delivery-test-unreachable",
+    );
     tally.outcome("an_endpoint_where_nothing_listens_shows_why_the_test_failed", outcome);
     for (name, shot, check) in [
         (OFF, "delivery-off", "an_app_that_is_off_offers_no_test"),
-        (BARE, "delivery-no-endpoint", "an_app_without_an_endpoint_offers_no_test"),
+        (
+            BARE,
+            "delivery-no-endpoint",
+            "an_app_without_an_endpoint_offers_no_test",
+        ),
     ] {
         let outcome = no_test_offered(&mut qa, name, shot);
         tally.outcome(check, outcome);
@@ -1266,29 +1296,36 @@ fn open_details(qa: &mut Qa<'_>, name: &str) -> SandboxResult<Value> {
 fn test_activity_taken(qa: &mut Qa<'_>, taker: &LoopbackBot) -> SandboxResult {
     let state = open_details(qa, TAKES)?;
     let health = state["dialog"]["health"].as_str().unwrap_or_default();
-    ensure(health == "Nothing sent to the bot yet.", || format!("a new bot's health says {health}"))?;
+    ensure(health == "Nothing sent to the bot yet.", || {
+        format!("a new bot's health says {health}")
+    })?;
     qa.shots("delivery-new")?;
     qa.act("test")?;
     let state = qa.state_until("the test's answer", |state| state["dialog"]["test"].is_object())?;
     let test = &state["dialog"]["test"];
     let words = test["words"].as_str().unwrap_or_default();
-    ensure(test["took"] == true && words.starts_with("The bot took it (200) in "), || {
-        format!("the test says {test}")
-    })?;
+    ensure(
+        test["took"] == true && words.starts_with("The bot took it (200) in "),
+        || format!("the test says {test}"),
+    )?;
     qa.shots("delivery-test-taken")?;
     let got = taker.got();
     ensure(got.len() == 1, || format!("the bot got {} requests", got.len()))?;
     let request = &got[0];
-    ensure(request.starts_with("POST /api/messages "), || format!("the bot got {request}"))?;
-    ensure(request.contains("\"ngteams/testActivity\"") && request.contains("\"event\""), || {
+    ensure(request.starts_with("POST /api/messages "), || {
         format!("the bot got {request}")
     })?;
+    ensure(
+        request.contains("\"ngteams/testActivity\"") && request.contains("\"event\""),
+        || format!("the bot got {request}"),
+    )?;
     ensure(request.to_ascii_lowercase().contains("authorization: bearer "), || {
         "a signed bot's test activity carries no token".to_owned()
     })?;
-    ensure(!request.contains("userAadToken") && !request.contains("\"token\""), || {
-        "the test activity carries a user token".to_owned()
-    })?;
+    ensure(
+        !request.contains("userAadToken") && !request.contains("\"token\""),
+        || "the test activity carries a user token".to_owned(),
+    )?;
     // the test is no delivery: the health stays new
     qa.act("reload")?;
     let state = open_details(qa, TAKES)?;
@@ -1304,9 +1341,10 @@ fn test_activity_refused(qa: &mut Qa<'_>, name: &str, says: &str, shot: &str) ->
     let state = qa.state_until("the test's answer", |state| state["dialog"]["test"].is_object())?;
     let test = &state["dialog"]["test"];
     let words = test["words"].as_str().unwrap_or_default();
-    ensure(test["took"] == false && words.starts_with("The bot didn't take it: "), || {
-        format!("the test says {test}")
-    })?;
+    ensure(
+        test["took"] == false && words.starts_with("The bot didn't take it: "),
+        || format!("the test says {test}"),
+    )?;
     ensure(words.contains(says), || format!("the test says {words}, not {says}"))?;
     qa.shots(shot)
 }
@@ -1314,9 +1352,10 @@ fn test_activity_refused(qa: &mut Qa<'_>, name: &str, says: &str, shot: &str) ->
 /// The details of an app that can't be tested; the shot shows the button off and what to do.
 fn no_test_offered(qa: &mut Qa<'_>, name: &str, shot: &str) -> SandboxResult {
     let state = open_details(qa, name)?;
-    ensure(state["dialog"]["test"].is_null() && state["dialog"]["testing"] == false, || {
-        format!("{name} was tested: {}", state["dialog"])
-    })?;
+    ensure(
+        state["dialog"]["test"].is_null() && state["dialog"]["testing"] == false,
+        || format!("{name} was tested: {}", state["dialog"]),
+    )?;
     qa.shots(shot)
 }
 

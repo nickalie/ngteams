@@ -70,6 +70,8 @@ pub enum Refusal {
     InvalidEndpoint,
     /// The address written in the bot's endpoint is on a network the server doesn't send to.
     EndpointNotAllowed,
+    /// The address written in the bot's endpoint is a cloud metadata address, which no setting opens.
+    EndpointMetadata,
     /// The bot has no endpoint to send to.
     NoEndpoint,
     /// The app is turned off.
@@ -109,6 +111,7 @@ impl Refusal {
             "NoBot" => Self::NoBot,
             "InvalidEndpoint" => Self::InvalidEndpoint,
             "EndpointNotAllowed" => Self::EndpointNotAllowed,
+            "EndpointMetadata" => Self::EndpointMetadata,
             "NoEndpoint" => Self::NoEndpoint,
             "AppDisabled" => Self::AppDisabled,
             "UnsignedNotAllowed" => Self::UnsignedNotAllowed,

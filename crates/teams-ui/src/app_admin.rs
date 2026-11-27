@@ -80,6 +80,8 @@ pub enum AppProblem {
     InvalidEndpoint,
     /// The address in the endpoint is on a network the server doesn't send to.
     EndpointNotAllowed,
+    /// The address in the endpoint is a cloud metadata address, which the server never sends to.
+    EndpointMetadata,
     /// A test activity to a bot that has no endpoint.
     NoEndpoint,
     /// A test activity to an app that is off.
@@ -113,6 +115,10 @@ impl AppProblem {
             Self::EndpointNotAllowed => "The server doesn't send to this address. Use a public address, or ask the \
                  server's operator to allow the bot's private network."
                 .into(),
+            Self::EndpointMetadata => {
+                "This address is a cloud metadata address. The server never sends to it. Use the bot's own address."
+                    .into()
+            }
             Self::NoEndpoint => "Set the bot's messaging endpoint first.".into(),
             Self::AppDisabled => "Turn the app on first.".into(),
             Self::UnsignedNotAllowed => {
@@ -140,6 +146,7 @@ impl AppProblem {
             Self::InvalidName => "invalid-name",
             Self::InvalidEndpoint => "invalid-endpoint",
             Self::EndpointNotAllowed => "endpoint-not-allowed",
+            Self::EndpointMetadata => "endpoint-metadata",
             Self::NoEndpoint => "no-endpoint",
             Self::AppDisabled => "app-disabled",
             Self::UnsignedNotAllowed => "unsigned-not-allowed",
@@ -190,6 +197,7 @@ impl From<AdminError> for AppProblem {
         match refusal {
             Refusal::InvalidEndpoint => Self::InvalidEndpoint,
             Refusal::EndpointNotAllowed => Self::EndpointNotAllowed,
+            Refusal::EndpointMetadata => Self::EndpointMetadata,
             Refusal::NoEndpoint => Self::NoEndpoint,
             Refusal::AppDisabled => Self::AppDisabled,
             Refusal::UnsignedNotAllowed => Self::UnsignedNotAllowed,
@@ -732,6 +740,7 @@ mod tests {
             AppProblem::EndpointNotAllowed,
             AppProblem::NoEndpoint,
             AppProblem::AppDisabled,
+            AppProblem::EndpointMetadata,
         ];
         for problem in &problems {
             assert!(!problem.words().is_empty() && !problem.kind().is_empty(), "{problem:?}");
@@ -751,6 +760,7 @@ mod tests {
         let cases = [
             (refused(Refusal::InvalidEndpoint, ""), AppProblem::InvalidEndpoint),
             (refused(Refusal::EndpointNotAllowed, ""), AppProblem::EndpointNotAllowed),
+            (refused(Refusal::EndpointMetadata, ""), AppProblem::EndpointMetadata),
             (refused(Refusal::NoEndpoint, ""), AppProblem::NoEndpoint),
             (refused(Refusal::AppDisabled, ""), AppProblem::AppDisabled),
             (refused(Refusal::UnsignedNotAllowed, ""), AppProblem::UnsignedNotAllowed),

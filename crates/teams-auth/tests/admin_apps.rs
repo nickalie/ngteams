@@ -199,6 +199,7 @@ async fn the_servers_refusals_name_what_is_wrong() -> TestResult {
         (409, "BotExists", Refusal::BotExists),
         (413, "PackageTooLarge", Refusal::PackageTooLarge),
         (400, "EndpointNotAllowed", Refusal::EndpointNotAllowed),
+        (400, "EndpointMetadata", Refusal::EndpointMetadata),
         (400, "NoEndpoint", Refusal::NoEndpoint),
         (409, "AppDisabled", Refusal::AppDisabled),
     ];

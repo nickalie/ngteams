@@ -895,9 +895,26 @@ fn an_endpoint_on_a_closed_network_is_said_in_the_details(cx: &mut TestAppContex
     let (server, mut opened) = page_opened(cx);
     opened.click_owned(&format!("app-row-{NOTES}"));
     server.refuse_next(AppProblem::EndpointNotAllowed);
-    opened.with_dialog(|dialog, window, cx| dialog.fill("", "", "https://169.254.169.254/latest", window, cx));
+    opened.with_dialog(|dialog, window, cx| dialog.fill("", "", "https://10.1.2.3/api/messages", window, cx));
     opened.click("app-dialog-confirm");
     let said = opened.dialog_problem().unwrap();
     assert!(said.contains("doesn't send to this address"), "{said}");
+    assert!(said.contains("private network"), "{said}");
+    assert_eq!(opened.kind(), Some(DialogKind::Details));
+}
+
+#[gpui::test]
+fn a_cloud_metadata_endpoint_is_said_in_its_own_words(cx: &mut TestAppContext) {
+    let (server, mut opened) = page_opened(cx);
+    opened.click_owned(&format!("app-row-{NOTES}"));
+    server.refuse_next(AppProblem::EndpointMetadata);
+    opened.with_dialog(|dialog, window, cx| dialog.fill("", "", "https://169.254.169.254/latest", window, cx));
+    opened.click("app-dialog-confirm");
+    let said = opened.dialog_problem().unwrap();
+    assert!(said.contains("cloud metadata address"), "{said}");
+    assert!(
+        !said.contains("private network") && !said.contains("operator"),
+        "{said}"
+    );
     assert_eq!(opened.kind(), Some(DialogKind::Details));
 }

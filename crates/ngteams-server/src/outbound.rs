@@ -24,12 +24,26 @@ pub const MAX_ANSWER: usize = 256 * 1024;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Why a request wasn't made or had no answer.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum OutboundError {
     #[error("the address isn't one the server sends to")]
     Url,
     #[error("the address is on a network the server doesn't reach")]
     Refused,
+    #[error("the address is a cloud metadata address, which the server never sends to")]
+    Metadata,
+    #[error("the name did not resolve")]
+    Unresolved,
+    #[error("the connection was refused")]
+    ConnectionRefused,
+    #[error("the bot's host is not reachable")]
+    Unreachable,
+    #[error("the connection was closed")]
+    Closed,
+    #[error("the bot's TLS certificate is not trusted")]
+    Certificate,
+    #[error("the TLS handshake failed")]
+    Tls,
     #[error("the request timed out")]
     Timeout,
     #[error("the answer is bigger than the server reads")]
@@ -68,7 +82,7 @@ impl Guard {
     /// Refuses `url` unless its scheme and form may be sent to and an address written in it is allowed.
     ///
     /// # Errors
-    /// [`OutboundError::Url`] or [`OutboundError::Refused`].
+    /// [`OutboundError::Url`], [`OutboundError::Metadata`] or [`OutboundError::Refused`].
     pub fn check(&self, url: &Url) -> Result<(), OutboundError> {
         let scheme = url.scheme() == "https" || (self.allow_http && url.scheme() == "http");
         if !scheme || !url.username().is_empty() || url.password().is_some() {
@@ -80,6 +94,7 @@ impl Guard {
             Host::Domain(_) => None,
         };
         match literal {
+            Some(address) if is_metadata(canonical(address)) => Err(OutboundError::Metadata),
             Some(address) if !self.allows(address) => Err(OutboundError::Refused),
             _ => Ok(()),
         }
@@ -111,10 +126,17 @@ impl Resolve for Guarded {
     fn resolve(&self, name: Name) -> Resolving {
         let guard = self.0.clone();
         Box::pin(async move {
-            let found = tokio::net::lookup_host((name.as_str(), 0)).await?;
-            let addresses: Vec<SocketAddr> = found.filter(|address| guard.allows(address.ip())).collect();
+            let failed = |error: OutboundError| Box::new(error) as Box<dyn std::error::Error + Send + Sync>;
+            let found: Vec<SocketAddr> = tokio::net::lookup_host((name.as_str(), 0))
+                .await
+                .map_err(|_| failed(OutboundError::Unresolved))?
+                .collect();
+            if found.is_empty() {
+                return Err(failed(OutboundError::Unresolved));
+            }
+            let addresses: Vec<SocketAddr> = found.into_iter().filter(|address| guard.allows(address.ip())).collect();
             if addresses.is_empty() {
-                return Err(Box::new(OutboundError::Refused) as Box<dyn std::error::Error + Send + Sync>);
+                return Err(failed(OutboundError::Refused));
             }
             Ok(Box::new(addresses.into_iter()) as Addrs)
         })
@@ -232,12 +254,25 @@ fn sensitive_authorization(authorization: &str) -> Result<reqwest::header::Heade
     Ok(value)
 }
 
-/// What a failed request was: refused by the guard's resolver, or another failure.
+/// What a failed request was, in words for a person: the guard's resolver, the connection, TLS or a timeout.
 fn refusal(error: &reqwest::Error) -> OutboundError {
     let mut source: Option<&(dyn std::error::Error + 'static)> = Some(error);
     while let Some(cause) = source {
-        if cause.downcast_ref::<OutboundError>() == Some(&OutboundError::Refused) {
-            return OutboundError::Refused;
+        if let Some(known) = cause.downcast_ref::<OutboundError>() {
+            return known.clone();
+        }
+        if let Some(found) = cause.downcast_ref::<rustls::Error>().map(tls) {
+            return found;
+        }
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            if let Some(found) = connection(io.kind()) {
+                return found;
+            }
+            // an io::Error's source() skips its own inner error, where the TLS layer puts the rustls error
+            if let Some(inner) = io.get_ref() {
+                source = Some(inner);
+                continue;
+            }
         }
         source = cause.source();
     }
@@ -245,6 +280,28 @@ fn refusal(error: &reqwest::Error) -> OutboundError {
         OutboundError::Timeout
     } else {
         OutboundError::Failed
+    }
+}
+
+fn tls(error: &rustls::Error) -> OutboundError {
+    match error {
+        rustls::Error::InvalidCertificate(_) => OutboundError::Certificate,
+        _ => OutboundError::Tls,
+    }
+}
+
+fn connection(kind: std::io::ErrorKind) -> Option<OutboundError> {
+    use std::io::ErrorKind;
+    match kind {
+        ErrorKind::ConnectionRefused => Some(OutboundError::ConnectionRefused),
+        ErrorKind::HostUnreachable | ErrorKind::NetworkUnreachable | ErrorKind::AddrNotAvailable => {
+            Some(OutboundError::Unreachable)
+        }
+        ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::UnexpectedEof => {
+            Some(OutboundError::Closed)
+        }
+        ErrorKind::TimedOut => Some(OutboundError::Timeout),
+        _ => None,
     }
 }
 
@@ -339,7 +396,16 @@ mod tests {
         assert_eq!(check(&https, "ftp://bot.example.test/"), Err(OutboundError::Url));
         assert_eq!(check(&https, "https://127.0.0.1/"), Err(OutboundError::Refused));
         assert_eq!(check(&https, "https://[::ffff:10.0.0.1]/"), Err(OutboundError::Refused));
-        assert_eq!(check(&https, "https://[fd00:ec2::254]/"), Err(OutboundError::Refused));
+        assert_eq!(check(&https, "https://[fd00:ec2::254]/"), Err(OutboundError::Metadata));
+        assert_eq!(
+            check(&https, "https://169.254.169.254/latest"),
+            Err(OutboundError::Metadata)
+        );
+        assert_eq!(
+            check(&guard(&["169.254.0.0/16"]), "https://[::ffff:169.254.169.254]/"),
+            Err(OutboundError::Metadata)
+        );
+        assert_eq!(check(&https, "https://169.254.10.10/"), Err(OutboundError::Refused));
         assert_eq!(check(&https, "https://bot.example.test/api/messages"), Ok(()));
         assert_eq!(check(&guard(&["127.0.0.0/8"]), "http://127.0.0.1:3978/"), Ok(()));
     }
@@ -351,6 +417,50 @@ mod tests {
             .post_json("https://localhost:9/api/messages", None, b"{}".to_vec())
             .await;
         assert_eq!(refused.unwrap_err(), OutboundError::Refused);
+    }
+
+    #[tokio::test]
+    async fn a_failed_connection_says_why_in_words_for_a_person() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let plain = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let plain_port = plain.local_addr().unwrap().port();
+        let task = tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            while let Ok((mut stream, _)) = plain.accept().await {
+                let _ = stream.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
+            }
+        });
+        let outbound = Outbound::new(guard(&["127.0.0.0/8"]), Duration::from_secs(5)).unwrap();
+        let failure = |url: String| {
+            let outbound = outbound.clone();
+            async move { outbound.post_json(&url, None, b"{}".to_vec()).await.unwrap_err() }
+        };
+        let refused = failure(format!("http://127.0.0.1:{closed}/")).await;
+        assert_eq!(refused, OutboundError::ConnectionRefused);
+        assert_eq!(refused.to_string(), "the connection was refused");
+        let tls = failure(format!("https://127.0.0.1:{plain_port}/")).await;
+        assert_eq!(tls, OutboundError::Tls);
+        assert_eq!(tls.to_string(), "the TLS handshake failed");
+        let unresolved = failure("https://bot.ngteams.invalid/".to_owned()).await;
+        assert_eq!(unresolved, OutboundError::Unresolved);
+        assert_eq!(unresolved.to_string(), "the name did not resolve");
+        task.abort();
+    }
+
+    #[test]
+    fn a_tls_error_and_an_io_kind_have_their_own_words() {
+        use std::io::ErrorKind;
+        let untrusted = rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer);
+        assert_eq!(tls(&untrusted), OutboundError::Certificate);
+        assert_eq!(tls(&rustls::Error::DecryptError), OutboundError::Tls);
+        assert_eq!(connection(ErrorKind::HostUnreachable), Some(OutboundError::Unreachable));
+        assert_eq!(connection(ErrorKind::ConnectionReset), Some(OutboundError::Closed));
+        assert_eq!(connection(ErrorKind::TimedOut), Some(OutboundError::Timeout));
+        assert_eq!(connection(ErrorKind::Other), None);
     }
 
     #[tokio::test]

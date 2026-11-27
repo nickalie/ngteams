@@ -228,7 +228,9 @@ async fn attempt(app: &App, row: &Delivery) -> Outcome {
     match app.outbound.post_json(endpoint, token.as_deref(), body).await {
         Ok(answer) if (200..300).contains(&answer.status) => Outcome::Sent,
         Ok(answer) => retry(app, row, format!("the bot answered {}", answer.status)),
-        Err(error @ (OutboundError::Url | OutboundError::Refused)) => Outcome::Failed(error.to_string()),
+        Err(error @ (OutboundError::Url | OutboundError::Refused | OutboundError::Metadata)) => {
+            Outcome::Failed(error.to_string())
+        }
         Err(error) => retry(app, row, error.to_string()),
     }
 }

@@ -15,10 +15,19 @@ async fn add(registry: &Registry, endpoint: &str) -> (u16, Value) {
     registry.call(Method::POST, APPS, Some(body)).await
 }
 
+/// A private, loopback, link-local or reserved address: `bots.allowed_networks` can open it, and the words say so.
 fn refused(answer: &Value, endpoint: &str) {
     assert_eq!(error_code(answer), "EndpointNotAllowed", "{endpoint}: {answer}");
     let message = answer["error"]["message"].as_str().unwrap_or_default();
     assert!(message.contains("bots.allowed_networks"), "{endpoint}: {message}");
+}
+
+/// A cloud metadata address: no setting opens it, and the words do not send the operator to one.
+fn metadata(answer: &Value, endpoint: &str) {
+    assert_eq!(error_code(answer), "EndpointMetadata", "{endpoint}: {answer}");
+    let message = answer["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("cloud metadata address"), "{endpoint}: {message}");
+    assert!(!message.contains("allowed_networks"), "{endpoint}: {message}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -30,6 +39,12 @@ async fn an_endpoint_on_a_network_the_server_never_reaches_is_refused_when_saved
         "https://[::ffff:169.254.169.254]/latest",
         "https://[fd00:ec2::254]/latest",
         "http://100.100.100.200/latest",
+    ] {
+        let (status, answer) = add(&registry, endpoint).await;
+        assert_eq!(status, 400, "{endpoint}: {answer}");
+        metadata(&answer, endpoint);
+    }
+    for endpoint in [
         "http://10.1.2.3/api/messages",
         "https://192.168.1.10/api/messages",
         "https://169.254.10.10/api/messages",
@@ -62,7 +77,16 @@ async fn an_endpoint_on_a_network_the_server_never_reaches_is_refused_when_saved
         )
         .await;
     assert_eq!(status, 400, "{answer}");
-    refused(&answer, "a change");
+    metadata(&answer, "a change");
+    let (status, answer) = registry
+        .call(
+            Method::PATCH,
+            &path,
+            Some(json!({"endpoint": "https://10.1.2.3/api/messages"})),
+        )
+        .await;
+    assert_eq!(status, 400, "{answer}");
+    refused(&answer, "a private change");
     let (_, app) = registry.call(Method::GET, &path, None).await;
     assert_eq!(app["bot"]["endpoint"], "https://bots.example.test/api/messages");
     registry.server.stop().await;
@@ -81,7 +105,7 @@ async fn allowed_networks_open_a_private_address_but_never_metadata() {
     assert_eq!(status, 201, "{answer}");
     let (status, answer) = add(&registry, "http://169.254.169.254/latest").await;
     assert_eq!(status, 400, "{answer}");
-    refused(&answer, "metadata");
+    metadata(&answer, "metadata");
     let (status, answer) = add(&registry, "http://127.0.0.1:3978/api/messages").await;
     assert_eq!(status, 400, "{answer}");
     refused(&answer, "loopback");

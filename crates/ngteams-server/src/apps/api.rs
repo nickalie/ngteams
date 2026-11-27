@@ -69,6 +69,7 @@ impl From<AppError> for ApiError {
             AppError::Name => (StatusCode::BAD_REQUEST, "InvalidName"),
             AppError::Endpoint => (StatusCode::BAD_REQUEST, "InvalidEndpoint"),
             AppError::EndpointNetwork => (StatusCode::BAD_REQUEST, "EndpointNotAllowed"),
+            AppError::EndpointMetadata => (StatusCode::BAD_REQUEST, "EndpointMetadata"),
             AppError::Unsigned => (StatusCode::BAD_REQUEST, "UnsignedNotAllowed"),
             AppError::UnknownUser => (StatusCode::BAD_REQUEST, "UnknownUser"),
             AppError::Package(_) => (StatusCode::BAD_REQUEST, "InvalidPackage"),
