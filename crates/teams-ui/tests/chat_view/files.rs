@@ -181,6 +181,11 @@ fn a_video_without_a_thumbnail_shows_the_large_video_icon_and_narrow_cards_wrap(
 fn more_options_download_the_file_and_copy_its_link() {
     let rig = rig();
     let shares = share_urls();
+    rig.core
+        .file_bytes
+        .lock()
+        .unwrap()
+        .insert(shares[1].clone(), DOCUMENT_BYTES.to_vec());
     let (written_trace, _) = trace();
     let (_view, cx) = chat_window(&rig, written_trace);
     click(cx, &format!("file-more-{ID}-1"));
@@ -189,10 +194,68 @@ fn more_options_download_the_file_and_copy_its_link() {
         "Open in browser"
     );
     click(cx, &format!("file-menu-download-{ID}-1"));
-    assert_eq!(cx.opened_url(), Some(format!("{}?download=1", shares[1])));
+    let folder = tempfile::tempdir().unwrap();
+    let target = folder.path().join("saved");
+    cx.simulate_new_path_selection(|_| Some(target.clone()));
+    draw(cx);
+    assert_eq!(
+        std::fs::read(&target).unwrap(),
+        DOCUMENT_BYTES,
+        "read through the engine"
+    );
+    assert_eq!(cx.opened_url(), None, "never the browser's download link");
+    assert!(bounds(cx, &format!("file-download-{ID}-1 saved")).is_some());
     click(cx, &format!("file-more-{ID}-0"));
     click(cx, &format!("file-menu-copy-{ID}-0"));
     assert_eq!(copied(cx).as_deref(), Some(shares[0].as_str()));
+}
+
+/// Made-up bytes standing for the fixture's document.
+const DOCUMENT_BYTES: &[u8] = b"made-up document bytes, every byte synthetic";
+
+/// A made-up address of a file in a person's OneDrive, sent with no sharing link.
+const UNSHARED: &str = "https://contoso-my.sharepoint.com/personal/made_up_owner_contoso_test/Documents/Microsoft%20Teams%20Chat%20Files/made-up%20answers.md";
+
+/// Made-up bytes standing for that file.
+const UNSHARED_BYTES: &[u8] = b"# made-up answers, every byte synthetic";
+
+/// A message from b with one file that has its own address and no sharing link.
+fn unshared_file_message() -> Message {
+    let entry = serde_json::json!({"@type": teams_proto::chat::FILE_TYPE, "fileName": "made-up answers.md",
+        "fileType": "md", "state": "active", "objectUrl": UNSHARED});
+    let mut stored = message(ID, LAB_B, "<p>the answers</p>", NOON);
+    stored.properties = Some(serde_json::json!({"files": Value::Array(vec![entry]).to_string()}).to_string());
+    stored
+}
+
+#[test]
+fn more_options_of_a_file_with_no_sharing_link_download_it_through_the_engine() {
+    let rig = rig_with(vec![unshared_file_message()]);
+    rig.core
+        .file_bytes
+        .lock()
+        .unwrap()
+        .insert(UNSHARED.to_owned(), UNSHARED_BYTES.to_vec());
+    let (written_trace, _) = trace();
+    let (_view, cx) = chat_window(&rig, written_trace);
+    click(cx, &format!("file-more-{ID}-0"));
+    for row in ["open", "download", "share", "copy"] {
+        assert!(bounds(cx, &format!("file-menu-{row}-{ID}-0")).is_some(), "{row}");
+    }
+    click(cx, &format!("file-menu-download-{ID}-0"));
+    assert!(cx.did_prompt_for_new_path());
+    let folder = tempfile::tempdir().unwrap();
+    let target = folder.path().join("made-up answers.md");
+    cx.simulate_new_path_selection(|_| Some(target.clone()));
+    draw(cx);
+    assert_eq!(std::fs::read(&target).unwrap(), UNSHARED_BYTES);
+    assert!(rig.core.asked().contains(&"file_stream"));
+    assert_eq!(cx.opened_url(), None, "saved, not opened");
+    assert!(bounds(cx, &format!("file-download-{ID}-0 saved")).is_some());
+    // Open still goes to the browser: a Microsoft file has a page there
+    click(cx, &format!("file-more-{ID}-0"));
+    click(cx, &format!("file-menu-open-{ID}-0"));
+    assert_eq!(cx.opened_url().as_deref(), Some(UNSHARED));
 }
 
 /// What the clipboard holds.

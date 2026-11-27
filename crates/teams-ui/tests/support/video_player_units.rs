@@ -448,9 +448,20 @@ fn video_actions_open_only_the_mock_browser_and_copy_the_original_link() {
     );
     click(cx, "video-more-menu");
     click(cx, "video-menu-download");
+    assert!(
+        cx.did_prompt_for_new_path(),
+        "saved through the engine, not the browser"
+    );
+    let folder = tempfile::tempdir().unwrap();
+    let target = folder.path().join("synthetic.mp4");
+    let place = target.clone();
+    cx.simulate_new_path_selection(move |_| Some(place));
+    draw(cx);
+    assert_eq!(std::fs::read(&target).unwrap(), MOVIE);
     assert_eq!(
         cx.opened_url().as_deref(),
-        Some("https://files.example.test/synthetic.mp4?download=1")
+        Some("https://files.example.test/synthetic.mp4"),
+        "no download link opened"
     );
     click(cx, "video-more-menu");
     click(cx, "video-menu-open");

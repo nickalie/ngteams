@@ -8,7 +8,7 @@
 //!   shows. The card ends with its reactions, "View original email" and, in the channel's list, "Reply in thread".
 //! - **"View original email"** gets the original `.eml` file, as Teams' download does: a SharePoint file opens in the
 //!   browser with `download=1` (the browser downloads it), an own server's file is saved through its account's engine
-//!   ([`crate::files::OwnFile`]); a line under the row tells how far that download got, or why it failed.
+//!   ([`crate::files::EngineFile`]); a line under the row tells how far that download got, or why it failed.
 
 use gpui::{
     AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
@@ -258,7 +258,7 @@ pub fn open_original(link: &str, source: Option<&PictureSource>, cx: &mut App) {
         return;
     }
     if let Some(source) = source {
-        crate::files::OwnFile::new(link.to_owned(), file_name(link), source.clone()).download(cx);
+        crate::files::EngineFile::new(link.to_owned(), file_name(link), source.clone()).download(cx);
     }
 }
 

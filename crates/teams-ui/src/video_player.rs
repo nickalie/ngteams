@@ -8,8 +8,8 @@
 //!   the card's [`PictureSource`]: no view builds a request), played by `GStreamer`, each frame shown here through
 //!   GPUI's external surface, its sound on the speaker of the devices the app gave ([`set_playback`]).
 //! - **The controls**, as Teams' player has them: play/pause, back 10 s, forward 10 s, mute (its volume slider beside
-//!   it while the pointer is on it), the time (`0:10 / 1:52`), "More options" (open in the browser, download, copy
-//!   link), full screen (the video over the whole window, the window full screen; Esc or the button leaves it) and
+//!   it while the pointer is on it), the time (`0:10 / 1:52`), "More options" (open in the browser, download through
+//!   the engine as the card's Download does, copy link), full screen (the video over the whole window, the window full screen; Esc or the button leaves it) and
 //!   "Open in browser" (Stream's player, where Teams pops the video out). The seek bar seeks
 //!   where it is clicked or dragged to, its tooltip the time. In a card the controls show only while the pointer is on
 //!   the video (or its seek bar is dragged, or a menu of it is open), whether it plays or not, as in Teams; a recap's
@@ -1572,7 +1572,7 @@ impl VideoPlayer {
     fn more(&self) -> AnyElement {
         let id = self.id.clone();
         let open = self.file.open_link().map(str::to_owned);
-        let download = self.file.download_link();
+        let download = crate::files::download_of_file(&self.file, Some(&self.source));
         let button = Button::new(SharedString::from(format!("video-more-button-{id}")))
             .ghost()
             .icon(Glyph::MORE.icon().size(px(18.0)).text_color(gpui::rgb(ON_VIDEO)))
@@ -1593,8 +1593,7 @@ impl VideoPlayer {
                 }
                 if let Some(download) = download.clone() {
                     menu = menu.item(
-                        menu_item("download", Glyph::DOWNLOAD, DOWNLOAD)
-                            .on_click(move |_, _, cx| cx.open_url(&download)),
+                        menu_item("download", Glyph::DOWNLOAD, DOWNLOAD).on_click(move |_, _, cx| download.start(cx)),
                     );
                 }
                 menu

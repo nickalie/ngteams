@@ -330,3 +330,36 @@ async fn an_abandoned_stream_request_does_not_wait_for_its_slow_item_to_finish()
     );
     rig.handle.shutdown();
 }
+
+/// A made-up own address of a file in a person's OneDrive, as an entry with no sharing link names it.
+const OBJECT: &str = "https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/Documents/Microsoft%20Teams%20Chat%20Files/made-up%20answers.md";
+
+#[tokio::test]
+async fn a_file_with_no_sharing_link_is_streamed_whole_by_its_own_address() {
+    let rig = running_engine().await;
+    let item_path = format!("/v1.0/shares/{}/driveItem", FileDownload::of(OBJECT).unwrap().share());
+    answer(
+        &rig.server,
+        &item_path,
+        ResponseTemplate::new(200).set_body_json(item(BYTES.len() as u64)),
+    )
+    .await;
+    answer(
+        &rig.server,
+        DOWNLOAD,
+        ResponseTemplate::new(206)
+            .insert_header("Content-Range", format!("bytes 0-{}/{}", BYTES.len() - 1, BYTES.len()))
+            .set_body_bytes(BYTES),
+    )
+    .await;
+    let mut stream = rig.handle.file_stream(OBJECT, 0, BYTES.len() as u64).await.unwrap();
+    assert_eq!(collect(&mut stream).await, BYTES);
+    assert_eq!(count(&rig.server, &item_path).await, 1);
+    let sent = rig.server.received_requests().await.unwrap();
+    let download = sent.iter().find(|request| request.url.path() == DOWNLOAD).unwrap();
+    assert!(
+        !download.headers.contains_key("authorization"),
+        "the download link carries its own grant: no token goes to it"
+    );
+    rig.handle.shutdown();
+}

@@ -20,18 +20,20 @@
 //!   card is drawn when there is none.
 //! - **A click** on the name or the picture opens the file the way the web client does, at its sharing link in the
 //!   browser (GPUI's `open_url`); "More options" offers what Teams on the web offers: "Open in browser" (not on a
-//!   video's card), "Download" (the sharing link with `download=1`: the browser downloads it), "Share" and "Copy link".
+//!   video's card), "Download", "Share" and "Copy link". Download reads the file through its account's engine by
+//!   its sharing link, else its own (a file sent with none), and saves it where the user chooses, as an own server's
+//!   file (below). Only a card drawn with no engine gives the browser the sharing link with `download=1`.
 //!   Share (the video card's button, and the item) opens Teams' "Share this file" dialog through the view that drew
 //!   the card ([`ShareFile`], `crate::share_file`); a card drawn with no such view (a message still being sent, the
 //!   read-only app) offers no Share. Teams' "Favorite" (the file in the user's OneDrive favorites) is not offered: the
 //!   app has no favorite files.
-//! - **An own server's file** ([`OwnFile`]) is read through its account's engine, never in a browser: the server has
+//! - **An own server's file** ([`EngineFile`]) is read through its account's engine, never in a browser: the server has
 //!   no page that shows a file, and a browser holds no token for it. A click and "Open in desktop app" save it in a
 //!   new folder in a folder of the user's alone and open it in the system's app for it (its `file://` link; not on a
 //!   video's card, as Teams has no "Open in browser" there);
 //!   "Download" saves it where the user chooses (the downloads folder without a chooser)
 //!   (`crate::recording_download`). Each runs to its end, also when the other one starts while it runs. A line under
-//!   the card tells how far the last one got.
+//!   the card tells how far the last one got, for a Microsoft file's Download too.
 //! - **The keyboard** reaches each card as Teams' does: a card is a Tab stop in its message's order, ringed while the
 //!   keyboard is on it ([`crate::keyboard::outline_ring`]), then its own buttons. Enter or Space does what a click does: it opens the file,
 //!   or plays a video in its card, the keys going into the player; Escape there pauses it and gives the keys back to
@@ -545,31 +547,26 @@ impl FileCard {
 
     /// "More options": the file's actions, as Teams on the web offers them, when it has a link to act on: "Open in
     /// browser" (not on a video's card), "Download", "Share" ("Share this file", [`ShareFile`]; not without a view to
-    /// open it) and "Copy link". An own server's file is opened and downloaded through its engine (see the module
-    /// docs).
+    /// open it) and "Copy link". Download goes through the engine, as an own server's Open does (see the module docs).
     fn more(&self, kind: FileKind) -> Option<AnyElement> {
         let link = self.file.open_link()?.to_owned();
         let opens = kind != FileKind::Video;
-        let actions = match self.own() {
-            Some(own) => Actions::Own(own),
-            None => Actions::Browser {
-                download: self.file.download_link(),
-            },
-        };
+        let own = self.own();
+        let download = self.download();
         let id = self.id.clone();
         let (share, file) = (self.share.clone(), self.file.clone());
         let button =
             header_button(format!("file-more-{id}"), Glyph::MORE, "More options").dropdown_menu(move |menu, _, _| {
-                let menu = match &actions {
+                let menu = match &own {
                     _ if !opens => menu,
-                    Actions::Own(own) => {
+                    Some(own) => {
                         let own = own.clone();
                         menu.item(
                             menu_item(&id, "open", Glyph::EXTERNAL_LINK, OPEN_IN_APP)
                                 .on_click(move |_, _, cx| own.open(cx)),
                         )
                     }
-                    Actions::Browser { .. } => {
+                    None => {
                         let link = link.clone();
                         menu.item(
                             menu_item(&id, "open", Glyph::EXTERNAL_LINK, OPEN_IN_BROWSER)
@@ -577,24 +574,12 @@ impl FileCard {
                         )
                     }
                 };
-                let menu = match &actions {
-                    Actions::Own(own) => {
-                        let own = own.clone();
-                        menu.item(
-                            menu_item(&id, "download", Glyph::DOWNLOAD, DOWNLOAD)
-                                .on_click(move |_, _, cx| own.download(cx)),
-                        )
-                    }
-                    Actions::Browser {
-                        download: Some(download),
-                    } => {
-                        let download = download.clone();
-                        menu.item(
-                            menu_item(&id, "download", Glyph::DOWNLOAD, DOWNLOAD)
-                                .on_click(move |_, _, cx| cx.open_url(&download)),
-                        )
-                    }
-                    Actions::Browser { download: None } => menu,
+                let menu = match download.clone() {
+                    Some(download) => menu.item(
+                        menu_item(&id, "download", Glyph::DOWNLOAD, DOWNLOAD)
+                            .on_click(move |_, _, cx| download.start(cx)),
+                    ),
+                    None => menu,
                 };
                 let copied = link.clone();
                 let menu = match &share {
@@ -617,22 +602,28 @@ impl FileCard {
 
     /// The file as its own server's, read through `source`'s engine: when it has an engine and its links aren't on
     /// Microsoft's file service.
-    fn own(&self) -> Option<OwnFile> {
-        let source = self.source.clone()?;
-        let link = self.file.open_link()?.to_owned();
-        (!teams_proto::chat::is_file_link(&link)).then(|| OwnFile {
-            link,
-            name: self.file.name.clone(),
-            source,
-        })
+    fn own(&self) -> Option<EngineFile> {
+        self.engine_file()
+            .filter(|file| !teams_proto::chat::is_file_link(&file.link))
     }
 
-    /// How far the own server's file's download got, as a line under its card; none without one this run.
+    /// The file read through `source`'s engine by its sharing link, else its own: when it has an engine and a link.
+    fn engine_file(&self) -> Option<EngineFile> {
+        let link = self.file.open_link()?.to_owned();
+        Some(EngineFile::new(link, self.file.name.clone(), self.source.clone()?))
+    }
+
+    /// How "Download" gets the file (see [`Download`]); none when it has no link.
+    fn download(&self) -> Option<Download> {
+        download_of_file(&self.file, self.source.as_ref())
+    }
+
+    /// How far the file's download through its engine got, as a line under its card; none without one this run.
     fn status(&self, cx: &App) -> Option<AnyElement> {
-        let own = self.own()?;
+        let file = self.engine_file()?;
         download_line(
-            &own.link,
-            &own.name,
+            &file.link,
+            &file.name,
             &format!("file-download-{}", self.id),
             self.palette,
             cx,
@@ -688,11 +679,34 @@ pub fn no_picture(kind: FileKind, selector: &str) -> AnyElement {
         .into_any_element()
 }
 
-/// What "More options" does with a file: through the browser (a Microsoft file), or through its engine (an own
-/// server's).
-enum Actions {
-    Browser { download: Option<String> },
-    Own(OwnFile),
+/// How "Download" gets a file: through its account's engine, which saves it with a line under its card; the browser's
+/// download link only for a card drawn with no engine.
+#[derive(Clone)]
+pub(crate) enum Download {
+    Engine(EngineFile),
+    Browser(String),
+}
+
+impl Download {
+    pub(crate) fn start(&self, cx: &mut App) {
+        match self {
+            Self::Engine(file) => file.download(cx),
+            Self::Browser(link) => cx.open_url(link),
+        }
+    }
+}
+
+/// How "Download" gets `file`, read through `source`'s engine when there is one (see [`Download`]).
+pub(crate) fn download_of_file(file: &SharedFile, source: Option<&PictureSource>) -> Option<Download> {
+    let link = file.open_link()?.to_owned();
+    match source {
+        Some(source) => Some(Download::Engine(EngineFile::new(
+            link,
+            file.name.clone(),
+            source.clone(),
+        ))),
+        None => file.download_link().map(Download::Browser),
+    }
 }
 
 /// A header's button: `glyph` at Teams' size ([`HEADER_BUTTON`]), `tip` its tooltip.
@@ -700,9 +714,9 @@ fn header_button(id: String, glyph: Glyph, tip: &'static str) -> Button {
     icon_button(SharedString::from(id), glyph, tip).with_size(px(HEADER_BUTTON))
 }
 
-/// `element` opening `file` when clicked, with the pointer's hand: an own server's through its engine ([`OwnFile::open`]),
+/// `element` opening `file` when clicked, with the pointer's hand: an own server's through its engine ([`EngineFile::open`]),
 /// any other in the browser (its sharing link, else its own); as it was when the file has no link to open.
-fn open_on_click(element: gpui::Stateful<gpui::Div>, file: &SharedFile, own: Option<OwnFile>) -> AnyElement {
+fn open_on_click(element: gpui::Stateful<gpui::Div>, file: &SharedFile, own: Option<EngineFile>) -> AnyElement {
     if file.open_link().is_none() {
         return element.into_any_element();
     }
@@ -714,9 +728,9 @@ fn open_on_click(element: gpui::Stateful<gpui::Div>, file: &SharedFile, own: Opt
         .into_any_element()
 }
 
-/// Opens `file`: an own server's through its engine ([`OwnFile::open`]), any other in the browser (its sharing link,
+/// Opens `file`: an own server's through its engine ([`EngineFile::open`]), any other in the browser (its sharing link,
 /// else its own); nothing when it has no link.
-fn open_file(file: &SharedFile, own: Option<&OwnFile>, cx: &mut App) {
+fn open_file(file: &SharedFile, own: Option<&EngineFile>, cx: &mut App) {
     match (own, file.open_link()) {
         (Some(own), _) => own.open(cx),
         (None, Some(link)) => cx.open_url(link),
@@ -724,7 +738,7 @@ fn open_file(file: &SharedFile, own: Option<&OwnFile>, cx: &mut App) {
     }
 }
 
-/// Why an own server's file couldn't be downloaded, as its card's line says it.
+/// Why a file couldn't be downloaded through its engine, as its card's line says it.
 fn failed_words(failure: &Failure) -> String {
     match failure {
         Failure::Refused => "You may no longer have access to the file.".to_owned(),
@@ -732,7 +746,7 @@ fn failed_words(failure: &Failure) -> String {
     }
 }
 
-/// How far the last download this run of the own server's file at `link` (saved as `name`) got, as a line; none
+/// How far the last download this run of the file at `link` (saved as `name`) through its engine got, as a line; none
 /// without one, or after it was cancelled. Its selector is `<selector> <state>`.
 pub(crate) fn download_line(link: &str, name: &str, selector: &str, palette: Palette, cx: &App) -> Option<AnyElement> {
     let download = download_of(link, cx)?;
@@ -763,10 +777,11 @@ pub(crate) fn download_line(link: &str, name: &str, selector: &str, palette: Pal
     )
 }
 
-/// An own server's file, read through its account's engine (see the module docs).
+/// A file read through its account's engine: an own server's to open or download, a Microsoft file's to download
+/// (see the module docs).
 #[derive(Clone)]
-pub struct OwnFile {
-    /// Its sharing link: what the engine reads it by, and what its download is known by.
+pub struct EngineFile {
+    /// Its sharing link, else its own: what the engine reads it by, and what its download is known by.
     link: String,
     name: String,
     source: PictureSource,
@@ -792,8 +807,8 @@ fn new_folder_in(folder: &Path) -> std::io::Result<PathBuf> {
     Err(std::io::ErrorKind::AlreadyExists.into())
 }
 
-impl OwnFile {
-    /// The file at `link` (its sharing link), saved as `name`, read through the engine of `source`.
+impl EngineFile {
+    /// The file at `link` (its sharing link, else its own), saved as `name`, read through the engine of `source`.
     #[must_use]
     pub fn new(link: String, name: String, source: PictureSource) -> Self {
         Self { link, name, source }
