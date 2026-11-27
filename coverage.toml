@@ -114,7 +114,7 @@ sha256 = "4f27776ff2e3d9d662467a5ecb6542670137e2e47658e9d5b3dc26196987a972"
 reason = "module declarations, documentation and an integer constant only; no executable bodies"
 
 [unmapped_sources."crates/teams-ui/src/lib.rs"]
-sha256 = "cebaf219cbd57bb253eb05a59dacb0aefbfacdab095902d7848c395f711bf790"
+sha256 = "c86f84aa090c14011f8693673b39b4a8a9c1203515e0c396e364beed9443b42e"
 reason = "module declarations, re-exports, documentation and the `ctrl!` hint and `secondary!` keystroke macros (a string literal per platform) only; no executable bodies"
 
 [unmapped_sources."crates/teams-wpe-client/src/event.rs"]
@@ -609,12 +609,12 @@ context = { "crates/teams-signin/src/lib.rs" = "a7b946e05829938c67d8c83c2f95877b
 [unmapped_sources_windows."crates/teams-ui/src/notify/linux.rs"]
 sha256 = "e8c66c3caa1e08455c4fc7999bef41a82cb04232806c3c6ffa7f8f7f6993fba7"
 reason = "Linux-only freedesktop notification D-Bus transport; notify.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
-context = { "crates/teams-ui/src/lib.rs" = "cebaf219cbd57bb253eb05a59dacb0aefbfacdab095902d7848c395f711bf790", "crates/teams-ui/src/notify.rs" = "7a1fd788213e6394f7868c775f88814768d3eb0b242986828020d82b083ea6d8" }
+context = { "crates/teams-ui/src/lib.rs" = "c86f84aa090c14011f8693673b39b4a8a9c1203515e0c396e364beed9443b42e", "crates/teams-ui/src/notify.rs" = "7a1fd788213e6394f7868c775f88814768d3eb0b242986828020d82b083ea6d8" }
 
 [unmapped_sources_windows."crates/teams-ui/src/tray/linux.rs"]
 sha256 = "ceed6565f30d059be5e8b6c0901fcba714248fe4ba0998e40c912d90db539ade"
 reason = "Linux-only StatusNotifierItem, D-Bus menu and launcher unread transport; tray.rs selects this module only under cfg(target_os = \"linux\"), so it is absent from native Windows compilation and remains required on Linux"
-context = { "crates/teams-ui/src/lib.rs" = "cebaf219cbd57bb253eb05a59dacb0aefbfacdab095902d7848c395f711bf790", "crates/teams-ui/src/tray.rs" = "761e00a9301f59539a3edca854dfd467ac83a8f68dcd509ef18e4eaa07d7a1ab" }
+context = { "crates/teams-ui/src/lib.rs" = "c86f84aa090c14011f8693673b39b4a8a9c1203515e0c396e364beed9443b42e", "crates/teams-ui/src/tray.rs" = "761e00a9301f59539a3edca854dfd467ac83a8f68dcd509ef18e4eaa07d7a1ab" }
 
 [unmapped_sources_windows."crates/ngteams/src/ctl/socket/unix.rs"]
 sha256 = "ea79c3378f2968223f72f282f2514e5cd6cb8ff57c9d0dc46b9130aa2b7bc50e"
