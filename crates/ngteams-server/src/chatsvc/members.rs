@@ -111,6 +111,9 @@ pub(super) async fn finish(app: &App, caller: &Caller, outcome: Outcome) -> Resu
     events::tell(app, "NewMessage", &done.event.value()?, &done.readers, &[]).await;
     let thread = wire::thread(app, caller, &done.chat, &done.members);
     events::publish(app, &done.members, "ThreadUpdate", &thread).await;
+    if done.bots {
+        crate::bots::wake(app).await;
+    }
     Ok(StatusCode::OK)
 }
 

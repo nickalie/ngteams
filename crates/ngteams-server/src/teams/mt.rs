@@ -189,15 +189,23 @@ async fn account(app: &App, mri: &str) -> Answer<Option<String>> {
         .map(|user| user.id))
 }
 
-/// Puts `user` on the team with the role, or gives someone on it the role; not when the team would lose its
+/// `by` puts `user` on the team with the role, or gives someone on it the role; not when the team would lose its
 /// last owner.
-async fn place(app: &App, team: &str, user: &str, owner: bool, on_team: bool) -> Answer<bool> {
+async fn place(app: &App, team: &str, (user, owner): (&str, bool), on_team: bool, by: &str) -> Answer<bool> {
     if on_team {
-        let (changed, _) = repo::change_member(&app.db, team, user, Some(owner)).await?;
-        return Ok(changed == Changed::Done);
+        let change = repo::change_member(&app.db, team, user, Some(owner), by).await?;
+        return Ok(change.changed == Changed::Done);
     }
-    repo::put_member(&app.db, team, user, owner).await?;
+    put_member(app, team, user, owner, by).await?;
     Ok(true)
+}
+
+/// [`repo::put_member`], waking the bot senders when a bot of the team was told.
+pub(super) async fn put_member(app: &App, team: &str, user: &str, owner: bool, by: &str) -> Answer<()> {
+    if repo::put_member(&app.db, team, user, owner, by).await? {
+        crate::bots::wake(app).await;
+    }
+    Ok(())
 }
 
 async fn add_members(
@@ -230,7 +238,7 @@ async fn add_members(
         // only an owner makes owners or changes the role of someone already on the team
         let allowed = seat.member.owner || (!owner && current.is_none());
         let placed = match account(&app, named).await? {
-            Some(user) if allowed => place(&app, &id, &user, owner, current.is_some()).await?,
+            Some(user) if allowed => place(&app, &id, (&user, owner), current.is_some(), &actor.id).await?,
             _ => false,
         };
         if placed { &mut added } else { &mut failed }.push(json!({"mri": named}));
@@ -264,8 +272,12 @@ async fn update_member(
         seat.owner()?;
         seat.active()?;
     }
-    let (changed, handed) = repo::change_member(&app.db, &id, user, role).await?;
-    match changed {
+    let change = repo::change_member(&app.db, &id, user, role, &actor.id).await?;
+    if change.bots {
+        crate::bots::wake(&app).await;
+    }
+    let handed = change.handed;
+    match change.changed {
         Changed::Done => {}
         Changed::NotMember => return Err(Error::NOT_FOUND),
         Changed::LastOwner => return Err(Error::LAST_OWNER),
@@ -307,7 +319,7 @@ async fn enter(app: &App, actor: &Me, team: &Team) -> Answer<Json<Value>> {
         return Err(Error::ARCHIVED);
     }
     if repo::membership(&app.db, &team.id, &actor.id).await?.is_none() {
-        repo::put_member(&app.db, &team.id, &actor.id, false).await?;
+        put_member(app, &team.id, &actor.id, false, &actor.id).await?;
         announce(app, &actor.tenant, &team.id).await;
     }
     Ok(Json(
@@ -408,7 +420,7 @@ async fn answer_join_request(
         return Err(Error::NOT_FOUND);
     }
     if accept {
-        repo::put_member(&app.db, &seat.team.id, user, false).await?;
+        put_member(&app, &seat.team.id, user, false, &actor.id).await?;
         announce(&app, &actor.tenant, &seat.team.id).await;
     }
     Ok(Json(json!({"value": true})))

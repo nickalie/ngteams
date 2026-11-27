@@ -393,7 +393,7 @@ async fn clone(
     if flag("includeRoster") {
         for person in repo::roster(&app.db, &seat.team.id).await? {
             if person.user_id != actor.id {
-                repo::put_member(&app.db, &team.id, &person.user_id, person.owner).await?;
+                super::mt::put_member(&app, &team.id, &person.user_id, person.owner, &actor.id).await?;
             }
         }
     }

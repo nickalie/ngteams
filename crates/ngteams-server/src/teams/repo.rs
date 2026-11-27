@@ -518,14 +518,15 @@ pub(crate) async fn delete_team(db: &Db, id: &str) -> Result<(), DbError> {
         .await)
 }
 
-/// Puts `user` on the team with a role and into its standard channels. Someone already on it keeps their role:
-/// only `change_member`, which keeps an owner, changes one.
-pub(crate) async fn put_member(db: &Db, team: &str, user: &str, owner: bool) -> Result<(), DbError> {
+/// Puts `user` on the team with a role and into its standard channels, `by` adding them (or themself, joining).
+/// Someone already on it keeps their role: only `change_member`, which keeps an owner, changes one. Whether a bot of
+/// the team was told, so the caller wakes the senders.
+pub(crate) async fn put_member(db: &Db, team: &str, user: &str, owner: bool, by: &str) -> Result<bool, DbError> {
     let at = now();
     with_conn!(db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
             let version: i64 = advance!(conn, at);
-            diesel::insert_into(team_members::table)
+            let added = diesel::insert_into(team_members::table)
                 .values((
                     team_members::team_id.eq(team),
                     team_members::user_id.eq(user),
@@ -548,7 +549,8 @@ pub(crate) async fn put_member(db: &Db, team: &str, user: &str, owner: bool) -> 
                 .execute(conn)
                 .await?;
             touch_team!(conn, team, version);
-            Ok(())
+            let bots = added > 0 && crate::bots::outbox::enqueue_members!(conn, team, by, &[user], true, version);
+            Ok(bots)
         })
         .await)
 }
@@ -647,14 +649,35 @@ macro_rules! hand_on_channels {
     }};
 }
 
-/// Changes the role of someone on the team (`owner`), or takes them off it (`None`), never leaving it or a private
-/// channel of it ownerless. With what it came to, the private channels that got a new owner.
+/// What a change of someone's place on a team did.
+#[derive(Debug)]
+pub(crate) struct MemberChange {
+    pub changed: Changed,
+    /// The private channels that got a new owner.
+    pub handed: Vec<String>,
+    /// Whether a bot of the team was told, so the caller wakes the senders.
+    pub bots: bool,
+}
+
+impl MemberChange {
+    const fn refused(changed: Changed) -> Self {
+        Self {
+            changed,
+            handed: Vec::new(),
+            bots: false,
+        }
+    }
+}
+
+/// Changes the role of someone on the team (`owner`), or takes them off it (`None`; `by` themself: they leave),
+/// never leaving it or a private channel of it ownerless.
 pub(crate) async fn change_member(
     db: &Db,
     team: &str,
     user: &str,
     owner: Option<bool>,
-) -> Result<(Changed, Vec<String>), DbError> {
+    by: &str,
+) -> Result<MemberChange, DbError> {
     let at = now();
     with_conn!(db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
@@ -666,7 +689,7 @@ pub(crate) async fn change_member(
                 .await
                 .optional()?
             else {
-                return Ok((Changed::NotMember, Vec::new()));
+                return Ok(MemberChange::refused(Changed::NotMember));
             };
             if current && owner != Some(true) {
                 let owners: i64 = team_members::table
@@ -676,10 +699,11 @@ pub(crate) async fn change_member(
                     .get_result(conn)
                     .await?;
                 if owners < 2 {
-                    return Ok((Changed::LastOwner, Vec::new()));
+                    return Ok(MemberChange::refused(Changed::LastOwner));
                 }
             }
             let mut handed = Vec::new();
+            let mut bots = false;
             if let Some(owner) = owner {
                 diesel::update(team_members::table.find((team, user)))
                     .set(team_members::owner.eq(owner))
@@ -709,9 +733,14 @@ pub(crate) async fn change_member(
                 diesel::delete(team_members::table.find((team, user)))
                     .execute(conn)
                     .await?;
+                bots = crate::bots::outbox::enqueue_members!(conn, team, by, &[user], false, version);
             }
             touch_team!(conn, team, version);
-            Ok((Changed::Done, handed))
+            Ok(MemberChange {
+                changed: Changed::Done,
+                handed,
+                bots,
+            })
         })
         .await)
 }

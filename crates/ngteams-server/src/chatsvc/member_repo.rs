@@ -35,6 +35,8 @@ pub(super) struct Done {
     pub chat: Chat,
     /// The people in the chat after the change.
     pub members: Vec<Member>,
+    /// Whether a bot in the chat was told of the change.
+    pub bots: bool,
 }
 
 /// One person to add, and the first message they may read (the `shareHistoryTime` sent for them).
@@ -118,6 +120,7 @@ macro_rules! finish {
             readers,
             chat: scene.chat,
             members,
+            bots: false,
         }
     }};
 }
@@ -212,7 +215,11 @@ pub(super) async fn add(
             if added.is_empty() {
                 return Ok(Outcome::Unchanged);
             }
-            let done = finish!(conn, found, actor, version, event(version, &added), None::<String>);
+            let mut done = finish!(conn, found, actor, version, event(version, &added), None::<String>);
+            if joining == Joining::People {
+                let people: Vec<&str> = added.iter().map(|(user, _)| user.as_str()).collect();
+                done.bots = crate::bots::outbox::enqueue_members!(conn, chat, actor, &people, true, version);
+            }
             Ok(Outcome::Done(Box::new(done)))
         })
         .await)
@@ -258,7 +265,10 @@ pub(super) async fn remove(
                 return Ok(Outcome::Missing);
             }
             let body = event(version, &[(target.to_owned(), 0)]);
-            let done = finish!(conn, found, actor, version, body, Some(target.to_owned()));
+            let mut done = finish!(conn, found, actor, version, body, Some(target.to_owned()));
+            if leaving == Joining::People {
+                done.bots = crate::bots::outbox::enqueue_members!(conn, chat, actor, &[target], false, version);
+            }
             Ok(Outcome::Done(Box::new(done)))
         })
         .await)

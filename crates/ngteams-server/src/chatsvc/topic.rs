@@ -102,6 +102,7 @@ async fn rename(
                 readers,
                 chat: scene.chat,
                 members,
+                bots: false,
             })))
         })
         .await)

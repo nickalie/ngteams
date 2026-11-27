@@ -765,8 +765,13 @@ activities in the outbox, so it gets them as it gets any other: on an add `insta
 with the bot (`personal`); for a group chat in the chat (`groupChat`); for a team in its general channel
 (`conversationType` `channel`, the team's thread as `conversation.id`, `channelData.team` `{"id", "name",
 "aadGroupId"}`, `channelData.channel`, `teamsTeamId`, `teamsChannelId`, and `channelData.eventType`
-`teamMemberAdded` or `teamMemberRemoved` on the `conversationUpdate`). A bot is not told yet when people join or leave
-a chat or team it is in, or when a channel is made there (`membersAdded` of people, `channelCreated`).
+`teamMemberAdded` or `teamMemberRemoved` on the `conversationUpdate`).
+
+**People who come and go.** When people are added to a group chat or a team where the bot is, join the team, are
+taken out or leave, the bot gets `conversationUpdate` with `membersAdded` or `membersRemoved` (each person as
+`{"id": "29:<object id>", "aadObjectId"}`), `from` the person who made the change, in the chat or (for a team) in its
+general channel as above. The row is written in the roster change's own transaction. A role change, a bot's own
+seat and a private channel's people tell it nothing. A bot is not told yet when a channel is made (`channelCreated`).
 
 **Groups and channels.** In a group chat or a channel the bot gets only a message that mentions it. In a channel the
 activity's `conversation.id` is the post's reply chain, `<channel>;messageid=<post>`, with the channel and team in

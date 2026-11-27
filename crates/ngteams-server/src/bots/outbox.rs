@@ -63,13 +63,11 @@ impl Delivery {
     }
 }
 
-/// In a chat write's transaction (`$conn`): a row for each bot in `$chat` that `$event` (an
-/// [`super::activity::Event`]) by `$owner` concerns. A bot's own writes, anything in a chat without a bot and a member
-/// whose app was deleted make none. Whether one was made, so the caller wakes the senders after its commit.
-macro_rules! enqueue {
-    ($conn:expr, $chat:expr, $owner:expr, $event:expr, $at:expr) => {{
-        use $crate::bots::schema::bot_deliveries;
-        use $crate::chatsvc::schema::{chat_members, chats};
+/// In a transaction (`$conn`): the bots in `$chat` (their ids and names) that hear what `$owner` does there. A chat
+/// without a bot, a member whose app was deleted and the bot `$owner` itself make none.
+macro_rules! bots_in {
+    ($conn:expr, $chat:expr, $owner:expr) => {{
+        use $crate::chatsvc::schema::chat_members;
         use $crate::db::schema::users;
         let members: Vec<String> = chat_members::table
             .filter(chat_members::chat_id.eq($chat))
@@ -98,15 +96,39 @@ macro_rules! enqueue {
                 .load($conn)
                 .await?
         };
+        bots
+    }};
+}
+pub(crate) use bots_in;
+
+/// In a transaction (`$conn`): the name of `$owner` when they are a person; a bot's or a deleted account's acts reach
+/// no bot.
+macro_rules! person_name {
+    ($conn:expr, $owner:expr) => {{
+        use $crate::db::schema::users;
+        let name: Option<String> = users::table
+            .find($owner)
+            .filter($crate::db::users::person())
+            .select(users::display_name)
+            .first($conn)
+            .await
+            .optional()?;
+        name
+    }};
+}
+pub(crate) use person_name;
+
+/// In a chat write's transaction (`$conn`): a row for each bot in `$chat` that `$event` (an
+/// [`super::activity::Event`]) by `$owner` concerns ([`bots_in!`]). Whether one was made, so the caller wakes the
+/// senders after its commit.
+macro_rules! enqueue {
+    ($conn:expr, $chat:expr, $owner:expr, $event:expr, $at:expr) => {{
+        use $crate::bots::schema::bot_deliveries;
+        use $crate::chatsvc::schema::chats;
+        let bots = $crate::bots::outbox::bots_in!($conn, $chat, $owner);
         let mut queued = false;
         if !bots.is_empty() {
-            let sender: Option<String> = users::table
-                .find($owner)
-                .filter($crate::db::users::person())
-                .select(users::display_name)
-                .first($conn)
-                .await
-                .optional()?;
+            let sender = $crate::bots::outbox::person_name!($conn, $owner);
             let personal: bool = chats::table
                 .find($chat)
                 .select(chats::unique_roster)
@@ -147,6 +169,44 @@ macro_rules! enqueue {
     }};
 }
 pub(crate) use enqueue;
+
+/// In a roster write's transaction (`$conn`): a `conversationUpdate` row for each bot in `$chat` (a group chat, or a
+/// team's thread: its own id) that the people `$people` (account ids) were added to it (`$added`) or taken out of it
+/// by `$by`, a person. Whether one was made, so the caller wakes the senders after its commit.
+macro_rules! enqueue_members {
+    ($conn:expr, $chat:expr, $by:expr, $people:expr, $added:expr, $at:expr) => {{
+        use $crate::bots::schema::bot_deliveries;
+        let bots = $crate::bots::outbox::bots_in!($conn, $chat, $by);
+        let mut queued = false;
+        if !bots.is_empty()
+            && let Some(name) = $crate::bots::outbox::person_name!($conn, $by)
+        {
+            let in_channel = $crate::bots::outbox::channel_of!($conn, $chat, None::<i64>);
+            let place = in_channel.as_ref().map_or(
+                $crate::bots::activity::Place::Group($chat),
+                $crate::bots::activity::Place::Channel,
+            );
+            let from = $crate::bots::activity::Sender { id: $by, name: &name };
+            let people: Vec<String> = $people.iter().map(|id| format!("8:orgid:{id}")).collect();
+            for (bot, bot_name) in &bots {
+                let to = $crate::bots::activity::Recipient {
+                    id: bot,
+                    name: bot_name,
+                };
+                let activity = $crate::bots::activity::members_changed(&place, &from, &to, &people, $added, $at);
+                let row = $crate::bots::outbox::Delivery::new(bot, $chat, $at, &activity, false);
+                diesel::insert_into(bot_deliveries::table)
+                    .values(&row)
+                    .execute($conn)
+                    .await?;
+                queued = true;
+            }
+        }
+        queued
+    }};
+}
+pub(crate) use enqueue;
+pub(crate) use enqueue_members;
 
 /// In a transaction (`$conn`): when `$chat` is a team's channel, the channel, its team and the post of the thread of
 /// the message `$message` (an `Option<i64>`).
