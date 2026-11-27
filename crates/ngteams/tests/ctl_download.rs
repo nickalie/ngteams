@@ -261,7 +261,7 @@ impl Lab {
         let dir = tempfile::tempdir().unwrap();
         runtime.block_on(serve_files(&server));
         let gate = Arc::new(Gate::default());
-        let race_picture = dir.path().join("out/race/image-2.png");
+        let race_picture = dir.path().join("out").join("race").join("image-2.png");
         runtime.block_on(serve_held(&server, race_picture, Arc::clone(&gate)));
         let http = || {
             let http = HttpTransport::with_mock_origin(Arc::new(Tokens), CHAT_BASE, &server.uri()).unwrap();

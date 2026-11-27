@@ -952,7 +952,7 @@ fn download_asks_for_the_selected_attachments_in_an_absolute_folder_and_prints_w
         ),
         (
             vec!["download", "Lab chat", "1700000000000", "--all", "--out", "saved/here"],
-            download(&here.join("saved/here"), None, None, true, false),
+            download(&here.join("saved").join("here"), None, None, true, false),
             vec![
                 saved_file(1, "report.pdf", out, 18),
                 saved_file(2, "picture-2.png", out, 4),
