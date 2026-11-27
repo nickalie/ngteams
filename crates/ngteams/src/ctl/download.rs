@@ -15,7 +15,8 @@
 //! - A download is a read: the read-only mode serves it too.
 //! - The files are saved one after the other. The first failure stops the download, and its error names the files
 //!   saved before it. The download runs apart from the request: past [`DOWNLOAD_ANSWER`] the app answers `timeout`,
-//!   and the download continues to its end, also with the files after the one it reads then.
+//!   and the download continues to its end, also with the files after the one it reads then. The app's log tells how
+//!   it ended (the count of files, or the error code).
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
@@ -202,7 +203,10 @@ pub async fn answer(
     let (answered, answer) = async_channel::bounded(1);
     // detached, so that past the timeout the files after the one that is read then are saved too
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let _ = answered.try_send(save_all(core, chosen, folder, force, cx).await);
+        let outcome = save_all(core, chosen, folder, force, cx).await;
+        if let Err(async_channel::TrySendError::Closed(outcome)) = answered.try_send(outcome) {
+            log_late(&outcome);
+        }
     })
     .detach();
     let executor = cx.background_executor().clone();
@@ -217,6 +221,15 @@ pub async fn answer(
             .unwrap_or_else(|_| Err(CtlError::new(ErrorCode::Engine, "the download stopped")))
     };
     within(DOWNLOAD_ANSWER, &late, saved, &executor).await
+}
+
+/// Logs the end of a download that was answered `timeout`, as its client no longer hears it.
+fn log_late(outcome: &Result<Response, CtlError>) {
+    match outcome {
+        Ok(Response::Downloaded { files }) => log::info!("a late download saved its {} files", files.len()),
+        Ok(_) => {}
+        Err(error) => log::warn!("a late download failed: {:?}", error.code),
+    }
 }
 
 /// The attachments `pick` selects of `attachments`.
@@ -360,7 +373,7 @@ async fn plan(core: &dyn Core, chosen: Vec<Attachment>) -> Result<Vec<Planned>, 
                 (name, Some(picture.bytes.clone()))
             }
         };
-        let file_name = unique(name, attachment.row.index, &mut taken);
+        let file_name = unique(&name, attachment.row.index, &mut taken);
         planned.push(Planned {
             attachment,
             file_name,
@@ -370,19 +383,25 @@ async fn plan(core: &dyn Core, chosen: Vec<Attachment>) -> Result<Vec<Planned>, 
     Ok(planned)
 }
 
-/// `name`, or with ` (<index>)` before its extension when an earlier attachment of the download took it, also in
-/// another case (a file system that ignores case would save the two at one place).
-fn unique(name: String, index: u32, taken: &mut HashSet<String>) -> String {
-    let name = if taken.contains(&name.to_lowercase()) {
-        match name.rsplit_once('.') {
-            Some((stem, extension)) if !stem.is_empty() => format!("{stem} ({index}).{extension}"),
-            _ => format!("{name} ({index})"),
-        }
-    } else {
-        name
-    };
-    taken.insert(name.to_lowercase());
-    name
+/// `name`, or with ` (<index>)` before its extension (then ` (<index>-2)` and on) when an earlier attachment of the
+/// download took it, also in another case (a file system that ignores case would save the two at one place).
+fn unique(name: &str, index: u32, taken: &mut HashSet<String>) -> String {
+    let mut candidate = name.to_owned();
+    let mut round = 1_u32;
+    while taken.contains(&candidate.to_lowercase()) {
+        let tag = if round == 1 {
+            index.to_string()
+        } else {
+            format!("{index}-{round}")
+        };
+        candidate = match name.rsplit_once('.') {
+            Some((stem, extension)) if !stem.is_empty() => format!("{stem} ({tag}).{extension}"),
+            _ => format!("{name} ({tag})"),
+        };
+        round += 1;
+    }
+    taken.insert(candidate.to_lowercase());
+    candidate
 }
 
 /// `folder` joined with `file_name`, which must be one plain name.
@@ -481,4 +500,29 @@ async fn size_of(target: PathBuf, cx: &mut AsyncApp) -> Result<u64, CtlError> {
 
 fn disk_error(error: &std::io::Error) -> CtlError {
     CtlError::new(ErrorCode::Engine, format!("the file couldn't be saved: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unique_never_gives_a_name_that_the_download_took() {
+        let mut taken = HashSet::new();
+        let names: Vec<String> = [
+            ("report.pdf", 1),
+            ("report (3).pdf", 2),
+            ("REPORT.pdf", 3),
+            ("report.pdf", 4),
+        ]
+        .into_iter()
+        .map(|(name, index)| unique(name, index, &mut taken))
+        .collect();
+        assert_eq!(
+            names,
+            ["report.pdf", "report (3).pdf", "REPORT (3-2).pdf", "report (4).pdf"]
+        );
+        assert_eq!(unique("notes", 5, &mut taken), "notes");
+        assert_eq!(unique("Notes", 6, &mut taken), "Notes (6)");
+    }
 }

@@ -2,8 +2,9 @@
 //! and server, over lab account a's engine on wiremock as Graph, SharePoint and AMS (the transport's `test-support`
 //! mock origin): a message with a SharePoint file and a picture in its text, and one whose file name tries to leave
 //! the folder, one with two files of one name, the second not there, and one with two files whose names differ only in
-//! case. The files are read by the app's engine, as the chat view reads them, and saved where the client asks. The
-//! read-only mode downloads too. Every id, link, name and byte is made up.
+//! case. Two more messages each have a file whose download is held: one while a file comes in at the next target, one
+//! past the app's answer bound. The files are read by the app's engine, as the chat view reads them, and saved where
+//! the client asks. The read-only mode downloads too. Every id, link, name and byte is made up.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -15,8 +16,10 @@ use std::future::{self, Future};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
-use ctl_support::{ask, quit};
+use ctl_support::{ask, connect, quit};
 use gpui::TestAppContext;
 use ngteams::accounts::{Runner, Started};
 use ngteams::accounts_file::{PersonalAccount, PersonalPaths};
@@ -31,14 +34,16 @@ use teams_core::account::AccountEngine;
 use teams_core::engine::{self, EngineOptions, Parts};
 use teams_core::{CallFloor, Outbox};
 use teams_ctl::ClientError;
-use teams_ctl::protocol::{AttachmentKind, AttachmentRow, CtlError, ErrorCode, Request, Response, SavedFile};
+use teams_ctl::protocol::{
+    AttachmentKind, AttachmentRow, CtlError, DOWNLOAD_ANSWER, ErrorCode, Request, Response, SavedFile,
+};
 use teams_mock::{CHAT_BASE, LAB_A, LAB_B, TENANT};
 use teams_proto::{Author, Client, Credentials, FileDownload, HttpTransport, Mri};
 use teams_store::{Conversation, ConversationKind, Member, Message, Store};
 use teams_ui::bus::BusError;
 use teams_ui::{SettingsFile, ViewTrace};
 use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Respond, ResponseTemplate};
 
 const UPN: &str = "bot-a@lab.example.test";
 const CHAT: &str = "19:00000000000000000000000000download@thread.v2";
@@ -56,6 +61,17 @@ const ESCAPE: &str = "1700000001000";
 const TWINS: &str = "1700000002000";
 /// The message with two files whose names differ only in case, both on the service.
 const CASES: &str = "1700000003000";
+/// The message with a picture and a file whose download puts a file at the picture's target first.
+const RACE: &str = "1700000004000";
+/// The message with a slow file, then a file.
+const SLOW: &str = "1700000005000";
+const RACE_SHARE: &str = "https://contoso-my.sharepoint.com/:b:/g/personal/made_up_user_contoso_test/MadeUpCtlRace01";
+const RACE_DOWNLOAD: &str = "/personal/made_up_user_contoso_test/_layouts/15/race.aspx";
+const SLOW_SHARE: &str = "https://contoso-my.sharepoint.com/:b:/g/personal/made_up_user_contoso_test/MadeUpCtlSlow01";
+const SLOW_DOWNLOAD: &str = "/personal/made_up_user_contoso_test/_layouts/15/slow.aspx";
+/// How long the test waits in real time for a step of the held download.
+const WAIT: Duration = Duration::from_secs(30);
+const ANOTHER_APPS: &[u8] = b"another app's picture";
 const MISSING: &str = "https://contoso-my.sharepoint.com/:b:/g/personal/made_up_user_contoso_test/MadeUpCtlMissing01";
 
 /// Placeholder tokens for every audience.
@@ -114,10 +130,12 @@ fn seed(store: &mut Store) {
     store
         .replace_members(CHAT, 1, &[Member::new(LAB_A, None), Member::new(LAB_B, None)])
         .unwrap();
-    let picture = format!(
-        r#"<p>the report<img src="https://us-api.asm.skype.com/v1/objects/{OBJECT}/views/imgo" itemtype="http://schema.skype.com/AMSImage" itemid="{OBJECT}" alt="image"></p>"#
-    );
+    let picture = picture_html();
     message(store, BOTH, &picture, &json!([entry("report.pdf", SHARE)]));
+    message(store, RACE, &picture, &json!([entry("report.pdf", RACE_SHARE)]));
+    let slow = json!([entry("slow.pdf", SLOW_SHARE), entry("after.pdf", SHARE)]);
+    message(store, SLOW, "<p>slow</p>", &slow);
+
     message(
         store,
         ESCAPE,
@@ -128,6 +146,84 @@ fn seed(store: &mut Store) {
     message(store, TWINS, "<p>twins</p>", &twins);
     let cases = json!([entry("report.pdf", SHARE), entry("Report.PDF", SHARE)]);
     message(store, CASES, "<p>cases</p>", &cases);
+}
+
+fn picture_html() -> String {
+    format!(
+        r#"<p>the report<img src="https://us-api.asm.skype.com/v1/objects/{OBJECT}/views/imgo" itemtype="http://schema.skype.com/AMSImage" itemid="{OBJECT}" alt="image"></p>"#
+    )
+}
+
+/// The file's bytes, once another app put its file at `there`.
+struct PutsAFileFirst {
+    there: PathBuf,
+}
+
+impl Respond for PutsAFileFirst {
+    fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
+        std::fs::create_dir_all(self.there.parent().unwrap()).unwrap();
+        std::fs::write(&self.there, ANOTHER_APPS).unwrap();
+        file_bytes()
+    }
+}
+
+/// The slow file's content, held until the test opens the gate.
+#[derive(Default)]
+struct Gate {
+    reached: AtomicBool,
+    open: AtomicBool,
+}
+
+struct Held(Arc<Gate>);
+
+impl Respond for Held {
+    fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
+        self.0.reached.store(true, Ordering::SeqCst);
+        let start = Instant::now();
+        while !self.0.open.load(Ordering::SeqCst) && start.elapsed() < WAIT {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        file_bytes()
+    }
+}
+
+fn file_bytes() -> ResponseTemplate {
+    let range = format!("bytes 0-{}/{}", FILE_BYTES.len() - 1, FILE_BYTES.len());
+    ResponseTemplate::new(206)
+        .insert_header("Content-Range", range)
+        .set_body_bytes(FILE_BYTES)
+}
+
+/// The Graph item of `share`, its content at `download`.
+async fn serve_item(server: &MockServer, share: &str, download: &str) {
+    let item = json!({
+        "id": "made-up-file", "size": FILE_BYTES.len(),
+        "@microsoft.graph.downloadUrl": format!("https://contoso-my.sharepoint.com{download}?UniqueId=made-up&tempauth=made-up"),
+    });
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "/v1.0/shares/{}/driveItem",
+            FileDownload::of(share).unwrap().share()
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(item))
+        .mount(server)
+        .await;
+}
+
+/// The race message's file content puts a picture at `race_picture` first.
+async fn serve_held(server: &MockServer, race_picture: PathBuf, gate: Arc<Gate>) {
+    serve_item(server, RACE_SHARE, RACE_DOWNLOAD).await;
+    Mock::given(method("GET"))
+        .and(path(RACE_DOWNLOAD))
+        .respond_with(PutsAFileFirst { there: race_picture })
+        .mount(server)
+        .await;
+    serve_item(server, SLOW_SHARE, SLOW_DOWNLOAD).await;
+    Mock::given(method("GET"))
+        .and(path(SLOW_DOWNLOAD))
+        .respond_with(Held(gate))
+        .mount(server)
+        .await;
 }
 
 async fn serve_files(server: &MockServer) {
@@ -163,6 +259,7 @@ struct Lab {
     socket: PathBuf,
     cx: TestAppContext,
     dir: tempfile::TempDir,
+    gate: Arc<Gate>,
     _server: MockServer,
     _runtime: tokio::runtime::Runtime,
 }
@@ -175,8 +272,11 @@ impl Lab {
             .build()
             .unwrap();
         let server = runtime.block_on(MockServer::start());
-        runtime.block_on(serve_files(&server));
         let dir = tempfile::tempdir().unwrap();
+        runtime.block_on(serve_files(&server));
+        let gate = Arc::new(Gate::default());
+        let race_picture = dir.path().join("out/race/image-2.png");
+        runtime.block_on(serve_held(&server, race_picture, Arc::clone(&gate)));
         let http = || {
             let http = HttpTransport::with_mock_origin(Arc::new(Tokens), CHAT_BASE, &server.uri()).unwrap();
             if read_only { http.read_only() } else { http }
@@ -219,6 +319,7 @@ impl Lab {
             socket,
             cx,
             dir,
+            gate,
             _server: server,
             _runtime: runtime,
         }
@@ -483,4 +584,54 @@ fn two_files_whose_names_differ_only_in_case_are_both_saved_under_two_names() {
     );
     assert_eq!(std::fs::read(out.join("report.pdf")).unwrap(), FILE_BYTES);
     assert_eq!(std::fs::read(out.join("Report (2).PDF")).unwrap(), FILE_BYTES);
+}
+
+#[test]
+fn a_file_that_comes_in_at_a_later_target_during_the_download_stops_it_without_force() {
+    let lab = Lab::start(false);
+    let out = lab.out("race");
+    let refused = lab.refused(into(RACE, &out, ALL));
+    assert_eq!(refused.code, ErrorCode::FileExists, "{refused:?}");
+    assert!(
+        refused
+            .message
+            .contains(&format!("saved before it: {}", out.join("report.pdf").display())),
+        "{refused:?}"
+    );
+    assert_eq!(std::fs::read(out.join("image-2.png")).unwrap(), ANOTHER_APPS);
+    assert_eq!(std::fs::read(out.join("report.pdf")).unwrap(), FILE_BYTES);
+}
+
+#[test]
+fn past_the_answer_bound_the_app_answers_timeout_and_saves_the_files_after_the_one_it_reads() {
+    let lab = Lab::start(false);
+    let out = lab.out("slow");
+    let socket = lab.socket.clone();
+    let request = into(SLOW, &out, ALL);
+    let asking = std::thread::spawn(move || connect(&socket).unwrap().request(None, request));
+    let start = Instant::now();
+    while !lab.gate.reached.load(Ordering::SeqCst) {
+        lab.cx.run_until_parked();
+        assert!(start.elapsed() < WAIT, "the slow file wasn't asked for");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    lab.cx.executor().advance_clock(DOWNLOAD_ANSWER);
+    while !asking.is_finished() {
+        lab.cx.run_until_parked();
+        assert!(start.elapsed() < WAIT, "the client wasn't answered");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let late = asking.join().unwrap();
+    assert!(
+        matches!(&late, Err(ClientError::Server(error)) if error.code == ErrorCode::Timeout),
+        "{late:?}"
+    );
+    lab.gate.open.store(true, Ordering::SeqCst);
+    while !out.join("after.pdf").exists() {
+        lab.cx.run_until_parked();
+        assert!(start.elapsed() < WAIT, "the file after the slow one wasn't saved");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(std::fs::read(out.join("slow.pdf")).unwrap(), FILE_BYTES);
+    assert_eq!(std::fs::read(out.join("after.pdf")).unwrap(), FILE_BYTES);
 }
