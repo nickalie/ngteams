@@ -322,7 +322,9 @@ impl Walk<'_> {
         thread::sleep(SETTLE);
         self.until_page("the Apps tab", |page| page["open"] == true)?;
         let hooks = self.server_hooks()?;
-        expect(hooks.is_empty(), || format!("the server lists webhooks for a new team: {hooks:?}"));
+        expect(hooks.is_empty(), || {
+            format!("the server lists webhooks for a new team: {hooks:?}")
+        });
         self.run.shot(self.sandbox, "qa-webhooks-apps-light.png")?;
         step("Manage team > Apps is open");
         Ok(())
@@ -367,7 +369,9 @@ impl Walk<'_> {
         self.shots("token")?;
         self.run.act("copy")?;
         let same = self.run.state_in("clipboard-is-token")?;
-        expect(same == true, || "Copy did not put the token shown on the clipboard".to_owned());
+        expect(same == true, || {
+            "Copy did not put the token shown on the clipboard".to_owned()
+        });
         let copied = self.run.state_in("clipboard")?;
         let key = STANDARD.decode(copied.as_str().unwrap_or_default());
         expect(key.as_ref().is_ok_and(|key| key.len() == 32), || {
@@ -436,7 +440,9 @@ impl Walk<'_> {
         self.run.act("close")?;
         self.until_dialog("the dialog closed", |dialog| dialog["open"] == false)?;
         let hooks = self.server_hooks()?;
-        expect(hooks == [HOOK], || format!("a refused create changed the server's list: {hooks:?}"));
+        expect(hooks == [HOOK], || {
+            format!("a refused create changed the server's list: {hooks:?}")
+        });
         Ok(())
     }
 
@@ -1283,7 +1289,9 @@ fn webhook(shell: &Entity<Shell>, name: &str, cx: &App) -> Result<teams_proto::O
 
 /// Whether the clipboard holds the token the dialog shows.
 fn clipboard_is_token(shell: &Entity<Shell>, cx: &App) -> bool {
-    let shown = dialog(shell, cx).ok().and_then(|dialog| dialog.read(cx).token().map(str::to_owned));
+    let shown = dialog(shell, cx)
+        .ok()
+        .and_then(|dialog| dialog.read(cx).token().map(str::to_owned));
     let copied = cx.read_from_clipboard().and_then(|item| item.text());
     shown.is_some() && shown == copied
 }

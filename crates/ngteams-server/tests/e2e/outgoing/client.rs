@@ -210,10 +210,7 @@ async fn member_refused(crew: &Crew, team: &str, id: &str) {
         team: team.clone(),
         webhook: id.to_owned(),
     };
-    assert_eq!(
-        refusal(write(&crew.bert, removed).await).as_deref(),
-        Some("Forbidden")
-    );
+    assert_eq!(refusal(write(&crew.bert, removed).await).as_deref(), Some("Forbidden"));
     let made = TeamWrite::CreateOutgoingWebhook {
         team: team.clone(),
         form: form("Member bot", "https://hooks.example.test/member", WebhookPicture::Keep),
