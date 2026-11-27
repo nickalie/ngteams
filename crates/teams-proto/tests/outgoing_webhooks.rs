@@ -222,4 +222,17 @@ fn a_webhook_is_an_app_whose_bot_people_mention_in_the_teams_channels() {
         no_picture.definition.outgoing_webhook().map(|picture| picture.version),
         Some(None)
     );
+    let other = OutgoingWebhook {
+        mri: "28:made-up-bot".to_owned(),
+        ..hooks[0].clone()
+    };
+    assert_eq!(
+        other
+            .app()
+            .definition
+            .mentionable_bot(true)
+            .map(|bot| bot.as_str().to_owned()),
+        Some("28:made-up-bot".to_owned()),
+        "its mri names its bot"
+    );
 }

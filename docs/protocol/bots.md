@@ -267,11 +267,12 @@ replies come from `28:<id>`, with the webhook's name as `imdisplayname`, in the 
 
 ### The client (own design)
 
-ngteams uses these routes for Microsoft and own-server accounts alike, behind `NGTEAMS_BOTS=1`; an own-server account
-shows webhooks only while authz names `outgoingWebhookService`. Manage team > Apps lists the team's webhooks after its
-apps, each with its picture, its name and "Outgoing webhook". An owner gets "Create an outgoing webhook": Name,
-Callback URL (HTTPS only), Description and a picture (PNG or JPEG, at most 1 MB). The create answer's token shows once,
-with Copy. A webhook with `canManage` has Edit (only the changed fields are sent; `"picture": null` removes the
+ngteams shows webhooks behind `NGTEAMS_BOTS=1`, only for an own-server account and only while its authz names
+`outgoingWebhookService`. A Microsoft account sends none of these requests until a capture shows Teams' own routes
+(`teams_core::Capabilities::of`). Manage team > Apps lists the team's webhooks after its apps, each with its picture,
+its name and "Outgoing webhook". An owner gets "Create an outgoing webhook": Name (at most 100 characters, the own
+server's limit), Callback URL (HTTPS only), Description and a picture (PNG or JPEG, at most 1 MB). The create answer's token shows once,
+with Copy; the dialog stays open until the create is answered. For an owner, a webhook with `canManage` has Edit (only the changed fields are sent; `"picture": null` removes the
 picture) and Remove, which asks first. A list read makes each webhook a known bot for the run, so the mention picker
-of the team's channels offers it. A mention of it is a bot's mention (`mentionType` `bot`) with the webhook's id as
+of the team's standard channels offers it (not of its private or shared channels, where a webhook gets nothing). A mention of it is a bot's mention (`mentionType` `bot`) with the webhook's id as
 `appId`. Its replies show its name, its picture and an "App" mark. A card in a reply shows as any bot's card.

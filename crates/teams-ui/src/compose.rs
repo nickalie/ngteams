@@ -112,7 +112,7 @@ use teams_proto::chat::{
     ComposeError, Marks, MessageText, MessageType, Node, Quote, RichText, parse_html, with_everyone_shown,
 };
 use teams_proto::{Mri, is_group_chat_id};
-use teams_store::Message;
+use teams_store::{ChannelKind, Message};
 
 pub use correction::{CorrectDraft, CorrectionStatus, KeepOriginal, SendCorrection, UseCorrection};
 pub use customize::{CustomizeClose, CustomizeDown, CustomizeToggle, CustomizeUp, SHOW_IN_TOOLBAR};
@@ -820,20 +820,21 @@ async fn read_candidates(core: Arc<dyn Core>, conversation: String) -> Vec<Candi
 
 /// The bots people can mention in `conversation` (a group chat, or a channel or a post's thread in one), each with
 /// its app, by name: the bots of the apps added to the chat, or to the channel's team, while `served` the apps; in a
-/// channel also the team's outgoing webhooks, while `served` them.
+/// standard channel also the team's outgoing webhooks, while `served` them.
 async fn read_bots(core: Arc<dyn Core>, conversation: String, served: Capabilities) -> Vec<Candidate> {
     let place = if is_group_chat_id(&conversation) {
-        Some((conversation, false))
+        Some((conversation, false, ChannelKind::Standard))
     } else {
-        channel_team(core.as_ref(), &conversation)
+        channel_of_team(core.as_ref(), &conversation)
             .await
-            .map(|team| (team, true))
+            .map(|(team, kind)| (team, true, kind))
     };
-    let Some((place, team)) = place else {
+    let Some((place, team, kind)) = place else {
         return Vec::new();
     };
     let mut apps = Vec::new();
-    if team && served.outgoing_webhooks {
+    // Teams sends nothing to a webhook from a private or shared channel.
+    if team && kind == ChannelKind::Standard && served.outgoing_webhooks {
         let hooks = core.outgoing_webhooks(place.clone()).await.unwrap_or_default();
         apps.extend(hooks.iter().map(teams_proto::OutgoingWebhook::app));
     }
@@ -855,15 +856,27 @@ async fn read_bots(core: Arc<dyn Core>, conversation: String, served: Capabiliti
 
 /// The team whose channel `conversation` is (or a post's thread in), by the team's thread id.
 pub(crate) async fn channel_team(core: &dyn Core, conversation: &str) -> Option<String> {
+    channel_of_team(core, conversation).await.map(|(team, _)| team)
+}
+
+/// [`channel_team`], with the channel's kind.
+async fn channel_of_team(core: &dyn Core, conversation: &str) -> Option<(String, ChannelKind)> {
     let channel = conversation.split(';').next().unwrap_or(conversation);
     if !teams_proto::is_team_thread_id(channel) {
         return None;
     }
     let teams = core.teams().await.ok().flatten()?;
-    teams
-        .into_iter()
-        .find(|team| team.id == channel || team.channels.iter().any(|known| known.id == channel))
-        .map(|team| team.id)
+    teams.into_iter().find_map(|team| {
+        let kind = if team.id == channel {
+            Some(ChannelKind::Standard)
+        } else {
+            team.channels
+                .iter()
+                .find(|known| known.id == channel)
+                .map(|known| known.kind)
+        };
+        kind.map(|kind| (team.id, kind))
+    })
 }
 
 impl Compose {

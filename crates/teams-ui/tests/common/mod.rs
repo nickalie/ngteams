@@ -212,10 +212,15 @@ pub struct FakeCore {
     pub team_written: Mutex<Option<teams_core::TeamWritten>>,
     /// The code a refused team write names.
     pub team_refusal: Mutex<Option<String>>,
+    /// While set, a team write waits in `held_team_writes` for the test to answer it.
+    pub hold_team_writes: Mutex<bool>,
+    pub held_team_writes: Mutex<Vec<Answer<teams_core::TeamWritten>>>,
     /// Each team's outgoing webhooks, by the team's id; a read makes each known as a bot, as the engine does.
     pub outgoing_webhooks: Mutex<HashMap<String, Vec<teams_proto::OutgoingWebhook>>>,
     /// The webhooks' pictures, by the webhook's id.
     pub webhook_pictures: Mutex<HashMap<String, Vec<u8>>>,
+    /// The webhooks whose picture was read, in order.
+    pub webhook_pictures_asked: Mutex<Vec<String>>,
     /// The account's own views of a team asked for, in order.
     pub team_views: Mutex<Vec<teams_proto::OwnTeamView>>,
     /// A team's people, as its roster answers.
@@ -733,6 +738,11 @@ impl Core for FakeCore {
         change: Option<teams_core::TeamChange>,
     ) -> Reply<teams_core::TeamWritten> {
         locked(&self.team_writes).push((write, change));
+        if *locked(&self.hold_team_writes) {
+            let (answer, reply) = Reply::later();
+            locked(&self.held_team_writes).push(answer);
+            return reply;
+        }
         Reply::ready(
             locked(&self.team_written)
                 .clone()
@@ -752,6 +762,7 @@ impl Core for FakeCore {
     }
 
     fn outgoing_webhook_picture(&self, picture: teams_proto::OutgoingWebhookPicture) -> Reply<Option<Vec<u8>>> {
+        locked(&self.webhook_pictures_asked).push(picture.webhook.clone());
         Reply::ready(Ok(locked(&self.webhook_pictures).get(&picture.webhook).cloned()))
     }
 
@@ -858,7 +869,7 @@ impl Core for FakeCore {
     }
 
     fn known_bot_app(&self, id: String) -> Reply<Option<teams_proto::StoreApp>> {
-        let key = id.to_ascii_lowercase();
+        let key = id.trim_start_matches("28:").to_ascii_lowercase();
         Reply::ready(Ok(locked(&self.bot_apps).get(&key).cloned()))
     }
 

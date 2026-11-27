@@ -1,8 +1,8 @@
 //! A bot as the views show it, as Teams does: by its app's name, with the app's icon on a rounded tile rather than a
 //! person's circle (a chat list's row, a bot chat's header and its "new conversation" intro, its messages, the
 //! mention picker). The engine finds the app by the bot's id ([`Core::bot_app`]); a bot no app names keeps the name
-//! its messages give and Teams' bot head. Nothing is asked while the account's cloud serves no apps
-//! ([`teams_core::Capabilities::apps`]).
+//! its messages give and Teams' bot head. Nothing is asked while the account's cloud serves neither apps nor outgoing
+//! webhooks; without apps, only a webhook the engine read is found ([`Core::known_bot_app`]).
 
 use gpui::{Div, ParentElement as _, Styled as _, div, img, px, rgb};
 use teams_proto::StoreApp;

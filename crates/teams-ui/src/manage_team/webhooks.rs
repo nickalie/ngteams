@@ -1,8 +1,8 @@
 //! The Apps tab's outgoing webhooks (`docs/protocol/bots.md`, "Outgoing webhooks"), while the bots are shown
 //! (`NGTEAMS_BOTS=1`) and the account's cloud serves them ([`teams_core::Capabilities::outgoing_webhooks`]):
 //! "Create an outgoing webhook" for an owner, and a row per webhook of the team ([`Core::outgoing_webhooks`]) with its
-//! picture, its name and "Outgoing webhook". A webhook the account may manage has a "..." with Edit and Remove;
-//! Remove asks first.
+//! picture, its name and "Outgoing webhook". For an owner, a webhook the server lets the account manage has a "..."
+//! with Edit and Remove; Remove asks first.
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
@@ -178,7 +178,8 @@ impl ManageTeam {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let hook = &shown.hook;
-        let can_write = hook.can_manage && !team.archived && !self.core.read_only();
+        // Create is an owner's, so Edit and Remove are too, also where the server lets members manage.
+        let can_write = team.owner && hook.can_manage && !team.archived && !self.core.read_only();
         let menu_open = self.webhook_menu.as_deref() == Some(hook.id.as_str());
         let menu = menu_open.then(|| self.webhook_menu_of(team, hook, palette, cx));
         let id = hook.id.clone();

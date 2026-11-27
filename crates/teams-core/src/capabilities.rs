@@ -1,6 +1,7 @@
 //! What an account's cloud serves of the services the views offer beside chats, teams, calls and people.
 //!
-//! Microsoft's cloud serves them all. An own server serves each only when its authz names the service's GTM
+//! Microsoft's cloud serves them all, but the client sends outgoing webhooks' requests only to an own server: their
+//! routes are the own server's design, and no capture showed Teams' form (`docs/protocol/bots.md`). An own server serves each only when its authz names the service's GTM
 //! (`docs/server.md`, "Optional services"): the views hide what it doesn't serve rather than offer something that fails.
 
 use teams_proto::Cloud;
@@ -55,11 +56,15 @@ impl Capabilities {
         teams_stickers: true,
     };
 
-    /// The services `cloud` serves: all on Microsoft's, on an own server those whose GTM `names` holds.
+    /// The services `cloud` serves: on Microsoft's all but outgoing webhooks, on an own server those whose GTM
+    /// `names` holds.
     #[must_use]
     pub fn of(cloud: &Cloud, names: impl Fn(&str) -> bool) -> Self {
         if cloud.is_microsoft() {
-            return Self::ALL;
+            return Self {
+                outgoing_webhooks: false,
+                ..Self::ALL
+            };
         }
         Self {
             workflows: names(WORKFLOWS_GTM),
@@ -85,8 +90,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn microsoft_serves_every_service_and_an_own_server_what_it_names() {
-        assert_eq!(Capabilities::of(&Cloud::Microsoft, |_| false), Capabilities::ALL);
+    fn microsoft_serves_every_service_but_outgoing_webhooks_and_an_own_server_what_it_names() {
+        assert_eq!(
+            Capabilities::of(&Cloud::Microsoft, |_| false),
+            Capabilities {
+                outgoing_webhooks: false,
+                ..Capabilities::ALL
+            }
+        );
         let own = Cloud::own("https://own.example.test").unwrap();
         let none = Capabilities::of(&own, |_| false);
         assert_eq!(

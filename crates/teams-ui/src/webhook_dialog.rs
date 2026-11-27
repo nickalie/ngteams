@@ -33,8 +33,8 @@ use crate::theme::{self, Palette};
 /// The largest picture a webhook takes, as the own server's default (`outgoing_webhooks.max_picture_bytes`).
 pub const WEBHOOK_PICTURE_LIMIT: usize = 1024 * 1024;
 
-/// The longest name a webhook takes.
-pub const WEBHOOK_NAME_LIMIT: usize = 64;
+/// The longest name a webhook takes, as the own server's limit: Teams' own limit isn't documented.
+pub const WEBHOOK_NAME_LIMIT: usize = 100;
 
 /// What the token step says about the token.
 pub const TOKEN_WORDS: &str = "Use this security token to check that the requests to your service come from Teams. \
@@ -67,7 +67,11 @@ pub struct WebhookDialog {
     step: Step,
     copied: bool,
     saving: bool,
+    /// An Upload's file picker or read is under way.
+    uploading: bool,
     problem: Option<&'static str>,
+    _reading: Option<Task<()>>,
+    upload: Option<Task<()>>,
     working: Option<Task<()>>,
     focus: FocusHandle,
     _typed: Vec<Subscription>,
@@ -142,8 +146,11 @@ impl WebhookDialog {
             step: Step::Form,
             copied: false,
             saving: false,
+            uploading: false,
             problem: None,
-            working: reading,
+            _reading: reading,
+            upload: None,
+            working: None,
             focus: cx.focus_handle(),
             _typed: typed,
         }
@@ -167,7 +174,17 @@ impl WebhookDialog {
     #[must_use]
     pub fn can_send(&self, cx: &Context<Self>) -> bool {
         let (name, url, _) = self.values(cx);
-        !self.saving && !name.is_empty() && !url.is_empty() && name.chars().count() <= WEBHOOK_NAME_LIMIT
+        !self.saving
+            && !self.uploading
+            && !name.is_empty()
+            && !url.is_empty()
+            && name.chars().count() <= WEBHOOK_NAME_LIMIT
+    }
+
+    /// What the form says is wrong, while it says it.
+    #[must_use]
+    pub fn problem(&self) -> Option<&'static str> {
+        self.problem
     }
 
     /// The token the create's answer showed, while the dialog shows it.
@@ -211,24 +228,30 @@ impl WebhookDialog {
             prompt: Some("Upload".into()),
             ..PathPromptOptions::default()
         });
-        self.working = Some(cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+        self.uploading = true;
+        cx.notify();
+        self.upload = Some(cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let path: Option<PathBuf> = picked
                 .await
                 .ok()
                 .and_then(Result::ok)
                 .flatten()
                 .and_then(|paths| paths.into_iter().next());
-            let Some(path) = path else {
-                return;
+            let read = match path {
+                Some(path) => Some(cx.background_spawn(async move { std::fs::read(path) }).await),
+                None => None,
             };
-            let read = cx.background_spawn(async move { std::fs::read(path) }).await;
-            let _ = this.update(cx, |this, cx| match read {
-                Ok(bytes) => this.choose(bytes, cx),
-                Err(error) => {
-                    log::info!("a webhook's picture couldn't be read: {error}");
-                    this.problem = Some("That file can't be read.");
-                    cx.notify();
+            let _ = this.update(cx, |this, cx| {
+                this.uploading = false;
+                match read {
+                    Some(Ok(bytes)) => this.choose(bytes, cx),
+                    Some(Err(error)) => {
+                        log::info!("a webhook's picture couldn't be read: {error}");
+                        this.problem = Some("That file can't be read.");
+                    }
+                    None => {}
                 }
+                cx.notify();
             });
         }));
     }
@@ -314,6 +337,10 @@ impl WebhookDialog {
 
     /// Close or Cancel: after a create, the page reads its list again.
     pub fn close(&mut self, cx: &mut Context<Self>) {
+        // A create's answer holds the only copy of the token, so the dialog stays until it comes.
+        if self.saving {
+            return;
+        }
         match self.step {
             Step::Token(_) => self.closed_changed("Outgoing webhook created", cx),
             Step::Form => cx.emit(TeamDialogEvent::Closed),
@@ -364,7 +391,7 @@ impl WebhookDialog {
                     .outline()
                     .icon(Glyph::UPLOAD.icon())
                     .label("Upload an image")
-                    .disabled(self.saving)
+                    .disabled(self.saving || self.uploading)
                     .on_click(cx.listener(|this, _, _, cx| this.upload(cx))),
             ))
             .when(has_picture, |row| {
@@ -412,6 +439,7 @@ impl WebhookDialog {
                         Button::new("webhook-cancel")
                             .outline()
                             .label("Cancel")
+                            .disabled(self.saving)
                             .on_click(cx.listener(|this, _, _, cx| this.close(cx))),
                     ))
                     .child(selected_by(

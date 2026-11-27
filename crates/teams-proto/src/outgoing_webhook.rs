@@ -86,7 +86,8 @@ impl OutgoingWebhook {
         definition.insert("name".to_owned(), json!(self.name));
         definition.insert("shortDescription".to_owned(), json!(self.description));
         definition.insert("developerName".to_owned(), json!(OUTGOING_WEBHOOK_MAKER));
-        definition.insert("bots".to_owned(), json!([{"id": self.id, "scopes": ["team"]}]));
+        let bot = self.mri.strip_prefix("28:").unwrap_or(&self.id);
+        definition.insert("bots".to_owned(), json!([{"id": bot, "scopes": ["team"]}]));
         definition.insert(
             WEBHOOK_KEY.to_owned(),
             json!({"team": self.team, "picture": self.picture_version()}),
