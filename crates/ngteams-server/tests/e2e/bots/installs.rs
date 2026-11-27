@@ -498,6 +498,23 @@ async fn send(seat: &Seat, conversation: &str, text: MessageText) -> String {
     row.message_id.unwrap()
 }
 
+/// Deletes the account's personal install rows and nothing else, as if the bot had been seated without one.
+async fn forget_personal_install(
+    app: &ngteams_server::app::App,
+    account: &str,
+) -> Result<(), ngteams_server::db::DbError> {
+    use diesel::sql_types::Text;
+    use diesel_async::RunQueryDsl as _;
+    use ngteams_server::db::with_conn;
+    with_conn!(&app.db, |conn| diesel::sql_query(
+        "DELETE FROM app_installs WHERE scope = 'personal' AND target = $1"
+    )
+    .bind::<Text, _>(account)
+    .execute(conn)
+    .await?);
+    Ok(())
+}
+
 /// Whether a message activity reaches the bot within a few seconds.
 async fn reaches(bot: &TestBot) -> bool {
     bot.gets_within("message", Duration::from_secs(3)).await
@@ -567,8 +584,25 @@ async fn an_app_added_for_the_account_tells_its_bot_in_their_chat_and_lists_as_t
             .team_write(TeamWrite::AddPersonalApp { app: definition }, None)
             .await;
         assert!(written.is_ok(), "{written:?}");
+        // seated before it is told: its answer to the add is accepted
+        let got = shop.bot.next_of("installationUpdate").await.activity;
+        assert_eq!(got["action"], "add", "{got}");
+        let (status, _) = connector.send(&chat, Connector::text("thanks for adding me")).await;
+        assert_eq!(status, 200);
         say(&shop.ada, &chat, "welcome back").await;
         assert_eq!(shop.bot.next_of("message").await.activity["text"], "welcome back");
+        // a removal that removes no install (a bot seated without one) leaves the bot seated
+        forget_personal_install(&shop.registry.server.app, &shop.ada.id).await.unwrap();
+        let removed = shop
+            .ada
+            .engine
+            .team_write(TeamWrite::RemovePersonalApp { app: APP.into() }, None)
+            .await;
+        assert!(removed.is_ok(), "{removed:?}");
+        say(&shop.ada, &chat, "still seated").await;
+        assert_eq!(shop.bot.next_of("message").await.activity["text"], "still seated");
+        let (status, _) = connector.send(&chat, Connector::text("still here")).await;
+        assert_eq!(status, 200);
         shop.stop();
     }
 }

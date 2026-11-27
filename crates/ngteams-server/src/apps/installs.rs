@@ -173,7 +173,8 @@ impl Change<'_> {
     }
 }
 
-/// Records `change` with its bot's events in one transaction; a repeat changes nothing and queues nothing.
+/// Records `change` with its bot's events in one transaction, and a personal removal's unseat with them; a repeat
+/// changes nothing and queues nothing.
 async fn write_change(app: &App, change: &Change<'_>) -> Result<(), DbError> {
     let at = now();
     let ms = crate::chatsvc::now();
@@ -224,6 +225,10 @@ async fn write_change(app: &App, change: &Change<'_>) -> Result<(), DbError> {
                         .values(&row)
                         .execute(conn)
                         .await?;
+                }
+                // With the row, so a bot seated without an install (an app for everyone) stays seated.
+                if let (false, Place::Personal(chat), Some(bot)) = (change.added, &change.place, &change.record.bot) {
+                    crate::chatsvc::service::seat_personal!(conn, *chat, bot.id.as_str(), false, ms);
                 }
             }
             Ok(changed > 0)
@@ -289,10 +294,6 @@ async fn remove_personal(State(app): State<Arc<App>>, me: Me, Path(id): Path<Str
         added: false,
     };
     write_change(&app, &change).await?;
-    // Not gated on the row: a retry must still unseat the bot after a failed first unseat.
-    if let Some(bot) = &record.bot {
-        crate::chatsvc::service::seat_personal_bot(&app.db, &chat, &bot.id, false).await?;
-    }
     Ok(StatusCode::OK.into_response())
 }
 
