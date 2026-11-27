@@ -205,7 +205,6 @@ macro_rules! enqueue_members {
         queued
     }};
 }
-pub(crate) use enqueue;
 pub(crate) use enqueue_members;
 
 /// In a transaction (`$conn`): when `$chat` is a team's channel, the channel, its team and the post of the thread of
