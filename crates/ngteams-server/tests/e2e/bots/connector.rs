@@ -15,8 +15,11 @@ use tempfile::TempDir;
 
 use super::Registry;
 use super::endpoint::{Connector, ORIGIN, TestBot};
-use crate::chatsvc::engine;
+use crate::chatsvc::engine_with_session;
 use crate::support::{Backend, backends};
+use std::sync::Arc;
+use teams_auth::secrets::MemorySecretStore;
+use teams_auth::session::Session;
 
 pub const BOT_NAME: &str = "Echo (synthetic)";
 
@@ -25,6 +28,8 @@ pub struct Setup {
     pub registry: Registry,
     pub ada: String,
     pub engine: EngineHandle,
+    /// The session whose tokens Ada's engine sends.
+    pub session: Arc<Session<MemorySecretStore>>,
     pub bot: TestBot,
     pub bot_id: String,
     pub secret: String,
@@ -65,7 +70,7 @@ impl Setup {
         let registry = Registry::over(server).await;
         let ada = registry.server.add_user("ada@own.test", "Ada Lovelace").await;
         let dir = tempfile::tempdir().unwrap();
-        let engine = engine(&registry.server, "ada@own.test", &ada, dir.path()).await;
+        let (engine, session) = engine_with_session(&registry.server, "ada@own.test", &ada, dir.path()).await;
         let bot = TestBot::start().await;
         let answer = registry.register(BOT_NAME, &bot.url).await;
         let bot_id = answer["id"].as_str().unwrap().to_owned();
@@ -74,6 +79,7 @@ impl Setup {
             registry,
             ada,
             engine,
+            session,
             bot,
             bot_id,
             secret,

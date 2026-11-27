@@ -9,11 +9,12 @@ use serde_json::{Value, json};
 use teams_proto::bot::{InvokeAnswer, InvokeKind};
 
 use super::connector::Setup;
-use super::endpoint::{Connector, ORIGIN, Scripted};
+use super::endpoint::{ORIGIN, Scripted};
 use super::idp::{self, CLIENT_SECRET, Idp};
+use super::registry::audit_actions;
 use super::sign_in::{
-    CONNECTION, add_connection, connection_body, connection_path, get_token, has_token, holds, link_for, prompt, query,
-    sign_in_config, started, synced_link, token_service,
+    CONNECTION, add_connection, codes_held, connection_body, connection_path, engine_token, get_token, has_token,
+    holds, link_for, prompt, sign_in_config, sign_out, started, synced_link, token_service, wrong_code,
 };
 use super::{app_path, error_code};
 use crate::support::backends;
@@ -30,34 +31,19 @@ fn verifies(setup: &Setup, right: &str, refusal: u16) {
 
 /// Ada's engine sends `code`; the bot gets it with no token of Ada's; the engine's answer.
 async fn ada_sends(setup: &Setup, code: &str) -> InvokeAnswer {
-    let session = setup.registry.server.session("ada@own.test").await;
-    let ada_token = teams_trouter::TrouterCredentials::ic3(&session).await.unwrap();
     let answer = setup
         .invoke(Some(&setup.chat()), InvokeKind::VerifyState { code: code.to_owned() })
         .await;
     let got = setup.bot.next_of("invoke").await;
     assert_eq!(got.activity["name"], "signin/verifyState");
     assert_eq!(got.activity["value"], json!({"state": code}));
-    assert!(!holds(&got.activity, ada_token.token.expose()), "{}", got.activity);
+    assert!(!holds(&got.activity, &engine_token(setup).await), "{}", got.activity);
     assert!(
         !got.activity.to_string().contains("idp-access"),
         "no provider token in the invoke: {}",
         got.activity
     );
     answer
-}
-
-async fn sign_out(setup: &Setup, connector: &Connector) {
-    let path = format!(
-        "api/usertoken/SignOut?{}",
-        query(&[
-            ("userId", &format!("29:{}", setup.ada)),
-            ("connectionName", CONNECTION),
-            ("channelId", "msteams"),
-        ])
-    );
-    let (status, _) = token_service(setup, connector, Method::DELETE, &path).await;
-    assert_eq!(status, 200);
 }
 
 /// Sets every sign-in of the server as if its 15 minutes ran out.
@@ -124,7 +110,7 @@ async fn codes_of_another_person_used_expired_or_wrong_are_refused_on_each_backe
         let get = |user: &str, code: Option<&str>| get_token(user, code);
 
         // the bot refuses a wrong code as an SDK does, and the engine gets that refusal for the code field
-        let wrong = if code == "000000" { "111111" } else { "000000" };
+        let wrong = wrong_code(&code);
         for refusal in [412, 404] {
             verifies(&setup, &code, refusal);
             assert_eq!(
@@ -146,6 +132,7 @@ async fn codes_of_another_person_used_expired_or_wrong_are_refused_on_each_backe
         }
         let (status, token) = token_service(&setup, &connector, Method::GET, &get(&setup.ada, Some(&code))).await;
         assert_eq!((status, &token["token"]), (200, &json!("idp-access-1")), "{token}");
+        assert_eq!(codes_held(&setup).await, 0, "a used code is gone before the sign-out");
         let (status, _) = token_service(&setup, &connector, Method::GET, &get(&bob, None)).await;
         assert_eq!(status, 404, "Bob has no token");
 
@@ -167,7 +154,7 @@ async fn codes_of_another_person_used_expired_or_wrong_are_refused_on_each_backe
         // five wrong codes end the sign-in
         let link = link_for(&setup, &connector).await;
         let (fresh, _) = idp::sign_in_in_browser(&link, ORIGIN, &setup.registry.server.origin).await;
-        let wrong = if fresh == "000000" { "111111" } else { "000000" };
+        let wrong = wrong_code(&fresh);
         for _ in 0..5 {
             let (status, _) = token_service(&setup, &connector, Method::GET, &get(&setup.ada, Some(wrong))).await;
             assert_eq!(status, 404);
@@ -179,23 +166,12 @@ async fn codes_of_another_person_used_expired_or_wrong_are_refused_on_each_backe
     }
 }
 
-/// The audit's newest entries: action, target and detail.
+/// The audit's newest entries, which never hold the secret.
 async fn audit(setup: &Setup) -> Vec<(String, String, Value)> {
     let (status, audit) = setup.registry.call(Method::GET, "/api/admin/v1/audit", None).await;
     assert_eq!(status, 200, "{audit}");
     assert!(!holds(&audit, CLIENT_SECRET), "{audit}");
-    audit["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|entry| {
-            (
-                entry["action"].as_str().unwrap_or_default().to_owned(),
-                entry["target"].as_str().unwrap_or_default().to_owned(),
-                entry["detail"].clone(),
-            )
-        })
-        .collect()
+    audit_actions(&setup.registry).await
 }
 
 #[tokio::test(flavor = "multi_thread")]

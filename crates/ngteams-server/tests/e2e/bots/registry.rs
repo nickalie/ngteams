@@ -10,7 +10,7 @@ use crate::support::{Backend, backends};
 
 const ECHO_ENDPOINT: &str = "https://echo.example.test/api/messages";
 
-async fn audit_actions(registry: &Registry) -> Vec<(String, String, Value)> {
+pub(super) async fn audit_actions(registry: &Registry) -> Vec<(String, String, Value)> {
     let (status, audit) = registry.call(Method::GET, "/api/admin/v1/audit", None).await;
     assert_eq!(status, 200, "{audit}");
     audit["entries"]

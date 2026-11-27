@@ -57,10 +57,20 @@ pub(crate) async fn client(server: &TestServer, upn: &str, id: &str) -> ChatClie
 }
 
 pub(crate) async fn engine(server: &TestServer, upn: &str, id: &str, dir: &std::path::Path) -> EngineHandle {
+    engine_with_session(server, upn, id, dir).await.0
+}
+
+/// The engine and the session whose tokens it sends.
+pub(crate) async fn engine_with_session(
+    server: &TestServer,
+    upn: &str,
+    id: &str,
+    dir: &std::path::Path,
+) -> (EngineHandle, Arc<Session<MemorySecretStore>>) {
     let session = Arc::new(server.session(upn).await);
     let client = Arc::new(Client::new(transport_with(Arc::clone(&session), server, id)));
-    let transport = Arc::new(transport_with(session, server, id));
-    engine::start(Parts {
+    let transport = Arc::new(transport_with(Arc::clone(&session), server, id));
+    let handle = engine::start(Parts {
         store: Store::open(&dir.join("account.sqlite")).unwrap(),
         client,
         outbox: Outbox::new(transport, Author::new(Mri::new(format!("8:orgid:{id}")), upn)),
@@ -72,7 +82,8 @@ pub(crate) async fn engine(server: &TestServer, upn: &str, id: &str, dir: &std::
         },
         known_names: Vec::new(),
     })
-    .unwrap()
+    .unwrap();
+    (handle, session)
 }
 
 #[tokio::test(flavor = "multi_thread")]

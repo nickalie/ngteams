@@ -63,7 +63,7 @@ pub(super) fn query(pairs: &[(&str, &str)]) -> String {
 }
 
 /// The state an SDK's prompt sends for a sign-in link: the connection and the conversation reference, in base64.
-pub(super) fn state(setup: &Setup, user: &str, pascal: bool) -> String {
+fn state(setup: &Setup, user: &str, pascal: bool) -> String {
     let reference = json!({"user": {"id": format!("29:{user}")}, "bot": {"id": format!("28:{}", setup.bot_id)},
         "conversation": {"id": setup.chat()}, "channelId": "msteams", "serviceUrl": format!("{ORIGIN}/bot/")});
     let state = if pascal {
@@ -158,6 +158,56 @@ pub(super) async fn add_connection(setup: &Setup, idp: &Idp) {
     assert_eq!(status, 201, "{answer}");
 }
 
+/// The `ic3` token Ada's engine sends with its invokes.
+pub(super) async fn engine_token(setup: &Setup) -> String {
+    let token = teams_trouter::TrouterCredentials::ic3(&*setup.session).await.unwrap();
+    token.token.expose().to_owned()
+}
+
+/// A code that isn't `code`.
+pub(super) fn wrong_code(code: &str) -> &'static str {
+    if code == "000000" { "111111" } else { "000000" }
+}
+
+/// The bot signs Ada out of the connection.
+pub(super) async fn sign_out(setup: &Setup, connector: &Connector) {
+    let path = format!(
+        "api/usertoken/SignOut?{}",
+        query(&[
+            ("userId", &format!("29:{}", setup.ada)),
+            ("connectionName", CONNECTION),
+            ("channelId", "msteams"),
+        ])
+    );
+    let (status, _) = token_service(setup, connector, Method::DELETE, &path).await;
+    assert_eq!(status, 200);
+}
+
+diesel::table! {
+    bot_sign_ins (id) {
+        id -> Text,
+        user_id -> Text,
+        code_hash -> Nullable<Text>,
+    }
+}
+
+/// How many of Ada's sign-ins hold a code that the bot did not redeem yet.
+pub(super) async fn codes_held(setup: &Setup) -> i64 {
+    use diesel::{ExpressionMethods as _, QueryDsl as _};
+    use diesel_async::RunQueryDsl as _;
+    let query = bot_sign_ins::table
+        .filter(bot_sign_ins::user_id.eq(setup.ada.clone()))
+        .filter(bot_sign_ins::code_hash.is_not_null())
+        .count();
+    let db = &setup.registry.server.app.db;
+    async {
+        let held: i64 = ngteams_server::with_conn!(db, |conn| query.get_result(conn).await?);
+        Ok::<_, ngteams_server::db::DbError>(held)
+    }
+    .await
+    .unwrap()
+}
+
 /// Whether any string in `value` holds `secret`.
 pub(super) fn holds(value: &Value, secret: &str) -> bool {
     value.to_string().contains(secret)
@@ -202,8 +252,6 @@ async fn verified(setup: &Setup, code: &str) {
         Some("signin/verifyState") => Scripted::empty(200),
         _ => Scripted::empty(404),
     });
-    let ada_token = setup.registry.server.session("ada@own.test").await;
-    let ada_token = teams_trouter::TrouterCredentials::ic3(&ada_token).await.unwrap();
     let answer = setup
         .invoke(Some(&setup.chat()), InvokeKind::VerifyState { code: code.to_owned() })
         .await;
@@ -212,7 +260,7 @@ async fn verified(setup: &Setup, code: &str) {
     assert_eq!(got.activity["name"], "signin/verifyState");
     assert_eq!(got.activity["value"], json!({"state": code}));
     assert_eq!(got.activity["from"]["id"], format!("29:{}", setup.ada));
-    assert!(!holds(&got.activity, ada_token.token.expose()), "{}", got.activity);
+    assert!(!holds(&got.activity, &engine_token(setup).await), "{}", got.activity);
     assert_eq!(got.token_claims().unwrap()["aud"], setup.bot_id.as_str());
 }
 
@@ -221,6 +269,7 @@ async fn redeemed(setup: &Setup, connector: &Connector, code: &str) {
     let (status, token) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(code))).await;
     assert_eq!(status, 200, "{token}");
     assert_eq!(token["token"], "idp-access-1");
+    assert_eq!(codes_held(setup).await, 0, "the redeemed code is used up");
     assert_eq!(token["connectionName"], CONNECTION);
     assert_eq!(token["channelId"], "msteams");
     assert!(
@@ -246,16 +295,7 @@ pub(super) async fn has_token(setup: &Setup, connector: &Connector) -> bool {
 
 /// Sign-out: no token for the bot, and the redeemed code doesn't sign in again.
 async fn signed_out(setup: &Setup, connector: &Connector, code: &str) {
-    let sign_out = format!(
-        "api/usertoken/SignOut?{}",
-        query(&[
-            ("userId", &format!("29:{}", setup.ada)),
-            ("connectionName", CONNECTION),
-            ("channelId", "msteams"),
-        ])
-    );
-    let (status, _) = token_service(setup, connector, Method::DELETE, &sign_out).await;
-    assert_eq!(status, 200);
+    sign_out(setup, connector).await;
     let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
     assert_eq!(status, 404, "signed out, the bot gets no token");
     let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(code))).await;
@@ -341,7 +381,7 @@ async fn a_wrong_code_signs_no_one_in_and_single_sign_on_is_refused() {
     let (status, _) = token_service(&setup, &connector, Method::GET, &get_token(&bob, Some(&code))).await;
     assert_eq!(status, 404);
     // five wrong codes end the sign-in: the right one no longer works
-    let wrong = if code == "000000" { "111111" } else { "000000" };
+    let wrong = wrong_code(&code);
     for _ in 0..5 {
         let (status, _) = token_service(&setup, &connector, Method::GET, &get_token(&setup.ada, Some(wrong))).await;
         assert_eq!(status, 404);

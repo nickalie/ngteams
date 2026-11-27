@@ -927,13 +927,17 @@ fn a_narrow_cards_answer_line_wraps_under_it_and_the_card_keeps_its_width() {
 }
 
 /// An OAuth card as an SDK's sign-in prompt sends it.
+fn sign_in_link(id: &str) -> String {
+    format!("https://example.invalid/sign-in/{id}")
+}
+
 fn oauth_message(id: &str) -> Message {
     bot_message(
         id,
         &json!({"type": "message/card", "attachments": [
             {"contentType": "application/vnd.microsoft.card.oauth", "content": {
                 "text": "Sign in to Synthetic Tools", "connectionName": "tools",
-                "buttons": [{"type": "signin", "title": "Sign in", "value": "https://example.invalid/sign-in"}]}}
+                "buttons": [{"type": "signin", "title": "Sign in", "value": sign_in_link(id)}]}}
         ]}),
     )
 }
@@ -969,7 +973,7 @@ fn a_sign_in_card_opens_its_page_then_sends_the_code_it_showed() {
     let code = format!("card-{ID}-c0-code");
     assert!(bounds(cx, &code).is_none(), "no code field before the page opens");
     click(cx, &format!("card-{ID}-c0a0"));
-    assert_eq!(cx.opened_url().as_deref(), Some("https://example.invalid/sign-in"));
+    assert_eq!(cx.opened_url(), Some(sign_in_link(ID)));
     assert!(bounds(cx, &code).is_some(), "the code field shows");
     // what isn't six digits goes nowhere
     click(cx, &format!("{code}-verify"));
@@ -1030,7 +1034,7 @@ fn without_the_bots_a_sign_in_card_opens_in_teams_and_offers_no_code() {
 /// QA of task 233: the code field of message `id`'s sign-in card, open after its Sign in.
 fn opened_code_field(cx: &mut VisualTestContext, id: &str) -> String {
     click(cx, &format!("card-{id}-c0a0"));
-    assert_eq!(cx.opened_url().as_deref(), Some("https://example.invalid/sign-in"));
+    assert_eq!(cx.opened_url(), Some(sign_in_link(id)));
     let code = format!("card-{id}-c0-code");
     assert!(bounds(cx, &code).is_some(), "the code field of {id} shows");
     code
