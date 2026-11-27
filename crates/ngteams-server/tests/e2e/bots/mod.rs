@@ -14,6 +14,7 @@ mod keys;
 mod limits;
 mod people;
 mod picture_races;
+mod qa_send_limits;
 mod registry;
 
 use std::io::{Cursor, Write as _};
