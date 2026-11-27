@@ -21,22 +21,22 @@ use crate::support::{Backend, backends};
 use crate::teams::Seat;
 
 /// The packaged app and its bot (the manifest's ids).
-const APP: &str = "6b1c2f4e-3a8d-4c51-9e27-1f0a2b3c4d5e";
-const BOT: &str = "7c2d3e5f-4b9e-4d62-8f38-2a1b3c4d5e6f";
+pub(super) const APP: &str = "6b1c2f4e-3a8d-4c51-9e27-1f0a2b3c4d5e";
+pub(super) const BOT: &str = "7c2d3e5f-4b9e-4d62-8f38-2a1b3c4d5e6f";
 const FORM_BOT: &str = "Helper (synthetic)";
 
 /// A server with an administrator, the packaged app (its bot at a test endpoint) and a bot from the form, and Ada with
 /// her engine.
-struct Shop {
-    registry: Registry,
-    ada: Seat,
-    bot: TestBot,
+pub(super) struct Shop {
+    pub(super) registry: Registry,
+    pub(super) ada: Seat,
+    pub(super) bot: TestBot,
     secret: String,
     form: String,
 }
 
 impl Shop {
-    async fn open(backend: Backend) -> Self {
+    pub(super) async fn open(backend: Backend) -> Self {
         let registry = Registry::open_with(backend, loopback).await;
         let (status, answer) = registry
             .upload(
@@ -67,11 +67,11 @@ impl Shop {
     }
 
     /// The packaged bot's connector, signed with its own token.
-    async fn connector(&self, service_url: &str) -> Connector {
+    pub(super) async fn connector(&self, service_url: &str) -> Connector {
         Connector::signed(&self.registry.server, service_url, BOT, &self.secret).await
     }
 
-    fn stop(self) {
+    pub(super) fn stop(self) {
         self.ada.stop();
     }
 }
@@ -150,7 +150,7 @@ async fn told_of_team(bot: &TestBot, team: &str, group: &str) {
 
 /// What the bot gets when its app is taken off: `conversationUpdate` (it is gone, with `event` as the team's
 /// `eventType`) before `installationUpdate`. `next_of` drops other kinds, so a wrong order fails on the second read.
-async fn told_of_removal(bot: &TestBot, conversation: &str, event: Option<&str>) {
+pub(super) async fn told_of_removal(bot: &TestBot, conversation: &str, event: Option<&str>) {
     let members = bot.next_of("conversationUpdate").await.activity;
     assert_eq!(
         members["membersRemoved"],
@@ -354,7 +354,7 @@ async fn members_may(owner: &Seat, team: &str, (install, uninstall): (bool, bool
 }
 
 /// `seat` adds the packaged app to `team`.
-async fn add_to_team(seat: &Seat, team: &str) {
+pub(super) async fn add_to_team(seat: &Seat, team: &str) {
     let definition = polls(seat).await;
     let written = seat
         .engine
@@ -447,7 +447,7 @@ async fn roster_keeps_the_bot(shop: &Shop, bea: &Seat, chat: &str) {
 }
 
 /// The chat `seat` makes with `others`; its id.
-async fn create_chat(seat: &Seat, others: &[&Seat], topic: Option<&str>) -> String {
+pub(super) async fn create_chat(seat: &Seat, others: &[&Seat], topic: Option<&str>) -> String {
     let others = others.iter().map(|other| Mri::new(&other.mri)).collect();
     let topic = topic.map(Into::into);
     let made = seat.engine.write(Action::CreateChat { others, topic }).await.unwrap();
@@ -455,13 +455,13 @@ async fn create_chat(seat: &Seat, others: &[&Seat], topic: Option<&str>) -> Stri
 }
 
 /// Ada's definition of the packaged app, as the store gave it.
-async fn polls(seat: &Seat) -> AppDefinition {
+pub(super) async fn polls(seat: &Seat) -> AppDefinition {
     let listing = seat.engine.app_listing().await.unwrap();
     listing.app(APP).unwrap().definition.clone()
 }
 
 /// `seat`'s message to `conversation` that mentions the packaged app's bot, composed as the client composes it.
-async fn mention(seat: &Seat, conversation: &str, words: &str) -> String {
+pub(super) async fn mention(seat: &Seat, conversation: &str, words: &str) -> String {
     let bot = Mri::new(format!("28:{BOT}"));
     let text = RichText {
         nodes: vec![Node::Paragraph(vec![
@@ -481,7 +481,7 @@ async fn mention(seat: &Seat, conversation: &str, words: &str) -> String {
     send(seat, conversation, text).await
 }
 
-async fn say(seat: &Seat, conversation: &str, words: &str) -> String {
+pub(super) async fn say(seat: &Seat, conversation: &str, words: &str) -> String {
     send(seat, conversation, MessageText::plain(words).unwrap()).await
 }
 
@@ -516,7 +516,7 @@ async fn forget_personal_install(
 }
 
 /// Whether a message activity reaches the bot within a few seconds.
-async fn reaches(bot: &TestBot) -> bool {
+pub(super) async fn reaches(bot: &TestBot) -> bool {
     bot.gets_within("message", Duration::from_secs(3)).await
 }
 

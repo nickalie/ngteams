@@ -10,6 +10,7 @@ pub mod endpoint;
 mod guarded;
 mod health;
 mod installs;
+mod installs_qa;
 mod invoke;
 mod keys;
 mod limits;

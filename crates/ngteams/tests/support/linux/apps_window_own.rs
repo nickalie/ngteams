@@ -1,7 +1,8 @@
 //! The Store's own-server side: an own server's account on the real `ngteams-server` binary (`NGTEAMS_QA_SERVER_BIN`,
 //! else the one `cargo build -p ngteams-server` left in the target directory), run as an operator runs it, its user
-//! made with `user add` and one synthetic app registered with `app add`. The server does not name `appsService` in its
-//! authz, so the account must not be offered the Store. Without the binary it says so and skips.
+//! made with `user add` and one synthetic app registered with `app add`. The server names `appsService` in its authz
+//! (`apps.enabled`, on by default), so the rail's Store opens and lists that app. Without the binary it says so and
+//! skips.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -60,7 +61,7 @@ pub fn run(sandbox: &Sandbox) -> SandboxResult<Outcome> {
         MODE,
         &[(ORIGIN_ENV, &server.origin), (CA_ENV, &ca), (DIR_ENV, &data)],
     )?;
-    qa.check("own_server_without_apps_service_offers_no_store", no_store);
+    qa.check("own_server_store_lists_the_registered_app", store_lists_the_app);
     let outcome = (qa.passed.clone(), qa.failed.clone());
     qa.quit()?;
     if let Some(evidence) = std::env::var_os(EVIDENCE_ENV) {
@@ -69,22 +70,22 @@ pub fn run(sandbox: &Sandbox) -> SandboxResult<Outcome> {
     Ok(outcome)
 }
 
-fn no_store(qa: &mut Qa<'_>) -> SandboxResult {
+fn store_lists_the_app(qa: &mut Qa<'_>) -> SandboxResult {
     qa.state_until("the window drawn", |state| state["main"].is_string())?;
     thread::sleep(super::ANSWERED);
     qa.shot("own-window")?;
     qa.act("store")?;
-    let state = qa.state()?;
-    let opened = state["main"] == "Apps";
-    if opened {
-        qa.state_until("the own server's store read", |state| state["store"]["loaded"] == true)?;
-        qa.shots("own-store")?;
-    }
-    ensure(!opened, || {
-        format!(
-            "the rail's Store opens for an own server that names no appsService; it shows {}",
-            state["store"]
-        )
+    let state = qa.state_until("the own server's store read", |state| {
+        state["main"] == "Apps" && state["store"]["loaded"] == true
+    })?;
+    qa.shots("own-store")?;
+    let store = &state["store"];
+    let org = store["org"].as_array().cloned().unwrap_or_default();
+    ensure(org.len() == 1 && store["found"].as_array() == Some(&org), || {
+        format!("the own server's store does not list exactly the registered app: {store}")
+    })?;
+    ensure(store["mine"].as_array().is_some_and(Vec::is_empty), || {
+        format!("an app nobody added shows as added: {store}")
     })
 }
 
