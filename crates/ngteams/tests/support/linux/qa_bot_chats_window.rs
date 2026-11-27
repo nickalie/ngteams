@@ -14,8 +14,8 @@
 //!   mention picked is sent as a bot's mention with its app's id; a bot with an odd and very long name; a received
 //!   message that mentions a bot the chat does not have.
 //! - **With `NGTEAMS_BOTS` unset** (a second run): no bot in the picker and no About; the bot chats keep their names.
-//! - **An own server's account** (a third run, on the real `ngteams-server` binary when it is built): its server
-//!   names no `appsService`, so the picker offers no bot and nothing shows broken.
+//! - **An own server's account** (a third run, on the real `ngteams-server` binary when it is built): its one
+//!   registered app is not added to the group chat, so the picker offers no bot and nothing shows broken.
 //!
 //! Every name, id and text is made up. Screenshots are kept under `target/ui-shots/qa-bot-chats-*.png`, in Teams Light
 //! and Dark. Without weston 15, niri or `dbus-daemon` it says so and passes, unless `GPUI_SMOKE_REQUIRE=1`.

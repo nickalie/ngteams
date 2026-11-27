@@ -592,7 +592,9 @@ async fn an_app_added_for_the_account_tells_its_bot_in_their_chat_and_lists_as_t
         say(&shop.ada, &chat, "welcome back").await;
         assert_eq!(shop.bot.next_of("message").await.activity["text"], "welcome back");
         // a removal that removes no install (a bot seated without one) leaves the bot seated
-        forget_personal_install(&shop.registry.server.app, &shop.ada.id).await.unwrap();
+        forget_personal_install(&shop.registry.server.app, &shop.ada.id)
+            .await
+            .unwrap();
         let removed = shop
             .ada
             .engine

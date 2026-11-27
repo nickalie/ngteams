@@ -20,7 +20,8 @@
 //! - **A card's `task/fetch` button**: the app's dialog in the app.
 //! - **A narrow window**: the flyout and a dialog.
 //! - **More runs**: an account with no apps; the read-only mode; `NGTEAMS_BOTS` unset; an own server's account on the
-//!   real `ngteams-server` binary (it names no `appsService` yet, so nothing of this shows).
+//!   real `ngteams-server` binary with one registered app: the "+" opens the flyout with no app, and its "Get more
+//!   apps" opens the Store.
 //!
 //! Every name, id and text is made up. Screenshots are kept under `target/ui-shots/qa-me-*.png`, in Teams Light and
 //! Dark. `QA_ME_ONLY` (a run's name: `walk`, `no-apps`, `read-only`, `flag-off`, `own`) runs only that run. Without
@@ -1555,7 +1556,9 @@ fn hidden(
 const OWN_UPN: &str = "dana@own.example.test";
 const OWN_B: &str = "erin@own.example.test";
 
-/// An own server's account on the real binary: its server names no `appsService` yet, so the "+" opens nothing.
+/// An own server's account on the real binary: its server names `appsService`, so the "+" opens the flyout. The one
+/// registered app has no message extension and nobody added it, so the flyout lists no app; "Get more apps" opens the
+/// Store.
 fn own_server(sandbox: &Sandbox, dir: &Path) -> SandboxResult {
     let Some(binary) = own_server_binary::binary()? else {
         say("skipped own-server checks: no ngteams-server binary (cargo build -p ngteams-server)");
@@ -1564,6 +1567,20 @@ fn own_server(sandbox: &Sandbox, dir: &Path) -> SandboxResult {
     let server = own_server_binary::BinaryServer::start(&binary)?;
     server.add_user(OWN_UPN, "Dana Made-Up")?;
     server.add_user(OWN_B, "Erin Made-Up")?;
+    let added = server.run(
+        &[
+            "app",
+            "add",
+            "--name",
+            "Made-up Notes (synthetic)",
+            "--endpoint",
+            "https://bots.example.test/api/messages",
+            "--description",
+            "A made-up app an admin registered",
+        ],
+        None,
+    )?;
+    step(&format!("own server: {}", added.lines().next().unwrap_or_default()));
     let env = vec![
         (ORIGIN_ENV, server.origin.clone()),
         (CA_ENV, server.ca_file.to_string_lossy().into_owned()),
@@ -1581,22 +1598,37 @@ fn own_server(sandbox: &Sandbox, dir: &Path) -> SandboxResult {
         let chat = rows["rows"][0]["id"].as_str().ok_or("no chat row")?.to_owned();
         run.open(&chat)?;
         thread::sleep(SETTLE);
-        run.shot(sandbox, "qa-me-own-chat-light.png")?;
+        let before = load(&run.shot(sandbox, "qa-me-own-chat-light.png")?)?;
         run.click(PLUS.0, PLUS.1)?;
-        thread::sleep(SETTLE);
-        let state = run.state_in("chat")?;
-        expect(state["compose"]["flyout"].is_null(), || {
-            format!(
-                "an own server's account (no appsService): the + opens {}",
-                state["compose"]["flyout"]
-            )
+        let state = run.until_chat("the own server's flyout read", |state| {
+            state["compose"]["flyout"]["loaded"] == true
+        })?;
+        let listed = strings(&state["compose"]["flyout"]["listed"]);
+        expect(listed.is_empty(), || {
+            format!("an own server's flyout lists {listed:?}, but no app with a message extension is added")
         });
-        run.shot(sandbox, "qa-me-own-plus-light.png")?;
+        thread::sleep(SETTLE);
+        let after = load(&run.shot(sandbox, "qa-me-own-plus-light.png")?)?;
+        let region = Rect {
+            x0: 0,
+            y0: 0,
+            x1: after.width(),
+            y1: PLUS.1.saturating_sub(16),
+        };
+        let flyout = changed_box(&before, &after, region).ok_or("no flyout on the screen (own)")?;
+        step(&format!("the own server's flyout: {flyout:?}"));
         run.theme(true)?;
         thread::sleep(SETTLE);
         run.shot(sandbox, "qa-me-own-plus-dark.png")?;
         run.theme(false)?;
-        step("an own server's account: nothing of the apps shows");
+        thread::sleep(SETTLE);
+        run.click(flyout.x1.saturating_sub(70), flyout.y1.saturating_sub(30))?;
+        run.until_chat("the own server's Store from Get more apps", |state| {
+            state["main"].as_str().is_some_and(|main| main.contains("Apps"))
+        })?;
+        thread::sleep(SETTLE);
+        run.shot(sandbox, "qa-me-own-store-light.png")?;
+        step("an own server's account: the flyout lists no app, Get more apps opens the Store");
         Ok(())
     })();
     if let Err(error) = outcome {

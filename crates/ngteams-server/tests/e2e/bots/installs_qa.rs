@@ -8,9 +8,7 @@ use serde_json::json;
 use teams_proto::TeamWrite;
 
 use super::endpoint::{Connector, encode};
-use super::installs::{
-    APP, BOT, Shop, add_to_team, create_chat, mention, polls, reaches, say, told_of_removal,
-};
+use super::installs::{APP, BOT, Shop, add_to_team, create_chat, mention, polls, reaches, say, told_of_removal};
 use crate::support::backends;
 use crate::teams::{Seat, new_channel};
 
@@ -52,10 +50,7 @@ async fn a_team_app_hears_the_standard_channels_made_before_it_and_never_a_priva
         let plans = shop.ada.make_channel(&team, &group, "Plans", true).await;
         let secret = make_private(&shop.ada, &team, &group, "Secret").await;
         add_to_team(&shop.ada, &team).await;
-        assert_eq!(
-            shop.bot.next_of("installationUpdate").await.activity["action"],
-            "add"
-        );
+        assert_eq!(shop.bot.next_of("installationUpdate").await.activity["action"], "add");
         let later_secret = make_private(&shop.ada, &team, &group, "Later secret").await;
 
         // a standard channel made before the add
@@ -80,7 +75,10 @@ async fn a_team_app_hears_the_standard_channels_made_before_it_and_never_a_priva
         // private channels, made before or after the add, are not the bot's
         mention(&shop.ada, &secret, "secret plans?").await;
         mention(&shop.ada, &later_secret, "later secret?").await;
-        assert!(!reaches(&shop.bot).await, "a mention in a private channel reached the bot");
+        assert!(
+            !reaches(&shop.bot).await,
+            "a mention in a private channel reached the bot"
+        );
         let (status, _) = connector.send(&secret, Connector::text("peek")).await;
         assert_eq!(status, 403);
         let (status, _) = connector.send(&later_secret, Connector::text("peek")).await;
@@ -107,7 +105,10 @@ async fn a_team_app_hears_the_standard_channels_made_before_it_and_never_a_priva
         assert!(removed.is_ok(), "{removed:?}");
         told_of_removal(&shop.bot, &team, Some("teamMemberRemoved")).await;
         mention(&bea, &plans, "plans now?").await;
-        assert!(!reaches(&shop.bot).await, "a removed bot got a mention in an earlier channel");
+        assert!(
+            !reaches(&shop.bot).await,
+            "a removed bot got a mention in an earlier channel"
+        );
         let (status, _) = connector.send(&conversation, Connector::text("late")).await;
         assert_eq!(status, 403);
         let (status, _) = connector.send(&plans, Connector::text("late post")).await;
@@ -134,10 +135,7 @@ async fn a_bots_answer_in_a_group_chat_shows_to_its_people_and_an_app_added_agai
         };
         let written = shop.ada.engine.team_write(add(polls(&shop.ada).await), None).await;
         assert!(written.is_ok(), "{written:?}");
-        assert_eq!(
-            shop.bot.next_of("installationUpdate").await.activity["action"],
-            "add"
-        );
+        assert_eq!(shop.bot.next_of("installationUpdate").await.activity["action"], "add");
 
         let sent = mention(&bea, &chat, "start a poll").await;
         let message = shop.bot.next_of("message").await.activity;
@@ -178,7 +176,10 @@ async fn a_bots_answer_in_a_group_chat_shows_to_its_people_and_an_app_added_agai
         let written = bea.engine.team_write(add(polls(&bea).await), None).await;
         assert!(written.is_ok(), "{written:?}");
         let got = shop.bot.next_of("installationUpdate").await.activity;
-        assert_eq!((got["action"].as_str(), got["conversation"]["id"].as_str()), (Some("add"), Some(chat.as_str())));
+        assert_eq!(
+            (got["action"].as_str(), got["conversation"]["id"].as_str()),
+            (Some("add"), Some(chat.as_str()))
+        );
         let members = shop.bot.next_of("conversationUpdate").await.activity;
         assert_eq!(members["membersAdded"][0]["id"], format!("28:{BOT}"), "{members}");
         let names = cora.engine.chat_apps(chat.clone()).await.unwrap();
@@ -213,7 +214,11 @@ async fn the_store_shows_an_app_only_to_its_people_and_only_while_it_is_on() {
         let path = super::app_path(&few);
         let (status, _) = shop
             .registry
-            .call(Method::PATCH, &path, Some(json!({"everyone": false, "users": [bea.id]})))
+            .call(
+                Method::PATCH,
+                &path,
+                Some(json!({"everyone": false, "users": [bea.id]})),
+            )
             .await;
         assert_eq!(status, 200);
 
@@ -226,7 +231,12 @@ async fn the_store_shows_an_app_only_to_its_people_and_only_while_it_is_on() {
         let definition = bea.engine.app_definition(few.clone()).await.unwrap().unwrap();
         let written = bea
             .engine
-            .team_write(TeamWrite::AddPersonalApp { app: definition.clone() }, None)
+            .team_write(
+                TeamWrite::AddPersonalApp {
+                    app: definition.clone(),
+                },
+                None,
+            )
             .await;
         assert!(written.is_ok(), "{written:?}");
         let mine = bea.engine.user_apps().await.unwrap();
