@@ -45,7 +45,7 @@ use teams_core::engine::{self, EngineHandle, EngineOptions, Parts, Push};
 use teams_ctl::protocol::{OpenTarget, Request, Response};
 use teams_ctl::{Client, Timeouts};
 use teams_mock::{
-    AMS_BASE, CHAT_BASE, CSA_BASE, ChatServiceMock, EventKind, LAB_A, LAB_B, LAB_C, MIDDLE_TIER_BASE, PRESENCE_BASE,
+    AMS_BASE, CHAT_BASE, CSA_BASE, ChatServiceMock, LAB_A, LAB_B, LAB_C, MIDDLE_TIER_BASE, PRESENCE_BASE,
     PROVISIONING_BASE, TEAM_CHANNEL, USER_PROFILE_BASE,
 };
 use teams_proto::{Author, Client as ChatClient, Credentials, HttpTransport, Mri};
@@ -288,31 +288,15 @@ fn seeds() -> Vec<Seed> {
     ]
 }
 
-/// Puts `html` in the channel from `from`, with `properties`, as the service keeps it; its id. The service's own
-/// delivery of it is taken back: the caller tells a of it with the properties or lets the app read it.
-fn put_post(
-    mock: &ChatServiceMock,
-    from: (&str, &str),
-    html: &str,
-    properties: &Value,
-) -> SandboxResult<(String, Value)> {
-    let mut stored = Value::Null;
+/// Puts `html` in the channel from `from`, with `properties`, as the service keeps and delivers it; its id.
+fn put_post(mock: &ChatServiceMock, from: (&str, &str), html: &str, properties: &Value) -> SandboxResult<String> {
     // the properties go in with the post: a delivery before a later change would show it plain
     let id = mock
         .add_message_with(TEAM_CHANNEL, from, "RichText/Html", html, |message| {
             message["properties"] = properties.clone();
-            stored = message.clone();
         })
         .ok_or("no channel on the mock")?;
-    let kept: Vec<_> = mock
-        .take_events(LAB_A)
-        .into_iter()
-        .filter(|event| event.resource["id"] != id.as_str())
-        .collect();
-    for event in kept {
-        mock.queue_event(LAB_A, event);
-    }
-    Ok((id, stored))
+    Ok(id)
 }
 
 // --- the parent ---
@@ -349,7 +333,7 @@ fn parent() -> SandboxResult {
     let dir = tempfile::tempdir()?;
     let mut posts = Vec::new();
     for seed in seeds() {
-        let (id, _) = put_post(&mock, seed.from, &seed.html, &seed.properties)?;
+        let id = put_post(&mock, seed.from, &seed.html, &seed.properties)?;
         posts.push((seed.key.to_owned(), id));
     }
     let _ = mock.take_events(LAB_A);
@@ -853,16 +837,7 @@ fn live_post(user: &mut User<'_>) -> SandboxResult {
         Some(LIVE_SUBJECT),
         &details(&channel_only(), &[], Some("Made-up alert resolved.eml")),
     );
-    let (id, stored) = put_post(user.mock, (MAILER, MAILER_NAME), LIVE_BODY, &properties)?;
-    user.mock.queue_event(
-        LAB_A,
-        teams_mock::ChatEvent {
-            conversation: TEAM_CHANNEL.to_owned(),
-            from: MAILER.to_owned(),
-            kind: EventKind::Message,
-            resource: stored,
-        },
-    );
+    let id = put_post(user.mock, (MAILER, MAILER_NAME), LIVE_BODY, &properties)?;
     user.posts.push(("live".to_owned(), id.clone()));
     let state = user.until("the live email post", |state| {
         post_of(state, &id).is_ok_and(|post| post["email"] == true)
