@@ -106,7 +106,7 @@ sha256 = "0f7139e9fde996fa5771555828e546ab5bf8dd4d9eeb3f220cd351ba6b9779ad"
 reason = "module declarations, re-exports and documentation only; no executable bodies"
 
 [unmapped_sources."crates/teams-media/src/lib.rs"]
-sha256 = "2b0ab18157391af1d2d9c9cdf346f017e72c07b0a3bf15b2ce13fc4dd4bb8dc8"
+sha256 = "613f6a3d4678cd96ec98094252624044f14082f07bcc02c487bf7efd9cb3fa48"
 reason = "module declarations and derived error type only; no authored executable bodies"
 
 [unmapped_sources."crates/teams-media/src/video.rs"]
