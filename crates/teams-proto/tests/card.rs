@@ -355,7 +355,10 @@ fn reads_a_hero_cards_bot_buttons() {
 
 #[test]
 fn reads_a_sign_in_and_an_oauth_card_as_their_text_and_sign_in_button() {
-    for kind in ["application/vnd.microsoft.card.oauth", "application/vnd.microsoft.card.signin"] {
+    for kind in [
+        "application/vnd.microsoft.card.oauth",
+        "application/vnd.microsoft.card.signin",
+    ] {
         let activity = json!({"attachments": [{"contentType": kind, "content": {
             "text": "Sign in to Synthetic Tools", "connectionName": "tools",
             "tokenExchangeResource": {"id": "x", "uri": "api://synthetic"},

@@ -6,10 +6,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
-use oauth2::basic::{BasicClient, BasicTokenResponse};
+use oauth2::basic::{BasicClient, BasicErrorResponse, BasicErrorResponseType, BasicTokenResponse};
 use oauth2::{
-    AsyncHttpClient, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointNotSet, EndpointSet, PkceCodeChallenge,
-    HttpRequest, HttpResponse, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, TokenResponse as _, TokenUrl,
+    AsyncHttpClient, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointNotSet, EndpointSet,
+    HttpRequest, HttpResponse, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, RequestTokenError,
+    Scope, TokenResponse as _, TokenUrl,
 };
 use serde::{Deserialize, Serialize};
 
@@ -32,8 +33,32 @@ type Client = BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointN
 
 /// Why the provider gave no token.
 #[derive(Debug, thiserror::Error)]
-#[error("the identity provider gave no token: {0}")]
-pub(crate) struct ProviderError(String);
+pub(crate) enum ProviderError {
+    /// The grant is gone: the provider refused it (`invalid_grant`), or there is no refresh token.
+    #[error("the identity provider refused the grant: {0}")]
+    Refused(String),
+    /// Anything else: the connection, the provider's answer or its availability.
+    #[error("the identity provider gave no token: {0}")]
+    Failed(String),
+}
+
+impl ProviderError {
+    /// Whether the grant is gone, not only this attempt.
+    pub(crate) fn refused(&self) -> bool {
+        matches!(self, Self::Refused(_))
+    }
+}
+
+type TokenError = RequestTokenError<OutboundError, BasicErrorResponse>;
+
+fn token_error(error: &TokenError) -> ProviderError {
+    match error {
+        RequestTokenError::ServerResponse(answer) if *answer.error() == BasicErrorResponseType::InvalidGrant => {
+            ProviderError::Refused(error.to_string())
+        }
+        _ => ProviderError::Failed(error.to_string()),
+    }
+}
 
 /// A person's token from the provider, as it is kept (sealed). Its `Debug` shows no token.
 #[derive(Clone, Serialize, Deserialize)]
@@ -53,7 +78,7 @@ impl std::fmt::Debug for Held {
 }
 
 fn client(connection: &Connection, secret: String, redirect: &str) -> Result<Client, ProviderError> {
-    let failed = |error: url::ParseError| ProviderError(error.to_string());
+    let failed = |error: url::ParseError| ProviderError::Failed(error.to_string());
     Ok(BasicClient::new(ClientId::new(connection.client_id.clone()))
         .set_client_secret(ClientSecret::new(secret))
         .set_auth_uri(AuthUrl::new(connection.authorize_url.clone()).map_err(failed)?)
@@ -105,7 +130,7 @@ pub(crate) async fn redeem(
         .set_pkce_verifier(PkceCodeVerifier::new(verifier))
         .request_async(&Guarded(outbound))
         .await
-        .map_err(|error| ProviderError(error.to_string()))?;
+        .map_err(|error| token_error(&error))?;
     Ok(held(&answer, None))
 }
 
@@ -120,17 +145,19 @@ pub(crate) async fn renew(
     let refresh = held_now
         .refresh_token
         .clone()
-        .ok_or_else(|| ProviderError("no refresh token".to_owned()))?;
+        .ok_or_else(|| ProviderError::Refused("no refresh token".to_owned()))?;
     let answer = client(connection, secret, redirect)?
         .exchange_refresh_token(&RefreshToken::new(refresh.clone()))
         .request_async(&Guarded(outbound))
         .await
-        .map_err(|error| ProviderError(error.to_string()))?;
+        .map_err(|error| token_error(&error))?;
     Ok(held(&answer, Some(refresh)))
 }
 
 fn held(answer: &BasicTokenResponse, old_refresh: Option<String>) -> Held {
-    let lifetime = answer.expires_in().map(|left| left.min(Duration::from_hours(10 * 365 * 24)));
+    let lifetime = answer
+        .expires_in()
+        .map(|left| left.min(Duration::from_hours(10 * 365 * 24)));
     Held {
         access_token: answer.access_token().secret().clone(),
         refresh_token: answer
@@ -191,5 +218,14 @@ mod tests {
             expires_at: Some(1),
         };
         assert!(!format!("{held:?}").contains("synthetic"));
+    }
+
+    #[test]
+    fn only_a_refused_grant_is_the_grants_end() {
+        let answer = |kind| RequestTokenError::ServerResponse(BasicErrorResponse::new(kind, None, None));
+        assert!(token_error(&answer(BasicErrorResponseType::InvalidGrant)).refused());
+        assert!(!token_error(&answer(BasicErrorResponseType::InvalidClient)).refused());
+        assert!(!token_error(&RequestTokenError::Request(OutboundError::Timeout)).refused());
+        assert!(!token_error(&RequestTokenError::Other("503".to_owned())).refused());
     }
 }

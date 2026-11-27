@@ -399,7 +399,11 @@ async fn sign_in_card(run: &Running, count: usize) -> String {
         if links.len() >= count {
             return links.last().unwrap().clone();
         }
-        assert!(Instant::now() < deadline, "no sign-in card came: {}", run.container.logs());
+        assert!(
+            Instant::now() < deadline,
+            "no sign-in card came: {}",
+            run.container.logs()
+        );
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
 }
@@ -427,7 +431,14 @@ async fn sign_in(run: &Running, sdk: &Sdk) {
             hex
         });
     let digest = &hex[..12];
-    answered(&run.ada, &run.chat, &run.bot, &format!("signed in to {name}: {digest}"), &run.container).await;
+    answered(
+        &run.ada,
+        &run.chat,
+        &run.bot,
+        &format!("signed in to {name}: {digest}"),
+        &run.container,
+    )
+    .await;
     ask(run, "signin", &format!("already signed in to {name}: {digest}")).await;
     ask(run, "signout", &format!("signed out of {name}")).await;
     run.ada.send(&run.chat, "signin").await;

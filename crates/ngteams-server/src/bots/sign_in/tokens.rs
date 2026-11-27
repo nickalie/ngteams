@@ -13,14 +13,14 @@ use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use serde_json::{Map, Value, json};
 
 use super::browser::{pending_context, verifier_context};
-use super::connections::{self, Connection, secret_context};
+use super::connections::{self, Connection};
+use super::now_ms as now;
 use super::provider::{self, Held};
 use super::store::{self, Owner, SignIn};
 use super::{SIGN_IN_LIFETIME_MS, Sealer, redirect_uri, sign_in_link};
 use crate::app::App;
 use crate::bots::Bot;
 use crate::db::DbError;
-use super::now_ms as now;
 
 /// How long before its end a token is renewed rather than handed out.
 const RENEW_BEFORE_MS: i64 = 60_000;
@@ -33,7 +33,11 @@ fn refused(status: StatusCode, code: &str, message: &str) -> Response {
 }
 
 fn not_found() -> Response {
-    refused(StatusCode::NOT_FOUND, "NotFound", "No token for this user and connection.")
+    refused(
+        StatusCode::NOT_FOUND,
+        "NotFound",
+        "No token for this user and connection.",
+    )
 }
 
 fn bad(message: &str) -> Response {
@@ -174,7 +178,7 @@ async fn redeem_code(app: &App, sealer: &Sealer, owner: Owner<'_>, code: &str) -
 
 fn pending_token(sealer: &Sealer, sign_in: &SignIn) -> Option<Held> {
     let locked = sign_in.token.as_deref()?;
-    let plain = sealer.open(&pending_context(&sign_in.id), locked).ok()?;
+    let plain = sealer.open(&pending_context(sign_in), locked).ok()?;
     serde_json::from_slice(&plain).ok()
 }
 
@@ -183,8 +187,8 @@ fn seal_held(sealer: &Sealer, owner: Owner<'_>, held: &Held) -> Option<Vec<u8>> 
     sealer.seal(&token_context(owner), &plain).ok()
 }
 
-/// The owner's token, renewed first when it runs out within [`RENEW_BEFORE_MS`]; a token that can't be renewed
-/// signs them out of the connection.
+/// The owner's token, renewed first when it runs out within [`RENEW_BEFORE_MS`]. A token the provider refuses to
+/// renew signs them out of the connection; any other failure keeps it for the next request.
 async fn held(app: &App, sealer: &Sealer, connection: &Connection, owner: Owner<'_>) -> Result<Option<Held>, DbError> {
     let Some(locked) = store::token(&app.db, owner).await? else {
         return Ok(None);
@@ -199,30 +203,27 @@ async fn held(app: &App, sealer: &Sealer, connection: &Connection, owner: Owner<
     if held.expires_at.is_none_or(|at| at > now() + RENEW_BEFORE_MS) {
         return Ok(Some(held));
     }
-    let secret = sealer
-        .open(&secret_context(&connection.bot_id, &connection.name), &connection.client_secret)
-        .ok();
-    let renewed = match secret {
-        Some(secret) => provider::renew(
-            &app.outbound,
-            connection,
-            String::from_utf8_lossy(&secret).into_owned(),
-            &redirect_uri(&app.config),
-            &held,
-        )
-        .await
-        .inspect_err(|error| tracing::info!(%error, connection = %connection.name, "a token wasn't renewed"))
-        .ok(),
-        None => None,
+    let Some(secret) = connection.secret(sealer) else {
+        tracing::warn!(connection = %connection.name, "a connection's secret didn't open");
+        return Ok(None);
     };
-    if let Some((renewed, locked)) =
-        renewed.and_then(|renewed| seal_held(sealer, owner, &renewed).map(|locked| (renewed, locked)))
-    {
-        store::keep(&app.db, owner, &locked).await?;
-        return Ok(Some(renewed));
+    let renewed = provider::renew(&app.outbound, connection, secret, &redirect_uri(&app.config), &held)
+        .await
+        .inspect_err(|error| tracing::info!(%error, connection = %connection.name, "a token wasn't renewed"));
+    match renewed {
+        Ok(renewed) => {
+            let Some(locked) = seal_held(sealer, owner, &renewed) else {
+                return Ok(None);
+            };
+            store::keep(&app.db, owner, &locked).await?;
+            Ok(Some(renewed))
+        }
+        Err(error) if error.refused() => {
+            store::sign_out(&app.db, owner.bot, Some(owner.connection), owner.user).await?;
+            Ok(None)
+        }
+        Err(_) => Ok(None),
     }
-    store::sign_out(&app.db, owner.bot, Some(owner.connection), owner.user).await?;
-    Ok(None)
 }
 
 /// A `TokenResponse`.
@@ -316,7 +317,11 @@ async fn sign_in_resource(app: &App, bot: &Bot, asked: &Asked, as_text: bool) ->
     let Some(state) = asked.get("state").and_then(state_of) else {
         return Ok(bad("state names no connection and user."));
     };
-    if state.app.as_ref().is_some_and(|named| *named != bot.app_id && *named != bot.id) {
+    if state
+        .app
+        .as_ref()
+        .is_some_and(|named| *named != bot.app_id && *named != bot.id)
+    {
         return Ok(bad("state names another app."));
     }
     let Some(sealer) = Sealer::of(&app.config) else {
@@ -357,22 +362,23 @@ fn new_sign_in(sealer: &Sealer, bot: &Bot, connection: &Connection, user: &str) 
     let mut bytes = [0_u8; 32];
     aws_lc_rs::rand::fill(&mut bytes).ok()?;
     let id = URL_SAFE_NO_PAD.encode(bytes);
-    let verifier = sealer
-        .seal(&verifier_context(&id), provider::new_verifier().as_bytes())
-        .ok()?;
     let at = now();
-    Some(SignIn {
+    let mut sign_in = SignIn {
         bot_id: bot.id.clone(),
         connection: connection.name.clone(),
         user_id: user.to_owned(),
-        verifier,
+        verifier: Vec::new(),
         code_hash: None,
         token: None,
         attempts: 0,
         expires_at: at + SIGN_IN_LIFETIME_MS,
         created_at: at,
         id,
-    })
+    };
+    sign_in.verifier = sealer
+        .seal(&verifier_context(&sign_in), provider::new_verifier().as_bytes())
+        .ok()?;
+    Some(sign_in)
 }
 
 #[cfg(test)]
@@ -387,7 +393,10 @@ mod tests {
         assert_eq!(read.app.as_deref(), Some("b"));
         let pascal = json!({"ConnectionName": "g", "Conversation": {"User": {"Id": "ada"}}});
         let read = state_of(&URL_SAFE_NO_PAD.encode(pascal.to_string())).unwrap();
-        assert_eq!((read.connection.as_str(), read.user.as_str(), read.app), ("g", "ada", None));
+        assert_eq!(
+            (read.connection.as_str(), read.user.as_str(), read.app),
+            ("g", "ada", None)
+        );
         assert!(state_of("not base64!").is_none());
         assert!(state_of(&STANDARD.encode("{}")).is_none());
         assert!(state_of(&"A".repeat(MAX_STATE + 1)).is_none());

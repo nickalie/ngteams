@@ -4,9 +4,9 @@
 use diesel::prelude::*;
 use diesel_async::{AsyncConnection as _, RunQueryDsl};
 
+use super::now_ms as now;
 use super::schema::{bot_connections, bot_sign_ins, bot_user_tokens};
 use crate::db::{Db, DbError, with_conn};
-use super::now_ms as now;
 
 /// How many wrong codes end a sign-in.
 pub(super) const MAX_ATTEMPTS: i32 = 5;
@@ -70,14 +70,16 @@ pub(super) async fn sign_in(db: &Db, id: &str) -> Result<Option<SignIn>, DbError
         .optional()?))
 }
 
-/// Gives the sign-in `id` its code and token, once: whether it took them.
+/// Gives the sign-in `id` its code and token, once, and a full lifetime from now for the code: whether it took them.
 pub(super) async fn signed_in(db: &Db, id: &str, code_hash: &str, token: &[u8]) -> Result<bool, DbError> {
     let updated = with_conn!(db, |conn| diesel::update(
-        bot_sign_ins::table
-            .find(id)
-            .filter(bot_sign_ins::token.is_null())
+        bot_sign_ins::table.find(id).filter(bot_sign_ins::token.is_null())
     )
-    .set((bot_sign_ins::code_hash.eq(code_hash), bot_sign_ins::token.eq(token)))
+    .set((
+        bot_sign_ins::code_hash.eq(code_hash),
+        bot_sign_ins::token.eq(token),
+        bot_sign_ins::expires_at.eq(now() + super::SIGN_IN_LIFETIME_MS),
+    ))
     .execute(conn)
     .await)?;
     Ok(updated == 1)
@@ -153,7 +155,6 @@ pub(super) async fn redeem(db: &Db, id: &str, owner: Owner<'_>, token: &[u8]) ->
         .await)
 }
 
-
 /// Keeps `token` (sealed) as the owner's, in place of any they had.
 pub(super) async fn keep(db: &Db, owner: Owner<'_>, token: &[u8]) -> Result<(), DbError> {
     with_conn!(db, |conn| conn
@@ -222,8 +223,10 @@ pub(super) async fn statuses(db: &Db, bot: &str, user: &str) -> Result<Vec<(Stri
 
 /// Drops the sign-ins that ran out before `before`.
 pub(super) async fn purge(db: &Db, before: i64) -> Result<(), DbError> {
-    with_conn!(db, |conn| diesel::delete(bot_sign_ins::table.filter(bot_sign_ins::expires_at.le(before)))
-        .execute(conn)
-        .await)?;
+    with_conn!(db, |conn| diesel::delete(
+        bot_sign_ins::table.filter(bot_sign_ins::expires_at.le(before))
+    )
+    .execute(conn)
+    .await)?;
     Ok(())
 }

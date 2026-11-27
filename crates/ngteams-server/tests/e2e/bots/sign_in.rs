@@ -223,7 +223,10 @@ async fn redeemed(setup: &Setup, connector: &Connector, code: &str) {
     assert_eq!(token["token"], "idp-access-1");
     assert_eq!(token["connectionName"], CONNECTION);
     assert_eq!(token["channelId"], "msteams");
-    assert!(token["expiration"].as_str().is_some_and(|at| at.ends_with('Z')), "{token}");
+    assert!(
+        token["expiration"].as_str().is_some_and(|at| at.ends_with('Z')),
+        "{token}"
+    );
     let (status, again) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
     assert_eq!((status, &again["token"]), (200, &json!("idp-access-1")));
     let status_path = format!(
@@ -326,7 +329,11 @@ async fn a_wrong_code_signs_no_one_in_and_single_sign_on_is_refused() {
     );
     let (status, url) = token_service(&setup, &connector, Method::GET, &path).await;
     assert_eq!(status, 200);
-    assert!(url.as_str().is_some_and(|url| url.starts_with(&format!("{ORIGIN}/api/oauth/signin?"))), "{url}");
+    assert!(
+        url.as_str()
+            .is_some_and(|url| url.starts_with(&format!("{ORIGIN}/api/oauth/signin?"))),
+        "{url}"
+    );
     // a sign-in link that isn't one
     let (status, _) = super::call(
         &setup.registry.server,
@@ -425,10 +432,7 @@ async fn an_administrator_keeps_a_bots_connections_and_their_secret_stays_unread
     // a person who isn't an administrator reads nothing
     setup.registry.server.add_user("eve@own.test", "Eve Synthetic").await;
     let eve = setup.registry.server.session("eve@own.test").await;
-    let eve = eve
-        .access_token(teams_auth::token::SPACES_RESOURCE)
-        .await
-        .unwrap();
+    let eve = eve.access_token(teams_auth::token::SPACES_RESOURCE).await.unwrap();
     let (status, _) = super::call(
         &setup.registry.server,
         Method::GET,
@@ -439,15 +443,7 @@ async fn an_administrator_keeps_a_bots_connections_and_their_secret_stays_unread
     .await;
     assert_eq!(status, 403);
 
-    // deleting the connection signs everyone out of it
-    let (status, _) = token_service(&setup, &connector, Method::GET, &get_token(&setup.ada, Some(&code))).await;
-    assert_eq!(status, 200);
-    let (status, _) = setup.registry.call(Method::DELETE, &path, None).await;
-    assert_eq!(status, 204);
-    let (status, _) = token_service(&setup, &connector, Method::GET, &get_token(&setup.ada, None)).await;
-    assert_eq!(status, 404);
-    let (status, answer) = setup.registry.call(Method::GET, &list, None).await;
-    assert_eq!((status, &answer["value"]), (200, &json!([])));
+    a_change_keeps_tokens_and_a_delete_drops_them(&setup, &connector, &idp, &code).await;
     setup.stop().await;
 
     // without a key, no connection is made
@@ -459,6 +455,34 @@ async fn an_administrator_keeps_a_bots_connections_and_their_secret_stays_unread
         .await;
     assert_eq!((status, error_code(&answer)), (409, "SignInNotConfigured"), "{answer}");
     keyless.stop().await;
+}
+
+/// A connection's change keeps the people's tokens; its deletion drops them, also when it is made again.
+async fn a_change_keeps_tokens_and_a_delete_drops_them(setup: &Setup, connector: &Connector, idp: &Idp, code: &str) {
+    let path = connection_path(&setup.bot_id, CONNECTION);
+    let list = format!("{}/connections", app_path(&setup.bot_id));
+    // a change keeps the people's tokens
+    let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(code))).await;
+    assert_eq!(status, 200);
+    let mut changed = connection_body(idp);
+    changed["scopes"] = json!("repo");
+    let (status, answer) = setup.registry.call(Method::PUT, &path, Some(changed)).await;
+    assert_eq!(status, 200, "{answer}");
+    let (status, token) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
+    assert_eq!(status, 200, "{token}");
+
+    // deleting the connection signs everyone out of it, also when it is made again
+    let (status, _) = setup.registry.call(Method::DELETE, &path, None).await;
+    assert_eq!(status, 204);
+    let (status, answer) = setup.registry.call(Method::GET, &list, None).await;
+    assert_eq!((status, &answer["value"]), (200, &json!([])));
+    let (status, _) = setup
+        .registry
+        .call(Method::PUT, &path, Some(connection_body(idp)))
+        .await;
+    assert_eq!(status, 201);
+    let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
+    assert_eq!(status, 404);
 }
 
 #[tokio::test]

@@ -11,10 +11,11 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde::Deserialize;
 
-use super::connections::{self, secret_context};
+use super::connections;
 use super::store::{self, SignIn};
 use super::{Sealer, provider, redirect_uri, tokens};
 use crate::app::App;
+use crate::db::DbError;
 
 pub(super) fn router() -> Router<Arc<App>> {
     Router::new()
@@ -34,36 +35,50 @@ struct Callback {
     error: Option<String>,
 }
 
+type Running = (SignIn, connections::Connection, Sealer);
+
 /// The sign-in a link or a callback names, with its connection and the sealer, while it runs and has no token yet.
-async fn running(app: &App, id: Option<&str>) -> Option<(SignIn, connections::Connection, Sealer)> {
-    let sealer = Sealer::of(&app.config)?;
-    let found = store::sign_in(&app.db, id?).await.ok().flatten()?;
-    if found.token.is_some() {
-        return None;
+async fn running(app: &App, id: Option<&str>) -> Result<Option<Running>, DbError> {
+    let (Some(sealer), Some(id)) = (Sealer::of(&app.config), id) else {
+        return Ok(None);
+    };
+    let Some(found) = store::sign_in(&app.db, id).await?.filter(|found| found.token.is_none()) else {
+        return Ok(None);
+    };
+    let connection = connections::find(&app.db, &found.bot_id, &found.connection).await?;
+    Ok(connection.map(|connection| (found, connection, sealer)))
+}
+
+/// The page for a sign-in that doesn't run, or that the database couldn't find.
+fn not_running(error: Option<DbError>) -> Response {
+    match error {
+        Some(error) => unavailable(&error),
+        None => page(StatusCode::NOT_FOUND, GONE_TITLE, GONE_TEXT, None),
     }
-    let connection = connections::find(&app.db, &found.bot_id, &found.connection)
-        .await
-        .ok()
-        .flatten()?;
-    Some((found, connection, sealer))
+}
+
+fn unavailable(error: &DbError) -> Response {
+    tracing::error!(%error, "bot sign-in database failure");
+    page(StatusCode::SERVICE_UNAVAILABLE, FAILED_TITLE, BUSY_TEXT, None)
 }
 
 /// `GET /api/oauth/signin?signin=<id>`: on to the provider.
 async fn start(State(app): State<Arc<App>>, Query(query): Query<Start>) -> Response {
-    let Some((found, connection, sealer)) = running(&app, query.signin.as_deref()).await else {
-        return page(StatusCode::NOT_FOUND, GONE_TITLE, GONE_TEXT, None);
+    let (found, connection, sealer) = match running(&app, query.signin.as_deref()).await {
+        Ok(Some(running)) => running,
+        other => return not_running(other.err()),
     };
     let opened = (
-        sealer.open(&verifier_context(&found.id), &found.verifier),
-        sealer.open(&secret_context(&connection.bot_id, &connection.name), &connection.client_secret),
+        sealer.open(&verifier_context(&found), &found.verifier),
+        connection.secret(&sealer),
     );
-    let (Ok(verifier), Ok(secret)) = opened else {
+    let (Ok(verifier), Some(secret)) = opened else {
         tracing::warn!(connection = %connection.name, "a sign-in's sealed values didn't open");
         return page(StatusCode::INTERNAL_SERVER_ERROR, FAILED_TITLE, FAILED_TEXT, None);
     };
     let url = provider::authorize_url(
         &connection,
-        String::from_utf8_lossy(&secret).into_owned(),
+        secret,
         &redirect_uri(&app.config),
         &found.id,
         &String::from_utf8_lossy(&verifier),
@@ -82,15 +97,17 @@ async fn start(State(app): State<Arc<App>>, Query(query): Query<Start>) -> Respo
 
 /// `GET /api/oauth/callback?code&state`: the provider's code redeemed, the person's code shown.
 async fn callback(State(app): State<Arc<App>>, Query(query): Query<Callback>) -> Response {
-    let Some((found, connection, sealer)) = running(&app, query.state.as_deref()).await else {
-        return page(StatusCode::NOT_FOUND, GONE_TITLE, GONE_TEXT, None);
+    let (found, connection, sealer) = match running(&app, query.state.as_deref()).await {
+        Ok(Some(running)) => running,
+        other => return not_running(other.err()),
     };
     let (Some(code), None) = (query.code, query.error) else {
         return page(StatusCode::BAD_REQUEST, FAILED_TITLE, FAILED_TEXT, None);
     };
     match finish(&app, &found, &connection, &sealer, code).await {
-        Some(shown) => page(StatusCode::OK, DONE_TITLE, DONE_TEXT, Some(&shown)),
-        None => page(StatusCode::BAD_GATEWAY, FAILED_TITLE, FAILED_TEXT, None),
+        Ok(Some(shown)) => page(StatusCode::OK, DONE_TITLE, DONE_TEXT, Some(&shown)),
+        Ok(None) => page(StatusCode::BAD_GATEWAY, FAILED_TITLE, FAILED_TEXT, None),
+        Err(error) => unavailable(&error),
     }
 }
 
@@ -101,15 +118,28 @@ async fn finish(
     connection: &connections::Connection,
     sealer: &Sealer,
     code: String,
-) -> Option<String> {
-    let verifier = sealer.open(&verifier_context(&found.id), &found.verifier).ok()?;
-    let secret = sealer
-        .open(&secret_context(&connection.bot_id, &connection.name), &connection.client_secret)
-        .ok()?;
+) -> Result<Option<String>, DbError> {
+    let Some((locked, shown)) = redeemed(app, found, connection, sealer, code).await else {
+        return Ok(None);
+    };
+    let taken = store::signed_in(&app.db, &found.id, &tokens::code_hash(&found.id, &shown), &locked).await?;
+    Ok(taken.then_some(shown))
+}
+
+/// The provider's token for `code`, sealed for the sign-in, and the code to show for it.
+async fn redeemed(
+    app: &App,
+    found: &SignIn,
+    connection: &connections::Connection,
+    sealer: &Sealer,
+    code: String,
+) -> Option<(Vec<u8>, String)> {
+    let verifier = sealer.open(&verifier_context(found), &found.verifier).ok()?;
+    let secret = connection.secret(sealer)?;
     let held = provider::redeem(
         &app.outbound,
         connection,
-        String::from_utf8_lossy(&secret).into_owned(),
+        secret,
         &redirect_uri(&app.config),
         code,
         String::from_utf8_lossy(&verifier).into_owned(),
@@ -118,22 +148,25 @@ async fn finish(
     .inspect_err(|error| tracing::warn!(%error, connection = %connection.name, "a sign-in got no token"))
     .ok()?;
     let plain = serde_json::to_vec(&held).ok()?;
-    let locked = sealer.seal(&pending_context(&found.id), &plain).ok()?;
-    let shown = new_code()?;
-    let taken = store::signed_in(&app.db, &found.id, &tokens::code_hash(&found.id, &shown), &locked)
-        .await
-        .ok()?;
-    taken.then_some(shown)
+    let locked = sealer.seal(&pending_context(found), &plain).ok()?;
+    Some((locked, new_code()?))
 }
 
-/// What a sign-in's verifier is sealed for.
-pub(super) fn verifier_context(id: &str) -> String {
-    format!("sign-in-verifier|{id}")
+/// What a sign-in's verifier is sealed for: its bot, connection and person with it.
+pub(super) fn verifier_context(sign_in: &SignIn) -> String {
+    sign_in_context("sign-in-verifier", sign_in)
 }
 
 /// What a sign-in's token is sealed for until its code is redeemed.
-pub(super) fn pending_context(id: &str) -> String {
-    format!("sign-in-token|{id}")
+pub(super) fn pending_context(sign_in: &SignIn) -> String {
+    sign_in_context("sign-in-token", sign_in)
+}
+
+fn sign_in_context(kind: &str, sign_in: &SignIn) -> String {
+    format!(
+        "{kind}|{}|{}|{}|{}",
+        sign_in.id, sign_in.bot_id, sign_in.connection, sign_in.user_id
+    )
 }
 
 /// Six random digits.
@@ -150,6 +183,7 @@ const GONE_TITLE: &str = "This sign-in link doesn't work";
 const GONE_TEXT: &str = "It ran out or was used already. Ask the app to sign you in again.";
 const FAILED_TITLE: &str = "Sign-in didn't finish";
 const FAILED_TEXT: &str = "The sign-in service didn't complete it. Ask the app to sign you in again.";
+const BUSY_TEXT: &str = "The server can't complete it now. Try the link again in a moment.";
 
 fn guarded(headers: &mut axum::http::HeaderMap) {
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
@@ -163,7 +197,9 @@ fn guarded(headers: &mut axum::http::HeaderMap) {
 
 /// A page of `title` and `text`, with the code when there is one. Only fixed words and digits are written in it.
 fn page(status: StatusCode, title: &str, text: &str, code: Option<&str>) -> Response {
-    let code = code.map_or_else(String::new, |code| format!("<p><output id=\"code\">{code}</output></p>"));
+    let code = code.map_or_else(String::new, |code| {
+        format!("<p><output id=\"code\">{code}</output></p>")
+    });
     let html = format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{title}</title>\
          <meta name=\"viewport\" content=\"width=device-width\"><style>body{{font-family:sans-serif;max-width:32em;\
@@ -190,6 +226,11 @@ mod tests {
         let headers = response.headers();
         assert_eq!(headers[header::CACHE_CONTROL], "no-store");
         assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");
-        assert!(headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap().contains("default-src 'none'"));
+        assert!(
+            headers[header::CONTENT_SECURITY_POLICY]
+                .to_str()
+                .unwrap()
+                .contains("default-src 'none'")
+        );
     }
 }

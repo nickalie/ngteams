@@ -99,9 +99,10 @@ pub struct Credentials {
     pub signed: bool,
 }
 
+/// An `admin_audit` row: an administrator's change to an app.
 #[derive(Insertable)]
 #[diesel(table_name = admin_audit)]
-struct Entry<'a> {
+pub(crate) struct Entry<'a> {
     at: i64,
     actor_id: Option<&'a str>,
     actor: &'a str,
@@ -112,7 +113,7 @@ struct Entry<'a> {
 }
 
 impl<'a> Entry<'a> {
-    fn new(actor: Actor<'a>, action: &'a str, app: &'a AppRow, detail: &Value) -> Self {
+    pub(crate) fn new(actor: Actor<'a>, action: &'a str, app: &'a AppRow, detail: &Value) -> Self {
         Self {
             at: now(),
             actor_id: actor.id,
@@ -125,14 +126,16 @@ impl<'a> Entry<'a> {
     }
 }
 
+/// Inserts the audit [`Entry`] `$entry` in the transaction `$conn`.
 macro_rules! record {
     ($conn:ident, $entry:expr) => {
-        diesel::insert_into(admin_audit::table)
+        diesel::insert_into($crate::db::schema::admin_audit::table)
             .values($entry)
             .execute($conn)
             .await?
     };
 }
+pub(crate) use record;
 
 /// The app row `$id`, if there is one.
 macro_rules! app_row {

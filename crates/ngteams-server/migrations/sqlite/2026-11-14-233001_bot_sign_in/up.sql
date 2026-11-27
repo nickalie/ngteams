@@ -1,6 +1,7 @@
 -- Sign-in cards: a bot's OAuth connections (an identity provider's endpoints and its client), the sign-ins under way
 -- (a person's browser on its way through the provider, then the code it showed them), and each person's token for
--- a connection. Every secret and token is sealed with bots.token_key (AES-256-GCM); times are Unix milliseconds.
+-- a connection. Every secret and token is sealed with bots.token_key (AES-256-GCM); bot_connections times are Unix
+-- seconds (as the registry's), the sign-ins' and tokens' Unix milliseconds.
 CREATE TABLE bot_connections (
     bot_id TEXT NOT NULL REFERENCES bots (id) ON DELETE CASCADE,
     name TEXT NOT NULL,

@@ -943,7 +943,10 @@ fn type_code_and_verify_twice(cx: &mut VisualTestContext, code: &str) {
     click(cx, code);
     cx.simulate_input("123 456");
     draw(cx);
-    assert!(bounds(cx, &format!("{code}-error")).is_none(), "typing takes the mark away");
+    assert!(
+        bounds(cx, &format!("{code}-error")).is_none(),
+        "typing takes the mark away"
+    );
     click(cx, &format!("{code}-verify"));
     cx.run_until_parked();
     draw(cx);
@@ -957,10 +960,11 @@ fn type_code_and_verify_twice(cx: &mut VisualTestContext, code: &str) {
 #[test]
 fn a_sign_in_card_opens_its_page_then_sends_the_code_it_showed() {
     let rig = bots_rig(vec![oauth_message(ID)]);
-    rig.core.bot_answers.lock().unwrap().extend([
-        Ok(InvokeAnswer::Refused(404)),
-        Ok(InvokeAnswer::Done),
-    ]);
+    rig.core
+        .bot_answers
+        .lock()
+        .unwrap()
+        .extend([Ok(InvokeAnswer::Refused(404)), Ok(InvokeAnswer::Done)]);
     let (_view, cx) = tall_window(&rig);
     let code = format!("card-{ID}-c0-code");
     assert!(bounds(cx, &code).is_none(), "no code field before the page opens");

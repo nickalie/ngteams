@@ -162,7 +162,10 @@ impl BotsConfig {
                 .any(|audience| audience.trim_end_matches('/').eq_ignore_ascii_case(&self.scope));
         let issuer_ok = self.issuer.as_deref().is_none_or(|issuer| Url::parse(issuer).is_ok());
         let service_ok = self.service_url.as_ref().is_none_or(Url::has_host);
-        let key_ok = self.token_key.as_ref().is_none_or(crate::bots::sign_in::SealKey::usable);
+        let key_ok = self
+            .token_key
+            .as_ref()
+            .is_none_or(crate::bots::sign_in::SealKey::usable);
         scope_ok
             && issuer_ok
             && key_ok

@@ -176,9 +176,7 @@ pub(crate) fn router(app: &Arc<App>) -> Router<Arc<App>> {
     if !app.config.apps.enabled {
         return Router::new();
     }
-    connector::router(app)
-        .merge(invoke::router())
-        .merge(sign_in::router())
+    connector::router(app).merge(invoke::router()).merge(sign_in::router())
 }
 
 /// Typing by `user` in `chat` at the chat service's moment `at`, for the bots in it.

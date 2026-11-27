@@ -424,7 +424,10 @@ async fn a_sign_in_code_goes_once_and_the_bots_answer_comes_back() {
     assert_eq!(taken[0].body["name"], "signin/verifyState");
     assert_eq!(taken[0].body["value"], json!({"state": "402917"}));
     assert_eq!(taken[0].body["conversation"]["id"], ABC_CHAT);
-    assert!(taken[0].body["userAadToken"].is_string(), "the Teams token, as every invoke");
+    assert!(
+        taken[0].body["userAadToken"].is_string(),
+        "the Teams token, as every invoke"
+    );
     mock.refuse_next("POST", "/invoke", 404).await;
     assert_eq!(
         a.handle.bot_invoke(ask(Some(ABC_CHAT), verify())).await.unwrap(),

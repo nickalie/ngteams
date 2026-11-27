@@ -24,8 +24,8 @@ use crate::admin::api::{Admin, ApiError};
 use crate::app::App;
 use crate::apps::AppError;
 use crate::apps::api::{answer, body};
+use crate::apps::repo::{AppRow, Entry, record};
 use crate::config::Config;
-use crate::db::schema::admin_audit;
 use crate::db::{Db, DbError, now, with_conn};
 
 /// The longest connection name.
@@ -59,9 +59,22 @@ impl std::fmt::Debug for Connection {
     }
 }
 
-/// What a connection's client secret is sealed for.
-pub(super) fn secret_context(bot: &str, name: &str) -> String {
-    format!("connection-secret|{bot}|{name}")
+/// What a connection's client secret is sealed for: with the token URL it may be sent to.
+fn secret_context(bot: &str, name: &str, token_url: &str) -> String {
+    format!("connection-secret|{bot}|{name}|{token_url}")
+}
+
+impl Connection {
+    /// Its client secret, opened.
+    pub(super) fn secret(&self, sealer: &Sealer) -> Option<String> {
+        let plain = sealer
+            .open(
+                &secret_context(&self.bot_id, &self.name, &self.token_url),
+                &self.client_secret,
+            )
+            .ok()?;
+        String::from_utf8(plain).ok()
+    }
 }
 
 pub(super) fn router() -> Router<Arc<App>> {
@@ -87,10 +100,11 @@ fn shown(config: &Config, connection: &Connection) -> Value {
     })
 }
 
-/// The bot of the app `id`.
-async fn bot_of(db: &Db, id: &str) -> Result<String, AppError> {
+/// The app `id` and its bot's id.
+async fn bot_of(db: &Db, id: &str) -> Result<(AppRow, String), AppError> {
     let record = crate::apps::repo::get(db, id).await?.ok_or(AppError::NoSuchApp)?;
-    Ok(record.bot.ok_or(AppError::NoBot)?.id)
+    let bot = record.bot.ok_or(AppError::NoBot)?.id;
+    Ok((record.app, bot))
 }
 
 /// The connection `name` of `bot`.
@@ -103,39 +117,9 @@ pub(super) async fn find(db: &Db, bot: &str, name: &str) -> Result<Option<Connec
         .optional()?))
 }
 
-#[derive(Insertable)]
-#[diesel(table_name = admin_audit)]
-struct Entry<'a> {
-    at: i64,
-    actor_id: Option<&'a str>,
-    actor: &'a str,
-    action: &'a str,
-    target_id: Option<&'a str>,
-    target: &'a str,
-    detail: String,
-}
-
-impl<'a> Entry<'a> {
-    fn new(actor: Actor<'a>, action: &'a str, app_id: &'a str, connection: &str) -> Self {
-        Self {
-            at: now(),
-            actor_id: actor.id,
-            actor: actor.name,
-            action,
-            target_id: Some(app_id),
-            target: app_id,
-            detail: json!({ "connection": connection }).to_string(),
-        }
-    }
-}
-
-macro_rules! audit {
-    ($conn:ident, $entry:expr) => {
-        diesel::insert_into(admin_audit::table)
-            .values($entry)
-            .execute($conn)
-            .await?
-    };
+/// The audit entry of `action` on the app's connection `name`.
+fn entry<'a>(actor: Actor<'a>, action: &'a str, app: &'a AppRow, name: &str) -> Entry<'a> {
+    Entry::new(actor, action, app, &json!({ "connection": name }))
 }
 
 /// `bot`'s connections, by name.
@@ -150,7 +134,7 @@ async fn all(db: &Db, bot: &str) -> Result<Vec<Connection>, DbError> {
 
 /// `GET …/connections`, by name.
 async fn list(State(app): State<Arc<App>>, Admin(_): Admin, Path(id): Path<String>) -> Result<Response, ApiError> {
-    let bot = bot_of(&app.db, &id).await?;
+    let (_, bot) = bot_of(&app.db, &id).await?;
     let rows = all(&app.db, &bot).await.map_err(AppError::from)?;
     let value: Vec<Value> = rows.iter().map(|row| shown(&app.config, row)).collect();
     Ok(answer(StatusCode::OK, &json!({ "value": value })))
@@ -176,7 +160,7 @@ async fn save(
 ) -> Result<Response, ApiError> {
     let request: SaveBody = body(&bytes)?;
     let sealer = Sealer::of(&app.config).ok_or(AppError::SignInNotConfigured)?;
-    let bot = bot_of(&app.db, &id).await?;
+    let (record, bot) = bot_of(&app.db, &id).await?;
     let name = checked_name(&name)?;
     let authorize_url = checked_authorize(&app.config, &request.authorize_url)?;
     let token_url = crate::apps::checked_endpoint(&app.config, &request.token_url).map_err(|error| match error {
@@ -184,22 +168,19 @@ async fn save(
         other => other,
     })?;
     let client_id = field(&request.client_id)?;
-    let scopes = request
-        .scopes
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let scopes = request.scopes.split_whitespace().collect::<Vec<_>>().join(" ");
     if scopes.len() > MAX_FIELD {
         return Err(AppError::Connection.into());
     }
     let existing = find(&app.db, &bot, &name).await.map_err(AppError::from)?;
-    let client_secret = match (request.client_secret.as_deref(), &existing) {
-        (Some(secret), _) => sealer
-            .seal(&secret_context(&bot, &name), field(secret)?.as_bytes())
-            .map_err(|_| AppError::Random)?,
-        (None, Some(existing)) => existing.client_secret.clone(),
+    let secret = match (request.client_secret.as_deref(), &existing) {
+        (Some(secret), _) => field(secret)?,
+        (None, Some(existing)) => existing.secret(&sealer).ok_or(AppError::Random)?,
         (None, None) => return Err(AppError::Connection.into()),
     };
+    let client_secret = sealer
+        .seal(&secret_context(&bot, &name, &token_url), secret.as_bytes())
+        .map_err(|_| AppError::Random)?;
     let at = now();
     let row = Connection {
         bot_id: bot,
@@ -213,7 +194,7 @@ async fn save(
         updated_at: at,
     };
     let created = existing.is_none();
-    write(&app.db, Actor::account(&admin), &id, &row, created).await?;
+    write(&app.db, Actor::account(&admin), &record, &row, created).await?;
     let status = if created { StatusCode::CREATED } else { StatusCode::OK };
     Ok(answer(status, &shown(&app.config, &row)))
 }
@@ -224,9 +205,9 @@ async fn remove(
     Admin(admin): Admin,
     Path((id, name)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
-    let bot = bot_of(&app.db, &id).await?;
+    let (record, bot) = bot_of(&app.db, &id).await?;
     let actor = Actor::account(&admin);
-    let removed = delete(&app.db, actor, &id, &bot, &name)
+    let removed = delete(&app.db, actor, &record, &bot, &name)
         .await
         .map_err(AppError::from)?;
     if removed == 0 {
@@ -236,21 +217,22 @@ async fn remove(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-async fn delete(db: &Db, actor: Actor<'_>, app_id: &str, bot: &str, name: &str) -> Result<usize, DbError> {
+async fn delete(db: &Db, actor: Actor<'_>, app: &AppRow, bot: &str, name: &str) -> Result<usize, DbError> {
     with_conn!(db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
             let removed = diesel::delete(bot_connections::table.find((bot, name)))
                 .execute(conn)
                 .await?;
             if removed > 0 {
-                audit!(conn, &Entry::new(actor, "app.connection.delete", app_id, name));
+                record!(conn, &entry(actor, "app.connection.delete", app, name));
             }
             Ok(removed)
         })
         .await)
 }
 
-async fn write(db: &Db, actor: Actor<'_>, app_id: &str, row: &Connection, created: bool) -> Result<(), AppError> {
+/// Adds the connection, or changes it in place: its sign-ins and people's tokens stay.
+async fn write(db: &Db, actor: Actor<'_>, app: &AppRow, row: &Connection, created: bool) -> Result<(), AppError> {
     let action = if created {
         "app.connection.add"
     } else {
@@ -258,18 +240,29 @@ async fn write(db: &Db, actor: Actor<'_>, app_id: &str, row: &Connection, create
     };
     with_conn!(db, |conn| conn
         .transaction::<_, DbError, _>(async |conn| {
-            diesel::delete(bot_connections::table.find((&row.bot_id, &row.name)))
-                .execute(conn)
-                .await?;
-            diesel::insert_into(bot_connections::table)
-                .values(row)
-                .execute(conn)
-                .await?;
-            audit!(conn, &Entry::new(actor, action, app_id, &row.name));
+            if created {
+                diesel::insert_into(bot_connections::table)
+                    .values(row)
+                    .execute(conn)
+                    .await?;
+            } else {
+                diesel::update(bot_connections::table.find((&row.bot_id, &row.name)))
+                    .set((
+                        bot_connections::authorize_url.eq(&row.authorize_url),
+                        bot_connections::token_url.eq(&row.token_url),
+                        bot_connections::client_id.eq(&row.client_id),
+                        bot_connections::client_secret.eq(&row.client_secret),
+                        bot_connections::scopes.eq(&row.scopes),
+                        bot_connections::updated_at.eq(row.updated_at),
+                    ))
+                    .execute(conn)
+                    .await?;
+            }
+            record!(conn, &entry(actor, action, app, &row.name));
             Ok(())
         })
         .await)?;
-    tracing::info!(actor = actor.name, target = %app_id, connection = %row.name, "admin action {action}");
+    tracing::info!(actor = actor.name, target = %app.id, connection = %row.name, "admin action {action}");
     Ok(())
 }
 

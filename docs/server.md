@@ -917,7 +917,7 @@ that redirect with it.
 | Request | Does | Answers |
 |---|---|---|
 | `GET /api/admin/v1/apps/{id}/connections` | the app's bot's connections, by name, never a secret | 200 `{"value": [{"name", "authorize_url", "token_url", "client_id", "scopes", "redirect_uri", "created_at", "updated_at"}]}` |
-| `PUT /api/admin/v1/apps/{id}/connections/{name}` | `authorize_url`, `token_url`, `client_id`, `client_secret` (needed for a new one; a change without it keeps the old one), `scopes` (space-separated). A name has 1–64 letters, digits, `-`, `_` or `.` | 201 new, 200 changed: the connection |
+| `PUT /api/admin/v1/apps/{id}/connections/{name}` | `authorize_url`, `token_url`, `client_id`, `client_secret` (needed for a new one; a change without it keeps the old one), `scopes` (space-separated). A name has 1–64 letters, digits, `-`, `_` or `.`. A change keeps the connection's sign-ins and people's tokens | 201 new, 200 changed: the connection |
 | `DELETE /api/admin/v1/apps/{id}/connections/{name}` | the connection, its sign-ins and every person's token for it | 204 |
 
 Refusals: 400 `InvalidConnection`, `EndpointNotAllowed`, `EndpointMetadata`; 404 `NotFound`; 409
@@ -927,9 +927,10 @@ Refusals: 400 `InvalidConnection`, `EndpointNotAllowed`, `EndpointMetadata`; 404
 token; with none, it asks for a link and posts an OAuth card with it. The person opens the link in a browser, signs in
 at the provider (the authorization code grant with PKCE, through the address guard), and the server's page shows them
 a six-digit code. Their client sends the code to the bot as `signin/verifyState`, and the bot redeems it for the
-token. The code works once, for 15 minutes, only for the person the link was made for; five wrong codes end the
-sign-in. A token within a minute of its end is renewed with its refresh token when the bot asks for it; one that
-can't be renewed signs the person out of that connection.
+token. The link works for 15 minutes; the code works once, for 15 minutes from when the page showed it, only for
+the person the link was made for; five wrong codes end the sign-in. A token within a minute of its end is renewed
+with its refresh token when the bot asks for it; one the provider refuses to renew (`invalid_grant`, or no refresh
+token) signs the person out of that connection; any other failure keeps it for the next request.
 
 | Request (the bot's) | Answers |
 |---|---|
