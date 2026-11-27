@@ -87,11 +87,9 @@ const BROKEN: &str = "1700000003000";
 
 /// When this binary runs as `ngteamsctl` (see the module docs), it does what the `ngteamsctl` binary does.
 #[test]
+#[ignore = "run by ngteamsctl() as the ngteamsctl binary"]
 fn ngteamsctl_child() {
-    let Ok(args) = std::env::var(CHILD_ARGS) else {
-        return;
-    };
-    let args: Vec<String> = serde_json::from_str(&args).unwrap();
+    let args: Vec<String> = serde_json::from_str(&std::env::var(CHILD_ARGS).unwrap()).unwrap();
     let mut out = std::fs::File::create(std::env::var(CHILD_OUT).unwrap()).unwrap();
     let mut err = std::fs::File::create(std::env::var(CHILD_ERR).unwrap()).unwrap();
     let code = match Cli::try_parse_from(std::iter::once("ngteamsctl".to_owned()).chain(args)) {
@@ -120,23 +118,30 @@ fn ngteamsctl(cx: &TestAppContext, socket: &Path, cwd: &Path, args: &[&str]) -> 
     let (out, err) = (logs.path().join("out"), logs.path().join("err"));
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
-        .args(["--exact", CHILD_TEST, "--test-threads=1", "--quiet"])
+        .args(["--exact", CHILD_TEST, "--ignored", "--test-threads=1", "--quiet"])
         .current_dir(cwd)
         .env_clear()
+        // a coverage run counts the child's runs too, and its profile stays out of the download folder
+        .envs(std::env::var_os("LLVM_PROFILE_FILE").map(|value| ("LLVM_PROFILE_FILE", value)))
         .env(CHILD_ARGS, serde_json::to_string(args).unwrap())
         .env(CHILD_OUT, &out)
         .env(CHILD_ERR, &err)
         .env("NGTEAMS_CTL_SOCKET", socket)
         .env("HOME", logs.path())
         .env("XDG_RUNTIME_DIR", logs.path())
-        .env("TZ", "UTC")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    let thread = std::thread::spawn(move || command.status().unwrap());
+        .env("TZ", "UTC");
+    let thread = std::thread::spawn(move || command.output().unwrap());
     pump_until_done(cx, &thread);
-    let status = thread.join().unwrap();
+    let output = thread.join().unwrap();
+    // the harness of a child that panicked failed its one test; its output holds the panic's message
+    assert!(
+        output.status.code() != Some(101),
+        "ngteamsctl {args:?} panicked: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     Run {
-        code: status.code().unwrap_or(-1),
+        code: output.status.code().unwrap_or(-1),
         stdout: std::fs::read_to_string(out).unwrap_or_default(),
         stderr: std::fs::read_to_string(err).unwrap_or_default(),
     }
@@ -496,8 +501,12 @@ fn a_person_gets_a_refusal_for_a_bad_selection_and_nothing_is_written() {
         (&["download", TOPIC, BARE], 1, "no_attachment"),
         (&["download", TOPIC, BARE, "--all"], 1, "no_attachment"),
         (&["download", TOPIC, BOTH], 1, "no_attachment"),
-        (&["download", TOPIC, BOTH, "--index", "1", "--all"], 2, ""),
-        (&["download", TOPIC, BOTH, "--name", "notes.pdf", "--index", "1"], 2, ""),
+        (&["download", TOPIC, BOTH, "--index", "1", "--all"], 2, "cannot be used with"),
+        (
+            &["download", TOPIC, BOTH, "--name", "notes.pdf", "--index", "1"],
+            2,
+            "cannot be used with",
+        ),
     ];
     for (args, code, said) in cases {
         let run = lab.ctl("refused", args);
