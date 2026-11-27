@@ -3,16 +3,15 @@ FROM archlinux:base-devel@sha256:624bdc7fc6615155d67bc34cf7146c0c9fd0e3c92943977
 ARG CI_UID=1001
 ARG RUST_VERSION
 
+# docker: the server's SDK bot tests run their images on the runner's Docker
 RUN pacman -Syu --noconfirm --needed \
-    clang cmake curl dbus ffmpeg fontconfig freetype2 git gnome-keyring \
+    clang cmake curl dbus docker ffmpeg fontconfig freetype2 git gnome-keyring \
     gst-libav gst-plugins-bad gst-plugins-base gst-plugins-good \
     libxkbcommon libxkbcommon-x11 mesa niri noto-fonts-emoji \
     pipewire pipewire-audio python rustup ttf-dejavu unzip \
     vulkan-swrast wayland weston wireplumber wpewebkit \
     && pacman -Scc --noconfirm \
     && useradd --create-home --uid "$CI_UID" ci
-# the Docker client: the server's SDK bot tests run their images on the runner's Docker
-RUN pacman -S --noconfirm --needed docker && pacman -Scc --noconfirm
 
 USER ci
 ENV HOME="/home/ci" PATH="/home/ci/.cargo/bin:${PATH}"
