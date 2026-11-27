@@ -16,15 +16,19 @@ use crate::support::backends;
 use crate::teams::Seat;
 
 /// A person as the bot reads them in `membersAdded` or `membersRemoved`.
-fn person(seat: &Seat) -> Value {
+pub(super) fn person(seat: &Seat) -> Value {
     json!([{"id": format!("29:{}", seat.id), "aadObjectId": seat.id}])
 }
 
 /// The next `conversationUpdate` the bot gets: `listed` added (or removed) by `by` in `conversation`.
-async fn told(bot: &TestBot, conversation: &str, by: &Seat, (field, listed): (&str, Value)) -> Value {
+pub(super) async fn told(bot: &TestBot, conversation: &str, by: &Seat, (field, listed): (&str, Value)) -> Value {
     let got = bot.next_of("conversationUpdate").await.activity;
     assert_eq!(got[field], listed, "{got}");
-    let other = if field == "membersAdded" { "membersRemoved" } else { "membersAdded" };
+    let other = if field == "membersAdded" {
+        "membersRemoved"
+    } else {
+        "membersAdded"
+    };
     assert!(got[other].is_null(), "{got}");
     assert_eq!(got["conversation"]["id"], conversation, "{got}");
     assert_eq!(got["from"]["id"], format!("29:{}", by.id), "{got}");
@@ -32,11 +36,11 @@ async fn told(bot: &TestBot, conversation: &str, by: &Seat, (field, listed): (&s
     got
 }
 
-async fn quiet(bot: &TestBot) -> bool {
+pub(super) async fn quiet(bot: &TestBot) -> bool {
     !bot.gets_within("conversationUpdate", Duration::from_secs(3)).await
 }
 
-async fn add_to_chat(seat: &Seat, chat: &str, who: &Seat) {
+pub(super) async fn add_to_chat(seat: &Seat, chat: &str, who: &Seat) {
     let row = seat
         .engine
         .write(Action::AddMembers {
@@ -61,7 +65,7 @@ async fn out_of_chat(seat: &Seat, chat: &str, who: &Seat) {
     assert_eq!(gone.status(), 200);
 }
 
-async fn chat_app(seat: &Seat, chat: &str, add: bool) {
+pub(super) async fn chat_app(seat: &Seat, chat: &str, add: bool) {
     let write = if add {
         TeamWrite::AddChatApp {
             chat: chat.to_owned(),
@@ -77,7 +81,7 @@ async fn chat_app(seat: &Seat, chat: &str, add: bool) {
     assert!(written.is_ok(), "{written:?}");
 }
 
-fn team_update(team: &str, group: &str, member: &Seat, update: MemberUpdate) -> TeamWrite {
+pub(super) fn team_update(team: &str, group: &str, member: &Seat, update: MemberUpdate) -> TeamWrite {
     TeamWrite::UpdateMember {
         team: team.into(),
         group: group.into(),
@@ -178,7 +182,10 @@ async fn people_added_to_joining_and_leaving_a_team_reach_its_bot_in_the_teams_c
             .team_write(team_update(&team, &group, &bea, MemberUpdate::Promoted), None)
             .await;
         assert!(promoted.is_ok(), "{promoted:?}");
-        let joined = cora.engine.team_write(TeamWrite::Join { group: group.clone() }, None).await;
+        let joined = cora
+            .engine
+            .team_write(TeamWrite::Join { group: group.clone() }, None)
+            .await;
         assert!(joined.is_ok(), "{joined:?}");
         told(&shop.bot, &team, &cora, ("membersAdded", person(&cora))).await;
 

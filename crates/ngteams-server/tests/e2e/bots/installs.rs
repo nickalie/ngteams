@@ -37,7 +37,19 @@ pub(super) struct Shop {
 
 impl Shop {
     pub(super) async fn open(backend: Backend) -> Self {
-        let registry = Registry::open_with(backend, loopback).await;
+        Self::open_with(backend, |_| {}).await
+    }
+
+    /// [`Self::open`] with a change to the server's config.
+    pub(super) async fn open_with(
+        backend: Backend,
+        configure: impl FnOnce(&mut ngteams_server::config::Config),
+    ) -> Self {
+        let registry = Registry::open_with(backend, |config| {
+            loopback(config);
+            configure(config);
+        })
+        .await;
         let (status, answer) = registry
             .upload(
                 &format!("{}/package", super::APPS),
