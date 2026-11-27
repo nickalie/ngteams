@@ -134,6 +134,33 @@ pub(super) enum Joining {
     Bot,
 }
 
+/// In a transaction (`$conn`): whether each of `$ids` is an account that may join as `$joining`.
+macro_rules! all_known {
+    ($conn:expr, $ids:expr, $joining:expr) => {{
+        let known: i64 = match $joining {
+            Joining::People => {
+                users::table
+                    .filter(users::id.eq_any($ids))
+                    .filter(users::disabled.eq(false))
+                    .filter(crate::db::users::person())
+                    .count()
+                    .get_result($conn)
+                    .await?
+            }
+            Joining::Bot => {
+                users::table
+                    .filter(users::id.eq_any($ids))
+                    .filter(users::kind.eq(crate::db::users::APP))
+                    .filter(users::deleted_at.is_null())
+                    .count()
+                    .get_result($conn)
+                    .await?
+            }
+        };
+        usize::try_from(known).ok() == Some($ids.len())
+    }};
+}
+
 /// Adds `invites` (all `joining`) to the group chat for `actor`; `event` makes the body of the thread's event.
 pub(super) async fn add(
     db: &Db,
@@ -148,27 +175,7 @@ pub(super) async fn add(
         .transaction::<_, DbError, _>(async |conn| {
             let version: i64 = advance!(conn, at);
             let found = group!(conn, chat, actor);
-            let known: i64 = match joining {
-                Joining::People => {
-                    users::table
-                        .filter(users::id.eq_any(&ids))
-                        .filter(users::disabled.eq(false))
-                        .filter(crate::db::users::person())
-                        .count()
-                        .get_result(conn)
-                        .await?
-                }
-                Joining::Bot => {
-                    users::table
-                        .filter(users::id.eq_any(&ids))
-                        .filter(users::kind.eq(crate::db::users::APP))
-                        .filter(users::deleted_at.is_null())
-                        .count()
-                        .get_result(conn)
-                        .await?
-                }
-            };
-            if usize::try_from(known).ok() != Some(ids.len()) {
+            if !all_known!(conn, &ids, joining) {
                 return Ok(Outcome::Unknown);
             }
             let seats: Vec<(String, Option<i64>, i32)> = chat_members::table
