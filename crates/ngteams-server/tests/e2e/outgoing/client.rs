@@ -123,7 +123,7 @@ async fn an_owner_manages_a_webhook_through_the_client_engine_and_a_member_sees_
         assert_eq!(hook.callback_url.as_deref(), Some("https://hooks.example.test/build"));
         assert_eq!(picture(&crew.ada, hook).await.as_deref(), Some(JPEG));
 
-        let removed = member_view(&crew, &team, &id).await;
+        member_view(&crew, &team, &id).await;
 
         // the picture removed, then the webhook
         let change = TeamWrite::ChangeOutgoingWebhook {
@@ -138,6 +138,10 @@ async fn an_owner_manages_a_webhook_through_the_client_engine_and_a_member_sees_
         let hooks = listed(&crew.ada, &team).await;
         assert_eq!(only(&hooks).picture_url, None);
         assert_eq!(picture(&crew.ada, only(&hooks)).await, None);
+        let removed = TeamWrite::RemoveOutgoingWebhook {
+            team: team.clone(),
+            webhook: id.clone(),
+        };
         write(&crew.ada, removed).await.unwrap();
         assert!(listed(&crew.ada, &team).await.is_empty());
         assert!(listed(&crew.bert, &team).await.is_empty());
@@ -181,8 +185,8 @@ async fn refusals(crew: &Crew, team: &str, id: &str) {
     );
 }
 
-/// What the member sees and may do; the owner's Remove for the webhook.
-async fn member_view(crew: &Crew, team: &str, id: &str) -> TeamWrite {
+/// What the member sees and may do.
+async fn member_view(crew: &Crew, team: &str, id: &str) {
     let team = team.to_owned();
     let id = id.to_owned();
     // the member: the team's default lets members manage apps, so the server offers Edit and Remove
@@ -196,18 +200,18 @@ async fn member_view(crew: &Crew, team: &str, id: &str) -> TeamWrite {
     assert!(!hook.can_manage);
     assert_eq!(hook.callback_url, None);
     assert_eq!(picture(&crew.bert, hook).await.as_deref(), Some(JPEG));
-    member_refused(crew, &team, &id).await
+    member_refused(crew, &team, &id).await;
 }
 
-/// The member's Remove and Create, which the server refuses; the owner's Remove for the webhook.
-async fn member_refused(crew: &Crew, team: &str, id: &str) -> TeamWrite {
+/// The member's Remove and Create, which the server refuses.
+async fn member_refused(crew: &Crew, team: &str, id: &str) {
     let team = team.to_owned();
     let removed = TeamWrite::RemoveOutgoingWebhook {
         team: team.clone(),
         webhook: id.to_owned(),
     };
     assert_eq!(
-        refusal(write(&crew.bert, removed.clone()).await).as_deref(),
+        refusal(write(&crew.bert, removed).await).as_deref(),
         Some("Forbidden")
     );
     let made = TeamWrite::CreateOutgoingWebhook {
@@ -217,7 +221,6 @@ async fn member_refused(crew: &Crew, team: &str, id: &str) -> TeamWrite {
     assert_eq!(refusal(write(&crew.bert, made).await).as_deref(), Some("Forbidden"));
     // someone on no team: the list is nothing
     assert!(listed(&crew.cora, &team).await.is_empty());
-    removed
 }
 
 #[tokio::test(flavor = "multi_thread")]

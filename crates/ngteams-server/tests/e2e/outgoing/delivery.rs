@@ -27,8 +27,8 @@ async fn hooked(crew: &Crew) -> (Receiver, String) {
     (receiver, made["id"].as_str().unwrap().to_owned())
 }
 
-/// `seat`'s post in `conversation` that mentions the webhook `hook` (`name`), as Teams' composer sends it, through
-/// the account's own client: the native composer doesn't mention apps yet (client task 412). Its id.
+/// `seat`'s post in `conversation` that mentions the webhook `hook` (`name`), raw as Teams' own composer sends it,
+/// through the account's own client; `client.rs` posts the native composer's mention. Its id.
 async fn mention(seat: &Seat, conversation: &str, hook: &str, name: &str, words: &str) -> String {
     let post = RawPost {
         chat: conversation.into(),

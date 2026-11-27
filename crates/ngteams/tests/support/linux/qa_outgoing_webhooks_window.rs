@@ -265,6 +265,21 @@ impl Walk<'_> {
         self.run.until_in("page", what, wanted)
     }
 
+    /// The names of the team's webhooks as the server lists them now; an error if the read fails.
+    fn server_hooks(&mut self) -> SandboxResult<Vec<String>> {
+        self.run.act("server-hooks")?;
+        let answer = self.run.until_in("server", "the server's list of webhooks", |answer| !answer.is_null())?;
+        if let Some(error) = answer["error"].as_str() {
+            return Err(format!("the server's list of webhooks: {error}").into());
+        }
+        Ok(answer["hooks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|name| name.as_str().map(str::to_owned))
+            .collect())
+    }
+
     /// Types `text` with the keyboard.
     fn type_text(&mut self, text: &str) -> SandboxResult {
         self.run.input.type_text(text)?;
@@ -294,10 +309,9 @@ impl Walk<'_> {
             .until_in("teams", "the team in the list", |state| state["count"] == 1)?;
         self.run.act("manage")?;
         thread::sleep(SETTLE);
-        let page = self.until_page("the Apps tab", |page| page["open"] == true)?;
-        expect(page["hooks"].as_array().is_some_and(Vec::is_empty), || {
-            format!("a new team lists webhooks: {page}")
-        });
+        self.until_page("the Apps tab", |page| page["open"] == true)?;
+        let hooks = self.server_hooks()?;
+        expect(hooks.is_empty(), || format!("the server lists webhooks for a new team: {hooks:?}"));
         self.run.shot(self.sandbox, "qa-webhooks-apps-light.png")?;
         step("Manage team > Apps is open");
         Ok(())
@@ -332,7 +346,7 @@ impl Walk<'_> {
         });
         self.shots("create")?;
         self.run.act("send")?;
-        self.until_dialog("the token after Create", |dialog| dialog["token"].is_string())?;
+        self.until_dialog("the token after Create", |dialog| dialog["token_shown"] == true)?;
         step("Create answered with the token");
         Ok(())
     }
@@ -340,13 +354,10 @@ impl Walk<'_> {
     /// The token once, Copy, and the service trusts the copied token.
     fn token(&mut self) -> SandboxResult {
         self.shots("token")?;
-        let dialog = self.run.state_in("dialog")?;
-        let shown = dialog["token"].as_str().unwrap_or_default().to_owned();
         self.run.act("copy")?;
+        let same = self.run.state_in("clipboard-is-token")?;
+        expect(same == true, || "Copy did not put the token shown on the clipboard".to_owned());
         let copied = self.run.state_in("clipboard")?;
-        expect(copied == shown.as_str(), || {
-            format!("Copy put {copied} on the clipboard, not the token shown")
-        });
         let key = STANDARD.decode(copied.as_str().unwrap_or_default());
         expect(key.as_ref().is_ok_and(|key| key.len() == 32), || {
             "the copied token is no 32-byte key in base64".to_owned()
@@ -389,7 +400,7 @@ impl Walk<'_> {
     fn refusals(&mut self) -> SandboxResult {
         self.run.act("create")?;
         self.until_dialog("the create dialog again", |dialog| {
-            dialog["open"] == true && dialog["token"].is_null()
+            dialog["open"] == true && dialog["token_shown"] == false
         })?;
         thread::sleep(SETTLE);
         self.type_text("ECHO BOT")?;
@@ -413,10 +424,8 @@ impl Walk<'_> {
         self.shots("conflict")?;
         self.run.act("close")?;
         self.until_dialog("the dialog closed", |dialog| dialog["open"] == false)?;
-        let page = self.run.state_in("page")?;
-        expect(page["hooks"].as_array().is_some_and(|hooks| hooks.len() == 1), || {
-            format!("a refused create changed the list: {page}")
-        });
+        let hooks = self.server_hooks()?;
+        expect(hooks == [HOOK], || format!("a refused create changed the server's list: {hooks:?}"));
         Ok(())
     }
 
@@ -587,12 +596,18 @@ impl Walk<'_> {
         self.until_page("the webhook gone", |page| {
             page["hooks"].as_array().is_some_and(Vec::is_empty)
         })?;
-        self.run.act("reread")?;
-        thread::sleep(Duration::from_secs(2));
-        let page = self.run.state_in("page")?;
-        expect(page["hooks"].as_array().is_some_and(Vec::is_empty), || {
-            format!("the server still lists the removed webhook: {page}")
-        });
+        // the Remove write may still be on its way, so the server's list is read until it is empty
+        let start = Instant::now();
+        loop {
+            let hooks = self.server_hooks()?;
+            if hooks.is_empty() {
+                break;
+            }
+            if start.elapsed() > WAIT {
+                return Err(format!("the server still lists the removed webhook: {hooks:?}").into());
+            }
+            thread::sleep(POLL);
+        }
         self.run.shot(self.sandbox, "qa-webhooks-removed-light.png")?;
         step("Remove asked, then took the webhook off");
         Ok(())
@@ -1162,6 +1177,8 @@ fn on_shell(shell: &Entity<Shell>, verb: &str, places: &Places, window: &mut Win
         "posts" => posts_state(shell, cx),
         "thread" if argument.is_empty() => thread_state(shell, cx),
         "clipboard" => json!(cx.read_from_clipboard().and_then(|item| item.text())),
+        "clipboard-is-token" => json!(clipboard_is_token(shell, cx)),
+        "server" => SERVER_HOOKS.lock().unwrap_or_else(PoisonError::into_inner).clone().unwrap_or(Value::Null),
         _ => done(act(shell, verb, argument, places, window, cx)),
     }
 }
@@ -1213,10 +1230,7 @@ fn act(
             page(shell, cx)?.update(cx, |page, cx| page.ask_remove_webhook(hook, cx));
         }
         "remove" => page(shell, cx)?.update(cx, teams_ui::manage_team::ManageTeam::remove_webhook),
-        "reread" => shell.update(cx, |shell, cx| {
-            shell.open_manage_team(places.team.clone(), ManageTab::Members, window, cx);
-            shell.open_manage_team(places.team.clone(), ManageTab::Apps, window, cx);
-        }),
+        "server-hooks" => read_server_hooks(places.team.clone(), cx)?,
         "channel" => {
             shell.update(cx, Shell::close_team_dialog);
             let channel = places.channel.clone();
@@ -1258,7 +1272,35 @@ fn webhook(shell: &Entity<Shell>, name: &str, cx: &App) -> Result<teams_proto::O
         .ok_or_else(|| format!("no webhook {name} is listed"))
 }
 
-/// The dialog: open, Create's state, its problem and its token.
+/// The answer of the last [`read_server_hooks`]: `{"hooks": [names]}` or `{"error": ...}`; none while it runs.
+static SERVER_HOOKS: Mutex<Option<Value>> = Mutex::new(None);
+
+/// Reads the team's webhooks from the server through the account's engine, into [`SERVER_HOOKS`].
+fn read_server_hooks(team: String, cx: &mut App) -> Result<(), String> {
+    let core = app::bridges(cx)
+        .first()
+        .map(|bridge| bridge.read(cx).core())
+        .ok_or("no account runs")?;
+    *SERVER_HOOKS.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    cx.spawn(async move |_: &mut AsyncApp| {
+        let answer = match core.outgoing_webhooks(team).await {
+            Ok(hooks) => json!({"hooks": hooks.iter().map(|hook| hook.name.clone()).collect::<Vec<_>>()}),
+            Err(error) => json!({"error": error.to_string()}),
+        };
+        *SERVER_HOOKS.lock().unwrap_or_else(PoisonError::into_inner) = Some(answer);
+    })
+    .detach();
+    Ok(())
+}
+
+/// Whether the clipboard holds the token the dialog shows.
+fn clipboard_is_token(shell: &Entity<Shell>, cx: &App) -> bool {
+    let shown = dialog(shell, cx).ok().and_then(|dialog| dialog.read(cx).token().map(str::to_owned));
+    let copied = cx.read_from_clipboard().and_then(|item| item.text());
+    shown.is_some() && shown == copied
+}
+
+/// The dialog: open, Create's state, its problem and whether it shows the token (never the token itself).
 fn dialog_state(shell: &Entity<Shell>, cx: &mut App) -> Value {
     let Ok(dialog) = dialog(shell, cx) else {
         return json!({"open": false});
@@ -1268,7 +1310,7 @@ fn dialog_state(shell: &Entity<Shell>, cx: &mut App) -> Value {
             "open": true,
             "can_send": dialog.can_send(cx),
             "problem": dialog.problem(),
-            "token": dialog.token(),
+            "token_shown": dialog.token().is_some(),
         })
     })
 }
