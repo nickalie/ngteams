@@ -94,7 +94,9 @@ async fn people_added_to_and_taken_out_of_a_group_chat_reach_its_bot_until_its_a
         let bea = Seat::new(server, "bea@own.test", "Bea Lovelace").await;
         let cora = Seat::new(server, "cora@own.test", "Cora Lovelace").await;
         let dan = Seat::new(server, "dan@own.test", "Dan Lovelace").await;
-        let chat = create_chat(&shop.ada, &[&bea], Some("Polls room")).await;
+        let eve = Seat::new(server, "eve@own.test", "Eve Lovelace").await;
+        // two others: a chat of two is 1:1, where no app goes
+        let chat = create_chat(&shop.ada, &[&bea, &eve], Some("Polls room")).await;
         chat_app(&shop.ada, &chat, true).await;
         assert_eq!(shop.bot.next_of("installationUpdate").await.activity["action"], "add");
         let own = shop.bot.next_of("conversationUpdate").await.activity;
@@ -122,7 +124,7 @@ async fn people_added_to_and_taken_out_of_a_group_chat_reach_its_bot_until_its_a
         add_to_chat(&shop.ada, &chat, &dan).await;
         out_of_chat(&shop.ada, &chat, &dan).await;
         assert!(quiet(&shop.bot).await, "a removed bot heard of the chat's people");
-        for seat in [bea, cora, dan] {
+        for seat in [bea, cora, dan, eve] {
             seat.stop();
         }
         shop.stop();
