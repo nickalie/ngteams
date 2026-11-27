@@ -501,7 +501,11 @@ fn a_person_gets_a_refusal_for_a_bad_selection_and_nothing_is_written() {
         (&["download", TOPIC, BARE], 1, "no_attachment"),
         (&["download", TOPIC, BARE, "--all"], 1, "no_attachment"),
         (&["download", TOPIC, BOTH], 1, "no_attachment"),
-        (&["download", TOPIC, BOTH, "--index", "1", "--all"], 2, "cannot be used with"),
+        (
+            &["download", TOPIC, BOTH, "--index", "1", "--all"],
+            2,
+            "cannot be used with",
+        ),
         (
             &["download", TOPIC, BOTH, "--name", "notes.pdf", "--index", "1"],
             2,
