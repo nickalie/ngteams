@@ -275,7 +275,8 @@ impl Actor {
                 Cloud::own(&node.endpoint).unwrap(),
             )
             .unwrap()
-            .with_ams(&session.service_base(teams_core::account::AMS_GTM).unwrap())
+            // The region names AMS on the shared public origin; this actor is pinned to its own node, as its chat base is.
+            .with_ams(&format!("{}/ams", node.endpoint))
             .unwrap()
             .for_account(mri.clone())
         };
