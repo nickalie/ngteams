@@ -2,7 +2,8 @@
 //! record, one line per event, and an error with an ambiguous chat's candidates.
 //!
 //! Times are local (`YYYY-MM-DD HH:MM` in tables, `HH:MM:SS` on event lines). A message's line breaks are shown as
-//! ` ↵ `, so each message keeps to its row. Any other control character is shown escaped (`\u{1b}`), so text from
+//! ` ↵ `, so each message keeps to its row. The attachments of a message follow its text, each as
+//! `[<index>: <name>, <type>]`. Any other control character is shown escaped (`\u{1b}`), so text from
 //! the app never drives the terminal. `--json` skips all of this ([`crate::cli`]): JSON escapes them itself.
 
 use std::fmt::Write as _;
@@ -11,9 +12,9 @@ use std::io::{self, Write};
 use chrono::{DateTime, Local};
 
 use crate::protocol::{
-    AccountRow, ActivityRow, AppStatus, CalendarRow, CallRow, ChatRow, CtlError, CtlEvent, EventLine, MemberRow,
-    MessageRow, OutboxRow, OutboxState, OwnStatus, PersonRow, ReactionRow, Response, SyncReport, UiState, Unread, View,
-    WindowState,
+    AccountRow, ActivityRow, AppStatus, AttachmentKind, AttachmentRow, CalendarRow, CallRow, ChatRow, CtlError,
+    CtlEvent, EventLine, MemberRow, MessageRow, OutboxRow, OutboxState, OwnStatus, PersonRow, ReactionRow, Response,
+    SavedFile, SyncReport, UiState, Unread, View, WindowState,
 };
 
 /// Print `response` for a person.
@@ -56,6 +57,7 @@ fn unescaped(response: &Response) -> String {
         Response::Call(call) => call_table(std::slice::from_ref(call)),
         Response::Calendar { events } => calendar_table(events),
         Response::CalendarEvent(event) => calendar_event(event),
+        Response::Downloaded { files } => saved(files),
     }
 }
 
@@ -338,7 +340,32 @@ fn message_text(message: &MessageRow) -> String {
         }
     }
     text.push_str(&one_line(&message.text));
+    for attachment in &message.attachments {
+        let _ = write!(text, " [{}]", attachment_label(attachment));
+    }
     text
+}
+
+/// An attachment as a message's row lists it: `1: report.pdf, pdf`.
+fn attachment_label(attachment: &AttachmentRow) -> String {
+    let mut label = format!("{}: {}", attachment.index, attachment.name);
+    let kind = match attachment.kind {
+        AttachmentKind::File => attachment.file_type.as_deref().unwrap_or("file"),
+        AttachmentKind::Picture => "picture",
+    };
+    let _ = write!(label, ", {kind}");
+    if let Some(size) = attachment.size {
+        let _ = write!(label, ", {size} bytes");
+    }
+    label
+}
+
+/// A line for each file that a download saved.
+fn saved(files: &[SavedFile]) -> String {
+    files.iter().fold(String::new(), |mut text, file| {
+        let _ = writeln!(text, "saved {} ({} bytes)", one_line(&file.path), file.size);
+        text
+    })
 }
 
 fn unread_table(unread: &Unread) -> String {

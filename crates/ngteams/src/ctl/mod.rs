@@ -13,6 +13,7 @@
 //! - [`writes`]: the message writes, through the account's `Core::write`, its outbox.
 //! - [`calls`]: the call commands, asked of the account's calls as the call buttons ask them.
 //! - [`calendar`]: the account's calendar, and its meetings joined as the calendar's Join joins them.
+//! - [`download`]: the attachments of a message saved in a folder, read by the account's engine.
 //! - [`links`]: a Teams link opened (a meeting join link's pre-join), what a second launch hands over.
 //! - [`events`]: the event stream a `subscribe` turns a connection into, fed by each account's bridge tap,
 //! - [`watch`]: by the app's own state where it changes (unread, own status, sign-out, notifications, the window),
@@ -28,6 +29,7 @@ pub mod address;
 pub mod calendar;
 pub mod calls;
 pub mod dispatch;
+pub mod download;
 pub mod events;
 pub mod links;
 pub mod listener;

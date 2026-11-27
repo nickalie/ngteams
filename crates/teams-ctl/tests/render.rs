@@ -7,9 +7,9 @@
 use std::collections::BTreeSet;
 
 use teams_ctl::protocol::{
-    AccountRow, CalendarRow, CallRow, ChatRow, Connection, CtlError, CtlEvent, ErrorCode, EventLine, Hello,
-    ManualStatus, MessageRow, MessageSource, OutboxRow, OutboxState, OwnStatus, PersonRow, ReactionRow, Response,
-    SyncReport, UiState, View, WindowState,
+    AccountRow, AttachmentKind, AttachmentRow, CalendarRow, CallRow, ChatRow, Connection, CtlError, CtlEvent,
+    ErrorCode, EventLine, Hello, ManualStatus, MessageRow, MessageSource, OutboxRow, OutboxState, OwnStatus, PersonRow,
+    ReactionRow, Response, SavedFile, SyncReport, UiState, View, WindowState,
 };
 use teams_ctl::render::{error, event, kinds, text};
 
@@ -472,6 +472,7 @@ fn control_characters_from_the_app_are_shown_escaped() {
         deleted: false,
         from_me: false,
         mentions_me: false,
+        attachments: Vec::new(),
     };
     let table = text(&Response::Messages {
         messages: vec![message],
@@ -597,6 +598,7 @@ fn rows_without_their_optional_values_read_plainly() {
         deleted: true,
         from_me: true,
         mentions_me: false,
+        attachments: Vec::new(),
     };
     let messages = text(&Response::Messages { messages: vec![mine] });
     assert!(
@@ -727,4 +729,60 @@ fn rarer_event_values_read_plainly() {
     ] {
         assert_eq!(untimed(&event(&line(sample))), format!("a@lab.invalid {expected}"));
     }
+}
+
+#[test]
+fn a_message_lists_its_attachments_after_its_text_and_a_download_its_saved_files() {
+    let attachment = |index, name: &str, kind, file_type: Option<&str>, size| AttachmentRow {
+        index,
+        name: s(name),
+        kind,
+        file_type: file_type.map(s),
+        size,
+    };
+    let message = MessageRow {
+        id: s("7"),
+        chat: s("19:lab@thread.v2"),
+        sender: None,
+        sender_name: Some(s("Lab B")),
+        at: 1_700_000_000_000,
+        text: s("see\u{1b} these"),
+        edited: false,
+        deleted: false,
+        from_me: false,
+        mentions_me: false,
+        attachments: vec![
+            attachment(1, "report.pdf", AttachmentKind::File, Some("pdf"), None),
+            attachment(2, "picture\u{7}-2.png", AttachmentKind::Picture, None, Some(2048)),
+        ],
+    };
+    let table = text(&Response::Messages {
+        messages: vec![message],
+    });
+    let row = table.lines().nth(1).unwrap();
+    assert!(
+        row.ends_with("see\\u{1b} these [1: report.pdf, pdf] [2: picture\\u{7}-2.png, picture, 2048 bytes]"),
+        "{table}"
+    );
+
+    let saved = text(&Response::Downloaded {
+        files: vec![
+            SavedFile {
+                index: 1,
+                name: s("report.pdf"),
+                path: s("/tmp/out/report.pdf"),
+                size: 18,
+            },
+            SavedFile {
+                index: 2,
+                name: s("picture-2.png"),
+                path: s("/tmp/out/picture\u{1b}-2.png"),
+                size: 2048,
+            },
+        ],
+    });
+    assert_eq!(
+        saved,
+        "saved /tmp/out/report.pdf (18 bytes)\nsaved /tmp/out/picture\\u{1b}-2.png (2048 bytes)\n"
+    );
 }

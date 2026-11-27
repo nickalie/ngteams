@@ -27,10 +27,10 @@ use teams_ctl::codec::{LineReader, decode_request};
 use teams_ctl::path::Env;
 use teams_ctl::protocol::{
     AccountRow, ActivityRow, AppStatus, CALENDAR_ANSWER, CALL_ANSWER, CalendarRow, CallRow, ChatRef, ChatRow, CtlError,
-    CtlEvent, ErrorCode, EventFilter, EventLine, Hello, ManualStatus, MemberRow, MessageRow, MessageSource, OpenTarget,
-    OutboxRow, OutboxState, Outcome, OwnStatus, PROTOCOL_VERSION, Request, RequestLine, Response, ResponseLine,
-    SYNC_ANSWER, StatusChoice, SyncReport, Toggle, UiState, Unread, UnreadRow, View, WRITE_ANSWER, WRITE_WAIT,
-    WindowOp, WindowState,
+    CtlEvent, DOWNLOAD_ANSWER, ErrorCode, EventFilter, EventLine, Hello, ManualStatus, MemberRow, MessageRow,
+    MessageSource, OpenTarget, OutboxRow, OutboxState, Outcome, OwnStatus, PROTOCOL_VERSION, Request, RequestLine,
+    Response, ResponseLine, SYNC_ANSWER, SavedFile, StatusChoice, SyncReport, Toggle, UiState, Unread, UnreadRow, View,
+    WRITE_ANSWER, WRITE_WAIT, WindowOp, WindowState,
 };
 
 fn accept(listener: &UnixListener) -> teams_ctl::transport::Stream {
@@ -235,6 +235,7 @@ fn message(id: &str, text: &str) -> MessageRow {
         deleted: false,
         from_me: false,
         mentions_me: true,
+        attachments: Vec::new(),
     }
 }
 
@@ -886,6 +887,130 @@ fn join_meeting_cases() -> Vec<Case> {
             shows: &["7   a@lab.invalid  19:lab@thread.v2  connecting"],
         },
     ]
+}
+
+/// The request `download` asks with `dir` and the selection given.
+fn download(dir: &Path, name: Option<&str>, index: Option<u32>, all: bool, force: bool) -> Request {
+    Request::Download {
+        chat: s("Lab chat"),
+        message: s("1700000000000"),
+        name: name.map(s),
+        index,
+        all,
+        dir: dir.to_str().unwrap().to_owned(),
+        force,
+    }
+}
+
+fn saved_file(index: u32, name: &str, dir: &Path, size: u64) -> SavedFile {
+    SavedFile {
+        index,
+        name: s(name),
+        path: dir.join(name).to_str().unwrap().to_owned(),
+        size,
+    }
+}
+
+#[test]
+fn download_asks_for_the_selected_attachments_in_an_absolute_folder_and_prints_where_they_are() {
+    let out = tempfile::tempdir().unwrap();
+    let out = out.path();
+    let here = std::env::current_dir().unwrap();
+    let out_arg = out.to_str().unwrap();
+    let cases: Vec<(Vec<&str>, Request, Vec<SavedFile>)> = vec![
+        (
+            vec!["download", "Lab chat", "1700000000000", "--out", out_arg],
+            download(out, None, None, false, false),
+            vec![saved_file(1, "report.pdf", out, 18)],
+        ),
+        (
+            vec![
+                "download",
+                "Lab chat",
+                "1700000000000",
+                "--name",
+                "report.pdf",
+                "--out",
+                out_arg,
+                "--force",
+            ],
+            download(out, Some("report.pdf"), None, false, true),
+            vec![saved_file(1, "report.pdf", out, 18)],
+        ),
+        (
+            vec![
+                "download",
+                "Lab chat",
+                "1700000000000",
+                "--index",
+                "2",
+                "--out",
+                out_arg,
+            ],
+            download(out, None, Some(2), false, false),
+            vec![saved_file(2, "picture-2.png", out, 4)],
+        ),
+        (
+            vec!["download", "Lab chat", "1700000000000", "--all", "--out", "saved/here"],
+            download(&here.join("saved/here"), None, None, true, false),
+            vec![
+                saved_file(1, "report.pdf", out, 18),
+                saved_file(2, "picture-2.png", out, 4),
+            ],
+        ),
+        (
+            vec!["download", "Lab chat", "1700000000000", "--all"],
+            download(&here, None, None, true, false),
+            vec![saved_file(1, "report.pdf", out, 18)],
+        ),
+    ];
+    for (args, asked, files) in cases {
+        let shows: Vec<String> = files
+            .iter()
+            .map(|file| format!("saved {} ({} bytes)", file.path, file.size))
+            .collect();
+        let (run, request) = run_one(Server::answering(Response::Downloaded { files }), &args);
+        assert_eq!(run.code, 0, "{args:?}: {}", run.stderr);
+        assert_eq!(request.request, asked, "{args:?}");
+        assert_eq!(run.stdout, shows.join("\n") + "\n", "{args:?}");
+    }
+}
+
+#[test]
+fn download_with_two_selections_is_a_usage_error_and_a_refusal_exits_1() {
+    let home = tempfile::tempdir().unwrap();
+    for args in [
+        &["download", "Lab chat", "1", "--name", "a.pdf", "--all"][..],
+        &["download", "Lab chat", "1", "--index", "1", "--name", "a.pdf"],
+        &["download", "Lab chat", "1", "--index", "1", "--all"],
+        &["download", "Lab chat"],
+    ] {
+        let run = ctl(home.path(), &home.path().join("nobody.sock"), args);
+        assert_eq!(run.code, 2, "{args:?}: {}", run.stderr);
+    }
+    let server = Server::new(Box::new(|request: &RequestLine| {
+        (
+            vec![error_line(
+                request.id,
+                ErrorCode::FileExists,
+                "report.pdf is in the folder already: --force replaces it",
+            )],
+            true,
+        )
+    }));
+    let run = ctl(
+        server.dir.path(),
+        &server.path,
+        &["download", "Lab chat", "1", "--out", "/tmp"],
+    );
+    assert_eq!(run.code, 1, "{}", run.stderr);
+    assert!(run.stderr.contains("file_exists: report.pdf"), "{}", run.stderr);
+}
+
+#[test]
+fn a_download_is_waited_for_past_the_app_s_own_bound_on_it() {
+    let parsed = Cli::try_parse_from(["ngteamsctl", "download", "Lab chat", "1", "--all"]).unwrap();
+    assert_eq!(answer_time(&parsed.command), DOWNLOAD_ANSWER + Timeouts::default().read);
 }
 
 #[test]

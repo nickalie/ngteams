@@ -414,7 +414,8 @@ joins with `refused_read_only`. A lab alias's writes and calls are live lab runs
 ngteamsctl status                           # version, accounts and their engines, the window, the call up
 ngteamsctl accounts                         # each account; an own server's names its server
 ngteamsctl chats [--unread] [--limit N]
-ngteamsctl messages <chat> [--limit N] [--before <message-id>]
+ngteamsctl messages <chat> [--limit N] [--before <message-id>]   # with each message's attachments
+ngteamsctl download <chat> <message-id> [--name <file> | --index N | --all] [--out <dir>] [--force]
 ngteamsctl unread                           # the badge's counts, per chat and total
 ngteamsctl search <words…> [--limit N]
 ngteamsctl members <chat>
@@ -466,6 +467,14 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   `events --follow --kind outbox` or `messages <chat>` before writing it again. `send` takes plain text; markdown and
   mentions aren't parsed. `status set` chooses as the status menu does, kept in the settings; `reset` hands the
   status back to the app.
+- **Downloads**: `messages` lists the attachments of each message after its text, `[<index>: <name>, <type>]`
+  (in JSON, `attachments` with `index`, `name`, `kind` `file` or `picture`, `file_type`, and `size` when the message
+  tells it). `download` saves them in `--out` (the current folder without it; made when it is not there). The app
+  reads them as the chat view does: a SharePoint or OneDrive file through Graph, an own server's file on its server,
+  a picture in the text as the chat shows it. `ngteamsctl` gets no token. Without `--name`, `--index` or `--all`,
+  the message's only attachment is saved. A picture is saved as `image-<index>` with the extension of its format. A
+  name never leaves the folder, and a file that is there already is replaced only with `--force` (else
+  `file_exists`). The read-only app downloads too: a download is a read.
 - **Calls** are asked as the call buttons ask them (the one-call rule, the call window and devices apply) and answer
   with the call's row once the engine took it. `mute` and `camera` with `on`/`off` change only what differs.
   `join meeting` opens the pre-join as the calendar's Join does; `--now` joins at once (microphone on, camera off).
@@ -475,7 +484,8 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   protocol version; the types are in `crates/teams-ctl/src/protocol.rs`. Error codes: `unknown_account`,
   `unknown_chat`, `ambiguous_chat`, `busy`, `no_calling`, `no_call`, `not_ringing`, `no_video`, `no_meeting`,
   `no_tray`, `no_window`, `unknown_action`, `refused_read_only`, `stopped`, `timeout`, `bad_request`,
-  `version_mismatch`, `engine`.
+  `version_mismatch`, `engine`, `no_attachment`, `file_exists`. The protocol is version 2 (version 1 had no
+  attachments and no `download`).
 - **Exit codes**: 0 success; 1 an error answer, a write whose row failed (with `--wait`, one not sent), or a stream
   that ended early or lagged; 2 no app on the socket, no socket path, or a usage error; 3 `wait` timed out.
 

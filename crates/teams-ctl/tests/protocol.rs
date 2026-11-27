@@ -60,9 +60,10 @@ fn request_index(request: &Request) -> usize {
         Request::JoinMeeting { .. } => 37,
         Request::OpenLink { .. } => 38,
         Request::Activity { .. } => 39,
+        Request::Download { .. } => 40,
     }
 }
-const REQUESTS: usize = 40;
+const REQUESTS: usize = 41;
 
 /// One line of each request (and of each value of their enums).
 const REQUEST_LINES: &[&str] = &[
@@ -126,6 +127,8 @@ const REQUEST_LINES: &[&str] = &[
     r#"{"id":58,"cmd":"activity","filter":"unread","search":"lab b","limit":10}"#,
     r#"{"id":59,"cmd":"activity"}"#,
     r#"{"id":60,"cmd":"open","target":{"view":"activity"}}"#,
+    r#"{"id":61,"cmd":"download","chat":"Lab B","message":"1700000000000","name":"report.pdf","index":2,"all":true,"dir":"/home/someone/Downloads","force":true}"#,
+    r#"{"id":62,"cmd":"download","chat":"19:x@thread.v2","message":"1700000000000","dir":"/tmp/out"}"#,
 ];
 
 /// `text` read as a `T` and written again: the same JSON.
@@ -251,9 +254,10 @@ fn response_index(response: &Response) -> usize {
         Response::Calendar { .. } => 18,
         Response::CalendarEvent(_) => 19,
         Response::Activity { .. } => 20,
+        Response::Downloaded { .. } => 21,
     }
 }
-const RESPONSES: usize = 21;
+const RESPONSES: usize = 22;
 
 /// One `ok` answer of each kind (and of each value of their enums).
 const RESPONSE_LINES: &[&str] = &[
@@ -294,6 +298,8 @@ const RESPONSE_LINES: &[&str] = &[
     r#"{"id":35,"ok":{"kind":"calendar_event","id":"AAMk-synthetic","subject":"","start":1,"end":2,"all_day":true,"cancelled":true,"online":false,"joinable":false}}"#,
     r#"{"id":36,"ok":{"kind":"activity","items":[{"id":"1700000000001","kind":"reaction","title":"Lab B +1 reacted to your message","preview":"hello","place":"In chat with you","chat":"19:x@unq.gbl.spaces","message":"1700000000000","at":1700000000002,"read":false},{"id":"2","kind":"missed-call","title":"Missed call from Lab C","at":2,"read":true}]}}"#,
     r#"{"id":37,"ok":{"kind":"ui_state","view":"chat","window":"shown","call_window":false,"activity":true}}"#,
+    r#"{"id":38,"ok":{"kind":"messages","messages":[{"id":"1","chat":"19:x@thread.v2","at":1,"text":"","edited":false,"deleted":false,"from_me":false,"mentions_me":false,"attachments":[{"index":1,"name":"report.pdf","kind":"file","file_type":"pdf"},{"index":2,"name":"picture-2.png","kind":"picture","size":1024}]}]}}"#,
+    r#"{"id":39,"ok":{"kind":"downloaded","files":[{"index":1,"name":"report.pdf","path":"/tmp/out/report.pdf","size":18}]}}"#,
 ];
 
 #[test]
@@ -317,7 +323,7 @@ fn every_response_round_trips_through_its_line() {
     );
 }
 
-const CODES: [ErrorCode; 18] = [
+const CODES: [ErrorCode; 20] = [
     ErrorCode::UnknownAccount,
     ErrorCode::UnknownChat,
     ErrorCode::AmbiguousChat,
@@ -336,6 +342,8 @@ const CODES: [ErrorCode; 18] = [
     ErrorCode::BadRequest,
     ErrorCode::VersionMismatch,
     ErrorCode::Engine,
+    ErrorCode::NoAttachment,
+    ErrorCode::FileExists,
 ];
 
 #[test]

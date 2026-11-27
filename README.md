@@ -281,6 +281,7 @@ On a Mac, press <kbd>⌘</kbd> (Cmd) where the table says <kbd>Ctrl</kbd>.
 ```sh
 ngteamsctl unread                             # what's waiting for you
 ngteamsctl send "Project 1" 'On my way'       # send a message
+ngteamsctl download "Project 1" <id> --all    # save a message's files
 ngteamsctl mute toggle                        # mute from a hotkey
 ngteamsctl wait message --mentions            # wait until someone mentions you
 ```

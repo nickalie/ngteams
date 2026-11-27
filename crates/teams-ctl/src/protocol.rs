@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The protocol's version: a `hello` from a client of another version is refused.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// How long a write asked to `wait` waits for its outbox row to settle before it answers [`ErrorCode::Timeout`]: past
 /// the outbox's own retries of a send that keeps failing for a while.
@@ -46,6 +46,11 @@ pub const CALL_ANSWER: std::time::Duration = std::time::Duration::from_secs(60);
 /// is tried again (a token renewed, or the service throttling); a range over 62 days is read 62 days at a time. Past
 /// it the app answers [`ErrorCode::Timeout`].
 pub const CALENDAR_ANSWER: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// How long the app takes at most to answer a `download`: the files are read and written one after the other, a big
+/// file at the speed of the network. Past it the app answers [`ErrorCode::Timeout`], and the download that runs
+/// continues to its end.
+pub const DOWNLOAD_ANSWER: std::time::Duration = std::time::Duration::from_secs(3600);
 
 /// What to do about a write whose answer didn't come in time: it may still go out, so it is looked for before it is
 /// written again.
@@ -242,6 +247,24 @@ pub enum Request {
     },
     /// Open a Teams link (a meeting's join link) as the app would.
     OpenLink { url: String },
+    /// Save attachments of a message in the folder `dir` (an absolute path), each file by the name it has in the
+    /// message. The app reads them as the chat view reads them, so the client gets no token.
+    ///
+    /// `name` or `index` (as `messages` lists them) selects one attachment, `all` selects all of them. Without one, the
+    /// message's only attachment is saved. A file that is in `dir` already is replaced only with `force`.
+    Download {
+        chat: String,
+        message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        index: Option<u32>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        all: bool,
+        dir: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        force: bool,
+    },
 }
 
 /// How a calendar date is spelled on the wire and the command line.
@@ -432,6 +455,10 @@ pub enum Response {
         events: Vec<CalendarRow>,
     },
     CalendarEvent(CalendarRow),
+    /// The files a `download` saved, in the order of the message.
+    Downloaded {
+        files: Vec<SavedFile>,
+    },
 }
 
 /// The server's half of `hello`.
@@ -530,6 +557,48 @@ pub struct MessageRow {
     pub from_me: bool,
     #[serde(default)]
     pub mentions_me: bool,
+    /// The files and pictures it carries, in the order the chat view shows them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentRow>,
+}
+
+/// A file or a picture that a message carries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentRow {
+    /// Its place in the message's attachments, from 1: what `download --index` names.
+    pub index: u32,
+    /// The file name it is saved with.
+    pub name: String,
+    pub kind: AttachmentKind,
+    /// The type of a file, as the app names it (`pdf`, `word`, `image`, `video`, …).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_type: Option<String>,
+    /// Its size in bytes, when the message tells it. A shared file's message does not tell it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+}
+
+/// What an attachment is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentKind {
+    /// A shared file: on SharePoint or OneDrive, or on an own server.
+    File,
+    /// A picture in the message's text (on AMS, or on an own server's media service).
+    Picture,
+}
+
+/// A file that `download` saved.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedFile {
+    /// Its place in the message's attachments, from 1.
+    pub index: u32,
+    /// The attachment's name.
+    pub name: String,
+    /// Where the app saved it.
+    pub path: String,
+    /// Its size in bytes.
+    pub size: u64,
 }
 
 /// The badge's unread counts.
@@ -782,6 +851,10 @@ pub enum ErrorCode {
     VersionMismatch,
     /// The engine refused or failed, as its message says.
     Engine,
+    /// The message has no attachment of the name or index given, or several and none was selected.
+    NoAttachment,
+    /// A file of the name to save is in the folder already, and `force` was not given.
+    FileExists,
 }
 
 impl ErrorCode {
@@ -807,6 +880,8 @@ impl ErrorCode {
             Self::BadRequest => "bad_request",
             Self::VersionMismatch => "version_mismatch",
             Self::Engine => "engine",
+            Self::NoAttachment => "no_attachment",
+            Self::FileExists => "file_exists",
         }
     }
 }

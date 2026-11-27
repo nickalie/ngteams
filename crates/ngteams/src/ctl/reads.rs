@@ -6,7 +6,7 @@
 //!   chat ("Meeting started", …) as the chat list's preview reads them ([`system_message::preview`]); the rest
 //!   (a thread's events, a call's records) left out. `before` pages back from a message. The answer stops before a
 //!   message that would take its line over the wire's cap ([`MAX_LINE`]): fewer than asked, the client pages on from
-//!   the last one.
+//!   the last one. Each row lists the message's attachments as `download` names them ([`super::download`]).
 //! - `search`: the store's own search over the listed chats, as the window's search box searches; its hits also stop
 //!   where the line is full.
 //! - `members`: a chat's stored members with their names.
@@ -435,6 +435,10 @@ impl Names {
             deleted: message.delete_time.is_some(),
             from_me: message.sender.as_deref() == Some(me),
             mentions_me: Mentions::of_message(message, me).names_me(),
+            attachments: super::download::attachments(message)
+                .into_iter()
+                .map(|attachment| attachment.row)
+                .collect(),
         }
     }
 }

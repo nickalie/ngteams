@@ -26,6 +26,10 @@
 //!   without `--follow`, `events` prints the first one and exits. `wait <kind>` prints the first event of that kind
 //!   whose JSON line matches `--match`, within `--timeout` (which the connect and the subscribe spend too). A kind
 //!   that names no event kind is a usage error. A refused subscription is an error answer like any other.
+//! - **Downloads**: `messages` lists the attachments of each message. `download` asks the app to save them in the
+//!   folder `--out` names (the current folder without it), sent as an absolute path. The app reads the files, so the
+//!   client gets no token. `--name`, `--index` or `--all` selects them, and an existing file is replaced only with
+//!   `--force`. The client waits for the answer past [`DOWNLOAD_ANSWER`].
 //! - **Completions**: `completions bash|fish|zsh` prints that shell's completion script, and `events kinds` the event
 //!   kinds, without asking the app.
 
@@ -41,9 +45,9 @@ use regex::Regex;
 use crate::client::{Client, ClientError, Events, Refused, Timeouts};
 use crate::path::{Env, Mode};
 use crate::protocol::{
-    CALENDAR_ANSWER, CALL_ANSWER, CtlEvent, DATE_FORMAT, EventFilter, EventLine, OpenTarget, OutboxState, Outcome,
-    Request, Response, ResponseLine, SYNC_ANSWER, StatusChoice, Toggle, UNANSWERED_WRITE, WRITE_ANSWER, WRITE_WAIT,
-    WindowOp,
+    CALENDAR_ANSWER, CALL_ANSWER, CtlEvent, DATE_FORMAT, DOWNLOAD_ANSWER, EventFilter, EventLine, OpenTarget,
+    OutboxState, Outcome, Request, Response, ResponseLine, SYNC_ANSWER, StatusChoice, Toggle, UNANSWERED_WRITE,
+    WRITE_ANSWER, WRITE_WAIT, WindowOp,
 };
 use crate::render;
 
@@ -104,6 +108,28 @@ pub enum Command {
         /// Only the messages before this message id.
         #[arg(long, value_name = "MESSAGE")]
         before: Option<String>,
+    },
+    /// Save files and pictures of a message in a folder, each by the name `messages` lists. The app reads them.
+    Download {
+        /// The chat's id or title.
+        chat: String,
+        /// The message's id.
+        message: String,
+        /// The attachment of this name; without a selection, the message's only attachment.
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["index", "all"])]
+        name: Option<String>,
+        /// The attachment at this place, from 1, as `messages` lists it.
+        #[arg(long, value_name = "N", conflicts_with = "all")]
+        index: Option<u32>,
+        /// All the attachments of the message.
+        #[arg(long)]
+        all: bool,
+        /// The folder to save in (made when it is not there); the current folder without it.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
+        /// Replace a file of the same name in the folder.
+        #[arg(long)]
+        force: bool,
     },
     /// The unread counts the badge shows: per chat and the total.
     Unread,
@@ -570,7 +596,7 @@ pub fn run(cli: &Cli, env: &Env, out: &mut dyn Write, err: &mut dyn Write) -> Ex
     let request = match request(&cli.command, &mut || io::read_to_string(io::stdin())) {
         Ok(Some(request)) => request,
         Ok(None) => return local(&cli.command, out),
-        Err(error) => return told(err, Exit::NoApp, &format!("stdin couldn't be read: {error}")),
+        Err(error) => return told(err, Exit::NoApp, &format!("the command couldn't be read: {error}")),
     };
     let path = match socket(cli, env) {
         Ok(path) => path,
@@ -691,7 +717,8 @@ fn request(command: &Command, stdin: &mut dyn FnMut() -> io::Result<String>) -> 
             command: Some(EventsCommand::Kinds),
             ..
         } => return Ok(None),
-        Command::Write(write) => write_request(write, stdin)?,
+        Command::Write(write) => write_request(write, stdin)
+            .map_err(|error| io::Error::new(error.kind(), format!("stdin couldn't be read: {error}")))?,
         Command::Call(call) => call_request(call),
         Command::Status { command: None } => Request::Status,
         Command::Status {
@@ -713,6 +740,7 @@ fn request(command: &Command, stdin: &mut dyn FnMut() -> io::Result<String>) -> 
             limit: *limit,
             before: before.clone(),
         },
+        Command::Download { .. } => download_request(command)?,
         Command::Unread => Request::Unread,
         Command::Search { query, limit } => Request::Search {
             query: query.join(" "),
@@ -757,6 +785,44 @@ fn request(command: &Command, stdin: &mut dyn FnMut() -> io::Result<String>) -> 
             filter: filter.filter(vec![kind.clone()]),
         },
     }))
+}
+
+/// The request `download` asks.
+fn download_request(command: &Command) -> io::Result<Request> {
+    let Command::Download {
+        chat,
+        message,
+        name,
+        index,
+        all,
+        out,
+        force,
+    } = command
+    else {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a download"));
+    };
+    Ok(Request::Download {
+        chat: chat.clone(),
+        message: message.clone(),
+        name: name.clone(),
+        index: *index,
+        all: *all,
+        dir: folder(out.as_deref())?,
+        force: *force,
+    })
+}
+
+/// The folder `download --out` names as an absolute path (the current folder without it): the app does not share the
+/// client's current folder.
+fn folder(out: Option<&Path>) -> io::Result<String> {
+    let folder = match out {
+        Some(out) => std::path::absolute(out)?,
+        None => std::env::current_dir()?,
+    };
+    folder
+        .into_os_string()
+        .into_string()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "the folder's path isn't UTF-8"))
 }
 
 /// The request a write asks.
@@ -910,6 +976,7 @@ pub fn answer_time(command: &Command) -> Duration {
         Command::Call(CallCommand::Calls) => slack,
         Command::Call(_) => CALL_ANSWER + slack,
         Command::Calendar { .. } => CALENDAR_ANSWER + slack,
+        Command::Download { .. } => DOWNLOAD_ANSWER + slack,
         _ => slack,
     }
 }
