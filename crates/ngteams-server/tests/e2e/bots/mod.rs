@@ -20,6 +20,7 @@ mod member_updates_qa;
 mod people;
 mod picture_races;
 mod qa_send_limits;
+mod qa_sign_in;
 mod registry;
 pub mod sign_in;
 

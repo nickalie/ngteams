@@ -19,6 +19,9 @@
 //! - **Suggested actions.** They stand over the compose box of a 1:1 chat, and a click posts the answer.
 //! - **Refresh.** A card whose refresh names the account asks its bot once by itself; "Refresh card" in the message's
 //!   More options asks again.
+//! - **A sign-in card** (QA of task 233). Sign in opens the bot's link, and a code field shows under the card. An
+//!   empty code and a code with a letter are marked and sent nowhere. Enter sends a six-digit code typed with a space
+//!   as `signin/verifyState`. The bot's 412 keeps the field with a red line, and its 200 removes the field.
 //! - **Many inputs and long labels**, and **a link's app card** (it asks no bot).
 //! - **Read-only mode** (a second run): inputs take nothing, and a button opens the message in Teams on the web.
 //! - **An account whose cloud serves no apps** (a third run): nothing asks a bot.
@@ -128,6 +131,9 @@ const BACK_BOT: &str = "28:00000000-0000-4000-8000-0000000000b8";
 const SUGGEST_BOT: &str = "28:00000000-0000-4000-8000-0000000000b9";
 const REFRESH_BOT: &str = "28:00000000-0000-4000-8000-0000000000ba";
 const LONG_BOT: &str = "28:00000000-0000-4000-8000-0000000000bb";
+const OAUTH_BOT: &str = "28:00000000-0000-4000-8000-0000000000bc";
+/// The made-up link of the OAuth card's Sign in.
+const SIGN_IN_LINK: &str = "https://tools.example.invalid/sign-in";
 
 const LONG_LABEL: &str = "A made-up question with a very long label that goes on past the width of the card, so \
     that it must wrap onto a second and maybe a third line without cutting a word";
@@ -214,6 +220,7 @@ fn walk(sandbox: &Sandbox, runtime: &tokio::runtime::Runtime, service: &Service,
         };
         ctx.form()?;
         ctx.answers()?;
+        ctx.sign_in_card()?;
         ctx.backs()?;
         ctx.suggested()?;
         ctx.refresh()?;
@@ -669,6 +676,147 @@ impl Walk<'_> {
         self.expect_line(card, "late", Line::Red)?;
         step("a bot that does not answer in time");
         Ok(())
+    }
+}
+
+// --- the sign-in card ---
+
+/// The code field and its Verify button under a sign-in card, found on the screen.
+#[derive(Debug)]
+struct CodeField {
+    field: Rect,
+    verify: Rect,
+}
+
+impl CodeField {
+    /// The field and the button below the Sign in button `sign_in`, in the card `card`; `None` when no field shows.
+    fn find(shot: &image::RgbImage, card: Rect, sign_in: Rect) -> Option<Self> {
+        let found: Vec<Rect> = boxes_below(shot, card.x0, card.x1, sign_in.y1 + 2)
+            .into_iter()
+            .filter(|found| found.y0 < card.y1 + 120)
+            .collect();
+        let field = found
+            .iter()
+            .copied()
+            .filter(|found| found.width() > 120)
+            .max_by_key(Rect::width)?;
+        // Verify is a primary button filled with the brand colour, right of the field; this row is over its label
+        let y = field.y0 + 4;
+        let (x0, x1) = runs(shot, y, field.x1, field.x1 + 160, |pixel| near(pixel, RING, 16))
+            .into_iter()
+            .find(|(x0, x1)| x1 - x0 >= 30)?;
+        let verify = Rect {
+            x0,
+            y0: field.y0,
+            x1,
+            y1: field.y1,
+        };
+        Some(Self { field, verify })
+    }
+}
+
+impl Walk<'_> {
+    /// The OAuth card: Sign in opens its link, then the code field takes a code as a user types it.
+    fn sign_in_card(&mut self) -> SandboxResult {
+        let service = self.service;
+        let card = self.open_card(&service.chats.oauth, &service.ids.oauth, "oauth")?;
+        self.dark("oauth")?;
+        let sign_in = only_button(&self.run.last, card)?;
+        let (x, y) = sign_in.centre();
+        let opened = self.run.click_opens(self.sandbox, x, y)?;
+        if opened != SIGN_IN_LINK {
+            note(format!("Sign in opened {opened}, expected {SIGN_IN_LINK}"));
+        }
+        thread::sleep(SETTLE);
+        self.shot("qa-bot-cards-oauth-code-light.png")?;
+        let code = self.code_field("after Sign in")?;
+        self.dark("oauth-code")?;
+        let red = danger_in(&self.run.last, PANE);
+
+        self.click_quiet(code.verify.centre(), "Verify with no code")?;
+        self.expect_marked(red, "oauth-empty", "Verify with no code")?;
+        let code = self.code_field("after an empty code")?;
+        self.replace_text(code.field, "12a456")?;
+        // typing takes the mark away, and the chat moves with it
+        self.shot("qa-bot-cards-oauth-letter-typed-light.png")?;
+        let code = self.code_field("after 12a456 is typed")?;
+        self.click_quiet(code.verify.centre(), "Verify with 12a456")?;
+        self.expect_marked(red, "oauth-letter", "Verify with 12a456")?;
+        self.dark("oauth-letter")?;
+
+        let code = self.code_field("after a marked code")?;
+        self.replace_text(code.field, "123 456")?;
+        let before = self.invokes().len();
+        self.run.input.key(keys::ENTER)?;
+        let invoke = wait_until(WAIT, || self.invokes().get(before).cloned()).ok_or("Enter sent no code to the bot")?;
+        self.expect_verify(&invoke, "Enter");
+        thread::sleep(SETTLE);
+        self.shot("qa-bot-cards-oauth-refused-light.png")?;
+        let code = self.code_field("after the bot's 412")?;
+        let line = Rect {
+            x0: code.field.x0.saturating_sub(10),
+            y0: code.field.y1,
+            x1: code.verify.x1,
+            y1: code.field.y1 + 40,
+        };
+        if danger_in(&self.run.last, line) < 30 {
+            note("the bot's 412: no red line under the code field".to_owned());
+        }
+        self.dark("oauth-refused")?;
+
+        self.service
+            .mock
+            .script_bot(OAUTH_BOT, "Lunch Bot", &[("signin/verifyState", BotReply::done())]);
+        let before = self.invokes().len();
+        let invoke = self.click_invokes(code.verify.centre(), before, "Verify")?;
+        self.expect_verify(&invoke, "Verify");
+        thread::sleep(SETTLE);
+        let card = self.run.card(self.sandbox, "qa-bot-cards-oauth-signed-in-light.png")?;
+        let sign_in = only_button(&self.run.last, card)?;
+        if CodeField::find(&self.run.last, card, sign_in).is_some() {
+            note("signed in: the code field stays under the card".to_owned());
+        }
+        self.expect_line(card, "oauth-signed-in", Line::Note)?;
+        self.dark("oauth-signed-in")?;
+        step("the sign-in card: Sign in, the code field, a refused code, then signed in");
+        Ok(())
+    }
+
+    /// The code field and Verify under the sign-in card on the last screen (the chat scrolls as they show).
+    fn code_field(&mut self, what: &str) -> SandboxResult<CodeField> {
+        let card = find_card(&self.run.last).ok_or_else(|| format!("{what}: no card on the screen"))?;
+        let sign_in = only_button(&self.run.last, card)?;
+        CodeField::find(&self.run.last, card, sign_in).ok_or_else(|| {
+            let found = boxes_below(&self.run.last, card.x0, card.x1, sign_in.y1 + 2);
+            format!("{what}: no code field and Verify under the card {card:?}: {found:?}").into()
+        })
+    }
+
+    /// A marked code: more red on the screen than `red`, kept as shot `name`.
+    fn expect_marked(&mut self, red: usize, name: &str, what: &str) -> SandboxResult {
+        let shot = self.shot(&format!("qa-bot-cards-{name}-light.png"))?;
+        let after = danger_in(&load(&shot)?, PANE);
+        if after <= red + 20 {
+            note(format!(
+                "{what}: the code is not marked ({red} -> {after} red pixels, {})",
+                shot.display()
+            ));
+        }
+        Ok(())
+    }
+
+    /// The code `123456` reached the sign-in bot as `signin/verifyState`, past the mock's token check.
+    fn expect_verify(&self, invoke: &Value, what: &str) {
+        let body = &invoke["body"];
+        let path = invoke["path"].as_str().unwrap_or_default();
+        if !path.contains(OAUTH_BOT)
+            || body["name"] != "signin/verifyState"
+            || body["value"] != json!({"state": "123456"})
+            || body["conversation"]["id"] != self.service.chats.oauth.as_str()
+            || invoke["taken"] != true
+        {
+            note(format!("{what}: the code's invoke is {invoke}"));
+        }
     }
 }
 
@@ -1236,6 +1384,7 @@ struct Chats {
     refresh: String,
     long: String,
     app: String,
+    oauth: String,
 }
 
 /// The ids of the messages the walk reads.
@@ -1252,6 +1401,7 @@ struct Ids {
     refresh: String,
     long: String,
     app: String,
+    oauth: String,
 }
 
 struct Service {
@@ -1279,6 +1429,7 @@ impl Service {
             refresh: group("Made-up lunch status")?,
             long: group("Made-up long survey")?,
             app: group("Made-up video link")?,
+            oauth: group("Made-up bot OAuth")?,
         };
         let post = |chat: &str, bot: &str, activity: &Value| post_card(&mock, chat, bot, activity);
         let ids = Ids {
@@ -1294,6 +1445,7 @@ impl Service {
             refresh: post(&chats.refresh, REFRESH_BOT, &adaptive(&status_card(Some(LAB_A))))?,
             long: post(&chats.long, LONG_BOT, &adaptive(&long_card()))?,
             app: app_card_message(&mock, &chats.app)?,
+            oauth: post(&chats.oauth, OAUTH_BOT, &oauth_card())?,
         };
         let _ = mock.take_events(LAB_A);
         Ok(Self {
@@ -1340,6 +1492,7 @@ fn script(mock: &ChatServiceMock) -> SandboxResult {
         "statusCode": 200, "type": ADAPTIVE, "value": refreshed_card(),
     }));
     mock.script_bot(REFRESH_BOT, "Lunch Bot", &[("adaptiveCard/action", ready)]);
+    mock.script_bot(OAUTH_BOT, "Lunch Bot", &[("signin/verifyState", BotReply::status(412))]);
     Ok(())
 }
 
@@ -1431,6 +1584,15 @@ fn refreshed_card() -> Value {
     let mut card = status_card(Some(LAB_A));
     card["body"][1]["facts"][1]["value"] = json!("Ready");
     card
+}
+
+/// A bot's sign-in prompt: an OAuth card with its Sign in button.
+fn oauth_card() -> Value {
+    json!({"type": "message/card", "attachments": [
+        {"contentType": "application/vnd.microsoft.card.oauth", "content": {
+            "text": "Sign in to Synthetic Tools to see your tasks.", "connectionName": "tools",
+            "buttons": [{"type": "signin", "title": "Sign in", "value": SIGN_IN_LINK}]}}
+    ]})
 }
 
 /// An `imBack` and a `messageBack` button.

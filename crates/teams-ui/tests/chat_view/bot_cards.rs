@@ -1026,3 +1026,102 @@ fn without_the_bots_a_sign_in_card_opens_in_teams_and_offers_no_code() {
     );
     assert!(bounds(cx, &format!("card-{ID}-c0-code")).is_none());
 }
+
+/// QA of task 233: the code field of message `id`'s sign-in card, open after its Sign in.
+fn opened_code_field(cx: &mut VisualTestContext, id: &str) -> String {
+    click(cx, &format!("card-{id}-c0a0"));
+    assert_eq!(cx.opened_url().as_deref(), Some("https://example.invalid/sign-in"));
+    let code = format!("card-{id}-c0-code");
+    assert!(bounds(cx, &code).is_some(), "the code field of {id} shows");
+    code
+}
+
+fn verify_asks(rig: &Rig) -> Vec<(String, String)> {
+    rig.core
+        .bot_asks
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|ask| match &ask.kind {
+            InvokeKind::VerifyState { code } => Some((code.clone(), ask.conversation.clone().unwrap_or_default())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn qa_a_code_of_five_or_seven_digits_or_with_a_letter_is_marked_and_not_sent() {
+    for typed in ["12345", "1234567", "12a456", "１２３４５６"] {
+        let rig = bots_rig(vec![oauth_message(ID)]);
+        rig.core.bot_answers.lock().unwrap().push_back(Ok(InvokeAnswer::Done));
+        let (_view, cx) = tall_window(&rig);
+        let code = opened_code_field(cx, ID);
+        click(cx, &code);
+        cx.simulate_input(typed);
+        click(cx, &format!("{code}-verify"));
+        cx.run_until_parked();
+        assert!(bounds(cx, &format!("{code}-error")).is_some(), "{typed} is marked");
+        assert!(rig.core.bot_asks.lock().unwrap().is_empty(), "{typed} goes nowhere");
+        assert!(bounds(cx, &code).is_some(), "the field stays for {typed}");
+    }
+}
+
+#[test]
+fn qa_enter_in_the_code_field_sends_the_code_and_signs_the_user_in() {
+    let rig = bots_rig(vec![oauth_message(ID)]);
+    rig.core.bot_answers.lock().unwrap().push_back(Ok(InvokeAnswer::Done));
+    let (_view, cx) = tall_window(&rig);
+    let code = opened_code_field(cx, ID);
+    click(cx, &code);
+    cx.simulate_input("654321");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    draw(cx);
+    assert_eq!(verify_asks(&rig), [("654321".to_owned(), AB.to_owned())]);
+    assert!(bounds(cx, &code).is_none(), "the field goes");
+    assert!(bounds(cx, &format!("card-{ID}-c0answer")).is_some());
+}
+
+#[test]
+fn qa_after_a_sign_out_the_bots_next_card_takes_its_own_code() {
+    const NEXT: &str = "602";
+    let mut next = oauth_message(NEXT);
+    next.arrival_time = NOON + 60_000;
+    next.compose_time = Some(next.arrival_time);
+    let rig = bots_rig(vec![oauth_message(ID), next]);
+    rig.core.bot_answers.lock().unwrap().extend([
+        Ok(InvokeAnswer::Done),
+        Ok(InvokeAnswer::Refused(412)),
+        Ok(InvokeAnswer::Refused(404)),
+        Ok(InvokeAnswer::Done),
+    ]);
+    let (_view, cx) = tall_window(&rig);
+    let first = opened_code_field(cx, ID);
+    click(cx, &first);
+    cx.simulate_input("111111");
+    click(cx, &format!("{first}-verify"));
+    cx.run_until_parked();
+    assert!(bounds(cx, &first).is_none(), "the first card signed the user in");
+
+    // the bot signed the user out and sent a new card: its Sign in opens a field of its own
+    let second = opened_code_field(cx, NEXT);
+    assert!(bounds(cx, &first).is_none(), "the first card's field stays away");
+    click(cx, &second);
+    cx.simulate_input("222222");
+    for refusal in [412, 404] {
+        click(cx, &format!("{second}-verify"));
+        cx.run_until_parked();
+        assert!(bounds(cx, &second).is_some(), "a {refusal} keeps the field");
+        assert!(bounds(cx, &format!("card-{NEXT}-c0answer")).is_some());
+    }
+    click(cx, &format!("{second}-verify"));
+    cx.run_until_parked();
+    assert!(bounds(cx, &second).is_none(), "the new card signed the user in");
+    assert!(
+        bounds(cx, &format!("card-{ID}-c0answer")).is_some(),
+        "the first card's line stays"
+    );
+    assert!(bounds(cx, &format!("card-{NEXT}-c0answer")).is_some());
+    let codes: Vec<String> = verify_asks(&rig).into_iter().map(|(code, _)| code).collect();
+    assert_eq!(codes, ["111111", "222222", "222222", "222222"]);
+}

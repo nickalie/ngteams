@@ -19,28 +19,28 @@ use super::idp::{self, CLIENT_ID, CLIENT_SECRET, Idp, RefreshFailure};
 use super::{app_path, error_code};
 use crate::support::{Backend, backends};
 
-const CONNECTION: &str = "synthetic-github";
+pub(super) const CONNECTION: &str = "synthetic-github";
 
 /// A usable `bots.token_key` (synthetic).
 pub fn token_key() -> String {
     base64::engine::general_purpose::STANDARD.encode([42_u8; 32])
 }
 
-fn sign_in_config(config: &mut ngteams_server::config::Config) {
+pub(super) fn sign_in_config(config: &mut ngteams_server::config::Config) {
     config.bots.token_key = Some(ngteams_server::bots::sign_in::SealKey::new(token_key()));
 }
 
-fn connection_path(app: &str, name: &str) -> String {
+pub(super) fn connection_path(app: &str, name: &str) -> String {
     format!("{}/connections/{name}", app_path(app))
 }
 
-fn connection_body(idp: &Idp) -> Value {
+pub(super) fn connection_body(idp: &Idp) -> Value {
     json!({"authorize_url": idp.authorize_url(), "token_url": idp.token_url(), "client_id": CLIENT_ID,
            "client_secret": CLIENT_SECRET, "scopes": "read:user repo"})
 }
 
 /// The bot's call to its token service at the origin, with its own token; the status and JSON (or text).
-async fn token_service(setup: &Setup, connector: &Connector, method: Method, path: &str) -> (u16, Value) {
+pub(super) async fn token_service(setup: &Setup, connector: &Connector, method: Method, path: &str) -> (u16, Value) {
     let base = if connector.token.is_some() {
         setup.registry.server.origin.clone()
     } else {
@@ -56,14 +56,14 @@ async fn token_service(setup: &Setup, connector: &Connector, method: Method, pat
     (status, serde_json::from_str(&text).unwrap_or(Value::String(text)))
 }
 
-fn query(pairs: &[(&str, &str)]) -> String {
+pub(super) fn query(pairs: &[(&str, &str)]) -> String {
     url::form_urlencoded::Serializer::new(String::new())
         .extend_pairs(pairs)
         .finish()
 }
 
 /// The state an SDK's prompt sends for a sign-in link: the connection and the conversation reference, in base64.
-fn state(setup: &Setup, user: &str, pascal: bool) -> String {
+pub(super) fn state(setup: &Setup, user: &str, pascal: bool) -> String {
     let reference = json!({"user": {"id": format!("29:{user}")}, "bot": {"id": format!("28:{}", setup.bot_id)},
         "conversation": {"id": setup.chat()}, "channelId": "msteams", "serviceUrl": format!("{ORIGIN}/bot/")});
     let state = if pascal {
@@ -75,7 +75,7 @@ fn state(setup: &Setup, user: &str, pascal: bool) -> String {
 }
 
 /// What the bot asks its token service for a person's token, with the sign-in code when it has one.
-fn get_token(user: &str, code: Option<&str>) -> String {
+pub(super) fn get_token(user: &str, code: Option<&str>) -> String {
     let user = format!("29:{user}");
     let mut pairs = vec![
         ("userId", user.as_str()),
@@ -89,7 +89,7 @@ fn get_token(user: &str, code: Option<&str>) -> String {
 }
 
 /// The bot's OAuth prompt: no token, a sign-in link, an OAuth card in Ada's chat. The link.
-async fn prompt(setup: &Setup, connector: &Connector) -> String {
+pub(super) async fn prompt(setup: &Setup, connector: &Connector) -> String {
     let (status, answer) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
     assert_eq!(status, 404, "{answer}");
     let link = link_for(setup, connector).await;
@@ -103,7 +103,7 @@ async fn prompt(setup: &Setup, connector: &Connector) -> String {
 }
 
 /// A sign-in link for Ada, from the token service.
-async fn link_for(setup: &Setup, connector: &Connector) -> String {
+pub(super) async fn link_for(setup: &Setup, connector: &Connector) -> String {
     let path = format!(
         "api/botsignin/GetSignInResource?{}",
         query(&[("state", &state(setup, &setup.ada, false))])
@@ -116,7 +116,7 @@ async fn link_for(setup: &Setup, connector: &Connector) -> String {
 }
 
 /// The link of the OAuth card Ada synced, as the client reads it.
-async fn synced_link(setup: &Setup) -> String {
+pub(super) async fn synced_link(setup: &Setup) -> String {
     let messages = setup.synced(&setup.chat()).await;
     let card = messages
         .iter()
@@ -140,13 +140,13 @@ async fn synced_link(setup: &Setup) -> String {
 }
 
 /// The bot's connector after Ada's first message.
-async fn started(setup: &Setup) -> Connector {
+pub(super) async fn started(setup: &Setup) -> Connector {
     setup.send(&setup.chat(), "start").await;
     let got = setup.bot.next_of("message").await;
     setup.connector(got.activity["serviceUrl"].as_str().unwrap()).await
 }
 
-async fn add_connection(setup: &Setup, idp: &Idp) {
+pub(super) async fn add_connection(setup: &Setup, idp: &Idp) {
     let (status, answer) = setup
         .registry
         .call(
@@ -159,7 +159,7 @@ async fn add_connection(setup: &Setup, idp: &Idp) {
 }
 
 /// Whether any string in `value` holds `secret`.
-fn holds(value: &Value, secret: &str) -> bool {
+pub(super) fn holds(value: &Value, secret: &str) -> bool {
     value.to_string().contains(secret)
 }
 
@@ -233,7 +233,7 @@ async fn redeemed(setup: &Setup, connector: &Connector, code: &str) {
 }
 
 /// Whether the token service says Ada has a token for the connection.
-async fn has_token(setup: &Setup, connector: &Connector) -> bool {
+pub(super) async fn has_token(setup: &Setup, connector: &Connector) -> bool {
     let status_path = format!(
         "api/usertoken/GetTokenStatus?{}",
         query(&[("userId", &format!("29:{}", setup.ada)), ("channelId", "msteams")])
