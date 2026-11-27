@@ -988,6 +988,30 @@ fn a_sign_in_card_opens_its_page_then_sends_the_code_it_showed() {
 }
 
 #[test]
+fn a_code_stays_after_a_server_error_and_the_bots_error_then_signs_in() {
+    let rig = bots_rig(vec![oauth_message(ID)]);
+    rig.core.bot_answers.lock().unwrap().extend([
+        Ok(InvokeAnswer::Refused(500)),
+        Ok(InvokeAnswer::Error {
+            code: None,
+            message: " ".to_owned(),
+        }),
+        Ok(InvokeAnswer::Done),
+    ]);
+    let (_view, cx) = tall_window(&rig);
+    let code = format!("card-{ID}-c0-code");
+    click(cx, &format!("card-{ID}-c0a0"));
+    type_code_and_verify_twice(cx, &code);
+    assert!(bounds(cx, &code).is_some(), "the bot's error keeps the field");
+    click(cx, &format!("{code}-verify"));
+    cx.run_until_parked();
+    draw(cx);
+    assert_eq!(rig.core.bot_asks.lock().unwrap().len(), 3);
+    assert!(bounds(cx, &code).is_none(), "the third answer signs the user in");
+    assert!(bounds(cx, &format!("card-{ID}-c0answer")).is_some());
+}
+
+#[test]
 fn without_the_bots_a_sign_in_card_opens_in_teams_and_offers_no_code() {
     let rig = rig_with(vec![oauth_message(ID)]);
     let (_view, cx) = tall_window(&rig);
