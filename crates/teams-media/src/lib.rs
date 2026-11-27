@@ -36,6 +36,10 @@ pub use teams_sdp::mcp;
 #[cfg(feature = "gstreamer")]
 pub mod player;
 pub mod processing;
+#[cfg(any(
+    target_os = "linux",
+    all(feature = "gstreamer", any(windows, target_os = "macos", test))
+))]
 mod queue;
 pub mod relay;
 pub mod rtc;
