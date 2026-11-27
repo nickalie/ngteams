@@ -44,6 +44,9 @@ const LAB_C: &str = "8:orgid:00000000-0000-4000-8000-00000000000c";
 const AT: i64 = 1_767_268_800_000;
 /// The pure Arabic message, which the reply quotes.
 const QUOTED: i64 = AT + 120_000;
+/// The mixed paragraph of the first message, which the "select" page drags across.
+const MIXED: &str = "\"أوافق على تلقي العروض الترويجية المستقبلية والأخبار والعروض من النادي. I agree to receive future \
+                     promotions, news and offers from the club.\"";
 /// What the compose box holds on its page.
 const DRAFT: &str = "\"أوافق على الشروط والأحكام. I agree to the terms.\" Please confirm (2 items).";
 
@@ -167,11 +170,10 @@ fn messages() -> Vec<Message> {
         (
             LAB_B,
             "Synthetic Bee",
-            "<p>Each option is kept in a column named after its id. Both use the same wording:</p>\
-             <p>\"أوافق على تلقي العروض الترويجية المستقبلية والأخبار والعروض من النادي. I agree to receive future \
-             promotions, news and offers from the club.\"</p>\
-             <p>The column is empty when nobody chose it.</p>"
-                .to_owned(),
+            format!(
+                "<p>Each option is kept in a column named after its id. Both use the same wording:</p>\
+                 <p>{MIXED}</p><p>The column is empty when nobody chose it.</p>"
+            ),
         ),
         (
             LAB_B,
@@ -309,12 +311,41 @@ fn step(shell: &Entity<Shell>, _page: &str, window: &mut Window, cx: &mut App) {
     shell.update(cx, |shell, cx| shell.open_chat(AB.to_owned(), window, cx));
 }
 
-/// Where the drag of the "select" page starts and ends: in the mixed line of the first message, from the middle of
-/// its Arabic to the middle of its English, logical px as the 1280 by 800 window lays it out.
-const DRAG: [(f32, f32); 2] = [(640.0, 254.0), (1000.0, 254.0)];
+/// Where the "select" page's drag starts and ends across the messages area, as fractions of its width: from the
+/// middle of the mixed line's Arabic to the middle of its English, at each window size the sandbox gives.
+const DRAG_ACROSS: [f32; 2] = [0.3, 0.8];
 
-fn drag(window: &mut Window, cx: &mut App) {
-    let [from, to] = DRAG.map(|(x, y)| gpui::point(gpui::px(x), gpui::px(y)));
+/// Drags across the mixed line of the first message, found from the laid-out messages area: each row of the area
+/// is tried from the top until a drag selects from the line's Arabic into its English. Whether one did.
+fn drag_mixed_line(shell: &Entity<Shell>, window: &mut Window, cx: &mut App) -> bool {
+    let Some(chat) = shell.read(cx).chat().cloned() else {
+        return false;
+    };
+    let Some(area) = chat.read(cx).messages_area().get() else {
+        return false;
+    };
+    let english = MIXED.find("I agree").unwrap_or_default();
+    let first = AT.to_string();
+    let [from, to] = DRAG_ACROSS.map(|fraction| area.origin.x + area.size.width * fraction);
+    let mut y = area.origin.y + gpui::px(4.0);
+    while y < area.bottom() {
+        drag(window, cx, gpui::point(from, y), gpui::point(to, y));
+        let across = chat.read(cx).text_selection().range().is_some_and(|(start, end)| {
+            start.message.id == first.as_str()
+                && start.message == end.message
+                && start.path == end.path
+                && start.offset < english
+                && end.offset > english
+        });
+        if across {
+            return true;
+        }
+        y += gpui::px(4.0);
+    }
+    false
+}
+
+fn drag(window: &mut Window, cx: &mut App, from: gpui::Point<gpui::Pixels>, to: gpui::Point<gpui::Pixels>) {
     let events = [
         gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
             position: from,
@@ -343,7 +374,10 @@ fn drag(window: &mut Window, cx: &mut App) {
 /// The page's step once its chat shows: the draft typed into the compose box, or the drag.
 fn then(shell: &Entity<Shell>, page: &str, window: &mut Window, cx: &mut App) {
     if page == "select" {
-        drag(window, cx);
+        if !drag_mixed_line(shell, window, cx) {
+            eprintln!("rtl text select: no drag across the messages area selected the mixed line");
+            cx.quit();
+        }
         return;
     }
     if page != "compose" {

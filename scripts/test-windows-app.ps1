@@ -69,7 +69,8 @@ $scenes=@(
  @('teams-ui','scene','workflow_window'),
  @('teams-ui','scene','workflow_message_window'),
  @('teams-ui','scene','workflows_app_window'),
- @('teams-ui','scene','channel_window')
+ @('teams-ui','scene','channel_window'),
+ @('teams-ui','scene','rtl_text_window')
 )
 # Keep the shared contracts complete as Cargo discovers new integration tests. The Linux compositor harnesses
 # and native Windows fixtures have their own drivers; the scene targets below use their own main functions.
