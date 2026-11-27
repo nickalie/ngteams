@@ -35,7 +35,10 @@ async fn a_person_who_writes_fast_reaches_the_bot_in_order_at_its_rate_on_each_b
             arrived.push(started.elapsed());
         }
         // two at once, then two a second: the last of eight no sooner than three seconds after the first
-        assert!(arrived[SENDS - 1] >= Duration::from_millis(2_800), "{backend:?} {arrived:?}");
+        assert!(
+            arrived[SENDS - 1] >= Duration::from_millis(2_800),
+            "{backend:?} {arrived:?}"
+        );
 
         let deadline = Instant::now() + Duration::from_secs(10);
         let rows = loop {
