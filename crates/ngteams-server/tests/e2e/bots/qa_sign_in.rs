@@ -136,10 +136,10 @@ async fn codes_of_another_person_used_expired_or_wrong_are_refused_on_each_backe
         let (status, _) = token_service(&setup, &connector, Method::GET, &get(&bob, None)).await;
         assert_eq!(status, 404, "Bob has no token");
 
-        // a used code doesn't sign in again
+        // after the sign-out, the code signs in no one
         sign_out(&setup, &connector).await;
         let (status, _) = token_service(&setup, &connector, Method::GET, &get(&setup.ada, Some(&code))).await;
-        assert_eq!(status, 404, "a used code");
+        assert_eq!(status, 404, "after the sign-out, no code signs in");
 
         // a code whose 15 minutes ran out, and a link whose 15 minutes ran out
         let link = link_for(&setup, &connector).await;

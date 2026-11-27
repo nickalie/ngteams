@@ -293,13 +293,13 @@ pub(super) async fn has_token(setup: &Setup, connector: &Connector) -> bool {
     statuses[0]["hasToken"].as_bool().unwrap()
 }
 
-/// Sign-out: no token for the bot, and the redeemed code doesn't sign in again.
+/// Sign-out: no token for the bot, and no code signs in after it.
 async fn signed_out(setup: &Setup, connector: &Connector, code: &str) {
     sign_out(setup, connector).await;
     let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, None)).await;
     assert_eq!(status, 404, "signed out, the bot gets no token");
     let (status, _) = token_service(setup, connector, Method::GET, &get_token(&setup.ada, Some(code))).await;
-    assert_eq!(status, 404, "a redeemed code doesn't sign in again");
+    assert_eq!(status, 404, "after the sign-out, no code signs in");
 }
 
 /// A token past its time is renewed with its refresh token when the bot asks for it.

@@ -926,11 +926,12 @@ fn a_narrow_cards_answer_line_wraps_under_it_and_the_card_keeps_its_width() {
     }
 }
 
-/// An OAuth card as an SDK's sign-in prompt sends it.
+/// The link of message `id`'s sign-in card.
 fn sign_in_link(id: &str) -> String {
     format!("https://example.invalid/sign-in/{id}")
 }
 
+/// An OAuth card as an SDK's sign-in prompt sends it.
 fn oauth_message(id: &str) -> Message {
     bot_message(
         id,

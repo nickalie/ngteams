@@ -12,6 +12,7 @@ use teams_proto::bot::{CardInvoke, CommandContext, InvokeAnswer, InvokeKind, Mes
 
 use super::connector::{Setup, personal_chat};
 use super::endpoint::{Connector, ORIGIN, Received, Scripted, TestBot};
+use super::sign_in::engine_token;
 use crate::support::backends;
 
 /// An Adaptive Card with an input, a plain submit, an `Action.Execute` and a dialog button.
@@ -94,8 +95,7 @@ impl Setup {
 
     /// Ada's raw invoke, as any client could post it; the status and body.
     pub async fn raw_invoke(&self, bot: &str, body: &Value) -> (u16, String) {
-        let session = self.registry.server.session("ada@own.test").await;
-        let token = teams_trouter::TrouterCredentials::ic3(&session).await.unwrap();
+        let token = teams_trouter::TrouterCredentials::ic3(&*self.session).await.unwrap();
         let response = reqwest::Client::new()
             .post(
                 self.registry
@@ -487,10 +487,8 @@ async fn no_user_token_reaches_the_bot_even_when_a_client_sends_one() {
         let got = setup.bot.next_of("invoke").await;
         assert!(!carries_token(&got.activity), "{}", got.activity);
         assert!(!got.activity.to_string().contains(synthetic));
-        let session = setup.registry.server.session("ada@own.test").await;
-        let ic3 = teams_trouter::TrouterCredentials::ic3(&session).await.unwrap();
         let bearer = got.authorization.as_deref().unwrap();
-        assert!(!bearer.contains(ic3.token.expose()));
+        assert!(!bearer.contains(&engine_token(&setup).await));
         // the server's own activity token, for the bot only
         let claims = got.token_claims().unwrap();
         assert_eq!(claims["aud"], setup.bot_id);
