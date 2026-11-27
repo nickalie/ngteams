@@ -110,27 +110,7 @@ pub enum Command {
         before: Option<String>,
     },
     /// Save files and pictures of a message in a folder, each by the name `messages` lists. The app reads them.
-    Download {
-        /// The chat's id or title.
-        chat: String,
-        /// The message's id.
-        message: String,
-        /// The attachment of this name; without a selection, the message's only attachment.
-        #[arg(long, value_name = "FILE", conflicts_with_all = ["index", "all"])]
-        name: Option<String>,
-        /// The attachment at this place, from 1, as `messages` lists it.
-        #[arg(long, value_name = "N", conflicts_with = "all")]
-        index: Option<u32>,
-        /// All the attachments of the message.
-        #[arg(long)]
-        all: bool,
-        /// The folder to save in (made when it is not there); the current folder without it.
-        #[arg(long, value_name = "DIR")]
-        out: Option<PathBuf>,
-        /// Replace a file of the same name in the folder.
-        #[arg(long)]
-        force: bool,
-    },
+    Download(DownloadArgs),
     /// The unread counts the badge shows: per chat and the total.
     Unread,
     /// The account's messages that match a query.
@@ -708,6 +688,30 @@ fn kind(value: &str) -> Result<String, String> {
     }
 }
 
+/// What `download` selects and where it saves.
+#[derive(Args, Debug)]
+pub struct DownloadArgs {
+    /// The chat's id or title.
+    pub chat: String,
+    /// The message's id.
+    pub message: String,
+    /// The attachment of this name; without a selection, the message's only attachment.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["index", "all"])]
+    pub name: Option<String>,
+    /// The attachment at this place, from 1, as `messages` lists it.
+    #[arg(long, value_name = "N", conflicts_with = "all")]
+    pub index: Option<u32>,
+    /// All the attachments of the message.
+    #[arg(long)]
+    pub all: bool,
+    /// The folder to save in (made when it is not there); the current folder without it.
+    #[arg(long, value_name = "DIR")]
+    pub out: Option<PathBuf>,
+    /// Replace a file of the same name in the folder.
+    #[arg(long)]
+    pub force: bool,
+}
+
 /// The request a command asks: `events` and `wait` subscribe; a write's text `-` is what `stdin` reads. None for a
 /// command that asks the app nothing ([`local`]).
 fn request(command: &Command, stdin: &mut dyn FnMut() -> io::Result<String>) -> io::Result<Option<Request>> {
@@ -740,7 +744,7 @@ fn request(command: &Command, stdin: &mut dyn FnMut() -> io::Result<String>) -> 
             limit: *limit,
             before: before.clone(),
         },
-        Command::Download { .. } => download_request(command)?,
+        Command::Download(download) => download_request(download)?,
         Command::Unread => Request::Unread,
         Command::Search { query, limit } => Request::Search {
             query: query.join(" "),
@@ -788,27 +792,15 @@ fn request(command: &Command, stdin: &mut dyn FnMut() -> io::Result<String>) -> 
 }
 
 /// The request `download` asks.
-fn download_request(command: &Command) -> io::Result<Request> {
-    let Command::Download {
-        chat,
-        message,
-        name,
-        index,
-        all,
-        out,
-        force,
-    } = command
-    else {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a download"));
-    };
+fn download_request(download: &DownloadArgs) -> io::Result<Request> {
     Ok(Request::Download {
-        chat: chat.clone(),
-        message: message.clone(),
-        name: name.clone(),
-        index: *index,
-        all: *all,
-        dir: folder(out.as_deref())?,
-        force: *force,
+        chat: download.chat.clone(),
+        message: download.message.clone(),
+        name: download.name.clone(),
+        index: download.index,
+        all: download.all,
+        dir: folder(download.out.as_deref())?,
+        force: download.force,
     })
 }
 
@@ -976,7 +968,7 @@ pub fn answer_time(command: &Command) -> Duration {
         Command::Call(CallCommand::Calls) => slack,
         Command::Call(_) => CALL_ANSWER + slack,
         Command::Calendar { .. } => CALENDAR_ANSWER + slack,
-        Command::Download { .. } => DOWNLOAD_ANSWER + slack,
+        Command::Download(_) => DOWNLOAD_ANSWER + slack,
         _ => slack,
     }
 }

@@ -733,12 +733,11 @@ fn rarer_event_values_read_plainly() {
 
 #[test]
 fn a_message_lists_its_attachments_after_its_text_and_a_download_its_saved_files() {
-    let attachment = |index, name: &str, kind, file_type: Option<&str>, size| AttachmentRow {
+    let attachment = |index, name: &str, kind, file_type: Option<&str>| AttachmentRow {
         index,
         name: s(name),
         kind,
         file_type: file_type.map(s),
-        size,
     };
     let message = MessageRow {
         id: s("7"),
@@ -752,8 +751,8 @@ fn a_message_lists_its_attachments_after_its_text_and_a_download_its_saved_files
         from_me: false,
         mentions_me: false,
         attachments: vec![
-            attachment(1, "report.pdf", AttachmentKind::File, Some("pdf"), None),
-            attachment(2, "picture\u{7}-2.png", AttachmentKind::Picture, None, Some(2048)),
+            attachment(1, "report\n.pdf", AttachmentKind::File, Some("pdf")),
+            attachment(2, "picture\u{7}-2.png", AttachmentKind::Picture, None),
         ],
     };
     let table = text(&Response::Messages {
@@ -761,7 +760,7 @@ fn a_message_lists_its_attachments_after_its_text_and_a_download_its_saved_files
     });
     let row = table.lines().nth(1).unwrap();
     assert!(
-        row.ends_with("see\\u{1b} these [1: report.pdf, pdf] [2: picture\\u{7}-2.png, picture, 2048 bytes]"),
+        row.ends_with("see\\u{1b} these [1: report ↵ .pdf, pdf] [2: picture\\u{7}-2.png, picture]"),
         "{table}"
     );
 

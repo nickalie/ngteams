@@ -348,15 +348,12 @@ fn message_text(message: &MessageRow) -> String {
 
 /// An attachment as a message's row lists it: `1: report.pdf, pdf`.
 fn attachment_label(attachment: &AttachmentRow) -> String {
-    let mut label = format!("{}: {}", attachment.index, attachment.name);
+    let mut label = format!("{}: {}", attachment.index, one_line(&attachment.name));
     let kind = match attachment.kind {
         AttachmentKind::File => attachment.file_type.as_deref().unwrap_or("file"),
         AttachmentKind::Picture => "picture",
     };
     let _ = write!(label, ", {kind}");
-    if let Some(size) = attachment.size {
-        let _ = write!(label, ", {size} bytes");
-    }
     label
 }
 

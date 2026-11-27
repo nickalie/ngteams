@@ -1,8 +1,9 @@
 //! The control socket's `download` and the attachments `messages` lists (`ctl::download`), through the real protocol
 //! and server, over lab account a's engine on wiremock as Graph, SharePoint and AMS (the transport's `test-support`
 //! mock origin): a message with a SharePoint file and a picture in its text, and one whose file name tries to leave
-//! the folder, and one with two files of one name, the second not there. The files are read by the app's engine, as the chat view reads them, and saved where the client asks.
-//! The read-only mode downloads too. Every id, link, name and byte is made up.
+//! the folder, one with two files of one name, the second not there, and one with two files whose names differ only in
+//! case. The files are read by the app's engine, as the chat view reads them, and saved where the client asks. The
+//! read-only mode downloads too. Every id, link, name and byte is made up.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
@@ -53,6 +54,8 @@ const BOTH: &str = "1700000000000";
 const ESCAPE: &str = "1700000001000";
 /// The message with two files of one name, the second not on the service.
 const TWINS: &str = "1700000002000";
+/// The message with two files whose names differ only in case, both on the service.
+const CASES: &str = "1700000003000";
 const MISSING: &str = "https://contoso-my.sharepoint.com/:b:/g/personal/made_up_user_contoso_test/MadeUpCtlMissing01";
 
 /// Placeholder tokens for every audience.
@@ -123,6 +126,8 @@ fn seed(store: &mut Store) {
     );
     let twins = json!([entry("report.pdf", SHARE), entry("report.pdf", MISSING)]);
     message(store, TWINS, "<p>twins</p>", &twins);
+    let cases = json!([entry("report.pdf", SHARE), entry("Report.PDF", SHARE)]);
+    message(store, CASES, "<p>cases</p>", &cases);
 }
 
 async fn serve_files(server: &MockServer) {
@@ -346,14 +351,12 @@ fn messages_list_a_message_s_file_and_its_picture() {
                 name: "report.pdf".to_owned(),
                 kind: AttachmentKind::File,
                 file_type: Some("pdf".to_owned()),
-                size: None,
             },
             AttachmentRow {
                 index: 2,
                 name: "image-2".to_owned(),
                 kind: AttachmentKind::Picture,
                 file_type: None,
-                size: None,
             },
         ]
     );
@@ -395,6 +398,13 @@ fn download_saves_the_file_and_the_picture_through_the_engine_and_replaces_a_fil
     );
     assert_eq!(lab.saved(forced).len(), 1);
     assert_eq!(std::fs::read(out.join("report.pdf")).unwrap(), FILE_BYTES);
+
+    std::fs::remove_file(out.join("image-2.png")).unwrap();
+    std::fs::write(out.join("image-2.png.part"), b"another app's").unwrap();
+    let refused = lab.refused(into(BOTH, &out, index(2)));
+    assert_eq!(refused.code, ErrorCode::FileExists, "{refused:?}");
+    assert_eq!(std::fs::read(out.join("image-2.png.part")).unwrap(), b"another app's");
+    assert!(!out.join("image-2.png").exists());
 }
 
 #[test]
@@ -434,7 +444,7 @@ fn the_read_only_mode_downloads_too() {
 }
 
 #[test]
-fn two_files_of_one_name_get_two_names_and_a_failure_names_what_was_saved_before_it() {
+fn a_name_two_files_have_selects_none_and_a_failure_names_what_was_saved_before_it() {
     let lab = Lab::start(false);
     let out = lab.out("twins");
     assert_eq!(
@@ -457,4 +467,20 @@ fn two_files_of_one_name_get_two_names_and_a_failure_names_what_was_saved_before
     assert_eq!(std::fs::read(&first).unwrap(), FILE_BYTES);
     assert!(!out.join("report (2).pdf").exists());
     assert!(!out.join("report (2).pdf.part").exists());
+}
+
+#[test]
+fn two_files_whose_names_differ_only_in_case_are_both_saved_under_two_names() {
+    let lab = Lab::start(false);
+    let out = lab.out("cases");
+    let files = lab.saved(into(CASES, &out, ALL));
+    assert_eq!(
+        files,
+        vec![
+            saved_file(1, "report.pdf", &out.join("report.pdf"), FILE_BYTES.len()),
+            saved_file(2, "Report.PDF", &out.join("Report (2).PDF"), FILE_BYTES.len()),
+        ]
+    );
+    assert_eq!(std::fs::read(out.join("report.pdf")).unwrap(), FILE_BYTES);
+    assert_eq!(std::fs::read(out.join("Report (2).PDF")).unwrap(), FILE_BYTES);
 }

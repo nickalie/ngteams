@@ -298,7 +298,7 @@ const RESPONSE_LINES: &[&str] = &[
     r#"{"id":35,"ok":{"kind":"calendar_event","id":"AAMk-synthetic","subject":"","start":1,"end":2,"all_day":true,"cancelled":true,"online":false,"joinable":false}}"#,
     r#"{"id":36,"ok":{"kind":"activity","items":[{"id":"1700000000001","kind":"reaction","title":"Lab B +1 reacted to your message","preview":"hello","place":"In chat with you","chat":"19:x@unq.gbl.spaces","message":"1700000000000","at":1700000000002,"read":false},{"id":"2","kind":"missed-call","title":"Missed call from Lab C","at":2,"read":true}]}}"#,
     r#"{"id":37,"ok":{"kind":"ui_state","view":"chat","window":"shown","call_window":false,"activity":true}}"#,
-    r#"{"id":38,"ok":{"kind":"messages","messages":[{"id":"1","chat":"19:x@thread.v2","at":1,"text":"","edited":false,"deleted":false,"from_me":false,"mentions_me":false,"attachments":[{"index":1,"name":"report.pdf","kind":"file","file_type":"pdf"},{"index":2,"name":"picture-2.png","kind":"picture","size":1024}]}]}}"#,
+    r#"{"id":38,"ok":{"kind":"messages","messages":[{"id":"1","chat":"19:x@thread.v2","at":1,"text":"","edited":false,"deleted":false,"from_me":false,"mentions_me":false,"attachments":[{"index":1,"name":"report.pdf","kind":"file","file_type":"pdf"},{"index":2,"name":"image-2","kind":"picture"}]}]}}"#,
     r#"{"id":39,"ok":{"kind":"downloaded","files":[{"index":1,"name":"report.pdf","path":"/tmp/out/report.pdf","size":18}]}}"#,
 ];
 

@@ -4,16 +4,18 @@
 //! - **The attachments** of a message ([`attachments`]): its shared files in their order ([`chat_view::files_of`]),
 //!   then the pictures in its text (not an emoticon, and not one in a quote). Each has its index from 1, as `messages`
 //!   lists them. A picture is named `image-<index>`, and its file has the extension of its format.
-//! - **A file** is saved by the download of the file cards ([`recording_download::start_with`]): the engine reads it
+//! - **A file** is saved by the download of the file cards ([`recording_download::start`]): the engine reads it
 //!   by its link ([`Core::file_stream`]), a SharePoint or OneDrive file through Graph, an own server's file on its
 //!   server. **A picture** is read as the chat view shows it ([`Core::message_picture`]). Each is written as
 //!   `<name>.part`, then renamed.
 //! - **The folder** is an absolute path, made when it is not there. Each file name is made safe ([`files::safe_name`]),
-//!   so a name never leaves the folder. A file that is in the folder already stops the download before a file is
-//!   written, unless `force`.
+//!   so a name never leaves the folder, and names that differ only in case get different names. A file that is in the
+//!   folder already (or its `.part` file) stops the download before a file is written, unless `force`. The check is
+//!   done again before each file, for a file that came in the meantime.
 //! - A download is a read: the read-only mode serves it too.
 //! - The files are saved one after the other. The first failure stops the download, and its error names the files
-//!   saved before it. Past [`DOWNLOAD_ANSWER`] the app answers `timeout`, and the download that runs continues.
+//!   saved before it. The download runs apart from the request: past [`DOWNLOAD_ANSWER`] the app answers `timeout`,
+//!   and the download continues to its end, also with the files after the one it reads then.
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
@@ -23,12 +25,12 @@ use gpui::{AsyncApp, Entity, WeakEntity};
 use teams_ctl::protocol::{
     AttachmentKind, AttachmentRow, CtlError, DOWNLOAD_ANSWER, ErrorCode, Request, Response, SavedFile,
 };
-use teams_proto::chat::{FileKind, Node, parse_html};
+use teams_proto::chat::{FileKind, MessageType, Node, parse_html};
 use teams_store::Message;
 use teams_ui::Core;
 use teams_ui::chat_view;
 use teams_ui::files;
-use teams_ui::recording_download::{self, Failure, Opener, Progress, RecordingDownload, Then};
+use teams_ui::recording_download::{self, Failure, Progress, RecordingDownload};
 
 use super::address::{self, engine_error};
 use super::dispatch::alive;
@@ -73,7 +75,6 @@ pub fn attachments(message: &Message) -> Vec<Attachment> {
                 name: name.unwrap_or_else(|| format!("image-{index}")),
                 kind,
                 file_type,
-                size: None,
             },
             source,
         })
@@ -98,7 +99,7 @@ fn file_type(kind: FileKind) -> &'static str {
 
 /// The `src` of each picture in the text of `message`, in its order: not an emoticon, a sticker or a quoted picture.
 fn pictures_of(message: &Message) -> Vec<String> {
-    if !message.message_type.starts_with("RichText") {
+    if message.message_type != MessageType::RichTextHtml.as_str() {
         return Vec::new();
     }
     let mut found = Vec::new();
@@ -197,18 +198,25 @@ pub async fn answer(
         all: *all,
     };
     let chosen = chosen(attachments(&stored), &pick)?;
+    let force = *force;
+    let (answered, answer) = async_channel::bounded(1);
+    // detached, so that past the timeout the files after the one that is read then are saved too
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        let _ = answered.try_send(save_all(core, chosen, folder, force, cx).await);
+    })
+    .detach();
     let executor = cx.background_executor().clone();
     let late = format!(
-        "the download wasn't done in {}s: it continues",
+        "the download wasn't done in {}s: it continues in the app",
         DOWNLOAD_ANSWER.as_secs()
     );
-    within(
-        DOWNLOAD_ANSWER,
-        &late,
-        save_all(core, chosen, folder, *force, cx),
-        &executor,
-    )
-    .await
+    let saved = async move {
+        answer
+            .recv()
+            .await
+            .unwrap_or_else(|_| Err(CtlError::new(ErrorCode::Engine, "the download stopped")))
+    };
+    within(DOWNLOAD_ANSWER, &late, saved, &executor).await
 }
 
 /// The attachments `pick` selects of `attachments`.
@@ -270,26 +278,14 @@ async fn save_all(
         .iter()
         .map(|planned| inside(&folder, &planned.file_name))
         .collect::<Result<_, _>>()?;
-    let there = {
-        let targets = targets.clone();
-        cx.background_executor()
-            .spawn(async move {
-                targets
-                    .into_iter()
-                    .filter(|target| target.symlink_metadata().is_ok())
-                    .collect::<Vec<_>>()
-            })
-            .await
-    };
-    if !force && !there.is_empty() {
-        let names: Vec<String> = there.iter().map(|target| target.display().to_string()).collect();
-        return Err(CtlError::new(
-            ErrorCode::FileExists,
-            format!("{} is there already: --force replaces it", names.join(", ")),
-        ));
+    if !force {
+        free(targets.clone(), cx).await?;
     }
     let mut files = Vec::with_capacity(planned.len());
     for (planned, target) in planned.into_iter().zip(targets) {
+        if !force && let Err(error) = free(vec![target.clone()], cx).await {
+            return Err(failed_after(error, &files));
+        }
         let saved = match planned.picture {
             Some(bytes) => write_picture(target.clone(), bytes, cx).await,
             None => save_file(&core, &planned.attachment, target.clone(), cx).await,
@@ -305,6 +301,28 @@ async fn save_all(
         }
     }
     Ok(Response::Downloaded { files })
+}
+
+/// Fails with [`ErrorCode::FileExists`] when a file (or its `.part` file) is at one of `targets`.
+async fn free(targets: Vec<PathBuf>, cx: &mut AsyncApp) -> Result<(), CtlError> {
+    let there: Vec<String> = cx
+        .background_executor()
+        .spawn(async move {
+            targets
+                .into_iter()
+                .flat_map(|target| [recording_download::part_path(&target), target])
+                .filter(|path| path.symlink_metadata().is_ok())
+                .map(|path| path.display().to_string())
+                .collect()
+        })
+        .await;
+    if there.is_empty() {
+        return Ok(());
+    }
+    Err(CtlError::new(
+        ErrorCode::FileExists,
+        format!("{} is there already: --force replaces it", there.join(", ")),
+    ))
 }
 
 /// `error`, with the files saved before it named.
@@ -352,9 +370,10 @@ async fn plan(core: &dyn Core, chosen: Vec<Attachment>) -> Result<Vec<Planned>, 
     Ok(planned)
 }
 
-/// `name`, or with ` (<index>)` before its extension when an earlier attachment of the download took it.
+/// `name`, or with ` (<index>)` before its extension when an earlier attachment of the download took it, also in
+/// another case (a file system that ignores case would save the two at one place).
 fn unique(name: String, index: u32, taken: &mut HashSet<String>) -> String {
-    let name = if taken.contains(&name) {
+    let name = if taken.contains(&name.to_lowercase()) {
         match name.rsplit_once('.') {
             Some((stem, extension)) if !stem.is_empty() => format!("{stem} ({index}).{extension}"),
             _ => format!("{name} ({index})"),
@@ -362,7 +381,7 @@ fn unique(name: String, index: u32, taken: &mut HashSet<String>) -> String {
     } else {
         name
     };
-    taken.insert(name.clone());
+    taken.insert(name.to_lowercase());
     name
 }
 
@@ -391,10 +410,7 @@ async fn save_file(
             format!("{} has no link that the app reads it by", attachment.row.name),
         ));
     };
-    let opened = link.clone();
-    let engine = Arc::clone(core);
-    let open: Opener = Arc::new(move |offset, len| engine.file_stream(opened.clone(), offset, len));
-    let download = cx.update(|cx| recording_download::start_with(open, link.clone(), target.clone(), Then::Keep, cx));
+    let download = cx.update(|cx| recording_download::start(Arc::clone(core), link.clone(), target.clone(), cx));
     match settled(&download, cx).await {
         Progress::Saved => size_of(target, cx).await,
         Progress::Failed(failure) => Err(CtlError::new(

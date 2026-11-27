@@ -468,13 +468,13 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   mentions aren't parsed. `status set` chooses as the status menu does, kept in the settings; `reset` hands the
   status back to the app.
 - **Downloads**: `messages` lists the attachments of each message after its text, `[<index>: <name>, <type>]`
-  (in JSON, `attachments` with `index`, `name`, `kind` `file` or `picture`, `file_type`, and `size` when the message
-  tells it). `download` saves them in `--out` (the current folder without it; made when it is not there). The app
+  (in JSON, `attachments` with `index`, `name`, `kind` `file` or `picture`, and `file_type`; files first, then the
+  pictures in the text). `download` saves them in `--out` (the current folder without it; made when it is not there). The app
   reads them as the chat view does: a SharePoint or OneDrive file through Graph, an own server's file on its server,
   a picture in the text as the chat shows it. `ngteamsctl` gets no token. Without `--name`, `--index` or `--all`,
   the message's only attachment is saved. A picture is saved as `image-<index>` with the extension of its format. A
-  name never leaves the folder, and a file that is there already is replaced only with `--force` (else
-  `file_exists`). The read-only app downloads too: a download is a read.
+  name never leaves the folder, and a file that is there already (or its `<name>.part`) is replaced only with
+  `--force` (else `file_exists`). A download not done in an hour answers `timeout` and goes on in the app. The read-only app downloads too: a download is a read.
 - **Calls** are asked as the call buttons ask them (the one-call rule, the call window and devices apply) and answer
   with the call's row once the engine took it. `mute` and `camera` with `on`/`off` change only what differs.
   `join meeting` opens the pre-join as the calendar's Join does; `--now` joins at once (microphone on, camera off).

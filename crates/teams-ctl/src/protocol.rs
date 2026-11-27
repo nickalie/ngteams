@@ -48,8 +48,8 @@ pub const CALL_ANSWER: std::time::Duration = std::time::Duration::from_secs(60);
 pub const CALENDAR_ANSWER: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// How long the app takes at most to answer a `download`: the files are read and written one after the other, a big
-/// file at the speed of the network. Past it the app answers [`ErrorCode::Timeout`], and the download that runs
-/// continues to its end.
+/// file at the speed of the network. Past it the app answers [`ErrorCode::Timeout`], and the download continues to
+/// its end in the app, also with the files after the one it reads then.
 pub const DOWNLOAD_ANSWER: std::time::Duration = std::time::Duration::from_secs(3600);
 
 /// What to do about a write whose answer didn't come in time: it may still go out, so it is looked for before it is
@@ -557,7 +557,7 @@ pub struct MessageRow {
     pub from_me: bool,
     #[serde(default)]
     pub mentions_me: bool,
-    /// The files and pictures it carries, in the order the chat view shows them.
+    /// The files and pictures it carries: its shared files in their order, then the pictures in its text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<AttachmentRow>,
 }
@@ -567,15 +567,13 @@ pub struct MessageRow {
 pub struct AttachmentRow {
     /// Its place in the message's attachments, from 1: what `download --index` names.
     pub index: u32,
-    /// The file name it is saved with.
+    /// Its name: what `download --name` selects. A picture is `image-<index>`. Where the file is saved, its name made
+    /// safe and different from the others of the download, is [`SavedFile::path`].
     pub name: String,
     pub kind: AttachmentKind,
     /// The type of a file, as the app names it (`pdf`, `word`, `image`, `video`, …).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_type: Option<String>,
-    /// Its size in bytes, when the message tells it. A shared file's message does not tell it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size: Option<u64>,
 }
 
 /// What an attachment is.
