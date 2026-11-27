@@ -1086,7 +1086,7 @@ account starts on the region it has). Each optional service has a GTM that annou
 | Live captions | `captionsService` | no | a call's Language and speech, the captions key and command, the saved captions |
 | Recording and transcription | `recordingService` | no | a call's Record and transcribe |
 | The app catalogue and bots | `appsService` | while `apps.enabled` | a team's Apps tab, Get more apps, a copied team's Apps, a bot card's buttons that send to the bot |
-| A team's outgoing webhooks | `outgoingWebhookService` | while `outgoing_webhooks.enabled` | Manage team's "Create an outgoing webhook" and the team's webhooks (client task 412) |
+| A team's outgoing webhooks | `outgoingWebhookService` | while `outgoing_webhooks.enabled` | Manage team's "Create an outgoing webhook", the team's webhooks and their mentions in its channels |
 
 `docs/protocol/endpoints.md` names for every request the client sends whether the server serves it, the client hides
 it, it goes to a public host, or it is a known gap (`own server: …`); `cargo test -p ngteams-server endpoints` checks

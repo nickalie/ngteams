@@ -202,9 +202,10 @@ Without the flag, or in read-only mode, a card's bot buttons open the message in
 A team's outgoing webhook is an app that the team's people @mention in its channels. Teams sends the mention to the
 webhook's service and posts the answer as the webhook's reply in the post's thread. Nothing here was seen in the
 lab: a webhook made in the lab tenant would send lab channel content to an outside address, which the lab rule does
-not allow (`docs/lab-rules.md`). The web client's own requests are still to be captured (client task 412, with every
-write held). Thus each part below is marked **documented** (Microsoft's public documentation and samples), **third
-party** (other services' documents) or **own design** (the own server's choice until a capture shows Teams' form).
+not allow (`docs/lab-rules.md`). The web client's own requests are still to be captured, with every create, change
+and delete held; on 2026-11-27 the capture could not run, because the lab accounts were deleted from the tenant.
+Thus each part below is marked **documented** (Microsoft's public documentation and samples), **third party** (other
+services' documents) or **own design** (the own server's choice until a capture shows Teams' form).
 
 ### What Teams does (documented)
 
@@ -263,3 +264,14 @@ A delete also returns `OutgoingWebhookChanged` if a concurrent update changed th
 
 A mention of a webhook is an ordinary mention in the message's `properties.mentions`, with `mri` `28:<id>`. Its
 replies come from `28:<id>`, with the webhook's name as `imdisplayname`, in the thread of the post.
+
+### The client (own design)
+
+ngteams uses these routes for Microsoft and own-server accounts alike, behind `NGTEAMS_BOTS=1`; an own-server account
+shows webhooks only while authz names `outgoingWebhookService`. Manage team > Apps lists the team's webhooks after its
+apps, each with its picture, its name and "Outgoing webhook". An owner gets "Create an outgoing webhook": Name,
+Callback URL (HTTPS only), Description and a picture (PNG or JPEG, at most 1 MB). The create answer's token shows once,
+with Copy. A webhook with `canManage` has Edit (only the changed fields are sent; `"picture": null` removes the
+picture) and Remove, which asks first. A list read makes each webhook a known bot for the run, so the mention picker
+of the team's channels offers it. A mention of it is a bot's mention (`mentionType` `bot`) with the webhook's id as
+`appId`. Its replies show its name, its picture and an "App" mark. A card in a reply shows as any bot's card.
