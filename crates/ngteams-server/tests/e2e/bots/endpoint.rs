@@ -21,10 +21,11 @@ use crate::support::TestServer;
 pub const ORIGIN: &str = "https://own.example.test";
 
 /// One activity as the bot got it.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Received {
     pub activity: Value,
     pub authorization: Option<String>,
+    pub headers: Vec<(String, String)>,
 }
 
 impl Received {
@@ -80,6 +81,7 @@ struct Shared {
     status: AtomicU16,
     hits: AtomicUsize,
     script: std::sync::Mutex<Option<Script>>,
+    log: std::sync::Mutex<Vec<Received>>,
 }
 
 /// A bot endpoint on loopback.
@@ -104,6 +106,7 @@ impl TestBot {
             status: AtomicU16::new(status),
             hits: AtomicUsize::new(0),
             script: std::sync::Mutex::new(None),
+            log: std::sync::Mutex::new(Vec::new()),
         });
         let router = Router::new()
             .route("/api/messages", post(receive))
@@ -124,6 +127,11 @@ impl TestBot {
     /// How many requests reached it.
     pub fn hits(&self) -> usize {
         self.shared.hits.load(Ordering::SeqCst)
+    }
+
+    /// Every activity that reached it so far, in order, whether taken by [`Self::next_of`] or not.
+    pub fn received(&self) -> Vec<Received> {
+        self.shared.log.lock().unwrap().clone()
     }
 
     pub fn answer(&self, status: u16) {
@@ -184,10 +192,17 @@ async fn receive(State(shared): State<Arc<Shared>>, headers: HeaderMap, body: St
         .get("authorization")
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
-    let _ = shared.sender.send(Received {
+    let headers = headers
+        .iter()
+        .map(|(name, value)| (name.to_string(), String::from_utf8_lossy(value.as_bytes()).into_owned()))
+        .collect();
+    let received = Received {
         activity,
         authorization,
-    });
+        headers,
+    };
+    shared.log.lock().unwrap().push(received.clone());
+    let _ = shared.sender.send(received);
     let Some(scripted) = scripted else {
         return StatusCode::from_u16(status).unwrap_or(StatusCode::OK).into_response();
     };
