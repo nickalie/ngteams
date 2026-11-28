@@ -124,6 +124,10 @@ reason = "module declarations, documentation and an integer constant only; no ex
 sha256 = "c86f84aa090c14011f8693673b39b4a8a9c1203515e0c396e364beed9443b42e"
 reason = "module declarations, re-exports, documentation and the `ctrl!` hint and `secondary!` keystroke macros (a string literal per platform) only; no executable bodies"
 
+[unmapped_sources."crates/teams-ui/src/sounds.rs"]
+sha256 = "e36232be985421fa59cfdcfcf85bf6855060923f1c0f1d1034b95d80c825998a"
+reason = "module declarations, re-exports of teams-app::settings::sounds and documentation only; no executable items"
+
 [unmapped_sources."crates/teams-wpe-client/src/event.rs"]
 sha256 = "d8512708340bfb250e4405fc6654775b3d3f612c29e56e2029956cb1013867c9"
 reason = "event types and raw_ids macro invocations; LLVM maps all token from_raw/raw bodies to their definition in lib.rs, which remains required in the report"
