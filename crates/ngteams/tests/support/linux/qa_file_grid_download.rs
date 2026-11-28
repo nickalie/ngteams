@@ -2,7 +2,8 @@
 //!
 //! Each file is alone in a chat of its own. The parent reads where each download stands from the child (the app's
 //! own download of the file's link), the files in a's downloads folder, the links the sandbox's URI opener got and
-//! the requests the mock got.
+//! the requests the mock got. The card shows its download line when its height in a shot is more than before its
+//! first Download.
 //!
 //! - **The user's case**: a `.md` file sent with no sharing link (only its own address in a OneDrive). "More options"
 //!   shows "Download" (Teams Light and Dark shots). The file's host cuts the first stream and answers the next one
@@ -20,6 +21,7 @@
 //!
 //! Every name, id, link and byte is made up.
 
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -30,7 +32,7 @@ use serde_json::{Value, json};
 use teams_mock::{ChatServiceMock, LAB_A, LAB_C};
 use ui_sandbox::SandboxResult;
 use ui_sandbox::input::keys;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, Request, ResponseTemplate};
 
 use super::{
@@ -43,6 +45,9 @@ const SLOW: Duration = Duration::from_secs(5);
 
 /// How long a download gets to end: a host that cuts each stream fails it only after the app's retries (15 s).
 const LONG_WAIT: Duration = Duration::from_secs(60);
+
+/// How much taller a card is with its download line than before its first Download, at the least.
+const LINE: u32 = 8;
 
 /// A user's OneDrive, where a file sent in a chat is.
 const PERSONAL: &str = "https://contoso-my.sharepoint.com/personal/made_up_user_contoso_test/";
@@ -78,11 +83,15 @@ struct Case {
     extension: &'static str,
     /// Its sharing link, if it has one.
     share: Option<&'static str>,
+    /// The site that holds it.
+    site: &'static str,
     /// Its own address, percent-encoded as Teams posts it.
     object: String,
     bytes: Vec<u8>,
     graph: Arc<Mutex<Graph>>,
     host: Arc<Mutex<Host>>,
+    /// The height of its card before its first download, with no download line.
+    bare: Cell<Option<u32>>,
 }
 
 impl Case {
@@ -91,7 +100,7 @@ impl Case {
         topic: &'static str,
         name: &'static str,
         share: Option<&'static str>,
-        site: &str,
+        site: &'static str,
     ) -> Self {
         let extension = name.rsplit_once('.').map_or("", |(_, extension)| extension);
         let object = format!(
@@ -104,10 +113,12 @@ impl Case {
             name,
             extension,
             share,
+            site,
             object,
             bytes: made_up_bytes(key, 640 * 1024),
             graph: Arc::new(Mutex::new(Graph::Item)),
             host: Arc::new(Mutex::new(Host::Whole)),
+            bare: Cell::new(None),
         }
     }
 
@@ -118,8 +129,8 @@ impl Case {
 
     /// Its entry in `properties.files`, in the shape `tests/fixtures/chatsvc/files.json` has; with no `shareUrl` when
     /// it has no sharing link.
-    fn entry(&self, site: &str) -> Value {
-        let mut info = json!({"fileUrl": self.object, "siteUrl": site});
+    fn entry(&self) -> Value {
+        let mut info = json!({"fileUrl": self.object, "siteUrl": self.site});
         if let Some(share) = self.share {
             info["shareUrl"] = json!(share);
         }
@@ -247,9 +258,8 @@ pub(super) fn post(mock: &ChatServiceMock, runtime: &tokio::runtime::Runtime) ->
     };
     let mut posted = Vec::new();
     for case in cases.all() {
-        let site = if case.key == "dl-team" { TEAM_SITE } else { PERSONAL };
         let chat = mock.add_group(case.topic, &[LAB_C, LAB_A]).ok_or("no group made")?;
-        let files = Value::String(Value::Array(vec![case.entry(site)]).to_string());
+        let files = Value::String(Value::Array(vec![case.entry()]).to_string());
         let id = post_files(mock, &chat, "", files)?;
         posted.push(Posted {
             key: case.key,
@@ -281,6 +291,7 @@ fn serve(mock: &ChatServiceMock, runtime: &tokio::runtime::Runtime, case: &Case)
         mock.mount(
             Mock::given(method("GET"))
                 .and(path(format!("/v1.0/shares/{token}/driveItem")))
+                .and(header("prefer", "redeemSharingLink"))
                 .respond_with(
                     move |_: &Request| match *graph.lock().unwrap_or_else(PoisonError::into_inner) {
                         Graph::Item => ResponseTemplate::new(200).set_body_json(&item),
@@ -290,6 +301,19 @@ fn serve(mock: &ChatServiceMock, runtime: &tokio::runtime::Runtime, case: &Case)
                     },
                 )
                 .with_priority(1),
+        ),
+    );
+    // Graph refuses a share's read that does not redeem the link
+    runtime.block_on(
+        mock.mount(
+            Mock::given(method("GET"))
+                .and(path(format!("/v1.0/shares/{token}/driveItem")))
+                .respond_with(ResponseTemplate::new(403).set_body_json(json!({"error": {
+                    "code": "accessDenied",
+                    "message": "made-up: the sharing link no longer exists, or you do not have permission to access it.",
+                    "innerError": {"code": "SharesAccessDeniedVroomException"},
+                }})))
+                .with_priority(2),
         ),
     );
     let host = Arc::clone(&case.host);
@@ -377,6 +401,29 @@ impl Walk<'_> {
         &self.service.cases
     }
 
+    fn case(&self, key: &str) -> &Case {
+        self.cases()
+            .all()
+            .into_iter()
+            .find(|case| case.key == key)
+            .unwrap_or(&self.cases().answers)
+    }
+
+    /// The card of `key`'s chat in `look`, after a shot named `name`: notes when it shows no download line.
+    fn line_shown(&mut self, key: &str, name: &str, look: Look) -> SandboxResult {
+        let card = self.lone_card(name, look)?;
+        let bare = self.case(key).bare.get();
+        if let (Some(card), Some(bare)) = (card, bare)
+            && card.height() < bare + LINE
+        {
+            note(format!(
+                "{name}: the card shows no download line: {} px high, {bare} px before the Download",
+                card.height()
+            ));
+        }
+        Ok(())
+    }
+
     fn downloads_dir(&self) -> PathBuf {
         self.run.dir.join("downloads")
     }
@@ -384,7 +431,7 @@ impl Walk<'_> {
     /// Where the app's download of `link` stands; `None` without one.
     fn standing(&mut self, link: &str) -> SandboxResult<Option<Standing>> {
         let answer = self.run.question(&format!("download {link}"))?;
-        Ok(serde_json::from_str(&answer).ok())
+        serde_json::from_str(&answer).map_err(|error| format!("the download {answer}: {error}").into())
     }
 
     /// Waits up to `wait` for a standing of `link`'s download that `wanted` takes; the last one seen.
@@ -423,6 +470,10 @@ impl Walk<'_> {
         let Some(card) = self.lone_card(&format!("qa1009-{key}-card-light.png"), LIGHT)? else {
             return Ok(false);
         };
+        let bare = &self.case(key).bare;
+        if bare.get().is_none() {
+            bare.set(Some(card.height()));
+        }
         let Some(menu) = self.run.open_menu(self.sandbox, more_at(card), menu_shot)? else {
             note(format!("{key}: More options opens no menu"));
             return Ok(false);
@@ -485,7 +536,7 @@ impl Walk<'_> {
         let running = self.standing_until(&link, super::WAIT, |standing| {
             standing.running && standing.fraction.is_some_and(|part| part > 0.0 && part < 1.0)
         })?;
-        self.run.shot(self.sandbox, "qa1009-answers-downloading-light.png")?;
+        self.line_shown(key, "qa1009-answers-downloading-light.png", LIGHT)?;
         match &running {
             Some(standing) if standing.running && standing.fraction.is_some() => step(&format!(
                 "the user's case: Downloading at {:?} while the host is slow",
@@ -500,8 +551,8 @@ impl Walk<'_> {
             step("the user's case: Download saves the exact bytes in the downloads folder");
         }
         thread::sleep(SETTLE);
-        self.lone_card("qa1009-answers-saved-light.png", LIGHT)?;
-        self.lone_card("qa1009-answers-saved-dark.png", DARK)?;
+        self.line_shown(key, "qa1009-answers-saved-light.png", LIGHT)?;
+        self.line_shown(key, "qa1009-answers-saved-dark.png", DARK)?;
         self.run.theme(false)?;
         if self.sandbox.opened()?.len() != opened_before {
             note(format!(
@@ -532,7 +583,7 @@ impl Walk<'_> {
         if fs::read(&first).ok() != before {
             note("a second Download changes the first file".to_owned());
         }
-        self.lone_card("qa1009-answers-again-saved-light.png", LIGHT)?;
+        self.line_shown(key, "qa1009-answers-again-saved-light.png", LIGHT)?;
         Ok(())
     }
 
@@ -562,7 +613,7 @@ impl Walk<'_> {
         if self.sandbox.opened()?.len() != opened_before {
             note("Download of a file with a sharing link opened the browser".to_owned());
         }
-        self.lone_card("qa1009-named-saved-light.png", LIGHT)?;
+        self.line_shown(key, "qa1009-named-saved-light.png", LIGHT)?;
         Ok(())
     }
 
@@ -580,6 +631,8 @@ impl Walk<'_> {
         if self.expect_saved("a team site's file", &link, &bytes, &target)? {
             step("a team site's file: Download saves it");
         }
+        thread::sleep(SETTLE);
+        self.line_shown(key, "qa1009-team-saved-light.png", LIGHT)?;
         Ok(())
     }
 
@@ -607,7 +660,7 @@ impl Walk<'_> {
             }
             let standing = self.standing_until(&link, LONG_WAIT, |standing| !standing.running)?;
             thread::sleep(SETTLE);
-            self.lone_card(&format!("qa1009-{which}-failed-light.png"), LIGHT)?;
+            self.line_shown(key, &format!("qa1009-{which}-failed-light.png"), LIGHT)?;
             let target = self.downloads_dir().join(name);
             if !standing.as_ref().is_some_and(Standing::failed) {
                 note(format!("{what}: the download does not fail: the app says {standing:?}"));
@@ -630,7 +683,7 @@ impl Walk<'_> {
             if self.expect_saved(&format!("{what}, then a second Download"), &link, &bytes, &target)? {
                 step(&format!("{what}: a second Download saves the file"));
             }
-            self.lone_card(&format!("qa1009-{which}-again-saved-light.png"), LIGHT)?;
+            self.line_shown(key, &format!("qa1009-{which}-again-saved-light.png"), LIGHT)?;
         }
         Ok(())
     }
