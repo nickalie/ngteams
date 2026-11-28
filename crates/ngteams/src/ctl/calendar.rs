@@ -28,6 +28,9 @@
 //! [`CALENDAR_ANSWER`].
 
 use std::collections::HashSet;
+use std::future::{self, Future};
+use std::pin::{Pin, pin};
+use std::task::Poll;
 
 use gpui::{App, AsyncApp, WeakEntity};
 use teams_core::{CalendarEvent, EventResponse, FullEvent};
@@ -100,16 +103,13 @@ pub async fn answer(
             })
         }
         Request::CalendarEvent { event } => {
-            let started = std::time::Instant::now();
-            let read = async {
-                core.calendar_event(event.clone())
-                    .await
-                    .map_err(|error| unread(event, &error))
-            };
-            let full = within(CALENDAR_ANSWER, &late, read, &executor).await?;
-            let left = CALENDAR_ANSWER.saturating_sub(started.elapsed());
-            let series = async { Ok(recurrence(core, &full).await) };
-            let repeats = within(left, &late, series, &executor).await.ok().flatten();
+            let mut deadline = pin!(executor.timer(CALENDAR_ANSWER));
+            let read = core.calendar_event(event.clone());
+            let full = before(deadline.as_mut(), read)
+                .await
+                .ok_or_else(|| CtlError::new(ErrorCode::Timeout, &late))?
+                .map_err(|error| unread(event, &error))?;
+            let repeats = before(deadline.as_mut(), recurrence(core, &full)).await.flatten();
             Ok(Response::CalendarEvent(Box::new(shown(&full, repeats, joinable))))
         }
         _ => Err(CtlError::new(ErrorCode::BadRequest, "not a calendar command")),
@@ -150,6 +150,18 @@ pub fn row(event: &CalendarEvent, joinable: bool) -> CalendarRow {
         organizer: filled(&event.organizer_name).or_else(|| filled(&event.organizer_address)),
         ..CalendarRow::default()
     }
+}
+
+/// `work`'s output, or `None` when `deadline` comes first. The work goes on.
+async fn before<T>(mut deadline: Pin<&mut impl Future<Output = ()>>, work: impl Future<Output = T>) -> Option<T> {
+    let mut work = pin!(work);
+    future::poll_fn(|task| {
+        if let Poll::Ready(output) = work.as_mut().poll(task) {
+            return Poll::Ready(Some(output));
+        }
+        deadline.as_mut().poll(task).map(|()| None)
+    })
+    .await
 }
 
 /// How `full`'s series repeats (see the module docs): its own recurrence, or an occurrence's series' read whole.
@@ -316,4 +328,33 @@ fn open(
         },
     );
     Ok(Some(taken))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use gpui::TestAppContext;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn a_late_series_read_gives_none_within_the_event_read_s_deadline(cx: &mut TestAppContext) {
+        let executor = cx.executor();
+        let deadline = executor.timer(CALENDAR_ANSWER);
+        let read = executor.timer(CALENDAR_ANSWER.saturating_sub(Duration::from_secs(1)));
+        let late = executor.spawn(async move {
+            let mut deadline = pin!(deadline);
+            let event = before(deadline.as_mut(), async {
+                read.await;
+                "event"
+            })
+            .await;
+            let series = before(deadline.as_mut(), future::pending::<&str>()).await;
+            (event, series)
+        });
+        cx.run_until_parked();
+        executor.advance_clock(CALENDAR_ANSWER);
+        assert_eq!(late.await, (Some("event"), None));
+    }
 }
