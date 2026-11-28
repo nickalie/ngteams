@@ -29,8 +29,9 @@ use teams_ctl::protocol::{
     AccountRow, ActivityRow, AppStatus, CALENDAR_ANSWER, CALL_ANSWER, CHANNEL_SYNC, CalendarRow, CallRow, ChannelRow,
     ChatRef, ChatRow, CtlError, CtlEvent, DOWNLOAD_ANSWER, ErrorCode, EventFilter, EventLine, Hello, HistoryEnd,
     ManualStatus, MemberRow, MessageRow, MessageSource, OpenTarget, OutboxRow, OutboxState, Outcome, OwnStatus,
-    PROTOCOL_VERSION, Request, RequestLine, Response, ResponseLine, SYNC_ANSWER, SavedFile, StatusChoice, SyncReport,
-    TEAMS_ANSWER, TeamRow, Toggle, UiState, Unread, UnreadRow, View, WRITE_ANSWER, WRITE_WAIT, WindowOp, WindowState,
+    PEOPLE_ANSWER, PRESENCE_WAIT, PROTOCOL_VERSION, PeopleRow, PersonCard, PresenceRow, Request, RequestLine, Response,
+    ResponseLine, SYNC_ANSWER, SavedFile, StatusChoice, SyncReport, TEAMS_ANSWER, TeamRow, Toggle, UiState, Unread,
+    UnreadRow, View, WRITE_ANSWER, WRITE_WAIT, WindowOp, WindowState,
 };
 
 fn accept(listener: &UnixListener) -> teams_ctl::transport::Stream {
@@ -1995,4 +1996,119 @@ fn buffered_message_events_keep_their_text_across_native_pipe_writes() {
     }
     drop(events);
     server.requests();
+}
+
+fn people_cases() -> Vec<Case> {
+    vec![
+        Case {
+            args: &["people", "lab", "b", "--limit", "2"],
+            account: None,
+            request: Request::People {
+                query: s("lab b"),
+                limit: Some(2),
+            },
+            response: Response::People {
+                people: vec![PeopleRow {
+                    mri: Some(s("8:orgid:b")),
+                    name: s("Lab B"),
+                    email: Some(s("b@lab.invalid")),
+                    job_title: Some(s("Tester")),
+                    department: None,
+                    presence: Some(s("busy")),
+                }],
+            },
+            shows: &["8:orgid:b  busy      Lab B  b@lab.invalid  Tester"],
+        },
+        Case {
+            args: &["person", "b@lab.invalid", "--account", "1"],
+            account: Some("1"),
+            request: Request::Person {
+                who: s("b@lab.invalid"),
+            },
+            response: Response::Person(Box::new(PersonCard {
+                mri: s("8:orgid:b"),
+                name: Some(s("Lab B")),
+                presence: Some(s("away")),
+                ..PersonCard::default()
+            })),
+            shows: &["mri:      8:orgid:b", "name:     Lab B", "presence: away"],
+        },
+        Case {
+            args: &["presence", "8:orgid:b", "Lab C"],
+            account: None,
+            request: Request::Presence {
+                people: vec![s("8:orgid:b"), s("Lab C")],
+            },
+            response: Response::Presence {
+                people: vec![PresenceRow {
+                    mri: s("8:orgid:b"),
+                    name: None,
+                    availability: s("offline"),
+                }],
+            },
+            shows: &["8:orgid:b  offline"],
+        },
+    ]
+}
+
+#[test]
+fn each_people_read_asks_its_request_and_prints_its_answer() {
+    for case in people_cases() {
+        let args = case.args;
+        let (run, request) = run_one(Server::answering(case.response), args);
+        assert_eq!(run.code, 0, "{args:?}: {}", run.stderr);
+        assert_eq!(request.request, case.request, "{args:?}");
+        assert_eq!(request.account.as_deref(), case.account, "{args:?}");
+        for shown in case.shows {
+            assert!(run.stdout.contains(shown), "{args:?}: {shown:?} not in\n{}", run.stdout);
+        }
+    }
+}
+
+#[test]
+fn a_people_read_is_waited_for_past_the_app_s_bound_and_names_someone_to_read() {
+    let parsed = |args: &[&str]| Cli::try_parse_from([&["ngteamsctl"][..], args].concat());
+    let default = Timeouts::default().read;
+    for args in [&["people", "lab"][..], &["person", "Lab B"]] {
+        assert_eq!(
+            answer_time(&parsed(args).unwrap().command),
+            PEOPLE_ANSWER + default,
+            "{args:?}"
+        );
+    }
+    assert_eq!(
+        answer_time(&parsed(&["presence", "Lab B"]).unwrap().command),
+        PEOPLE_ANSWER + PRESENCE_WAIT + default
+    );
+    let many: Vec<String> = (0..21).map(|index| format!("8:orgid:{index}")).collect();
+    let many: Vec<&str> = [&["presence"][..], &many.iter().map(String::as_str).collect::<Vec<_>>()].concat();
+    for args in [&["people"][..], &["person"], &["presence"], &many] {
+        assert!(parsed(args).is_err(), "{args:?}");
+    }
+}
+
+#[test]
+fn an_ambiguous_person_exits_1_with_the_candidates() {
+    let server = Server::new(Box::new(|request: &RequestLine| {
+        let error = CtlError {
+            candidates: vec![ChatRef {
+                id: s("8:orgid:b1"),
+                title: s("Lab B <b1@lab.invalid>"),
+            }],
+            ..CtlError::new(ErrorCode::AmbiguousPerson, "2 people are called Lab B")
+        };
+        let line = ResponseLine {
+            id: request.id,
+            outcome: Outcome::Error(error),
+        };
+        (vec![serde_json::to_string(&line).unwrap()], true)
+    }));
+    let run = ctl(server.dir.path(), &server.path, &["person", "Lab B"]);
+    assert_eq!(run.code, 1, "{}", run.stderr);
+    assert!(run.stderr.contains("ambiguous_person: 2 people"), "{}", run.stderr);
+    assert!(
+        run.stderr.contains("8:orgid:b1  Lab B <b1@lab.invalid>"),
+        "{}",
+        run.stderr
+    );
 }

@@ -68,6 +68,9 @@ result has its `Type`, `HitHighlightedSummary` (the text around the match, the m
 
 Opening a message found opens its chat beside the results, at the message.
 
+`ngteamsctl people`, `person` and `presence` send the People tab's request. `person` and `presence` use it to find
+the MRI of a person named by address or name.
+
 ## What else the web client sends
 
 - `GET search/api/v2/init?scenario=powerbar&cvid=…` and `GET search/api/v1/suggestions?scenario=powerbar&query=&…`

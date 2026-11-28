@@ -17,6 +17,10 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod people;
+
+pub use people::{CardPersonRow, PEOPLE_ANSWER, PRESENCE_MOST, PRESENCE_WAIT, PeopleRow, PersonCard, PresenceRow};
+
 /// The protocol's version: a `hello` from a client of another version is refused.
 pub const PROTOCOL_VERSION: u32 = 2;
 
@@ -289,6 +293,17 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "is_false")]
         force: bool,
     },
+    /// The people the people search finds for `query` (a name, an email or a UPN), as its People tab lists them.
+    People {
+        query: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
+    /// One person's profile card: by MRI, UPN, email or a name only one person has ([`people`]).
+    Person { who: String },
+    /// The presence of these people (each as [`Request::Person`] names them), as the presence badges read it; at most
+    /// [`PRESENCE_MOST`].
+    Presence { people: Vec<String> },
 }
 
 /// How a calendar date is spelled on the wire and the command line.
@@ -494,6 +509,14 @@ pub enum Response {
     Downloaded {
         files: Vec<SavedFile>,
     },
+    People {
+        people: Vec<PeopleRow>,
+    },
+    /// Boxed: a card is far bigger than any other answer.
+    Person(Box<PersonCard>),
+    Presence {
+        people: Vec<PresenceRow>,
+    },
 }
 
 /// The server's half of `hello`.
@@ -604,7 +627,8 @@ pub struct ChannelRow {
     pub archived: bool,
 }
 
-/// A chat named by id and title: an ambiguous title's candidates.
+/// A chat named by id and title: an ambiguous title's candidates. For an ambiguous person, the id is a person's MRI
+/// and the title their name and address.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatRef {
     pub id: String,
@@ -961,7 +985,7 @@ pub enum EventAnswer {
 pub struct CtlError {
     pub code: ErrorCode,
     pub message: String,
-    /// An ambiguous chat's candidates.
+    /// An ambiguous chat's or person's candidates.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub candidates: Vec<ChatRef>,
 }
@@ -1023,6 +1047,10 @@ pub enum ErrorCode {
     NoAttachment,
     /// A file of the name to save is in the folder already, and `force` was not given.
     FileExists,
+    /// No person has the name or address given.
+    UnknownPerson,
+    /// Several people have the name given ([`CtlError::candidates`]).
+    AmbiguousPerson,
 }
 
 impl ErrorCode {
@@ -1051,6 +1079,8 @@ impl ErrorCode {
             Self::Engine => "engine",
             Self::NoAttachment => "no_attachment",
             Self::FileExists => "file_exists",
+            Self::UnknownPerson => "unknown_person",
+            Self::AmbiguousPerson => "ambiguous_person",
         }
     }
 }

@@ -34,6 +34,9 @@
 //!   folder `--out` names (the current folder without it), sent as an absolute path. The app reads the files, so the
 //!   client gets no token. `--name`, `--index` or `--all` selects them, and an existing file is replaced only with
 //!   `--force`. The client waits for the answer past [`DOWNLOAD_ANSWER`].
+//! - **People**: `people` lists whom the people search finds, `person` shows one person's profile card and
+//!   `presence` the presence of people, each named by MRI, UPN, email or a name only one person has. The client waits
+//!   past [`PEOPLE_ANSWER`] (and [`PRESENCE_WAIT`] more for `presence`).
 //! - **Completions**: `completions bash|fish|zsh` prints that shell's completion script, and `events kinds` the event
 //!   kinds, without asking the app.
 
@@ -50,10 +53,14 @@ use crate::client::{Client, ClientError, Events, Refused, Timeouts};
 use crate::path::{Env, Mode};
 use crate::protocol::{
     CALENDAR_ANSWER, CALL_ANSWER, CHANNEL_SYNC, CtlEvent, DATE_FORMAT, DOWNLOAD_ANSWER, EventFilter, EventLine,
-    OpenTarget, OutboxState, Outcome, Request, Response, ResponseLine, SYNC_ANSWER, StatusChoice, TEAMS_ANSWER, Toggle,
-    UNANSWERED_WRITE, WRITE_ANSWER, WRITE_WAIT, WindowOp,
+    OpenTarget, OutboxState, Outcome, PEOPLE_ANSWER, PRESENCE_WAIT, Request, Response, ResponseLine, SYNC_ANSWER,
+    StatusChoice, TEAMS_ANSWER, Toggle, UNANSWERED_WRITE, WRITE_ANSWER, WRITE_WAIT, WindowOp,
 };
 use crate::render;
+
+mod people;
+
+pub use people::PeopleCommand;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -202,6 +209,8 @@ pub enum Command {
     Write(WriteCommand),
     #[command(flatten)]
     Call(CallCommand),
+    #[command(flatten)]
+    People(PeopleCommand),
     /// Print what happens in the app: with `--follow` every event the filters let through, otherwise the first one.
     /// `events kinds` lists the kinds.
     #[command(args_conflicts_with_subcommands = true)]
@@ -762,6 +771,7 @@ fn request(command: &Command, stdin: &mut dyn FnMut() -> io::Result<String>) -> 
         Command::Write(write) => write_request(write, stdin)
             .map_err(|error| io::Error::new(error.kind(), format!("stdin couldn't be read: {error}")))?,
         Command::Call(call) => call_request(call),
+        Command::People(people) => people.request(),
         Command::Status { command: None } => Request::Status,
         Command::Status {
             command: Some(StatusCommand::Get),
@@ -997,7 +1007,8 @@ fn ask(cli: &Cli, mut client: Client, request: Request, out: &mut dyn Write, err
 /// How long `command`'s answer is waited for: a write's past the app's own bound on it ([`WRITE_ANSWER`], and
 /// [`WRITE_WAIT`] more with `--wait`), a `sync`'s past [`SYNC_ANSWER`], a call command's (`join meeting` too) past
 /// [`CALL_ANSWER`], a calendar read's past [`CALENDAR_ANSWER`], `messages` and `thread` past a channel's sync
-/// ([`CHANNEL_SYNC`]), `teams` past the teams' first read ([`TEAMS_ANSWER`]), so the app's answer (its own timeout too) comes first;
+/// ([`CHANNEL_SYNC`]), `teams` past the teams' first read ([`TEAMS_ANSWER`]), a people read's past [`PEOPLE_ANSWER`]
+/// ([`PRESENCE_WAIT`] more for `presence`), so the app's answer (its own timeout too) comes first;
 /// any other's the client's default.
 #[must_use]
 pub fn answer_time(command: &Command) -> Duration {
@@ -1012,6 +1023,8 @@ pub fn answer_time(command: &Command) -> Duration {
         Command::Download(_) => DOWNLOAD_ANSWER + slack,
         Command::Messages { .. } | Command::Thread(_) => CHANNEL_SYNC + slack,
         Command::Teams => TEAMS_ANSWER + slack,
+        Command::People(PeopleCommand::Presence { .. }) => PEOPLE_ANSWER + PRESENCE_WAIT + slack,
+        Command::People(_) => PEOPLE_ANSWER + slack,
         _ => slack,
     }
 }

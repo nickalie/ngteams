@@ -63,9 +63,12 @@ fn request_index(request: &Request) -> usize {
         Request::Download { .. } => 40,
         Request::Teams => 41,
         Request::Thread { .. } => 42,
+        Request::People { .. } => 43,
+        Request::Person { .. } => 44,
+        Request::Presence { .. } => 45,
     }
 }
-const REQUESTS: usize = 43;
+const REQUESTS: usize = 46;
 
 /// One line of each request (and of each value of their enums).
 const REQUEST_LINES: &[&str] = &[
@@ -134,6 +137,10 @@ const REQUEST_LINES: &[&str] = &[
     r#"{"id":63,"cmd":"teams"}"#,
     r#"{"id":64,"cmd":"thread","channel":"Team > General","post":"1700000000000","limit":5,"before":"1700000000100"}"#,
     r#"{"id":65,"cmd":"thread","channel":"19:c@thread.tacv2","post":"1700000000000"}"#,
+    r#"{"id":66,"cmd":"people","query":"lab b","limit":5}"#,
+    r#"{"id":67,"cmd":"people","query":"b@lab.invalid"}"#,
+    r#"{"id":68,"cmd":"person","who":"8:orgid:b"}"#,
+    r#"{"id":69,"cmd":"presence","people":["8:orgid:b","c@lab.invalid","Lab D"]}"#,
 ];
 
 /// `text` read as a `T` and written again: the same JSON.
@@ -261,9 +268,12 @@ fn response_index(response: &Response) -> usize {
         Response::Activity { .. } => 20,
         Response::Downloaded { .. } => 21,
         Response::Teams { .. } => 22,
+        Response::People { .. } => 23,
+        Response::Person(_) => 24,
+        Response::Presence { .. } => 25,
     }
 }
-const RESPONSES: usize = 23;
+const RESPONSES: usize = 26;
 
 /// One `ok` answer of each kind (and of each value of their enums).
 const RESPONSE_LINES: &[&str] = &[
@@ -310,6 +320,10 @@ const RESPONSE_LINES: &[&str] = &[
     r#"{"id":40,"ok":{"kind":"teams","teams":[{"id":"19:t@thread.tacv2","name":"Team","channels":[{"id":"19:t@thread.tacv2","name":"General","title":"Team > General","general":true,"channel_type":"standard"},{"id":"19:p@thread.tacv2","name":"Plans","title":"Team > Plans","channel_type":"private","hidden":true,"archived":true}]},{"id":"19:o@thread.tacv2","name":"Old","archived":true,"channels":[]}]}}"#,
     r#"{"id":41,"ok":{"kind":"messages","messages":[{"id":"2","chat":"19:c@thread.tacv2","at":2,"text":"a reply","edited":false,"deleted":false,"from_me":false,"mentions_me":false,"post":"1"},{"id":"1","chat":"19:c@thread.tacv2","at":1,"text":"a post","edited":false,"deleted":false,"from_me":false,"mentions_me":false,"replies":1,"subject":"Plans","email":{"from":{"name":"Someone","address":"someone@lab.invalid"},"sender":{"address":"relay@lab.invalid"},"to":[{"name":"Team"}],"cc":[{"address":"other@lab.invalid"}],"recipients":5}}],"synced":false,"end":"beginning"}}"#,
     r#"{"id":42,"ok":{"kind":"messages","messages":[],"synced":true,"end":"store"}}"#,
+    r#"{"id":43,"ok":{"kind":"people","people":[{"mri":"8:orgid:b","name":"Lab B","email":"b@lab.invalid","job_title":"Tester","department":"Lab","presence":"available"},{"name":"Room 1"}]}}"#,
+    r#"{"id":44,"ok":{"kind":"person","mri":"8:orgid:b","name":"Lab B","upn":"b@lab.invalid","emails":["b@lab.invalid"],"user_type":"Member","job_title":"Tester","department":"Lab","office":"1","company":"Lab Inc","mobile_phone":"+1 555 0100","business_phones":["+1 555 0101"],"presence":"busy","last_active":1700000000000,"out_of_office":false,"free_busy":"busy","next_free_busy":"free","free_busy_until":1700000900000,"managers":[{"mri":"8:orgid:c","name":"Lab C","email":"c@lab.invalid"}],"direct_reports":[{"mri":"8:orgid:d"}],"works_with":[{"mri":"8:orgid:a","name":"Lab A"}]}}"#,
+    r#"{"id":45,"ok":{"kind":"person","mri":"28:made-up-bot"}}"#,
+    r#"{"id":46,"ok":{"kind":"presence","people":[{"mri":"8:orgid:b","name":"Lab B","availability":"do-not-disturb"},{"mri":"8:orgid:c","availability":"unknown"}]}}"#,
 ];
 
 #[test]
@@ -333,7 +347,7 @@ fn every_response_round_trips_through_its_line() {
     );
 }
 
-const CODES: [ErrorCode; 21] = [
+const CODES: [ErrorCode; 23] = [
     ErrorCode::UnknownAccount,
     ErrorCode::UnknownChat,
     ErrorCode::AmbiguousChat,
@@ -355,6 +369,8 @@ const CODES: [ErrorCode; 21] = [
     ErrorCode::Engine,
     ErrorCode::NoAttachment,
     ErrorCode::FileExists,
+    ErrorCode::UnknownPerson,
+    ErrorCode::AmbiguousPerson,
 ];
 
 #[test]

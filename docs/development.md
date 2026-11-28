@@ -424,6 +424,9 @@ ngteamsctl download <chat> <message-id> [--name <file> | --index N | --all] [--o
 ngteamsctl unread                           # the badge's counts, per chat and total
 ngteamsctl search <words…> [--limit N]
 ngteamsctl members <chat>
+ngteamsctl people <words…> [--limit N]      # as the search's People tab finds them, with presence where known
+ngteamsctl person <mri|upn|email|name>     # the profile card, with presence
+ngteamsctl presence <mri|upn|email|name>…  # as the presence badges read it; 20 people at most
 ngteamsctl activity [--filter unread|mentions|reactions|missed-calls|replies|voicemail|apps] [--search <words>] [--limit N]
 ngteamsctl calendar [--today | --from YYYY-MM-DD [--to YYYY-MM-DD]]
 ngteamsctl calendar show <event-id>         # the event card's details: attendees, answers, join link, series, text
@@ -488,6 +491,12 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   `messages` and `search` mark each card message (also one whose cards cannot be read) and each message with a link's
   app cards: in the table such a row starts with `(card)`; in JSON it has `"card": true`. The `message` event has no
   such mark. `search` finds a card by its text.
+- **People**: `people` asks the service's people search, as the search's People tab does. `person` and `presence`
+  name a person by MRI, or by UPN, email or display name as that search finds them. A part of a name matches each
+  person the search finds for it. Nobody is `unknown_person`. Several people are `ambiguous_person`, with each one's
+  MRI and name. `person` shows what the profile card reads, filled from the search where the card has nothing.
+  `presence` asks the engine as a badge does, so the engine watches those people from then on. It waits up to 20 s
+  for someone the app did not know yet, then says `unknown`. The app reads no status message, so none is shown.
 - **Downloads**: `messages` lists the attachments of each message after its text, `[<index>: <name>, <type>]`
   (in JSON, `attachments` with `index`, `name`, `kind` `file` or `picture`, and `file_type`; files first, then the
   pictures in the text). `download` saves them in `--out` (the current folder without it; made when it is not there). The app
@@ -513,7 +522,8 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   protocol version; the types are in `crates/teams-ctl/src/protocol.rs`. Error codes: `unknown_account`,
   `unknown_chat`, `ambiguous_chat`, `busy`, `no_calling`, `no_call`, `not_ringing`, `no_video`, `no_meeting`,
   `unknown_event`, `no_tray`, `no_window`, `unknown_action`, `refused_read_only`, `stopped`, `timeout`, `bad_request`,
-  `version_mismatch`, `engine`, `no_attachment`, `file_exists`. The protocol is version 2 (version 1 had no
+  `version_mismatch`, `engine`, `no_attachment`, `file_exists`, `unknown_person`, `ambiguous_person`. The protocol is
+  version 2 (version 1 had no
   attachments and no `download`).
 - **Exit codes**: 0 success; 1 an error answer, a write whose row failed (with `--wait`, one not sent), or a stream
   that ended early or lagged; 2 no app on the socket, no socket path, or a usage error; 3 `wait` timed out.

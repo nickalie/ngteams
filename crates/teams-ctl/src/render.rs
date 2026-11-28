@@ -13,6 +13,8 @@ use std::io::{self, Write};
 
 use chrono::{DateTime, Local};
 
+mod people;
+
 use crate::protocol::{
     AccountRow, ActivityRow, AppStatus, AttachmentKind, AttachmentRow, AttendeeRow, CalendarRow, CallRow, ChatRow,
     CtlError, CtlEvent, EmailPerson, EmailRow, EventAnswer, EventLine, HistoryEnd, MemberRow, MessageRow, OutboxRow,
@@ -66,10 +68,13 @@ fn unescaped(response: &Response) -> String {
         Response::Calendar { events } => calendar_table(events),
         Response::CalendarEvent(event) => calendar_event(event),
         Response::Downloaded { files } => saved(files),
+        Response::People { people } => people::people_table(people),
+        Response::Person(card) => people::person_card(card),
+        Response::Presence { people } => people::presence_table(people),
     }
 }
 
-/// Tell an error answer on `err`: its code and message, and an ambiguous chat's candidates.
+/// Tell an error answer on `err`: its code and message, and an ambiguous chat's or person's candidates.
 ///
 /// # Errors
 /// The write's own error.
