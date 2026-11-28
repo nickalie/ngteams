@@ -21,6 +21,8 @@
 //! `/meet/` link alone, which the calendar opens in the browser) is [`ErrorCode::NoMeeting`], its link told.
 //! **An event's row** says `joinable` for such an event in an app that shows calls and isn't read-only.
 //!
+//! An id the service has no event of is [`ErrorCode::UnknownEvent`] (`calendar show`, `join meeting`).
+//!
 //! **The account**: the one `--account` names, otherwise the one the window shows (an event is its account's own).
 //! A join while a call is up, rings or is being set up there or on another account is refused ([`ErrorCode::Busy`]),
 //! as the calendar's Join refuses it; the read-only mode refuses it ([`ErrorCode::RefusedReadOnly`]); an app that
@@ -234,8 +236,15 @@ fn event_answer(response: &EventResponse) -> Option<EventAnswer> {
     }
 }
 
-/// The error of event `id`'s read: the engine's, the event named.
-fn unread(id: &str, error: &teams_core::EngineError) -> CtlError {
+/// The error of event `id`'s read: [`ErrorCode::UnknownEvent`] when the service has no such event, otherwise the
+/// engine's, the event named.
+fn unread(id: &str, error: &EngineError) -> CtlError {
+    if matches!(error, EngineError::NoSuchEvent) {
+        return CtlError::new(
+            ErrorCode::UnknownEvent,
+            format!("no event {id} in the calendar: `ngteamsctl calendar` lists them"),
+        );
+    }
     let mut error = engine_error(error);
     if error.code == ErrorCode::Engine {
         error.message = format!(
@@ -394,5 +403,22 @@ mod tests {
         executor.advance_clock(CALENDAR_ANSWER);
         let error = shown.await.unwrap_err();
         assert_eq!((error.code, error.message.as_str()), (ErrorCode::Timeout, LATE));
+    }
+
+    #[test]
+    fn an_event_the_service_has_not_is_unknown_and_other_failures_stay_the_engine_s() {
+        let unknown = unread("AAMkMadeUp", &EngineError::NoSuchEvent);
+        assert_eq!(unknown.code, ErrorCode::UnknownEvent);
+        assert_eq!(
+            unknown.message,
+            "no event AAMkMadeUp in the calendar: `ngteamsctl calendar` lists them"
+        );
+        let failed = unread("AAMkMadeUp", &EngineError::CalendarUnread);
+        assert_eq!(failed.code, ErrorCode::Engine);
+        assert_eq!(
+            failed.message,
+            "event AAMkMadeUp couldn't be read (the calendar couldn't be read): `ngteamsctl calendar` lists them"
+        );
+        assert_eq!(unread("AAMkMadeUp", &EngineError::Stopped).code, ErrorCode::Stopped);
     }
 }

@@ -999,6 +999,8 @@ pub enum ErrorCode {
     NoVideo,
     /// The calendar event isn't a Teams meeting the app can join.
     NoMeeting,
+    /// The calendar has no event of the id given.
+    UnknownEvent,
     /// No tray item to hide the window to.
     NoTray,
     /// The main window is closed.
@@ -1037,6 +1039,7 @@ impl ErrorCode {
             Self::NotRinging => "not_ringing",
             Self::NoVideo => "no_video",
             Self::NoMeeting => "no_meeting",
+            Self::UnknownEvent => "unknown_event",
             Self::NoTray => "no_tray",
             Self::NoWindow => "no_window",
             Self::UnknownAction => "unknown_action",

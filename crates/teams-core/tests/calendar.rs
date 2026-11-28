@@ -511,6 +511,11 @@ async fn invalid_or_unreadable_calendar_answers_fail_without_guessing_an_event()
         rig.handle.calendar_event("MadeUpEvent").await,
         Err(EngineError::CalendarUnread)
     ));
+    next_answer(&rig.server, "GET", EVENT, 404, Value::Null).await;
+    assert!(matches!(
+        rig.handle.calendar_event("MadeUpEvent").await,
+        Err(EngineError::NoSuchEvent)
+    ));
     let view = format!("{PREFIX}/v2.0/me/calendars/default/calendarView");
     answer(
         &rig.server,

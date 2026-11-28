@@ -510,19 +510,18 @@ fn the_calendar_list_keeps_its_rows_and_an_unknown_event_is_a_clear_error() {
     let unknown = lab.ctl(&["calendar", "show", "AAMkNoSuchEvent"]);
     assert_eq!(unknown.code, 1, "{unknown:?}");
     assert!(unknown.stdout.is_empty(), "{unknown:?}");
-    assert!(
-        unknown.stderr.contains("AAMkNoSuchEvent") && unknown.stderr.contains("ngteamsctl calendar"),
+    assert_eq!(
+        unknown.stderr,
+        "ngteamsctl: unknown_event: no event AAMkNoSuchEvent in the calendar: `ngteamsctl calendar` lists them\n",
         "{unknown:?}"
     );
 
     let unknown = lab.ctl(&["--json", "calendar", "show", "AAMkNoSuchEvent"]);
     assert_eq!(unknown.code, 1, "{unknown:?}");
     let line: Value = serde_json::from_str(&unknown.stdout).unwrap_or_else(|error| panic!("{error}: {unknown:?}"));
-    assert_eq!(line["error"]["code"], "engine", "{line}");
-    assert!(
-        line["error"]["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("AAMkNoSuchEvent")),
+    assert_eq!(line["error"]["code"], "unknown_event", "{line}");
+    assert_eq!(
+        line["error"]["message"], "no event AAMkNoSuchEvent in the calendar: `ngteamsctl calendar` lists them",
         "{line}"
     );
 }

@@ -96,6 +96,7 @@ fn request_errors_are_named_without_message_ids_or_failure_text() {
         (EngineError::FileUnavailable, "file unavailable"),
         (EngineError::FileUnread, "file unread"),
         (EngineError::CalendarUnread, "calendar unread"),
+        (EngineError::NoSuchEvent, "no such event"),
         (
             EngineError::EventNotSaved {
                 kind: "creation",

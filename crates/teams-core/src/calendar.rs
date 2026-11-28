@@ -8,7 +8,7 @@
 //!   it syncs. A window that is empty, reversed or wider than [`teams_proto::MAX_CALENDAR_WINDOW_MS`] is answered with
 //!   no events and nothing read. A read that failed, or an answer that isn't in the shape the web client reads, is
 //!   [`EngineError::CalendarUnread`] and changes nothing stored. One event is read whole
-//!   ([`EventRead`]) before the form opens on it (a series' master too, when the form changes a whole series). The
+//!   ([`EventRead`], [`EngineError::NoSuchEvent`] when the service answers 404) before the form opens on it (a series' master too, when the form changes a whole series). The
 //!   form's Scheduler reads the attendees' busy times and the suggested times ([`MeetingAvailability`]): two reads sent as a
 //!   `PUT`, which reach nobody.
 //! - **Writes** ([`EventWrite`]): an event created, changed, cancelled or deleted, each a sealed `teams-proto` write
@@ -335,6 +335,7 @@ where
                         log::info!("the event's answer wasn't taken: {error}");
                         EngineError::CalendarUnread
                     }),
+                Err(HttpError::Status(answer)) if answer.status() == 404 => Err(EngineError::NoSuchEvent),
                 Err(error) => {
                     log::info!("the event couldn't be read: {error}");
                     Err(EngineError::CalendarUnread)

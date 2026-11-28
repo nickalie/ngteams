@@ -373,8 +373,11 @@ fn an_event_s_details_are_read_whole_and_an_unknown_one_is_the_engine_s_error() 
     let unknown = lab.refused(Request::CalendarEvent {
         event: "AAMkNoSuchEvent".to_owned(),
     });
-    assert_eq!(unknown.code, ErrorCode::Engine, "{unknown:?}");
-    assert!(unknown.message.contains("AAMkNoSuchEvent"), "{}", unknown.message);
+    assert_eq!(unknown.code, ErrorCode::UnknownEvent, "{unknown:?}");
+    assert_eq!(
+        unknown.message,
+        "no event AAMkNoSuchEvent in the calendar: `ngteamsctl calendar` lists them"
+    );
 }
 
 #[test]

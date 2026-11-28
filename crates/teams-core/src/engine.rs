@@ -634,6 +634,9 @@ pub enum EngineError {
     /// The calendar couldn't be read, or its answer wasn't in the shape the web client reads ([`crate::calendar`]).
     #[error("the calendar couldn't be read")]
     CalendarUnread,
+    /// The service has no event of the id asked for (its read answered 404, [`crate::calendar`]).
+    #[error("the calendar has no such event")]
+    NoSuchEvent,
     /// A meeting's recap (what it left, or a transcript) couldn't be read ([`crate::recap`]).
     #[error("the meeting's recap couldn't be read")]
     RecapUnread,
@@ -697,6 +700,7 @@ impl EngineError {
             Self::FileUnavailable => "file unavailable",
             Self::FileUnread => "file unread",
             Self::CalendarUnread => "calendar unread",
+            Self::NoSuchEvent => "no such event",
             Self::MeetingUnread => "meeting unread",
             Self::RecapUnread => "recap unread",
             Self::ProfileUnread => "profile unread",
@@ -1499,7 +1503,8 @@ impl EngineRequests {
     }
 
     /// The event `id` of the account's calendar, read whole from the middle tier now: what the scheduling form opens
-    /// on ([`crate::calendar`]); [`EngineError::CalendarUnread`] when the read failed.
+    /// on ([`crate::calendar`]); [`EngineError::NoSuchEvent`] when the service has no such event,
+    /// [`EngineError::CalendarUnread`] when the read failed otherwise.
     pub fn calendar_event(&self, id: impl Into<String>) -> Reply<FullEvent> {
         let id = id.into();
         self.ask(|reply| Request::CalendarEvent { id, reply })

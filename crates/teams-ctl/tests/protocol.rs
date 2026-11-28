@@ -333,7 +333,7 @@ fn every_response_round_trips_through_its_line() {
     );
 }
 
-const CODES: [ErrorCode; 20] = [
+const CODES: [ErrorCode; 21] = [
     ErrorCode::UnknownAccount,
     ErrorCode::UnknownChat,
     ErrorCode::AmbiguousChat,
@@ -343,6 +343,7 @@ const CODES: [ErrorCode; 20] = [
     ErrorCode::NotRinging,
     ErrorCode::NoVideo,
     ErrorCode::NoMeeting,
+    ErrorCode::UnknownEvent,
     ErrorCode::NoTray,
     ErrorCode::NoWindow,
     ErrorCode::UnknownAction,

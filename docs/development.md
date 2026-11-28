@@ -502,7 +502,8 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   scheduling form; for an occurrence, from its series) and the text as plain text. Only the organizer's copy tells
   the answer of each attendee, so the other copies give no attendee answers. In JSON, these are the optional fields
   `organizer_address`, `response`, `attendees` (`name`, `address`, `optional`, `response`), `join_url`, `series`,
-  `recurrence` and `body`. An answer is `organizer`, `accepted`, `tentative`, `declined` or `not_responded`.
+  `recurrence` and `body`. An answer is `organizer`, `accepted`, `tentative`, `declined` or `not_responded`. An
+  event id that the calendar doesn't have gives `unknown_event` (`calendar show` and `join meeting`).
 - **Calls** are asked as the call buttons ask them (the one-call rule, the call window and devices apply) and answer
   with the call's row once the engine took it. `mute` and `camera` with `on`/`off` change only what differs.
   `join meeting` opens the pre-join as the calendar's Join does; `--now` joins at once (microphone on, camera off).
@@ -511,7 +512,7 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   `{"id":N,"ok":{"kind":"…",…}}` or `{"id":N,"error":{"code":"…","message":"…"}}`, after a `hello` that checks the
   protocol version; the types are in `crates/teams-ctl/src/protocol.rs`. Error codes: `unknown_account`,
   `unknown_chat`, `ambiguous_chat`, `busy`, `no_calling`, `no_call`, `not_ringing`, `no_video`, `no_meeting`,
-  `no_tray`, `no_window`, `unknown_action`, `refused_read_only`, `stopped`, `timeout`, `bad_request`,
+  `unknown_event`, `no_tray`, `no_window`, `unknown_action`, `refused_read_only`, `stopped`, `timeout`, `bad_request`,
   `version_mismatch`, `engine`, `no_attachment`, `file_exists`. The protocol is version 2 (version 1 had no
   attachments and no `download`).
 - **Exit codes**: 0 success; 1 an error answer, a write whose row failed (with `--wait`, one not sent), or a stream
