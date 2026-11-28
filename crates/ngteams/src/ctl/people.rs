@@ -267,8 +267,11 @@ async fn card(core: &dyn Core, person: Named) -> Result<PersonCard, CtlError> {
         };
     }
     if let Some(found) = person.found {
+        if card.upn.is_none() {
+            card.upn.clone_from(&found.upn);
+        }
         if card.emails.is_empty() {
-            card.emails = found.addresses;
+            card.emails = mail_addresses(found.addresses, found.upn.as_deref());
         }
         if card.job_title.is_none() {
             card.job_title = found.job_title;
@@ -278,6 +281,17 @@ async fn card(core: &dyn Core, person: Named) -> Result<PersonCard, CtlError> {
         }
     }
     Ok(card)
+}
+
+/// The search's `addresses` without the `upn`, unless the UPN is the only address.
+fn mail_addresses(addresses: Vec<String>, upn: Option<&str>) -> Vec<String> {
+    let Some(upn) = upn else { return addresses };
+    let mails: Vec<String> = addresses
+        .iter()
+        .filter(|address| !address.eq_ignore_ascii_case(upn))
+        .cloned()
+        .collect();
+    if mails.is_empty() { addresses } else { mails }
 }
 
 /// `mri`'s name as the engine has it (none when it fails).
@@ -445,6 +459,7 @@ mod tests {
             mri: Some(mri.to_owned()),
             name: name.to_owned(),
             email: addresses.first().map(|address| (*address).to_owned()),
+            upn: None,
             addresses: addresses.iter().map(|address| (*address).to_owned()).collect(),
             job_title: None,
             department: None,
@@ -504,6 +519,26 @@ mod tests {
                 "unknown",
                 "madeUpWord"
             ]
+        );
+    }
+
+    #[test]
+    fn the_mails_of_a_search_leave_out_the_upn_unless_it_is_the_only_address() {
+        let owned = |addresses: &[&str]| {
+            addresses
+                .iter()
+                .map(|address| (*address).to_owned())
+                .collect::<Vec<_>>()
+        };
+        let upn = "eve_guest.test#EXT#@lab.example.test";
+        assert_eq!(
+            mail_addresses(owned(&[upn, "eve@guest.test"]), Some(&upn.to_uppercase())),
+            ["eve@guest.test"]
+        );
+        assert_eq!(mail_addresses(owned(&[upn]), Some(upn)), [upn]);
+        assert_eq!(
+            mail_addresses(owned(&["dee@lab.example.test"]), None),
+            ["dee@lab.example.test"]
         );
     }
 

@@ -109,6 +109,7 @@ fn seeded() -> Rig {
         mri: Some(LAB_D.to_owned()),
         name: "Dee Synthetic".to_owned(),
         email: Some("dee@lab.example.test".to_owned()),
+        upn: None,
         addresses: Vec::new(),
         job_title: Some("Analyst".to_owned()),
         department: None,

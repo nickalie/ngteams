@@ -146,6 +146,7 @@ fn the_others_read(found: &Found) {
     assert_eq!(found.people.len(), 1);
     assert_eq!(found.people[0].mri.as_deref(), Some(B));
     assert_eq!(found.people[0].email.as_deref(), Some("bee@lab.example.com"));
+    assert_eq!(found.people[0].upn.as_deref(), Some("bee@lab.example.com"));
     assert_eq!(
         found.people[0].addresses,
         ["bee@lab.example.com", "bee.alias@lab.example.com"]

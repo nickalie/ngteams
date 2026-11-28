@@ -149,6 +149,8 @@ pub struct FoundPerson {
     pub name: String,
     /// The address to show: their UPN, else their first mail address.
     pub email: Option<String>,
+    /// Their UPN, when the service gave one (a guest's UPN is not a mailbox).
+    pub upn: Option<String>,
     /// Each address the service gave, once: the UPN and each mail address (a guest's or an alias's mail is not
     /// its UPN).
     pub addresses: Vec<String>,
@@ -570,6 +572,7 @@ fn person(item: &Value) -> Option<FoundPerson> {
         }
     }
     let email = addresses.first().cloned();
+    let upn = text(item, "UserPrincipalName").map(str::to_owned);
     let mri = first(item, &["MRI", "Mri"])
         .filter(|mri| mri.starts_with("8:"))
         .or_else(|| {
@@ -581,6 +584,7 @@ fn person(item: &Value) -> Option<FoundPerson> {
         mri,
         name,
         email,
+        upn,
         addresses,
         job_title: owned(item, "JobTitle"),
         department: owned(item, "Department"),

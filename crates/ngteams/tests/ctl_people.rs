@@ -43,6 +43,8 @@ use wiremock::{Mock, Request as Asked, ResponseTemplate};
 const UPN: &str = "bot-a@lab.example.test";
 const B_MAIL: &str = "bee@lab.example.test";
 const C_MAIL: &str = "cee@lab.example.test";
+/// A mail of b that the search gives and the card does not.
+const B_ALIAS: &str = "bee.alias@lab.example.test";
 /// Two made-up people of one name, found by the search only.
 const DEE_ONE: &str = "8:orgid:00000000-0000-4000-8000-0000000000d1";
 const DEE_TWO: &str = "8:orgid:00000000-0000-4000-8000-0000000000d2";
@@ -51,15 +53,24 @@ const GUEST: &str = "8:orgid:00000000-0000-4000-8000-0000000000e1";
 const GUEST_MAIL: &str = "eve@guest.test";
 const GUEST_UPN: &str = "eve_guest.test#EXT#@lab.onmicrosoft.test";
 
-/// The made-up directory: `(MRI, name, UPN, mail, job title, department)`.
-const DIRECTORY: &[(&str, &str, &str, &str, &str, &str)] = &[
-    (LAB_B, "Bee Example", B_MAIL, B_MAIL, "Tester", "Lab"),
-    (LAB_C, "Cee Example", C_MAIL, C_MAIL, "Builder", "Lab"),
+/// A made-up directory entry: `(MRI, name, UPN, mails, job title, department)`.
+type Entry = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    &'static str,
+    &'static str,
+);
+
+const DIRECTORY: &[Entry] = &[
+    (LAB_B, "Bee Example", B_MAIL, &[B_MAIL, B_ALIAS], "Tester", "Lab"),
+    (LAB_C, "Cee Example", C_MAIL, &[C_MAIL], "Builder", "Lab"),
     (
         DEE_ONE,
         "Dee Example",
         "dee.one@lab.example.test",
-        "dee.one@lab.example.test",
+        &["dee.one@lab.example.test"],
         "Writer",
         "Docs",
     ),
@@ -67,11 +78,11 @@ const DIRECTORY: &[(&str, &str, &str, &str, &str, &str)] = &[
         DEE_TWO,
         "Dee Example",
         "dee.two@lab.example.test",
-        "dee.two@lab.example.test",
+        &["dee.two@lab.example.test"],
         "Reader",
         "Docs",
     ),
-    (GUEST, "Eve Guest", GUEST_UPN, GUEST_MAIL, "Visitor", "Guests"),
+    (GUEST, "Eve Guest", GUEST_UPN, &[GUEST_MAIL], "Visitor", "Guests"),
 ];
 
 /// a's token, as the mock hands it out.
@@ -96,10 +107,12 @@ fn directory_answer(request: &Asked) -> ResponseTemplate {
         .to_lowercase();
     let results: Vec<Value> = DIRECTORY
         .iter()
-        .filter(|(_, name, _, mail, _, _)| name.to_lowercase().contains(&query) || mail.contains(&query))
-        .map(|(mri, name, upn, mail, title, department)| {
+        .filter(|(_, name, _, mails, _, _)| {
+            name.to_lowercase().contains(&query) || mails.iter().any(|mail| mail.contains(&query))
+        })
+        .map(|(mri, name, upn, mails, title, department)| {
             json!({ "Type": "People", "Source": {
-                "DisplayName": name, "MRI": mri, "UserPrincipalName": upn, "EmailAddresses": [mail],
+                "DisplayName": name, "MRI": mri, "UserPrincipalName": upn, "EmailAddresses": mails,
                 "JobTitle": title, "Department": department,
             }})
         })
@@ -324,7 +337,7 @@ fn person_shows_the_card_by_upn_by_mri_and_by_name() {
     assert_eq!(by_upn.mri, LAB_B);
     assert_eq!(by_upn.name.as_deref(), Some("Bee Example"));
     assert_eq!(by_upn.upn.as_deref(), Some(B_MAIL));
-    assert_eq!(by_upn.emails.first().map(String::as_str), Some(B_MAIL));
+    assert_eq!(by_upn.emails, [B_MAIL], "the card's, not the search's");
     assert_eq!(by_upn.presence.as_deref(), Some("busy"), "{by_upn:?}");
     assert_eq!(
         by_upn.job_title.as_deref(),
@@ -368,7 +381,12 @@ fn person_finds_a_guest_by_a_mail_that_is_not_the_upn() {
         (GUEST, Some("Eve Guest")),
         "by a mail the search gives besides the UPN"
     );
-    assert_eq!(guest.emails, [GUEST_UPN, GUEST_MAIL], "the addresses the search gives");
+    assert_eq!(guest.upn.as_deref(), Some(GUEST_UPN));
+    assert_eq!(
+        guest.emails,
+        [GUEST_MAIL],
+        "the mails the search gives, without the UPN"
+    );
     let rows = lab.presence(&[GUEST_MAIL]);
     assert_eq!(
         (rows[0].mri.as_str(), rows[0].availability.as_str()),
