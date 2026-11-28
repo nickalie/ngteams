@@ -419,7 +419,7 @@ ngteamsctl accounts                         # each account; an own server's name
 ngteamsctl chats [--unread] [--limit N]
 ngteamsctl messages <chat|channel> [--limit N] [--before <message-id>]   # with each message's attachments
 ngteamsctl teams                            # the teams and their channels with their ids
-ngteamsctl thread <channel> <post-id> [--limit N]   # a post and its replies
+ngteamsctl thread <channel> <post-id> [--limit N] [--before <message-id>]   # a post and its replies
 ngteamsctl download <chat> <message-id> [--name <file> | --index N | --all] [--out <dir>] [--force]
 ngteamsctl unread                           # the badge's counts, per chat and total
 ngteamsctl search <words…> [--limit N]

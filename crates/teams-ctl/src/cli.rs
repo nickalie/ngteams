@@ -117,7 +117,8 @@ pub enum Command {
     },
     /// The account's teams and their channels with their ids, as the Teams list shows them.
     Teams,
-    /// One thread of a channel: the post and its replies, the newest first. The channel is synced first.
+    /// One thread of a channel: the post and its replies, the newest first. The channel is synced first,
+    /// except for `--before`, which pages back from the store.
     Thread(ThreadArgs),
     /// Save files and pictures of a message in a folder, each by the name `messages` lists. The app reads them.
     Download(DownloadArgs),

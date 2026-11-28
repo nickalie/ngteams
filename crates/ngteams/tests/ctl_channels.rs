@@ -15,9 +15,10 @@ use std::future::{self, Future};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use clap::Parser as _;
-use ctl_support::{pumped, quit};
+use ctl_support::{pump_until, pumped, quit};
 use gpui::TestAppContext;
 use ngteams::accounts::{Runner, Started};
 use ngteams::accounts_file::{PersonalAccount, PersonalPaths};
@@ -431,9 +432,17 @@ fn teams_says_at_once_when_their_read_failed() {
             runtime.block_on(mock.refuse_next("GET", "/teams/users/me", 403));
         }
     });
+    pump_until(&lab.cx, Duration::from_millis(10), |cx| {
+        app::bridges(cx)[0].read(cx).models().chats.read(cx).teams_failed_at() > 0
+    });
+    let asked = Instant::now();
     let (exit, _, err) = lab.ctl(&["teams"]);
     assert_eq!(exit, 1);
     assert!(err.contains("engine: the teams can't be read right now"), "{err}");
+    assert!(
+        asked.elapsed() < Duration::from_secs(5),
+        "answered at once, not at the timeout"
+    );
     // before the teams are read, a thread's id that no stored chat has is no channel to point to
     let unknown = "19:no-such-chat@thread.v2";
     let (exit, _, err) = lab.ctl(&["members", unknown]);
