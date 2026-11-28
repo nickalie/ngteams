@@ -267,6 +267,12 @@ impl Walk<'_> {
         self.run.until_in("dialog", what, wanted)
     }
 
+    /// The dialog once its fields hold `values`: a key the input has not taken yet would change them after a send.
+    fn until_typed(&mut self, values: [&str; 3]) -> SandboxResult {
+        self.until_dialog("the typed fields", |dialog| dialog["values"] == json!(values))
+            .map(drop)
+    }
+
     /// The Apps tab's webhooks once `wanted` takes them.
     fn until_page(&mut self, what: &str, wanted: impl Fn(&Value) -> bool) -> SandboxResult<Value> {
         self.run.until_in("page", what, wanted)
@@ -358,6 +364,7 @@ impl Walk<'_> {
             format!("a PNG picture is not taken: {dialog}")
         });
         self.shots("create")?;
+        self.until_typed([HOOK, &self.service.url.clone(), DESCRIPTION])?;
         self.run.act("send")?;
         self.until_dialog("the token after Create", |dialog| dialog["token_shown"] == true)?;
         step("Create answered with the token");
@@ -421,6 +428,7 @@ impl Walk<'_> {
         self.type_text("ECHO BOT")?;
         self.key(keys::TAB)?;
         self.type_text("http://127.0.0.1:9/hook")?;
+        self.until_typed(["ECHO BOT", "http://127.0.0.1:9/hook", ""])?;
         self.run.act("send")?;
         let dialog = self.run.state_in("dialog")?;
         expect(dialog["problem"] == NOT_HTTPS, || {
@@ -431,6 +439,7 @@ impl Walk<'_> {
             self.run.input.key(keys::BACKSPACE)?;
         }
         self.type_text(&self.service.url.clone())?;
+        self.until_typed(["ECHO BOT", &self.service.url.clone(), ""])?;
         self.run.act("send")?;
         let dialog = self.until_dialog("the name's conflict", |dialog| !dialog["problem"].is_null())?;
         expect(dialog["problem"] == NAME_TAKEN, || {
@@ -456,6 +465,7 @@ impl Walk<'_> {
         self.key(keys::TAB)?;
         self.key(keys::END)?;
         self.type_text(MORE)?;
+        self.until_typed([HOOK, &self.service.url.clone(), &format!("{DESCRIPTION}{MORE}")])?;
         self.run.shot(self.sandbox, "qa-webhooks-edit-light.png")?;
         self.run.act("send")?;
         self.until_dialog("the edit dialog closed", |dialog| dialog["open"] == false)?;
@@ -566,7 +576,7 @@ impl Walk<'_> {
                     items(state).any(|item| hook_reply(item, card))
                 });
             let state = match found {
-                Ok(state) => state,
+                Ok(_) => self.until_marked()?,
                 Err(error) => {
                     note(format!(
                         "the thread of post {post} does not show the webhook's reply: {error}"
@@ -597,6 +607,22 @@ impl Walk<'_> {
         }
         step("both threads show the webhook's replies");
         Ok(())
+    }
+
+    /// The thread once each of the webhook's replies has the App mark, else as it is when the wait ends.
+    // the row shows the message's own sender name before the view's read of the webhook's app gives the mark
+    fn until_marked(&mut self) -> SandboxResult<Value> {
+        let marked = self
+            .run
+            .until_in("thread", "the App mark on the webhook's reply", |state| {
+                items(state)
+                    .filter(|item| item["sender_name"] == HOOK)
+                    .all(|item| item["app_mark"] == true)
+            });
+        match marked {
+            Ok(state) => Ok(state),
+            Err(_) => self.run.state_in("thread"),
+        }
     }
 
     /// Remove asks first; then the webhook is gone from the list, and the server's list.
@@ -1305,6 +1331,7 @@ fn dialog_state(shell: &Entity<Shell>, cx: &mut App) -> Value {
         json!({
             "open": true,
             "can_send": dialog.can_send(cx),
+            "values": dialog.values(cx),
             "problem": dialog.problem(),
             "token_shown": dialog.token().is_some(),
         })

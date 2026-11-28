@@ -165,7 +165,9 @@ impl WebhookDialog {
         cx.notify();
     }
 
-    fn values(&self, cx: &Context<Self>) -> (String, String, String) {
+    /// The name, callback URL and description as typed, trimmed.
+    #[must_use]
+    pub fn values(&self, cx: &Context<Self>) -> (String, String, String) {
         let text = |input: &Entity<InputState>| input.read(cx).value().trim().to_owned();
         (text(&self.name), text(&self.url), text(&self.description))
     }
