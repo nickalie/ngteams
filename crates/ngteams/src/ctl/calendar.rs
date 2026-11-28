@@ -28,12 +28,11 @@
 //! [`CALENDAR_ANSWER`].
 
 use std::collections::HashSet;
-use std::future::{self, Future};
+use std::future::Future;
 use std::pin::{Pin, pin};
-use std::task::Poll;
 
 use gpui::{App, AsyncApp, WeakEntity};
-use teams_core::{CalendarEvent, EventResponse, FullEvent};
+use teams_core::{CalendarEvent, EngineError, EventResponse, FullEvent};
 use teams_ctl::protocol::{
     AttendeeRow, CALENDAR_ANSWER, CALL_ANSWER, CalendarRow, CtlError, ErrorCode, EventAnswer, Request, Response,
     calendar_window, local_today,
@@ -49,7 +48,7 @@ use tokio::sync::oneshot;
 use super::address::{self, engine_error};
 use super::calls::{self, Fallback, Settle, Target};
 use super::dispatch::alive;
-use super::writes::within;
+use super::writes::{before, within};
 use crate::app::Running;
 
 /// Whether `request` is a calendar command (see the module docs).
@@ -103,13 +102,8 @@ pub async fn answer(
             })
         }
         Request::CalendarEvent { event } => {
-            let mut deadline = pin!(executor.timer(CALENDAR_ANSWER));
-            let read = core.calendar_event(event.clone());
-            let full = before(deadline.as_mut(), read)
-                .await
-                .ok_or_else(|| CtlError::new(ErrorCode::Timeout, &late))?
-                .map_err(|error| unread(event, &error))?;
-            let repeats = before(deadline.as_mut(), recurrence(core, &full)).await.flatten();
+            let deadline = pin!(executor.timer(CALENDAR_ANSWER));
+            let (full, repeats) = read_whole(|id| core.calendar_event(id), event, deadline, &late).await?;
             Ok(Response::CalendarEvent(Box::new(shown(&full, repeats, joinable))))
         }
         _ => Err(CtlError::new(ErrorCode::BadRequest, "not a calendar command")),
@@ -152,26 +146,36 @@ pub fn row(event: &CalendarEvent, joinable: bool) -> CalendarRow {
     }
 }
 
-/// `work`'s output, or `None` when `deadline` comes first. The work goes on.
-async fn before<T>(mut deadline: Pin<&mut impl Future<Output = ()>>, work: impl Future<Output = T>) -> Option<T> {
-    let mut work = pin!(work);
-    future::poll_fn(|task| {
-        if let Poll::Ready(output) = work.as_mut().poll(task) {
-            return Poll::Ready(Some(output));
-        }
-        deadline.as_mut().poll(task).map(|()| None)
-    })
-    .await
+/// Event `id` read whole with `read`, then how its series repeats, both before `deadline` (see the module docs): an
+/// event read that is late is [`ErrorCode::Timeout`] saying `late`, a series read that is late is `None`.
+async fn read_whole<R>(
+    read: impl Fn(String) -> R,
+    id: &str,
+    mut deadline: Pin<&mut impl Future<Output = ()>>,
+    late: &str,
+) -> Result<(FullEvent, Option<String>), CtlError>
+where
+    R: Future<Output = Result<FullEvent, EngineError>>,
+{
+    let full = before(deadline.as_mut(), read(id.to_owned()))
+        .await
+        .ok_or_else(|| CtlError::new(ErrorCode::Timeout, late))?
+        .map_err(|error| unread(id, &error))?;
+    let repeats = before(deadline, recurrence(&read, &full)).await.flatten();
+    Ok((full, repeats))
 }
 
 /// How `full`'s series repeats (see the module docs): its own recurrence, or an occurrence's series' read whole.
-async fn recurrence(core: &dyn Core, full: &FullEvent) -> Option<String> {
+async fn recurrence<R>(read: &impl Fn(String) -> R, full: &FullEvent) -> Option<String>
+where
+    R: Future<Output = Result<FullEvent, EngineError>>,
+{
     if let Some(recurrence) = &full.recurrence {
         return Repeat::summary_of(recurrence);
     }
     let master = full.event.series_master_id.clone()?;
     // the event itself was read: a series that isn't still shows it, as "Part of a series"
-    let series = core.calendar_event(master).await.ok()?;
+    let series = read(master).await.ok()?;
     series.recurrence.as_ref().and_then(Repeat::summary_of)
 }
 
@@ -332,29 +336,63 @@ fn open(
 
 #[cfg(test)]
 mod tests {
+    use std::future;
     use std::time::Duration;
 
     use gpui::TestAppContext;
 
     use super::*;
 
+    const LATE: &str = "made-up late";
+
+    fn occurrence() -> FullEvent {
+        let fields = r#"{"objectId": "AAMkMadeUpOccurrence", "subject": "Made-up", "eventType": "Occurrence",
+            "seriesMasterId": "AAMkMadeUpSeries", "startTime": "2026-11-02T10:00:00Z", "endTime": "2026-11-02T10:30:00Z"}"#;
+        FullEvent {
+            event: CalendarEvent::stored(fields).unwrap(),
+            raw: serde_json::Map::new(),
+            body_html: None,
+            reminder_minutes: None,
+            categories: Vec::new(),
+            optional: Vec::new(),
+            recurrence: None,
+        }
+    }
+
     #[gpui::test]
-    async fn a_late_series_read_gives_none_within_the_event_read_s_deadline(cx: &mut TestAppContext) {
+    async fn a_series_read_that_does_not_answer_gives_the_event_and_no_recurrence_at_the_deadline(
+        cx: &mut TestAppContext,
+    ) {
         let executor = cx.executor();
-        let deadline = executor.timer(CALENDAR_ANSWER);
-        let read = executor.timer(CALENDAR_ANSWER.saturating_sub(Duration::from_secs(1)));
-        let late = executor.spawn(async move {
-            let mut deadline = pin!(deadline);
-            let event = before(deadline.as_mut(), async {
-                read.await;
-                "event"
-            })
-            .await;
-            let series = before(deadline.as_mut(), future::pending::<&str>()).await;
-            (event, series)
-        });
+        let timer = executor.timer(CALENDAR_ANSWER);
+        let slow = executor.clone();
+        let read = move |id: String| {
+            let event_read = slow.timer(CALENDAR_ANSWER.saturating_sub(Duration::from_secs(1)));
+            async move {
+                if id == "AAMkMadeUpSeries" {
+                    future::pending().await
+                } else {
+                    event_read.await;
+                    Ok(occurrence())
+                }
+            }
+        };
+        let shown = executor.spawn(async move { read_whole(read, "AAMkMadeUpOccurrence", pin!(timer), LATE).await });
         cx.run_until_parked();
         executor.advance_clock(CALENDAR_ANSWER);
-        assert_eq!(late.await, (Some("event"), None));
+        let (full, repeats) = shown.await.unwrap();
+        assert_eq!((full, repeats), (occurrence(), None));
+    }
+
+    #[gpui::test]
+    async fn an_event_read_that_does_not_answer_is_a_timeout_at_the_deadline(cx: &mut TestAppContext) {
+        let executor = cx.executor();
+        let timer = executor.timer(CALENDAR_ANSWER);
+        let read = |_: String| future::pending::<Result<FullEvent, EngineError>>();
+        let shown = executor.spawn(async move { read_whole(read, "AAMkMadeUpOccurrence", pin!(timer), LATE).await });
+        cx.run_until_parked();
+        executor.advance_clock(CALENDAR_ANSWER);
+        let error = shown.await.unwrap_err();
+        assert_eq!((error.code, error.message.as_str()), (ErrorCode::Timeout, LATE));
     }
 }

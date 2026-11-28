@@ -29,7 +29,7 @@
 //! refuses every write ([`ErrorCode::RefusedReadOnly`]), as its transport would; `status set` too.
 
 use std::future::{self, Future};
-use std::pin::pin;
+use std::pin::{Pin, pin};
 use std::task::Poll;
 
 use gpui::{App, AsyncApp, BackgroundExecutor, Entity};
@@ -132,16 +132,23 @@ pub(super) async fn within<T>(
     work: impl Future<Output = Result<T, CtlError>>,
     executor: &BackgroundExecutor,
 ) -> Result<T, CtlError> {
+    let timer = pin!(executor.timer(bound));
+    before(timer, work)
+        .await
+        .unwrap_or_else(|| Err(CtlError::new(ErrorCode::Timeout, late)))
+}
+
+/// `work`'s output, or `None` when `deadline` comes first. The work goes on.
+pub(super) async fn before<T>(
+    mut deadline: Pin<&mut impl Future<Output = ()>>,
+    work: impl Future<Output = T>,
+) -> Option<T> {
     let mut work = pin!(work);
-    let mut timer = pin!(executor.timer(bound));
     future::poll_fn(|task| {
-        if let Poll::Ready(answer) = work.as_mut().poll(task) {
-            return Poll::Ready(answer);
+        if let Poll::Ready(output) = work.as_mut().poll(task) {
+            return Poll::Ready(Some(output));
         }
-        timer
-            .as_mut()
-            .poll(task)
-            .map(|()| Err(CtlError::new(ErrorCode::Timeout, late)))
+        deadline.as_mut().poll(task).map(|()| None)
     })
     .await
 }
