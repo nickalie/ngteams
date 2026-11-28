@@ -73,6 +73,7 @@ const HERO_TEXT: &str = "Build 7 passed\nmain\nAll 12 checks passed.\nOpen the b
 const THUMBNAIL_TEXT: &str = "Deploy started\nto staging\nLogs (https://example.invalid/logs)";
 const CONNECTOR_TEXT: &str = "Probe failed\nThe probe of api failed.\nuptime-bot\n\
      endpoint: https://api.example.invalid/health\nStatus page (https://status.example.invalid/api)";
+const VIDEO_LINK_TEXT: &str = "watch https://video.example.invalid/v/1";
 const VIDEO_TEXT: &str = "Synthetic video title\nSynthetic channel\nOpen";
 
 /// When this binary runs as `ngteamsctl` (see the module docs), it does what the `ngteamsctl` binary does.
@@ -409,7 +410,7 @@ impl Lab {
             let (mock, done, content) = (Arc::clone(&self.mock), Arc::clone(&done), connector(title));
             std::thread::spawn(move || {
                 while !done.load(Ordering::Relaxed) {
-                    let _ = mock.add_message(AB_CHAT, WORKFLOW, CARD_TYPE, &content);
+                    mock.add_message(AB_CHAT, WORKFLOW, CARD_TYPE, &content).unwrap();
                     std::thread::sleep(Duration::from_millis(300));
                 }
             })
@@ -521,9 +522,8 @@ fn a_person_reads_a_chat_s_cards_and_its_text_message_is_as_before() {
     );
     let video = row(&answer, &posted.video);
     assert_eq!(video["card"], json!(true), "{video}");
-    let video_text = video["text"].as_str().unwrap();
-    assert!(video_text.starts_with("watch "), "{video}");
-    assert!(video_text.ends_with(&format!("\n{VIDEO_TEXT}")), "{video}");
+    let video_text = format!("{VIDEO_LINK_TEXT}\n{VIDEO_TEXT}");
+    assert_eq!(video["text"].as_str(), Some(video_text.as_str()), "{video}");
     let plain = row(&answer, &posted.plain);
     assert_eq!(plain["text"], "plain words, no card", "{plain}");
     assert!(plain.get("card").is_none(), "a text message has no card field: {plain}");
@@ -531,8 +531,8 @@ fn a_person_reads_a_chat_s_cards_and_its_text_message_is_as_before() {
     let table = lab.ctl(&["messages", AB_CHAT]);
     assert_eq!(table.code, 0, "{table:?}");
     assert!(line(&table.stdout, &posted.connector).ends_with(&format!("(card) {}", one_line(CONNECTOR_TEXT))));
-    assert!(line(&table.stdout, &posted.video).ends_with(&format!(" ↵ {}", one_line(VIDEO_TEXT))));
-    assert!(line(&table.stdout, &posted.video).contains("(card) watch "));
+    let video = line(&table.stdout, &posted.video);
+    assert!(video.ends_with(&format!("(card) {}", one_line(&video_text))), "{video}");
     let plain = line(&table.stdout, &posted.plain);
     assert!(
         plain.ends_with(" plain words, no card") && !plain.contains("(card)"),
@@ -577,7 +577,7 @@ fn search_finds_a_card_that_the_previous_release_indexed_by_its_fallback() {
             &posted.connector,
             "Card - access it on https://go.skype.com/cards.unsupported.",
         ),
-        (&posted.video, "watch https://video.example.invalid/v/1"),
+        (&posted.video, VIDEO_LINK_TEXT),
     ] {
         let changed = db
             .execute(
