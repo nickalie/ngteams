@@ -215,6 +215,11 @@ name = "qa_nix_update_window"
 harness = false
 
 [[test]]
+# QA of task 929: the theme picker and the settings file across restarts, in the UI sandbox
+name = "qa_theme_settings_window"
+harness = false
+
+[[test]]
 # QA of task 525: a message with several files, its grid of file cards, their actions and odd shapes, in the UI sandbox
 name = "qa_file_grid_window"
 harness = false
