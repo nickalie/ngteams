@@ -526,8 +526,7 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   `unknown_chat`, `ambiguous_chat`, `busy`, `no_calling`, `no_call`, `not_ringing`, `no_video`, `no_meeting`,
   `unknown_event`, `no_tray`, `no_window`, `unknown_action`, `refused_read_only`, `stopped`, `timeout`, `bad_request`,
   `version_mismatch`, `engine`, `no_attachment`, `file_exists`, `unknown_person`, `ambiguous_person`. The protocol is
-  version 2 (version 1 had no
-  attachments and no `download`).
+  version 2 (version 1 had no attachments and no `download`).
 - **Exit codes**: 0 success; 1 an error answer, a write whose row failed (with `--wait`, one not sent), or a stream
   that ended early or lagged; 2 no app on the socket, no socket path, or a usage error; 3 `wait` timed out.
 
