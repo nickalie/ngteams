@@ -576,7 +576,7 @@ impl Walk<'_> {
                     items(state).any(|item| hook_reply(item, card))
                 });
             let state = match found {
-                Ok(_) => self.until_marked()?,
+                Ok(_) => self.until_marked(card)?,
                 Err(error) => {
                     note(format!(
                         "the thread of post {post} does not show the webhook's reply: {error}"
@@ -609,15 +609,17 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// The thread once each of the webhook's replies has the App mark, else as it is when the wait ends.
+    /// The thread once it shows the webhook's reply and each of its replies has the App mark, else as it is when the
+    /// wait ends.
     // the row shows the message's own sender name before the view's read of the webhook's app gives the mark
-    fn until_marked(&mut self) -> SandboxResult<Value> {
+    fn until_marked(&mut self, card: bool) -> SandboxResult<Value> {
         let marked = self
             .run
             .until_in("thread", "the App mark on the webhook's reply", |state| {
-                items(state)
-                    .filter(|item| item["sender_name"] == HOOK)
-                    .all(|item| item["app_mark"] == true)
+                items(state).any(|item| hook_reply(item, card))
+                    && items(state)
+                        .filter(|item| item["sender_name"] == HOOK)
+                        .all(|item| item["app_mark"] == true)
             });
         match marked {
             Ok(state) => Ok(state),
@@ -1322,7 +1324,7 @@ fn clipboard_is_token(shell: &Entity<Shell>, cx: &App) -> bool {
     shown.is_some() && shown == copied
 }
 
-/// The dialog: open, Create's state, its problem and whether it shows the token (never the token itself).
+/// The dialog: open, Create's state, its typed values, its problem and whether it shows the token (never the token itself).
 fn dialog_state(shell: &Entity<Shell>, cx: &mut App) -> Value {
     let Ok(dialog) = dialog(shell, cx) else {
         return json!({"open": false});
