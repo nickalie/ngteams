@@ -768,7 +768,8 @@ audit entry holds it.
 | 413 | | a package over 5 MiB |
 
 The operator has the same on the command line: `app add --name <name> [--endpoint <url>] [--description <text>]
-[--unsigned]` or `app add --package <file.zip>` print `added <id> (<name>)` and `secret <secret>`; `app list` prints
+[--unsigned]` or `app add --package <file.zip>` print `added <id> (<name>)`, `secret <secret>` (a signed bot) and
+`bot <bot id>` (for a package, the manifest's `botId`); `app list` prints
 `<id>\t<enabled|disabled>\t<name>\t<28:bot or ->`, in the same order; `app disable|enable|rotate-secret|remove <id>`.
 
 ### A bot's credentials

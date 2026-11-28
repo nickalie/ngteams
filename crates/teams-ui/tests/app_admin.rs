@@ -457,11 +457,13 @@ fn sdk_settings_shown(opened: &mut Opened, dialog: &Entity<AppDialog>) {
     assert_eq!(opened.kind(), Some(DialogKind::Settings));
     assert!(opened.shows("app-dialog-sdk-text"));
     let settings = opened.cx.read(|cx| dialog.read(cx).settings()).unwrap();
-    assert!(settings.text.contains(SECRET) && settings.text.contains("https://teams.example.test/botframework.com"));
+    assert!(settings.text.contains(SECRET) && settings.text.contains("https://teams.example.test/adfs"));
     opened.click("app-dialog-sdk-python");
     assert_eq!(opened.cx.read(|cx| dialog.read(cx).sdk()), Sdk::Python);
     opened.click("app-dialog-sdk-javascript");
     assert!(opened.shows("app-dialog-sdk-note"));
+    let settings = opened.cx.read(|cx| dialog.read(cx).settings()).unwrap();
+    assert!(settings.text.contains("https://teams.example.test/botframework.com"));
     opened.click("app-dialog-sdk-copy");
     assert!(
         opened

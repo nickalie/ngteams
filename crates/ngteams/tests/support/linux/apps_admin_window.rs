@@ -316,7 +316,7 @@ fn sdk_settings(qa: &mut Qa<'_>) -> SandboxResult {
     })?;
     let text = state["dialog"]["settings"].as_str().unwrap_or_default();
     ensure(
-        text.contains("/botframework.com") && text.contains("/bot/v1/.well-known/openidconfiguration"),
+        text.contains("/adfs") && text.contains("/bot/v1/.well-known/openidconfiguration"),
         || format!("the settings name another server: {text}"),
     )?;
     ensure(state["dialog"]["settings_have_secret"] == true, || {

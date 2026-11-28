@@ -12,8 +12,8 @@ use crate::config::Config;
 
 #[derive(Debug, Subcommand)]
 pub enum AppCommand {
-    /// Registers a bot (`--name`, `--endpoint`) or a Teams app package (`--package`); prints the app's id and its
-    /// bot's secret, which is shown only this once.
+    /// Registers a bot (`--name`, `--endpoint`) or a Teams app package (`--package`); prints the app's id, its bot's
+    /// secret (shown only this once) and its bot's id.
     Add {
         #[arg(long, required_unless_present = "package", conflicts_with = "package")]
         name: Option<String>,
