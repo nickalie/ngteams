@@ -3,7 +3,9 @@
 //! Each file is alone in a chat of its own. The parent reads where each download stands from the child (the app's
 //! own download of the file's link), the files in a's downloads folder, the links the sandbox's URI opener got and
 //! the requests the mock got. The card shows its download line when its height in a shot is more than before its
-//! first Download.
+//! first Download. The walk does not read the line's words: the child's download tells if it runs, saved or failed,
+//! and the shots show the words. In Teams Light, a line must have pixels that are not the same as the card's last
+//! line: thus a "Saved to" line after a failure, or after an earlier "Saved to", is a new line.
 //!
 //! - **The user's case**: a `.md` file sent with no sharing link (only its own address in a OneDrive). "More options"
 //!   shows "Download" (Teams Light and Dark shots). The file's host cuts the first stream and answers the next one
@@ -21,7 +23,7 @@
 //!
 //! Every name, id, link and byte is made up.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -92,6 +94,8 @@ struct Case {
     host: Arc<Mutex<Host>>,
     /// The height of its card before its first download, with no download line.
     bare: Cell<Option<u32>>,
+    /// The pixels of its card's download line in the last Teams Light shot that showed one.
+    line: RefCell<Option<image::RgbImage>>,
 }
 
 impl Case {
@@ -119,6 +123,7 @@ impl Case {
             graph: Arc::new(Mutex::new(Graph::Item)),
             host: Arc::new(Mutex::new(Host::Whole)),
             bare: Cell::new(None),
+            line: RefCell::new(None),
         }
     }
 
@@ -401,26 +406,46 @@ impl Walk<'_> {
         &self.service.cases
     }
 
-    fn case(&self, key: &str) -> &Case {
+    fn case(&self, key: &str) -> SandboxResult<&Case> {
         self.cases()
             .all()
             .into_iter()
             .find(|case| case.key == key)
-            .unwrap_or(&self.cases().answers)
+            .ok_or_else(|| format!("no case of this walk has the key {key}").into())
     }
 
-    /// The card of `key`'s chat in `look`, after a shot named `name`: notes when it shows no download line.
+    /// The card of `key`'s chat in `look`, after a shot named `name`: notes when it shows no download line, or in
+    /// Teams Light the same line as the last one.
     fn line_shown(&mut self, key: &str, name: &str, look: Look) -> SandboxResult {
         let card = self.lone_card(name, look)?;
-        let bare = self.case(key).bare.get();
-        if let (Some(card), Some(bare)) = (card, bare)
-            && card.height() < bare + LINE
-        {
+        let case = self.case(key)?;
+        let (Some(card), Some(bare)) = (card, case.bare.get()) else {
+            return Ok(());
+        };
+        if card.height() < bare + LINE {
             note(format!(
                 "{name}: the card shows no download line: {} px high, {bare} px before the Download",
                 card.height()
             ));
+            return Ok(());
         }
+        if look.dark {
+            return Ok(());
+        }
+        let line = image::imageops::crop_imm(
+            &self.run.last,
+            card.x0,
+            card.y0 + bare,
+            card.width(),
+            card.height() - bare,
+        )
+        .to_image();
+        if case.line.borrow().as_ref().is_some_and(|last| same_pixels(last, &line)) {
+            note(format!(
+                "{name}: the card's download line did not change since its last shot"
+            ));
+        }
+        case.line.replace(Some(line));
         Ok(())
     }
 
@@ -470,7 +495,7 @@ impl Walk<'_> {
         let Some(card) = self.lone_card(&format!("qa1009-{key}-card-light.png"), LIGHT)? else {
             return Ok(false);
         };
-        let bare = &self.case(key).bare;
+        let bare = &self.case(key)?.bare;
         if bare.get().is_none() {
             bare.set(Some(card.height()));
         }
@@ -816,6 +841,11 @@ impl Walk<'_> {
             to_hosts.len()
         ));
     }
+}
+
+/// Whether `a` and `b` have the same size and each pixel of one is near the pixel of the other.
+fn same_pixels(a: &image::RgbImage, b: &image::RgbImage) -> bool {
+    a.dimensions() == b.dimensions() && a.pixels().zip(b.pixels()).all(|(a, b)| super::near(a.0, b.0, 8))
 }
 
 /// `<target>.part`, as the app names a download's file until it is whole.
