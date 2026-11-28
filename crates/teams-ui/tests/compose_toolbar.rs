@@ -2014,6 +2014,25 @@ fn a_second_click_on_plus_closes_the_apps_flyout_and_gives_the_keys_back_to_the_
 }
 
 #[test]
+fn a_user_who_clicks_plus_two_times_and_then_types_writes_in_the_box() {
+    let rig = Rig::start();
+    *rig.core.extension_apps.lock().unwrap() =
+        teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    focus_box(&compose, cx);
+    click(cx, "compose-apps");
+    click(cx, "compose-apps");
+    cx.simulate_input("hello");
+    draw(cx);
+    assert_eq!(
+        compose.read_with(cx, |compose, cx| compose.editor().read(cx).text()),
+        "hello",
+        "the typed text goes into the box, not to the message list"
+    );
+    assert!(compose.read_with(cx, |compose, _| compose.apps_flyout().is_none()));
+}
+
+#[test]
 fn open_plus_opens_the_apps_flyout_while_the_box_offers_apps_else_the_menu() {
     let rig = Rig::start();
     let (compose, cx) = rooted_chat(&rig, 900.0);
