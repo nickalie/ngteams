@@ -268,7 +268,7 @@ async fn card(core: &dyn Core, person: Named) -> Result<PersonCard, CtlError> {
     }
     if let Some(found) = person.found {
         if card.emails.is_empty() {
-            card.emails.extend(found.email);
+            card.emails = found.addresses;
         }
         if card.job_title.is_none() {
             card.job_title = found.job_title;

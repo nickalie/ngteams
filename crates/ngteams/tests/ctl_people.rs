@@ -46,7 +46,7 @@ const C_MAIL: &str = "cee@lab.example.test";
 /// Two made-up people of one name, found by the search only.
 const DEE_ONE: &str = "8:orgid:00000000-0000-4000-8000-0000000000d1";
 const DEE_TWO: &str = "8:orgid:00000000-0000-4000-8000-0000000000d2";
-/// A made-up guest, whose UPN the search gives, not their mail.
+/// A made-up guest, whose UPN is not their mail.
 const GUEST: &str = "8:orgid:00000000-0000-4000-8000-0000000000e1";
 const GUEST_MAIL: &str = "eve@guest.test";
 const GUEST_UPN: &str = "eve_guest.test#EXT#@lab.onmicrosoft.test";
@@ -357,13 +357,18 @@ fn person_shows_the_card_by_upn_by_mri_and_by_name() {
     );
     assert_eq!(c.emails, [C_MAIL]);
     assert_eq!(c.presence.as_deref(), Some("away"), "{c:?}");
+}
 
+#[test]
+fn person_finds_a_guest_by_a_mail_that_is_not_the_upn() {
+    let lab = Lab::start();
     let guest = lab.person(GUEST_MAIL);
     assert_eq!(
         (guest.mri.as_str(), guest.name.as_deref()),
         (GUEST, Some("Eve Guest")),
-        "by a mail that isn't the UPN the search gives, the search's only person"
+        "by a mail the search gives besides the UPN"
     );
+    assert_eq!(guest.emails, [GUEST_UPN, GUEST_MAIL], "the addresses the search gives");
     let rows = lab.presence(&[GUEST_MAIL]);
     assert_eq!(
         (rows[0].mri.as_str(), rows[0].availability.as_str()),
