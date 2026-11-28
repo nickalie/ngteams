@@ -475,6 +475,8 @@ const STARTUP_CASES: &[&str] = &[
     "ready-then-unserved-own",
     "unserved-own-served-now",
     "served-own",
+    "previous-release",
+    "damaged-accounts",
     "forget-missing",
     "forget-pending",
     "forget-stored",
@@ -620,6 +622,8 @@ fn child() {
         // signed in before, on a server that serves chats, but whose authz can't be reached now
         "served-own" => served_own(&setup),
         "unserved-own-then-ready" | "ready-then-unserved-own" => unserved_beside_ready(&setup, &case),
+        "previous-release" => previous_release(&setup),
+        "damaged-accounts" => damaged_accounts(&setup),
         "empty" | "prompt-window-error" | "own-prompt-success" | "own-prompt-error" | "own-prompt-unserved" => {}
         other => panic!("unknown synthetic case {other}"),
     }
@@ -758,6 +762,13 @@ fn check_outcome(case: &str, outcome: &Result<Outcome, String>) {
         | "forget-error"
         | "window-error"
         | "prompt-window-error" => assert!(outcome.is_err()),
+        "damaged-accounts" => {
+            assert!(
+                matches!(outcome, Err(error) if error.starts_with("accounts.toml: ")),
+                "{:?}",
+                outcome.as_ref().err()
+            );
+        }
         _ => assert!(matches!(outcome, Ok(Outcome::Quit))),
     }
 }
@@ -798,11 +809,113 @@ fn seen_after(case: &str) {
         assert!(!personal.exists(), "the quit removes the socket");
     }
     seen_own(case, &seen);
+    seen_files(case, &seen);
     if case == "many" {
         assert!(
             seen.iter().any(|call| call == "start:ready-other@example.test"),
             "a later account still starts"
         );
+    }
+}
+
+/// `accounts.toml` as the release before `teams-app` wrote it (made-up accounts): two Microsoft 365 accounts (the
+/// first with its name and identity provider hosts), one no sign-in named, and an own server's account with its CA
+/// file.
+const PREVIOUS_RELEASE: &str =
+    "# The accounts the personal build signs in, in the order they were added (a first sign-in adds oid and
+# tid). Never a token.
+
+[[account]]
+upn = \"ready@example.test\"
+oid = \"00000000-0000-4000-8000-000000000002\"
+tid = \"00000000-0000-4000-8000-000000000001\"
+name = \"Ready Made-Up\"
+idp_hosts = [\"sso.example.test\"]
+
+[[account]]
+upn = \"pending@example.test\"
+idp_hosts = []
+
+[[account]]
+upn = \"ready-own@example.test\"
+oid = \"00000000-0000-4000-8000-0000000000a2\"
+tid = \"00000000-0000-4000-8000-000000000001\"
+idp_hosts = []
+server = \"https://chat.example.test\"
+ca_file = \"/synthetic/ca.pem\"
+
+[[account]]
+upn = \"ready-other@example.test\"
+oid = \"00000000-0000-4000-8000-000000000004\"
+tid = \"00000000-0000-4000-8000-000000000001\"
+idp_hosts = []
+";
+
+/// An accounts file that does not parse.
+const DAMAGED: &str = "[[account]]\nupn = \"ready@example.test\"\nnot = [valid\n";
+
+/// The previous release's `accounts.toml` and the regions its sign-ins saved.
+fn previous_release(setup: &Setup) {
+    std::fs::create_dir_all(setup.paths.config_dir()).unwrap();
+    std::fs::write(setup.paths.accounts_file(), PREVIOUS_RELEASE).unwrap();
+    for account in setup.signed_in_accounts().unwrap() {
+        let (region, chat) = if account.server.is_some() {
+            ("own", format!("{OWN_SERVER}/api/chatsvc/own"))
+        } else {
+            ("amer", teams_mock::CHAT_BASE.to_owned())
+        };
+        let path = setup.paths.region_file(&account).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            format!(r#"{{"_synthetic":true,"region":"{region}","partition":null,"regionGtms":{{"chatServiceAfd":"{chat}"}}}}"#),
+        )
+        .unwrap();
+    }
+}
+
+fn damaged_accounts(setup: &Setup) {
+    std::fs::create_dir_all(setup.paths.config_dir()).unwrap();
+    std::fs::write(setup.paths.accounts_file(), DAMAGED).unwrap();
+}
+
+/// What a case's run did with an accounts file it did not write: the previous release's accounts start in their order
+/// and the one no sign-in named waits; a damaged file starts and asks nothing. Neither file is written.
+fn seen_files(case: &str, seen: &[String]) {
+    let setup = Setup::from_env().unwrap();
+    let file = || std::fs::read_to_string(setup.paths.accounts_file()).unwrap();
+    match case {
+        "previous-release" => {
+            let started: Vec<&str> = seen.iter().filter_map(|call| call.strip_prefix("start:")).collect();
+            assert_eq!(
+                started,
+                [
+                    "ready@example.test",
+                    "ready-own@example.test",
+                    "ready-other@example.test"
+                ],
+                "{seen:?}"
+            );
+            assert_eq!(asked_again(seen), 1, "{seen:?}");
+            // the engines here hold no token, so an account signed out after its start is asked again
+            assert!(
+                !seen
+                    .iter()
+                    .any(|call| call.starts_with("add") || call.contains("pending@example.test")),
+                "{seen:?}"
+            );
+            assert_eq!(file(), PREVIOUS_RELEASE);
+        }
+        "damaged-accounts" => {
+            assert!(
+                !seen.iter().any(|call| ["start:", "ready:", "sign-in", "add"]
+                    .iter()
+                    .any(|kind| call.starts_with(kind))),
+                "{seen:?}"
+            );
+            assert_eq!(file(), DAMAGED);
+        }
+        _ => {}
     }
 }
 
