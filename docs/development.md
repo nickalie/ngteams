@@ -493,8 +493,8 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   such mark. `search` finds a card by its text.
 - **People**: `people` asks the service's people search, as the search's People tab does. `person` and `presence`
   name a person by MRI, or by UPN, email or display name as that search finds them. A part of a name matches each
-  person the search finds for it. An address that is not the UPN the search gives (a guest's or an alias's mail)
-  matches the search's only person. Nobody is `unknown_person`. Several people are `ambiguous_person`, with each one's
+  person the search finds for it. An address matches only a person for whom the search gives that address, the UPN
+  or a mail address (a guest's or an alias's mail). Nobody is `unknown_person`. Several people are `ambiguous_person`, with each one's
   MRI and name. `person` shows what the profile card reads, filled from the search where the card has nothing.
   `presence` asks the engine as a badge does, so the engine watches those people from then on. The views share that
   watch of 20 people: each new person asked about drops the badge asked about longest ago, which shows unknown until

@@ -15,10 +15,11 @@
 //!   badge shows unknown until its view asks again (as the profile card's Organization tab does too).
 //!
 //! **A person** is named by their MRI (as it is), or else found by the people search: by UPN or email when the
-//! address is the one that the search gives, by display name in any case. When no name is the one given, each
-//! person that the search found for it is a match (a part of a name); when no address is the one given, the search's
-//! only person is (the search gives a guest's or an alias's UPN, not the mail address that found them). Nobody is
-//! [`ErrorCode::UnknownPerson`]; several people are [`ErrorCode::AmbiguousPerson`], with each one's MRI and name.
+//! address is one that the search gives for them (their UPN or a mail address, as a guest's or an alias's mail is
+//! not its UPN), by display name in any case. When no name is the one given, each person that the search found for it
+//! is a match (a part of a name); an address matches only itself, so a mistyped one names nobody. A person that the
+//! search gives more than once is one match. Nobody is [`ErrorCode::UnknownPerson`]; several people are
+//! [`ErrorCode::AmbiguousPerson`], with each one's MRI and name.
 
 use gpui::{App, AsyncApp, Entity, WeakEntity};
 use teams_core::presence::has_presence;
@@ -162,22 +163,7 @@ async fn resolve(core: &dyn Core, who: &str) -> Result<Named, CtlError> {
         .into_iter()
         .filter_map(|person| Some((person.mri.clone()?, person)))
         .collect();
-    let by_address = who.contains('@');
-    let matches = |(_, person): &&(String, FoundPerson)| {
-        if by_address {
-            person
-                .email
-                .as_deref()
-                .is_some_and(|email| email.eq_ignore_ascii_case(who))
-        } else {
-            person.name.to_lowercase() == who.to_lowercase()
-        }
-    };
-    let mut exact: Vec<&(String, FoundPerson)> = found.iter().filter(matches).collect();
-    exact.dedup_by(|(one, _), (other, _)| one == other);
-    if exact.is_empty() && (!by_address || found.len() == 1) {
-        exact = found.iter().collect();
-    }
+    let exact = matching(who, &found);
     match exact.as_slice() {
         [] => Err(CtlError::new(
             ErrorCode::UnknownPerson,
@@ -190,6 +176,26 @@ async fn resolve(core: &dyn Core, who: &str) -> Result<Named, CtlError> {
         }),
         several => Err(ambiguous(who, several)),
     }
+}
+
+/// The people of `found` that `who` names, each MRI once: by an address that the search gives for them, else by
+/// name, else (for a name only) each person found.
+fn matching<'a>(who: &str, found: &'a [(String, FoundPerson)]) -> Vec<&'a (String, FoundPerson)> {
+    let by_address = who.contains('@');
+    let named = |(_, person): &&(String, FoundPerson)| {
+        if by_address {
+            person.addresses.iter().any(|address| address.eq_ignore_ascii_case(who))
+        } else {
+            person.name.to_lowercase() == who.to_lowercase()
+        }
+    };
+    let mut exact: Vec<&(String, FoundPerson)> = found.iter().filter(named).collect();
+    if exact.is_empty() && !by_address {
+        exact = found.iter().collect();
+    }
+    let mut seen = std::collections::HashSet::new();
+    exact.retain(|(mri, _)| seen.insert(mri.as_str()));
+    exact
 }
 
 fn ambiguous(who: &str, several: &[&(String, FoundPerson)]) -> CtlError {
@@ -432,6 +438,45 @@ mod tests {
         for not_one in ["bee@lab.example.test", "Bee Example", ":x", "8:", "a8:orgid:x"] {
             assert!(!is_mri(not_one), "{not_one}");
         }
+    }
+
+    fn found(mri: &str, name: &str, addresses: &[&str]) -> (String, FoundPerson) {
+        let person = FoundPerson {
+            mri: Some(mri.to_owned()),
+            name: name.to_owned(),
+            email: addresses.first().map(|address| (*address).to_owned()),
+            addresses: addresses.iter().map(|address| (*address).to_owned()).collect(),
+            job_title: None,
+            department: None,
+        };
+        (mri.to_owned(), person)
+    }
+
+    fn mris<'a>(people: &[&'a (String, FoundPerson)]) -> Vec<&'a str> {
+        people.iter().map(|(mri, _)| mri.as_str()).collect()
+    }
+
+    #[test]
+    fn an_address_names_whoever_the_search_gives_it_for_and_nobody_else() {
+        let jane = found(
+            "8:orgid:jane",
+            "Jane Guest",
+            &["jane_ext.test#EXT#@lab.test", "jane@ext.test"],
+        );
+        let mary = found("8:orgid:mary", "Mary Jane", &["mary.jane@ext.test"]);
+        let people = [mary.clone(), jane.clone(), jane];
+        assert_eq!(mris(&matching("JANE@ext.test", &people)), ["8:orgid:jane"]);
+        let jonathan = [found("8:orgid:jonathan", "Jonathan", &["jonathan@lab.test"])];
+        assert!(matching("jon@lab.test", &jonathan).is_empty());
+    }
+
+    #[test]
+    fn a_part_of_a_name_names_each_person_found_once() {
+        let ann = found("8:orgid:ann", "Ann Lee", &["ann@lab.test"]);
+        let anna = found("8:orgid:anna", "Anna Bell", &[]);
+        let people = [ann.clone(), anna, ann];
+        assert_eq!(mris(&matching("ann", &people)), ["8:orgid:ann", "8:orgid:anna"]);
+        assert_eq!(mris(&matching("ann lee", &people)), ["8:orgid:ann"]);
     }
 
     #[test]

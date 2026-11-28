@@ -147,7 +147,11 @@ pub struct FoundPerson {
     /// Their MRI (`8:orgid:<guid>`) when the service gave one.
     pub mri: Option<String>,
     pub name: String,
+    /// The address to show: their UPN, else their first mail address.
     pub email: Option<String>,
+    /// Each address the service gave, once: the UPN and each mail address (a guest's or an alias's mail is not
+    /// its UPN).
+    pub addresses: Vec<String>,
     pub job_title: Option<String>,
     pub department: Option<String>,
 }
@@ -546,11 +550,26 @@ fn message(source: &Value, summary: Option<&str>) -> Option<FoundMessage> {
 
 fn person(item: &Value) -> Option<FoundPerson> {
     let name = first(item, &["DisplayName", "Name", "Text"])?;
-    let email = first(item, &["UserPrincipalName", "EmailAddress", "PrimarySmtpAddress"]).or_else(|| {
-        item.get("EmailAddresses")
-            .and_then(Value::as_array)
-            .and_then(|addresses| addresses.iter().find_map(|address| address.as_str().map(str::to_owned)))
-    });
+    let mut addresses: Vec<String> = Vec::new();
+    let listed = item
+        .get("EmailAddresses")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str);
+    let single = ["UserPrincipalName", "EmailAddress", "PrimarySmtpAddress"]
+        .into_iter()
+        .filter_map(|key| text(item, key));
+    for address in single
+        .chain(listed)
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+    {
+        if !addresses.iter().any(|known| known.eq_ignore_ascii_case(address)) {
+            addresses.push(address.to_owned());
+        }
+    }
+    let email = addresses.first().cloned();
     let mri = first(item, &["MRI", "Mri"])
         .filter(|mri| mri.starts_with("8:"))
         .or_else(|| {
@@ -562,6 +581,7 @@ fn person(item: &Value) -> Option<FoundPerson> {
         mri,
         name,
         email,
+        addresses,
         job_title: owned(item, "JobTitle"),
         department: owned(item, "Department"),
     })
