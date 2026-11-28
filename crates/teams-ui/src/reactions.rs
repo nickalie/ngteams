@@ -26,7 +26,7 @@ use image::{Delay, Frame};
 
 use crate::bridge::Core;
 
-use teams_app::reactions::CATALOG;
+use teams_app::reactions::{self, CATALOG};
 
 const PICTURES: &[u8] = include_bytes!("../assets/reactions/emoji.bin");
 /// The most reactions a search shows.
@@ -89,17 +89,17 @@ impl Catalog {
             pictures: Vec::new(),
         };
         let mut placed: HashMap<usize, usize> = HashMap::new();
-        for line in text.lines().filter(|line| !line.is_empty() && !line.starts_with('#')) {
-            if let Some(title) = line.strip_prefix('@') {
-                let at = catalog.reactions.len();
-                catalog.categories.push(Category {
-                    title,
-                    reactions: at..at,
-                });
-                continue;
-            }
-            let Some([id, points, diverse, offset, length, description]) = teams_app::reactions::fields(line) else {
-                continue;
+        for line in reactions::lines(text) {
+            let [id, points, diverse, offset, length, description] = match line {
+                reactions::Line::Category(title) => {
+                    let at = catalog.reactions.len();
+                    catalog.categories.push(Category {
+                        title,
+                        reactions: at..at,
+                    });
+                    continue;
+                }
+                reactions::Line::Reaction(fields) => fields,
             };
             let picture = match (offset.parse::<usize>(), length.parse::<usize>()) {
                 (Ok(offset), Ok(length)) if offset + length <= PICTURES.len() => {
@@ -110,9 +110,7 @@ impl Catalog {
                 }
                 _ => None,
             };
-            let Some(category) = catalog.categories.len().checked_sub(1) else {
-                continue;
-            };
+            let category = catalog.categories.len().saturating_sub(1);
             catalog.by_id.insert(id, catalog.reactions.len());
             catalog.reactions.push(Reaction {
                 id,

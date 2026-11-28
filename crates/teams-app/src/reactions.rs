@@ -14,10 +14,33 @@ pub const TONES: u8 = 5;
 /// Teams' own quick reactions, in the order its message hover bar shows them.
 pub const DEFAULT_QUICK_REACTIONS: [&str; 6] = ["like", "heart", "laugh", "surprised", "sad", "angry"];
 
-/// One reaction line of the catalog: its id, code points, skin-tone flag, picture offset, picture length and
-/// description, once it is under a category.
-#[must_use]
-pub fn fields(line: &str) -> Option<[&str; 6]> {
+/// One line of the catalog that counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Line<'a> {
+    /// A category starts, with this title.
+    Category(&'a str),
+    /// A reaction of the last category: its id, code points, skin-tone flag, picture offset, picture length and
+    /// description.
+    Reaction([&'a str; 6]),
+}
+
+/// The lines of a catalog that count: no empty or `#` line, no reaction before the first category, and no reaction
+/// line without its six fields.
+pub fn lines(text: &str) -> impl Iterator<Item = Line<'_>> {
+    let mut in_category = false;
+    text.lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(move |line| {
+            if let Some(title) = line.strip_prefix('@') {
+                in_category = true;
+                Some(Line::Category(title))
+            } else {
+                fields(line).filter(|_| in_category).map(Line::Reaction)
+            }
+        })
+}
+
+fn fields(line: &str) -> Option<[&str; 6]> {
     let mut fields = line.split('\t');
     let mut taken = [""; 6];
     for slot in &mut taken {
@@ -30,19 +53,12 @@ pub fn fields(line: &str) -> Option<[&str; 6]> {
 fn ids() -> &'static HashMap<&'static str, bool> {
     static IDS: OnceLock<HashMap<&'static str, bool>> = OnceLock::new();
     IDS.get_or_init(|| {
-        let mut ids = HashMap::new();
-        let mut in_category = false;
-        for line in CATALOG
-            .lines()
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        {
-            if line.starts_with('@') {
-                in_category = true;
-            } else if let Some([id, _, diverse, ..]) = fields(line).filter(|_| in_category) {
-                ids.insert(id, diverse == "d");
-            }
-        }
-        ids
+        lines(CATALOG)
+            .filter_map(|line| match line {
+                Line::Reaction([id, _, diverse, ..]) => Some((id, diverse == "d")),
+                Line::Category(_) => None,
+            })
+            .collect()
     })
 }
 
@@ -81,8 +97,14 @@ mod tests {
     }
 
     #[test]
-    fn a_line_without_six_fields_is_no_reaction() {
-        assert_eq!(fields("a\tb\tc"), None);
-        assert_eq!(fields("a\tb\t\t1\t2\tdesc"), Some(["a", "b", "", "1", "2", "desc"]));
+    fn only_a_reaction_line_with_six_fields_under_a_category_counts() {
+        let text = "# a comment\nearly\tb\t\t1\t2\tdesc\n\n@Smilies\na\tb\tc\nyes\tb\td\t1\t2\tdesc\n";
+        assert_eq!(
+            lines(text).collect::<Vec<_>>(),
+            [
+                Line::Category("Smilies"),
+                Line::Reaction(["yes", "b", "d", "1", "2", "desc"])
+            ]
+        );
     }
 }

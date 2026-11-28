@@ -177,12 +177,6 @@ pub fn find(key: &str) -> Option<&'static Pack> {
     PACKS.iter().find(|pack| pack.key == key)
 }
 
-/// The app's pack of this key, by the static key it is kept under.
-#[must_use]
-pub fn pack_key(key: &str) -> Option<&'static str> {
-    find(key).map(|pack| pack.key)
-}
-
 /// `seconds` into a note of `hz`, on `timbre`, before its envelope.
 fn wave(timbre: Timbre, hz: f32, seconds: f32) -> f32 {
     let phase = TAU * hz * seconds;
@@ -333,8 +327,6 @@ mod tests {
         let event = SoundEvent::Message;
         assert_ne!(render("chimes", event), render("retro", event));
         assert_eq!(render("nope", event), render(DEFAULT_PACK, event));
-        assert_eq!(pack_key("chimes"), Some("chimes"));
-        assert_eq!(pack_key("nope"), None);
         let rings: Vec<Vec<f32>> = PACKS
             .iter()
             .map(|pack| render(pack.key, SoundEvent::IncomingCall))
