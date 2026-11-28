@@ -82,7 +82,7 @@ reason = "unit-test module included only by track.rs cfg(test); omitted by cargo
 context = { "crates/teams-call/src/track.rs" = "6d4e8692460da51c26997e85f500f4838d67f3cd02b004cba42203a53727eeb9" }
 
 [unmapped_sources."crates/teams-media/src/video/effects/tests.rs"]
-sha256 = "cb1ce19ec37268fed2b9c4e2472156b7a71691003811ca451d8a6144722e5370"
+sha256 = "b5767979abc4153c9c829e54e96da2ab9d9ba9059de626be653fc0096b133e0f"
 reason = "unit-test module included only by effects.rs cfg(test); omitted by cargo-llvm-cov's test-file filter"
 context = { "crates/teams-media/src/video/effects.rs" = "7c4753841bcb551ab4210642856b58fef1f2696febbe662285cf6011c4db36dd" }
 
