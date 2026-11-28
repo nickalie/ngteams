@@ -80,7 +80,8 @@ const CONFIRM: (u32, u32) = (639, 534);
 const KEEP_AI: (u32, u32) = (789, 541);
 
 /// A settings file of the release before the move (main at 4edd10db), with a value other than the default for each
-/// setting where one is simple to write. The theme is Solarized Dark.
+/// setting where one is simple to write. The theme is Solarized Dark. It has no `font_family`, because a different
+/// font moves the clicked positions.
 const OLD_FILE: &str = r#"selected_chat = "19:qa929-chat@thread.v2"
 send_typing = false
 send_read_receipts = false
@@ -96,6 +97,7 @@ idle_minutes = 15
 manual_status = "do-not-disturb"
 log_level = "debug"
 microphone = "alsa_input.qa929-headset"
+speaker = "alsa_output.qa929-headset"
 camera = "qa929-camera"
 video_effect = "blur"
 follow_system_theme = false
@@ -192,6 +194,9 @@ struct Run<'a> {
 
 impl<'a> Run<'a> {
     fn start(sandbox: &'a Sandbox, dir: &Path, evidence: Option<&Path>) -> SandboxResult<Self> {
+        // A killed run can leave a question that the next child answers before it is ready.
+        let _ = fs::remove_file(sandbox.path(ASK));
+        let _ = fs::remove_file(sandbox.path(&format!("{ASK}.staged")));
         let child = sandbox.spawn(&std::env::current_exe()?, &[], &[(CHILD_ENV, &dir.to_string_lossy())])?;
         let mut running = Running::new(child)?;
         running
