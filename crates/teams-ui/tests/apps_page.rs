@@ -1047,6 +1047,22 @@ fn a_pasted_bot_s_mention_is_sent_with_its_app() {
     );
 }
 
+/// Where the cloud serves no apps, a pasted bot's mention is never sent as a bot's: the box asks for no app.
+#[test]
+fn a_pasted_bot_s_mention_is_not_sent_as_a_bot_s_without_the_apps_service() {
+    let (rig, cx) = bot_mention_pasted_in_other_group(|rig, _| *rig.core.capabilities.lock().unwrap() = Some(NO_APPS));
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let actions = std::mem::take(&mut *rig.core.actions.lock().unwrap());
+    assert!(
+        !actions.iter().any(|action| matches!(
+            action,
+            teams_core::Action::Send { text, .. } if text.bots().contains_key(&teams_proto::Mri::new(POLLS_BOT))
+        )),
+        "{actions:?}"
+    );
+}
+
 /// An ask for a pasted bot's app that failed is asked again at the next change of the text, and the mention is then
 /// sent with its app's id.
 #[test]

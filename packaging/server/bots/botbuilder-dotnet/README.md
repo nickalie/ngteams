@@ -17,8 +17,9 @@ Pinned: `Microsoft.Bot.Builder.Integration.AspNet.Core` 4.23.1 (`packages.lock.j
 By configuration alone: the SDK's own keys, read by `ConfigurationBotFrameworkAuthentication` (`appsettings.json` shows
 them; `run.sh` sets them in the environment from the variables below): `MicrosoftAppType`, `MicrosoftAppId`,
 `MicrosoftAppPassword`, `MicrosoftAppTenantId`, `ChannelService` any name but Microsoft's clouds', `ValidateAuthority =
-false`, `ToChannelFromBotLoginUrl = "<origin>/<tenant>"`, `ToChannelFromBotOAuthScope`, `ToBotFromChannelTokenIssuer =
-"<origin>/bot"`, `ToBotFromChannelOpenIdMetadataUrl` and `ToBotFromEmulatorOpenIdMetadataUrl` =
+false`, `ToChannelFromBotLoginUrl = "<origin>/adfs"` (with `<origin>/<tenant>`, MSAL.NET first asks Microsoft for
+instance metadata and fails where that host is not reached), `ToChannelFromBotOAuthScope`, `ToBotFromChannelTokenIssuer
+= "<origin>/bot"`, `ToBotFromChannelOpenIdMetadataUrl` and `ToBotFromEmulatorOpenIdMetadataUrl` =
 `"<origin>/bot/v1/.well-known/openidconfiguration"`, `OAuthUrl = "<origin>"`. .NET reads the CA from `SSL_CERT_FILE`,
 which the image's entrypoint points at the system's CAs and `BOT_CA_PEM`.
 
@@ -37,13 +38,13 @@ which the image's entrypoint points at the system's CAs and `BOT_CA_PEM`.
      -e BOT_ID=<bot id> -e BOT_SECRET=<secret> -e BOT_CA_PEM="$(cat ca.pem)" localhost/ngteams-bot-botbuilder-dotnet:1
    ```
 
-4. Press **Send a test activity** in Manage apps: the bot answers `200` when it took the server's token. Then add the
-   app from the Store and chat with it.
+4. Press **Send a test activity** in Manage apps: the bot answers with a 2xx status when it took the server's
+   token. Then add the app from the Store and chat with it.
 
 | Variable | What |
 |---|---|
 | `ORIGIN` | the server's public origin (`https`: every MSAL refuses another authority) |
-| `TENANT` | the server's tenant id (Manage apps shows it) |
+| `TENANT` | the server's tenant id: the `<id>` in the `issuer` (`<origin>/<id>/v2.0`) of `<origin>/botframework.com/v2.0/.well-known/openid-configuration` |
 | `BOT_ID`, `BOT_SECRET` | the bot's id and secret |
 | `SCOPE` | the server's `bots.scope`, default `https://api.botframework.com` |
 | `PORT` | where the bot listens, default `3978` |

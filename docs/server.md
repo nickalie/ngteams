@@ -685,11 +685,13 @@ tests run.
    same on the command line: `ngteams-server app add --name Echo --endpoint https://bots.example.com/api/messages`
    or `ngteams-server app add --package echo.zip`.
 3. **Copy the credentials.** The answer shows the bot's id and its secret once (Manage apps has **Copy**; the
-   command line prints them). A lost secret is replaced with **New secret** or `app rotate-secret <id>`; the old one
-   stops at once.
-4. **Configure the bot.** Give the bot its id, its secret, the server's tenant id (Manage apps shows it with the
-   settings to paste) and the settings of its SDK in [What each SDK needs](#what-each-sdk-needs). Start it, then
-   press **Send a test activity** in Manage apps: the bot answers `200` when it accepted the server's token.
+   command line prints `secret <secret>` and `bot <bot id>`, which for a package is the manifest's `botId`, not the
+   app's id). A lost secret is replaced with **New secret** or `app rotate-secret <id>`; the old one stops at once.
+4. **Configure the bot.** Give the bot its id, its secret, the server's tenant id (the `<id>` in the `issuer`,
+   `<origin>/<id>/v2.0`, of `<origin>/botframework.com/v2.0/.well-known/openid-configuration`) and the settings of its
+   SDK in [What each SDK needs](#what-each-sdk-needs) (Manage apps shows them to paste). Start it, then press **Send a
+   test activity** in Manage apps: the bot answers with a 2xx status (botbuilder-python with `201`) when it accepted
+   the server's token.
 5. **Use it.** People find the app in the **Store**, add it for themselves, to a group chat or to a team, and chat
    with the bot. In a group chat or a channel a bot gets only the messages that @mention it.
 

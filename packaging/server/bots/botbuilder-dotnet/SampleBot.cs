@@ -9,7 +9,7 @@ using Microsoft.Bot.Schema;
 using Microsoft.Bot.Schema.Teams;
 using Newtonsoft.Json.Linq;
 
-public class SampleBot(CloudAdapter adapter, IConfiguration configuration) : TeamsActivityHandler
+public class SampleBot(CloudAdapter adapter, IConfiguration configuration, ILogger<SampleBot> logger) : TeamsActivityHandler
 {
     private const string Name = "botbuilder-dotnet";
     private const string Adaptive = "application/vnd.microsoft.card.adaptive";
@@ -124,7 +124,17 @@ public class SampleBot(CloudAdapter adapter, IConfiguration configuration) : Tea
                 break;
             case "proactive":
                 var reference = turnContext.Activity.GetConversationReference();
-                _ = Task.Run(() => ProactiveAsync(reference));
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await ProactiveAsync(reference);
+                    }
+                    catch (Exception error)
+                    {
+                        logger.LogError(error, "proactive");
+                    }
+                });
                 break;
             default:
                 await Send($"echo from {Name}: {text}");

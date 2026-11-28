@@ -36,13 +36,13 @@ msal-node with authority `<origin>/<tenant>` and `knownAuthorities: ["<origin ho
      -e BOT_ID=<bot id> -e BOT_SECRET=<secret> -e BOT_CA_PEM="$(cat ca.pem)" localhost/ngteams-bot-teams:1
    ```
 
-4. Press **Send a test activity** in Manage apps: the bot answers `200` when it took the server's token. Then add the
-   app from the Store and chat with it.
+4. Press **Send a test activity** in Manage apps: the bot answers with a 2xx status when it took the server's
+   token. Then add the app from the Store and chat with it.
 
 | Variable | What |
 |---|---|
 | `ORIGIN` | the server's public origin (`https`: every MSAL refuses another authority) |
-| `TENANT` | the server's tenant id (Manage apps shows it) |
+| `TENANT` | the server's tenant id: the `<id>` in the `issuer` (`<origin>/<id>/v2.0`) of `<origin>/botframework.com/v2.0/.well-known/openid-configuration` |
 | `BOT_ID`, `BOT_SECRET` | the bot's id and secret |
 | `SCOPE` | the server's `bots.scope`, default `https://api.botframework.com` |
 | `PORT` | where the bot listens, default `3978` |

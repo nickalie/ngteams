@@ -98,7 +98,7 @@ struct Addresses {
     metadata: String,
     /// A Bot Framework SDK's sign-in address: the server's tenant path that MSAL takes as its authority.
     login: String,
-    /// Python's: an `/adfs` authority, which msal-python takes without asking Microsoft about it.
+    /// Python's and .NET's: an `/adfs` authority, which msal-python and MSAL.NET take without asking Microsoft.
     adfs: String,
 }
 
@@ -178,7 +178,7 @@ fn dotnet(at: &Addresses, id: &str, secret: &str) -> String {
         ("MicrosoftAppId", quoted(id)),
         ("MicrosoftAppPassword", quoted(secret)),
         ("MicrosoftAppTenantId", quoted("")),
-        ("ToChannelFromBotLoginUrl", quoted(&at.login)),
+        ("ToChannelFromBotLoginUrl", quoted(&at.adfs)),
         ("ToChannelFromBotOAuthScope", quoted(BOT_SCOPE)),
         ("ToBotFromChannelTokenIssuer", quoted(&at.issuer)),
         ("ToBotFromChannelOpenIdMetadataUrl", quoted(&at.metadata)),
@@ -312,10 +312,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&shown.text).unwrap();
         assert_eq!(json["MicrosoftAppId"], ID);
         assert_eq!(json["MicrosoftAppPassword"], "made-up-secret");
-        assert_eq!(
-            json["ToChannelFromBotLoginUrl"],
-            "https://teams.example.test/botframework.com"
-        );
+        assert_eq!(json["ToChannelFromBotLoginUrl"], "https://teams.example.test/adfs");
         assert_eq!(json["ToChannelFromBotOAuthScope"], BOT_SCOPE);
         assert_eq!(json["ToBotFromChannelTokenIssuer"], "https://teams.example.test/bot");
         assert_eq!(

@@ -232,14 +232,14 @@ name = "app_health_window"
 harness = false
 
 [[test]]
-# a bot's cards with the bots shown, over the fake engine, in the UI sandbox, screenshotted in each theme under
+# a bot's cards, over the fake engine, in the UI sandbox, screenshotted in each theme under
 # `target/ui-shots/bot-cards-*.png`
 name = "bot_cards_window"
 harness = false
 
 [[test]]
 # the compose box's Actions and apps, an app's search, an action dialog and its submit, a web-page dialog, a message's
-# "More actions" with apps and a card's task/fetch dialog, with the bots shown, over the fake engine, in the UI sandbox,
+# "More actions" with apps and a card's task/fetch dialog, over the fake engine, in the UI sandbox,
 # screenshotted in each theme under `target/ui-shots/message-extensions-*.png`
 name = "message_extensions_window"
 harness = false
@@ -251,7 +251,7 @@ name = "rtl_text_window"
 harness = false
 
 [[test]]
-# a bot's chat, its intro and the mention picker's bot, with the bots shown, over the fake engine, in the UI sandbox,
+# a bot's chat, its intro and the mention picker's bot, over the fake engine, in the UI sandbox,
 # screenshotted in each theme under `target/ui-shots/bot-chat-*.png`
 name = "bot_chat_window"
 harness = false

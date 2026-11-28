@@ -514,6 +514,7 @@ async fn the_operator_manages_apps_on_the_command_line() {
         .unwrap();
     assert!(uploaded.starts_with(&format!("added {app_id} ")), "{uploaded}");
     assert!(uploaded.contains("\nsecret "), "{uploaded}");
+    assert!(uploaded.contains(&format!("\nbot {bot_id}")), "{uploaded}");
 
     let listed = cli(server, &["app", "list"], "").await.unwrap();
     assert!(

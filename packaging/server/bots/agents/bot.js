@@ -21,7 +21,7 @@ const authConfig = {
   tenantId: env('TENANT'),
   authorityEndpoint: origin,
   issuers: [`${origin}/bot`],
-  scope: `${env('SCOPE')}/.default`,
+  scope: `${process.env.SCOPE || 'https://api.botframework.com'}/.default`,
 };
 
 const msal = new ConfidentialClientApplication({

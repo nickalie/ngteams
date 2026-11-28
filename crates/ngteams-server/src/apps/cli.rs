@@ -43,6 +43,18 @@ fn line(output: &mut dyn Write, text: &str) -> Result<(), CliError> {
     writeln!(output, "{text}").map_err(CliError::Output)
 }
 
+/// What `app add` prints: the app, its secret once, and its bot's id, which a package's manifest may set apart.
+fn added(output: &mut dyn Write, record: &super::repo::Record, secret: Option<&str>) -> Result<(), CliError> {
+    line(output, &format!("added {} ({})", record.app.id, record.app.name))?;
+    if let Some(secret) = secret {
+        line(output, &format!("secret {secret}"))?;
+    }
+    if let Some(bot) = &record.bot {
+        line(output, &format!("bot {}", bot.id))?;
+    }
+    Ok(())
+}
+
 /// Runs an app command on the configured database and file store.
 ///
 /// # Errors
@@ -81,11 +93,7 @@ pub async fn run(config: &Config, command: AppCommand, output: &mut dyn Write) -
                 let (record, secret) = super::register(registry, Actor::CLI, &form).await?;
                 (record, Some(secret))
             };
-            line(output, &format!("added {} ({})", record.app.id, record.app.name))?;
-            if let Some(secret) = secret {
-                line(output, &format!("secret {secret}"))?;
-            }
-            Ok(())
+            added(output, &record, secret.as_deref())
         }
         AppCommand::List => {
             for record in super::repo::list(&db).await? {

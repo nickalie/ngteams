@@ -16,7 +16,7 @@ const env = (name: string): string => {
 
 const origin = env('ORIGIN');
 const tenant = env('TENANT');
-const scope = env('SCOPE');
+const scope = process.env.SCOPE || 'https://api.botframework.com';
 const clientId = env('BOT_ID');
 const name = 'teams-sdk';
 const connection = 'synthetic-idp';

@@ -195,7 +195,7 @@ cards ask their bot through `teams_ui::bot_card`:
   compose box (a result's card; in a channel the reply box of the post's thread, which opens), or shows (a message, an error); `signin` opens its page in the browser;
 - the bot's app id is the bot's own id until the engine knows each bot's app.
 
-Without the flag, or in read-only mode, a card's bot buttons open the message in Teams on the web, as before.
+Where the cloud serves no apps (an own server whose authz names no `appsService`), or in read-only mode, a card's bot buttons open the message in Teams on the web, as before.
 
 ## Outgoing webhooks
 
