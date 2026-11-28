@@ -1,6 +1,6 @@
 ---
 worth: later
-where: crates/ngteams/src/signin.rs, crates/teams-auth/src/broker.rs, crates/teams-auth/src/secrets.rs
+where: crates/teams-app/src/signin.rs, crates/ngteams/src/signin.rs, crates/teams-auth/src/broker.rs, crates/teams-auth/src/secrets.rs
 added: 2026-11-14
 ---
 # A locked keyring at sign-in is said in plain words

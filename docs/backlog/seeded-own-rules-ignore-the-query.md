@@ -1,6 +1,6 @@
 ---
 worth: later
-where: crates/teams-signin/src/classify.rs (SIGN_IN, QueryRule::Any)
+where: crates/teams-app/src/signin_bound/classify.rs (SIGN_IN, QueryRule::Any)
 added: 2026-10-21
 ---
 # the sign-in window's rules let Entra's sign-in form out whatever its query

@@ -14,13 +14,12 @@
 #[cfg(any(windows, target_os = "macos", test))]
 mod webview_policy;
 
-pub mod classify;
 mod diagnostics;
 pub mod egress;
+pub use teams_app::signin_bound::{classify, hosts};
 #[cfg(target_os = "linux")]
 pub mod engine;
 pub mod guard;
-pub mod hosts;
 #[cfg(target_os = "linux")]
 pub mod input;
 #[cfg(target_os = "linux")]

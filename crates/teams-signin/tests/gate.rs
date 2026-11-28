@@ -1,4 +1,4 @@
-//! The personal sign-in window's bound: the host list, the guard bound to it, the classifier's personal
+//! The personal sign-in window's bound with its guard: the guard bound to the host list, the classifier's personal
 //! rules, and the host gate opening a tunnel only to a host on the list (a local server standing in for Entra, through
 //! `SignInHosts::for_tests`), every other connection refused and logged. Every host and value is made up.
 
@@ -13,7 +13,7 @@ use teams_auth::token::NATIVE_CLIENT_REDIRECT;
 use teams_signin::classify::{Classification, Classifier, OwnKind};
 use teams_signin::egress::HostGate;
 use teams_signin::guard::{Decision, Guard};
-use teams_signin::hosts::{ENTRA_HOSTS, SignInHosts};
+use teams_signin::hosts::SignInHosts;
 use teams_signin_protocol::protocol::OK;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -27,73 +27,6 @@ fn guard(hosts: SignInHosts) -> TestResult<Arc<Guard>> {
     let guard = Guard::new(Arc::new(hosts), redirect, sender);
     assert_eq!(guard.answer("armed 1 1"), OK);
     Ok(Arc::new(guard))
-}
-
-#[test]
-fn the_bound_is_entra_and_the_identity_provider_s_hosts_never_a_microsoft_service() -> TestResult {
-    let hosts = SignInHosts::entra_with(&["sso.example.test".to_owned()])?;
-    for host in ENTRA_HOSTS.iter().copied().chain(["sso.example.test"]) {
-        assert!(hosts.admits(host, 443), "{host}");
-        assert!(!hosts.admits(host, 80), "{host} on 80");
-    }
-    for host in [
-        "teams.microsoft.com",
-        "graph.microsoft.com",
-        "evil.example.test",
-        "127.0.0.1",
-    ] {
-        assert!(!hosts.admits(host, 443), "{host}");
-    }
-    for refused in [
-        "teams.microsoft.com",
-        "login.microsoftonline.com",
-        "tenant.sharepoint.com",
-        "x.cloud.microsoft",
-        "Upper.example.test",
-        "localhost",
-        "-bad.example.test",
-    ] {
-        assert!(SignInHosts::entra_with(&[refused.to_owned()]).is_err(), "{refused}");
-    }
-    Ok(())
-}
-
-#[test]
-fn a_refused_navigation_names_only_a_host_the_user_could_add_to_idp_hosts() -> TestResult {
-    // the account names no identity provider yet: its organization's sign-in page is refused, and its host (alone,
-    // never the path or the query) is the one the window's answer names
-    let hosts = SignInHosts::entra_with(&[])?;
-    assert_eq!(
-        hosts
-            .idp_candidate("https://sso.example.test/adfs/ls/?SAMLRequest=made-up&RelayState=made-up")
-            .as_deref(),
-        Some("sso.example.test")
-    );
-    assert_eq!(
-        hosts.idp_candidate("https://SSO.Example.test/").as_deref(),
-        Some("sso.example.test"),
-        "a URL's host is lowercase"
-    );
-    // nothing to add: a Microsoft service, a host on the bound, an address, a page that isn't https
-    for url in [
-        "https://go.microsoft.com/fwlink/?LinkId=made-up",
-        "https://www.office.com/",
-        "https://login.microsoftonline.com:8443/x",
-        "https://192.0.2.1/x",
-        "http://sso.example.test/adfs/ls/",
-        "https://localhost/x",
-        "about:blank",
-        "not a url",
-    ] {
-        assert_eq!(hosts.idp_candidate(url), None, "{url}");
-    }
-    let named = SignInHosts::entra_with(&["sso.example.test".to_owned()])?;
-    assert_eq!(
-        named.idp_candidate("https://sso.example.test:8443/adfs/ls/"),
-        None,
-        "on the bound already"
-    );
-    Ok(())
 }
 
 #[test]

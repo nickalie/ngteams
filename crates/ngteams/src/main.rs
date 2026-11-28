@@ -14,7 +14,7 @@ use clap::Parser as _;
 use gpui::{App, AppContext as _, AsyncApp, Entity};
 #[cfg(not(test))]
 use ngteams::accounts::{self, Runner, StartFailed, Started};
-use ngteams::accounts_file::{PersonalAccount, PersonalPaths};
+use ngteams::accounts_file::{FromEnv as _, PersonalAccount, PersonalPaths};
 #[cfg(not(test))]
 use ngteams::app;
 use ngteams::app::{Launch, SignInAgain};
@@ -217,7 +217,7 @@ fn install_web_engine(archive: &std::path::Path) -> ExitCode {
         let pins = teams_web_engine::Pins::compiled()
             .map_err(|error| error.to_string())?
             .ok_or("this build has no pinned web engine: install your distribution's wpewebkit package")?;
-        let locations = ngteams::accounts_file::PersonalPaths::from_env().map_err(|error| error.to_string())?;
+        let locations = PersonalPaths::from_env().map_err(|error| error.to_string())?;
         pins.install(locations.data_dir(), archive)
             .map_err(|error| error.to_string())
     })();

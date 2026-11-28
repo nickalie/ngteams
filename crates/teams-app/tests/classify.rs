@@ -1,7 +1,7 @@
-//! The sign-in window's rules (`teams_signin::classify`): reads, the Entra token endpoint with its captured queries,
+//! The sign-in window's rules (`teams_app::signin_bound::classify`): reads, the Entra token endpoint with its captured queries,
 //! Teams' authz exchange without a query and Entra's sign-in form; everything else, lookalikes among them, unknown.
 
-use teams_signin::classify::{Classification, Classifier, OwnKind, OwnRule, QueryRule, ValueRule};
+use teams_app::signin_bound::classify::{Classification, Classifier, OwnKind, OwnRule, QueryRule, ValueRule};
 
 /// The token endpoint with the query the web client sends most: its request id alone.
 const TOKEN: &str = "https://login.microsoftonline.com/0f0e0d0c-0b0a-0908-0706-050403020100/oauth2/v2.0/token\
