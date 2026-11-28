@@ -1950,6 +1950,51 @@ fn escape_in_the_apps_flyout_of_a_focused_plus_gives_the_keys_back_to_plus() {
 }
 
 #[test]
+fn a_second_click_on_plus_closes_the_apps_flyout_and_gives_the_keys_back_to_the_text() {
+    let rig = Rig::start();
+    *rig.core.extension_apps.lock().unwrap() =
+        teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    focus_box(&compose, cx);
+    click(cx, "compose-apps");
+    assert!(compose.read_with(cx, |compose, _| compose.apps_flyout().is_some()));
+    assert!(!box_focused(&compose, cx), "the flyout's search takes the keys");
+    click(cx, "compose-apps");
+    assert!(
+        compose.read_with(cx, |compose, _| compose.apps_flyout().is_none()),
+        "the second click closes the flyout"
+    );
+    assert!(box_focused(&compose, cx), "the keys go back to the text");
+}
+
+#[test]
+fn open_plus_opens_the_apps_flyout_while_the_box_offers_apps_else_the_menu() {
+    let rig = Rig::start();
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.open_plus(window, cx)));
+    draw(cx);
+    assert!(compose.read_with(cx, |compose, _| compose.apps_flyout().is_some()));
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.open_plus(window, cx)));
+    draw(cx);
+    assert!(
+        compose.read_with(cx, |compose, _| compose.apps_flyout().is_some()),
+        "a second open keeps the flyout open"
+    );
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    cx.update(|window, cx| compose.update(cx, |compose, cx| compose.open_plus(window, cx)));
+    draw(cx);
+    assert_eq!(
+        compose.read_with(cx, |compose, _| compose.menu_open()),
+        Some(MenuKind::Plus)
+    );
+    assert!(compose.read_with(cx, |compose, _| compose.apps_flyout().is_none()));
+}
+
+#[test]
 fn escape_held_in_the_apps_flyout_does_not_cancel_the_reply() {
     let rig = Rig::start();
     *rig.core.extension_apps.lock().unwrap() =

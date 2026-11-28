@@ -30,7 +30,7 @@ use std::{fs, mem};
 use common::{FakeCore, FakeEvents, LAB_A, LAB_B};
 use gpui::{App, AppContext as _, Entity, Window};
 use teams_store::{Conversation, ConversationKind, Member, Message};
-use teams_ui::compose::{Compose, CustomizeDown, MenuKind};
+use teams_ui::compose::{Compose, CustomizeDown};
 use teams_ui::settings::{ComposeTool, Settings, SettingsModel};
 use teams_ui::settings_view::Page;
 use teams_ui::shell::{Shell, ShellParts};
@@ -332,7 +332,7 @@ fn show(shell: &Entity<Shell>, surface: &str, window: &mut Window, cx: &mut App)
                 "customize" => compose.customize_toolbar(window, cx),
                 "customize-click" => right_click_list(compose, window, cx),
                 "ai-plus" | "large-font" | "hidden" | "narrow-hidden" => {
-                    compose.open_menu(MenuKind::Plus, window, cx);
+                    compose.open_plus(window, cx);
                 }
                 "narrow-more" => compose.open_more(window, cx),
                 _ => {}

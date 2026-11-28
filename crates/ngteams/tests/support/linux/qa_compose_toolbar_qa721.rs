@@ -18,7 +18,8 @@
 //!   arrows in it), and Tab comes back the same way.
 //! - **The row's keys**: Right, Left, Home and End move in the tools and do not wrap; Up and Down do nothing; the
 //!   row keeps the last tool on both sides.
-//! - **Menus**: Enter on "+" and on Emoji opens its menu with the keys in it; Escape gives them back to that tool.
+//! - **Menus**: Enter on "+" opens its flyout, and Enter on Emoji its picker, with the keys in it; Escape gives them
+//!   back to that tool.
 //! - **A staged file** walked to the tools and back, its button's ring in Teams Light and Teams Dark.
 //! - **Other editors**: edit mode, New message's "To" and its box, and the search box keep their Tab order.
 
@@ -28,7 +29,10 @@ use std::{fs, thread};
 use gpui::{App, Entity, Window};
 use serde_json::Value;
 
-use super::{AB_CHAT, Check, SETTLE, STEP, SandboxResult, Shell, User, ensure, hidden, main_box, shown, text_of};
+use super::{
+    AB_CHAT, Check, SETTLE, STEP, SandboxResult, Shell, User, ensure, flyout_open, hidden, main_box, menus_closed,
+    shown, text_of,
+};
 
 /// QA 721's checks of the first run.
 pub(super) const FIRST: [Check; 8] = [
@@ -472,33 +476,34 @@ fn row_keys(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// Enter on "+" and on Emoji opens the menu with the keys in it; Escape gives them back to that tool.
+/// Enter on "+" opens its flyout, and Enter on Emoji its picker, with the keys in it; Escape gives them back to that
+/// tool.
 fn menu_keys(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
     user.press("tab")?;
     user.until("Tab to the tools", |state| main_box(state)["tools_focused"] == true)?;
     let plus = keys_of(&user.step("end")?);
     user.press("enter")?;
-    let open = user.until("+ open by Enter", |state| main_box(state)["menu"] == "Plus")?;
+    let open = user.until("+ open by Enter", |state| flyout_open(main_box(state)))?;
     ensure(keys_of(&open) != plus && main_box(&open)["focused"] == false, || {
         format!("the keys are not in + after Enter: {open}")
     })?;
     let down = user.step("down")?;
     ensure(
-        main_box(&down)["menu"] == "Plus" && main_box(&down)["focused"] == false,
+        flyout_open(main_box(&down)) && main_box(&down)["focused"] == false,
         || format!("Down in + leaves it: {down}"),
     )?;
     user.settled_shot("qa721-r1-plus-by-enter")?;
     user.press("escape")?;
-    let closed = user.until("+ closed by Escape", |state| main_box(state)["menu"].is_null())?;
+    let closed = user.until("+ closed by Escape", |state| menus_closed(main_box(state)))?;
     ensure(keys_of(&closed) == plus, || {
         format!("Escape from + does not give the keys back to +: {closed}")
     })?;
     user.ring_shots("qa721-r1-plus-after-escape-ring")?;
-    // the keys act in +: Up selects its last row, Customize toolbar, and Enter opens it
+    // the keys act in the flyout: Tab goes from its search to Customize toolbar at its foot, and Enter opens it
     user.press("enter")?;
-    user.until("+ open by Enter again", |state| main_box(state)["menu"] == "Plus")?;
-    user.press("up")?;
+    user.until("+ open by Enter again", |state| flyout_open(main_box(state)))?;
+    user.press("tab")?;
     user.press("enter")?;
     user.until("Customize toolbar by the keys of +", |state| {
         main_box(state)["customize"] == true
@@ -506,7 +511,7 @@ fn menu_keys(user: &mut User<'_>) -> SandboxResult {
     user.settled_shot("qa721-r1-customize-by-keys")?;
     user.press("escape")?;
     user.close_menus("chat")?;
-    // the list opened from the menu of "+": its Escape gives the keys back to "+"
+    // the list opened from the flyout of "+": its Escape gives the keys back to "+"
     let back = user.until("the keys back on + after the list", |state| {
         main_box(state)["tools_focused"] == true
     })?;

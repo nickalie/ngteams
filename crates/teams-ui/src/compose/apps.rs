@@ -36,6 +36,8 @@ pub(super) struct Apps {
     at: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// The rows of the hidden tools' actions that the open flyout lists, in its order.
     rows: Vec<Row>,
+    /// The tool that the keys go back to when the open flyout closes.
+    back_to: Option<gpui::FocusHandle>,
 }
 
 impl Compose {
@@ -74,6 +76,9 @@ impl Compose {
     /// Opens Actions and apps, or closes it when open.
     pub fn toggle_apps(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.apps.flyout.take().is_some() {
+            // closed by its button, as a menu of the tools: the keys go back to the box, never to where the press put them
+            let back_to = self.apps.back_to.take();
+            self.keys_back(back_to.as_ref(), window, cx);
             return cx.notify();
         }
         if !self.offers_apps() {
@@ -84,6 +89,7 @@ impl Compose {
         let actions = self.flyout_actions(&rows, window, cx);
         let flyout = cx.new(|cx| AppsFlyout::new(core, conversation, window, cx).with_actions(actions));
         let back_to = self.tool_to_return_to();
+        self.apps.back_to.clone_from(&back_to);
         let events = cx.subscribe_in(
             &flyout,
             window,
@@ -115,6 +121,15 @@ impl Compose {
         self.apps.flyout = Some((flyout, events));
         self.apps.rows = rows;
         cx.notify();
+    }
+
+    /// Opens "+" as a click on it does: the flyout when the box offers apps, else the menu of the hidden tools.
+    pub fn open_plus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.offers_apps() {
+            self.open_menu(MenuKind::Plus, window, cx);
+        } else if self.apps.flyout.is_none() {
+            self.toggle_apps(window, cx);
+        }
     }
 
     /// Whether the keys are in the open flyout.

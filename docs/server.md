@@ -716,8 +716,8 @@ it is in (here a proactive message in its 1:1 chat with a person). Every value h
 
 ```sh
 origin=https://teams.example.com
-tenant=00000000-0000-4000-8000-000000000001     # the server's tenant id
-bot=00000000-0000-4000-8000-0000000000b1        # the bot's id
+tenant='<guid:1>'     # the server's tenant id
+bot='<guid:2>'        # the bot's id
 token=$(curl -sS "$origin/$tenant/oauth2/v2.0/token" \
   --data-urlencode grant_type=client_credentials \
   --data-urlencode client_id="$bot" \

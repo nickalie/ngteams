@@ -72,7 +72,7 @@ use teams_ui::VideoFeed;
 use teams_ui::call_stage::CallStage;
 use teams_ui::chat_people::{ChatPeople, HistoryChoice, Picked};
 use teams_ui::chat_view::{Item, MessageAction};
-use teams_ui::compose::{Compose, MenuKind};
+use teams_ui::compose::Compose;
 use teams_ui::fun_picker::{FunPicker, Item as FunItem, Tab as FunTab};
 use teams_ui::global_search::{Mode as SearchMode, Tab};
 use teams_ui::new_chat::{NewChat, Recipient, Suggested};
@@ -848,11 +848,11 @@ const STEPS: [Step; 5 + 378 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5 + 11] = [
     // no AI button: "+" holds Correct, Translate and the language, over Customize toolbar
     ("compose-ai-plus", |shell, window, cx| {
         type_in_compose(shell, TOUR_DRAFT, window, cx);
-        with_compose(shell, cx, |compose, cx| compose.open_menu(MenuKind::Plus, window, cx));
+        with_compose(shell, cx, |compose, cx| compose.open_plus(window, cx));
     }),
     // Correct and Translate shown on the bar, the language menu open by Translate's chevron
     ("compose-ai-shown", |shell, window, cx| {
-        with_compose(shell, cx, |compose, cx| compose.close_more(window, cx));
+        with_compose(shell, cx, |compose, cx| close_plus(compose, window, cx));
         show_compose_ai_tools(shell, true, cx);
         with_compose(shell, cx, |compose, cx| compose.open_language_menu(window, cx));
     }),
@@ -870,14 +870,14 @@ const STEPS: [Step; 5 + 378 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5 + 11] = [
     ("compose-hidden-plus", |shell, window, cx| {
         with_compose(shell, cx, |compose, cx| compose.close_customize(window, cx));
         hide_compose_tools(shell, &[ComposeTool::Format, ComposeTool::Emoji], cx);
-        with_compose(shell, cx, |compose, cx| compose.open_menu(MenuKind::Plus, window, cx));
+        with_compose(shell, cx, |compose, cx| compose.open_plus(window, cx));
     }),
     // the same in Teams Dark
     ("compose-hidden-plus-dark", |shell, _, cx| {
         fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
     }),
     ("compose-toolbar-over", |shell, window, cx| {
-        with_compose(shell, cx, |compose, cx| compose.close_more(window, cx));
+        with_compose(shell, cx, |compose, cx| close_plus(compose, window, cx));
         hide_compose_tools(shell, &[], cx);
         clear_compose(shell, window, cx);
         show_chat_in_theme(shell, teams_ui::theme::LIGHT_KEY, window, cx);
@@ -5184,6 +5184,14 @@ fn hide_compose_tools(shell: &Entity<Shell>, tools: &[ComposeTool], cx: &mut App
     model.update(cx, |model, cx| {
         model.change(|settings| settings.compose_hidden = tools.to_vec(), cx);
     });
+}
+
+/// Closes "+" of the box: its flyout, or the menu of tools.
+fn close_plus(compose: &mut Compose, window: &mut Window, cx: &mut Context<Compose>) {
+    compose.close_more(window, cx);
+    if compose.apps_flyout().is_some() {
+        compose.toggle_apps(window, cx);
+    }
 }
 
 fn with_compose(shell: &Entity<Shell>, cx: &mut App, change: impl FnOnce(&mut Compose, &mut Context<Compose>)) {

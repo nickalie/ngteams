@@ -8,6 +8,9 @@
 //!   (Correct, Translate, the language) by the pointer and the keys, with a made-up `claude` on the app's `PATH`;
 //!   Ctrl+Shift+G and Ctrl+Shift+Y; the language stays saved. Correct and Translate shown on the bar from the list, and
 //!   Translate's chevron opens the language menu.
+//! - **"+" of a chat's box** is Actions and apps, as on Teams for an account whose cloud serves apps: a flyout that
+//!   lists the hidden tools' rows over the apps, with its first row lit and "Customize toolbar" at its foot. The
+//!   other boxes (a channel's, a thread's, New message's, edit mode) keep the menu of the hidden tools.
 //! - **The customize list**: a right click on the toolbar, and "Customize toolbar" in "+". Each click hides or shows a
 //!   button (the AI tools too); Send and "+" do not hide. A hidden button's action is in "+" and works from there.
 //! - **Settings** > Appearance > "Message box toolbar": its switches and the box's list agree, both ways.
@@ -830,6 +833,11 @@ fn main_tool(from_right: i32) -> (i32, i32) {
     (MAIN_LAST_TOOL_X - TOOL_STEP * from_right, MAIN_ROW_Y)
 }
 
+/// "Customize toolbar" at the foot of Actions and apps, from the centre of "+" that opened it, at 1280 px: the flyout
+/// opens upwards, its right edge at the right of "+".
+const FLYOUT_CUSTOMIZE_DX: i32 = -246;
+const FLYOUT_FOOT_Y: i32 = 711;
+
 /// The switches of "Message box toolbar" on the Appearance page, scrolled to its foot.
 const SETTINGS_FORMAT: (i32, i32) = (1135, 411);
 const SETTINGS_EMOJI: (i32, i32) = (1135, 475);
@@ -859,6 +867,34 @@ fn shown(state: &Value) -> Vec<String> {
 
 fn shown_is(state: &Value, names: &[&str]) -> bool {
     shown(state) == names
+}
+
+/// Whether Actions and apps, the flyout of "+" in a chat's box, is open with the account's apps read.
+fn flyout_open(boxed: &Value) -> bool {
+    boxed["flyout"]["loaded"] == true
+}
+
+/// The rows of the AI tools that Actions and apps lists over its apps while the AI tools are not on the bar.
+const AI_ROWS: &[&str] = &["compose-correct-row", "compose-translate-row", "compose-language-row"];
+
+/// Whether the main box's open flyout lists the box's own actions `rows` over its apps, in that order.
+fn flyout_actions_are(state: &Value, rows: &[&str]) -> bool {
+    main_box(state)["flyout"]["actions"].as_array().is_some_and(|actions| {
+        actions
+            .iter()
+            .map(|row| row.as_str().unwrap_or_default())
+            .eq(rows.iter().copied())
+    })
+}
+
+/// Whether "+" of a box is open: the flyout in a chat's box, the menu in the others.
+fn plus_open(boxed: &Value) -> bool {
+    boxed["menu"] == "Plus" || flyout_open(boxed)
+}
+
+/// Whether no menu of the box's tools and no flyout is open.
+fn menus_closed(boxed: &Value) -> bool {
+    boxed["menu"].is_null() && boxed["flyout"].is_null()
 }
 
 fn call_box(state: &Value) -> &Value {
@@ -917,10 +953,24 @@ impl User<'_> {
         self.until("the shown AI tools", |state| shown_is(state, names))
     }
 
-    /// Opens the menu of the main box's tool `from_right` by a click; waits for the menu `kind`.
+    /// Opens the menu of the main box's tool `from_right` by a click; waits for the menu `kind`. "+" of the chat's
+    /// box is Actions and apps, as on Teams (the menu in edit mode): it waits for the flyout with the apps read.
     fn click_menu(&mut self, from_right: i32, kind: &str) -> SandboxResult<Value> {
         self.click(main_tool(from_right))?;
+        if kind == "Plus" {
+            return self.until("\"+\"", |state| plus_open(main_box(state)));
+        }
         self.until(&format!("the {kind} menu"), |state| main_box(state)["menu"] == kind)
+    }
+
+    /// "Customize toolbar" at the foot of the flyout that "+" at `plus_x` opened, by a click; waits for the list.
+    fn customize_from_flyout(&mut self, plus_x: i32) -> SandboxResult<Value> {
+        self.click((plus_x + FLYOUT_CUSTOMIZE_DX, FLYOUT_FOOT_Y))?;
+        let state = self.until("the list from the flyout", |state| main_box(state)["customize"] == true)?;
+        ensure(menus_closed(main_box(&state)), || {
+            format!("the flyout stays open: {state}")
+        })?;
+        Ok(state)
     }
 
     fn right_click(&mut self, (x, y): (i32, i32)) -> SandboxResult {
@@ -967,13 +1017,13 @@ impl User<'_> {
         for _ in 0..3 {
             let state = self.state()?;
             let boxed = &state[key];
-            if boxed["menu"].is_null() && boxed["customize"] == false && boxed["language_open"] == false {
+            if menus_closed(boxed) && boxed["customize"] == false && boxed["language_open"] == false {
                 return Ok(state);
             }
             self.press("escape")?;
         }
         self.until("the menus closed", |state| {
-            state[key]["menu"].is_null() && state[key]["customize"] == false
+            menus_closed(&state[key]) && state[key]["customize"] == false
         })
     }
 }
@@ -1002,9 +1052,12 @@ fn bar_and_ai_in_plus(user: &mut User<'_>) -> SandboxResult {
         ensure(main_box(&state)["focused"] == false, || {
             format!("the text keeps the keyboard with \"+\" open: {state}")
         })?;
+        ensure(flyout_actions_are(&state, AI_ROWS), || {
+            format!("the flyout does not list the AI rows over its apps: {state}")
+        })?;
         user.settled_shot(&format!("plus-ai-rows-{theme}"))?;
         user.press("escape")?;
-        let state = user.until("\"+\" closed", |state| main_box(state)["menu"].is_null())?;
+        let state = user.until("\"+\" closed", |state| menus_closed(main_box(state)))?;
         ensure(main_box(&state)["focused"] == true, || {
             format!("Escape did not give the keyboard back: {state}")
         })?;
@@ -1013,7 +1066,7 @@ fn bar_and_ai_in_plus(user: &mut User<'_>) -> SandboxResult {
     // a second click on the button closes its menu
     user.click_menu(0, "Plus")?;
     user.click(main_tool(0))?;
-    user.until("\"+\" closed by its button", |state| main_box(state)["menu"].is_null())?;
+    user.until("\"+\" closed by its button", |state| menus_closed(main_box(state)))?;
     user.type_text(" ok")?;
     user.until("the keyboard after the menu", |state| {
         text_of(main_box(state)) == "a draft for the bar ok"
@@ -1029,12 +1082,12 @@ fn ai_rows_act(user: &mut User<'_>) -> SandboxResult {
     user.type_text("hello teh team")?;
     user.click_menu(0, "Plus")?;
     user.tool.hold(true)?;
-    user.press("down")?;
+    // the flyout opens with its first row lit
     user.settled_shot("plus-first-row")?;
     user.press("enter")?;
     let state = user.until("Correct by its row", |state| main_box(state)["correction"] == "Running")?;
-    ensure(main_box(&state)["menu"].is_null(), || {
-        format!("the menu stays open: {state}")
+    ensure(menus_closed(main_box(&state)), || {
+        format!("the flyout stays open: {state}")
     })?;
     user.click_menu(0, "Plus")?;
     user.settled_shot("plus-stop-correcting")?;
@@ -1043,22 +1096,19 @@ fn ai_rows_act(user: &mut User<'_>) -> SandboxResult {
     user.until("the correction", |state| main_box(state)["correction"] == "Proposed")?;
     user.settled_shot("ai-correction-proposed")?;
     user.click_menu(0, "Plus")?;
-    user.press("down")?;
     user.press("enter")?;
     user.press("enter")?;
     user.until("the correction taken", |state| {
         text_of(main_box(state)) == "hello the team"
     })?;
-    // Up from no row: Customize toolbar; Up again: the language row
+    // the third row: the language
     user.click_menu(0, "Plus")?;
-    user.press("up")?;
-    user.press("up")?;
+    user.press("down")?;
+    user.press("down")?;
     user.settled_shot("plus-language-row")?;
     user.press("enter")?;
     let state = user.until("the language menu", |state| main_box(state)["language_open"] == true)?;
-    ensure(main_box(&state)["menu"].is_null(), || {
-        format!("\"+\" stays open: {state}")
-    })?;
+    ensure(menus_closed(main_box(&state)), || format!("\"+\" stays open: {state}"))?;
     user.shots_in_both_themes("ai-language-menu")?;
     user.type_text("German")?;
     user.press("enter")?;
@@ -1071,7 +1121,6 @@ fn ai_rows_act(user: &mut User<'_>) -> SandboxResult {
     user.close_menus("chat")?;
     user.click_menu(0, "Plus")?;
     user.settled_shot("plus-german")?;
-    user.press("down")?;
     user.press("down")?;
     user.press("enter")?;
     let state = user.until("the translation", |state| text_of(main_box(state)) == "hallo the team")?;
@@ -1156,15 +1205,15 @@ fn ai_tools_on_the_bar(user: &mut User<'_>) -> SandboxResult {
     user.until("Translate by its button", |state| {
         text_of(main_box(state)) == "hallo teh bar"
     })?;
-    // "+" holds no AI row now: Down from no row is Customize toolbar
-    user.click((MAIN_TRANSLATE.0 - 2 * TOOL_STEP, MAIN_ROW_Y))?;
-    user.until("\"+\" with the AI tools shown", |state| {
-        main_box(state)["menu"] == "Plus"
+    // "+" holds no AI row now: its flyout has only Customize toolbar at its foot
+    let plus_x = MAIN_TRANSLATE.0 - 2 * TOOL_STEP;
+    user.click((plus_x, MAIN_ROW_Y))?;
+    let state = user.until("\"+\" with the AI tools shown", |state| flyout_open(main_box(state)))?;
+    ensure(flyout_actions_are(&state, &[]), || {
+        format!("the flyout lists an AI row: {state}")
     })?;
     user.settled_shot("plus-ai-shown")?;
-    user.press("down")?;
-    user.press("enter")?;
-    user.until("the list from \"+\"", |state| main_box(state)["customize"] == true)?;
+    user.customize_from_flyout(plus_x)?;
     user.close_menus("chat")?;
     user.show_ai(&[])?;
     user.ask("clear")?;
@@ -1332,9 +1381,21 @@ fn hidden_in_plus(user: &mut User<'_>) -> SandboxResult {
         user.close_menus("chat")?;
     }
     user.ask("theme-light")?;
-    // Down, Enter: Format's row shows the formatting options
-    user.click_menu(0, "Plus")?;
-    user.press("down")?;
+    // Enter on the first row: Format's row shows the formatting options
+    let state = user.click_menu(0, "Plus")?;
+    ensure(
+        flyout_actions_are(
+            &state,
+            &[
+                "compose-format-row",
+                "compose-emoji-row",
+                AI_ROWS[0],
+                AI_ROWS[1],
+                AI_ROWS[2],
+            ],
+        ),
+        || format!("the flyout does not list Format and Emoji over the AI rows: {state}"),
+    )?;
     user.press("enter")?;
     user.until("formatting by its row in +", |state| {
         main_box(state)["expanded"] == true
@@ -1344,10 +1405,9 @@ fn hidden_in_plus(user: &mut User<'_>) -> SandboxResult {
     user.until("formatting off by its key", |state| {
         main_box(state)["expanded"] == false
     })?;
-    // Down, Down, Enter: Emoji's row opens the picker
+    // Down, Enter: Emoji's row opens the picker
     user.close_menus("chat")?;
     user.click_menu(0, "Plus")?;
-    user.press("down")?;
     user.press("down")?;
     user.press("enter")?;
     user.until("the emoji picker by its row in +", |state| {
@@ -1378,13 +1438,11 @@ fn ai_rows_in_plus(user: &mut User<'_>) -> SandboxResult {
     user.shots_in_both_themes("plus-ai-hidden")?;
     user.press("down")?;
     user.press("down")?;
-    user.press("down")?;
     user.press("enter")?;
     user.until("Correct by its row in +", |state| {
         main_box(state)["correction"] == "Proposed"
     })?;
     user.click_menu(0, "Plus")?;
-    user.press("down")?;
     user.press("down")?;
     user.press("down")?;
     user.press("enter")?;
@@ -1393,7 +1451,7 @@ fn ai_rows_in_plus(user: &mut User<'_>) -> SandboxResult {
         text_of(main_box(state)) == "hello the plus"
     })?;
     user.click_menu(0, "Plus")?;
-    for _ in 0..5 {
+    for _ in 0..4 {
         user.press("down")?;
     }
     user.press("enter")?;
@@ -1412,7 +1470,7 @@ fn ai_rows_in_plus(user: &mut User<'_>) -> SandboxResult {
     Ok(())
 }
 
-/// "Customize toolbar" in "+" opens the list by "+"; with nothing of Teams hidden, "+" holds the AI rows and that row.
+/// "Customize toolbar" at the foot of "+" opens the list by "+"; with nothing of Teams hidden, "+" holds the AI rows.
 fn customize_from_plus(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
     user.reopened_shots("plus-nothing-hidden", "chat", |user| {
@@ -1420,16 +1478,10 @@ fn customize_from_plus(user: &mut User<'_>) -> SandboxResult {
     })?;
     user.reopened_shots("customize-from-plus", "chat", |user| {
         user.click_menu(0, "Plus")?;
-        user.press("up")?;
-        user.press("enter")?;
-        let state = user.until("the list from +", |state| main_box(state)["customize"] == true)?;
-        ensure(main_box(&state)["menu"].is_null(), || format!("+ stays open: {state}"))
+        user.customize_from_flyout(main_tool(0).0).map(|_| ())
     })?;
-    // Customize toolbar is the last row of "+": Up selects it
     user.click_menu(0, "Plus")?;
-    user.press("up")?;
-    user.press("enter")?;
-    user.until("the list from + by Up", |state| main_box(state)["customize"] == true)?;
+    user.customize_from_flyout(main_tool(0).0)?;
     user.take_row_by_up(4)?;
     user.until("Attach hidden from the list of +", |state| {
         hidden_is(state, &["attach"])
@@ -1541,7 +1593,7 @@ fn call_chat_box(user: &mut User<'_>) -> SandboxResult {
     user.press("escape")?;
     user.ask("hide format,emoji")?;
     user.ask("call-menu-plus")?;
-    user.until("+ in the call", |state| call_box(state)["menu"] == "Plus")?;
+    user.until("+ in the call", |state| plus_open(call_box(state)))?;
     user.settled_shot("call-chat-plus")?;
     user.press("escape")?;
     user.ask("call-menu-more")?;
@@ -1554,7 +1606,7 @@ fn call_chat_box(user: &mut User<'_>) -> SandboxResult {
     thread::sleep(SETTLE);
     user.shots_in_both_themes("call-chat-font-20")?;
     user.ask("call-menu-plus")?;
-    user.until("+ in the call at font 20", |state| call_box(state)["menu"] == "Plus")?;
+    user.until("+ in the call at font 20", |state| plus_open(call_box(state)))?;
     user.settled_shot("call-chat-font-20-plus")?;
     user.press("escape")?;
     user.ask("font 14")?;
@@ -1582,10 +1634,13 @@ fn narrow_font_dark(user: &mut User<'_>) -> SandboxResult {
         if user.state()?["chat"]["menu"].is_null() {
             user.ask("box-menu chat plus")?;
         }
-        let state = user.until(&format!("a menu at {width}"), |state| {
-            !main_box(state)["menu"].is_null()
-        })?;
-        say(&format!("  {name}: {} open", main_box(&state)["menu"]));
+        let state = user.until(&format!("a menu at {width}"), |state| !menus_closed(main_box(state)))?;
+        let open = if flyout_open(main_box(&state)) {
+            json!("the flyout")
+        } else {
+            main_box(&state)["menu"].clone()
+        };
+        say(&format!("  {name}: {open} open"));
         user.settled_shot(&format!("{name}-menu"))?;
         user.close_menus("chat")?;
     }
@@ -1662,7 +1717,7 @@ fn font_key_with_menu_open(user: &mut User<'_>) -> SandboxResult {
         thread::sleep(SETTLE);
         let state = user.state()?;
         let boxed = main_box(&state);
-        if !(boxed["menu"].is_null() && boxed["customize"] == false && boxed["focused"] == true) {
+        if !(menus_closed(boxed) && boxed["customize"] == false && boxed["focused"] == true) {
             faults.push(format!("{what}: after Ctrl+= and Escape: {boxed}"));
         }
         user.close_menus("chat")?;
@@ -1699,7 +1754,6 @@ fn kept_after_restart(user: &mut User<'_>) -> SandboxResult {
     user.shots_in_both_themes("after-restart")?;
     user.click_menu(0, "Plus")?;
     user.settled_shot("after-restart-plus")?;
-    user.press("down")?;
     user.press("enter")?;
     user.until("Emoji by its row after the restart", |state| {
         main_box(state)["emoji_open"] == true
@@ -2007,7 +2061,7 @@ fn on_call(verb: &str, cx: &mut App) -> String {
                 return "no menu".to_owned();
             };
             let compose = chat.read(cx).compose().clone();
-            compose.update(cx, |compose, cx| compose.open_menu(kind, window, cx));
+            compose.update(cx, |compose, cx| open_tools_menu(compose, kind, window, cx));
             "ok".to_owned()
         }
         "open-more" => {
@@ -2257,8 +2311,16 @@ fn box_menu(shell: &Entity<Shell>, rest: &str, window: &mut Window, cx: &mut App
     let Some(compose) = compose else {
         return format!("no box {key}");
     };
-    compose.update(cx, |compose, cx| compose.open_menu(kind, window, cx));
+    compose.update(cx, |compose, cx| open_tools_menu(compose, kind, window, cx));
     "ok".to_owned()
+}
+
+/// Opens the menu `kind` as a click on its button does: "+" of a chat's box opens Actions and apps.
+fn open_tools_menu(compose: &mut Compose, kind: MenuKind, window: &mut Window, cx: &mut gpui::Context<Compose>) {
+    match kind {
+        MenuKind::Plus => compose.open_plus(window, cx),
+        MenuKind::More => compose.open_menu(kind, window, cx),
+    }
 }
 
 /// Every box the main window shows now.
@@ -2360,6 +2422,14 @@ fn box_state(compose: &Entity<Compose>, window: &Window, cx: &App) -> Value {
         "narrow": compose.is_narrow(),
         "more_open": compose.more_open(),
         "menu": compose.menu_open().map(|kind| format!("{kind:?}")),
+        "flyout": compose.apps_flyout().map(|flyout| {
+            let flyout = flyout.read(cx);
+            json!({
+                "actions": flyout.actions().iter().map(|action| action.selector.to_string()).collect::<Vec<_>>(),
+                "loaded": flyout.loaded(),
+                "focused": flyout.holds_focus(window, cx),
+            })
+        }),
         "row_tools": compose.row_tools(cx),
         "plus_rows": compose.menu_selectors(MenuKind::Plus, cx),
         "more_rows": compose.menu_selectors(MenuKind::More, cx),

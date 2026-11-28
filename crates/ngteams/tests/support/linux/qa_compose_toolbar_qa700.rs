@@ -73,8 +73,8 @@ pub(super) fn write_old_file(file: &Path) -> SandboxResult {
     Ok(())
 }
 
-/// "+" with Format hidden: Format, then Correct, Translate and the language, then "Customize toolbar"; the keys find
-/// each row by the action that it starts. With AI off: Format, then "Customize toolbar".
+/// "+" with Format hidden: its flyout lists Format, then Correct, Translate and the language, then "Customize toolbar"
+/// at its foot; the keys find each row by the action that it starts. With AI off: Format, then "Customize toolbar".
 fn plus_rows(user: &mut User<'_>) -> SandboxResult {
     user.main_chat()?;
     user.ask("language German")?;
@@ -84,8 +84,11 @@ fn plus_rows(user: &mut User<'_>) -> SandboxResult {
     })?;
     user.type_text("hello teh rows")?;
     // the second row: Correct
-    user.click_menu(0, "Plus")?;
-    user.press("down")?;
+    let state = user.click_menu(0, "Plus")?;
+    ensure(
+        flyout_actions_are(&state, &["compose-format-row", AI_ROWS[0], AI_ROWS[1], AI_ROWS[2]]),
+        || format!("the flyout does not list Format over the AI rows: {state}"),
+    )?;
     user.press("down")?;
     user.settled_shot("qa700-plus-second-row")?;
     user.press("enter")?;
@@ -94,7 +97,7 @@ fn plus_rows(user: &mut User<'_>) -> SandboxResult {
     })?;
     // the third row: Translate, which drops the proposal
     user.click_menu(0, "Plus")?;
-    for _ in 0..3 {
+    for _ in 0..2 {
         user.press("down")?;
     }
     user.press("enter")?;
@@ -103,7 +106,7 @@ fn plus_rows(user: &mut User<'_>) -> SandboxResult {
     })?;
     // the fourth row: the language menu
     user.click_menu(0, "Plus")?;
-    for _ in 0..4 {
+    for _ in 0..3 {
         user.press("down")?;
     }
     user.press("enter")?;
@@ -112,15 +115,9 @@ fn plus_rows(user: &mut User<'_>) -> SandboxResult {
     })?;
     user.press("escape")?;
     user.close_menus("chat")?;
-    // the fifth row: Customize toolbar
+    // Customize toolbar at the foot
     user.click_menu(0, "Plus")?;
-    for _ in 0..5 {
-        user.press("down")?;
-    }
-    user.press("enter")?;
-    user.until("the list by the fifth row", |state| {
-        main_box(state)["customize"] == true
-    })?;
+    user.customize_from_flyout(main_tool(0).0)?;
     user.close_menus("chat")?;
     // AI off: the second row is Customize toolbar
     user.ask("ai off")?;
@@ -128,13 +125,11 @@ fn plus_rows(user: &mut User<'_>) -> SandboxResult {
     user.reopened_shots("qa700-plus-ai-off", "chat", |user| {
         user.click_menu(0, "Plus").map(|_| ())
     })?;
-    user.click_menu(0, "Plus")?;
-    user.press("down")?;
-    user.press("down")?;
-    user.press("enter")?;
-    user.until("the list by the second row with AI off", |state| {
-        main_box(state)["customize"] == true
+    let state = user.click_menu(0, "Plus")?;
+    ensure(flyout_actions_are(&state, &["compose-format-row"]), || {
+        format!("with AI off, the flyout lists more than Format: {state}")
     })?;
+    user.customize_from_flyout(main_tool(0).0)?;
     user.close_menus("chat")?;
     user.ask("ai on")?;
     user.until("AI on", |state| state["ai"] == true)?;
@@ -150,9 +145,7 @@ fn shown_from_plus(user: &mut User<'_>) -> SandboxResult {
     user.ask("language German")?;
     user.show_ai(&[])?;
     user.click_menu(0, "Plus")?;
-    user.press("up")?;
-    user.press("enter")?;
-    user.until("the list from \"+\"", |state| main_box(state)["customize"] == true)?;
+    user.customize_from_flyout(main_tool(0).0)?;
     user.take_row_by_up(1)?;
     user.until("Translate shown from \"+\"", |state| shown_is(state, &["translate"]))?;
     user.press("up")?;
@@ -417,8 +410,7 @@ fn font_sizes(user: &mut User<'_>) -> SandboxResult {
         user.shots_in_both_themes(&format!("qa700-font-{font}"))?;
         user.reopened_shots(&format!("qa700-font-{font}-plus"), "chat", |user| {
             user.ask("box-menu chat plus")?;
-            user.until("\"+\"", |state| main_box(state)["menu"] == "Plus")
-                .map(|_| ())
+            user.until("\"+\"", |state| plus_open(main_box(state))).map(|_| ())
         })?;
     }
     user.ask("font 14")?;
