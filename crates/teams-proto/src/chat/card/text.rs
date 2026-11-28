@@ -123,8 +123,11 @@ impl Lines {
     }
 
     fn connector(&mut self, text: &str) {
-        for line in connector_plain(text).lines() {
-            self.markdown(line);
+        // The HTML read joins whitespace, so each raw line is read alone to keep the markdown's lines.
+        for raw in text.lines() {
+            for line in connector_plain(raw).lines() {
+                self.markdown(line);
+            }
         }
     }
 

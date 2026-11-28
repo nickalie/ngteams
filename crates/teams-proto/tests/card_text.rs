@@ -194,6 +194,14 @@ fn a_connector_card_s_html_breaks_and_entities_are_read() {
 }
 
 #[test]
+fn a_connector_card_s_lines_stay_when_a_field_holds_html_characters() {
+    let text = text_of(&json!([{"contentType": CONNECTOR, "content": {
+        "text": "**Firing**\n\n- alertname = X\n- source: https://g/d?orgId=1&viewPanel=2",
+    }}]));
+    assert_eq!(text, "Firing\nalertname = X\nsource: https://g/d?orgId=1&viewPanel=2");
+}
+
+#[test]
 fn a_link_s_app_cards_give_their_text() {
     let cards = json!([{"appId": "synthetic-app", "appName": "Synthetic", "attachment": null,
         "contentType": ADAPTIVE, "content": {"type": "AdaptiveCard",
