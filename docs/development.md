@@ -493,9 +493,12 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   such mark. `search` finds a card by its text.
 - **People**: `people` asks the service's people search, as the search's People tab does. `person` and `presence`
   name a person by MRI, or by UPN, email or display name as that search finds them. A part of a name matches each
-  person the search finds for it. Nobody is `unknown_person`. Several people are `ambiguous_person`, with each one's
+  person the search finds for it. An address that is not the UPN the search gives (a guest's or an alias's mail)
+  matches the search's only person. Nobody is `unknown_person`. Several people are `ambiguous_person`, with each one's
   MRI and name. `person` shows what the profile card reads, filled from the search where the card has nothing.
-  `presence` asks the engine as a badge does, so the engine watches those people from then on. It waits up to 20 s
+  `presence` asks the engine as a badge does, so the engine watches those people from then on. The views share that
+  watch of 20 people: each new person asked about drops the badge asked about longest ago, which shows unknown until
+  its view asks again. It waits up to 20 s
   for someone the app did not know yet, then says `unknown`. The app reads no status message, so none is shown.
 - **Downloads**: `messages` lists the attachments of each message after its text, `[<index>: <name>, <type>]`
   (in JSON, `attachments` with `index`, `name`, `kind` `file` or `picture`, and `file_type`; files first, then the

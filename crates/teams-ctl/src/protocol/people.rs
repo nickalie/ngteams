@@ -9,7 +9,8 @@
 use serde::{Deserialize, Serialize};
 
 /// How long the app takes at most to answer `people` or `person`: the people search, then for a card its reads, each
-/// bounded by the transport's 30 s. Past it the app answers [`super::ErrorCode::Timeout`].
+/// bounded by the transport's 30 s. Past it the app answers [`super::ErrorCode::Timeout`]. A card whose presence read
+/// failed then waits [`PRESENCE_WAIT`] more.
 pub const PEOPLE_ANSWER: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// How long `presence` (and a card whose presence read failed) waits at most for the presence of a person that the
@@ -17,7 +18,8 @@ pub const PEOPLE_ANSWER: std::time::Duration = std::time::Duration::from_secs(60
 /// it the person's presence stays `unknown`.
 pub const PRESENCE_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// The most people one `presence` asks about: the number of people the engine watches at once.
+/// The most people one `presence` asks about: the number of people the engine watches at once. The views share that
+/// watch, so someone new that it asks about drops the badge asked about longest ago until its view asks again.
 pub const PRESENCE_MOST: usize = 20;
 
 /// A person that the people search found, as the search's People tab lists them.

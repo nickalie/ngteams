@@ -2069,17 +2069,17 @@ fn each_people_read_asks_its_request_and_prints_its_answer() {
 fn a_people_read_is_waited_for_past_the_app_s_bound_and_names_someone_to_read() {
     let parsed = |args: &[&str]| Cli::try_parse_from([&["ngteamsctl"][..], args].concat());
     let default = Timeouts::default().read;
-    for args in [&["people", "lab"][..], &["person", "Lab B"]] {
+    assert_eq!(
+        answer_time(&parsed(&["people", "lab"]).unwrap().command),
+        PEOPLE_ANSWER + default
+    );
+    for args in [&["person", "Lab B"][..], &["presence", "Lab B"]] {
         assert_eq!(
             answer_time(&parsed(args).unwrap().command),
-            PEOPLE_ANSWER + default,
+            PEOPLE_ANSWER + PRESENCE_WAIT + default,
             "{args:?}"
         );
     }
-    assert_eq!(
-        answer_time(&parsed(&["presence", "Lab B"]).unwrap().command),
-        PEOPLE_ANSWER + PRESENCE_WAIT + default
-    );
     let many: Vec<String> = (0..21).map(|index| format!("8:orgid:{index}")).collect();
     let many: Vec<&str> = [&["presence"][..], &many.iter().map(String::as_str).collect::<Vec<_>>()].concat();
     for args in [&["people"][..], &["person"], &["presence"], &many] {

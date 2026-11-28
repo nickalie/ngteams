@@ -36,7 +36,7 @@
 //!   `--force`. The client waits for the answer past [`DOWNLOAD_ANSWER`].
 //! - **People**: `people` lists whom the people search finds, `person` shows one person's profile card and
 //!   `presence` the presence of people, each named by MRI, UPN, email or a name only one person has. The client waits
-//!   past [`PEOPLE_ANSWER`] (and [`PRESENCE_WAIT`] more for `presence`).
+//!   past [`PEOPLE_ANSWER`] (and [`PRESENCE_WAIT`] more for `presence` and `person`).
 //! - **Completions**: `completions bash|fish|zsh` prints that shell's completion script, and `events kinds` the event
 //!   kinds, without asking the app.
 
@@ -1008,7 +1008,7 @@ fn ask(cli: &Cli, mut client: Client, request: Request, out: &mut dyn Write, err
 /// [`WRITE_WAIT`] more with `--wait`), a `sync`'s past [`SYNC_ANSWER`], a call command's (`join meeting` too) past
 /// [`CALL_ANSWER`], a calendar read's past [`CALENDAR_ANSWER`], `messages` and `thread` past a channel's sync
 /// ([`CHANNEL_SYNC`]), `teams` past the teams' first read ([`TEAMS_ANSWER`]), a people read's past [`PEOPLE_ANSWER`]
-/// ([`PRESENCE_WAIT`] more for `presence`), so the app's answer (its own timeout too) comes first;
+/// ([`PRESENCE_WAIT`] more for `presence` and `person`), so the app's answer (its own timeout too) comes first;
 /// any other's the client's default.
 #[must_use]
 pub fn answer_time(command: &Command) -> Duration {
@@ -1023,7 +1023,9 @@ pub fn answer_time(command: &Command) -> Duration {
         Command::Download(_) => DOWNLOAD_ANSWER + slack,
         Command::Messages { .. } | Command::Thread(_) => CHANNEL_SYNC + slack,
         Command::Teams => TEAMS_ANSWER + slack,
-        Command::People(PeopleCommand::Presence { .. }) => PEOPLE_ANSWER + PRESENCE_WAIT + slack,
+        Command::People(PeopleCommand::Presence { .. } | PeopleCommand::Person { .. }) => {
+            PEOPLE_ANSWER + PRESENCE_WAIT + slack
+        }
         Command::People(_) => PEOPLE_ANSWER + slack,
         _ => slack,
     }

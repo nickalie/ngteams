@@ -13,7 +13,8 @@
 //!   it shows after each load, the mention picker the [`PICKER_MAX`](crate::compose::PICKER_MAX) people it offers.
 //!   The chat view and the picker show the open chat's people and share one share of the watch: while the picker
 //!   offers people the view doesn't show, the ones asked about longest ago may drop until their views ask again (the
-//!   next load of the chat or the list). A chat left isn't unwatched: its senders give way to whoever is asked about
+//!   next load of the chat or the list). The profile card's Organization tab and `ngteamsctl presence` (and
+//!   `person`) ask outside these shares, with the same effect. A chat left isn't unwatched: its senders give way to whoever is asked about
 //!   next, as anyone does.
 //! - **Unknown** is drawn as a hollow ring: before the first read, for someone this build can't read (in the lab,
 //!   anyone but the lab accounts), when a read failed, and for someone no longer watched. A word UPS gave that this build doesn't name is drawn the

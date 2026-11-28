@@ -10,12 +10,15 @@
 //! - `presence`: each person asked about through [`Core::presence`], as a presence badge asks: the engine watches
 //!   them from then on. Someone that the app did not know yet is waited for, [`PRESENCE_WAIT`] at most, until the
 //!   engine tells their presence; then `unknown` (in the lab, the presence of anyone but the lab accounts stays
-//!   unknown). The engine watches [`PRESENCE_MOST`] people at most, so one `presence` asks about no more.
+//!   unknown). The engine watches [`PRESENCE_MOST`] people at most, so one `presence` asks about no more. The views
+//!   share that watch: each person asked about who isn't watched yet drops the one asked about longest ago, whose
+//!   badge shows unknown until its view asks again (as the profile card's Organization tab does too).
 //!
 //! **A person** is named by their MRI (as it is), or else found by the people search: by UPN or email when the
 //! address is the one that the search gives, by display name in any case. When no name is the one given, each
-//! person that the search found for it is a match (a part of a name). Nobody is [`ErrorCode::UnknownPerson`];
-//! several people are [`ErrorCode::AmbiguousPerson`], with each one's MRI and name.
+//! person that the search found for it is a match (a part of a name); when no address is the one given, the search's
+//! only person is (the search gives a guest's or an alias's UPN, not the mail address that found them). Nobody is
+//! [`ErrorCode::UnknownPerson`]; several people are [`ErrorCode::AmbiguousPerson`], with each one's MRI and name.
 
 use gpui::{App, AsyncApp, Entity, WeakEntity};
 use teams_core::presence::has_presence;
@@ -154,13 +157,13 @@ async fn resolve(core: &dyn Core, who: &str) -> Result<Named, CtlError> {
             found: None,
         });
     }
-    let found: Vec<FoundPerson> = search(core, who)
+    let found: Vec<(String, FoundPerson)> = search(core, who)
         .await?
         .into_iter()
-        .filter(|person| person.mri.is_some())
+        .filter_map(|person| Some((person.mri.clone()?, person)))
         .collect();
     let by_address = who.contains('@');
-    let matches = |person: &&FoundPerson| {
+    let matches = |(_, person): &&(String, FoundPerson)| {
         if by_address {
             person
                 .email
@@ -170,9 +173,9 @@ async fn resolve(core: &dyn Core, who: &str) -> Result<Named, CtlError> {
             person.name.to_lowercase() == who.to_lowercase()
         }
     };
-    let mut exact: Vec<&FoundPerson> = found.iter().filter(matches).collect();
-    exact.dedup_by(|one, other| one.mri == other.mri);
-    if exact.is_empty() && !by_address {
+    let mut exact: Vec<&(String, FoundPerson)> = found.iter().filter(matches).collect();
+    exact.dedup_by(|(one, _), (other, _)| one == other);
+    if exact.is_empty() && (!by_address || found.len() == 1) {
         exact = found.iter().collect();
     }
     match exact.as_slice() {
@@ -180,24 +183,24 @@ async fn resolve(core: &dyn Core, who: &str) -> Result<Named, CtlError> {
             ErrorCode::UnknownPerson,
             format!("no one is {who}: `ngteamsctl people {who}` lists whom the search finds"),
         )),
-        [person] => Ok(Named {
-            mri: person.mri.clone().unwrap_or_default(),
+        [(mri, person)] => Ok(Named {
+            mri: mri.clone(),
             name: Some(person.name.clone()),
-            found: Some((*person).clone()),
+            found: Some(person.clone()),
         }),
         several => Err(ambiguous(who, several)),
     }
 }
 
-fn ambiguous(who: &str, several: &[&FoundPerson]) -> CtlError {
+fn ambiguous(who: &str, several: &[&(String, FoundPerson)]) -> CtlError {
     let mut error = CtlError::new(
         ErrorCode::AmbiguousPerson,
         format!("{} people are called {who}: name one by MRI or email", several.len()),
     );
     error.candidates = several
         .iter()
-        .map(|person| ChatRef {
-            id: person.mri.clone().unwrap_or_default(),
+        .map(|(mri, person)| ChatRef {
+            id: mri.clone(),
             title: match &person.email {
                 Some(email) => format!("{} <{email}>", person.name),
                 None => person.name.clone(),

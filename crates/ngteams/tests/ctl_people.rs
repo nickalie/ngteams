@@ -46,13 +46,32 @@ const C_MAIL: &str = "cee@lab.example.test";
 /// Two made-up people of one name, found by the search only.
 const DEE_ONE: &str = "8:orgid:00000000-0000-4000-8000-0000000000d1";
 const DEE_TWO: &str = "8:orgid:00000000-0000-4000-8000-0000000000d2";
+/// A made-up guest, whose UPN the search gives, not their mail.
+const GUEST: &str = "8:orgid:00000000-0000-4000-8000-0000000000e1";
+const GUEST_MAIL: &str = "eve@guest.test";
+const GUEST_UPN: &str = "eve_guest.test#EXT#@lab.onmicrosoft.test";
 
-/// The made-up directory: `(MRI, name, address, job title, department)`.
-const DIRECTORY: &[(&str, &str, &str, &str, &str)] = &[
-    (LAB_B, "Bee Example", B_MAIL, "Tester", "Lab"),
-    (LAB_C, "Cee Example", C_MAIL, "Builder", "Lab"),
-    (DEE_ONE, "Dee Example", "dee.one@lab.example.test", "Writer", "Docs"),
-    (DEE_TWO, "Dee Example", "dee.two@lab.example.test", "Reader", "Docs"),
+/// The made-up directory: `(MRI, name, UPN, mail, job title, department)`.
+const DIRECTORY: &[(&str, &str, &str, &str, &str, &str)] = &[
+    (LAB_B, "Bee Example", B_MAIL, B_MAIL, "Tester", "Lab"),
+    (LAB_C, "Cee Example", C_MAIL, C_MAIL, "Builder", "Lab"),
+    (
+        DEE_ONE,
+        "Dee Example",
+        "dee.one@lab.example.test",
+        "dee.one@lab.example.test",
+        "Writer",
+        "Docs",
+    ),
+    (
+        DEE_TWO,
+        "Dee Example",
+        "dee.two@lab.example.test",
+        "dee.two@lab.example.test",
+        "Reader",
+        "Docs",
+    ),
+    (GUEST, "Eve Guest", GUEST_UPN, GUEST_MAIL, "Visitor", "Guests"),
 ];
 
 /// a's token, as the mock hands it out.
@@ -68,8 +87,7 @@ impl Credentials for Tokens {
     }
 }
 
-/// Substrate's answer to a results request: the directory's people whose name or address holds the query, in any
-/// case.
+/// Substrate's answer to a results request: the directory's people whose name or mail holds the query, in any case.
 fn directory_answer(request: &Asked) -> ResponseTemplate {
     let body: Value = serde_json::from_slice(&request.body).unwrap_or_default();
     let query = body["EntityRequests"][0]["query"]["queryString"]
@@ -78,10 +96,10 @@ fn directory_answer(request: &Asked) -> ResponseTemplate {
         .to_lowercase();
     let results: Vec<Value> = DIRECTORY
         .iter()
-        .filter(|(_, name, mail, _, _)| name.to_lowercase().contains(&query) || mail.contains(&query))
-        .map(|(mri, name, mail, title, department)| {
+        .filter(|(_, name, _, mail, _, _)| name.to_lowercase().contains(&query) || mail.contains(&query))
+        .map(|(mri, name, upn, mail, title, department)| {
             json!({ "Type": "People", "Source": {
-                "DisplayName": name, "MRI": mri, "UserPrincipalName": mail, "EmailAddresses": [mail],
+                "DisplayName": name, "MRI": mri, "UserPrincipalName": upn, "EmailAddresses": [mail],
                 "JobTitle": title, "Department": department,
             }})
         })
@@ -108,7 +126,8 @@ impl Lab {
             .unwrap();
         let mock = runtime.block_on(async {
             let mock = ChatServiceMock::start().await.unwrap();
-            mock.serve_presence(&[(LAB_B, "Busy"), (LAB_C, "Away")]).await;
+            mock.serve_presence(&[(LAB_B, "Busy"), (LAB_C, "Away"), (GUEST, "Available")])
+                .await;
             mock.serve_loki(&[LokiCard {
                 mri: LAB_B,
                 name: "Bee Example",
@@ -338,6 +357,19 @@ fn person_shows_the_card_by_upn_by_mri_and_by_name() {
     );
     assert_eq!(c.emails, [C_MAIL]);
     assert_eq!(c.presence.as_deref(), Some("away"), "{c:?}");
+
+    let guest = lab.person(GUEST_MAIL);
+    assert_eq!(
+        (guest.mri.as_str(), guest.name.as_deref()),
+        (GUEST, Some("Eve Guest")),
+        "by a mail that isn't the UPN the search gives, the search's only person"
+    );
+    let rows = lab.presence(&[GUEST_MAIL]);
+    assert_eq!(
+        (rows[0].mri.as_str(), rows[0].availability.as_str()),
+        (GUEST, "available"),
+        "{rows:?}"
+    );
 }
 
 #[test]
