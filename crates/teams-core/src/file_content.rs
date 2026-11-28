@@ -3,8 +3,9 @@
 //! that link ([`HttpTransport::file_range`], `Range`, no token), as `docs/protocol/graph.md` records.
 //!
 //! - **The download link** is kept for the run per file, in memory, for [`LINK_LIFE`] (Graph's links last about an
-//!   hour); an older one is asked for again, and so is one the file's host refused (a 401 or 403: it expired), once
-//!   per part. One read of a file's item at a time: asks while it runs wait for it.
+//!   hour); an older one is asked for again, and so is one the file's host refused (a 401 or 403: it expired), or one
+//!   whose item says the file is empty (it may have got its bytes since), once per part. An empty file streams no
+//!   bytes and asks its host for none. One read of a file's item at a time: asks while it runs wait for it.
 //! - **A part** is read when asked, never kept here (the player keeps what it read); at most
 //!   [`teams_proto::MAX_RANGE`] bytes of it.
 //! - **A stream** ([`FileStream`], what a playing video reads by) is a part of up to [`teams_proto::MAX_STREAM`] bytes
@@ -259,8 +260,7 @@ async fn open_stream<C: Credentials + 'static>(
 ) -> Result<Option<(FileBody, StreamStart)>, EngineError> {
     let mut fresh = false;
     loop {
-        let kept = known(links, file);
-        let content = link(client, links, file).await?;
+        let (content, kept) = link_and_origin(client, links, file).await?;
         if content.size == 0 {
             if kept && !fresh {
                 forget(links, file, &content);
@@ -296,12 +296,8 @@ async fn open_stream<C: Credentials + 'static>(
     }
 }
 
-/// Whether `file`'s link is kept from an earlier read, so [`link`] answers with it at once.
-fn known(links: &Links, file: &FileDownload) -> bool {
-    matches!(links.borrow().get(file), Some(Link::Known(_, at)) if at.elapsed() < LINK_LIFE)
-}
-
-/// Forgets `file`'s link `content`, which its host refused (it expired), unless another ask replaced it meanwhile.
+/// Forgets `file`'s link `content` (its host refused it, or its kept item said the file was empty), unless another ask
+/// replaced it meanwhile.
 fn forget(links: &Links, file: &FileDownload, content: &FileContent) {
     let mut known = links.borrow_mut();
     if let Some(Link::Known(kept, _)) = known.get(file)
@@ -350,11 +346,20 @@ async fn link<C: Credentials + 'static>(
     links: &Links,
     file: &FileDownload,
 ) -> Result<FileContent, EngineError> {
+    Ok(link_and_origin(client, links, file).await?.0)
+}
+
+/// [`link`], and whether the link was kept from an earlier read.
+async fn link_and_origin<C: Credentials + 'static>(
+    client: &Arc<Client<HttpTransport<C>>>,
+    links: &Links,
+    file: &FileDownload,
+) -> Result<(FileContent, bool), EngineError> {
     let (tell, told) = oneshot::channel();
     {
         let mut known = links.borrow_mut();
         match known.get_mut(file) {
-            Some(Link::Known(content, at)) if at.elapsed() < LINK_LIFE => return Ok(content.clone()),
+            Some(Link::Known(content, at)) if at.elapsed() < LINK_LIFE => return Ok((content.clone(), true)),
             Some(Link::Reading(waiting)) => waiting.push(tell),
             Some(Link::Known(..)) | None => {
                 known.insert(file.clone(), Link::Reading(vec![tell]));
@@ -366,7 +371,7 @@ async fn link<C: Credentials + 'static>(
             }
         }
     }
-    Ok(told.await.unwrap_or(Err(LinkFailure::Unread))?)
+    Ok((told.await.unwrap_or(Err(LinkFailure::Unread))?, false))
 }
 
 /// Keeps `file`'s link `answer` (or forgets the read that failed) and hands it to every ask waiting for it.
