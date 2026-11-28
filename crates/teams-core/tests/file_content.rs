@@ -379,3 +379,24 @@ async fn an_empty_file_streams_no_bytes_and_asks_its_host_for_none() {
     assert_eq!(count(&rig.server, DOWNLOAD).await, 0);
     rig.handle.shutdown();
 }
+
+#[tokio::test]
+async fn a_kept_empty_item_is_read_again_before_its_file_is_called_empty() {
+    let rig = running_engine().await;
+    Mock::given(method("GET"))
+        .and(path(item_path()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(item(0)))
+        .with_priority(1)
+        .up_to_n_times(1)
+        .mount(&rig.server)
+        .await;
+    readable_file(&rig.server).await;
+    let mut empty = rig.handle.file_stream(SHARE, 0, 1_000).await.unwrap();
+    assert_eq!(empty.total, 0);
+    assert!(collect(&mut empty).await.is_empty());
+    let mut filled = rig.handle.file_stream(SHARE, 0, 1_000).await.unwrap();
+    assert_eq!(filled.total, BYTES.len() as u64);
+    assert_eq!(collect(&mut filled).await, BYTES);
+    assert_eq!(count(&rig.server, &item_path()).await, 2);
+    rig.handle.shutdown();
+}

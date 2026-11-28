@@ -1,11 +1,12 @@
 //! A file downloaded through the engine: a meeting recording (the recap's More options → Download, offered only when
-//! the recording's item says the account may download it, as Teams' Stream page offers its Download), or a file on an
-//! own server (its card's Download and Open in desktop app: such a server has no page a browser opens a file at).
+//! the recording's item says the account may download it, as Teams' Stream page offers its Download), a Microsoft
+//! file (its card's Download, or the video player's), or a file on an own server (its card's Download and Open in
+//! desktop app: such a server has no page a browser opens a file at).
 //!
-//! - **The bytes** are read by the engine at the download link Graph hands out for the recording's sharing link
-//!   ([`Core::file_stream`], as a chat's video is played), [`CHUNK`] at a time, each written as it arrives. A link that
-//!   expired is read again by the engine; a stream that broke off is opened again where the file stands, a few times
-//!   ([`RETRIES`]) while nothing more arrives. A recording refused is not asked again.
+//! - **The bytes** are read by the engine at the download link Graph hands out for the file's sharing link, else for
+//!   its own address ([`Core::file_stream`], as a chat's video is played), [`CHUNK`] at a time, each written as it
+//!   arrives. A link that expired is read again by the engine; a stream that broke off is opened again where the file
+//!   stands, a few times ([`RETRIES`]) while nothing more arrives. A recording refused is not asked again.
 //! - **The file** is written beside its place as `<name>.part`, then renamed over it once whole; a download that failed
 //!   or was cancelled leaves nothing behind. A download whose place is the place of another running download of the
 //!   app, or the `.part` file of it, or the reverse, fails before it writes ([`Places`]). The download locks its

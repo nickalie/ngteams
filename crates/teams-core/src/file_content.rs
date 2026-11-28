@@ -248,7 +248,8 @@ async fn hand_on(mut body: FileBody, tell: &mpsc::Sender<Result<Vec<u8>, EngineE
 }
 
 /// A stream of the part of `file` asked for, as [`read_range`] reads a part: at the link known, else one read now; a
-/// link the host refused is read again once. `None` for an empty file, which has no byte to ask for.
+/// link the host refused is read again once. `None` for an empty file, which has no byte to ask for; an item kept from
+/// before says so only after a read now, as the file may have got its bytes since.
 async fn open_stream<C: Credentials + 'static>(
     client: &Arc<Client<HttpTransport<C>>>,
     links: &Links,
@@ -258,8 +259,14 @@ async fn open_stream<C: Credentials + 'static>(
 ) -> Result<Option<(FileBody, StreamStart)>, EngineError> {
     let mut fresh = false;
     loop {
+        let kept = known(links, file);
         let content = link(client, links, file).await?;
         if content.size == 0 {
+            if kept && !fresh {
+                forget(links, file, &content);
+                fresh = true;
+                continue;
+            }
             return Ok(None);
         }
         // a read past the end asks for the file's last byte, which tells its size
@@ -287,6 +294,11 @@ async fn open_stream<C: Credentials + 'static>(
             }
         }
     }
+}
+
+/// Whether `file`'s link is kept from an earlier read, so [`link`] answers with it at once.
+fn known(links: &Links, file: &FileDownload) -> bool {
+    matches!(links.borrow().get(file), Some(Link::Known(_, at)) if at.elapsed() < LINK_LIFE)
 }
 
 /// Forgets `file`'s link `content`, which its host refused (it expired), unless another ask replaced it meanwhile.
