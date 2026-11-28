@@ -487,6 +487,22 @@ fn an_event_without_a_meeting_is_not_joined_either_way() {
 }
 
 #[test]
+fn an_unknown_or_blank_event_is_not_joined_either_way() {
+    let lab = Lab::start(true);
+    for now in [false, true] {
+        let refused = lab.refused(join_meeting("AAMkNoSuchEvent", now));
+        assert_eq!(refused.code, ErrorCode::UnknownEvent, "{refused:?}");
+        assert_eq!(
+            refused.message,
+            "no event AAMkNoSuchEvent in the calendar: `ngteamsctl calendar` lists them"
+        );
+        assert_eq!(lab.refused(join_meeting(" ", now)).code, ErrorCode::UnknownEvent);
+    }
+    assert!(lab.cx.read(|cx| lab.calls().read(cx).prejoin().is_none()));
+    assert!(lab.traced.asked("join-meeting").is_empty());
+}
+
+#[test]
 fn an_app_without_calls_lists_no_event_joinable_and_joins_none() {
     let lab = Lab::start(false);
     let events = lab.week();

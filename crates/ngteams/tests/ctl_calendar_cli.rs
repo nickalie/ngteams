@@ -8,7 +8,7 @@
 //!   of others), an event with no text, no attendees and no join link, and an occurrence whose series cannot be read
 //!   ("Part of a series"). As text and as `--json`.
 //! - **calendar**: the list rows have no field of `calendar show`.
-//! - **errors**: an unknown event id.
+//! - **errors**: an unknown event id, and a blank id.
 //!
 //! Every id, name, address, link and text is made up.
 
@@ -524,4 +524,15 @@ fn the_calendar_list_keeps_its_rows_and_an_unknown_event_is_a_clear_error() {
         line["error"]["message"], "no event AAMkNoSuchEvent in the calendar: `ngteamsctl calendar` lists them",
         "{line}"
     );
+}
+
+#[test]
+fn a_blank_event_id_is_an_unknown_event() {
+    let lab = Lab::start();
+    for blank in ["", " "] {
+        let run = lab.ctl(&["--json", "calendar", "show", blank]);
+        assert_eq!(run.code, 1, "{run:?}");
+        let line: Value = serde_json::from_str(&run.stdout).unwrap_or_else(|error| panic!("{error}: {run:?}"));
+        assert_eq!(line["error"]["code"], "unknown_event", "{line}");
+    }
 }
