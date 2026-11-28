@@ -605,12 +605,7 @@ fn calendar_table(events: &[CalendarRow]) -> String {
 /// One event: its row's fields, then what `calendar show` read whole (each when there is one), each attendee on a line
 /// of its own, and its text below, its line breaks kept.
 fn calendar_event(event: &CalendarRow) -> String {
-    let organizer = match (&event.organizer, &event.organizer_address) {
-        (Some(name), Some(address)) if name != address => format!("{name} <{address}>"),
-        (Some(name), _) => name.clone(),
-        (None, Some(address)) => address.clone(),
-        (None, None) => "-".to_owned(),
-    };
+    let organizer = who(event.organizer.as_deref(), event.organizer_address.as_deref());
     let mut fields = vec![
         ("id", event.id.clone()),
         ("subject", event.subject.clone()),
@@ -640,13 +635,18 @@ fn calendar_event(event: &CalendarRow) -> String {
     text
 }
 
+/// A person as `calendar show` names them: `Name <address>`, or the one of the two it has.
+fn who(name: Option<&str>, address: Option<&str>) -> String {
+    match (name, address) {
+        (Some(name), Some(address)) if name != address => format!("{name} <{address}>"),
+        (Some(who), _) | (None, Some(who)) => who.to_owned(),
+        (None, None) => "-".to_owned(),
+    }
+}
+
 /// An attendee as `calendar show` lists them: `Name <address>`, then optional and their answer when known.
 fn attendee_line(attendee: &AttendeeRow) -> String {
-    let who = match (&attendee.name, &attendee.address) {
-        (Some(name), Some(address)) if name != address => format!("{name} <{address}>"),
-        (Some(who), _) | (None, Some(who)) => who.clone(),
-        (None, None) => "-".to_owned(),
-    };
+    let who = who(attendee.name.as_deref(), attendee.address.as_deref());
     let notes: Vec<&str> = [
         attendee.optional.then_some("optional"),
         attendee.response.map(answer_words),

@@ -197,6 +197,15 @@ pub fn event_title(event: &CalendarEvent) -> String {
     }
 }
 
+/// Who `event` invites as its card lists them: an attendee's copy names the organizer among them, said apart.
+pub fn invited(event: &CalendarEvent) -> impl Iterator<Item = &teams_core::Attendee> {
+    let organizer = event.organizer_address.as_deref().map(str::to_lowercase);
+    event
+        .attendees
+        .iter()
+        .filter(move |attendee| organizer.is_none() || attendee.address.as_deref().map(str::to_lowercase) != organizer)
+}
+
 /// Local midnight of `date` in ms since the epoch ([`midnight_in`] the local time zone).
 fn midnight_ms(date: NaiveDate) -> i64 {
     midnight_in(&Local, date)

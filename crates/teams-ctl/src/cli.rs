@@ -398,8 +398,8 @@ pub enum JoinCommand {
 #[derive(Debug, Subcommand)]
 pub enum CalendarCommand {
     /// One event, by its id as `calendar` lists it, read whole as the event card shows it: the organizer and your
-    /// answer, how its series repeats, its join link, who it invites (optional ones marked) and, on your own meeting,
-    /// how each answered, and its text.
+    /// answer, how its series repeats, its join link, its text, who it invites (optional ones marked) and, on your own
+    /// meeting, how each answered.
     Show { event: String },
 }
 

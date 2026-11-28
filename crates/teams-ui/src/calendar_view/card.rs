@@ -603,14 +603,9 @@ const LISTED: usize = 8;
 /// Who is invited, as Teams' peek lists them: how many and how they answered ([`attendee_tally`]), then each one with
 /// their answer's mark ([`attendee_row`]); the first [`LISTED`], then how many more.
 fn attendees_view(event: &CalendarEvent, palette: Palette) -> Option<gpui::Div> {
-    // an attendee's copy lists the organizer among them, and others' answers only as its own copy last heard them: the
-    // organizer is said above, and only the organizer's copy tells who answered what
-    let organizer = event.organizer_address.as_deref().map(str::to_lowercase);
-    let invited: Vec<&teams_core::Attendee> = event
-        .attendees
-        .iter()
-        .filter(|attendee| organizer.is_none() || attendee.address.as_deref().map(str::to_lowercase) != organizer)
-        .collect();
+    // an attendee's copy has others' answers only as its own copy last heard them: only the organizer's copy tells who
+    // answered what
+    let invited: Vec<&teams_core::Attendee> = crate::calendar::invited(event).collect();
     if invited.is_empty() {
         return None;
     }

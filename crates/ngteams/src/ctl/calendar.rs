@@ -6,9 +6,10 @@
 //!   ([`MAX_CALENDAR_WINDOW_MS`]) is read that much at a time, an event across two reads listed once.
 //! - `calendar show <id>`: one event, read whole now ([`Core::calendar_event`]), with what its card in the calendar
 //!   shows ([`shown`]): the organizer and the account's answer, who it invites (the organizer not among them, optional
-//!   ones marked) and, on the organizer's copy alone, how each answered, its join link and its text as plain text
-//!   from the sanitized model the scheduling form loads. How a series repeats is the form's summary of it, an
-//!   occurrence's from its series read whole too; "Part of a series" when that read fails.
+//!   ones marked), its join link, its text as plain text from the sanitized model the scheduling form loads and, on
+//!   the organizer's copy alone, how each answered. How a series repeats is the form's summary of it, an
+//!   occurrence's from its series read whole too, in what is left of the answer's time; "Part of a series" when that
+//!   read fails or is late.
 //! - `join meeting <id>`: the event read whole, then its meeting's pre-join opened in the call window as the
 //!   calendar's Join opens it ([`calls::show_prejoin`]); nothing goes out. With `now`, the pre-join's Join now asked
 //!   at once ([`calls::join_now_then`]: the microphone on, the camera off, the devices the settings chose), answered
@@ -37,7 +38,7 @@ use teams_ctl::protocol::{
 use teams_proto::MAX_CALENDAR_WINDOW_MS;
 use teams_proto::chat::parse_html;
 use teams_ui::Core;
-use teams_ui::calendar::event_title;
+use teams_ui::calendar::{event_title, invited};
 use teams_ui::calls::{self as ui_calls, MeetingToJoin};
 use teams_ui::event_form::repeat::Repeat;
 use tokio::sync::oneshot;
@@ -99,17 +100,17 @@ pub async fn answer(
             })
         }
         Request::CalendarEvent { event } => {
+            let started = std::time::Instant::now();
             let read = async {
-                let full = core
-                    .calendar_event(event.clone())
+                core.calendar_event(event.clone())
                     .await
-                    .map_err(|error| unread(event, &error))?;
-                let repeats = recurrence(core, &full).await;
-                Ok(Box::new(shown(&full, repeats, joinable)))
+                    .map_err(|error| unread(event, &error))
             };
-            Ok(Response::CalendarEvent(
-                within(CALENDAR_ANSWER, &late, read, &executor).await?,
-            ))
+            let full = within(CALENDAR_ANSWER, &late, read, &executor).await?;
+            let left = CALENDAR_ANSWER.saturating_sub(started.elapsed());
+            let series = async { Ok(recurrence(core, &full).await) };
+            let repeats = within(left, &late, series, &executor).await.ok().flatten();
+            Ok(Response::CalendarEvent(Box::new(shown(&full, repeats, joinable))))
         }
         _ => Err(CtlError::new(ErrorCode::BadRequest, "not a calendar command")),
     }
@@ -167,11 +168,7 @@ async fn recurrence(core: &dyn Core, full: &FullEvent) -> Option<String> {
 pub fn shown(full: &FullEvent, recurrence: Option<String>, joinable: bool) -> CalendarRow {
     let event = &full.event;
     let filled = |text: &Option<String>| text.clone().filter(|text| !text.trim().is_empty());
-    let organizer = event.organizer_address.as_deref().map(str::to_lowercase);
-    let attendees = event
-        .attendees
-        .iter()
-        .filter(|attendee| organizer.is_none() || attendee.address.as_deref().map(str::to_lowercase) != organizer)
+    let attendees = invited(event)
         .map(|attendee| AttendeeRow {
             name: filled(&attendee.name),
             address: filled(&attendee.address),

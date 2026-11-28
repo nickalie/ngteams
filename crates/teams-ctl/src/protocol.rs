@@ -53,7 +53,8 @@ pub const CALL_ANSWER: std::time::Duration = std::time::Duration::from_secs(60);
 /// How long the app takes at most to answer a calendar read (`calendar`, `calendar show`): one read of the service
 /// takes up to the transport's 30 s, and up to twice that and a throttled service's wait (at most 30 s) more when it
 /// is tried again (a token renewed, or the service throttling); a range over 62 days is read 62 days at a time. Past
-/// it the app answers [`ErrorCode::Timeout`].
+/// it the app answers [`ErrorCode::Timeout`]. An occurrence's series read in `calendar show` gets what is left of it,
+/// and when that runs out the event is still told, as part of a series.
 pub const CALENDAR_ANSWER: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// How long the app takes at most to answer a `download`: the files are read and written one after the other, a big
@@ -911,7 +912,7 @@ pub struct CalendarRow {
     /// The account's answer, as the event card says it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response: Option<EventAnswer>,
-    /// Who it invites (the organizer not among them), required ones first as the event names them.
+    /// Who it invites (the organizer not among them), in the order the event names them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attendees: Vec<AttendeeRow>,
     /// The Teams meeting's join link.
