@@ -2021,6 +2021,10 @@ fn a_user_who_clicks_plus_two_times_and_then_types_writes_in_the_box() {
     let (compose, cx) = rooted_chat(&rig, 900.0);
     focus_box(&compose, cx);
     click(cx, "compose-apps");
+    assert!(
+        compose.read_with(cx, |compose, _| compose.apps_flyout().is_some()),
+        "the first click opens the flyout"
+    );
     click(cx, "compose-apps");
     cx.simulate_input("hello");
     draw(cx);
