@@ -70,18 +70,24 @@ struct Lab {
     socket: PathBuf,
     cx: TestAppContext,
     _dir: tempfile::TempDir,
-    _runtime: tokio::runtime::Runtime,
+    runtime: tokio::runtime::Runtime,
 }
 
 impl Lab {
     /// The app of a on the mock, its store caught up first.
     fn start() -> Self {
+        Self::start_with(|_, _| {})
+    }
+
+    /// [`Self::start`], `prepare` given the mock before a's engine starts.
+    fn start_with(prepare: impl FnOnce(&ChatServiceMock, &tokio::runtime::Runtime)) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
             .unwrap();
         let mock = runtime.block_on(ChatServiceMock::start()).unwrap();
+        prepare(&mock, &runtime);
         let dir = tempfile::tempdir().unwrap();
         let http = || {
             let tokens = Arc::new(Tokens(mock.token(LAB_A).unwrap()));
@@ -124,7 +130,7 @@ impl Lab {
             socket,
             cx,
             _dir: dir,
-            _runtime: runtime,
+            runtime,
         }
     }
 
@@ -348,6 +354,18 @@ fn thread_reads_a_post_and_its_replies_by_the_post_or_a_reply() {
     let newest = lab.json(&["thread", &channel, POST, "--limit", "1"]);
     assert_eq!(ids(&newest), [PLAIN_REPLY], "{newest}");
     assert_eq!(newest["ok"].get("end"), None, "{newest}");
+    let older = lab.json(&["thread", &channel, POST, "--before", PLAIN_REPLY]);
+    assert_eq!(ids(&older), [REPLY, POST], "{older}");
+    assert_eq!(
+        (older["ok"].get("synced"), &older["ok"]["end"]),
+        (None, &json!("beginning")),
+        "a page back reads the store: {older}"
+    );
+    let past_the_post = lab.json(&["thread", &channel, REPLY, "--before", POST]);
+    assert_eq!(
+        (rows(&past_the_post).len(), &past_the_post["ok"]["end"]),
+        (0, &json!("beginning"))
+    );
 
     let (exit, _, err) = lab.ctl(&["thread", &channel, "1"]);
     assert_eq!(exit, 1);
@@ -382,4 +400,43 @@ fn a_channel_named_where_a_chat_is_wanted_points_to_teams() {
         err.contains("bad_request:") && err.contains("a thread is a channel's"),
         "{err}"
     );
+}
+
+#[test]
+fn a_channel_whose_sync_fails_answers_the_stored_rows_unsynced() {
+    let lab = Lab::start();
+    lab.runtime.block_on(
+        lab.mock
+            .answer_next_containing("GET", &format!("{TEAM_CHANNEL}/messages"), 403, &json!({})),
+    );
+    let answer = lab.json(&["messages", TEAM_CHANNEL]);
+    assert_eq!(
+        (&answer["ok"]["synced"], &answer["ok"]["end"]),
+        (&json!(false), &json!("store")),
+        "{answer}"
+    );
+    assert!(
+        rows(&answer).is_empty(),
+        "the store holds nothing of the channel: {answer}"
+    );
+    let (exit, out, err) = lab.ctl(&["messages", TEAM_CHANNEL]);
+    assert_eq!(exit, 0, "{err}");
+    assert!(!out.contains("was not synced"), "the next read synced it: {out}");
+}
+
+#[test]
+fn teams_says_at_once_when_their_read_failed() {
+    let lab = Lab::start_with(|mock, runtime| {
+        for _ in 0..3 {
+            runtime.block_on(mock.refuse_next("GET", "/teams/users/me", 403));
+        }
+    });
+    let (exit, _, err) = lab.ctl(&["teams"]);
+    assert_eq!(exit, 1);
+    assert!(err.contains("engine: the teams can't be read right now"), "{err}");
+    // before the teams are read, a thread's id that no stored chat has is no channel to point to
+    let unknown = "19:no-such-chat@thread.v2";
+    let (exit, _, err) = lab.ctl(&["members", unknown]);
+    assert_eq!(exit, 1);
+    assert!(err.contains(&format!("unknown_chat: no chat is {unknown}")), "{err}");
 }

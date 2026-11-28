@@ -121,12 +121,15 @@ pub enum Request {
     /// The account's teams and their channels, as the Teams list shows them.
     Teams,
     /// One thread of a channel: a post and its replies, the newest first. The channel is synced first, as for
-    /// `messages`. A reply's id names the thread of its post.
+    /// `messages`. A reply's id names the thread of its post. `before` pages back from one of its messages, from the
+    /// store without a sync.
     Thread {
         channel: String,
         post: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
     },
     /// The account's messages that match the query.
     Search {

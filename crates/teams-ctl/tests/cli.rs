@@ -368,12 +368,13 @@ fn channel_cases() -> Vec<Case> {
             ],
         },
         Case {
-            args: &["thread", "Team > General", "6", "--limit", "3"],
+            args: &["thread", "Team > General", "6", "--limit", "3", "--before", "8"],
             account: None,
             request: Request::Thread {
                 channel: s("Team > General"),
                 post: s("6"),
                 limit: Some(3),
+                before: Some(s("8")),
             },
             response: Response::Messages {
                 messages: vec![reply, post],

@@ -842,7 +842,7 @@ fn channel_answer(seat: &mut Seat, team: &str, bot: &str, text: &str) -> Sandbox
     let sender = format!("28:{bot}");
     let start = Instant::now();
     loop {
-        if let Response::Messages { messages } = seat.ctl(Request::Messages {
+        if let Response::Messages { messages, .. } = seat.ctl(Request::Messages {
             chat: team.to_owned(),
             limit: Some(50),
             before: None,

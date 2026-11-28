@@ -370,7 +370,6 @@ fn message_text(message: &MessageRow) -> String {
     text
 }
 
-/// An attachment as a message's row lists it: `1: report.pdf, pdf`.
 /// An email post's origin: `email from <who> to <whom>`, the recipients not named counted.
 fn email_label(email: &EmailRow) -> String {
     let mut label = "email".to_owned();
@@ -439,6 +438,7 @@ fn team_table(teams: &[TeamRow]) -> String {
     table(&["ID", "TYPE", "NAME"], rows)
 }
 
+/// An attachment as a message's row lists it: `1: report.pdf, pdf`.
 fn attachment_label(attachment: &AttachmentRow) -> String {
     let mut label = format!("{}: {}", attachment.index, one_line(&attachment.name));
     let kind = match attachment.kind {

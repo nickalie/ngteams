@@ -147,13 +147,21 @@ pub async fn listed(core: &dyn Core) -> Result<Vec<Conversation>, CtlError> {
 /// # Errors
 /// [`ErrorCode::UnknownChat`], [`ErrorCode::AmbiguousChat`] with the candidates, or the engine's.
 pub async fn chat(core: &dyn Core, wanted: &str) -> Result<Conversation, CtlError> {
+    match find_chat(core, wanted).await? {
+        Some(found) => Ok(found),
+        None => Err(not_a_chat(core, wanted).await),
+    }
+}
+
+/// The chat `wanted` names, `None` when no chat has the name.
+async fn find_chat(core: &dyn Core, wanted: &str) -> Result<Option<Conversation>, CtlError> {
     let conversations = core
         .conversations(ALL_CHATS)
         .await
         .map_err(|error| engine_error(&error))?;
     let wanted = wanted.trim();
     if let Some(found) = conversations.iter().find(|conversation| conversation.id == wanted) {
-        return Ok(found.clone());
+        return Ok(Some(found.clone()));
     }
     let mut found: Vec<(Conversation, String)> = Vec::new();
     for conversation in conversations.into_iter().filter(chat_list::listed) {
@@ -163,8 +171,8 @@ pub async fn chat(core: &dyn Core, wanted: &str) -> Result<Conversation, CtlErro
         }
     }
     match found.len() {
-        0 => Err(not_a_chat(core, wanted).await),
-        1 => Ok(found.swap_remove(0).0),
+        0 => Ok(None),
+        1 => Ok(Some(found.swap_remove(0).0)),
         many => Err(CtlError {
             code: ErrorCode::AmbiguousChat,
             message: format!("{many} chats are called {wanted}: name one by its id"),
@@ -179,17 +187,25 @@ pub async fn chat(core: &dyn Core, wanted: &str) -> Result<Conversation, CtlErro
     }
 }
 
-/// The error of a name that no chat has: it points to `teams` when a channel has the name.
+/// The error of a name that no chat has: it points to `teams` when a listed channel has the name.
 async fn not_a_chat(core: &dyn Core, wanted: &str) -> CtlError {
-    let message = if channel_id(core, wanted).await.is_ok() {
-        format!(
-            "{wanted} is a channel, not a chat: `ngteamsctl teams` lists the channels with their ids, and `ngteamsctl \
-             messages` reads a channel"
-        )
-    } else {
-        format!("no chat is {wanted}: `ngteamsctl chats` lists the chats, `ngteamsctl teams` the channels")
-    };
-    CtlError::new(ErrorCode::UnknownChat, message)
+    if matches!(find_channel(core, wanted).await, Ok(Channel::Listed(_))) {
+        return CtlError::new(
+            ErrorCode::UnknownChat,
+            format!(
+                "{wanted} is a channel, not a chat: `ngteamsctl teams` lists the channels with their ids, and \
+                 `ngteamsctl messages` reads a channel"
+            ),
+        );
+    }
+    no_chat(wanted)
+}
+
+fn no_chat(wanted: &str) -> CtlError {
+    CtlError::new(
+        ErrorCode::UnknownChat,
+        format!("no chat is {wanted}: `ngteamsctl chats` lists the chats, `ngteamsctl teams` the channels"),
+    )
 }
 
 /// A conversation that a read names: a chat or a team's channel.
@@ -207,19 +223,15 @@ pub struct Target {
 /// As [`chat`] when no channel has the name either; [`ErrorCode::AmbiguousChat`] for a channel name that several
 /// channels share; the engine's.
 pub async fn conversation(core: &dyn Core, wanted: &str) -> Result<Target, CtlError> {
-    let unknown = match chat(core, wanted).await {
-        Ok(found) => {
-            return Ok(Target {
-                channel: found.kind == ConversationKind::Channel,
-                id: found.id,
-            });
-        }
-        Err(error) if error.code == ErrorCode::UnknownChat => error,
-        Err(error) => return Err(error),
-    };
-    match channel_id(core, wanted).await {
-        Ok(id) => Ok(Target { id, channel: true }),
-        Err(error) if error.code == ErrorCode::UnknownChat => Err(unknown),
+    if let Some(found) = find_chat(core, wanted).await? {
+        return Ok(Target {
+            channel: found.kind == ConversationKind::Channel,
+            id: found.id,
+        });
+    }
+    match find_channel(core, wanted).await {
+        Ok(Channel::Listed(id) | Channel::Bare(id)) => Ok(Target { id, channel: true }),
+        Err(error) if error.code == ErrorCode::UnknownChat => Err(no_chat(wanted)),
         Err(error) => Err(error),
     }
 }
@@ -230,10 +242,24 @@ pub async fn conversation(core: &dyn Core, wanted: &str) -> Result<Target, CtlEr
 /// # Errors
 /// [`ErrorCode::UnknownChat`], [`ErrorCode::AmbiguousChat`] with the candidates, or the engine's.
 pub async fn channel_id(core: &dyn Core, wanted: &str) -> Result<String, CtlError> {
+    match find_channel(core, wanted).await? {
+        Channel::Listed(id) | Channel::Bare(id) => Ok(id),
+    }
+}
+
+/// A channel [`find_channel`] found.
+enum Channel {
+    /// One of the stored teams' channels.
+    Listed(String),
+    /// A thread's id taken as it is, before the teams were ever read.
+    Bare(String),
+}
+
+async fn find_channel(core: &dyn Core, wanted: &str) -> Result<Channel, CtlError> {
     let wanted = wanted.trim();
     let Some(teams) = core.teams().await.map_err(|error| engine_error(&error))? else {
         if wanted.starts_with("19:") {
-            return Ok(wanted.to_owned());
+            return Ok(Channel::Bare(wanted.to_owned()));
         }
         return Err(CtlError::new(
             ErrorCode::UnknownChat,
@@ -244,7 +270,7 @@ pub async fn channel_id(core: &dyn Core, wanted: &str) -> Result<String, CtlErro
     for team in &teams {
         for channel in &team.channels {
             if channel.id == wanted {
-                return Ok(channel.id.clone());
+                return Ok(Channel::Listed(channel.id.clone()));
             }
             if names(wanted, &team.name, &channel.name) {
                 found.push(ChatRef {
@@ -262,7 +288,7 @@ pub async fn channel_id(core: &dyn Core, wanted: &str) -> Result<String, CtlErro
                  name"
             ),
         )),
-        1 => Ok(found.swap_remove(0).id),
+        1 => Ok(Channel::Listed(found.swap_remove(0).id)),
         many => Err(CtlError {
             code: ErrorCode::AmbiguousChat,
             message: format!("{many} channels are called {wanted}: name one by <team> > <channel> or its id"),

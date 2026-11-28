@@ -118,14 +118,7 @@ pub enum Command {
     /// The account's teams and their channels with their ids, as the Teams list shows them.
     Teams,
     /// One thread of a channel: the post and its replies, the newest first. The channel is synced first.
-    Thread {
-        /// The channel's id, `<team> > <channel>` or name.
-        channel: String,
-        /// The post's id (`messages` lists it); a reply's id names the thread of its post.
-        post: String,
-        #[arg(long, value_name = "N")]
-        limit: Option<u32>,
-    },
+    Thread(ThreadArgs),
     /// Save files and pictures of a message in a folder, each by the name `messages` lists. The app reads them.
     Download(DownloadArgs),
     /// The unread counts the badge shows: per chat and the total.
@@ -705,6 +698,31 @@ fn kind(value: &str) -> Result<String, String> {
     }
 }
 
+/// Which thread `thread` reads, and which page of it.
+#[derive(Args, Debug)]
+pub struct ThreadArgs {
+    /// The channel's id, `<team> > <channel>` or name.
+    pub channel: String,
+    /// The post's id (`messages` lists it); a reply's id names the thread of its post.
+    pub post: String,
+    #[arg(long, value_name = "N")]
+    pub limit: Option<u32>,
+    /// Only messages older than this one of the thread: the next page.
+    #[arg(long, value_name = "MESSAGE")]
+    pub before: Option<String>,
+}
+
+impl ThreadArgs {
+    fn request(&self) -> Request {
+        Request::Thread {
+            channel: self.channel.clone(),
+            post: self.post.clone(),
+            limit: self.limit,
+            before: self.before.clone(),
+        }
+    }
+}
+
 /// What `download` selects and where it saves.
 #[derive(Args, Debug)]
 pub struct DownloadArgs {
@@ -762,11 +780,7 @@ fn request(command: &Command, stdin: &mut dyn FnMut() -> io::Result<String>) -> 
             before: before.clone(),
         },
         Command::Teams => Request::Teams,
-        Command::Thread { channel, post, limit } => Request::Thread {
-            channel: channel.clone(),
-            post: post.clone(),
-            limit: *limit,
-        },
+        Command::Thread(thread) => thread.request(),
         Command::Download(download) => download_request(download)?,
         Command::Unread => Request::Unread,
         Command::Search { query, limit } => Request::Search {
@@ -993,7 +1007,7 @@ pub fn answer_time(command: &Command) -> Duration {
         Command::Call(_) => CALL_ANSWER + slack,
         Command::Calendar { .. } => CALENDAR_ANSWER + slack,
         Command::Download(_) => DOWNLOAD_ANSWER + slack,
-        Command::Messages { .. } | Command::Thread { .. } => CHANNEL_SYNC + slack,
+        Command::Messages { .. } | Command::Thread(_) => CHANNEL_SYNC + slack,
         Command::Teams => TEAMS_ANSWER + slack,
         _ => slack,
     }

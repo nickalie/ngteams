@@ -132,7 +132,7 @@ const REQUEST_LINES: &[&str] = &[
     r#"{"id":61,"cmd":"download","chat":"Lab B","message":"1700000000000","name":"report.pdf","index":2,"all":true,"dir":"/home/someone/Downloads","force":true}"#,
     r#"{"id":62,"cmd":"download","chat":"19:x@thread.v2","message":"1700000000000","dir":"/tmp/out"}"#,
     r#"{"id":63,"cmd":"teams"}"#,
-    r#"{"id":64,"cmd":"thread","channel":"Team > General","post":"1700000000000","limit":5}"#,
+    r#"{"id":64,"cmd":"thread","channel":"Team > General","post":"1700000000000","limit":5,"before":"1700000000100"}"#,
     r#"{"id":65,"cmd":"thread","channel":"19:c@thread.tacv2","post":"1700000000000"}"#,
 ];
 

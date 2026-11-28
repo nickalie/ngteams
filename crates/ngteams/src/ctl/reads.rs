@@ -15,9 +15,10 @@
 //!   catch-up reads it), within [`CHANNEL_SYNC`]; a sync that fails or takes longer leaves the store's rows, with
 //!   `synced` false. Its rows name a reply's post, and count a post's stored replies ([`Core::reply_roots`]), and carry
 //!   a post's subject and email as the chat view draws them. `thread` reads one post's thread from the store, the post
-//!   last.
+//!   last; `before` pages back in it, without a sync.
 //! - `teams`: the account's teams and their channels, as the Teams list shows them ([`Core::teams`]). Before their
-//!   first read the answer waits for it, up to [`TEAMS_ANSWER`].
+//!   first read the answer waits for it, up to [`TEAMS_ANSWER`]; after a failed read it says so at once, as the Teams
+//!   list does.
 //! - `search`: the store's own search over the listed chats, as the window's search box searches; its hits also stop
 //!   where the line is full.
 //! - `members`: a chat's stored members with their names.
@@ -73,7 +74,12 @@ pub async fn answer(request: &Request, account: &Addressed, cx: &mut AsyncApp) -
     match request {
         Request::Chats { unread_only, limit } => chats(core, *unread_only, *limit).await,
         Request::Messages { chat, limit, before } => messages(core, chat, *limit, before.as_deref(), cx).await,
-        Request::Thread { channel, post, limit } => thread(core, channel, post, *limit, cx).await,
+        Request::Thread {
+            channel,
+            post,
+            limit,
+            before,
+        } => thread(core, channel, post, *limit, before.as_deref(), cx).await,
         Request::Teams => teams(account, cx).await,
         Request::Search { query, limit } => found(core, query, *limit).await,
         Request::Members { chat } => members(core, chat).await,
@@ -151,12 +157,13 @@ async fn messages(
 }
 
 /// `thread`: the post `post` names (its own id, or a reply's) and its replies, the newest first, after a sync of the
-/// channel as for `messages`.
+/// channel as for `messages`; `before` pages back from one of its messages, from the store.
 async fn thread(
     core: &dyn Core,
     channel: &str,
     post: &str,
     limit: Option<u32>,
+    before: Option<&str>,
     cx: &mut AsyncApp,
 ) -> Result<Response, CtlError> {
     let target = address::conversation(core, channel).await?;
@@ -166,13 +173,27 @@ async fn thread(
             format!("{channel} is a chat: a thread is a channel's"),
         ));
     }
-    let synced = synced(core, &target.id, cx).await;
+    let synced = match before {
+        Some(_) => None,
+        None => Some(synced(core, &target.id, cx).await),
+    };
     let posts = Posts::of(core, &target).await?.unwrap_or_default();
     let post = posts.post_of(post.trim()).to_owned();
     let posted = cursor_at(core, &target.id, &post).await?.arrival_time;
+    let cursor = match before {
+        Some(before) => Some(cursor_at(core, &target.id, before).await?),
+        None => None,
+    };
+    if cursor.as_ref().is_some_and(|cursor| cursor.arrival_time <= posted) {
+        return Ok(Response::Messages {
+            messages: Vec::new(),
+            synced,
+            end: Some(HistoryEnd::Beginning),
+        });
+    }
     let limit = count(limit, MESSAGES, MAX_MESSAGES);
-    // replies come after their post: read from the newest back, the post is the last row
-    let newest = read_back(core, &target.id, None, limit, Some(&posts), |message| {
+    // replies come after their post: read back from the newest, the post is the last row
+    let newest = read_back(core, &target.id, cursor, limit, Some(&posts), |message| {
         if message.id == post {
             Keep::Last
         } else if posts.post_of(&message.id) == post {
@@ -187,7 +208,7 @@ async fn thread(
     Ok(Response::Messages {
         end: newest.reached.then_some(HistoryEnd::Beginning),
         messages: newest.rows,
-        synced: Some(synced),
+        synced,
     })
 }
 
@@ -534,30 +555,33 @@ async fn unread(account: &Addressed, cx: &mut AsyncApp) -> Result<Response, CtlE
 /// [`ErrorCode::Timeout`] when it hasn't counted by then (its first count runs a moment after the tile is built; one
 /// that failed is tried again only once a chat changes).
 async fn counted(tray: &Entity<Tray>, cx: &mut AsyncApp) -> Result<(), CtlError> {
-    let (done, finished) = async_channel::bounded::<bool>(1);
+    let executor = cx.background_executor().clone();
+    let counted = async {
+        observed(tray, |tray, cx| tray.read(cx).total().is_some(), cx).await;
+        Ok(())
+    };
+    super::writes::within(FIRST_COUNT, &not_counted().message, counted, &executor).await
+}
+
+/// Waits until `done` holds for `entity`, as each change of it is told.
+async fn observed<T: 'static>(
+    entity: &Entity<T>,
+    done: impl Fn(&Entity<T>, &gpui::App) -> bool + 'static,
+    cx: &mut AsyncApp,
+) {
+    let (told, finished) = async_channel::bounded::<()>(1);
     let observing = cx.update(|cx| {
-        if tray.read(cx).total().is_some() {
+        if done(entity, cx) {
             return None;
         }
-        let done = done.clone();
-        Some(cx.observe(tray, move |tray, cx| {
-            if tray.read(cx).total().is_some() {
-                let _ = done.try_send(true);
+        Some(cx.observe(entity, move |entity, cx| {
+            if done(&entity, cx) {
+                let _ = told.try_send(());
             }
         }))
     });
-    let Some(_observing) = observing else {
-        return Ok(());
-    };
-    let timer = cx.background_executor().timer(FIRST_COUNT);
-    // dropped (cancelled) once the count came first
-    let _timeout = cx.background_executor().spawn(async move {
-        timer.await;
-        let _ = done.try_send(false);
-    });
-    match finished.recv().await {
-        Ok(true) => Ok(()),
-        _ => Err(not_counted()),
+    if observing.is_some() {
+        let _ = finished.recv().await;
     }
 }
 
@@ -692,25 +716,25 @@ fn email_person(user: &EmailUser) -> EmailPerson {
 
 /// `teams`: the account's teams as the Teams list shows them, waiting for their first read when the store holds none.
 async fn teams(account: &Addressed, cx: &mut AsyncApp) -> Result<Response, CtlError> {
-    let core = &*account.core;
-    let deadline = std::time::Instant::now() + TEAMS_ANSWER;
+    let executor = cx.background_executor().clone();
+    let late = "the teams aren't read yet: ask again in a moment";
+    super::writes::within(TEAMS_ANSWER, late, teams_read(account, cx), &executor).await
+}
+
+/// The account's teams once they are stored, or the failure of the last read when none are.
+async fn teams_read(account: &Addressed, cx: &mut AsyncApp) -> Result<Response, CtlError> {
     loop {
         let told = cx.update(|cx| told_at(&account.chats, cx));
-        if let Some(teams) = core.teams().await.map_err(|error| engine_error(&error))? {
+        if let Some(teams) = account.core.teams().await.map_err(|error| engine_error(&error))? {
             return Ok(Response::Teams {
                 teams: teams.iter().map(team_row).collect(),
             });
         }
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
-        if left.is_zero() || !teams_told(&account.chats, told, left, cx).await {
-            return Err(CtlError::new(
-                ErrorCode::Timeout,
-                "the teams aren't read yet: ask again in a moment",
-            ));
-        }
-        if cx.update(|cx| account.chats.read(cx).teams_failed_at() > account.chats.read(cx).teams_at()) {
+        let (stored, failed) = told;
+        if failed > stored {
             return Err(CtlError::new(ErrorCode::Engine, "the teams can't be read right now"));
         }
+        observed(&account.chats, move |chats, cx| told_at(chats, cx) != told, cx).await;
     }
 }
 
@@ -718,32 +742,6 @@ async fn teams(account: &Addressed, cx: &mut AsyncApp) -> Result<Response, CtlEr
 fn told_at(chats: &Entity<Chats>, cx: &gpui::App) -> (u64, u64) {
     let chats = chats.read(cx);
     (chats.teams_at(), chats.teams_failed_at())
-}
-
-/// Waits until the models tell a teams change or a failed read after `told`, up to `left`: `false` when none came.
-async fn teams_told(chats: &Entity<Chats>, told: (u64, u64), left: Duration, cx: &mut AsyncApp) -> bool {
-    let (done, finished) = async_channel::bounded::<bool>(1);
-    let observing = cx.update(|cx| {
-        if told_at(chats, cx) != told {
-            return None;
-        }
-        let done = done.clone();
-        Some(cx.observe(chats, move |chats, cx| {
-            if told_at(&chats, cx) != told {
-                let _ = done.try_send(true);
-            }
-        }))
-    });
-    let Some(_observing) = observing else {
-        return true;
-    };
-    let timer = cx.background_executor().timer(left);
-    // dropped (cancelled) once the teams were told first
-    let _timeout = cx.background_executor().spawn(async move {
-        timer.await;
-        let _ = done.try_send(false);
-    });
-    finished.recv().await.unwrap_or(false)
 }
 
 fn team_row(team: &Team) -> TeamRow {
