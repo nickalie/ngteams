@@ -529,9 +529,10 @@ fn an_accounts_file_that_cant_be_parsed_fails_every_change_and_read() -> TestRes
 }
 
 /// `accounts.toml` as the release before `teams-app` wrote it (made-up accounts): a Microsoft 365 account with its
-/// name and identity provider hosts, one no sign-in named, and an own server's account with its CA file.
-const PREVIOUS_RELEASE: &str =
-    "# The accounts the personal build signs in, in the order they were added (a first sign-in adds oid and
+/// name and identity provider hosts, one no sign-in named, and an own server's account with its CA file at `ca_file`.
+fn previous_release_file(ca_file: &str) -> String {
+    format!(
+        "# The accounts the personal build signs in, in the order they were added (a first sign-in adds oid and
 # tid). Never a token.
 
 [[account]]
@@ -551,8 +552,11 @@ oid = \"00000000-0000-4000-8000-0000000000a1\"
 tid = \"00000000-0000-4000-8000-000000000001\"
 idp_hosts = []
 server = \"https://chat.example.test:8443\"
-ca_file = \"/synthetic/ca.pem\"
-";
+ca_file = {}
+",
+        toml::Value::String(ca_file.to_owned())
+    )
+}
 
 #[test]
 fn an_accounts_file_of_the_previous_release_loads_the_same_accounts_and_is_written_back_the_same() -> TestResult {
@@ -560,13 +564,16 @@ fn an_accounts_file_of_the_previous_release_loads_the_same_accounts_and_is_writt
     let dir = tempfile::tempdir()?;
     let paths = paths_in(&dir);
     fs::create_dir_all(paths.config_dir())?;
-    fs::write(paths.accounts_file(), PREVIOUS_RELEASE)?;
+    // absolute on each platform, as the CA path must be
+    let ca_file = dir.path().join("synthetic-ca.pem").display().to_string();
+    let previous_release = previous_release_file(&ca_file);
+    fs::write(paths.accounts_file(), &previous_release)?;
     let microsoft = PersonalAccount {
         idp_hosts: vec!["sso.example.test".to_owned()],
         ..signed_in("first@example.test", GUID_X)?.signed_in_as(GUID_X, TENANT, Some("First Made-Up"))?
     };
     let pending = PersonalAccount::pending("pending@example.test")?;
-    let own = PersonalAccount::pending_on("first@example.test", &OwnServer::parse(SERVER, "/synthetic/ca.pem")?)?
+    let own = PersonalAccount::pending_on("first@example.test", &OwnServer::parse(SERVER, &ca_file)?)?
         .signed_in_as(GUID_S, TENANT, None)?;
     let accounts = PersonalAccount::load_all(&paths)?;
     assert_eq!(accounts, [microsoft.clone(), pending.clone(), own.clone()]);
@@ -577,12 +584,12 @@ fn an_accounts_file_of_the_previous_release_loads_the_same_accounts_and_is_writt
     for account in &accounts {
         account.save(&paths)?;
     }
-    assert_eq!(fs::read_to_string(paths.accounts_file())?, PREVIOUS_RELEASE);
+    assert_eq!(fs::read_to_string(paths.accounts_file())?, previous_release);
     let fresh = tempfile::tempdir()?;
     let fresh_paths = paths_in(&fresh);
     for account in &accounts {
         account.save(&fresh_paths)?;
     }
-    assert_eq!(fs::read_to_string(fresh_paths.accounts_file())?, PREVIOUS_RELEASE);
+    assert_eq!(fs::read_to_string(fresh_paths.accounts_file())?, previous_release);
     Ok(())
 }

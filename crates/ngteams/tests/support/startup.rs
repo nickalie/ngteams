@@ -74,6 +74,7 @@ pub(super) mod accounts {
                 None,
             )
             .map_err(|error| ngteams::accounts::StartFailed::of(account, &error))?;
+            record("started", &account.upn);
             Ok(Started {
                 account: account.clone(),
                 engine,
@@ -820,9 +821,10 @@ fn seen_after(case: &str) {
 
 /// `accounts.toml` as the release before `teams-app` wrote it (made-up accounts): two Microsoft 365 accounts (the
 /// first with its name and identity provider hosts), one no sign-in named, and an own server's account with its CA
-/// file.
-const PREVIOUS_RELEASE: &str =
-    "# The accounts the personal build signs in, in the order they were added (a first sign-in adds oid and
+/// file at `ca_file`.
+fn previous_release_file(ca_file: &std::path::Path) -> String {
+    format!(
+        "# The accounts the personal build signs in, in the order they were added (a first sign-in adds oid and
 # tid). Never a token.
 
 [[account]]
@@ -842,14 +844,22 @@ oid = \"00000000-0000-4000-8000-0000000000a2\"
 tid = \"00000000-0000-4000-8000-000000000001\"
 idp_hosts = []
 server = \"https://chat.example.test\"
-ca_file = \"/synthetic/ca.pem\"
+ca_file = {}
 
 [[account]]
 upn = \"ready-other@example.test\"
 oid = \"00000000-0000-4000-8000-000000000004\"
 tid = \"00000000-0000-4000-8000-000000000001\"
 idp_hosts = []
-";
+",
+        toml::Value::String(ca_file.display().to_string())
+    )
+}
+
+/// Where [`previous_release`] puts the own server's CA: an absolute path on each platform.
+fn previous_release_ca(setup: &Setup) -> PathBuf {
+    setup.paths.config_dir().join("synthetic-ca.pem")
+}
 
 /// An accounts file that does not parse.
 const DAMAGED: &str = "[[account]]\nupn = \"ready@example.test\"\nnot = [valid\n";
@@ -857,7 +867,10 @@ const DAMAGED: &str = "[[account]]\nupn = \"ready@example.test\"\nnot = [valid\n
 /// The previous release's `accounts.toml` and the regions its sign-ins saved.
 fn previous_release(setup: &Setup) {
     std::fs::create_dir_all(setup.paths.config_dir()).unwrap();
-    std::fs::write(setup.paths.accounts_file(), PREVIOUS_RELEASE).unwrap();
+    let ca = previous_release_ca(setup);
+    let authority = rcgen::generate_simple_self_signed(vec!["chat.example.test".to_owned()]).unwrap();
+    std::fs::write(&ca, authority.cert.pem()).unwrap();
+    std::fs::write(setup.paths.accounts_file(), previous_release_file(&ca)).unwrap();
     for account in setup.signed_in_accounts().unwrap() {
         let (region, chat) = if account.server.is_some() {
             ("own", format!("{OWN_SERVER}/api/chatsvc/own"))
@@ -880,22 +893,21 @@ fn damaged_accounts(setup: &Setup) {
 }
 
 /// What a case's run did with an accounts file it did not write: the previous release's accounts start in their order
-/// and the one no sign-in named waits; a damaged file starts and asks nothing. Neither file is written.
+/// and the one no sign-in named waits; a damaged file starts nothing and asks nothing. Neither file is written.
 fn seen_files(case: &str, seen: &[String]) {
     let setup = Setup::from_env().unwrap();
     let file = || std::fs::read_to_string(setup.paths.accounts_file()).unwrap();
     match case {
         "previous-release" => {
-            let started: Vec<&str> = seen.iter().filter_map(|call| call.strip_prefix("start:")).collect();
-            assert_eq!(
-                started,
-                [
-                    "ready@example.test",
-                    "ready-own@example.test",
-                    "ready-other@example.test"
-                ],
-                "{seen:?}"
-            );
+            let order = [
+                "ready@example.test",
+                "ready-own@example.test",
+                "ready-other@example.test",
+            ];
+            for kind in ["start:", "started:"] {
+                let calls: Vec<&str> = seen.iter().filter_map(|call| call.strip_prefix(kind)).collect();
+                assert_eq!(calls, order, "{seen:?}");
+            }
             assert_eq!(asked_again(seen), 1, "{seen:?}");
             // the engines here hold no token, so an account signed out after its start is asked again
             assert!(
@@ -904,7 +916,7 @@ fn seen_files(case: &str, seen: &[String]) {
                     .any(|call| call.starts_with("add") || call.contains("pending@example.test")),
                 "{seen:?}"
             );
-            assert_eq!(file(), PREVIOUS_RELEASE);
+            assert_eq!(file(), previous_release_file(&previous_release_ca(&setup)));
         }
         "damaged-accounts" => {
             assert!(
