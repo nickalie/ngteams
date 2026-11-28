@@ -422,7 +422,7 @@ fn saved_file(index: u32, name: &str, path: &Path, size: usize) -> SavedFile {
 #[test]
 fn messages_list_a_message_s_file_and_its_picture() {
     let lab = Lab::start(false);
-    let Ok(Response::Messages { messages }) = lab.ask(Request::Messages {
+    let Ok(Response::Messages { messages, .. }) = lab.ask(Request::Messages {
         chat: CHAT.to_owned(),
         limit: None,
         before: None,

@@ -1128,7 +1128,7 @@ impl AppRun {
             limit: Some(50),
             before: None,
         })? {
-            Response::Messages { messages } => messages
+            Response::Messages { messages, .. } => messages
                 .into_iter()
                 .find(|message| message.id == id)
                 .map(|message| (message.text, message.edited))

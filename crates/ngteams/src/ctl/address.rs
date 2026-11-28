@@ -7,13 +7,17 @@
 //! - **A chat**: by its id (any stored conversation's), or by its title as the chat list names it
 //!   ([`chat_list::chat_name`]: the topic, otherwise the other members' names; a 1:1 chat the other person's), in any
 //!   case. A title several chats have is [`ErrorCode::AmbiguousChat`] with each one's id and title; none is
-//!   [`ErrorCode::UnknownChat`].
+//!   [`ErrorCode::UnknownChat`], which says when the name is a channel's.
+//! - **A channel** ([`channel_id`]): by its id, by `<team> > <channel>` (as `teams` titles it) or `<team>/<channel>`, or
+//!   by its name alone when only one channel has it, in any case. [`conversation`] takes a chat or a channel, for the
+//!   reads that serve both.
 
 use std::sync::Arc;
 
 use gpui::{App, Entity};
 use teams_ctl::protocol::{ChatRef, CtlError, ErrorCode};
 use teams_store::Conversation;
+use teams_store::ConversationKind;
 use teams_ui::chat_list::{self, ALL_CHATS};
 use teams_ui::{Account, Chats, Core, Engine, Tray};
 
@@ -159,10 +163,7 @@ pub async fn chat(core: &dyn Core, wanted: &str) -> Result<Conversation, CtlErro
         }
     }
     match found.len() {
-        0 => Err(CtlError::new(
-            ErrorCode::UnknownChat,
-            format!("no chat is {wanted}: `ngteamsctl chats` lists them"),
-        )),
+        0 => Err(not_a_chat(core, wanted).await),
         1 => Ok(found.swap_remove(0).0),
         many => Err(CtlError {
             code: ErrorCode::AmbiguousChat,
@@ -176,4 +177,113 @@ pub async fn chat(core: &dyn Core, wanted: &str) -> Result<Conversation, CtlErro
                 .collect(),
         }),
     }
+}
+
+/// The error of a name that no chat has: it points to `teams` when a channel has the name.
+async fn not_a_chat(core: &dyn Core, wanted: &str) -> CtlError {
+    let message = if channel_id(core, wanted).await.is_ok() {
+        format!(
+            "{wanted} is a channel, not a chat: `ngteamsctl teams` lists the channels with their ids, and `ngteamsctl \
+             messages` reads a channel"
+        )
+    } else {
+        format!("no chat is {wanted}: `ngteamsctl chats` lists the chats, `ngteamsctl teams` the channels")
+    };
+    CtlError::new(ErrorCode::UnknownChat, message)
+}
+
+/// A conversation that a read names: a chat or a team's channel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Target {
+    pub id: String,
+    /// A team's channel: its rows tell a post from a reply, and a read syncs it first.
+    pub channel: bool,
+}
+
+/// The chat or the channel `wanted` names: a stored conversation by its id, a chat by its title, else a channel
+/// ([`channel_id`]).
+///
+/// # Errors
+/// As [`chat`] when no channel has the name either; [`ErrorCode::AmbiguousChat`] for a channel name that several
+/// channels share; the engine's.
+pub async fn conversation(core: &dyn Core, wanted: &str) -> Result<Target, CtlError> {
+    let unknown = match chat(core, wanted).await {
+        Ok(found) => {
+            return Ok(Target {
+                channel: found.kind == ConversationKind::Channel,
+                id: found.id,
+            });
+        }
+        Err(error) if error.code == ErrorCode::UnknownChat => error,
+        Err(error) => return Err(error),
+    };
+    match channel_id(core, wanted).await {
+        Ok(id) => Ok(Target { id, channel: true }),
+        Err(error) if error.code == ErrorCode::UnknownChat => Err(unknown),
+        Err(error) => Err(error),
+    }
+}
+
+/// The id of the channel `wanted` names among the account's teams (see the module docs). Before the teams were ever
+/// read, a thread's id (`19:…`) is taken as it is.
+///
+/// # Errors
+/// [`ErrorCode::UnknownChat`], [`ErrorCode::AmbiguousChat`] with the candidates, or the engine's.
+pub async fn channel_id(core: &dyn Core, wanted: &str) -> Result<String, CtlError> {
+    let wanted = wanted.trim();
+    let Some(teams) = core.teams().await.map_err(|error| engine_error(&error))? else {
+        if wanted.starts_with("19:") {
+            return Ok(wanted.to_owned());
+        }
+        return Err(CtlError::new(
+            ErrorCode::UnknownChat,
+            format!("the teams aren't read yet: name the channel {wanted} by its id"),
+        ));
+    };
+    let mut found: Vec<ChatRef> = Vec::new();
+    for team in &teams {
+        for channel in &team.channels {
+            if channel.id == wanted {
+                return Ok(channel.id.clone());
+            }
+            if names(wanted, &team.name, &channel.name) {
+                found.push(ChatRef {
+                    id: channel.id.clone(),
+                    title: channel_title(&team.name, &channel.name),
+                });
+            }
+        }
+    }
+    match found.len() {
+        0 => Err(CtlError::new(
+            ErrorCode::UnknownChat,
+            format!(
+                "no channel is {wanted}: `ngteamsctl teams` lists them; name one by its id, <team> > <channel> or its \
+                 name"
+            ),
+        )),
+        1 => Ok(found.swap_remove(0).id),
+        many => Err(CtlError {
+            code: ErrorCode::AmbiguousChat,
+            message: format!("{many} channels are called {wanted}: name one by <team> > <channel> or its id"),
+            candidates: found,
+        }),
+    }
+}
+
+/// A channel's title as `teams` gives it: `<team> > <channel>`.
+#[must_use]
+pub fn channel_title(team: &str, channel: &str) -> String {
+    format!("{} > {}", team.trim(), channel.trim())
+}
+
+/// Whether `wanted` names the channel `channel` of the team `team`: its name, `<team> > <channel>` (the spaces
+/// around `>` optional) or `<team>/<channel>`, in any case.
+fn names(wanted: &str, team: &str, channel: &str) -> bool {
+    let same = |one: &str, other: &str| one.trim().eq_ignore_ascii_case(other.trim());
+    same(wanted, channel)
+        || same(wanted, &format!("{team}/{channel}"))
+        || wanted
+            .match_indices('>')
+            .any(|(at, _)| same(&wanted[..at], team) && same(&wanted[at + 1..], channel))
 }

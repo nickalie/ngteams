@@ -2,12 +2,22 @@
 //!
 //! - `chats`: the chats the chat list lists, the latest activity first, each named, previewed and counted as its row
 //!   is ([`chat_list::build_row`]); `unread_only` keeps those with anything unread.
-//! - `messages`: a chat's messages, the newest first, as plain text: the text messages and the lines Teams says in a
-//!   chat ("Meeting started", …) as the chat list's preview reads them ([`system_message::preview`]); a card's text is
-//!   the text on it, one line for each text, fact or button (`teams_proto::chat::card::card_message_text`); the rest
-//!   (a thread's events, a call's records) left out. `before` pages back from a message. The answer stops before a
-//!   message that would take its line over the wire's cap ([`MAX_LINE`]): fewer than asked, the client pages on from
-//!   the last one. Each row lists the message's attachments as `download` names them ([`super::download`]).
+//! - `messages`: a chat's or a channel's messages, the newest first, as plain text: the text messages and the lines
+//!   Teams says in a chat ("Meeting started", …) as the chat list's preview reads them ([`system_message::preview`]);
+//!   a card's text is the text on it, one line for each text, fact or button
+//!   (`teams_proto::chat::card::card_message_text`); the rest (a thread's events, a call's records) left out. `before`
+//!   pages back from a message. The answer stops before a message that would take its line over the wire's cap
+//!   ([`MAX_LINE`]): fewer than asked, the client pages on from the last one. When the store holds no older message,
+//!   the answer says so (`end`): the beginning once the store holds the whole history. Each row lists the message's
+//!   attachments as `download` names them ([`super::download`]).
+//! - **A channel** ([`address::conversation`]): synced first, as the channel view syncs it when it opens
+//!   ([`Core::sync_conversation`]; a channel other than a team's general one is in no conversation list, so no
+//!   catch-up reads it), within [`CHANNEL_SYNC`]; a sync that fails or takes longer leaves the store's rows, with
+//!   `synced` false. Its rows name a reply's post, and count a post's stored replies ([`Core::reply_roots`]), and carry
+//!   a post's subject and email as the chat view draws them. `thread` reads one post's thread from the store, the post
+//!   last.
+//! - `teams`: the account's teams and their channels, as the Teams list shows them ([`Core::teams`]). Before their
+//!   first read the answer waits for it, up to [`TEAMS_ANSWER`].
 //! - `search`: the store's own search over the listed chats, as the window's search box searches; its hits also stop
 //!   where the line is full.
 //! - `members`: a chat's stored members with their names.
@@ -24,25 +34,28 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use serde_json::{Map, Value};
+
 use gpui::{AsyncApp, Entity};
 use teams_core::activity::{ActivityFilter, ActivityItem, ActivityKind};
 use teams_ctl::codec::{self, MAX_LINE};
 use teams_ctl::protocol::{
-    ActivityRow, ChatRow, CtlError, ErrorCode, MemberRow, MessageRow, Outcome, Request, Response, ResponseLine, Unread,
-    UnreadRow,
+    ActivityRow, CHANNEL_SYNC, ChannelRow, ChatRow, CtlError, EmailPerson, EmailRow, ErrorCode, HistoryEnd, MemberRow,
+    MessageRow, Outcome, Request, Response, ResponseLine, TEAMS_ANSWER, TeamRow, Unread, UnreadRow,
 };
 use teams_proto::chat::card::{CARD_TYPE, message_cards_text};
 use teams_proto::chat::parse_html;
-use teams_store::{Conversation, Message, PageCursor};
+use teams_proto::chat::{EmailDetails, EmailUser};
+use teams_store::{ChannelKind, Message, PageCursor, Team};
 use teams_ui::activity_view;
 use teams_ui::card_view::SENT_A_CARD;
 use teams_ui::chat_list;
 use teams_ui::rich_text::Mentions;
 use teams_ui::search::{self, MAX_HITS};
 use teams_ui::system_message::{self, Preview};
-use teams_ui::{Core, Tray};
+use teams_ui::{Chats, Core, Tray};
 
-use super::address::{self, Addressed, engine_error};
+use super::address::{self, Addressed, Target, engine_error};
 
 /// How many messages `messages` gives without a limit.
 pub const MESSAGES: usize = 50;
@@ -59,7 +72,9 @@ pub async fn answer(request: &Request, account: &Addressed, cx: &mut AsyncApp) -
     let core = &*account.core;
     match request {
         Request::Chats { unread_only, limit } => chats(core, *unread_only, *limit).await,
-        Request::Messages { chat, limit, before } => messages(core, chat, *limit, before.as_deref()).await,
+        Request::Messages { chat, limit, before } => messages(core, chat, *limit, before.as_deref(), cx).await,
+        Request::Thread { channel, post, limit } => thread(core, channel, post, *limit, cx).await,
+        Request::Teams => teams(account, cx).await,
         Request::Search { query, limit } => found(core, query, *limit).await,
         Request::Members { chat } => members(core, chat).await,
         Request::Unread => unread(account, cx).await,
@@ -100,38 +115,160 @@ async fn chats(core: &dyn Core, unread_only: bool, limit: Option<u32>) -> Result
     Ok(Response::Chats { chats })
 }
 
-async fn messages(core: &dyn Core, chat: &str, limit: Option<u32>, before: Option<&str>) -> Result<Response, CtlError> {
-    let chat = address::chat(core, chat).await?;
+async fn messages(
+    core: &dyn Core,
+    chat: &str,
+    limit: Option<u32>,
+    before: Option<&str>,
+    cx: &mut AsyncApp,
+) -> Result<Response, CtlError> {
+    let target = address::conversation(core, chat).await?;
     let limit = count(limit, MESSAGES, MAX_MESSAGES);
-    let mut cursor = match before {
-        Some(before) => Some(cursor_at(core, &chat, before).await?),
+    let cursor = match before {
+        Some(before) => Some(cursor_at(core, &target.id, before).await?),
         None => None,
     };
+    let synced = if target.channel && before.is_none() {
+        Some(synced(core, &target.id, cx).await)
+    } else {
+        None
+    };
+    let posts = Posts::of(core, &target).await?;
+    let read = read_back(core, &target.id, cursor, limit, posts.as_ref(), |_| Keep::Row).await?;
+    let end = if read.ended {
+        Some(match core.history_complete(target.id.clone()).await {
+            Ok(Some(true)) => HistoryEnd::Beginning,
+            _ => HistoryEnd::Store,
+        })
+    } else {
+        None
+    };
+    Ok(Response::Messages {
+        messages: read.rows,
+        synced,
+        end,
+    })
+}
+
+/// `thread`: the post `post` names (its own id, or a reply's) and its replies, the newest first, after a sync of the
+/// channel as for `messages`.
+async fn thread(
+    core: &dyn Core,
+    channel: &str,
+    post: &str,
+    limit: Option<u32>,
+    cx: &mut AsyncApp,
+) -> Result<Response, CtlError> {
+    let target = address::conversation(core, channel).await?;
+    if !target.channel {
+        return Err(CtlError::new(
+            ErrorCode::BadRequest,
+            format!("{channel} is a chat: a thread is a channel's"),
+        ));
+    }
+    let synced = synced(core, &target.id, cx).await;
+    let posts = Posts::of(core, &target).await?.unwrap_or_default();
+    let post = posts.post_of(post.trim()).to_owned();
+    let posted = cursor_at(core, &target.id, &post).await?.arrival_time;
+    let limit = count(limit, MESSAGES, MAX_MESSAGES);
+    // replies come after their post: read from the newest back, the post is the last row
+    let newest = read_back(core, &target.id, None, limit, Some(&posts), |message| {
+        if message.id == post {
+            Keep::Last
+        } else if posts.post_of(&message.id) == post {
+            Keep::Row
+        } else if message.arrival_time < posted {
+            Keep::Stop
+        } else {
+            Keep::Skip
+        }
+    })
+    .await?;
+    Ok(Response::Messages {
+        end: newest.reached.then_some(HistoryEnd::Beginning),
+        messages: newest.rows,
+        synced: Some(synced),
+    })
+}
+
+/// Whether the sync of `channel` worked within [`CHANNEL_SYNC`]; one that takes longer goes on in the engine.
+async fn synced(core: &dyn Core, channel: &str, cx: &mut AsyncApp) -> bool {
+    let executor = cx.background_executor().clone();
+    let sync = async {
+        core.sync_conversation(channel.to_owned())
+            .await
+            .map_err(|error| engine_error(&error))
+    };
+    super::writes::within(CHANNEL_SYNC, "", sync, &executor).await.is_ok()
+}
+
+/// What [`read_back`] does with a stored message.
+enum Keep {
+    /// A row, when it has a text.
+    Row,
+    /// Not a row: the read goes on.
+    Skip,
+    /// The last row: the read reached what it looked for.
+    Last,
+    /// Not a row, and nothing older is looked at.
+    Stop,
+}
+
+/// The rows of a read and how it ended.
+struct ReadBack {
+    rows: Vec<MessageRow>,
+    /// The store holds no older message than the ones read.
+    ended: bool,
+    /// The read reached a [`Keep::Last`] message.
+    reached: bool,
+}
+
+/// The stored messages of `conversation` before `cursor` (the newest without it), the newest first, kept as `keep`
+/// says, up to `limit` rows and while they fit on the answer's line.
+async fn read_back(
+    core: &dyn Core,
+    conversation: &str,
+    mut cursor: Option<PageCursor>,
+    limit: usize,
+    posts: Option<&Posts>,
+    keep: impl Fn(&Message) -> Keep,
+) -> Result<ReadBack, CtlError> {
     let mut names = Names::default();
-    let mut messages = Fitting::new(Response::Messages { messages: Vec::new() });
-    'pages: while messages.rows.len() < limit {
+    let mut rows = Fitting::new(Response::Messages {
+        messages: Vec::new(),
+        synced: Some(false),
+        end: Some(HistoryEnd::Beginning),
+    });
+    while rows.rows.len() < limit {
         let page = core
-            .messages(chat.id.clone(), cursor, limit)
+            .messages(conversation.to_owned(), cursor, limit)
             .await
             .map_err(|error| engine_error(&error))?;
         for message in &page.messages {
-            if messages.rows.len() == limit {
-                break 'pages;
+            if rows.rows.len() == limit {
+                return Ok(rows.done(false, false));
             }
+            let last = match keep(message) {
+                Keep::Skip => continue,
+                Keep::Stop => return Ok(rows.done(false, false)),
+                Keep::Row => false,
+                Keep::Last => true,
+            };
             if let Some(text) = text_of(message)
-                && !messages.push(names.row(core, message, text).await)
+                && !rows.push(names.row(core, message, text, posts).await)
             {
-                break 'pages;
+                return Ok(rows.done(false, false));
+            }
+            if last {
+                return Ok(rows.done(false, true));
             }
         }
         cursor = page.next;
         if cursor.is_none() {
-            break;
+            return Ok(rows.done(true, false));
         }
     }
-    Ok(Response::Messages {
-        messages: messages.rows,
-    })
+    Ok(rows.done(false, false))
 }
 
 /// An answer's rows, kept while they fit on its line: the codec refuses a line over [`MAX_LINE`], and an answer that
@@ -156,6 +293,14 @@ impl Fitting {
         }
     }
 
+    fn done(self, ended: bool, reached: bool) -> ReadBack {
+        ReadBack {
+            rows: self.rows,
+            ended,
+            reached,
+        }
+    }
+
     /// Keeps `row` when it fits, with the comma before it; `false`, keeping nothing, when it doesn't.
     fn push(&mut self, row: MessageRow) -> bool {
         // its own line's break stands for the comma
@@ -170,8 +315,8 @@ impl Fitting {
 }
 
 /// Where the page before message `id` of `chat` starts.
-async fn cursor_at(core: &dyn Core, chat: &Conversation, id: &str) -> Result<PageCursor, CtlError> {
-    match core.message(chat.id.clone(), id.to_owned()).await {
+async fn cursor_at(core: &dyn Core, chat: &str, id: &str) -> Result<PageCursor, CtlError> {
+    match core.message(chat.to_owned(), id.to_owned()).await {
         Ok(Some(message)) => Ok(PageCursor {
             arrival_time: message.arrival_time,
             id: message.id,
@@ -253,7 +398,7 @@ async fn found(core: &dyn Core, query: &str, limit: Option<u32>) -> Result<Respo
         // a hit is a stored message: one gone since is left out
         if let Some(message) = message
             && let Some(text) = text_of(&message)
-            && !messages.push(names.row(core, &message, text).await)
+            && !messages.push(names.row(core, &message, text, None).await)
         {
             break;
         }
@@ -439,8 +584,9 @@ impl Names {
             .filter(|name| !name.trim().is_empty())
     }
 
-    /// `message` as a row, its text `text`.
-    async fn row(&mut self, core: &dyn Core, message: &Message, text: ReadText) -> MessageRow {
+    /// `message` as a row, its text `text`; a channel's (`posts`) with its post or its replies, its subject and its
+    /// email.
+    async fn row(&mut self, core: &dyn Core, message: &Message, text: ReadText, posts: Option<&Posts>) -> MessageRow {
         let me = core.me();
         let sender_name = match &message.sender {
             Some(sender) => self.name(core, sender, message.sender_name.as_deref()).await,
@@ -462,6 +608,166 @@ impl Names {
                 .into_iter()
                 .map(|attachment| attachment.row)
                 .collect(),
+            ..posts.map(|posts| posts.parts(message)).unwrap_or_default()
         }
+    }
+}
+
+/// What a channel's rows carry besides a chat's: the post of each stored reply, and how many replies each post has.
+#[derive(Default)]
+struct Posts {
+    /// Each stored reply's post, by the reply's id.
+    roots: HashMap<String, String>,
+    replies: HashMap<String, u32>,
+}
+
+impl Posts {
+    /// The posts of `target`'s messages when it is a channel; `None` for a chat.
+    async fn of(core: &dyn Core, target: &Target) -> Result<Option<Self>, CtlError> {
+        if !target.channel {
+            return Ok(None);
+        }
+        let roots: HashMap<String, String> = core
+            .reply_roots(target.id.clone())
+            .await
+            .map_err(|error| engine_error(&error))?
+            .into_iter()
+            .filter(|(message, post)| message != post)
+            .collect();
+        let mut replies: HashMap<String, u32> = HashMap::new();
+        for post in roots.values() {
+            *replies.entry(post.clone()).or_default() += 1;
+        }
+        Ok(Some(Self { roots, replies }))
+    }
+
+    /// The post that message `id` belongs to: its own id for a post.
+    fn post_of<'a>(&'a self, id: &'a str) -> &'a str {
+        self.roots.get(id).map_or(id, String::as_str)
+    }
+
+    /// The channel's fields of `message`'s row; the rest left as a chat's.
+    fn parts(&self, message: &Message) -> MessageRow {
+        let post = self.roots.get(&message.id).cloned();
+        let replies = post
+            .is_none()
+            .then(|| self.replies.get(&message.id).copied().unwrap_or_default());
+        let properties = message
+            .properties
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<Map<String, Value>>(text).ok())
+            .unwrap_or_default();
+        MessageRow {
+            post,
+            replies,
+            subject: teams_proto::chat::subject(&properties),
+            email: EmailDetails::of_properties(&properties).map(|details| email_row(&details)),
+            ..MessageRow::default()
+        }
+    }
+}
+
+/// The email a post came from, as the wire tells it.
+fn email_row(details: &EmailDetails) -> EmailRow {
+    let people = |users: &[EmailUser]| users.iter().map(email_person).collect();
+    EmailRow {
+        from: details.from.as_ref().map(email_person),
+        sender: details
+            .sender
+            .as_ref()
+            .filter(|sender| Some(*sender) != details.from.as_ref())
+            .map(email_person),
+        to: people(&details.to),
+        cc: people(&details.cc),
+        recipients: u32::try_from(details.total_recipients).unwrap_or(u32::MAX),
+    }
+}
+
+fn email_person(user: &EmailUser) -> EmailPerson {
+    EmailPerson {
+        name: user.name.clone(),
+        address: user.smtp.clone(),
+    }
+}
+
+/// `teams`: the account's teams as the Teams list shows them, waiting for their first read when the store holds none.
+async fn teams(account: &Addressed, cx: &mut AsyncApp) -> Result<Response, CtlError> {
+    let core = &*account.core;
+    let deadline = std::time::Instant::now() + TEAMS_ANSWER;
+    loop {
+        let told = cx.update(|cx| told_at(&account.chats, cx));
+        if let Some(teams) = core.teams().await.map_err(|error| engine_error(&error))? {
+            return Ok(Response::Teams {
+                teams: teams.iter().map(team_row).collect(),
+            });
+        }
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() || !teams_told(&account.chats, told, left, cx).await {
+            return Err(CtlError::new(
+                ErrorCode::Timeout,
+                "the teams aren't read yet: ask again in a moment",
+            ));
+        }
+        if cx.update(|cx| account.chats.read(cx).teams_failed_at() > account.chats.read(cx).teams_at()) {
+            return Err(CtlError::new(ErrorCode::Engine, "the teams can't be read right now"));
+        }
+    }
+}
+
+/// The revisions of the models' last teams change and last failed teams read.
+fn told_at(chats: &Entity<Chats>, cx: &gpui::App) -> (u64, u64) {
+    let chats = chats.read(cx);
+    (chats.teams_at(), chats.teams_failed_at())
+}
+
+/// Waits until the models tell a teams change or a failed read after `told`, up to `left`: `false` when none came.
+async fn teams_told(chats: &Entity<Chats>, told: (u64, u64), left: Duration, cx: &mut AsyncApp) -> bool {
+    let (done, finished) = async_channel::bounded::<bool>(1);
+    let observing = cx.update(|cx| {
+        if told_at(chats, cx) != told {
+            return None;
+        }
+        let done = done.clone();
+        Some(cx.observe(chats, move |chats, cx| {
+            if told_at(&chats, cx) != told {
+                let _ = done.try_send(true);
+            }
+        }))
+    });
+    let Some(_observing) = observing else {
+        return true;
+    };
+    let timer = cx.background_executor().timer(left);
+    // dropped (cancelled) once the teams were told first
+    let _timeout = cx.background_executor().spawn(async move {
+        timer.await;
+        let _ = done.try_send(false);
+    });
+    finished.recv().await.unwrap_or(false)
+}
+
+fn team_row(team: &Team) -> TeamRow {
+    TeamRow {
+        id: team.id.clone(),
+        name: team.name.clone(),
+        archived: team.archived,
+        channels: team
+            .channels
+            .iter()
+            .map(|channel| ChannelRow {
+                id: channel.id.clone(),
+                name: channel.name.clone(),
+                title: address::channel_title(&team.name, &channel.name),
+                general: channel.general,
+                channel_type: match channel.kind {
+                    ChannelKind::Standard => "standard",
+                    ChannelKind::Private => "private",
+                    ChannelKind::Shared => "shared",
+                }
+                .to_owned(),
+                hidden: !channel.shown,
+                archived: channel.about.archived,
+            })
+            .collect(),
     }
 }

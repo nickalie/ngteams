@@ -327,7 +327,7 @@ fn an_open_naming_nothing_or_too_much_is_refused() {
     );
     assert_eq!(general.code, ErrorCode::AmbiguousChat);
     let titles: Vec<&str> = general.candidates.iter().map(|chat| chat.title.as_str()).collect();
-    assert_eq!(titles, ["Design/General", "Ops/General"]);
+    assert_eq!(titles, ["Design > General", "Ops > General"]);
     let page = app.refused(
         None,
         Request::Open {

@@ -467,7 +467,7 @@ fn shown_in(line: &serde_json::Value, chat: &str, id: &str) -> bool {
 fn newest_id(instance: &mut Instance, chat: &str) -> SandboxResult<String> {
     let deadline = Instant::now() + WAIT;
     loop {
-        if let Response::Messages { messages } = instance.ctl(Request::Messages {
+        if let Response::Messages { messages, .. } = instance.ctl(Request::Messages {
             chat: chat.to_owned(),
             limit: Some(1),
             before: None,
@@ -698,7 +698,7 @@ fn own_messages(from: &mut Instance, chat: &str) -> SandboxResult<Vec<String>> {
         limit: Some(10),
         before: None,
     })? {
-        Response::Messages { messages } => Ok(messages
+        Response::Messages { messages, .. } => Ok(messages
             .into_iter()
             .filter(|message| message.from_me)
             .map(|message| message.id)

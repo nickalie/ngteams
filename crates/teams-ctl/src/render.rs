@@ -3,7 +3,9 @@
 //!
 //! Times are local (`YYYY-MM-DD HH:MM` in tables, `HH:MM:SS` on event lines). A message's line breaks are shown as
 //! ` ↵ `, so each message keeps to its row. The attachments of a message follow its text, each as
-//! `[<index>: <name>, <type>]`. Any other control character is shown escaped (`\u{1b}`), so text from
+//! `[<index>: <name>, <type>]`. In a channel, a reply's text starts with `(reply to <post>)`, a post's ends with its
+//! count of replies, and a post's subject comes before its text, after its email's origin. Under a `messages` table,
+//! a line says when the channel was not synced and when nothing older is stored. Any other control character is shown escaped (`\u{1b}`), so text from
 //! the app never drives the terminal. `--json` skips all of this ([`crate::cli`]): JSON escapes them itself.
 
 use std::fmt::Write as _;
@@ -13,8 +15,8 @@ use chrono::{DateTime, Local};
 
 use crate::protocol::{
     AccountRow, ActivityRow, AppStatus, AttachmentKind, AttachmentRow, CalendarRow, CallRow, ChatRow, CtlError,
-    CtlEvent, EventLine, MemberRow, MessageRow, OutboxRow, OutboxState, OwnStatus, PersonRow, ReactionRow, Response,
-    SavedFile, SyncReport, UiState, Unread, View, WindowState,
+    CtlEvent, EmailPerson, EmailRow, EventLine, HistoryEnd, MemberRow, MessageRow, OutboxRow, OutboxState, OwnStatus,
+    PersonRow, ReactionRow, Response, SavedFile, SyncReport, TeamRow, UiState, Unread, View, WindowState,
 };
 
 /// Print `response` for a person.
@@ -38,7 +40,12 @@ fn unescaped(response: &Response) -> String {
         Response::Status(status) => app_status(status),
         Response::Accounts { accounts } => account_table(accounts),
         Response::Chats { chats } => chat_table(chats),
-        Response::Messages { messages } => message_table(messages, false),
+        Response::Messages { messages, synced, end } => {
+            let mut text = message_table(messages, false);
+            text.push_str(&read_notes(*synced, *end));
+            text
+        }
+        Response::Teams { teams } => team_table(teams),
         Response::Search { messages } => message_table(messages, true),
         Response::Unread(unread) => unread_table(unread),
         Response::Members { members } => member_table(members),
@@ -330,6 +337,9 @@ fn sender(message: &MessageRow) -> String {
 
 fn message_text(message: &MessageRow) -> String {
     let mut text = String::new();
+    if let Some(post) = &message.post {
+        let _ = write!(text, "(reply to {post}) ");
+    }
     for (on, flag) in [
         (message.deleted, "(deleted) "),
         (message.edited, "(edited) "),
@@ -340,7 +350,20 @@ fn message_text(message: &MessageRow) -> String {
             text.push_str(flag);
         }
     }
+    if let Some(email) = &message.email {
+        let _ = write!(text, "({}) ", email_label(email));
+    }
+    if let Some(subject) = &message.subject {
+        let _ = write!(text, "{} ↵ ", one_line(subject));
+    }
     text.push_str(&one_line(&message.text));
+    match message.replies {
+        Some(1) => text.push_str(" (1 reply)"),
+        Some(replies) if replies > 1 => {
+            let _ = write!(text, " ({replies} replies)");
+        }
+        _ => {}
+    }
     for attachment in &message.attachments {
         let _ = write!(text, " [{}]", attachment_label(attachment));
     }
@@ -348,6 +371,74 @@ fn message_text(message: &MessageRow) -> String {
 }
 
 /// An attachment as a message's row lists it: `1: report.pdf, pdf`.
+/// An email post's origin: `email from <who> to <whom>`, the recipients not named counted.
+fn email_label(email: &EmailRow) -> String {
+    let mut label = "email".to_owned();
+    if let Some(from) = &email.from {
+        let _ = write!(label, " from {}", person_label(from));
+    }
+    let named: Vec<String> = email.to.iter().chain(&email.cc).map(person_label).collect();
+    if !named.is_empty() {
+        let _ = write!(label, " to {}", named.join(", "));
+    }
+    let more = usize::try_from(email.recipients)
+        .unwrap_or(usize::MAX)
+        .saturating_sub(named.len());
+    if more > 0 {
+        let _ = write!(label, " and {more} more");
+    }
+    one_line(&label)
+}
+
+fn person_label(person: &EmailPerson) -> String {
+    match (&person.name, &person.address) {
+        (Some(name), Some(address)) => format!("{name} <{address}>"),
+        (Some(one), None) | (None, Some(one)) => one.clone(),
+        (None, None) => "-".to_owned(),
+    }
+}
+
+/// The lines under a `messages` or `thread` table: a channel sync that did not work, and why nothing older came.
+fn read_notes(synced: Option<bool>, end: Option<HistoryEnd>) -> String {
+    let mut notes = String::new();
+    if synced == Some(false) {
+        notes.push_str("(the channel was not synced: these are the messages the store held)\n");
+    }
+    match end {
+        Some(HistoryEnd::Beginning) => notes.push_str("(the first message: there is nothing older)\n"),
+        Some(HistoryEnd::Store) => {
+            notes.push_str("(the store holds no older message: the service can hold more)\n");
+        }
+        None => {}
+    }
+    notes
+}
+
+/// The teams, each with its channels under it: a channel's id, its type, and `<team> > <channel>`.
+fn team_table(teams: &[TeamRow]) -> String {
+    let rows = teams.iter().flat_map(|team| {
+        let head = vec![
+            team.id.clone(),
+            if team.archived { "team, archived" } else { "team" }.to_owned(),
+            team.name.clone(),
+        ];
+        std::iter::once(head).chain(team.channels.iter().map(|channel| {
+            let mut kind = channel.channel_type.clone();
+            for (on, flag) in [
+                (channel.general, ", general"),
+                (channel.hidden, ", hidden"),
+                (channel.archived, ", archived"),
+            ] {
+                if on {
+                    kind.push_str(flag);
+                }
+            }
+            vec![channel.id.clone(), kind, format!("  {}", channel.title)]
+        }))
+    });
+    table(&["ID", "TYPE", "NAME"], rows)
+}
+
 fn attachment_label(attachment: &AttachmentRow) -> String {
     let mut label = format!("{}: {}", attachment.index, one_line(&attachment.name));
     let kind = match attachment.kind {

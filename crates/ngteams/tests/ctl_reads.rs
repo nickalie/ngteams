@@ -284,7 +284,7 @@ impl App {
             before: before.map(str::to_owned),
         };
         match self.ask(None, request) {
-            Ok(Response::Messages { messages }) => messages,
+            Ok(Response::Messages { messages, .. }) => messages,
             other => panic!("not messages: {other:?}"),
         }
     }
@@ -474,7 +474,7 @@ fn a_page_of_messages_too_long_for_a_line_stops_short_and_pages_on() {
             limit: Some(1000),
             before: before.clone(),
         };
-        let Ok(Response::Messages { messages }) = app.ask(None, request).map(fits_on_a_line) else {
+        let Ok(Response::Messages { messages, .. }) = app.ask(None, request).map(fits_on_a_line) else {
             panic!("no answer");
         };
         assert!(!messages.is_empty(), "each page holds some");

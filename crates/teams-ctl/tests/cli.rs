@@ -26,11 +26,11 @@ use teams_ctl::client::Timeouts;
 use teams_ctl::codec::{LineReader, decode_request};
 use teams_ctl::path::Env;
 use teams_ctl::protocol::{
-    AccountRow, ActivityRow, AppStatus, CALENDAR_ANSWER, CALL_ANSWER, CalendarRow, CallRow, ChatRef, ChatRow, CtlError,
-    CtlEvent, DOWNLOAD_ANSWER, ErrorCode, EventFilter, EventLine, Hello, ManualStatus, MemberRow, MessageRow,
-    MessageSource, OpenTarget, OutboxRow, OutboxState, Outcome, OwnStatus, PROTOCOL_VERSION, Request, RequestLine,
-    Response, ResponseLine, SYNC_ANSWER, SavedFile, StatusChoice, SyncReport, Toggle, UiState, Unread, UnreadRow, View,
-    WRITE_ANSWER, WRITE_WAIT, WindowOp, WindowState,
+    AccountRow, ActivityRow, AppStatus, CALENDAR_ANSWER, CALL_ANSWER, CHANNEL_SYNC, CalendarRow, CallRow, ChannelRow,
+    ChatRef, ChatRow, CtlError, CtlEvent, DOWNLOAD_ANSWER, ErrorCode, EventFilter, EventLine, Hello, HistoryEnd,
+    ManualStatus, MemberRow, MessageRow, MessageSource, OpenTarget, OutboxRow, OutboxState, Outcome, OwnStatus,
+    PROTOCOL_VERSION, Request, RequestLine, Response, ResponseLine, SYNC_ANSWER, SavedFile, StatusChoice, SyncReport,
+    TEAMS_ANSWER, TeamRow, Toggle, UiState, Unread, UnreadRow, View, WRITE_ANSWER, WRITE_WAIT, WindowOp, WindowState,
 };
 
 fn accept(listener: &UnixListener) -> teams_ctl::transport::Stream {
@@ -237,6 +237,7 @@ fn message(id: &str, text: &str) -> MessageRow {
         from_me: false,
         mentions_me: true,
         attachments: Vec::new(),
+        ..MessageRow::default()
     }
 }
 
@@ -318,10 +319,71 @@ fn read_cases() -> Vec<Case> {
             },
             response: Response::Messages {
                 messages: vec![message("7", "two\nlines")],
+                synced: None,
+                end: None,
             },
             shows: &[
                 "ID  TIME              FROM   TEXT",
                 "7   2023-11-14 22:13  Lab B  (edited) (@me) two ↵ lines",
+            ],
+        },
+    ]
+}
+
+fn channel_cases() -> Vec<Case> {
+    let reply = MessageRow {
+        post: Some(s("6")),
+        ..message("7", "a reply")
+    };
+    let post = MessageRow {
+        replies: Some(1),
+        subject: Some(s("Plans")),
+        ..message("6", "a post")
+    };
+    vec![
+        Case {
+            args: &["teams"],
+            account: None,
+            request: Request::Teams,
+            response: Response::Teams {
+                teams: vec![TeamRow {
+                    id: s("19:t@thread.tacv2"),
+                    name: s("Team"),
+                    archived: false,
+                    channels: vec![ChannelRow {
+                        id: s("19:t@thread.tacv2"),
+                        name: s("General"),
+                        title: s("Team > General"),
+                        general: true,
+                        channel_type: s("standard"),
+                        hidden: false,
+                        archived: false,
+                    }],
+                }],
+            },
+            shows: &[
+                "ID                 TYPE               NAME",
+                "19:t@thread.tacv2  team               Team",
+                "19:t@thread.tacv2  standard, general    Team > General",
+            ],
+        },
+        Case {
+            args: &["thread", "Team > General", "6", "--limit", "3"],
+            account: None,
+            request: Request::Thread {
+                channel: s("Team > General"),
+                post: s("6"),
+                limit: Some(3),
+            },
+            response: Response::Messages {
+                messages: vec![reply, post],
+                synced: Some(true),
+                end: Some(HistoryEnd::Beginning),
+            },
+            shows: &[
+                "7   2023-11-14 22:13  Lab B  (reply to 6) (edited) (@me) a reply",
+                "6   2023-11-14 22:13  Lab B  (edited) (@me) Plans ↵ a post (1 reply)",
+                "(the first message: there is nothing older)",
             ],
         },
     ]
@@ -1046,6 +1108,20 @@ fn a_download_folder_that_is_not_utf_8_exits_2_before_connecting() {
 }
 
 #[test]
+fn a_channel_read_is_waited_for_past_its_sync_and_teams_past_their_first_read() {
+    let slack = Timeouts::default().read;
+    for args in [
+        &["ngteamsctl", "messages", "Team > General"][..],
+        &["ngteamsctl", "thread", "Team > General", "1"],
+    ] {
+        let parsed = Cli::try_parse_from(args).unwrap();
+        assert_eq!(answer_time(&parsed.command), CHANNEL_SYNC + slack, "{args:?}");
+    }
+    let parsed = Cli::try_parse_from(["ngteamsctl", "teams"]).unwrap();
+    assert_eq!(answer_time(&parsed.command), TEAMS_ANSWER + slack);
+}
+
+#[test]
 fn a_download_is_waited_for_past_the_app_s_own_bound_on_it() {
     let parsed = Cli::try_parse_from(["ngteamsctl", "download", "Lab chat", "1", "--all"]).unwrap();
     assert_eq!(answer_time(&parsed.command), DOWNLOAD_ANSWER + Timeouts::default().read);
@@ -1291,6 +1367,7 @@ fn each_command_asks_its_request_and_prints_its_answer() {
     for case in read_cases()
         .into_iter()
         .chain(list_cases())
+        .chain(channel_cases())
         .chain(activity_cases())
         .chain(ui_cases())
         .chain(message_write_cases())

@@ -110,7 +110,7 @@ fn started(handle: engine::EngineHandle) -> Started<MemorySecretStore> {
 
 fn rows(response: Response) -> Vec<MessageRow> {
     match response {
-        Response::Messages { messages } | Response::Search { messages } => messages,
+        Response::Messages { messages, .. } | Response::Search { messages } => messages,
         other => panic!("not messages: {other:?}"),
     }
 }

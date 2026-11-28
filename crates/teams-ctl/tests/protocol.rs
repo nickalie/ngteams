@@ -61,9 +61,11 @@ fn request_index(request: &Request) -> usize {
         Request::OpenLink { .. } => 38,
         Request::Activity { .. } => 39,
         Request::Download { .. } => 40,
+        Request::Teams => 41,
+        Request::Thread { .. } => 42,
     }
 }
-const REQUESTS: usize = 41;
+const REQUESTS: usize = 43;
 
 /// One line of each request (and of each value of their enums).
 const REQUEST_LINES: &[&str] = &[
@@ -129,6 +131,9 @@ const REQUEST_LINES: &[&str] = &[
     r#"{"id":60,"cmd":"open","target":{"view":"activity"}}"#,
     r#"{"id":61,"cmd":"download","chat":"Lab B","message":"1700000000000","name":"report.pdf","index":2,"all":true,"dir":"/home/someone/Downloads","force":true}"#,
     r#"{"id":62,"cmd":"download","chat":"19:x@thread.v2","message":"1700000000000","dir":"/tmp/out"}"#,
+    r#"{"id":63,"cmd":"teams"}"#,
+    r#"{"id":64,"cmd":"thread","channel":"Team > General","post":"1700000000000","limit":5}"#,
+    r#"{"id":65,"cmd":"thread","channel":"19:c@thread.tacv2","post":"1700000000000"}"#,
 ];
 
 /// `text` read as a `T` and written again: the same JSON.
@@ -255,9 +260,10 @@ fn response_index(response: &Response) -> usize {
         Response::CalendarEvent(_) => 19,
         Response::Activity { .. } => 20,
         Response::Downloaded { .. } => 21,
+        Response::Teams { .. } => 22,
     }
 }
-const RESPONSES: usize = 22;
+const RESPONSES: usize = 23;
 
 /// One `ok` answer of each kind (and of each value of their enums).
 const RESPONSE_LINES: &[&str] = &[
@@ -300,6 +306,9 @@ const RESPONSE_LINES: &[&str] = &[
     r#"{"id":37,"ok":{"kind":"ui_state","view":"chat","window":"shown","call_window":false,"activity":true}}"#,
     r#"{"id":38,"ok":{"kind":"messages","messages":[{"id":"1","chat":"19:x@thread.v2","at":1,"text":"","edited":false,"deleted":false,"from_me":false,"mentions_me":false,"attachments":[{"index":1,"name":"report.pdf","kind":"file","file_type":"pdf"},{"index":2,"name":"image-2","kind":"picture"}]}]}}"#,
     r#"{"id":39,"ok":{"kind":"downloaded","files":[{"index":1,"name":"report.pdf","path":"/tmp/out/report.pdf","size":18}]}}"#,
+    r#"{"id":40,"ok":{"kind":"teams","teams":[{"id":"19:t@thread.tacv2","name":"Team","channels":[{"id":"19:t@thread.tacv2","name":"General","title":"Team > General","general":true,"channel_type":"standard"},{"id":"19:p@thread.tacv2","name":"Plans","title":"Team > Plans","channel_type":"private","hidden":true,"archived":true}]},{"id":"19:o@thread.tacv2","name":"Old","archived":true,"channels":[]}]}}"#,
+    r#"{"id":41,"ok":{"kind":"messages","messages":[{"id":"2","chat":"19:c@thread.tacv2","at":2,"text":"a reply","edited":false,"deleted":false,"from_me":false,"mentions_me":false,"post":"1"},{"id":"1","chat":"19:c@thread.tacv2","at":1,"text":"a post","edited":false,"deleted":false,"from_me":false,"mentions_me":false,"replies":1,"subject":"Plans","email":{"from":{"name":"Someone","address":"someone@lab.invalid"},"sender":{"address":"relay@lab.invalid"},"to":[{"name":"Team"}],"cc":[{"address":"other@lab.invalid"}],"recipients":5}}],"synced":false,"end":"beginning"}}"#,
+    r#"{"id":42,"ok":{"kind":"messages","messages":[],"synced":true,"end":"store"}}"#,
 ];
 
 #[test]

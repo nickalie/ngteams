@@ -49,6 +49,8 @@ teams-ui.workspace = true
 # `ngteamsctl`'s control socket: its protocol, socket paths and line codec, served by `ngteams::ctl`
 teams-ctl.workspace = true
 serde = { workspace = true, features = ["derive"] }
+# a stored message's `properties` read for `ngteamsctl`'s channel rows (a post's subject and email)
+serde_json.workspace = true
 toml.workspace = true
 thiserror.workspace = true
 # the sign-in's and the engine's runtimes; the session's sign-out watch; the read-only mode's broker socket (`net`)
@@ -86,7 +88,6 @@ clap.workspace = true
 # a stored meeting's start written as the calendar service writes it (`tests/ctl_events.rs`)
 chrono.workspace = true
 gpui-pre = { workspace = true, features = ["test-support"] }
-serde_json.workspace = true
 tempfile.workspace = true
 # the calls' media in the tests: file devices and the loopback relay; PipeWire tests select sandbox reach
 teams-media = { workspace = true, features = ["test-support"] }

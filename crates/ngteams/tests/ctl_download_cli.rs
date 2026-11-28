@@ -398,7 +398,7 @@ fn a_person_lists_the_attachments_of_the_messages_as_text_and_as_json() {
     let run = lab.ctl("list", &["--json", "messages", TOPIC]);
     assert_eq!(run.code, 0, "{run:?}");
     let answer: ResponseLine = serde_json::from_str(run.stdout.trim()).unwrap();
-    let Outcome::Ok(Response::Messages { messages }) = answer.outcome else {
+    let Outcome::Ok(Response::Messages { messages, .. }) = answer.outcome else {
         panic!("{run:?}");
     };
     let both = messages.iter().find(|row| row.id == BOTH).unwrap();
@@ -625,7 +625,7 @@ fn a_person_downloads_an_own_server_s_file_from_its_server() {
     let listed = ngteamsctl(&cx, &socket, &home, &["--json", "messages", &chat]);
     assert_eq!(listed.code, 0, "{listed:?}");
     let answer: ResponseLine = serde_json::from_str(listed.stdout.trim()).unwrap();
-    let Outcome::Ok(Response::Messages { messages }) = answer.outcome else {
+    let Outcome::Ok(Response::Messages { messages, .. }) = answer.outcome else {
         panic!("{listed:?}");
     };
     let sent = messages

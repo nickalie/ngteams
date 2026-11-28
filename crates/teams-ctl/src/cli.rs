@@ -28,6 +28,8 @@
 //!   that names no event kind is a usage error. A refused subscription is an error answer like any other.
 //! - **Cards**: a message's text is the text on its cards ([`crate::protocol::MessageRow::card`]); the table marks such
 //!   a row `(card)`.
+//! - **Channels**: `teams` lists the teams and their channels with their ids. `messages` takes a channel too, and
+//!   `thread` reads one of its threads; the app syncs the channel first, within [`CHANNEL_SYNC`].
 //! - **Downloads**: `messages` lists the attachments of each message. `download` asks the app to save them in the
 //!   folder `--out` names (the current folder without it), sent as an absolute path. The app reads the files, so the
 //!   client gets no token. `--name`, `--index` or `--all` selects them, and an existing file is replaced only with
@@ -47,9 +49,9 @@ use regex::Regex;
 use crate::client::{Client, ClientError, Events, Refused, Timeouts};
 use crate::path::{Env, Mode};
 use crate::protocol::{
-    CALENDAR_ANSWER, CALL_ANSWER, CtlEvent, DATE_FORMAT, DOWNLOAD_ANSWER, EventFilter, EventLine, OpenTarget,
-    OutboxState, Outcome, Request, Response, ResponseLine, SYNC_ANSWER, StatusChoice, Toggle, UNANSWERED_WRITE,
-    WRITE_ANSWER, WRITE_WAIT, WindowOp,
+    CALENDAR_ANSWER, CALL_ANSWER, CHANNEL_SYNC, CtlEvent, DATE_FORMAT, DOWNLOAD_ANSWER, EventFilter, EventLine,
+    OpenTarget, OutboxState, Outcome, Request, Response, ResponseLine, SYNC_ANSWER, StatusChoice, TEAMS_ANSWER, Toggle,
+    UNANSWERED_WRITE, WRITE_ANSWER, WRITE_WAIT, WindowOp,
 };
 use crate::render;
 
@@ -101,15 +103,28 @@ pub enum Command {
         #[arg(long, value_name = "N")]
         limit: Option<u32>,
     },
-    /// A chat's messages, the newest first. A card's text is the text on the card: each text, fact and button.
+    /// A chat's or a channel's messages, the newest first. A channel is synced first, as the app syncs it when it
+    /// opens; each of its rows tells a post from a reply. A card's text is the text on the card: each text, fact and
+    /// button.
     Messages {
-        /// The chat's id or title.
+        /// The chat's id or title, or the channel's id, `<team> > <channel>` or name (`ngteamsctl teams`).
         chat: String,
         #[arg(long, value_name = "N")]
         limit: Option<u32>,
         /// Only the messages before this message id.
         #[arg(long, value_name = "MESSAGE")]
         before: Option<String>,
+    },
+    /// The account's teams and their channels with their ids, as the Teams list shows them.
+    Teams,
+    /// One thread of a channel: the post and its replies, the newest first. The channel is synced first.
+    Thread {
+        /// The channel's id, `<team> > <channel>` or name.
+        channel: String,
+        /// The post's id (`messages` lists it); a reply's id names the thread of its post.
+        post: String,
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
     },
     /// Save files and pictures of a message in a folder, each by the name `messages` lists. The app reads them.
     Download(DownloadArgs),
@@ -746,6 +761,12 @@ fn request(command: &Command, stdin: &mut dyn FnMut() -> io::Result<String>) -> 
             limit: *limit,
             before: before.clone(),
         },
+        Command::Teams => Request::Teams,
+        Command::Thread { channel, post, limit } => Request::Thread {
+            channel: channel.clone(),
+            post: post.clone(),
+            limit: *limit,
+        },
         Command::Download(download) => download_request(download)?,
         Command::Unread => Request::Unread,
         Command::Search { query, limit } => Request::Search {
@@ -958,7 +979,8 @@ fn ask(cli: &Cli, mut client: Client, request: Request, out: &mut dyn Write, err
 
 /// How long `command`'s answer is waited for: a write's past the app's own bound on it ([`WRITE_ANSWER`], and
 /// [`WRITE_WAIT`] more with `--wait`), a `sync`'s past [`SYNC_ANSWER`], a call command's (`join meeting` too) past
-/// [`CALL_ANSWER`], a calendar read's past [`CALENDAR_ANSWER`], so the app's answer (its own timeout too) comes first;
+/// [`CALL_ANSWER`], a calendar read's past [`CALENDAR_ANSWER`], `messages` and `thread` past a channel's sync
+/// ([`CHANNEL_SYNC`]), `teams` past the teams' first read ([`TEAMS_ANSWER`]), so the app's answer (its own timeout too) comes first;
 /// any other's the client's default.
 #[must_use]
 pub fn answer_time(command: &Command) -> Duration {
@@ -971,6 +993,8 @@ pub fn answer_time(command: &Command) -> Duration {
         Command::Call(_) => CALL_ANSWER + slack,
         Command::Calendar { .. } => CALENDAR_ANSWER + slack,
         Command::Download(_) => DOWNLOAD_ANSWER + slack,
+        Command::Messages { .. } | Command::Thread { .. } => CHANNEL_SYNC + slack,
+        Command::Teams => TEAMS_ANSWER + slack,
         _ => slack,
     }
 }

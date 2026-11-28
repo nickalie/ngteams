@@ -6,8 +6,8 @@
 //!   app; `toggle` hides a window shown and shows one that isn't. `activate` (a second launch's hand-off) shows it.
 //! - `open chat|channel|calendar|activity|settings|search`: the account addressed shown (`--account`, else the one
 //!   shown), the window first, and the view opened as its list, its rail or its search box opens it. A chat is named
-//!   as the reads name it ([`address::chat`]); a channel by its id, its name or `<team>/<channel>`, in any case, from
-//!   the account's teams; a settings page by its key or title.
+//!   as the reads name it ([`address::chat`]); a channel as [`address::channel_id`] names it, from the account's teams;
+//!   a settings page by its key or title.
 //! - `account switch <account>`: that account shown in the window, signed out or not.
 //! - `ui state`: what the window shows ([`watch::ui_state`], the `ui` event's).
 //! - `action list`: the registered `teams_ui::` actions; `action <name>`: one of them, by its full name or its short
@@ -20,11 +20,11 @@
 use std::collections::HashMap;
 
 use gpui::{AnyWindowHandle, App, AsyncApp, Entity, WeakEntity};
-use teams_ctl::protocol::{ChatRef, CtlError, ErrorCode, OpenTarget, Request, Response, UiState, WindowOp};
+use teams_ctl::protocol::{CtlError, ErrorCode, OpenTarget, Request, Response, UiState, WindowOp};
+use teams_ui::Desktop;
 use teams_ui::settings_view::Page;
-use teams_ui::{Core, Desktop};
 
-use super::address::{self, engine_error};
+use super::address;
 use super::dispatch::alive;
 use super::watch;
 use crate::app::Running;
@@ -226,58 +226,12 @@ async fn open_channel(
     cx: &mut AsyncApp,
 ) -> Result<(), CtlError> {
     let addressed = cx.update(|cx| address::account(alive(running, cx)?.read(cx), account, cx))?;
-    let id = channel_id(&*addressed.core, channel).await?;
+    let id = address::channel_id(&*addressed.core, channel).await?;
     cx.update(|cx| {
         let desktop = alive(running, cx)?.read(cx).desktop().clone();
         desktop.update(cx, |desktop, cx| desktop.open_channel_of(&addressed.mri, id, cx));
         Ok(())
     })
-}
-
-/// The id of the channel `wanted` names among the account's teams: its id, its name or `<team>/<channel>`, in any
-/// case. Before the teams were ever read, a thread's id (`19:…`) is taken as it is.
-///
-/// # Errors
-/// [`ErrorCode::UnknownChat`], [`ErrorCode::AmbiguousChat`] with the candidates, or the engine's.
-pub async fn channel_id(core: &dyn Core, wanted: &str) -> Result<String, CtlError> {
-    let wanted = wanted.trim();
-    let Some(teams) = core.teams().await.map_err(|error| engine_error(&error))? else {
-        if wanted.starts_with("19:") {
-            return Ok(wanted.to_owned());
-        }
-        return Err(CtlError::new(
-            ErrorCode::UnknownChat,
-            format!("the teams aren't read yet: name the channel {wanted} by its id"),
-        ));
-    };
-    let channels = teams
-        .iter()
-        .flat_map(|team| team.channels.iter().map(move |channel| (team, channel)));
-    let mut found: Vec<ChatRef> = Vec::new();
-    for (team, channel) in channels {
-        if channel.id == wanted {
-            return Ok(channel.id.clone());
-        }
-        let title = format!("{}/{}", team.name, channel.name);
-        if channel.name.eq_ignore_ascii_case(wanted) || title.eq_ignore_ascii_case(wanted) {
-            found.push(ChatRef {
-                id: channel.id.clone(),
-                title,
-            });
-        }
-    }
-    match found.len() {
-        0 => Err(CtlError::new(
-            ErrorCode::UnknownChat,
-            format!("no channel is {wanted}: name it by its id, its name or <team>/<channel>"),
-        )),
-        1 => Ok(found.swap_remove(0).id),
-        many => Err(CtlError {
-            code: ErrorCode::AmbiguousChat,
-            message: format!("{many} channels are called {wanted}: name one by <team>/<channel> or its id"),
-            candidates: found,
-        }),
-    }
 }
 
 /// The registered `teams_ui::` actions, sorted.

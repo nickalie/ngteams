@@ -771,7 +771,7 @@ fn sync_answers_what_the_catch_up_stored() {
         "{report:?}"
     );
     // stored: the chat holds b's message now
-    let Response::Messages { messages } = lab
+    let Response::Messages { messages, .. } = lab
         .ask(Request::Messages {
             chat: AB_CHAT.to_owned(),
             limit: Some(5),

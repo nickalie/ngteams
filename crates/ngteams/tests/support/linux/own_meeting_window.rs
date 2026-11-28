@@ -602,7 +602,7 @@ fn meeting_ends(rig: &mut Rig<'_>, people: &mut People<'_>, chat: &str) -> Sandb
             before: None,
         },
     )?;
-    if let Response::Messages { messages } = held {
+    if let Response::Messages { messages, .. } = held {
         let texts: Vec<&str> = messages.iter().map(|row| row.text.as_str()).collect();
         say(&format!("a's meeting chat holds, the newest first: {texts:?}"));
     }

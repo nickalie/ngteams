@@ -482,7 +482,7 @@ impl AppRun {
             limit: Some(50),
             before: None,
         })? {
-            Response::Messages { messages } => {
+            Response::Messages { messages, .. } => {
                 Ok(messages.into_iter().map(|message| (message.id, message.text)).collect())
             }
             other => Err(format!("messages answered {other:?}").into()),
@@ -496,7 +496,7 @@ impl AppRun {
             limit: Some(1000),
             before: None,
         })? {
-            Response::Messages { messages } => {
+            Response::Messages { messages, .. } => {
                 Ok(messages.into_iter().map(|message| (message.id, message.text)).collect())
             }
             other => Err(format!("messages answered {other:?}").into()),

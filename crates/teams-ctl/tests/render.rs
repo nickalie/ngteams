@@ -7,9 +7,10 @@
 use std::collections::BTreeSet;
 
 use teams_ctl::protocol::{
-    AccountRow, AttachmentKind, AttachmentRow, CalendarRow, CallRow, ChatRow, Connection, CtlError, CtlEvent,
-    ErrorCode, EventLine, Hello, ManualStatus, MessageRow, MessageSource, OutboxRow, OutboxState, OwnStatus, PersonRow,
-    ReactionRow, Response, SavedFile, SyncReport, UiState, View, WindowState,
+    AccountRow, AttachmentKind, AttachmentRow, CalendarRow, CallRow, ChannelRow, ChatRow, Connection, CtlError,
+    CtlEvent, EmailPerson, EmailRow, ErrorCode, EventLine, Hello, HistoryEnd, ManualStatus, MessageRow, MessageSource,
+    OutboxRow, OutboxState, OwnStatus, PersonRow, ReactionRow, Response, SavedFile, SyncReport, TeamRow, UiState, View,
+    WindowState,
 };
 use teams_ctl::render::{error, event, kinds, text};
 
@@ -474,9 +475,12 @@ fn control_characters_from_the_app_are_shown_escaped() {
         from_me: false,
         mentions_me: false,
         attachments: Vec::new(),
+        ..MessageRow::default()
     };
     let table = text(&Response::Messages {
         messages: vec![message],
+        synced: None,
+        end: None,
     });
     let row = table.lines().nth(1).unwrap();
     assert!(
@@ -601,8 +605,13 @@ fn rows_without_their_optional_values_read_plainly() {
         from_me: true,
         mentions_me: false,
         attachments: Vec::new(),
+        ..MessageRow::default()
     };
-    let messages = text(&Response::Messages { messages: vec![mine] });
+    let messages = text(&Response::Messages {
+        messages: vec![mine],
+        synced: None,
+        end: None,
+    });
     assert!(
         messages.ends_with(&format!("\n1   {}  - (me)  (deleted) gone\n", i64::MAX)),
         "{messages}"
@@ -757,9 +766,12 @@ fn a_message_lists_its_attachments_after_its_text_and_a_download_its_saved_files
             attachment(1, "report\n.pdf", AttachmentKind::File, Some("pdf")),
             attachment(2, "picture\u{7}-2.png", AttachmentKind::Picture, None),
         ],
+        ..MessageRow::default()
     };
     let table = text(&Response::Messages {
         messages: vec![message],
+        synced: None,
+        end: None,
     });
     let row = table.lines().nth(1).unwrap();
     assert!(
@@ -786,5 +798,81 @@ fn a_message_lists_its_attachments_after_its_text_and_a_download_its_saved_files
     assert_eq!(
         saved,
         "saved /tmp/out/report.pdf (18 bytes)\nsaved /tmp/out/picture\\u{1b}-2.png (2048 bytes)\n"
+    );
+}
+
+#[test]
+fn a_channel_s_rows_tell_posts_replies_subjects_and_emails_and_the_notes_under_them() {
+    let person = |name: Option<&str>, address: Option<&str>| EmailPerson {
+        name: name.map(s),
+        address: address.map(s),
+    };
+    let row = |id: &str, text: &str| MessageRow {
+        id: s(id),
+        chat: s("19:c@thread.tacv2"),
+        sender_name: Some(s("Lab B")),
+        at: 1_700_000_000_000,
+        text: s(text),
+        ..MessageRow::default()
+    };
+    let email = MessageRow {
+        subject: Some(s("Weekly\nreport")),
+        replies: Some(2),
+        email: Some(EmailRow {
+            from: Some(person(Some("Someone"), Some("someone@lab.invalid"))),
+            sender: None,
+            to: vec![person(Some("Team"), None)],
+            cc: vec![person(None, Some("other@lab.invalid")), person(None, None)],
+            recipients: 5,
+        }),
+        ..row("1", "the text")
+    };
+    let empty = MessageRow {
+        replies: Some(0),
+        email: Some(EmailRow::default()),
+        ..row("2", "no recipients")
+    };
+    let table = text(&Response::Messages {
+        messages: vec![email, empty],
+        synced: Some(false),
+        end: Some(HistoryEnd::Store),
+    });
+    let lines: Vec<&str> = table.lines().collect();
+    assert!(
+        lines[1].ends_with(
+            "(email from Someone <someone@lab.invalid> to Team, other@lab.invalid, - and 2 more) Weekly ↵ report ↵ \
+             the text (2 replies)"
+        ),
+        "{table}"
+    );
+    assert!(lines[2].ends_with("(email) no recipients"), "{table}");
+    assert_eq!(
+        lines[3..],
+        [
+            "(the channel was not synced: these are the messages the store held)",
+            "(the store holds no older message: the service can hold more)",
+        ]
+    );
+
+    let teams = text(&Response::Teams {
+        teams: vec![TeamRow {
+            id: s("19:o@thread.tacv2"),
+            name: s("Old"),
+            archived: true,
+            channels: vec![ChannelRow {
+                id: s("19:p@thread.tacv2"),
+                name: s("Plans"),
+                title: s("Old > Plans"),
+                general: false,
+                channel_type: s("private"),
+                hidden: true,
+                archived: true,
+            }],
+        }],
+    });
+    assert_eq!(
+        teams,
+        "ID                 TYPE                       NAME\n19:o@thread.tacv2  team, archived             Old\n\
+         19:p@thread.tacv2  private, hidden, archived    Old > Plans\n"
     );
 }

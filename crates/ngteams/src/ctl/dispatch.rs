@@ -104,6 +104,8 @@ async fn ask(
             })),
             Request::Chats { .. }
             | Request::Messages { .. }
+            | Request::Thread { .. }
+            | Request::Teams
             | Request::Unread
             | Request::Search { .. }
             | Request::Members { .. }

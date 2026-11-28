@@ -417,7 +417,9 @@ joins with `refused_read_only`. A lab alias's writes and calls are live lab runs
 ngteamsctl status                           # version, accounts and their engines, the window, the call up
 ngteamsctl accounts                         # each account; an own server's names its server
 ngteamsctl chats [--unread] [--limit N]
-ngteamsctl messages <chat> [--limit N] [--before <message-id>]   # with each message's attachments
+ngteamsctl messages <chat|channel> [--limit N] [--before <message-id>]   # with each message's attachments
+ngteamsctl teams                            # the teams and their channels with their ids
+ngteamsctl thread <channel> <post-id> [--limit N]   # a post and its replies
 ngteamsctl download <chat> <message-id> [--name <file> | --index N | --all] [--out <dir>] [--force]
 ngteamsctl unread                           # the badge's counts, per chat and total
 ngteamsctl search <words…> [--limit N]
@@ -462,8 +464,17 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   `<server>/<UPN>`, or its bare UPN while no other account has it); by default the account the
   window shows, and for call commands the account ringing or in the call. A chat is its id or its title as the chat
   list shows it (the topic, otherwise the other members' names), in any case; a title several chats share is
-  `ambiguous_chat`, listing their ids. A channel is its id, name or `<team>/<channel>`; a settings page its key or
-  title.
+  `ambiguous_chat`, listing their ids. A channel is its id, `<team> > <channel>` (as `teams` titles it),
+  `<team>/<channel>` or its name; a channel's name where only a chat is taken answers `unknown_chat` that points to
+  `teams`. A settings page is its key or title.
+- **Channels**: `teams` lists the teams and their channels as the Teams list shows them (in JSON, `teams` with
+  `channels`: `id`, `name`, `title`, `general`, `channel_type`, `hidden`, `archived`). `messages` on a channel first
+  syncs it as the channel view does when it opens (`synced`: false when the sync failed or took more than 30 s, and
+  the rows are the store's). A reply's row names its post (`post`), and a post's row counts its stored replies
+  (`replies`); a post carries its `subject` and, when it came by email, `email` (`from`, `sender`, `to`, `cc`,
+  `recipients`). `thread` reads one post and its replies; a reply's id names its post's thread. When the store holds
+  nothing older, the answer says so in `end`: `beginning` (the first message of the chat, channel or thread) or
+  `store` (the service can hold more).
 - **Writes** go through the outbox as the window's do. Each answers with its outbox row as its first attempt left it;
   `--wait` waits up to a minute more for it to settle (`sent`, `failed`, or `unknown`: it may have arrived, and only
   `resend` sends it again). A write the app didn't answer in time may still go out: check

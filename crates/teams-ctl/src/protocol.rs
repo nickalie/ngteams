@@ -35,6 +35,15 @@ pub const WRITE_ANSWER: std::time::Duration = std::time::Duration::from_secs(90)
 /// on.
 pub const SYNC_ANSWER: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// How long the app waits at most for a channel's sync before `messages` or `thread` answers from the store: the
+/// sync reads a few pages, each bounded by the transport's 30 s. Past it the answer says the sync did not work
+/// (`synced` false), and the sync goes on.
+pub const CHANNEL_SYNC: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long the app waits at most for the teams' first read before `teams` answers [`ErrorCode::Timeout`]: the
+/// engine reads them in the background when the store holds none.
+pub const TEAMS_ANSWER: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// How long the app takes at most to answer a call command: the engine's answer to its call action (a start is taken
 /// within the engine's 15 s or refused, a leave's request bounded by the transport's 30 s) and the call as the app
 /// then shows it. Past it the app answers [`ErrorCode::Timeout`], and the action goes on (`ngteamsctl calls` shows
@@ -97,7 +106,8 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         limit: Option<u32>,
     },
-    /// A chat's messages, the newest first.
+    /// A chat's or a channel's messages, the newest first. A channel is synced from the service first, as the app
+    /// syncs it when it opens.
     Messages {
         chat: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,6 +118,16 @@ pub enum Request {
     },
     /// The unread counts the badge shows: per chat and the account's total.
     Unread,
+    /// The account's teams and their channels, as the Teams list shows them.
+    Teams,
+    /// One thread of a channel: a post and its replies, the newest first. The channel is synced first, as for
+    /// `messages`. A reply's id names the thread of its post.
+    Thread {
+        channel: String,
+        post: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        limit: Option<u32>,
+    },
     /// The account's messages that match the query.
     Search {
         query: String,
@@ -421,8 +441,19 @@ pub enum Response {
     },
     Messages {
         messages: Vec<MessageRow>,
+        /// For a channel read from its first page: whether its sync from the service worked. When it did not, the
+        /// rows are what the store held.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        synced: Option<bool>,
+        /// Why the answer has no older message: the store holds none. Absent when the answer stopped at its limit or
+        /// at the line's cap.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        end: Option<HistoryEnd>,
     },
     Unread(Unread),
+    Teams {
+        teams: Vec<TeamRow>,
+    },
     Search {
         messages: Vec<MessageRow>,
     },
@@ -525,6 +556,50 @@ pub struct ChatRow {
     pub preview: Option<String>,
 }
 
+/// Why a `messages` or `thread` answer holds no older message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryEnd {
+    /// The last row is the first message: of the chat or channel (the store holds its whole history), or of the thread
+    /// (its post).
+    Beginning,
+    /// The store holds no older message, but the service can hold more.
+    Store,
+}
+
+/// A team in the Teams list.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeamRow {
+    /// Its id: its general channel's.
+    pub id: String,
+    pub name: String,
+    /// Archived: read-only for everyone.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub archived: bool,
+    /// Its channels in the order of the list, the general one first.
+    pub channels: Vec<ChannelRow>,
+}
+
+/// A channel of a team.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelRow {
+    /// Its id: what `messages`, `thread` and `open channel` take.
+    pub id: String,
+    pub name: String,
+    /// `<team> > <channel>`: a name that `messages`, `thread` and `open channel` also take.
+    pub title: String,
+    /// The team's general channel.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub general: bool,
+    /// Who it is for: `standard`, `private` or `shared`.
+    pub channel_type: String,
+    /// Not in the account's channel list.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hidden: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub archived: bool,
+}
+
 /// A chat named by id and title: an ambiguous title's candidates.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatRef {
@@ -533,7 +608,7 @@ pub struct ChatRef {
 }
 
 /// A message as plain text.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each is a flag of its own the message carries: edited, deleted, sent by the account"
@@ -565,6 +640,43 @@ pub struct MessageRow {
     /// The files and pictures it carries: its shared files in their order, then the pictures in its text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<AttachmentRow>,
+    /// In a channel, a reply's post: the id of the post its thread starts with. Absent for a post and in a chat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post: Option<String>,
+    /// In a channel, a post's replies that the store holds. Absent for a reply and in a chat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replies: Option<u32>,
+    /// A channel post's subject.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    /// The email that a channel post came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<EmailRow>,
+}
+
+/// The email that a channel post came from, as the post's card names it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmailRow {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<EmailPerson>,
+    /// Who sent it for `from`, when the email names another sender.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender: Option<EmailPerson>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub to: Vec<EmailPerson>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cc: Vec<EmailPerson>,
+    /// How many people it went to, the ones not named too.
+    pub recipients: u32,
+}
+
+/// A sender or a recipient of an email: a name, an address or both.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmailPerson {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
 }
 
 /// A file or a picture that a message carries.
