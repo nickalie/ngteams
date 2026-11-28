@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use clap::Parser as _;
 use ctl_support::{pump_until_done, quit};
@@ -62,22 +62,74 @@ const CHILD_TEST: &str = "ngteamsctl_child";
 const UPN: &str = "bot-a@lab.example.test";
 const B_MAIL: &str = "bee@lab.example.test";
 const C_MAIL: &str = "cee@lab.example.test";
+/// c's UPN is not c's mail, as a guest's is.
+const C_UPN: &str = "cee_guest.test#EXT#@lab.example.test";
 const DEE_ONE: &str = "8:orgid:00000000-0000-4000-8000-0000000000d1";
 const DEE_TWO: &str = "8:orgid:00000000-0000-4000-8000-0000000000d2";
+const BEE_TWO: &str = "8:orgid:00000000-0000-4000-8000-0000000000b2";
+const DEE_OTHER: &str = "8:orgid:00000000-0000-4000-8000-0000000000d3";
+const NOBODY_ELSE: &str = "8:orgid:00000000-0000-4000-8000-0000000000e1";
 
 /// The presence that UPS gives, and the time last active that it gives for each person.
 const PRESENCE: &[(&str, &str)] = &[(LAB_B, "Busy"), (LAB_C, "Away")];
 const LAST_ACTIVE: &str = "2026-11-20T08:30:00Z";
 const LAST_ACTIVE_MS: i64 = 1_795_163_400_000;
 
-/// A made-up directory entry: `(MRI, name, mail, job title, department)`.
-type Entry = (&'static str, &'static str, &'static str, &'static str, &'static str);
+/// A made-up directory entry: `(MRI, name, UPN, mail, job title, department)`.
+type Entry = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+);
 
+/// Bee Example Two, Dee Other and Nobody Else match only a part of a name or of a query, so that a part never
+/// passes for the whole.
 const DIRECTORY: &[Entry] = &[
-    (LAB_B, "Bee Example", B_MAIL, "Tester", "Lab"),
-    (LAB_C, "Cee Example", C_MAIL, "Builder", "Lab"),
-    (DEE_ONE, "Dee Example", "dee.one@lab.example.test", "Writer", "Docs"),
-    (DEE_TWO, "Dee Example", "dee.two@lab.example.test", "Reader", "Docs"),
+    (LAB_B, "Bee Example", B_MAIL, B_MAIL, "Tester", "Lab"),
+    (LAB_C, "Cee Example", C_UPN, C_MAIL, "Builder", "Lab"),
+    (
+        DEE_ONE,
+        "Dee Example",
+        "dee.one@lab.example.test",
+        "dee.one@lab.example.test",
+        "Writer",
+        "Docs",
+    ),
+    (
+        DEE_TWO,
+        "Dee Example",
+        "dee.two@lab.example.test",
+        "dee.two@lab.example.test",
+        "Reader",
+        "Docs",
+    ),
+    (
+        BEE_TWO,
+        "Bee Example Two",
+        "bee.two@lab.example.test",
+        "bee.two@lab.example.test",
+        "Tester",
+        "Lab",
+    ),
+    (
+        DEE_OTHER,
+        "Dee Other",
+        "dee.other@lab.example.test",
+        "dee.other@lab.example.test",
+        "Writer",
+        "Docs",
+    ),
+    (
+        NOBODY_ELSE,
+        "Nobody Else",
+        "nobody.else@lab.example.test",
+        "nobody.else@lab.example.test",
+        "Guest",
+        "Lab",
+    ),
 ];
 
 /// When this binary runs as `ngteamsctl` (see the module docs), it does what the `ngteamsctl` binary does.
@@ -137,7 +189,8 @@ impl Credentials for Tokens {
     }
 }
 
-/// Substrate's answer to a results request: the directory's people whose name or mail holds the query, in any case.
+/// Substrate's answer to a results request: the directory's people whose name, UPN or mail holds the query, in any
+/// case.
 fn directory_answer(request: &Asked) -> ResponseTemplate {
     let body: Value = serde_json::from_slice(&request.body).unwrap_or_default();
     let query = body["EntityRequests"][0]["query"]["queryString"]
@@ -146,10 +199,14 @@ fn directory_answer(request: &Asked) -> ResponseTemplate {
         .to_lowercase();
     let results: Vec<Value> = DIRECTORY
         .iter()
-        .filter(|(_, name, mail, _, _)| name.to_lowercase().contains(&query) || mail.contains(&query))
-        .map(|(mri, name, mail, title, department)| {
+        .filter(|(_, name, upn, mail, _, _)| {
+            [name, upn, mail]
+                .iter()
+                .any(|text| text.to_lowercase().contains(&query))
+        })
+        .map(|(mri, name, upn, mail, title, department)| {
             json!({ "Type": "People", "Source": {
-                "DisplayName": name, "MRI": mri, "UserPrincipalName": mail, "EmailAddresses": [mail],
+                "DisplayName": name, "MRI": mri, "UserPrincipalName": upn, "EmailAddresses": [mail],
                 "JobTitle": title, "Department": department,
             }})
         })
@@ -368,7 +425,7 @@ fn a_person_finds_people_as_a_table_and_as_json() {
     let lab = Lab::start(false);
     let table = lab.ngteamsctl(&["people", "example"]).ok().to_owned();
     let lines: Vec<&str> = table.lines().collect();
-    assert_eq!(lines.len(), 5, "a heading and four people:\n{table}");
+    assert_eq!(lines.len(), 8, "a heading and seven people:\n{table}");
     assert!(lines[0].starts_with("MRI"), "{table}");
     assert!(
         lines[0].contains("PRESENCE") && lines[0].contains("DEPARTMENT"),
@@ -381,14 +438,18 @@ fn a_person_finds_people_as_a_table_and_as_json() {
     assert_eq!(
         mris(&found, "people"),
         [DEE_ONE, DEE_TWO],
-        "the words are one query: {found}"
+        "the words are one query, not Dee Other: {found}"
     );
     let limited = lab.ngteamsctl(&["--json", "people", "example", "--limit", "1"]).json();
     assert_eq!(mris(&limited, "people"), [LAB_B], "{limited}");
 
     let none = lab.ngteamsctl(&["people", "nobody", "at", "all"]);
-    assert_eq!(none.ok().lines().count(), 1, "the heading only: {none:?}");
-    let none = lab.ngteamsctl(&["--json", "people", "nobody"]).json();
+    assert_eq!(
+        none.ok().lines().count(),
+        1,
+        "the heading only, not Nobody Else: {none:?}"
+    );
+    let none = lab.ngteamsctl(&["--json", "people", "nobody", "at", "all"]).json();
     assert_eq!(none["people"], json!([]), "{none}");
 }
 
@@ -422,14 +483,23 @@ fn a_person_reads_one_card_by_each_name_in_any_case() {
     }
 
     // c has no card: the search's fields, and the presence read as `presence` reads it
-    let c = lab.ngteamsctl(&["person", "CEE@lab.example.test"]).ok().to_owned();
-    let fields: Vec<(&str, &str)> = c
-        .lines()
-        .filter_map(|line| line.split_once(':'))
-        .map(|(key, value)| (key, value.trim()))
-        .collect();
-    for field in [("name", "Cee Example"), ("title", "Builder"), ("presence", "away")] {
-        assert!(fields.contains(&field), "{field:?} not in\n{c}");
+    for who in ["CEE@lab.example.test", &C_UPN.to_uppercase()] {
+        let c = lab.ngteamsctl(&["person", who]).ok().to_owned();
+        let fields: Vec<(&str, &str)> = c
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .map(|(key, value)| (key, value.trim()))
+            .collect();
+        for field in [
+            ("mri", LAB_C),
+            ("name", "Cee Example"),
+            ("upn", C_UPN),
+            ("email", C_MAIL),
+            ("title", "Builder"),
+            ("presence", "away"),
+        ] {
+            assert!(fields.contains(&field), "{who}: {field:?} not in\n{c}");
+        }
     }
 }
 
@@ -484,10 +554,8 @@ fn a_person_reads_the_presence_of_several_people_and_of_a_bot() {
         "b once:\n{table}"
     );
 
-    // a bot has no presence: it is unknown at once, the ask does not wait PRESENCE_WAIT for it
-    let asked = Instant::now();
+    // a bot has no presence: it is unknown at once; a wait for it would hang the ask, as the test clock stays
     let bot = lab.ngteamsctl(&["--json", "presence", ECHO, LAB_C]).json();
-    let took = asked.elapsed();
     let rows: Vec<(&str, &str)> = bot["people"]
         .as_array()
         .unwrap()
@@ -495,7 +563,6 @@ fn a_person_reads_the_presence_of_several_people_and_of_a_bot() {
         .map(|row| (row["mri"].as_str().unwrap(), row["availability"].as_str().unwrap()))
         .collect();
     assert_eq!(rows, [(ECHO, "unknown"), (LAB_C, "away")], "{bot}");
-    assert!(took < Duration::from_secs(15), "the bot was waited for: {took:?}");
     let card = lab.ngteamsctl(&["--json", "person", ECHO]).json();
     assert_eq!(card["mri"], ECHO, "{card}");
     assert!(card.get("presence").is_none_or(Value::is_null), "{card}");
@@ -516,7 +583,7 @@ fn the_read_only_app_serves_people_person_and_presence() {
     let found = lab.ngteamsctl(&["--json", "people", "example"]).json();
     assert_eq!(
         mris(&found, "people"),
-        [LAB_B, LAB_C, DEE_ONE, DEE_TWO],
+        [LAB_B, LAB_C, DEE_ONE, DEE_TWO, BEE_TWO, DEE_OTHER, NOBODY_ELSE],
         "the search is a read: {found}"
     );
     let card = lab.ngteamsctl(&["--json", "person", B_MAIL]).json();
