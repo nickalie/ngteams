@@ -498,7 +498,7 @@ async fn invalid_or_unreadable_calendar_answers_fail_without_guessing_an_event()
     assert!(rig.handle.calendar(START + 1, START).await.unwrap().is_empty());
     assert!(matches!(
         rig.handle.calendar_event(" ").await,
-        Err(EngineError::CalendarUnread)
+        Err(EngineError::NoSuchEvent)
     ));
     assert!(requests(&rig.server, "GET", EVENT).await.is_empty());
     answer(&rig.server, "GET", EVENT, 200, json!({"not": "an event"})).await;

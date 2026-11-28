@@ -171,7 +171,9 @@ Meeting"`).
 
 - `GET v2.0/me/calendars/events/<id>?shouldDecryptData=true` (a read): one event whole, as the form opens on it.
   `ngteamsctl calendar show` uses the same read. For an occurrence, it also reads the series master, because only
-  the master carries the recurrence.
+  the master carries the recurrence. The client takes a `404` as no such event (`unknown_event` in `ngteamsctl`), and
+  does not send the read for a blank id. Only the mock gave this `404`; no capture shows what the service sends for an
+  unknown or a malformed id. Examine both at the next lab calendar read.
 - `PUT v2.0/me/calendars/events/<id>?isOnlineMeeting=<bool>` with `{"updatedCalendarEvent": <the event>}`: the
   event as read with the form's fields over it; its update goes to every attendee (and a cancellation to one taken
   off). The bundle expects `204`.

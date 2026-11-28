@@ -1503,7 +1503,7 @@ impl EngineRequests {
     }
 
     /// The event `id` of the account's calendar, read whole from the middle tier now: what the scheduling form opens
-    /// on ([`crate::calendar`]); [`EngineError::NoSuchEvent`] when the service has no such event,
+    /// on ([`crate::calendar`]); [`EngineError::NoSuchEvent`] for a blank id or when the service has no such event,
     /// [`EngineError::CalendarUnread`] when the read failed otherwise.
     pub fn calendar_event(&self, id: impl Into<String>) -> Reply<FullEvent> {
         let id = id.into();

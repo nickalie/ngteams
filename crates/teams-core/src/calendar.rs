@@ -8,7 +8,7 @@
 //!   it syncs. A window that is empty, reversed or wider than [`teams_proto::MAX_CALENDAR_WINDOW_MS`] is answered with
 //!   no events and nothing read. A read that failed, or an answer that isn't in the shape the web client reads, is
 //!   [`EngineError::CalendarUnread`] and changes nothing stored. One event is read whole
-//!   ([`EventRead`], [`EngineError::NoSuchEvent`] when the service answers 404) before the form opens on it (a series' master too, when the form changes a whole series). The
+//!   ([`EventRead`], [`EngineError::NoSuchEvent`] for a blank id or a 404) before the form opens on it (a series' master too, when the form changes a whole series). The
 //!   form's Scheduler reads the attendees' busy times and the suggested times ([`MeetingAvailability`]): two reads sent as a
 //!   `PUT`, which reach nobody.
 //! - **Writes** ([`EventWrite`]): an event created, changed, cancelled or deleted, each a sealed `teams-proto` write
@@ -323,7 +323,7 @@ where
     /// Answers `reply` with the event `id`, read whole.
     pub(crate) fn event(&self, id: &str, reply: Responder<FullEvent>) {
         let Some(read) = EventRead::new(id) else {
-            let _ = reply.send(Err(EngineError::CalendarUnread));
+            let _ = reply.send(Err(EngineError::NoSuchEvent));
             return;
         };
         let client = Arc::clone(&self.client);
