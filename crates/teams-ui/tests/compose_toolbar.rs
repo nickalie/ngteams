@@ -1950,6 +1950,52 @@ fn escape_in_the_apps_flyout_of_a_focused_plus_gives_the_keys_back_to_plus() {
 }
 
 #[test]
+fn a_click_on_a_focused_plus_closes_its_apps_flyout_and_gives_the_keys_back_to_plus() {
+    let rig = Rig::start();
+    *rig.core.extension_apps.lock().unwrap() =
+        teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    focus_box(&compose, cx);
+    press(cx, "tab");
+    press(cx, "end");
+    let plus = focused(cx);
+    key_click(cx);
+    assert!(compose.read_with(cx, |compose, _| compose.apps_flyout().is_some()));
+    assert_ne!(focused(cx), plus, "the flyout's search takes the keys");
+    click(cx, "compose-apps");
+    assert!(
+        compose.read_with(cx, |compose, _| compose.apps_flyout().is_none()),
+        "the click closes the flyout"
+    );
+    assert_eq!(focused(cx), plus, "the keys go back to \"+\"");
+}
+
+#[test]
+fn a_press_outside_the_apps_flyout_closes_it() {
+    let rig = Rig::start();
+    *rig.core.extension_apps.lock().unwrap() =
+        teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
+    let (compose, cx) = rooted_chat(&rig, 900.0);
+    click(cx, "compose-apps");
+    let flyout = compose.read_with(cx, |compose, _| compose.apps_flyout().cloned());
+    let flyout = flyout.expect("the flyout opens");
+    let corner = cx.debug_bounds("apps-flyout").expect("the flyout shows").origin;
+    cx.simulate_click(corner + gpui::point(px(4.0), px(4.0)), Modifiers::none());
+    draw(cx);
+    assert!(
+        compose.read_with(cx, |compose, _| compose.apps_flyout().is_some()),
+        "a press in the flyout keeps it open"
+    );
+    cx.simulate_click(gpui::point(px(20.0), px(60.0)), Modifiers::none());
+    draw(cx);
+    assert!(
+        compose.read_with(cx, |compose, _| compose.apps_flyout().is_none()),
+        "a press outside closes the flyout"
+    );
+    assert!(!cx.update(|window, cx| flyout.read(cx).holds_focus(window, cx)));
+}
+
+#[test]
 fn a_second_click_on_plus_closes_the_apps_flyout_and_gives_the_keys_back_to_the_text() {
     let rig = Rig::start();
     *rig.core.extension_apps.lock().unwrap() =

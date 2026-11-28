@@ -88,14 +88,14 @@ impl Compose {
         let rows = self.flyout_rows(cx);
         let actions = self.flyout_actions(&rows, window, cx);
         let flyout = cx.new(|cx| AppsFlyout::new(core, conversation, window, cx).with_actions(actions));
-        let back_to = self.tool_to_return_to();
-        self.apps.back_to.clone_from(&back_to);
+        self.apps.back_to = self.tool_to_return_to();
         let events = cx.subscribe_in(
             &flyout,
             window,
             move |this: &mut Self, flyout, event: &FlyoutEvent, window, cx| {
                 this.apps.flyout = None;
                 let rows = std::mem::take(&mut this.apps.rows);
+                let back_to = this.apps.back_to.take();
                 match event {
                     FlyoutEvent::Close => {
                         // a press elsewhere keeps the keys where they went
@@ -106,7 +106,7 @@ impl Compose {
                     FlyoutEvent::GetMoreApps => cx.emit(ComposeEvent::ShowStore),
                     FlyoutEvent::Dialog(seed) => cx.emit(ComposeEvent::AppDialog(seed.clone())),
                     FlyoutEvent::Card(card) => this.add_app_card(card.as_ref().clone(), window, cx),
-                    FlyoutEvent::Customize => this.customize_toolbar_back_to(back_to.clone(), window, cx),
+                    FlyoutEvent::Customize => this.customize_toolbar_back_to(back_to, window, cx),
                     FlyoutEvent::Action(at) => {
                         if let Some(row) = rows.get(*at) {
                             // the keyboard goes back to the text first; an action that opens a picker takes it after
@@ -225,11 +225,23 @@ impl Compose {
                     .anchor(gpui::Anchor::BottomRight)
                     .position(at.top_right())
                     .snap_to_window_with_margin(px(8.0))
-                    .child(div().pb_1().child(flyout.clone())),
+                    .child(div().pb_1().child(self.closed_by_a_press_outside(flyout))),
             )
             .with_priority(1)
             .into_any_element(),
         )
+    }
+
+    /// `flyout`, closed by a press outside it, except on its button, whose click closes it.
+    fn closed_by_a_press_outside(&self, flyout: &gpui::Entity<AppsFlyout>) -> gpui::Div {
+        let (closed, button) = (flyout.clone(), std::rc::Rc::clone(&self.apps.at));
+        div()
+            .on_mouse_down_out(move |event, _, cx| {
+                if !button.get().is_some_and(|button| button.contains(&event.position)) {
+                    closed.update(cx, |_, cx| cx.emit(FlyoutEvent::Close));
+                }
+            })
+            .child(flyout.clone())
     }
 
     /// The files the box holds, then the apps' cards.
