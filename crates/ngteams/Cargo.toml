@@ -187,6 +187,12 @@ name = "qa_bot_connector_window"
 harness = false
 
 [[test]]
+# acceptance of task 234: an own server's administrator registers the sample bots and a user uses them in the app's
+# windows, on two API nodes with Postgres and Redis and on one node with SQLite, in the UI sandbox
+name = "qa_bots_acceptance_window"
+harness = false
+
+[[test]]
 # QA of task 412: a team owner makes an outgoing webhook and mentions it, against the real ngteams-server binary
 name = "qa_outgoing_webhooks_window"
 harness = false

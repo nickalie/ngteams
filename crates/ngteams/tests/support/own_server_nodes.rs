@@ -184,6 +184,17 @@ impl Nodes {
     /// Makes the database, writes the certificates and the nodes' configuration, migrates, and starts the media node
     /// and both API nodes behind the front; their logs go to `logs`.
     pub fn start(binary: &Path, needs: &Needs, runtime: &tokio::runtime::Runtime, logs: &Path) -> TestResult<Self> {
+        Self::start_with(binary, needs, runtime, logs, "")
+    }
+
+    /// [`Nodes::start`] with `tables` added to every node's configuration (a `[bots]` table, say).
+    pub fn start_with(
+        binary: &Path,
+        needs: &Needs,
+        runtime: &tokio::runtime::Runtime,
+        logs: &Path,
+        tables: &str,
+    ) -> TestResult<Self> {
         let dir = tempfile::tempdir()?;
         let ca_file = write_certificates(dir.path())?;
         let front = Front::open()?;
@@ -196,6 +207,7 @@ impl Nodes {
             redis: &needs.redis,
             storage: &storage,
             calls: &calls(&needs.relay, &needs.secret),
+            tables,
         };
         fs::create_dir_all(logs)?;
         let api = ["api-a", "api-b"]
@@ -312,6 +324,8 @@ struct Shared<'a> {
     storage: &'a (String, String),
     /// The calls' and the media node's tables.
     calls: &'a str,
+    /// The run's own tables, after each node's.
+    tables: &'a str,
 }
 
 impl Shared<'_> {
@@ -319,8 +333,8 @@ impl Shared<'_> {
     fn config(&self, listen: SocketAddr, tables: &str) -> String {
         format!(
             "listen = \"{listen}\"\npublic_origin = {:?}\ndatabase_url = {:?}\nredis_url = {:?}\nstorage_url = {:?}\n\
-             {}{}{tables}",
-            self.origin, self.database_url, self.redis, self.storage.0, self.storage.1, self.calls,
+             {}{}{tables}{}",
+            self.origin, self.database_url, self.redis, self.storage.0, self.storage.1, self.calls, self.tables,
         )
     }
 }

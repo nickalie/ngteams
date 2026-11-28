@@ -214,6 +214,8 @@ pub struct Instance {
     socket: PathBuf,
     ctl: Option<CtlClient>,
     pub mri: String,
+    /// What its screenshots' names start with.
+    pub shots: String,
     _dir: tempfile::TempDir,
 }
 
@@ -293,6 +295,7 @@ impl Instance {
             socket,
             ctl: None,
             mri: String::new(),
+            shots: "own-server-nodes".to_owned(),
             _dir: dir,
         }))
     }
@@ -436,10 +439,10 @@ impl Instance {
         Ok(())
     }
 
-    /// A screenshot of the focused window as `own-server-nodes-<name>-<what>.png`.
+    /// A screenshot of the focused window as `<shots>-<name>-<what>.png`.
     pub fn shot(&self, what: &str) -> SandboxResult<PathBuf> {
         thread::sleep(Duration::from_millis(800));
-        let file = format!("own-server-nodes-{}-{what}.png", self.name);
+        let file = format!("{}-{}-{what}.png", self.shots, self.name);
         let png = self.sandbox.screenshot(&file, true)?;
         let kept = shots_dir()?.join(&file);
         fs::copy(&png, &kept)?;
@@ -500,8 +503,16 @@ fn type_fields(input: &mut VirtualInput, origin: &str, upn: &str, ca_file: &Path
 
 // --- the child ---
 
+/// What a test adds to the child's app once its window is up: it gets the app's desktop.
+pub type Extra = fn(Entity<teams_ui::Desktop>, &mut App);
+
 /// The child in `mode` (`app`, or `mixed`: [`super::mixed`]).
 pub fn child(mode: &str) -> SandboxResult {
+    child_with(mode, None)
+}
+
+/// [`child`], with `extra` run on the app once it launched.
+pub fn child_with(mode: &str, extra: Option<Extra>) -> SandboxResult {
     ngteams::read_only::window_allowed_here()?;
     let log = teams_log::Config {
         dir: PathBuf::from(env(LOG_ENV)?),
@@ -530,6 +541,7 @@ pub fn child(mode: &str) -> SandboxResult {
         origin: env(ORIGIN_ENV)?,
         tone: env(TONE_ENV)?.parse()?,
         failed: Arc::new(Mutex::new(None)),
+        extra,
     };
     let failed = Arc::clone(&start.failed);
     let application = gpui_platform::linux(WindowingModes::WAYLAND).with_assets(teams_ui::AppAssets);
@@ -560,6 +572,7 @@ struct Start {
     origin: String,
     tone: f32,
     failed: Arc<Mutex<Option<String>>>,
+    extra: Option<Extra>,
 }
 
 /// The sign-in screen's own-server side: the app's own; a sign-in that goes through launches the app on it.
@@ -645,6 +658,9 @@ fn launch_on(start: &Start, account: PersonalAccount, prompt: WindowHandle<KitRo
     match launched {
         Ok(launched) => {
             say(&format!("signed-in {mri}"));
+            if let Some(extra) = start.extra {
+                extra(launched.desktop.clone(), cx);
+            }
             theme_when_asked(launched.desktop, cx);
             probe_when_asked(requests, start.origin.clone(), cx);
             let _ = prompt.update(cx, |_, window, _| window.remove_window());
