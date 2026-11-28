@@ -14,8 +14,7 @@ use std::collections::BTreeMap;
 use toml::{Table, Value};
 
 use super::{Problem, chat_id, keys};
-use crate::chat_view::DEFAULT_QUICK_REACTIONS;
-use crate::reactions;
+use crate::reactions::{self, DEFAULT_QUICK_REACTIONS};
 
 /// The prefix of a quick reaction's name in the file: `reaction-<id>`.
 const REACTION: &str = "reaction-";
@@ -54,9 +53,7 @@ impl BarItem {
     /// The quick reaction `key`, when Teams offers it.
     #[must_use]
     pub fn reaction(key: &str) -> Option<Self> {
-        reactions::catalog()
-            .get(key)
-            .map(|(reaction, tone)| Self::Reaction(reaction.id, tone))
+        reactions::reaction(key).map(|(id, tone)| Self::Reaction(id, tone))
     }
 
     /// A quick reaction's key, as the account sets it.

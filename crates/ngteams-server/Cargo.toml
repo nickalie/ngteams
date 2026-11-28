@@ -80,7 +80,7 @@ teams-auth.workspace = true
 # the calls' e2e tests: the client's call machine on the server's signaling, and its engine's calls with their media
 # on the file device backend through the loopback TURN server
 teams-call.workspace = true
-teams-core = { workspace = true, features = ["test-support"] }
+teams-core = { workspace = true, features = ["calls", "test-support"] }
 teams-media = { workspace = true, features = ["test-support"] }
 teams-proto = { workspace = true, features = ["test-support"] }
 teams-store.workspace = true

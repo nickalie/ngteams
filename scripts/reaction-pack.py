@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Build the reaction pack the app draws reactions with: crates/teams-ui/assets/reactions/{catalog.tsv,emoji.bin}.
+"""Build the reaction pack the app draws reactions with: crates/teams-app/assets/reactions/catalog.tsv and
+crates/teams-ui/assets/reactions/emoji.bin.
 
 - The catalog is every reaction Teams offers, in its picker's categories and order: the web client's emoticon
   metadata (a public, unauthenticated read of Teams' CDN, `personal-expressions/v1/metadata/<version>/default.json`,
@@ -34,6 +35,7 @@ IGNORED = {0xFE0E, 0xFE0F}
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "crates/teams-ui/assets/reactions"
+CATALOG_OUT = ROOT / "crates/teams-app/assets/reactions"
 
 
 def sequence(points):
@@ -143,7 +145,8 @@ def main():
             ]
             lines.append("\t".join(fields))
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "catalog.tsv").write_text("\n".join(lines) + "\n")
+    CATALOG_OUT.mkdir(parents=True, exist_ok=True)
+    (CATALOG_OUT / "catalog.tsv").write_text("\n".join(lines) + "\n")
     (OUT / "emoji.bin").write_bytes(bytes(packed))
     print(f"{len(seen)} reactions, {len(placed)} pictures, {len(packed)} bytes; no picture for {len(missing)}")
     if missing:

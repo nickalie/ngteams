@@ -1,0 +1,11 @@
+[package]
+name = "teams-theme"
+description = "The app's theme catalog without a UI kit: the palettes, the seven built-in themes and the user's appearance choice, shared by the desktop and the phone app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true

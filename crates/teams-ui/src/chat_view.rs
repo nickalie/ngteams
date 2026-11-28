@@ -304,7 +304,7 @@ pub const QUICK_COUNT: usize = 4;
 /// Teams' own quick reactions, in its order (the web client's hover bar offered the first four to an account that
 /// had set none: M2 Task 10, `docs/protocol/chat.md`, "Reactions (chat-shapes)"): they fill the hover bar after the
 /// account's most used ([`quick_reactions`]).
-pub const DEFAULT_QUICK_REACTIONS: [&str; 6] = ["like", "heart", "laugh", "surprised", "sad", "angry"];
+pub use teams_app::reactions::DEFAULT_QUICK_REACTIONS;
 /// How long the view waits, once a read receipt is due, before it sends it (and looks again whether it still is).
 pub const READ_DEBOUNCE: Duration = Duration::from_millis(800);
 /// What the delete's confirmation asks.

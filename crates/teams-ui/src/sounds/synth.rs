@@ -13,8 +13,7 @@ use teams_media::devices::SAMPLE_RATE;
 use super::{SoundEvent, recorded};
 use crate::ringtone::{RING_FRAMES, RingtoneFrames};
 
-/// The default pack's key.
-pub const DEFAULT_PACK: &str = "default";
+pub use teams_app::settings::sounds::DEFAULT_PACK;
 
 /// How a note sounds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -300,6 +299,12 @@ mod tests {
 
     use super::*;
     use crate::ringtone::RINGTONE;
+
+    #[test]
+    fn the_packs_are_the_settings_builtin_packs() {
+        let keys: Vec<&str> = PACKS.iter().map(|pack| pack.key).collect();
+        assert_eq!(keys, teams_app::settings::sounds::BUILTIN_PACKS);
+    }
 
     #[test]
     fn every_pack_has_every_event_and_stays_in_range() {

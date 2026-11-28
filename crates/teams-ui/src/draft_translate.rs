@@ -31,145 +31,15 @@ use crate::chat_translate::prompt::Said;
 use crate::editor::doc::Doc;
 use crate::local_ai::{Backend, Failure, Launch, Model, Target, Tool, Work};
 use crate::message_correct::draft::Encoded;
-use crate::translate::TARGET_LANGUAGES;
 
 /// The longest draft sent to the tool (its encoded text).
 pub const MAX_DRAFT: usize = crate::message_correct::MAX_DRAFT;
-/// The language a draft is translated into until the user picks one.
-pub const DEFAULT_LANGUAGE: &str = "English";
-/// The longest language name kept, in bytes.
-pub const MAX_LANGUAGE: usize = 60;
+pub use teams_app::languages::{COMMON_LANGUAGES, DEFAULT_LANGUAGE, MAX_LANGUAGE, language_name, listed};
 
 /// The settings' description of where a draft goes.
 pub const SETTINGS_NOTE: &str = "When you translate a message you are writing, its text, the language, the chat's \
                                  recent messages and the message a reply quotes, with the names of their writers, go \
                                  to this tool on your computer and its provider.";
-
-/// The languages the picker lists: every language captions and chats are translated into, and more that many people
-/// write in. Any other is typed.
-pub const COMMON_LANGUAGES: &[&str] = &[
-    "Afrikaans",
-    "Albanian",
-    "Amharic",
-    "Arabic",
-    "Armenian",
-    "Azerbaijani",
-    "Basque",
-    "Belarusian",
-    "Bengali",
-    "Bosnian",
-    "Bulgarian",
-    "Burmese",
-    "Catalan",
-    "Chinese (Simplified)",
-    "Chinese (Traditional)",
-    "Croatian",
-    "Czech",
-    "Danish",
-    "Dutch",
-    "English",
-    "Esperanto",
-    "Estonian",
-    "Filipino",
-    "Finnish",
-    "French",
-    "Galician",
-    "Georgian",
-    "German",
-    "Greek",
-    "Gujarati",
-    "Hausa",
-    "Hebrew",
-    "Hindi",
-    "Hungarian",
-    "Icelandic",
-    "Indonesian",
-    "Irish",
-    "Italian",
-    "Japanese",
-    "Kannada",
-    "Kazakh",
-    "Khmer",
-    "Korean",
-    "Kurdish",
-    "Kyrgyz",
-    "Lao",
-    "Latin",
-    "Latvian",
-    "Lithuanian",
-    "Luxembourgish",
-    "Macedonian",
-    "Malay",
-    "Malayalam",
-    "Maltese",
-    "Marathi",
-    "Mongolian",
-    "Nepali",
-    "Norwegian",
-    "Pashto",
-    "Persian",
-    "Polish",
-    "Portuguese (Brazil)",
-    "Portuguese (Portugal)",
-    "Punjabi",
-    "Romanian",
-    "Russian",
-    "Serbian",
-    "Sinhala",
-    "Slovak",
-    "Slovenian",
-    "Somali",
-    "Spanish",
-    "Swahili",
-    "Swedish",
-    "Tajik",
-    "Tamil",
-    "Telugu",
-    "Thai",
-    "Turkish",
-    "Turkmen",
-    "Ukrainian",
-    "Urdu",
-    "Uzbek",
-    "Vietnamese",
-    "Welsh",
-    "Yiddish",
-    "Yoruba",
-    "Zulu",
-];
-
-/// The language `typed` names, as the settings keep it: a listed one by its own name (whatever its case, or by its
-/// code), else what was typed, trimmed. `None` when it holds no letter, is longer than [`MAX_LANGUAGE`] bytes, or has a
-/// character that could be read as markup or a line of its own.
-#[must_use]
-pub fn language_name(typed: &str) -> Option<String> {
-    let typed = typed.trim();
-    if let Some(listed) = listed(typed) {
-        return Some(listed.to_owned());
-    }
-    let shaped = typed.len() <= MAX_LANGUAGE
-        && typed.chars().any(char::is_alphabetic)
-        && !typed
-            .chars()
-            .any(|c| c.is_control() || matches!(c, '<' | '>' | '&' | '"' | '`' | '{' | '}'));
-    shaped.then(|| typed.to_owned())
-}
-
-/// The listed language `typed` names, by its name or (one of [`TARGET_LANGUAGES`]) its code, ignoring case.
-#[must_use]
-pub fn listed(typed: &str) -> Option<&'static str> {
-    let typed = typed.trim();
-    COMMON_LANGUAGES
-        .iter()
-        .copied()
-        .find(|name| name.eq_ignore_ascii_case(typed))
-        .or_else(|| {
-            TARGET_LANGUAGES
-                .iter()
-                .find(|(code, _)| code.eq_ignore_ascii_case(typed))
-                .map(|(_, name)| *name)
-        })
-}
 
 /// The listed languages whose name has `query` in it, ignoring case (all of them for an empty query).
 #[must_use]

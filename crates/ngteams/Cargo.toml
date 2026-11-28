@@ -29,7 +29,7 @@ libc.workspace = true
 # ... a Unix stream socket, or open for writing; both made close-on-exec
 rustix = { workspace = true, features = ["event", "fs", "net"] }
 # the account's engine, assembled as every binary builds one (`teams_core::account`)
-teams-core.workspace = true
+teams-core = { workspace = true, features = ["calls"] }
 # the diagnostic log, installed once before the engine starts
 teams-log.workspace = true
 # Native private account files and snapshots.

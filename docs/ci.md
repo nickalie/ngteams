@@ -419,9 +419,10 @@ window itself and the app's windows run on the Mac console through `scripts/run-
 The [Android check workflow](../.github/workflows/android.yml) has one job, `android-check`. It runs on the same pushes
 to `main` as the portability workflows, on pull requests, on merge groups, and on each push to a `team/android-*`
 branch. It runs `cargo ndk -t arm64-v8a -t x86_64 -P 29 check` over the crates that the Android library links:
-`teams-sdp`, `teams-platform`, `teams-log`, `teams-store`, `teams-auth`, `teams-proto`, `teams-call`, `teams-trouter`
-and `teams-core`. `teams-core` builds with no default features: without `calls` it links no `teams-media`, thus no
-libwebrtc, GStreamer or GPU code. Warnings fail the job. The NDK is the runner's newest one.
+`teams-sdp`, `teams-platform`, `teams-log`, `teams-store`, `teams-auth`, `teams-proto`, `teams-call`, `teams-trouter`,
+`teams-core`, `teams-media-types`, `teams-theme` and `teams-app`. `teams-core` builds with no default features: without
+`calls` it links no `teams-media`, thus no libwebrtc, GStreamer or GPU code. The workspace takes `teams-core` without
+default features too, and each desktop crate that makes calls turns `calls` on. Warnings fail the job. The NDK is the runner's newest one.
 
 On a host, install the two Rust targets and `cargo-ndk`, set `ANDROID_NDK_HOME`, and run the same command.
 

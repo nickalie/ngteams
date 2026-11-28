@@ -34,54 +34,7 @@ use crate::settings::SettingsModel;
 pub use crate::local_ai::Backend;
 pub use crate::local_ai::{AiChoice, Failure, Model, Work};
 
-/// The languages captions can be translated into: a code and its English name.
-pub const TARGET_LANGUAGES: &[(&str, &str)] = &[
-    ("ar", "Arabic"),
-    ("bg", "Bulgarian"),
-    ("ca", "Catalan"),
-    ("zh-hans", "Chinese (Simplified)"),
-    ("zh-hant", "Chinese (Traditional)"),
-    ("hr", "Croatian"),
-    ("cs", "Czech"),
-    ("da", "Danish"),
-    ("nl", "Dutch"),
-    ("en", "English"),
-    ("et", "Estonian"),
-    ("fi", "Finnish"),
-    ("fr", "French"),
-    ("de", "German"),
-    ("el", "Greek"),
-    ("he", "Hebrew"),
-    ("hi", "Hindi"),
-    ("hu", "Hungarian"),
-    ("id", "Indonesian"),
-    ("it", "Italian"),
-    ("ja", "Japanese"),
-    ("ko", "Korean"),
-    ("lv", "Latvian"),
-    ("lt", "Lithuanian"),
-    ("nb", "Norwegian"),
-    ("pl", "Polish"),
-    ("pt-br", "Portuguese (Brazil)"),
-    ("pt-pt", "Portuguese (Portugal)"),
-    ("ro", "Romanian"),
-    ("ru", "Russian"),
-    ("sr", "Serbian"),
-    ("sk", "Slovak"),
-    ("sl", "Slovenian"),
-    ("es", "Spanish"),
-    ("sv", "Swedish"),
-    ("th", "Thai"),
-    ("tr", "Turkish"),
-    ("uk", "Ukrainian"),
-    ("vi", "Vietnamese"),
-];
-
-/// A target language's code as kept, and its name.
-#[must_use]
-pub fn language(code: &str) -> Option<(&'static str, &'static str)> {
-    TARGET_LANGUAGES.iter().copied().find(|(known, _)| *known == code)
-}
+pub use teams_app::languages::{TARGET_LANGUAGES, language};
 
 /// Whether a caption track in language `track` (`en-us`) is already in `target` (`en`, `zh-hans`, `pt-br`). Chinese
 /// and Portuguese are told apart by their script or country.

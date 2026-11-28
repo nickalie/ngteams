@@ -6,12 +6,14 @@ members = [
     "crates/proto-lab",
     "crates/ngteams",
     "crates/ngteams-server",
+    "crates/teams-app",
     "crates/teams-auth",
     "crates/teams-call",
     "crates/teams-core",
     "crates/teams-ctl",
     "crates/teams-log",
     "crates/teams-media",
+    "crates/teams-media-types",
     "crates/teams-sdp",
     "crates/teams-mock",
     "crates/teams-platform",
@@ -21,6 +23,7 @@ members = [
     "crates/teams-signin-extension",
     "crates/teams-signin-protocol",
     "crates/teams-store",
+    "crates/teams-theme",
     "crates/teams-trouter",
     "crates/teams-web-engine",
     "crates/teams-update",
@@ -39,12 +42,14 @@ default-members = [
     "crates/fixture-guard",
     "crates/ngteams-server",
     "crates/proto-lab",
+    "crates/teams-app",
     "crates/teams-auth",
     "crates/teams-call",
     "crates/teams-core",
     "crates/teams-ctl",
     "crates/teams-log",
     "crates/teams-media",
+    "crates/teams-media-types",
     "crates/teams-sdp",
     "crates/teams-mock",
     "crates/teams-platform",
@@ -54,6 +59,7 @@ default-members = [
     "crates/teams-signin-extension",
     "crates/teams-signin-protocol",
     "crates/teams-store",
+    "crates/teams-theme",
     "crates/teams-trouter",
     "crates/teams-web-engine",
     "crates/teams-update",
@@ -82,10 +88,13 @@ fixture-guard = { path = "crates/fixture-guard" }
 # the own Teams-compatible server (docs/server.md); no client crate depends on it
 ngteams-server = { path = "crates/ngteams-server" }
 proto-lab = { path = "crates/proto-lab" }
+# the app shell without GPUI: the settings file's data and its I/O, shared by the desktop and the phone app
+teams-app = { path = "crates/teams-app" }
 teams-auth = { path = "crates/teams-auth" }
 # a call's signaling state machine (sans-IO): builds the sealed call writes, sends nothing itself
 teams-call = { path = "crates/teams-call" }
-teams-core = { path = "crates/teams-core" }
+# without `calls` here: a crate that makes calls turns it on, so the phone's crates link no call media
+teams-core = { path = "crates/teams-core", default-features = false }
 # the control socket's protocol, paths, codec and client (`ngteamsctl`); the app's server is in crates/ngteams
 teams-ctl = { path = "crates/teams-ctl" }
 # the app's diagnostic log (M2 Task 24a): installed by the app crates only, through its `install`
@@ -93,6 +102,8 @@ teams-log = { path = "crates/teams-log" }
 # a call's media: Teams' SDP dialect (sdp-ngc-1.0), the relayed libwebrtc peer and its session, the mixer's control
 # plane and the device seam
 teams-media = { path = "crates/teams-media" }
+# the plain types of a call's media that the settings keep (device kinds, noise levels), without the media itself
+teams-media-types = { path = "crates/teams-media-types" }
 teams-sdp = { path = "crates/teams-sdp" }
 # tests only: a crate takes it under [dev-dependencies], never [dependencies] (crates/teams-mock/tests/mock.rs checks)
 teams-mock = { path = "crates/teams-mock" }
@@ -104,6 +115,8 @@ teams-signin = { path = "crates/teams-signin" }
 teams-signin-extension = { path = "crates/teams-signin-extension" }
 teams-signin-protocol = { path = "crates/teams-signin-protocol" }
 teams-store = { path = "crates/teams-store" }
+# the theme catalog without GPUI: the palettes, the themes and the user's appearance choice
+teams-theme = { path = "crates/teams-theme" }
 teams-trouter = { path = "crates/teams-trouter" }
 # the GPUI views and models over the engine
 teams-ui = { path = "crates/teams-ui" }

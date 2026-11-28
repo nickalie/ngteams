@@ -1,7 +1,7 @@
 //! The reactions Teams offers and how they are drawn.
 //!
 //! - **The catalog** ([`catalog`]) is every reaction Teams' picker offers, in its categories and order, built by
-//!   `scripts/reaction-pack.py` from the web client's emoticon metadata into `assets/reactions/catalog.tsv`: each
+//!   `scripts/reaction-pack.py` from the web client's emoticon metadata into `teams-app`'s `assets/reactions/catalog.tsv`: each
 //!   reaction's id (the key Teams sends: `1f440_eyes`, or an older name such as `like`, `cool`, `hearteyes`), its code
 //!   points, whether it takes a skin tone, and its description. A key of a reaction that takes one may carry the tone
 //!   Teams appends (`yes-tone2`, tones 1–5): it is that reaction, drawn in the default tone.
@@ -26,10 +26,9 @@ use image::{Delay, Frame};
 
 use crate::bridge::Core;
 
-const CATALOG: &str = include_str!("../assets/reactions/catalog.tsv");
+use teams_app::reactions::CATALOG;
+
 const PICTURES: &[u8] = include_bytes!("../assets/reactions/emoji.bin");
-/// The skin tones a key may carry (`-tone1` … `-tone5`).
-const TONES: u8 = 5;
 /// The most reactions a search shows.
 pub const MOST_FOUND: usize = 240;
 /// The frames a second Teams' reaction animations play at (every one in its catalog).
@@ -99,15 +98,7 @@ impl Catalog {
                 });
                 continue;
             }
-            let mut fields = line.split('\t');
-            let (Some(id), Some(points), Some(diverse), Some(offset), Some(length), Some(description)) = (
-                fields.next(),
-                fields.next(),
-                fields.next(),
-                fields.next(),
-                fields.next(),
-                fields.next(),
-            ) else {
+            let Some([id, points, diverse, offset, length, description]) = teams_app::reactions::fields(line) else {
                 continue;
             };
             let picture = match (offset.parse::<usize>(), length.parse::<usize>()) {
@@ -160,13 +151,8 @@ impl Catalog {
     /// The reaction a key names, and the skin tone it carries (0 for none).
     #[must_use]
     pub fn get(&self, key: &str) -> Option<(&Reaction, u8)> {
-        if let Some(&index) = self.by_id.get(key) {
-            return Some((&self.reactions[index], 0));
-        }
-        let (id, tone) = key.rsplit_once("-tone")?;
-        let tone = tone.parse::<u8>().ok().filter(|tone| (1..=TONES).contains(tone))?;
-        let reaction = &self.reactions[*self.by_id.get(id)?];
-        reaction.diverse.then_some((reaction, tone))
+        let (id, tone) = teams_app::reactions::reaction(key)?;
+        Some((&self.reactions[*self.by_id.get(id)?], tone))
     }
 
     /// Whether `key` is a reaction Teams offers, in a form Teams sends: these are the keys the account may set.

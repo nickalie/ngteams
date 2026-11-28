@@ -32,7 +32,7 @@ use gpui_component::input::{Input, InputEvent, InputState};
 
 use super::{Pick, group, picker, row_with};
 use crate::draft_translate::menu::{self, LanguageMenu, Translation};
-use crate::local_ai::providers::{ApiModels, Picked};
+use crate::local_ai::providers::{ApiModels, Picked, ready};
 use crate::local_ai::{
     AiChoice, Backend, Catalog, Failure, Listed, Model, Provider, Providers, ToolChoice, Tools, Work,
 };
@@ -349,7 +349,7 @@ impl AiPicker {
             }
             let label = if !provider.enabled {
                 format!("{} (off)", provider.name)
-            } else if provider.ready(&tools) {
+            } else if ready(provider, &tools) {
                 provider.name.clone()
             } else if provider.kind.is_cli() {
                 format!("{} (not installed)", provider.name)
