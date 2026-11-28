@@ -26,6 +26,8 @@
 //!   the Recap tab of a meeting whose recap names no drive or item of its recording.
 //! - **The keyboard on the cards** (task 849, `qa_file_grid_keys.rs`): Tab, Shift+Tab, Enter, Space and Escape on a
 //!   document, an image, a video and a recap's thumbnail.
+//! - **Download of a Microsoft file** (task 991, `qa_file_grid_download.rs`): a file with no sharing link, a second
+//!   Download, a name in the folder, a team site's file, failures, the keyboard, and no token to the file's host.
 //!
 //! Every name, id and text is made up. Screenshots go to `target/ui-shots/qa525-*.png`, and also to the directory
 //! `QA_FILE_GRID_EVIDENCE` names. Without weston 15, niri or `dbus-daemon` it says so and passes, unless
@@ -67,6 +69,8 @@ use ui_sandbox::{Running, Sandbox, SandboxOptions, SandboxResult, sandbox_or_ski
 
 #[path = "qa_file_grid_keys.rs"]
 mod card_keys;
+#[path = "qa_file_grid_download.rs"]
+mod download_cases;
 #[path = "../window.rs"]
 mod support;
 #[path = "qa_file_grid_video.rs"]
@@ -194,7 +198,8 @@ fn walk(sandbox: &Sandbox, service: &Service, dir: &Path) -> SandboxResult {
         ctx.thread()?;
         ctx.videos_open()?;
         ctx.card_keys()?;
-        ctx.downloads()
+        ctx.downloads()?;
+        ctx.download_cases()
     })();
     if let Err(error) = outcome {
         return Err(run.fail(sandbox, &*error));
@@ -1253,6 +1258,7 @@ struct Service {
     trouter: TrouterMock,
     posted: Vec<Posted>,
     channel_post: String,
+    cases: download_cases::Cases,
 }
 
 impl Service {
@@ -1292,6 +1298,8 @@ impl Service {
             posted.push(Posted { key, chat, id, cards });
         }
         posted.extend(card_keys::post(&mock, runtime)?);
+        let (download_posts, cases) = download_cases::post(&mock, runtime)?;
+        posted.extend(download_posts);
         let channel_post = channel_post(&mock)?;
         for (at, file) in [&CLIP_A, &CLIP_B, &CLIP_C, &LONE_CLIP, &DOC].into_iter().enumerate() {
             serve_file(&mock, runtime, file, at)?;
@@ -1305,6 +1313,7 @@ impl Service {
             trouter,
             posted,
             channel_post,
+            cases,
         })
     }
 }
@@ -2026,6 +2035,7 @@ fn on_shell(shell: &Entity<Shell>, verb: &str, window: &mut Window, cx: &mut App
         "tab" => json!(format!("{:?}", shell.read(cx).chat_tab())),
         "focus" => json!(focus_of(shell, window, cx)),
         "control" => json!(control_of(window, cx)),
+        "download" => download_cases::standing_of(rest, cx),
         other => json!(format!("unknown {other}")),
     }
     .to_string()

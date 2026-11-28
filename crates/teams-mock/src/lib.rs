@@ -750,6 +750,12 @@ impl ChatServiceMock {
             .await;
     }
 
+    /// Mounts `mock` on the mock's server as it is: a test's own answer that no helper here gives, for example a file
+    /// host that cuts a stream and then answers slowly.
+    pub async fn mount(&self, mock: Mock) {
+        mock.mount(&self.server).await;
+    }
+
     /// Answers every presence read (`POST` of UPS's `v1/presence/getpresence/` under [`PRESENCE_BASE`]) before the
     /// world sees it, in the shape of `tests/fixtures/ups/getpresence-answer.json`: one item per MRI asked, with the
     /// availability `presences` gives it, `Offline` for anyone else. A test's stand-in: the world keeps no one's

@@ -50,7 +50,7 @@ const PREVIEW_OBJECT: &str = "0-made-up-qa849-photo";
 const PANE: (u32, u32) = (460, 50);
 
 /// The most Tab presses the walk gives to pass every card of the chat.
-const STEPS: u32 = 40;
+pub(super) const STEPS: u32 = 40;
 
 /// The controls of a card's player in the order Tab reaches them, as the walk's app names them ("More options" is the
 /// kit's button, which it calls `player`).
@@ -760,7 +760,7 @@ const fn inked(pixel: [u8; 3], look: Look) -> bool {
 }
 
 /// The rings on the conversation pane: boxes drawn with a 2 px line in the text's colour.
-fn rings(shot: &image::RgbImage, look: Look) -> Vec<Rect> {
+pub(super) fn rings(shot: &image::RgbImage, look: Look) -> Vec<Rect> {
     let edges = edges(shot, look);
     let mut found: Vec<Rect> = Vec::new();
     for (at, &(top, from, to)) in edges.iter().enumerate() {
