@@ -6,10 +6,7 @@ use std::time::Duration;
 
 use super::menu::{Row, key_of, rows_for};
 use super::prompt;
-use super::{
-    DEFAULT_LANGUAGE, Engine, Limits, MAX_LANGUAGE, Outcome, Request, Session, Translating, language_name, listed,
-    matching,
-};
+use super::{Engine, Limits, Outcome, Request, Session, Translating, matching};
 use crate::chat_translate::prompt::Said;
 use crate::editor::doc::{Attrs, Block, Doc, Kind, Run};
 use crate::local_ai::{Backend, Failure, Launch, Model, Work};
@@ -139,42 +136,6 @@ fn translated(question: &str, pairs: &[(&str, &str)]) -> String {
         body = body.replace(from, to);
     }
     format!("<translated>{body}</translated>")
-}
-
-#[test]
-fn a_listed_language_is_kept_by_its_own_name_and_any_other_as_typed() {
-    assert_eq!(language_name("german").as_deref(), Some("German"));
-    assert_eq!(language_name("  FRENCH ").as_deref(), Some("French"));
-    assert_eq!(language_name("de").as_deref(), Some("German"));
-    assert_eq!(language_name("pt-br").as_deref(), Some("Portuguese (Brazil)"));
-    assert_eq!(language_name(" Klingon ").as_deref(), Some("Klingon"));
-    assert_eq!(language_name("Scots Gaelic").as_deref(), Some("Scots Gaelic"));
-    assert_eq!(listed("swahili"), Some("Swahili"));
-    assert_eq!(listed("Klingon"), None);
-    assert_eq!(DEFAULT_LANGUAGE, "English");
-}
-
-#[test]
-fn a_language_that_could_be_read_as_markup_or_isnt_a_name_is_refused() {
-    for bad in [
-        "",
-        "   ",
-        "1234",
-        "<x0/>German",
-        "German</language>",
-        "a & b",
-        "Ger\nman",
-        "\"quoted\"",
-        "{curly}",
-        "`code`",
-    ] {
-        assert_eq!(language_name(bad), None, "{bad:?}");
-    }
-    assert_eq!(
-        language_name(&"a".repeat(MAX_LANGUAGE)).map(|name| name.len()),
-        Some(MAX_LANGUAGE)
-    );
-    assert_eq!(language_name(&"a".repeat(MAX_LANGUAGE + 1)), None);
 }
 
 #[test]

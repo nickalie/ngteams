@@ -11,35 +11,7 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-/// What kind of device.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum DeviceKind {
-    Microphone,
-    Speaker,
-    Camera,
-}
-
-impl DeviceKind {
-    pub const ALL: [Self; 3] = [Self::Microphone, Self::Speaker, Self::Camera];
-
-    /// Its name, as a settings file or a probe's output gives it.
-    #[must_use]
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::Microphone => "microphone",
-            Self::Speaker => "speaker",
-            Self::Camera => "camera",
-        }
-    }
-
-    fn index(self) -> usize {
-        match self {
-            Self::Microphone => 0,
-            Self::Speaker => 1,
-            Self::Camera => 2,
-        }
-    }
-}
+pub use teams_media_types::DeviceKind;
 
 /// One device as the backend names it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

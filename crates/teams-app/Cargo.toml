@@ -1,0 +1,36 @@
+[package]
+name = "teams-app"
+description = "The app shell without GPUI, shared by the desktop and the phone app: the settings file's data and its private I/O, the AI choices the settings keep, the languages and the reaction keys"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+# a model choice is kept in the desktop's model catalog too
+serde.workspace = true
+# a manual status as the own-presence policy's choice (without `calls`: no call media)
+teams-core.workspace = true
+# the diagnostic log's level, kept in the settings
+teams-log.workspace = true
+# the settings file and its directory made private (Unix modes, Windows DACLs)
+teams-platform.workspace = true
+# the manual availabilities a status stands for
+teams-proto.workspace = true
+# the media's device kinds, noise levels and stock backgrounds, without the media
+teams-media-types.workspace = true
+# the theme keys and the appearance kept in the settings
+teams-theme.workspace = true
+# the settings file's problems
+thiserror.workspace = true
+# the settings file
+toml.workspace = true
+# an AI provider's base URL checked
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

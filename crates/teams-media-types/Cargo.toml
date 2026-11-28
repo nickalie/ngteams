@@ -1,0 +1,11 @@
+[package]
+name = "teams-media-types"
+description = "The plain types of a call's media that the settings keep: the kind of a device, the noise suppression level and the keys of the stock backgrounds; no media code, so a phone build links it"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true

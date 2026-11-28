@@ -57,8 +57,10 @@ similar.workspace = true
 regex.workspace = true
 # an own server's account management, which the Manage users page asks (its types and refusals)
 teams-auth.workspace = true
+# the settings file's data and its I/O, the AI choices, the languages and the reaction keys, re-exported here
+teams-app.workspace = true
 # the engine: its request side (behind `Core`), its events and its shutdown
-teams-core.workspace = true
+teams-core = { workspace = true, features = ["calls"] }
 # the sign-in screen's password, zeroed when dropped
 zeroize.workspace = true
 # a message's content read as rich text, for the chat list's preview line (sanitized, capped; never shown as HTML)
@@ -71,6 +73,8 @@ teams-media.workspace = true
 # the diagnostic log's level in the settings (changed live) and the "copy diagnostics" text; never installed here
 teams-log.workspace = true
 teams-platform.workspace = true
+# the theme catalog and the appearance choice, re-exported by `theme`
+teams-theme.workspace = true
 url.workspace = true
 # an original email's file name, decoded from its link's path
 percent-encoding.workspace = true

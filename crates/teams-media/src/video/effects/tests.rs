@@ -94,6 +94,8 @@ fn every_stock_picture_decodes() {
         assert_eq!((decoded.width(), decoded.height()), (1280, 720), "{}", stock.key);
     }
     assert_eq!(super::stock("waves").map(|stock| stock.name), Some("Purple waves"));
+    let keys: Vec<&str> = STOCK.iter().map(|stock| stock.key).collect();
+    assert_eq!(keys, teams_media_types::STOCK_BACKGROUNDS);
     assert!(super::stock("nothing").is_none());
 }
 

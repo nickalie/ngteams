@@ -65,8 +65,7 @@ pub const MAX_PEAK: f32 = 0.5;
 pub const MAX_PACKS: usize = 64;
 /// The longest pack name or author, in bytes.
 pub const MAX_NAME: usize = 64;
-/// The longest id, in bytes.
-pub const MAX_ID: usize = 72;
+pub use teams_app::settings::sounds::{MAX_PACK_ID as MAX_ID, is_pack_id as is_id};
 /// The id of the pack that holds the single files the user chose for an event ([`import_single`]).
 pub const OWN_PACK: &str = "my-sounds";
 /// That pack's name.
@@ -121,18 +120,6 @@ pub struct PackInfo {
     pub author: Option<String>,
     /// The events it has a sound for.
     pub events: Vec<SoundEvent>,
-}
-
-/// Whether `id` could be a pack's id: 1 to [`MAX_ID`] lowercase ASCII letters, digits and dashes, starting with a
-/// letter or a digit. Nothing else ever becomes a directory's name.
-#[must_use]
-pub fn is_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= MAX_ID
-        && !id.starts_with('-')
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 /// A manifest, once read.

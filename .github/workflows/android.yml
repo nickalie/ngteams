@@ -58,4 +58,4 @@ jobs:
           echo "NDK: $ANDROID_NDK_LATEST_HOME"
           ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" cargo ndk -t arm64-v8a -t x86_64 -P 29 check --locked \
             -p teams-sdp -p teams-platform -p teams-log -p teams-store -p teams-auth -p teams-proto -p teams-call \
-            -p teams-trouter -p teams-core --no-default-features
+            -p teams-trouter -p teams-core -p teams-media-types -p teams-theme -p teams-app --no-default-features

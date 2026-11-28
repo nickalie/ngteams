@@ -57,6 +57,8 @@ ndarray = { workspace = true, optional = true }
 burn = { workspace = true, optional = true }
 burn-store = { workspace = true, optional = true }
 cubecl = { workspace = true, optional = true }
+# the settings' plain types of the media, re-exported at their places here
+teams-media-types.workspace = true
 # libwebrtc's video source keeps its track alive on a tokio task until the camera's first frame, and the media's
 # threads wait for libwebrtc's streams with a timeout: the media's own runtime runs both
 tokio = { workspace = true, features = ["rt-multi-thread", "time", "sync"] }

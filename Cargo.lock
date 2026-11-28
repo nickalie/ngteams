@@ -12605,6 +12605,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "teams-app"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "teams-core",
+ "teams-log",
+ "teams-media-types",
+ "teams-platform",
+ "teams-proto",
+ "teams-theme",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml 1.1.8+spec-1.1.0",
+ "url",
+]
+
+[[package]]
 name = "teams-auth"
 version = "0.1.0"
 dependencies = [
@@ -12756,6 +12773,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "teams-media",
+ "teams-media-types",
  "teams-platform",
  "teams-sdp",
  "tempfile",
@@ -12767,6 +12785,10 @@ dependencies = [
  "windows-sys 0.61.2",
  "zbus",
 ]
+
+[[package]]
+name = "teams-media-types"
+version = "0.1.0"
 
 [[package]]
 name = "teams-mock"
@@ -12930,6 +12952,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "teams-theme"
+version = "0.1.0"
+
+[[package]]
 name = "teams-trouter"
 version = "0.1.0"
 dependencies = [
@@ -12992,6 +13018,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "similar",
+ "teams-app",
  "teams-auth",
  "teams-call",
  "teams-core",
@@ -13001,6 +13028,7 @@ dependencies = [
  "teams-platform",
  "teams-proto",
  "teams-store",
+ "teams-theme",
  "teams-trouter",
  "tempfile",
  "thiserror 2.0.21",
