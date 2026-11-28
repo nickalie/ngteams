@@ -1,6 +1,6 @@
 //! The settings and their file, without a UI: defaults for a missing or unreadable file, a bad value reported with its
-//! default kept, the file `0600` in a `0700` directory, written whole. `teams-ui`'s `tests/settings.rs` holds the same
-//! checks through its re-exports and its GPUI model. Every file here is in a test's own temporary directory.
+//! default kept, the file `0600` in a `0700` directory, written whole. `teams-ui`'s `tests/settings.rs` checks the same
+//! file through its GPUI model. Every file here is in a test's own temporary directory.
 
 // test code throughout (its helpers unwrap like the tests do)
 #![cfg(test)]
