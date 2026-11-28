@@ -449,3 +449,209 @@ fn teams_says_at_once_when_their_read_failed() {
     assert_eq!(exit, 1);
     assert!(err.contains(&format!("unknown_chat: no chat is {unknown}")), "{err}");
 }
+
+impl Lab {
+    /// [`Self::ctl`] while the app's clock goes on by `step` at each turn: a read that waits on an app timer.
+    fn ctl_ticking(&self, args: &[&str], step: Duration) -> (u8, String, String) {
+        let args: Vec<String> = ["ngteamsctl", "--socket", self.socket.to_str().unwrap()]
+            .into_iter()
+            .chain(args.iter().copied())
+            .map(str::to_owned)
+            .collect();
+        let thread = std::thread::spawn(move || {
+            let parsed = Cli::try_parse_from(&args).unwrap();
+            let (mut out, mut err) = (Vec::new(), Vec::new());
+            let exit = cli::run(&parsed, &Env::default(), &mut out, &mut err) as u8;
+            (exit, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
+        });
+        let start = Instant::now();
+        while !thread.is_finished() {
+            self.cx.executor().advance_clock(step);
+            self.cx.run_until_parked();
+            assert!(
+                start.elapsed() < Duration::from_secs(60),
+                "the client was not answered in time"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        thread.join().unwrap()
+    }
+
+    /// The posts the mock took: a write that reached the service.
+    fn posts_sent(&self) -> usize {
+        self.runtime
+            .block_on(self.mock.received_requests())
+            .iter()
+            .filter(|request| request.method.as_str() == "POST" && request.url.path().ends_with("/messages"))
+            .count()
+    }
+}
+
+/// The text of a post that the channel got after its first sync.
+const LATE_POST: &str = "A made-up post after the first sync";
+
+/// a's first read syncs the channel; then b posts to it: the store does not hold that post yet.
+fn synced_then_posted(lab: &Lab) {
+    let first = lab.json(&["messages", TEAM_CHANNEL]);
+    assert_eq!(first["ok"]["synced"], true, "{first}");
+    lab.mock
+        .add_message(
+            TEAM_CHANNEL,
+            (LAB_B, "bot-b"),
+            "RichText/Html",
+            &format!("<p>{LATE_POST}</p>"),
+        )
+        .unwrap();
+}
+
+#[test]
+fn a_failed_sync_of_a_synced_channel_shows_the_stored_rows_and_a_note() {
+    let lab = Lab::start();
+    synced_then_posted(&lab);
+    lab.runtime.block_on(
+        lab.mock
+            .answer_next_containing("GET", &format!("{TEAM_CHANNEL}/messages"), 403, &json!({})),
+    );
+    let (exit, out, err) = lab.ctl(&["messages", &format!("{TEAM} > {OTHER}")]);
+    assert_eq!(exit, 0, "{err}");
+    assert!(out.contains("a made-up post to the channel (2 replies)"), "{out}");
+    assert!(!out.contains(LATE_POST), "the store did not get the late post: {out}");
+    assert!(
+        out.contains("(the channel was not synced: these are the messages the store held)\n"),
+        "{out}"
+    );
+
+    let answer = lab.json(&["messages", &format!("{TEAM} > {OTHER}")]);
+    assert_eq!(answer["ok"]["synced"], true, "{answer}");
+    let late = rows(&answer)
+        .into_iter()
+        .find(|row| row["text"].as_str().is_some_and(|text| text.contains(LATE_POST)))
+        .unwrap_or_else(|| panic!("the next sync got the late post: {answer}"));
+    assert_eq!(late["replies"], 0, "{answer}");
+    assert!(late.get("post").is_none(), "{answer}");
+}
+
+#[test]
+fn a_channel_sync_slower_than_its_bound_answers_the_stored_rows_and_goes_on() {
+    let lab = Lab::start();
+    synced_then_posted(&lab);
+    lab.runtime.block_on(lab.mock.answer_next_after(
+        "GET",
+        &format!("{TEAM_CHANNEL}/messages"),
+        Duration::from_secs(4),
+    ));
+    let asked = Instant::now();
+    let (exit, out, err) = lab.ctl_ticking(&["--json", "messages", TEAM_CHANNEL], Duration::from_secs(1));
+    assert_eq!(exit, 0, "{err}");
+    let answer: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(answer["ok"]["synced"], false, "{answer}");
+    assert!(
+        asked.elapsed() < Duration::from_secs(4),
+        "the app answered at its own bound, before the slow sync: {answer}"
+    );
+    assert!(!out.contains(LATE_POST), "{answer}");
+    assert_eq!(row(&answer, POST)["replies"], 2, "the stored rows: {answer}");
+
+    // the slow sync goes on in the engine and stores the late post
+    std::thread::sleep(Duration::from_secs(5));
+    let stored = lab.json(&["messages", TEAM_CHANNEL, "--limit", "1"]);
+    assert!(
+        rows(&stored)[0]["text"].as_str().unwrap().contains(LATE_POST),
+        "{stored}"
+    );
+}
+
+#[test]
+fn thread_prints_a_post_and_its_replies_for_a_person() {
+    let lab = Lab::start();
+    for channel in [format!("{TEAM}/{OTHER}"), format!("{}>{}", TEAM.to_uppercase(), OTHER)] {
+        let (exit, out, err) = lab.ctl(&["thread", &channel, REPLY]);
+        assert_eq!(exit, 0, "{channel}: {err}");
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 5, "a heading, 3 rows and a note: {out}");
+        assert!(
+            lines[1].contains(PLAIN_REPLY) && lines[1].contains(&format!("(reply to {POST})")),
+            "{out}"
+        );
+        assert!(
+            lines[2].contains(REPLY) && lines[2].contains(&format!("(reply to {POST}) a made-up reply")),
+            "{out}"
+        );
+        assert!(lines[3].contains(POST) && lines[3].contains("(2 replies)"), "{out}");
+        assert_eq!(lines[4], "(the first message: there is nothing older)", "{out}");
+    }
+    let (exit, out, err) = lab.ctl(&["thread", OTHER, SECOND_POST]);
+    assert_eq!(exit, 0, "{err}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 3, "a heading, the post and a note: {out}");
+    assert!(lines[1].contains(SECOND_POST) && !lines[1].contains("repl"), "{out}");
+    let (exit, _, err) = lab.ctl(&["thread", OTHER, "1760000999999"]);
+    assert_eq!(exit, 1);
+    assert!(
+        err.contains("bad_request: the chat holds no message 1760000999999"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_channel_named_to_send_or_to_a_chat_filter_points_to_teams_and_sends_nothing() {
+    let lab = Lab::start();
+    let before = lab.posts_sent();
+    for name in [OTHER, &format!("{TEAM} > {OTHER}")] {
+        let (exit, out, err) = lab.ctl(&["send", name, "a made-up text"]);
+        assert_eq!((exit, out.as_str()), (1, ""), "{err}");
+        assert!(
+            err.contains("is a channel, not a chat: `ngteamsctl teams` lists"),
+            "{name}: {err}"
+        );
+    }
+    for name in ["General", "No such place"] {
+        let (exit, _, err) = lab.ctl(&["send", name, "a made-up text"]);
+        assert_eq!(exit, 1, "{err}");
+        assert!(err.contains(&format!("unknown_chat: no chat is {name}")), "{err}");
+        assert!(err.contains("`ngteamsctl teams` the channels"), "{err}");
+    }
+    assert_eq!(lab.posts_sent(), before, "nothing went to the service");
+
+    for args in [
+        vec!["events", "--chat", OTHER],
+        vec!["wait", "message", "--chat", OTHER, "--timeout", "1"],
+    ] {
+        let (exit, _, err) = lab.ctl(&args);
+        assert_eq!(exit, 1, "{args:?}: {err}");
+        assert!(
+            err.contains("is a channel, not a chat: `ngteamsctl teams` lists"),
+            "{args:?}: {err}"
+        );
+    }
+}
+
+#[test]
+fn a_chat_reads_as_before_beside_the_channels() {
+    let lab = Lab::start_with(|mock, _| {
+        mock.add_message(
+            teams_mock::AB_CHAT,
+            (LAB_B, "bot-b"),
+            "RichText/Html",
+            "<p>A made-up chat text.</p>",
+        )
+        .unwrap();
+    });
+    let answer = lab.json(&["messages", teams_mock::AB_CHAT]);
+    assert!(
+        answer["ok"].get("synced").is_none(),
+        "a chat is not synced first: {answer}"
+    );
+    assert!(
+        rows(&answer).iter().any(|row| row["text"] == "A made-up chat text."),
+        "{answer}"
+    );
+    for message in rows(&answer) {
+        for field in ["post", "replies", "subject", "email"] {
+            assert!(message.get(field).is_none(), "{field} in a chat's row: {answer}");
+        }
+    }
+    let (exit, out, err) = lab.ctl(&["messages", teams_mock::AB_CHAT]);
+    assert_eq!(exit, 0, "{err}");
+    assert!(!out.contains("(reply to") && !out.contains("not synced"), "{out}");
+}
