@@ -542,41 +542,25 @@ mod tests {
 
     #[test]
     fn a_late_download_logs_how_it_ended_with_no_payload() {
-        struct Capture;
-        thread_local! {
-            static LINES: std::cell::RefCell<Vec<(log::Level, String)>> =
-                const { std::cell::RefCell::new(Vec::new()) };
-        }
-        impl log::Log for Capture {
-            fn enabled(&self, _: &log::Metadata<'_>) -> bool {
-                true
-            }
-            fn log(&self, record: &log::Record<'_>) {
-                LINES.with_borrow_mut(|lines| lines.push((record.level(), record.args().to_string())));
-            }
-            fn flush(&self) {}
-        }
-        log::set_logger(&Capture).unwrap();
-        log::set_max_level(log::LevelFilter::Info);
         let saved = |index| SavedFile {
             index,
             name: format!("secret-{index}.pdf"),
             path: format!("/made-up/secret-{index}.pdf"),
             size: 7,
         };
-        log_late(&Ok(vec![saved(1), saved(2)]));
-        log_late(&Err(CtlError::new(
-            ErrorCode::FileExists,
-            "/made-up/secret-3.pdf is there already",
-        )));
-        LINES.with_borrow(|lines| {
-            assert_eq!(
-                *lines,
-                [
-                    (log::Level::Info, "a late download saved its 2 files".to_owned()),
-                    (log::Level::Warn, "a late download failed: FileExists".to_owned()),
-                ]
-            );
+        let lines = crate::log_capture::logged(|| {
+            log_late(&Ok(vec![saved(1), saved(2)]));
+            log_late(&Err(CtlError::new(
+                ErrorCode::FileExists,
+                "/made-up/secret-3.pdf is there already",
+            )));
         });
+        assert_eq!(
+            lines,
+            [
+                (log::Level::Info, "a late download saved its 2 files".to_owned()),
+                (log::Level::Warn, "a late download failed: FileExists".to_owned()),
+            ]
+        );
     }
 }

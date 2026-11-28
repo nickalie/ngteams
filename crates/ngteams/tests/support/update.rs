@@ -407,28 +407,13 @@ fn hold_arriving_during_the_package_prompt(hold: Waiting, cx: &mut TestAppContex
 
 #[test]
 fn path_lookup_failure_is_logged_with_the_reason() {
-    struct Capture;
-    thread_local! {
-        static LINES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
-    }
-    impl log::Log for Capture {
-        fn enabled(&self, _: &log::Metadata<'_>) -> bool {
-            true
-        }
-        fn log(&self, record: &log::Record<'_>) {
-            LINES.with_borrow_mut(|lines| lines.push(record.args().to_string()));
-        }
-        fn flush(&self) {}
-    }
-    log::set_logger(&Capture).unwrap();
-    log::set_max_level(log::LevelFilter::Info);
-    assert!(super::for_this_copy::<()>(Err(std::io::Error::other("synthetic current_exe failure"))).is_none());
-    assert_eq!(super::for_this_copy::<u8>(Ok::<_, std::io::Error>(7)), Some(7));
-    LINES.with_borrow(|lines| {
-        assert!(
-            lines
-                .iter()
-                .any(|line| line == "updates: not for this copy (synthetic current_exe failure)")
-        );
+    let lines = crate::log_capture::logged(|| {
+        assert!(super::for_this_copy::<()>(Err(std::io::Error::other("synthetic current_exe failure"))).is_none());
+        assert_eq!(super::for_this_copy::<u8>(Ok::<_, std::io::Error>(7)), Some(7));
     });
+    assert!(
+        lines
+            .iter()
+            .any(|(_, line)| line == "updates: not for this copy (synthetic current_exe failure)")
+    );
 }

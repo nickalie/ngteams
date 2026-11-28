@@ -43,5 +43,9 @@ pub mod update;
 
 pub use refusal::refusal;
 
+#[cfg(test)]
+#[path = "../tests/support/log_capture.rs"]
+mod log_capture;
+
 /// The application's credential namespace on the desktop Secret Service; only this crate names it.
 pub const KEYRING_APPLICATION: &str = "ngteams";
