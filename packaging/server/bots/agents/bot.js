@@ -1,4 +1,4 @@
-// An echo-and-cards bot on the Microsoft 365 Agents SDK (JavaScript) for ngteams-server's container tests. It checks
+// The Microsoft 365 Agents SDK (JavaScript) sample bot of an own ngteams server, which its container tests run. It checks
 // the server's activity tokens by configuration alone: the authority and tenant point the SDK at the server's keys and
 // `issuers` names the server's issuer. Its msal-node takes no known authorities and asks Microsoft about any other
 // authority, so the bot gets its own token from a provider of a few lines, msal-node told the server's host. All
@@ -58,6 +58,59 @@ const card = {
   ],
 };
 
+function adaptive(content) {
+  return { contentType: 'application/vnd.microsoft.card.adaptive', content };
+}
+
+function hero(title) {
+  return { contentType: 'application/vnd.microsoft.card.hero', content: { title } };
+}
+
+const approval = {
+  type: 'AdaptiveCard',
+  version: '1.5',
+  body: [{ type: 'TextBlock', text: `Approve the order? (${name}, synthetic)` }],
+  actions: [{ type: 'Action.Execute', title: 'Approve', verb: 'approve', data: { sdk: name } }],
+};
+
+const orderForm = {
+  type: 'AdaptiveCard',
+  version: '1.5',
+  body: [
+    { type: 'TextBlock', text: `What to order from ${name}?` },
+    { type: 'Input.Text', id: 'item', placeholder: 'Item' },
+  ],
+  actions: [{ type: 'Action.Submit', title: 'Order' }],
+};
+
+function withoutMentions(text) {
+  return text.replace(/<at>[^<]*<\/at>/g, '').trim();
+}
+
+// The answer to each invoke, by its name: the body of the invoke's response.
+const invokes = {
+  'composeExtension/query': (activity) => {
+    const query = String(activity.value.parameters?.[0]?.value ?? '');
+    const results = ['one', 'two'].map((n) => {
+      const title = `${query} ${n} from ${name}`;
+      return { ...hero(title), preview: { contentType: 'application/vnd.microsoft.card.thumbnail', content: { title } } };
+    });
+    return { composeExtension: { type: 'result', attachmentLayout: 'list', attachments: results } };
+  },
+  'composeExtension/fetchTask': () => ({
+    task: { type: 'continue', value: { title: `Order (${name})`, card: adaptive(orderForm) } },
+  }),
+  'composeExtension/submitAction': (activity) => {
+    const result = hero(`ordered ${String(activity.value.data?.item)} from ${name}`);
+    return { composeExtension: { type: 'result', attachmentLayout: 'list', attachments: [result] } };
+  },
+  'adaptiveCard/action': (activity) => {
+    const text = `approved by ${activity.from.name} from ${name}`;
+    const done = { type: 'AdaptiveCard', version: '1.5', body: [{ type: 'TextBlock', text }] };
+    return { statusCode: 200, type: 'application/vnd.microsoft.card.adaptive', value: done };
+  },
+};
+
 function sorted(value) {
   return Object.keys(value)
     .sort()
@@ -69,10 +122,21 @@ function connector(context) {
   return context.turnState.get(adapter.ConnectorClientKey);
 }
 
+app.onActivity('invoke', async (context) => {
+  const answer = invokes[context.activity.name];
+  const response = answer ? { status: 200, body: answer(context.activity) } : { status: 501 };
+  await context.sendActivity({ type: 'invokeResponse', value: response });
+});
+
 app.onActivity('message', async (context) => {
   const activity = context.activity;
   const conversation = activity.conversation.id;
   const text = (activity.text || '').trim();
+  const kind = activity.conversation.conversationType;
+  if (kind === 'groupChat' || kind === 'channel') {
+    await context.sendActivity(`mentioned in ${kind} from ${name}: ${withoutMentions(text)}`);
+    return;
+  }
   if (activity.value && typeof activity.value === 'object' && !text) {
     await context.sendActivity(`submitted from ${name}: ${sorted(activity.value)}`);
     return;
@@ -83,6 +147,9 @@ app.onActivity('message', async (context) => {
         type: 'message',
         attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', content: card }],
       });
+      return;
+    case 'execute':
+      await context.sendActivity({ type: 'message', attachments: [adaptive(approval)] });
       return;
     case 'markdown':
       await context.sendActivity(`**bold** from ${name}`);

@@ -1,0 +1,120 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "1.0.0",
+  "id": "${APP_ID}",
+  "developer": {
+    "name": "ngteams samples",
+    "websiteUrl": "https://samples.example.test",
+    "privacyUrl": "https://samples.example.test/privacy",
+    "termsOfUseUrl": "https://samples.example.test/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "Teams SDK sample",
+    "full": "Teams SDK v2 (TypeScript) sample bot (synthetic)"
+  },
+  "description": {
+    "short": "Echoes, cards, a search and an order dialog",
+    "full": "The Teams SDK v2 (TypeScript) sample bot of an own ngteams server: it echoes text, sends cards, answers a search and an order dialog, and replies to a mention in a group chat or a channel. Synthetic."
+  },
+  "accentColor": "#4F6BED",
+  "bots": [
+    {
+      "botId": "${BOT_ID}",
+      "scopes": [
+        "personal",
+        "team",
+        "groupChat"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": [
+            "personal"
+          ],
+          "commands": [
+            {
+              "title": "card",
+              "description": "A card to fill in"
+            },
+            {
+              "title": "execute",
+              "description": "A card to approve"
+            },
+            {
+              "title": "markdown",
+              "description": "A Markdown answer"
+            },
+            {
+              "title": "edit",
+              "description": "An answer it edits"
+            },
+            {
+              "title": "delete",
+              "description": "An answer it deletes"
+            },
+            {
+              "title": "typing",
+              "description": "Typing, then an answer"
+            },
+            {
+              "title": "member",
+              "description": "Your name, as the bot reads it"
+            },
+            {
+              "title": "proactive",
+              "description": "A message the bot sends later"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "composeExtensions": [
+    {
+      "botId": "${BOT_ID}",
+      "commands": [
+        {
+          "id": "search",
+          "type": "query",
+          "title": "Search",
+          "description": "Find sample items",
+          "initialRun": false,
+          "context": [
+            "compose",
+            "commandBox"
+          ],
+          "parameters": [
+            {
+              "name": "query",
+              "title": "Query",
+              "description": "Words to find",
+              "inputType": "text"
+            }
+          ]
+        },
+        {
+          "id": "order",
+          "type": "action",
+          "title": "Order",
+          "description": "Order a sample item",
+          "fetchTask": true,
+          "context": [
+            "compose",
+            "commandBox"
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": []
+}

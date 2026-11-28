@@ -93,7 +93,8 @@ class EnvironmentTests(unittest.TestCase):
         self.assertIn("NGTEAMS_SERVER_BOT_IMAGES: teams,agents", step)
         self.assertIn(".github/ci/docker.sh test", step)
         images = shards.split("      - name: Build the SDK bot images", 1)[1].split("      - ", 1)[0]
-        self.assertIn("tests/bots/build.sh", images)
+        self.assertIn("packaging/server/bots/build.sh", images)
+        self.assertIn("NGTEAMS_SERVER_BOT_IMAGES: teams,agents", images)
         urls = {"NGTEAMS_SERVER_PG_URL": "synthetic-postgres", "NGTEAMS_SERVER_REDIS_URL": "synthetic-redis",
                 "NGTEAMS_SERVER_S3_URL": "synthetic-s3", "NGTEAMS_SERVER_BOT_IMAGES": "teams,agents"}
         with tempfile.TemporaryDirectory() as directory:

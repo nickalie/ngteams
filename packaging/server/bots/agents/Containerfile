@@ -1,5 +1,5 @@
-# The Microsoft 365 Agents SDK (JavaScript) echo-and-cards bot of ngteams-server's container tests; versions pinned
-# by the lock. Build from tests/bots: `podman build -f agents/Containerfile -t localhost/ngteams-bot-agents:1 .`
+# The Microsoft 365 Agents SDK (JavaScript) sample bot, run by ngteams-server's container tests; pinned by the lock.
+# Build from packaging/server/bots: `podman build -f agents/Containerfile -t localhost/ngteams-bot-agents:1 .`
 FROM docker.io/library/node:22-slim
 WORKDIR /bot
 COPY agents/package.json agents/package-lock.json ./
@@ -8,4 +8,4 @@ COPY agents/bot.js ./
 COPY --chmod=755 entrypoint.sh /entrypoint.sh
 USER node
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["bot.js"]
+CMD ["node", "bot.js"]

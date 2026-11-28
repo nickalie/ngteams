@@ -1,0 +1,32 @@
+# Every package the bot runs with, pinned (`pip install --no-deps -r requirements.txt`). 4.16.2, not 4.17.1: the
+# latter's aiohttp adapter serializes an invoke's answer a second time and fails every Teams invoke with a 500.
+aiohappyeyeballs==2.7.1
+aiohttp==3.10.5
+aiosignal==1.4.0
+attrs==26.1.0
+azure-core==1.41.0
+botbuilder-core==4.16.2
+botbuilder-integration-aiohttp==4.16.2
+botbuilder-schema==4.16.2
+botframework-connector==4.16.2
+botframework-streaming==4.16.2
+certifi==2026.11.20
+cffi==2.1.1
+charset-normalizer==3.5.3
+cryptography==50.0.2
+frozenlist==1.8.0
+idna==3.20
+isodate==0.7.2
+jsonpickle==1.4.2
+msal==1.39.0
+msrest==0.7.1
+multidict==6.9.1
+oauthlib==4.0.1
+propcache==0.5.4
+pycparser==3.12
+PyJWT==2.15.1
+requests==2.34.2
+requests-oauthlib==2.0.0
+typing_extensions==4.16.0
+urllib3==2.8.0
+yarl==1.25.1

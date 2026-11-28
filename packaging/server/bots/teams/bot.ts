@@ -1,4 +1,4 @@
-// An echo-and-cards bot on the Teams SDK v2 (TypeScript) for ngteams-server's container tests. It runs against an own
+// The Teams SDK v2 (TypeScript) sample bot of an own ngteams server, which its container tests run. It runs against an own
 // server by configuration and one token callback: `cloud` points the SDK's checks of the server's activity tokens at
 // the server's keys and issuer; the SDK's msal-node takes no known authorities, so the bot gets its own token through
 // `token`, with msal-node told the server's host. Its token service (`tokenServiceUrl`) is the server too: `signin`
@@ -67,6 +67,28 @@ const card = {
   ],
 };
 
+const adaptive = (content: object) => ({ contentType: 'application/vnd.microsoft.card.adaptive', content });
+const hero = (title: string) => ({ contentType: 'application/vnd.microsoft.card.hero', content: { title } });
+
+const approval = {
+  type: 'AdaptiveCard',
+  version: '1.5',
+  body: [{ type: 'TextBlock', text: `Approve the order? (${name}, synthetic)` }],
+  actions: [{ type: 'Action.Execute', title: 'Approve', verb: 'approve', data: { sdk: name } }],
+};
+
+const orderForm = {
+  type: 'AdaptiveCard',
+  version: '1.5',
+  body: [
+    { type: 'TextBlock', text: `What to order from ${name}?` },
+    { type: 'Input.Text', id: 'item', placeholder: 'Item' },
+  ],
+  actions: [{ type: 'Action.Submit', title: 'Order' }],
+};
+
+const withoutMentions = (text: string): string => text.replace(/<at>[^<]*<\/at>/g, '').trim();
+
 const sorted = (value: Record<string, unknown>): string =>
   Object.keys(value)
     .sort()
@@ -78,10 +100,40 @@ signIn.onSignInComplete(async (ctx, token) => {
   await ctx.send(`signed in to ${name}: ${digest(token.token)}`);
 });
 
+app.on('message.ext.query', async ({ activity }) => {
+  const query = String(activity.value.parameters?.[0]?.value ?? '');
+  const results = ['one', 'two'].map((n) => {
+    const title = `${query} ${n} from ${name}`;
+    return { ...hero(title), preview: { contentType: 'application/vnd.microsoft.card.thumbnail', content: { title } } };
+  });
+  return { composeExtension: { type: 'result', attachmentLayout: 'list', attachments: results } } as never;
+});
+
+app.on('message.ext.open', async () => {
+  return { task: { type: 'continue', value: { title: `Order (${name})`, card: adaptive(orderForm) } } } as never;
+});
+
+app.on('message.ext.submit', async ({ activity }) => {
+  const data = (activity.value.data ?? {}) as Record<string, unknown>;
+  const result = hero(`ordered ${String(data.item)} from ${name}`);
+  return { composeExtension: { type: 'result', attachmentLayout: 'list', attachments: [result] } } as never;
+});
+
+app.on('card.action', async ({ activity }) => {
+  const text = `approved by ${activity.from.name} from ${name}`;
+  const done = { type: 'AdaptiveCard', version: '1.5', body: [{ type: 'TextBlock', text }] };
+  return { statusCode: 200, type: 'application/vnd.microsoft.card.adaptive', value: done } as never;
+});
+
 app.on('message', async (ctx) => {
   const { activity, send, api } = ctx;
   const conversation = activity.conversation.id;
   const text = (activity.text ?? '').trim();
+  const kind = activity.conversation.conversationType;
+  if (kind === 'groupChat' || kind === 'channel') {
+    await send(`mentioned in ${kind} from ${name}: ${withoutMentions(text)}`);
+    return;
+  }
   if (activity.value && typeof activity.value === 'object' && !text) {
     await send(`submitted from ${name}: ${sorted(activity.value as Record<string, unknown>)}`);
     return;
@@ -92,6 +144,9 @@ app.on('message', async (ctx) => {
         type: 'message',
         attachments: [{ contentType: 'application/vnd.microsoft.card.adaptive', content: card }],
       } as never);
+      return;
+    case 'execute':
+      await send({ type: 'message', attachments: [adaptive(approval)] } as never);
       return;
     case 'markdown':
       await send(`**bold** from ${name}`);

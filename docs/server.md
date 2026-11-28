@@ -1034,17 +1034,27 @@ With `apps.enabled = false` none of these routes is served.
 
 ### What each SDK needs
 
-From the container tests (`binary::bots::containers`, `tests/bots/`: each SDK's echo-and-cards bot against the real
-binary over TLS) and the QA test of task 229 (`binary::bots::sdk`). A signed bot needs the server's origin over
-`https` (every MSAL refuses another authority).
+From the container tests (`binary::bots::containers`: each SDK's sample bot from
+[`packaging/server/bots/`](../packaging/server/bots/), uploaded as its own Teams app package, against the real binary
+over TLS, on one SQLite node and on two `api` nodes on Postgres and Redis) and the QA test of task 229
+(`binary::bots::sdk`). A signed bot needs the server's origin over `https` (every MSAL refuses another authority). Each
+sample's README has its full settings.
 
 | SDK | Checks the server's activity token | Gets its own token | Seen |
 |---|---|---|---|
-| Teams SDK v2, TypeScript (`@microsoft/teams.apps` 2.2.1) | `cloud: withOverrides(PUBLIC, {openIdMetadataUrl: "<origin>/bot/v1/.well-known/openidconfiguration", tokenIssuer: "<origin>/bot", loginEndpoint})`, with a `loginEndpoint` the issuer doesn't start with (the SDK takes an issuer under it for an Entra one), `clientId`, `tenantId` | code: the SDK's msal-node takes no known authorities, so a `token` callback with msal-node, authority `<origin>/<tenant>` and `knownAuthorities: ["<origin host>"]`; `serviceUrl: "<origin>/bot/"` for a proactive send | text, Markdown, a card, edit, delete, typing, a member, proactive, the test activity; its OAuth flow (`oauthFlows`, `tokenServiceUrl: "<origin>"`) signs a person in with the card and `signin/verifyState`, and out |
-| Microsoft 365 Agents SDK, JavaScript (`@microsoft/agents-hosting` 1.10.1) | by configuration: `authorityEndpoint: "<origin>"`, `tenantId` (its keys at `<origin>/<tenant>/discovery/v2.0/keys`), `issuers: ["<origin>/bot"]`, `clientId` | code: its msal-node asks Microsoft about any authority it doesn't know, and the adapter takes no token provider, so one of a few lines (msal-node as above, scope `<bots.scope>/.default`) set as the adapter's `connectionManager.getTokenProvider` and `getTokenProviderFromActivity` | the same |
-| Bot Framework SDK, Python (botbuilder 4) | `ToBotFromChannelTokenIssuer`, `ToBotFromChannelOpenIdMetadataUrl` (upper snake case) | by configuration: msal-python takes an `<origin>/adfs` authority without asking Microsoft | tokens, the SDK's own check of an activity's token, a wrong secret, rotation |
+| Teams SDK v2, TypeScript (`@microsoft/teams.apps` 2.2.1) | `cloud: withOverrides(PUBLIC, {openIdMetadataUrl: "<origin>/bot/v1/.well-known/openidconfiguration", tokenIssuer: "<origin>/bot", loginEndpoint})`, with a `loginEndpoint` the issuer doesn't start with (the SDK takes an issuer under it for an Entra one), `clientId`, `tenantId` | code: the SDK's msal-node takes no known authorities, so a `token` callback with msal-node, authority `<origin>/<tenant>` and `knownAuthorities: ["<origin host>"]`; `serviceUrl: "<origin>/bot/"` for a proactive send | all of the flows below; its OAuth flow (`oauthFlows`, `tokenServiceUrl: "<origin>"`) signs a person in with the card and `signin/verifyState`, and out |
+| Microsoft 365 Agents SDK, JavaScript (`@microsoft/agents-hosting` 1.10.1) | by configuration: `authorityEndpoint: "<origin>"`, `tenantId` (its keys at `<origin>/<tenant>/discovery/v2.0/keys`), `issuers: ["<origin>/bot"]`, `clientId` | code: its msal-node asks Microsoft about any authority it doesn't know, and the adapter takes no token provider, so one of a few lines (msal-node as above, scope `<bots.scope>/.default`) set as the adapter's `connectionManager.getTokenProvider` and `getTokenProviderFromActivity` | all of the flows below; invokes answered from `onActivity('invoke')` with an `invokeResponse` |
+| Bot Framework SDK, Python (`botbuilder-integration-aiohttp` 4.16.2) | by configuration (`ConfigurationBotFrameworkAuthentication`): `CHANNEL_SERVICE` any name but Microsoft's clouds', `TO_BOT_FROM_CHANNEL_TOKEN_ISSUER`, `TO_BOT_FROM_CHANNEL_OPENID_METADATA_URL` (and the emulator's) | by configuration: `TO_CHANNEL_FROM_BOT_LOGIN_URL: "<origin>/adfs"` (msal-python takes an `adfs` authority without asking Microsoft), `TO_CHANNEL_FROM_BOT_OAUTH_SCOPE`, `VALIDATE_AUTHORITY: False`, `OAUTH_URL: "<origin>"` | all of the flows below; it answers an activity `201`. In `binary::bots::sdk` (4.16.2): tokens, its own check of an activity's token, a wrong secret, rotation. 4.17.1 fails every invoke (its aiohttp adapter serializes the answer twice) |
+| Bot Framework SDK, .NET (`Microsoft.Bot.Builder.Integration.AspNet.Core` 4.23.1, .NET 8) | by configuration: `ChannelService` any name but Microsoft's clouds', `ToBotFromChannelTokenIssuer`, `ToBotFromChannelOpenIdMetadataUrl` (and the emulator's) | by configuration: `ToChannelFromBotLoginUrl: "<origin>/adfs"`, `ToChannelFromBotOAuthScope`, `ValidateAuthority: false`, `OAuthUrl: "<origin>"`. With `<origin>/<tenant>` MSAL.NET first asks Microsoft for instance metadata and fails where that host is not reached | all of the flows below |
 | msal-node alone | | `knownAuthorities: ["<origin host>"]`, authority `<origin>/<tenant>` or `<origin>/botframework.com` | tokens, refusals, the hold |
-| botbuilder-dotnet, botbuilder-js, Teams SDK Python and .NET, Agents SDK Python and .NET | | | not run yet: the design's expectations stand (botbuilder-dotnet by configuration; Agents SDK Python only unsigned) |
+| botbuilder-js, Teams SDK Python and .NET, Agents SDK Python and .NET | | | not run yet: the design's expectations stand (Agents SDK Python only unsigned) |
+
+The flows, through the client's own engine: text, Markdown, an Adaptive Card and its `Action.Submit`, an edit, a delete,
+typing, a member read, a proactive message, the administrator's test activity, a search command's result list, an
+action command's dialog and its submit, an `Action.Execute` whose card the bot replaces, and a mention in a group chat
+and in a channel post (its answer in the post's thread). On two nodes a person writes at one node and reads the bot's
+answers at the other. Python and .NET read the server's CA from `SSL_CERT_FILE` (Python's requests also from
+`REQUESTS_CA_BUNDLE`), Node from `NODE_EXTRA_CA_CERTS`.
 
 Every SDK has its own unauthenticated mode (an empty app id, or its "allow unauthenticated" switch), which an
 unsigned bot uses with no code; the container tests run the signed mode.
@@ -2118,15 +2128,20 @@ NGTS_TEST_COTURN=127.0.0.1:53478 NGTS_TEST_COTURN_SECRET=test-secret \
 podman stop ngts-coturn
 ```
 
-`binary::bots::containers` runs each SDK's echo-and-cards bot (`tests/bots/`, the Teams SDK's and the Agents SDK's)
-in a container against the real binary, when `NGTEAMS_SERVER_BOT_IMAGES` names them (`teams,agents`); without it the
-cases pass and do nothing. `tests/bots/build.sh` builds the images. The engine is `podman` unless
-`NGTEAMS_SERVER_BOT_ENGINE` names another, and a bot joins the host's network unless `NGTEAMS_SERVER_BOT_NETWORK`
-names another (CI's Coverage job sets `docker` and the network of its test container, and sets the images):
+`binary::bots::containers` runs each SDK's sample bot ([`packaging/server/bots/`](../packaging/server/bots/): the
+Teams SDK's, the Agents SDK's, botbuilder-python's and botbuilder-dotnet's), uploaded as its own Teams app package,
+in a container against the real binary, when `NGTEAMS_SERVER_BOT_IMAGES` names them (`teams,agents,botbuilder-python,
+botbuilder-dotnet`); without it the cases pass and do nothing. With `NGTEAMS_SERVER_PG_URL` and
+`NGTEAMS_SERVER_REDIS_URL` it also runs every flow on two `api` nodes. `packaging/server/bots/build.sh` builds the
+images it names (all without it). The engine is `podman` unless `NGTEAMS_SERVER_BOT_ENGINE` names another, and a bot
+joins the host's network unless `NGTEAMS_SERVER_BOT_NETWORK` names another (CI's Coverage job sets `docker` and the
+network of its test container, and runs the two Node images; with no nightly workflow, the Python and .NET images run
+only by hand):
 
 ```sh
-tests/bots/build.sh
-NGTEAMS_SERVER_BOT_IMAGES=teams,agents cargo test -p ngteams-server --test e2e -- binary::bots::containers
+packaging/server/bots/build.sh
+NGTEAMS_SERVER_BOT_IMAGES=teams,agents,botbuilder-python,botbuilder-dotnet \
+  cargo test -p ngteams-server --test e2e -- binary::bots::containers
 ```
 
 `binary::cluster` runs the server as [Operations](#operations) deploys it: two `serve --role api` nodes and a

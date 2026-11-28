@@ -290,11 +290,12 @@ jobs:
           echo "the S3 store didn't come up" >&2
           exit 1
       - name: Build the SDK bot images
-        # the server's container tests run them through the runner's Docker (tests/bots, docs/server.md)
+        # the server's container tests run them through the runner's Docker (packaging/server/bots, docs/server.md)
         env:
           NGTEAMS_SERVER_BOT_ENGINE: docker
+          NGTEAMS_SERVER_BOT_IMAGES: teams,agents
         run: |
-          tests/bots/build.sh
+          packaging/server/bots/build.sh
           sudo chmod 666 /var/run/docker.sock
       - name: Run every assigned target, retaining failures
         env:

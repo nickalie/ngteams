@@ -1,0 +1,11 @@
+# The Bot Framework SDK for Python sample bot, run by ngteams-server's container tests; pinned by requirements.txt.
+# Build from packaging/server/bots: `podman build -f botbuilder-python/Containerfile -t localhost/ngteams-bot-botbuilder-python:1 .`
+FROM docker.io/library/python:3.12-slim
+WORKDIR /bot
+COPY botbuilder-python/requirements.txt ./
+RUN pip install --no-cache-dir --no-deps --disable-pip-version-check --root-user-action=ignore -r requirements.txt
+COPY botbuilder-python/config.py botbuilder-python/bot.py botbuilder-python/app.py ./
+COPY --chmod=755 entrypoint.sh /entrypoint.sh
+USER nobody
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python", "app.py"]
