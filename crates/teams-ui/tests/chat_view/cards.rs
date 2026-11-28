@@ -131,8 +131,9 @@ fn a_workflow_card_is_drawn_on_its_surface_beside_the_apps_avatar() {
 }
 
 #[test]
-fn a_cards_buttons_open_links_toggle_and_show_cards_and_send_to_teams_on_the_web() {
+fn a_cards_buttons_open_links_toggle_and_show_cards_and_send_to_teams_on_the_web_in_read_only_mode() {
     let rig = rig_with(vec![card_message(ID, &workflow_card())]);
+    *rig.core.read_only.lock().unwrap() = true;
     let (written_trace, _) = trace();
     let (_view, cx) = chat_window(&rig, written_trace);
     click(cx, &format!("card-{ID}-c0a0"));
@@ -188,6 +189,10 @@ fn a_card_with_an_input_says_it_has_content_it_cant_show() {
         "body": [{"type": "Input.Text", "id": "answer"}, {"type": "TextBlock", "text": "Your answer"}]
     });
     let rig = rig_with(vec![card_message(ID, &card)]);
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let (written_trace, _) = trace();
     let (_view, cx) = chat_window(&rig, written_trace);
     assert!(bounds(cx, &format!("card-{ID}-c0b0.")).is_some());

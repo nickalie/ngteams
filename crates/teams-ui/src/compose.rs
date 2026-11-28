@@ -11,7 +11,7 @@
 //!   it; the picker shows each member's presence dot (M2 Task 17: the engine is asked about the people offered each
 //!   time they are shown). In a group chat it offers Everyone after the members ([`offered`]), as the web client does:
 //!   it names the chat's id, and the message mentions everyone in the chat (`docs/protocol/chat.md`, "A mention of
-//!   everyone"). With `NGTEAMS_BOTS=1` ([`crate::bots_flag`]) it offers, after the members, the bots of the apps added
+//!   everyone"). It offers, after the members, the bots of the apps added
 //!   to the group chat or to the channel's team that can be mentioned there ([`Core::mentionable_bots`]), each by its
 //!   app's name and icon; a bot's mention is written with its app's id (`docs/protocol/chat.md`, "Mentions"), and an
 //!   edit keeps the apps its message named. `teams-proto`'s [`MessageText`] renders the HTML, the mentions and the reply's quote from that one
@@ -37,7 +37,7 @@
 //! - **The box** is drawn as Teams' compose box: the editor on a rounded surface with a hairline border and no shadow
 //!   ([`BOX_HEIGHT`] at least), Teams' accent line in the brand colour along its foot while it has the focus, and its
 //!   controls inside it on the right: Format, Emoji, Attach, Loop (shown disabled, saying the app doesn't have it yet),
-//!   Actions and apps (the "+": a menu of the hidden tools' actions and "Customize toolbar"; with `NGTEAMS_BOTS=1`, an
+//!   Actions and apps (the "+": a menu of the hidden tools' actions and "Customize toolbar"; an
 //!   account whose cloud serves apps, and a box that writes a chat's new message outside read-only mode, it opens the
 //!   apps' flyout with those rows over the apps, [`apps`]), the AI tools that the user shows (Correct, and Translate
 //!   with its language's chevron, [`ai_tools`]), a thin divider, then Send. The user shows and hides the buttons by a
@@ -1879,15 +1879,15 @@ impl Compose {
         cx.notify();
     }
 
-    /// Reads the chat's members for the picker, once, and the bots people can mention there while the bots are shown
-    /// (`NGTEAMS_BOTS=1`) and the account's cloud serves apps or outgoing webhooks.
+    /// Reads the chat's members for the picker, once, and the bots people can mention there while the account's cloud
+    /// serves apps or outgoing webhooks.
     fn read_candidates(&mut self, cx: &mut Context<Self>) {
         if self.candidates.is_some() || self.reading.is_some() {
             return;
         }
         let read = read_candidates(Arc::clone(&self.core), self.conversation.clone());
         let served = self.core.capabilities();
-        let bots = (crate::bots_flag::bots_on(cx) && (served.apps || served.outgoing_webhooks))
+        let bots = (served.apps || served.outgoing_webhooks)
             .then(|| read_bots(Arc::clone(&self.core), self.conversation.clone(), served));
         self.reading = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
             let mut found = read.await;
@@ -1914,10 +1914,10 @@ impl Compose {
     }
 
     /// Asks the engine, once for each bot, for the app of a bot that a mention in the box names and the box doesn't
-    /// know (a mention pasted from another box): a bot's mention is sent with its app's id. Only while the bots are
-    /// shown (`NGTEAMS_BOTS=1`). An ask that found no app is asked again at the next change of the text.
+    /// know (a mention pasted from another box): a bot's mention is sent with its app's id. Only while the account's
+    /// cloud serves apps. An ask that found no app is asked again at the next change of the text.
     fn learn_bots(&mut self, cx: &mut Context<Self>) {
-        if !(crate::bots_flag::bots_on(cx) && self.core.capabilities().apps) {
+        if !self.core.capabilities().apps {
             return;
         }
         let unknown: BTreeSet<Mri> = self
@@ -2434,7 +2434,7 @@ impl Compose {
             )
             .into_any_element(),
             fit::Tool::Loop => unavailable("compose-loop", Glyph::REPEAT, NO_LOOP),
-            fit::Tool::Apps if self.offers_apps(cx) => self.apps_button(fit, cx),
+            fit::Tool::Apps if self.offers_apps() => self.apps_button(fit, cx),
             fit::Tool::Apps => self.menu_button(MenuKind::Plus, fit, cx),
             fit::Tool::Correct => self.correct_button(cx),
             fit::Tool::Translate => self.translate_button(cx),

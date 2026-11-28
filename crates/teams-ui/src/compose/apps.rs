@@ -1,4 +1,4 @@
-//! The box's Actions and apps (the "+"): its apps' flyout, behind `NGTEAMS_BOTS=1` for an account whose cloud serves
+//! The box's Actions and apps (the "+"): its apps' flyout for an account whose cloud serves
 //! apps ([`crate::apps_flyout`]), with the hidden tools' rows over the apps; and the apps' cards the box sends with its
 //! message: each drawn over the tools as Teams draws a chosen result, its app's picture and name over the card, with a
 //! close mark that takes it out. With no apps, "+" is a menu of the hidden tools and "Customize toolbar"
@@ -39,11 +39,10 @@ pub(super) struct Apps {
 }
 
 impl Compose {
-    /// Whether Actions and apps opens its flyout: the bots are shown, the account's cloud serves apps, and the box
-    /// writes a chat's messages, not an edit.
-    pub(super) fn offers_apps(&self, cx: &App) -> bool {
-        crate::bots_flag::bots_on(cx)
-            && self.core.capabilities().apps
+    /// Whether Actions and apps opens its flyout: the account's cloud serves apps, and the box writes a chat's
+    /// messages, not an edit.
+    pub(super) fn offers_apps(&self) -> bool {
+        self.core.capabilities().apps
             && !self.core.read_only()
             && self.read_only.is_none()
             && self.writes == Writes::Chat
@@ -77,7 +76,7 @@ impl Compose {
         if self.apps.flyout.take().is_some() {
             return cx.notify();
         }
-        if !self.offers_apps(cx) {
+        if !self.offers_apps() {
             return;
         }
         let (core, conversation) = (Arc::clone(&self.core), self.conversation.clone());

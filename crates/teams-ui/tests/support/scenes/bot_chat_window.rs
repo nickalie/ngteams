@@ -1,5 +1,5 @@
 //! A bot's chat in the main window over synthetic data, rendered in the private UI sandbox in Teams Light and Dark,
-//! with the bots shown (`NGTEAMS_BOTS=1`): the chat with its app's name and tile in the list, the header and beside its
+//!: the chat with its app's name and tile in the list, the header and beside its
 //! messages ("chat"); a bot chat nobody wrote in yet, with its app's intro ("intro"); a group chat's mention picker
 //! offering the bot of an app added to it after the members ("picker"); the app's About from the bot chat's header
 //! ("about"). Screenshots go to `target/ui-shots/bot-chat-*.png`. Never reaches a tenant.
@@ -26,7 +26,6 @@ use teams_proto::{PastedFormat, PastedPicture, StoreApp};
 use teams_store::{Conversation, ConversationKind, Member, Message};
 use teams_ui::{
     Bridge, Core, Models, ViewTrace,
-    bots_flag::BotsFlag,
     settings::{Settings, SettingsModel},
     shell::{Shell, ShellParts},
     theme::{Appearance, DARK_KEY, LIGHT_KEY},
@@ -267,7 +266,6 @@ fn child(value: &str) -> SandboxResult {
             }
         })
         .detach();
-        cx.set_global(BotsFlag(true));
         if let Err(error) = open(theme, page, cx) {
             eprintln!("bot chat open: {error}");
             cx.quit();

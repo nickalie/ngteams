@@ -1,4 +1,4 @@
-//! A bot card's inputs, drawn as Teams' cards draw them (behind `NGTEAMS_BOTS=1`): the label over the control, a red
+//! A bot card's inputs, drawn as Teams' cards draw them: the label over the control, a red
 //! mark on a required one, the card's error under one that failed its check. Each control keeps its answer in the
 //! message's [`CardBot`].
 use gpui::prelude::FluentBuilder as _;

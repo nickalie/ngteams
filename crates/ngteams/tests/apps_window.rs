@@ -1,4 +1,4 @@
-//! Linux compositor/input harness for the Store (`NGTEAMS_BOTS=1`), driven as a user drives it. Cross-platform view
+//! Linux compositor/input harness for the Store, driven as a user drives it. Cross-platform view
 //! tests run in `teams-ui`; this one needs the UI sandbox.
 #[cfg(target_os = "linux")]
 #[path = "support/linux/apps_window.rs"]

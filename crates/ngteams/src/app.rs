@@ -450,17 +450,13 @@ fn offer_user_admin<S: SecretStore + 'static>(
 /// How many times the app asks whether an administrator's server serves apps before it stops for the run.
 const APPS_ASKED_AT_MOST: u32 = 4;
 
-/// Offers Manage apps to the administrator `key` (its `service`) while the bots are shown (`NGTEAMS_BOTS=1`) and its
-/// server serves apps: asked off the foreground, again after a question that got no answer, a "no" final for the run.
+/// Offers Manage apps to the administrator `key` (its `service`) while its server serves apps: asked off the foreground, again after a question that got no answer, a "no" final for the run.
 fn offer_app_admin<S: SecretStore + 'static>(
     service: Arc<AdminService<S>>,
     key: String,
     desktop: WeakEntity<Desktop>,
     cx: &mut AsyncApp,
 ) {
-    if !cx.update(|cx| teams_ui::bots_flag::bots_on(cx)) {
-        return;
-    }
     cx.spawn(async move |cx: &mut AsyncApp| {
         let mut wait = ADMIN_ASKED_AGAIN;
         for _ in 0..APPS_ASKED_AT_MOST {

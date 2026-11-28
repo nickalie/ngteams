@@ -108,7 +108,7 @@ off is signed out with that said, and no sign-in window opens for it. A Microsof
 asked for it; an own server's account that is no administrator has none either. `ngteamsctl open settings users`
 opens it for an account that has it.
 
-**Manage apps** (with `NGTEAMS_BOTS=1`). The same administrator's Settings also have a "Manage apps" page when the
+**Manage apps**. The same administrator's Settings also have a "Manage apps" page when the
 server serves apps (`GET /api/admin/v1/apps` answers): the server's apps with a search, "Register a bot" (name,
 description, messaging endpoint, Signed or Unsigned), "Upload an app" (a Teams app package, at most 5 MB), and for
 each app "On", its bot's endpoint and mode, "Who can use it" (everyone or chosen people), "Bot settings" (what the

@@ -979,7 +979,6 @@ impl AppRun {
         let dir_text = dir.to_string_lossy().into_owned();
         let mut vars: Vec<(&str, &str)> = vec![(CHILD_ENV, "app"), (TRACE_FD_ENV, &fd), (DIR_ENV, &dir_text)];
         vars.extend(env.iter().map(|(name, value)| (*name, value.as_str())));
-        vars.push((teams_ui::bots_flag::BOTS_ENV, "1"));
         let child = sandbox.spawn_with_fds(&std::env::current_exe()?, &[], &vars, &[writer.as_fd()])?;
         drop(writer);
         // the view trace is drained so that the app never waits on a full pipe

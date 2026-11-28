@@ -1,4 +1,4 @@
-//! Manage apps (`NGTEAMS_BOTS=1`) as a real administrator uses it, in the UI sandbox (`harness = false`: GPUI runs on
+//! Manage apps as a real administrator uses it, in the UI sandbox (`harness = false`: GPUI runs on
 //! the process's main thread). It is the QA test of task 232.
 //!
 //! The parent runs the real `ngteams-server` binary (`NGTEAMS_QA_SERVER_BIN`, else the one `cargo build -p
@@ -227,7 +227,6 @@ impl<'a> Qa<'a> {
         let data = dir.to_string_lossy().into_owned();
         let vars = [
             (CHILD_ENV, "app"),
-            (teams_ui::bots_flag::BOTS_ENV, "1"),
             (ORIGIN_ENV, server.origin.as_str()),
             (CA_ENV, ca.as_str()),
             (DIR_ENV, data.as_str()),

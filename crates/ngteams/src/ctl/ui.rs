@@ -158,13 +158,12 @@ fn open(desktop: &Entity<Desktop>, mri: &str, target: &OpenTarget, cx: &mut App)
                     "this account has no Manage users page: it isn't an administrator of an own server",
                 ));
             }
-            let manages_apps = teams_ui::bots_flag::bots_on(cx)
-                && desktop
-                    .read(cx)
-                    .accounts()
-                    .read(cx)
-                    .tile(mri)
-                    .is_some_and(|tile| tile.app_admin.is_some());
+            let manages_apps = desktop
+                .read(cx)
+                .accounts()
+                .read(cx)
+                .tile(mri)
+                .is_some_and(|tile| tile.app_admin.is_some());
             if page == Some(Page::Apps) && !manages_apps {
                 return Err(CtlError::new(
                     ErrorCode::BadRequest,

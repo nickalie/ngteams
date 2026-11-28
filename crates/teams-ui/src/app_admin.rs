@@ -1,5 +1,5 @@
 //! Manage apps: the settings page where an own server's administrator registers and manages its apps and bots
-//! (`docs/server.md`, "Apps and bots"), behind `NGTEAMS_BOTS=1` ([`crate::bots_flag`]). It lists the server's apps
+//! (`docs/server.md`, "Apps and bots"). It lists the server's apps
 //! with a search, registers a bot from a form, uploads a Teams app package, and opens an app to turn it on or off,
 //! change its bot's endpoint and mode and who may use it, give its bot a new secret, show the settings each SDK takes,
 //! or delete it after a confirmation. A bot's delivery health shows as a mark on its row when it fails or is paused,

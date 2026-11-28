@@ -275,7 +275,7 @@ pub enum Main {
     CreateTeamMore,
     /// The Workflows app, across both panes.
     Workflows,
-    /// The rail's Store, across both panes (`NGTEAMS_BOTS=1`).
+    /// The rail's Store, across both panes.
     Apps,
     /// New message, in the conversation pane.
     NewChat,

@@ -669,6 +669,63 @@ sign-in. No people read finds it: not the admin's account list or account change
 lookup by MRI or address, not a people search (`users.kind`, read through one people scope). An app has at most one
 bot, as a Teams manifest does; its bot's id is the manifest's `botId`, so a bot keeps the `MicrosoftAppId` it has.
 
+### Bots, step by step
+
+A bot written for Teams runs on the server with its SDK as shipped; only its settings change. A sample bot per SDK,
+with its Teams app package, is in [`packaging/server/bots/`](../packaging/server/bots/): each is the bot the container
+tests run.
+
+1. **The server.** Apps and bots are on by default (`apps.enabled`). A signed bot needs the server's origin over
+   `https` with a certificate the bot trusts: every MSAL refuses another authority. A bot on a private network needs
+   its range in `bots.allowed_networks`; `bots.allow_http_endpoints` and `bots.allow_unsigned` are for development.
+2. **Register the bot.** In ngteams, an administrator opens **Settings → Manage apps** and either registers a bot from
+   the form (a name and the bot's messaging endpoint, such as `https://bots.example.com/api/messages`) or uploads the
+   app's Teams package (a `.zip` with `manifest.json` and its two icons: [Registering an app](#registering-an-app)).
+   A package brings the app's message extension commands; the form makes a bot with none. The operator can do the
+   same on the command line: `ngteams-server app add --name Echo --endpoint https://bots.example.com/api/messages`
+   or `ngteams-server app add --package echo.zip`.
+3. **Copy the credentials.** The answer shows the bot's id and its secret once (Manage apps has **Copy**; the
+   command line prints them). A lost secret is replaced with **New secret** or `app rotate-secret <id>`; the old one
+   stops at once.
+4. **Configure the bot.** Give the bot its id, its secret, the server's tenant id (Manage apps shows it with the
+   settings to paste) and the settings of its SDK in [What each SDK needs](#what-each-sdk-needs). Start it, then
+   press **Send a test activity** in Manage apps: the bot answers `200` when it accepted the server's token.
+5. **Use it.** People find the app in the **Store**, add it for themselves, to a group chat or to a team, and chat
+   with the bot. In a group chat or a channel a bot gets only the messages that @mention it.
+
+**Signed or unsigned.** A signed bot (the default) checks the RS256 token on each activity against the server's
+published keys and gets its own token with its secret ([A bot's credentials](#a-bots-credentials)). An unsigned bot
+(`bots.allow_unsigned`, chosen per bot) runs in its SDK's unauthenticated mode with no code: the server sends it no
+token and its `serviceUrl` carries a credential instead, so its endpoint must be on a network only the server
+reaches. Use it for development or a private network, and for an SDK that can't take a signed setup (the Agents SDK
+for Python).
+
+**Limits.** Per bot: `bots.send_rate` activities a second (a burst of `bots.send_burst`) from each node, each send
+within `bots.send_timeout` seconds and an answer up to 256 KiB, three attempts over about a minute
+(`bots.retry_delays`), then the activity fails; 20 failures in a row pause the bot for a minute and Manage apps
+shows it as unhealthy. An invoke (a card's button, a search, a dialog) is one attempt of at most
+`bots.send_timeout` seconds. A bot's own calls keep to `bots.connector_rate` a second (a burst of
+`bots.connector_burst`); more get 429 with `Retry-After`. Not served: batch sends, meeting and calling bots, a bot's
+own start of a group chat or channel conversation, link unfurling, single sign-on (`signin/tokenExchange` gets 412,
+so the SDK falls back to its sign-in card).
+
+**A bot's calls, with curl.** What an SDK does underneath: take a token with the bot's secret, then post to a chat
+it is in (here a proactive message in its 1:1 chat with a person). Every value here is made up.
+
+```sh
+origin=https://teams.example.com
+tenant=00000000-0000-4000-8000-000000000001     # the server's tenant id
+bot=00000000-0000-4000-8000-0000000000b1        # the bot's id
+token=$(curl -sS "$origin/$tenant/oauth2/v2.0/token" \
+  --data-urlencode grant_type=client_credentials \
+  --data-urlencode client_id="$bot" \
+  --data-urlencode client_secret="$BOT_SECRET" \
+  --data-urlencode scope=https://api.botframework.com/.default | jq -r .access_token)
+curl -sS "$origin/bot/v3/conversations" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+  -d '{"bot": {"id": "28:'"$bot"'"}, "members": [{"id": "29:<the person'"'"'s account id>"}],
+       "tenantId": "'"$tenant"'", "activity": {"type": "message", "text": "Hello from **Echo**"}}'
+```
+
 ### Registering an app
 
 Admins only, with the same bearer token and refusals as the [account routes](#admin-api); every change is audited
@@ -2019,7 +2076,7 @@ The client also uses the [first-admin setup](#the-first-admin), the [admin API](
 [account's own endpoints](#the-accounts-own-endpoints): the account window asks `GET /api/admin/v1/setup` for a
 server's address and creates the first administrator there; it replaces a password that must change with
 `POST /api/account/v1/password`; and an administrator's Settings have a "Manage users" page over
-`/api/admin/v1/users` (the page is offered when `GET /api/account/v1/me` says `admin`); with `NGTEAMS_BOTS=1` they also
+`/api/admin/v1/users` (the page is offered when `GET /api/account/v1/me` says `admin`); they also
 have a "Manage apps" page over `/api/admin/v1/apps` (offered when that list answers) that reads
 `/bot/v1/.well-known/openidconfiguration` for the settings it shows each bot.
 

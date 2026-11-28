@@ -211,6 +211,10 @@ fn sent(rig: &Rig) -> usize {
 #[test]
 fn translate_replaces_the_draft_as_one_edit_and_undo_brings_it_back() {
     let rig = Rig::start();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let fake = Fake::install(&rig);
     let (compose, cx) = chat(&rig);
     type_in(&compose, cx, "hello there");
@@ -640,7 +644,6 @@ fn flyout_label(compose: &Entity<Compose>, cx: &mut VisualTestContext, selector:
 fn a_hidden_translate_in_the_apps_flyout_follows_the_job_and_gives_the_keyboard_back() {
     let rig = Rig::start();
     let fake = Fake::install(&rig);
-    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
     *rig.core.extension_apps.lock().unwrap() =
         teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
     // Translate is in "+" by default

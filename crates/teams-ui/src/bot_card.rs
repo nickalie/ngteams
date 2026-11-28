@@ -1,4 +1,4 @@
-//! A bot's card in a chat, behind `NGTEAMS_BOTS=1` ([`crate::bots_flag`]): what one message's cards hold besides
+//! A bot's card in a chat: what one message's cards hold besides
 //! what they say (`docs/protocol/bots.md`), as Teams' web client keeps it per card.
 //!
 //! - **Answers**: each input's control ([`Field`]), made when the card is first drawn, keyed by the card and the

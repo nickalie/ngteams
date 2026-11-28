@@ -1,4 +1,4 @@
-//! Linux compositor/input harness for an own server's Manage apps (`NGTEAMS_BOTS=1`), driven as an administrator
+//! Linux compositor/input harness for an own server's Manage apps, driven as an administrator
 //! drives it. Cross-platform view tests run in `teams-ui`; this one needs the UI sandbox.
 #[cfg(target_os = "linux")]
 #[path = "support/linux/apps_admin_window.rs"]

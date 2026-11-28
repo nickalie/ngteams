@@ -106,7 +106,7 @@ A bot that needs the person's token for another service sends an OAuth card
 is the sign-in link) or a sign-in card (`application/vnd.microsoft.card.signin`: `text`, `buttons`). Unseen: no bot in
 the lab tenant sends one within the lab rule. The card's text and buttons are drawn as a hero card's are.
 
-The native client (`NGTEAMS_BOTS=1`) opens the link in the browser, then shows a code field and Verify under the
+The native client opens the link in the browser, then shows a code field and Verify under the
 card. The page at the end of the sign-in shows a code (the Bot Framework's token service shows it when the sign-in
 runs outside Teams' own window; the own server always does). Verify sends it as `signin/verifyState`, one attempt;
 the bot redeems it at its token service. A `400`, `401`, `403`, `404` or `412` (or the bot's own error) says the code
@@ -144,7 +144,7 @@ Seen in the lab's catalogue reads (lab account a, 2026-11-14) and in browser Tea
   `contentType`, `content`). Unseen for a message extension's result; a message with only a card sends no text before
   the span (own design).
 
-The native client (`NGTEAMS_BOTS=1`): `teams_proto::ExtensionApp` and `ExtensionCommand` read the definitions;
+The native client: `teams_proto::ExtensionApp` and `ExtensionCommand` read the definitions;
 `teams_ui::apps_flyout` is the "+" (it lists no Teams action: this app has none of them for a chat),
 `teams_ui::app_dialog` the dialog, and a chat's "More actions" lists the commands after the workflows (an app not
 added opens its details, where it is added). A dialog that is a web page needs Teams' JavaScript host, which the native
@@ -179,8 +179,8 @@ An answer of another shape is kept as it came (`InvokeAnswer::Unknown`), never g
 
 An invoke is one attempt through the outbox (`Outbox::try_bot_invoke`), with no row: it may make the app act, so an
 unknown outcome is told to the asker and never sent again, and a later run sends nothing. Read-only mode sends none.
-The engine names the asker (`EngineHandle::bot_invoke`); no view builds the request. Until the bots feature leaves its
-flag (`NGTEAMS_BOTS=1`), only a build run with it asks a bot (`teams_ui::bot_card`):
+The engine names the asker (`EngineHandle::bot_invoke`); no view builds the request. A chat's
+cards ask their bot through `teams_ui::bot_card`:
 
 - a card's inputs are drawn and checked, and its buttons ask the bot (`message` for a plain submit, `messageBack`,
   `invoke` and a hero card's `postBack`; `adaptiveCard/action` for `Action.Execute`), its message in `messageId`;
@@ -267,7 +267,7 @@ replies come from `28:<id>`, with the webhook's name as `imdisplayname`, in the 
 
 ### The client (own design)
 
-ngteams shows webhooks behind `NGTEAMS_BOTS=1`, only for an own-server account and only while its authz names
+ngteams shows webhooks only for an own-server account and only while its authz names
 `outgoingWebhookService`. A Microsoft account sends none of these requests until a capture shows Teams' own routes
 (`teams_core::Capabilities::of`). Manage team > Apps lists the team's webhooks after its apps, each with its picture,
 its name and "Outgoing webhook". An owner gets "Create an outgoing webhook": Name (at most 100 characters, the own

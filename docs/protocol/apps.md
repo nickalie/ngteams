@@ -4,8 +4,7 @@ Status: 2026-11-16. From `proto-lab run team-manage` with lab account a, every a
 step holds (`POST`/`DELETE` on `/users/apps/entitlements` and `/chats/…/apps/entitlements`), so the shapes are seen and
 nothing was changed. The chat add (201) was seen live on 2026-11-16 by part 1's Approvals run in the a–b chat. The
 native client: reads in `crates/teams-proto/src/apps.rs` and `team_apps.rs`, writes in `write/team.rs`
-(`TeamWrite`), the engine's part in `teams-core`'s `team_apps`, the views in `teams-ui`'s `apps_page` (behind
-`NGTEAMS_BOTS=1`). A team's apps and Manage team's Apps tab are in [teams.md](teams.md#manage-team).
+(`TeamWrite`), the engine's part in `teams-core`'s `team_apps`, the views in `teams-ui`'s `apps_page`. A team's apps and Manage team's Apps tab are in [teams.md](teams.md#manage-team).
 
 ## The store
 

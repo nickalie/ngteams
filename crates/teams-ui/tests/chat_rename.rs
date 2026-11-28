@@ -460,7 +460,6 @@ type PageOpener = fn(&mut Shell, &mut gpui::Window, &mut gpui::Context<Shell>);
 #[test]
 fn a_channel_workflows_and_apps_close_a_saving_popup_and_its_failure_shows_as_a_toast() {
     let rig = seeded();
-    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
     // each save waits in the outbox, then fails
     for id in [7, 8, 9] {
         rig.core.write_answers.lock().unwrap().push_back(common::outbox_row(

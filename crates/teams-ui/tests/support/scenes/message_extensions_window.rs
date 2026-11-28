@@ -1,4 +1,4 @@
-//! Message extensions and apps' dialogs in a chat with the bots shown (`NGTEAMS_BOTS=1`), rendered in the private UI
+//! Message extensions and apps' dialogs in a chat, rendered in the private UI
 //! sandbox over synthetic data (`tests/fixtures/bots/extension-apps.json`) in Teams Light and Dark: the compose box's
 //! Actions and apps, an app's search and its results, a result's card in the compose box, an action command's card
 //! dialog and its submit, a dialog that is a web page, a message's "More actions" with the apps' actions, and a card's
@@ -34,7 +34,6 @@ use teams_store::Message;
 use teams_ui::{
     Core, Models, ShellParts, ViewTrace,
     app_dialog::AppDialog,
-    bots_flag::BotsFlag,
     chat_view::{ChatView, ChatViewEvent},
     settings::{Settings, SettingsModel},
     theme::{self, Appearance, DARK_KEY, LIGHT_KEY},
@@ -267,7 +266,6 @@ fn child(mode: &str) -> SandboxResult {
     let application = fixture::application().with_assets(teams_ui::AppAssets);
     application.run(move |cx: &mut App| {
         teams_ui::window::init(cx);
-        cx.set_global(BotsFlag(true));
         theme::set_appearance(
             &Appearance {
                 theme,

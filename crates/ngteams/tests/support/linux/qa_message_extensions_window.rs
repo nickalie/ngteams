@@ -1,4 +1,4 @@
-//! Message extensions and apps' dialogs with the bots shown (`NGTEAMS_BOTS=1`), as a user sees and uses them in the
+//! Message extensions and apps' dialogs, as a user sees and uses them in the
 //! app's window in the UI sandbox (`harness = false`: GPUI runs on the process's main thread). It is the QA test of
 //! task 227.
 //!
@@ -19,12 +19,12 @@
 //!   message action's dialog.
 //! - **A card's `task/fetch` button**: the app's dialog in the app.
 //! - **A narrow window**: the flyout and a dialog.
-//! - **More runs**: an account with no apps; the read-only mode; `NGTEAMS_BOTS` unset; an own server's account on the
+//! - **More runs**: an account with no apps; the read-only mode; an own server's account on the
 //!   real `ngteams-server` binary with one registered app: the "+" opens the flyout with no app, and its "Get more
 //!   apps" opens the Store.
 //!
 //! Every name, id and text is made up. Screenshots are kept under `target/ui-shots/qa-me-*.png`, in Teams Light and
-//! Dark. `QA_ME_ONLY` (a run's name: `walk`, `no-apps`, `read-only`, `flag-off`, `own`) runs only that run. Without
+//! Dark. `QA_ME_ONLY` (a run's name: `walk`, `no-apps`, `read-only`, `own`) runs only that run. Without
 //! weston 15, niri or `dbus-daemon` it says so and passes, unless `GPUI_SMOKE_REQUIRE=1`.
 
 use std::io::{self, BufRead as _, BufReader, Write as _};
@@ -87,7 +87,7 @@ const TROUTER_ENV: &str = "NGTEAMS_QA_ME_TROUTER";
 const TOKEN_ENV: &str = "NGTEAMS_QA_ME_TOKEN";
 const DIR_ENV: &str = "NGTEAMS_QA_ME_DIR";
 const CA_ENV: &str = "NGTEAMS_QA_ME_CA";
-/// `read-only`, `flag-off` (`NGTEAMS_BOTS` unset) or `own` (an own server's account); else the ordinary app.
+/// `read-only` or `own` (an own server's account); else the ordinary app.
 const MODE_ENV: &str = "NGTEAMS_QA_ME_MODE";
 /// The file in the app's directory the parent asks the child about its views through.
 const ASK: &str = "qa-me-ask";
@@ -193,7 +193,7 @@ fn parent() -> SandboxResult {
         return Ok(());
     };
     let only = std::env::var("QA_ME_ONLY").unwrap_or_default();
-    for mode in ["walk", "no-apps", "read-only", "flag-off", "own"] {
+    for mode in ["walk", "no-apps", "read-only", "own"] {
         if !only.is_empty() && only != mode {
             continue;
         }
@@ -208,7 +208,7 @@ fn parent() -> SandboxResult {
                 let service = Service::start(&runtime, false)?;
                 no_apps(&sandbox, &runtime, &service, dir.path())
             }
-            "read-only" | "flag-off" => {
+            "read-only" => {
                 let service = Service::start(&runtime, true)?;
                 hidden(&sandbox, &runtime, &service, dir.path(), mode)
             }
@@ -226,7 +226,7 @@ fn parent() -> SandboxResult {
     Ok(())
 }
 
-/// The walk of the ordinary app, the bots shown.
+/// The walk of the ordinary app.
 fn walk(sandbox: &Sandbox, runtime: &tokio::runtime::Runtime, service: &Service, dir: &Path) -> SandboxResult {
     let mut run = AppRun::launch(sandbox, &service.env(), dir, "")?;
     let outcome = (|| -> SandboxResult {
@@ -1465,7 +1465,7 @@ impl Walk<'_> {
     }
 }
 
-/// The read-only mode, or `NGTEAMS_BOTS` unset: the "+" opens nothing, More actions lists no app, a card's
+/// The read-only mode: the "+" opens nothing, More actions lists no app, a card's
 /// `task/fetch` opens no dialog in the app.
 fn hidden(
     sandbox: &Sandbox,
@@ -1526,7 +1526,7 @@ fn hidden(
         }
         thread::sleep(QUIET);
         let after = ctx.invokes().len();
-        expect(after == before || mode == "flag-off", || {
+        expect(after == before, || {
             format!("{mode}: {} invokes reached an app", after - before)
         });
         step(&format!("{mode}: nothing of the apps shows"));
@@ -2190,9 +2190,6 @@ impl AppRun {
             (MODE_ENV, mode),
         ];
         vars.extend(env.iter().map(|(name, value)| (*name, value.as_str())));
-        if mode != "flag-off" {
-            vars.push((teams_ui::bots_flag::BOTS_ENV, "1"));
-        }
         let child = sandbox.spawn_with_fds(&std::env::current_exe()?, &[], &vars, &[writer.as_fd()])?;
         drop(writer);
         let mut running = Running::new(child)?;

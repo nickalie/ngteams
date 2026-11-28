@@ -4,7 +4,7 @@
 //! The parent runs the real `ngteams-server` binary (TLS, SQLite) with `[bots]` set to reach loopback, and the
 //! webhook's service: an HTTPS endpoint on 127.0.0.1 whose certificate a made-up certificate authority signed, which
 //! checks each request's HMAC under the webhook's token. The server process trusts only that authority. The app runs
-//! as a child in the sandbox, with `NGTEAMS_BOTS=1`. Before its window opens, the user makes a team with a member and
+//! as a child in the sandbox. Before its window opens, the user makes a team with a member and
 //! a channel through the app's own engine.
 //!
 //! The walk: Manage team > Apps > "Create an outgoing webhook"; the user types the name, the HTTPS address and the
@@ -873,7 +873,6 @@ impl AppRun {
         let dir_text = dir.to_string_lossy().into_owned();
         let mut vars: Vec<(&str, &str)> = vec![(CHILD_ENV, "app"), (TRACE_FD_ENV, &fd), (DIR_ENV, &dir_text)];
         vars.extend(env.iter().map(|(name, value)| (*name, value.as_str())));
-        vars.push((teams_ui::bots_flag::BOTS_ENV, "1"));
         let child = sandbox.spawn_with_fds(&std::env::current_exe()?, &[], &vars, &[writer.as_fd()])?;
         drop(writer);
         // the view trace is drained so that the app never waits on a full pipe

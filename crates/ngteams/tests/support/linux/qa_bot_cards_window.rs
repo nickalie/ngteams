@@ -1,4 +1,4 @@
-//! A bot's cards and buttons with the bots shown (`NGTEAMS_BOTS=1`), as a user sees and uses them in the app's window
+//! A bot's cards and buttons, as a user sees and uses them in the app's window
 //! in the UI sandbox (`harness = false`: GPUI runs on the process's main thread). It is the QA test of task 224.
 //!
 //! The parent runs the mock (`teams-mock`) and scripts made-up bots that answer the chat service's invokes. Each bot
@@ -1787,7 +1787,6 @@ impl AppRun {
                 (TOKEN_ENV, &token),
                 (DIR_ENV, &dir_text),
                 (MODE_ENV, mode),
-                (teams_ui::bots_flag::BOTS_ENV, "1"),
             ],
             &[writer.as_fd()],
         )?;

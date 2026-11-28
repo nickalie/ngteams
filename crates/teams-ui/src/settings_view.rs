@@ -28,7 +28,7 @@
 //! - **Diagnostics**: the diagnostic log's level and "Copy diagnostics".
 //! - **Manage users** (an own server's administrator alone, [`SettingsView::with_admin`]): the server's accounts
 //!   ([`crate::user_admin`]).
-//! - **Manage apps** (the same administrator, while the server serves apps and `NGTEAMS_BOTS=1`,
+//! - **Manage apps** (the same administrator, while the server serves apps,
 //!   [`SettingsView::with_app_admin`]): the server's apps and bots ([`crate::app_admin`]).
 //!
 //! What was wrong with the settings file (or the log) is shown above every page. Each change goes to the
@@ -513,18 +513,15 @@ impl SettingsView {
     }
 
     /// The view offering Manage apps while `admin` gives the account's server's apps and bots (an own server's
-    /// administrator, with `NGTEAMS_BOTS=1`; nothing for any other account), its page recording to `trace`.
+    /// administrator; nothing for any other account), its page recording to `trace`.
     #[must_use]
     pub fn with_app_admin(mut self, admin: AccountAppAdmin, trace: Arc<ViewTrace>) -> Self {
         self.app_admin = Some((admin, trace));
         self
     }
 
-    /// The account's server's apps and bots now, while the bots are shown and it has them.
+    /// The account's server's apps and bots now, while it has them.
     fn app_admin(&self, cx: &App) -> Option<Arc<dyn AppAdmin>> {
-        if !crate::bots_flag::bots_on(cx) {
-            return None;
-        }
         self.app_admin.as_ref().and_then(|(admin, _)| admin(cx))
     }
 
@@ -2127,7 +2124,7 @@ impl Render for SettingsView {
             }
         }
         if self.app_admin(cx).is_none() {
-            // the account is no administrator (any more), or the bots are hidden: its page goes, and why is said
+            // the account is no administrator (any more): its page goes, and why is said
             self.apps = None;
             if self.page == Page::Apps {
                 self.page = Page::General;

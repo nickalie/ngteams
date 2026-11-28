@@ -1824,6 +1824,7 @@ fn a_workflows_card_post_is_drawn_as_its_card() {
     post.message_type = "RichText/Media_Card".to_owned();
     post.sender_name = Some("Workflows".to_owned());
     let rig = rig();
+    *rig.core.read_only.lock().unwrap() = true;
     *rig.core.teams.lock().unwrap() = Some(teams());
     let (mut messages, mut roots) = channel_store();
     messages.insert(0, post);

@@ -459,7 +459,7 @@ impl ManageTeam {
 
     /// Shows `tab`, reading what it shows.
     pub fn show_tab(&mut self, tab: ManageTab, cx: &mut Context<Self>) {
-        if tab == ManageTab::Apps && !self.apps_shown_at_all(cx) {
+        if tab == ManageTab::Apps && !self.apps_shown_at_all() {
             return;
         }
         self.tab = tab;
@@ -768,7 +768,7 @@ impl ManageTeam {
     fn header(&self, team: &Team, palette: Palette, cx: &mut Context<Self>) -> gpui::Div {
         let avatar = self.teams.read(cx).avatar(team, 32.0, false, palette);
         let mut shown = tabs_of(team);
-        if !self.apps_shown_at_all(cx) {
+        if !self.apps_shown_at_all() {
             shown.retain(|tab| *tab != ManageTab::Apps);
         }
         let tabs: Vec<keyboard::Stop> = shown

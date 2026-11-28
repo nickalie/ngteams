@@ -5,8 +5,8 @@ added: 2026-10-21
 ---
 # Bot invokes and message extensions: the shapes still unseen
 
-The client side of bots is being built in parts, behind `NGTEAMS_BOTS=1` (bots parts 1 and 2 of 12: the wire, and
-cards' inputs and buttons). A bot invoke is `POST v1/agents/28:<bot>/invoke` on the account's own chat service
+The client side of bots is built (cards' inputs and buttons, bot chats and mentions, the Store, message extensions
+and dialogs, sign-in cards). A bot invoke is `POST v1/agents/28:<bot>/invoke` on the account's own chat service
 ([bots.md](../protocol/bots.md)); the native client has the typed invoke (`teams_proto::BotInvoke`), its answers,
 what a card's buttons and inputs carry, and one attempt through the outbox (`EngineHandle::bot_invoke`). With the
 flag, a card's buttons, its `refresh` and a 1:1 chat's suggested actions send it (`teams_ui::bot_card`).

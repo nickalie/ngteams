@@ -1,5 +1,5 @@
-//! The rail's Store on GPUI's test context, over a fake core (`teams_ui::apps_page`): it shows only with
-//! `NGTEAMS_BOTS=1`; its sections and search; an app's details and Add, which adds it for the account; "Add to a chat"
+//! The rail's Store on GPUI's test context, over a fake core (`teams_ui::apps_page`): it shows only while the cloud
+//! serves apps; its sections and search; an app's details and Add, which adds it for the account; "Add to a chat"
 //! and its picker's Go; "Manage your apps" and a chat's apps, whose Remove asks first; nothing offered that writes in
 //! the read-only mode. A bot's chat with the bot its id names, by its app's name and tile, its intro, About and typing
 //! line; a group chat's picker offering its apps' bots and the bot's mention it sends.
@@ -27,7 +27,6 @@ use teams_ui::ViewTrace;
 use teams_ui::apps_page::AppsPage;
 use teams_ui::apps_page::chat_apps::ChatAppsDialog;
 use teams_ui::apps_page::details::AppDetailsDialog;
-use teams_ui::bots_flag::BotsFlag;
 use teams_ui::chat_view::MessageAction;
 use teams_ui::settings::{Settings, SettingsModel};
 use teams_ui::shell::{Main, Shell, ShellParts};
@@ -72,17 +71,27 @@ fn app(id: &str) -> StoreApp {
         .expect("a made-up app")
 }
 
-fn shell_window(rig: &Rig, bots: bool) -> (Entity<Shell>, &'static mut VisualTestContext) {
-    shell_window_with(rig, bots, Vec::new())
+/// The cloud of an account that serves neither apps nor outgoing webhooks.
+const NO_APPS: teams_core::Capabilities = teams_core::Capabilities {
+    apps: false,
+    outgoing_webhooks: false,
+    ..teams_core::Capabilities::ALL
+};
+
+/// The shell, with the account's cloud serving apps or not (`apps`).
+fn shell_window(rig: &Rig, apps: bool) -> (Entity<Shell>, &'static mut VisualTestContext) {
+    shell_window_with(rig, apps, Vec::new())
 }
 
 fn shell_window_with(
     rig: &Rig,
-    bots: bool,
+    apps: bool,
     more: Vec<Conversation>,
 ) -> (Entity<Shell>, &'static mut VisualTestContext) {
     rig.cx.update(teams_ui::window::init);
-    rig.cx.update(|cx| cx.set_global(BotsFlag(bots)));
+    if !apps {
+        *rig.core.capabilities.lock().unwrap() = Some(NO_APPS);
+    }
     *rig.core.app_listing.lock().unwrap() = listing();
     *rig.core.team_written.lock().unwrap() = Some(TeamWritten::default());
     let mut conversations = vec![Conversation {
@@ -139,7 +148,7 @@ fn open_store(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
 }
 
 #[test]
-fn the_store_shows_only_with_the_bots_flag() {
+fn the_store_shows_only_while_the_cloud_serves_apps() {
     let rig = Rig::start();
     let (_, cx) = shell_window(&rig, false);
     assert!(bounds(cx, "rail-apps").is_none());
@@ -796,7 +805,7 @@ fn row(shell: &Entity<Shell>, cx: &mut VisualTestContext, id: &str) -> teams_ui:
         .unwrap_or_else(|| panic!("{id} has a row"))
 }
 
-/// The helper bot's chat and a person's, each with a message, in a window with the bots hidden.
+/// The helper bot's chat and a person's, each with a message.
 fn helper_and_person() -> (Rig, Entity<Shell>, &'static mut VisualTestContext) {
     let rig = Rig::start();
     know_bots(&rig);
@@ -810,7 +819,7 @@ fn helper_and_person() -> (Rig, Entity<Shell>, &'static mut VisualTestContext) {
     );
     let (shell, cx) = shell_window_with(
         &rig,
-        false,
+        true,
         vec![one_to_one(HELPER_CHAT, 300), one_to_one(PERSON_CHAT, 200)],
     );
     (rig, shell, cx)
@@ -851,8 +860,8 @@ fn a_bot_s_chat_header_is_its_app_s() {
     assert!(bounds(cx, "chat-header-avatar-app").is_some(), "its tile in the header");
     assert!(bounds(cx, "chat-bot-tab-chat shown").is_some());
     assert!(
-        bounds(cx, "chat-bot-tab-about").is_none(),
-        "About is the Store's, behind the flag"
+        bounds(cx, "chat-bot-tab-about").is_some(),
+        "About opens the Store's details"
     );
     assert!(bounds(cx, "chat-header-people").is_none());
     assert!(bounds(cx, "profile-card-from-header-name").is_none());
@@ -876,7 +885,7 @@ fn a_bot_s_chat_is_found_by_its_app_or_its_messages() {
         .lock()
         .unwrap()
         .insert("28:bb".to_owned(), "Beeper".to_owned());
-    let (shell, cx) = shell_window_with(&rig, false, vec![one_to_one(POLLS_CHAT, 200), one_to_one(unknown, 100)]);
+    let (shell, cx) = shell_window_with(&rig, true, vec![one_to_one(POLLS_CHAT, 200), one_to_one(unknown, 100)]);
     let polls = row(&shell, cx, POLLS_CHAT);
     assert_eq!(polls.bot.map(|bot| bot.mri), Some(POLLS_BOT.to_owned()));
     assert_eq!(polls.name.as_ref(), "Made-up Polls");
@@ -921,7 +930,7 @@ fn a_bot_s_typing_line_names_its_app() {
         POLLS_CHAT.to_owned(),
         vec![text_message(POLLS_CHAT, 100, POLLS_BOT, None)],
     );
-    let (shell, cx) = shell_window_with(&rig, false, vec![one_to_one(POLLS_CHAT, 100)]);
+    let (shell, cx) = shell_window_with(&rig, true, vec![one_to_one(POLLS_CHAT, 100)]);
     cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_chat(POLLS_CHAT.to_owned(), window, cx)));
     cx.run_until_parked();
     for (bot, said) in [(POLLS_BOT, "Made-up Polls is typing…"), ("28:cc", "Bot is typing…")] {
@@ -942,7 +951,7 @@ fn a_bot_s_typing_line_names_its_app() {
     }
 }
 
-fn picker_in_group(bots: bool) -> (Rig, Entity<Shell>, &'static mut VisualTestContext) {
+fn picker_in_group(apps: bool) -> (Rig, Entity<Shell>, &'static mut VisualTestContext) {
     let rig = Rig::start();
     rig.core.members.lock().unwrap().insert(
         GROUP_CHAT.to_owned(),
@@ -958,7 +967,7 @@ fn picker_in_group(bots: bool) -> (Rig, Entity<Shell>, &'static mut VisualTestCo
         .lock()
         .unwrap()
         .insert(GROUP_CHAT.to_owned(), vec![app(POLLS)]);
-    let (shell, cx) = shell_window(&rig, bots);
+    let (shell, cx) = shell_window(&rig, apps);
     cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_chat(GROUP_CHAT.to_owned(), window, cx)));
     cx.run_until_parked();
     let chat = cx.update(|_, cx| shell.read(cx).chat().cloned()).expect("the chat");
@@ -987,8 +996,8 @@ fn offered(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> Vec<String> {
     })
 }
 
-/// With the bots shown, a group chat's picker offers the bots of its apps after its members and before Everyone; the
-/// bot picked is sent as a bot's mention with its app's id. Without the flag, no bot is offered.
+/// A group chat's picker offers the bots of its apps after its members and before Everyone; the bot picked is sent
+/// as a bot's mention with its app's id. In a cloud that serves no apps, no bot is offered.
 #[test]
 fn a_group_chat_s_picker_offers_its_apps_bots_and_sends_a_bot_s_mention() {
     let (_rig, shell, cx) = picker_in_group(false);
@@ -1038,21 +1047,6 @@ fn a_pasted_bot_s_mention_is_sent_with_its_app() {
     );
 }
 
-/// With the bots hidden, the box asks for no bot's app: a pasted bot's mention is not sent as a bot's.
-#[test]
-fn a_pasted_bot_s_mention_is_not_sent_as_a_bot_s_with_the_bots_hidden() {
-    let (rig, cx) = bot_mention_pasted_in_other_group(|_, cx| cx.update(|_, cx| cx.set_global(BotsFlag(false))));
-    cx.simulate_keystrokes("enter");
-    cx.run_until_parked();
-    let actions = std::mem::take(&mut *rig.core.actions.lock().unwrap());
-    assert!(
-        !actions
-            .iter()
-            .any(|action| matches!(action, teams_core::Action::Send { .. })),
-        "{actions:?}"
-    );
-}
-
 /// An ask for a pasted bot's app that failed is asked again at the next change of the text, and the mention is then
 /// sent with its app's id.
 #[test]
@@ -1081,65 +1075,58 @@ fn a_pasted_bot_s_app_that_could_not_be_read_is_asked_again() {
     );
 }
 
-/// An edit of the account's own message that mentions the Polls bot with its app (as browser Teams sends it): with the
-/// bots shown, the edit sends the bot's mention with its app's id again; with the bots hidden, the box refuses the
-/// edit and sends nothing.
+/// An edit of the account's own message that mentions the Polls bot with its app (as browser Teams sends it): the
+/// edit sends the bot's mention with its app's id again.
 #[test]
-fn an_edit_of_a_bot_s_mention_keeps_its_app_only_with_the_bots_shown() {
-    for bots in [true, false] {
-        let rig = Rig::start();
-        let mut mine = text_message(GROUP_CHAT, 400, common::LAB_A, Some("Lab A"));
-        mine.content = "<p><readonly class=\"skipProofing\" itemtype=\"http://schema.skype.com/Mention\" \
-                        spellcheck=\"false\"><span itemtype=\"http://schema.skype.com/Mention\" itemscope \
-                        itemid=\"0\">Made-up Polls</span></readonly>&nbsp;who's in?</p>"
-            .to_owned();
-        mine.properties = Some(
-            json!({ "mentions": [{
-                "@type": "http://schema.skype.com/Mention",
-                "itemid": "0",
-                "mri": POLLS_BOT,
-                "mentionType": "bot",
-                "displayName": "Made-up Polls",
-                "appId": POLLS,
-            }] })
-            .to_string(),
-        );
-        rig.core
-            .messages
-            .lock()
-            .unwrap()
-            .insert(GROUP_CHAT.to_owned(), vec![mine]);
-        let (shell, cx) = shell_window(&rig, bots);
-        cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_chat(GROUP_CHAT.to_owned(), window, cx)));
-        cx.run_until_parked();
-        let chat = cx.update(|_, cx| shell.read(cx).chat().cloned()).expect("the chat");
-        cx.update(|window, cx| chat.update(cx, |chat, cx| chat.act(MessageAction::Edit, "400", window, cx)));
-        cx.run_until_parked();
-        cx.simulate_input(" now");
-        cx.simulate_keystrokes("enter");
-        cx.run_until_parked();
-        let actions = std::mem::take(&mut *rig.core.actions.lock().unwrap());
-        let edits: Vec<_> = actions
-            .iter()
-            .filter_map(|action| match action {
-                teams_core::Action::Edit { text, .. } => Some(text),
-                _ => None,
-            })
-            .collect();
-        if bots {
-            let [text] = edits.as_slice() else {
-                panic!("one edit: {actions:?}");
-            };
-            assert_eq!(
-                text.bots().get(&teams_proto::Mri::new(POLLS_BOT)).map(String::as_str),
-                Some(POLLS),
-                "{}",
-                text.html()
-            );
-        } else {
-            assert!(edits.is_empty(), "{actions:?}");
-        }
-    }
+fn an_edit_of_a_bot_s_mention_keeps_its_app() {
+    let rig = Rig::start();
+    let mut mine = text_message(GROUP_CHAT, 400, common::LAB_A, Some("Lab A"));
+    mine.content = "<p><readonly class=\"skipProofing\" itemtype=\"http://schema.skype.com/Mention\" \
+                    spellcheck=\"false\"><span itemtype=\"http://schema.skype.com/Mention\" itemscope \
+                    itemid=\"0\">Made-up Polls</span></readonly>&nbsp;who's in?</p>"
+        .to_owned();
+    mine.properties = Some(
+        json!({ "mentions": [{
+            "@type": "http://schema.skype.com/Mention",
+            "itemid": "0",
+            "mri": POLLS_BOT,
+            "mentionType": "bot",
+            "displayName": "Made-up Polls",
+            "appId": POLLS,
+        }] })
+        .to_string(),
+    );
+    rig.core
+        .messages
+        .lock()
+        .unwrap()
+        .insert(GROUP_CHAT.to_owned(), vec![mine]);
+    let (shell, cx) = shell_window(&rig, true);
+    cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_chat(GROUP_CHAT.to_owned(), window, cx)));
+    cx.run_until_parked();
+    let chat = cx.update(|_, cx| shell.read(cx).chat().cloned()).expect("the chat");
+    cx.update(|window, cx| chat.update(cx, |chat, cx| chat.act(MessageAction::Edit, "400", window, cx)));
+    cx.run_until_parked();
+    cx.simulate_input(" now");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let actions = std::mem::take(&mut *rig.core.actions.lock().unwrap());
+    let edits: Vec<_> = actions
+        .iter()
+        .filter_map(|action| match action {
+            teams_core::Action::Edit { text, .. } => Some(text),
+            _ => None,
+        })
+        .collect();
+    let [text] = edits.as_slice() else {
+        panic!("one edit: {actions:?}");
+    };
+    assert_eq!(
+        text.bots().get(&teams_proto::Mri::new(POLLS_BOT)).map(String::as_str),
+        Some(POLLS),
+        "{}",
+        text.html()
+    );
 }
 
 const OTHER_GROUP: &str = "19:made-up-other-group@thread.v2";

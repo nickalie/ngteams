@@ -1,12 +1,11 @@
-//! The rail's Store in the shell, behind `NGTEAMS_BOTS=1` ([`crate::bots_flag::bots_on`]) and an own server's
-//! `appsService` ([`teams_core::Capabilities`]): it takes both panes, as browser Teams' store does; an app's details,
+//! The rail's Store in the shell, offered while the account's cloud serves apps (an own server's `appsService`,
+//! [`teams_core::Capabilities`]): it takes both panes, as browser Teams' store does; an app's details,
 //! the place pickers and a chat's apps open over the window as dialogs.
 use super::*;
 use crate::apps_page::chat_apps::ChatAppsDialog;
 use crate::apps_page::details::{AppDetailsDialog, DetailsContext};
 use crate::apps_page::place::{AddToPlaceDialog, Place};
 use crate::apps_page::{AppsPage, AppsPageEvent, AppsView};
-use crate::bots_flag::bots_on;
 
 /// The rail's Store item: Lucide's square-plus (ISC), as Teams' own plus in a square.
 pub(super) const STORE: RailItem = RailItem {
@@ -14,15 +13,15 @@ pub(super) const STORE: RailItem = RailItem {
     label: "Store",
 };
 
-/// Whether the account offers the Store and its dialogs: the flag is on and its cloud serves apps.
-pub(super) fn apps_offered(core: &dyn Core, cx: &App) -> bool {
-    bots_on(cx) && core.capabilities().apps
+/// Whether the account offers the Store and its dialogs: its cloud serves apps.
+pub(super) fn apps_offered(core: &dyn Core) -> bool {
+    core.capabilities().apps
 }
 
 impl Shell {
     /// The rail's Store: the store across both panes, read again.
     pub fn open_apps(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !apps_offered(self.core.as_ref(), cx) {
+        if !apps_offered(self.core.as_ref()) {
             return;
         }
         let page = if let Some(page) = &self.apps {
@@ -65,7 +64,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !apps_offered(self.core.as_ref(), cx) || self.core.read_only() {
+        if !apps_offered(self.core.as_ref()) || self.core.read_only() {
             return;
         }
         let core = Arc::clone(&self.core);
@@ -137,7 +136,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !apps_offered(self.core.as_ref(), cx) {
+        if !apps_offered(self.core.as_ref()) {
             return;
         }
         let known = self.apps.as_ref().map_or_else(DetailsContext::default, |page| {
@@ -173,7 +172,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !apps_offered(self.core.as_ref(), cx) {
+        if !apps_offered(self.core.as_ref()) {
             return;
         }
         let places: Vec<Place> = if team {
@@ -214,7 +213,7 @@ impl Shell {
 
     /// The apps of chat `chat` over the window.
     pub fn open_chat_apps(&mut self, chat: String, window: &mut Window, cx: &mut Context<Self>) {
-        if !apps_offered(self.core.as_ref(), cx) {
+        if !apps_offered(self.core.as_ref()) {
             return;
         }
         let core = Arc::clone(&self.core);
@@ -224,7 +223,7 @@ impl Shell {
 
     /// The rail's Store item, while the account offers the Store.
     pub(super) fn store_rail(&self, palette: Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
-        apps_offered(self.core.as_ref(), cx).then(|| {
+        apps_offered(self.core.as_ref()).then(|| {
             Self::rail_button(
                 "rail-apps",
                 STORE,
@@ -238,7 +237,7 @@ impl Shell {
 
     /// A chat header's "Apps in this chat", while the account offers the Store.
     pub(super) fn chat_apps_button(&self, chat: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !apps_offered(self.core.as_ref(), cx) {
+        if !apps_offered(self.core.as_ref()) {
             return None;
         }
         let chat = chat.to_owned();

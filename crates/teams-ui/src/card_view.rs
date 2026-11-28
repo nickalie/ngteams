@@ -16,7 +16,7 @@
 //! - **Actions**: `Action.OpenUrl` opens its link (GPUI's `open_url`); `Action.ShowCard` shows its card under the
 //!   buttons, and hides it again; `Action.ToggleVisibility` shows, hides or flips the elements it names. Both change
 //!   only what this view shows ([`CardState`], held by the view per message). `Action.Submit`/`Execute` are bot
-//!   invokes (`docs/protocol/bots.md`). Without the message's bot state ([`BotHook`], `NGTEAMS_BOTS=1`), or in
+//!   invokes (`docs/protocol/bots.md`). Without the message's bot state ([`BotHook`]), or in
 //!   read-only mode, such a button opens the message in Teams on the web, where it runs, and its tooltip says so; with
 //!   it, the button asks the bot ([`crate::bot_card`]) and the bot's answer shows on the card. A `selectAction` does
 //!   what its action does on a click anywhere on its element.
@@ -120,7 +120,7 @@ impl ShownCards {
             .map(|message| Self(Arc::new(message)))
     }
 
-    /// The cards of a card message's `content` for a view that draws inputs (the bots' cards, `NGTEAMS_BOTS=1`).
+    /// The cards of a card message's `content` for a view that draws inputs (the bots' cards).
     #[must_use]
     pub fn with_inputs(content: &str) -> Option<Self> {
         card::card_message_with_inputs(content)
@@ -188,7 +188,7 @@ type OnClick = Rc<dyn Fn(&mut Window, &mut App)>;
 /// What a card tells its view: its state as a click left it.
 pub type OnState = Rc<dyn Fn(CardState, &mut Window, &mut App)>;
 
-/// A message's bot state its cards are drawn with (`NGTEAMS_BOTS=1`): their answers, what their bot did, and whether
+/// A message's bot state its cards are drawn with: their answers, what their bot did, and whether
 /// the app is read-only (its buttons then open in Teams on the web, its inputs take nothing).
 #[derive(Clone)]
 pub struct BotHook {

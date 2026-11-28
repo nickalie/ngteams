@@ -1484,7 +1484,7 @@ impl ChatView {
             stored_posts: HashSet::new(),
             shown: Visibility::Shown,
             pending_rendered: HashMap::new(),
-            held_cards: bots::HeldCards::new(cx),
+            held_cards: bots::HeldCards::new(),
             read_upto: None,
             receipt: None,
             receipts: 0,
@@ -2332,13 +2332,7 @@ impl ChatView {
         let shown = self.translated.0.language.and_then(|_| self.translated.0.text_of(held));
         let text = shown.map_or_else(|| compose::rich_text_of(held), |shown| shown.as_ref().clone());
         let loaded = compose::load(&text, &mentioned);
-        // the apps of the message's bots, only while the bots are shown (`NGTEAMS_BOTS=1`): with the bots hidden, the
-        // box refuses to send a bot's mention, as for a pasted one
-        let bots = if crate::bots_flag::bots_on(cx) {
-            rich_text::mentioned_bots(held.properties.as_deref())
-        } else {
-            std::collections::BTreeMap::new()
-        };
+        let bots = rich_text::mentioned_bots(held.properties.as_deref());
         let id = held.id.clone();
         self.compose.update(cx, |compose, cx| match loaded {
             Ok(loaded) => {
@@ -3261,8 +3255,7 @@ impl ChatView {
         self.asks = ask;
         let core = Arc::clone(&self.core);
         // a channel's webhooks are read first, so the bot index knows their replies' senders
-        let webhooks = (crate::bots_flag::bots_on(cx)
-            && core.capabilities().outgoing_webhooks
+        let webhooks = (core.capabilities().outgoing_webhooks
             && teams_proto::is_team_thread_id(self.conversation.split(';').next().unwrap_or_default())
             && asked.iter().any(|mri| crate::bot_face::is_bot(mri)))
         .then(|| self.conversation.clone());

@@ -141,6 +141,10 @@ fn type_in(compose: &Entity<Compose>, cx: &mut VisualTestContext, text: &str) {
 #[test]
 fn there_is_no_ai_button_and_the_ai_tools_are_rows_of_plus() {
     let rig = Rig::start();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let Opened { compose, cx, .. } = chat_with(&rig, Settings::default(), 900.0);
     for gone in ["compose-ai", "compose-correct", "compose-translate", "compose-language"] {
         assert!(!shown(cx, gone), "{gone} is not on the bar");
@@ -410,6 +414,10 @@ fn the_list_s_keys_pass_over_its_title_and_go_round() {
 #[test]
 fn customize_toolbar_in_plus_opens_the_same_list() {
     let rig = Rig::start();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let Opened { settings, cx, .. } = chat_with(&rig, Settings::default(), 900.0);
     click(cx, "compose-apps");
     assert!(shown(cx, "compose-apps-menu"), "\"+\" opens its menu");
@@ -827,6 +835,10 @@ fn the_tools_are_one_stop_and_the_arrows_move_between_them() {
 #[test]
 fn a_tool_s_menu_keeps_its_own_arrows_and_gives_the_keys_back_to_its_button() {
     let rig = Rig::start();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let (compose, cx) = rooted_chat(&rig, 900.0);
     press(cx, "tab");
     press(cx, "end");
@@ -853,6 +865,10 @@ fn a_tool_s_menu_keeps_its_own_arrows_and_gives_the_keys_back_to_its_button() {
 #[test]
 fn formatting_taken_in_plus_leaves_the_keys_in_the_text() {
     let rig = Rig::start();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let (compose, cx) = rooted_chat_with(&rig, hiding(&[ComposeTool::Format]), 900.0);
     press(cx, "tab");
     press(cx, "end");
@@ -1147,7 +1163,6 @@ fn enter_on_the_selected_message_goes_to_its_controls_and_escape_comes_back() {
     let mut messages = many(2);
     messages.insert(1, card_message("700"));
     rig.core.messages.lock().unwrap().insert(AB.to_owned(), messages);
-    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
     let (view, compose, cx) = rooted_view(&rig, Settings::default(), 900.0);
     assert!(shown(cx, "card-700-c0-in-said"), "the card's input is drawn");
     press(cx, "shift-tab");
@@ -1190,7 +1205,6 @@ fn card_selected(rig: &Rig, card: teams_store::Message) -> (Entity<ChatView>, &'
     let mut messages = many(2);
     messages.insert(1, card);
     rig.core.messages.lock().unwrap().insert(AB.to_owned(), messages);
-    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
     let (view, _, cx) = rooted_view(rig, Settings::default(), 900.0);
     press(cx, "shift-tab");
     press(cx, "up");
@@ -1345,7 +1359,6 @@ fn deleting_beside_a_card(rig: &Rig, card: teams_store::Message) -> (Entity<Chat
     mine.arrival_time += 40_000;
     messages.push(mine);
     rig.core.messages.lock().unwrap().insert(AB.to_owned(), messages);
-    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
     let (view, _, cx) = rooted_view(rig, Settings::default(), 900.0);
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
@@ -1550,6 +1563,10 @@ fn escape_held_on_the_list_with_nothing_selected_stops_at_the_box() {
 #[test]
 fn tab_in_a_tool_s_menu_closes_it_and_leaves_the_tools() {
     let rig = Rig::start();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let (compose, cx) = rooted_chat(&rig, 900.0);
     press(cx, "tab");
     press(cx, "end");
@@ -1635,6 +1652,10 @@ fn tab_out_of_a_clicked_message_menu_gives_the_keys_back_to_the_card_s_input() {
 #[test]
 fn tab_in_a_clicked_tool_s_menu_goes_on_from_its_button() {
     let rig = Rig::start();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let (compose, cx) = rooted_chat(&rig, 900.0);
     type_in(&compose, cx, "draft");
     click(cx, "compose-apps");
@@ -1689,6 +1710,10 @@ fn more_opened_on_attach_then_attach_moved_into_it(rig: &Rig) -> (Entity<Compose
 #[test]
 fn plus_s_menu_closes_when_plus_leaves_the_row_and_the_text_gets_the_keys() {
     let rig = Rig::start();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let (compose, cx) = rooted_chat(&rig, 900.0);
     press(cx, "tab");
     press(cx, "end");
@@ -1846,6 +1871,10 @@ fn tab_and_shift_tab_in_customize_toolbar_close_it_and_give_the_text_the_keys() 
 #[test]
 fn customize_toolbar_taken_from_plus_by_the_keys_gives_them_back_to_plus_when_it_closes() {
     let rig = Rig::start();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let (compose, cx) = rooted_chat(&rig, 900.0);
     for key in ["escape", "tab", "shift-tab"] {
         focus_box(&compose, cx);
@@ -1875,7 +1904,6 @@ fn customize_toolbar_taken_from_plus_by_the_keys_gives_them_back_to_plus_when_it
 #[test]
 fn customize_toolbar_taken_from_the_apps_flyout_of_a_focused_plus_gives_the_keys_back_to_plus() {
     let rig = Rig::start();
-    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
     *rig.core.extension_apps.lock().unwrap() =
         teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
     let (compose, cx) = rooted_chat(&rig, 900.0);
@@ -1903,7 +1931,6 @@ fn customize_toolbar_taken_from_the_apps_flyout_of_a_focused_plus_gives_the_keys
 #[test]
 fn escape_in_the_apps_flyout_of_a_focused_plus_gives_the_keys_back_to_plus() {
     let rig = Rig::start();
-    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
     *rig.core.extension_apps.lock().unwrap() =
         teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
     let (compose, cx) = rooted_chat(&rig, 900.0);
@@ -1925,7 +1952,6 @@ fn escape_in_the_apps_flyout_of_a_focused_plus_gives_the_keys_back_to_plus() {
 #[test]
 fn escape_held_in_the_apps_flyout_does_not_cancel_the_reply() {
     let rig = Rig::start();
-    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
     *rig.core.extension_apps.lock().unwrap() =
         teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
     let (compose, cx) = rooted_chat(&rig, 900.0);
@@ -1963,7 +1989,6 @@ fn escape_held_in_the_emoji_picker_does_not_cancel_the_reply() {
 #[test]
 fn shift_escape_held_in_the_apps_flyout_does_not_cancel_the_reply_when_shift_goes_up() {
     let rig = Rig::start();
-    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
     *rig.core.extension_apps.lock().unwrap() =
         teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
     let (compose, cx) = rooted_chat(&rig, 900.0);
@@ -2219,6 +2244,10 @@ fn a_click_on_another_message_s_more_options_from_the_keys_in_a_menu_keeps_where
 #[test]
 fn escape_held_after_it_closed_plus_does_not_cancel_the_reply() {
     let rig = Rig::start();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let (compose, cx) = rooted_chat(&rig, 900.0);
     replying_in(&compose, cx);
     click(cx, "compose-apps");
@@ -2375,7 +2404,6 @@ fn card_input_in_a_long_chat(rig: &Rig) -> (Entity<ChatView>, &'static mut Visua
     card.arrival_time = messages[58].arrival_time + 1;
     messages.insert(59, card);
     rig.core.messages.lock().unwrap().insert(AB.to_owned(), messages);
-    rig.cx.update(|cx| cx.set_global(teams_ui::bots_flag::BotsFlag(true)));
     let (view, _, cx) = rooted_view(rig, Settings::default(), 900.0);
     press(cx, "shift-tab");
     press(cx, "up");

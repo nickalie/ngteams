@@ -1,4 +1,4 @@
-//! The compose box's "Actions and apps" (the "+"), behind `NGTEAMS_BOTS=1` ([`crate::bots_flag`]) for an account
+//! The compose box's "Actions and apps" (the "+") for an account
 //! whose cloud serves apps, as Teams' flyout (`docs/protocol/bots.md`, "Message extensions"):
 //!
 //! - **The list**: "Search for apps" over the account's apps that have a message extension command for the compose

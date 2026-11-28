@@ -389,6 +389,10 @@ fn a_proposal_arriving_never_changes_the_editors_send_key() {
 #[test]
 fn the_buttons_send_and_keep_too() {
     let rig = Rig::start();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let _fake = Fake::new(&rig);
     let (compose, cx) = chat(&rig);
     type_in(&compose, cx, "teh one");
@@ -541,6 +545,10 @@ fn a_draft_too_long_is_not_asked_about() {
 #[test]
 fn it_can_be_stopped_from_the_button_or_with_escape() {
     let rig = Rig::start();
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let fake = Fake::new(&rig);
     fake.hold();
     let (compose, cx) = chat(&rig);

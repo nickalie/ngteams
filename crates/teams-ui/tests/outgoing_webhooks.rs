@@ -1,5 +1,5 @@
 //! A team's outgoing webhooks in Manage team's Apps tab, over a fake core (`docs/protocol/bots.md`, "Outgoing
-//! webhooks"): "Create an outgoing webhook" for an owner while the bots are shown and the cloud serves webhooks; the
+//! webhooks"): "Create an outgoing webhook" for an owner while the cloud serves webhooks; the
 //! create dialog, its checks and the token shown once with Copy; a webhook's row with its picture, its Edit that sends
 //! only what changed, and its Remove that asks first. Every id, name and token is made up.
 
@@ -19,7 +19,6 @@ use teams_core::TeamWritten;
 use teams_proto::{CreatedWebhook, OutgoingWebhook, TeamWrite, WebhookForm, WebhookPicture};
 use teams_store::{ChannelKind, Team, TeamChannel};
 use teams_ui::ViewTrace;
-use teams_ui::bots_flag::BotsFlag;
 use teams_ui::manage_team::ManageTab;
 use teams_ui::settings::{Settings, SettingsModel};
 use teams_ui::shell::{Shell, ShellParts};
@@ -70,8 +69,8 @@ fn hook(name: &str, can_manage: bool, picture: bool) -> OutgoingWebhook {
 }
 
 /// The shell, with Manage team's Apps tab open.
-fn window(rig: &Rig, bots: bool, owner: bool) -> (Entity<Shell>, &'static mut VisualTestContext) {
-    let (shell, cx) = shell_window(rig, bots, owner);
+fn window(rig: &Rig, owner: bool) -> (Entity<Shell>, &'static mut VisualTestContext) {
+    let (shell, cx) = shell_window(rig, owner);
     cx.update(|window, cx| {
         shell.update(cx, |shell, cx| {
             shell.open_manage_team(TEAM.to_owned(), ManageTab::Apps, window, cx);
@@ -81,13 +80,12 @@ fn window(rig: &Rig, bots: bool, owner: bool) -> (Entity<Shell>, &'static mut Vi
     (shell, cx)
 }
 
-fn shell_window(rig: &Rig, bots: bool, owner: bool) -> (Entity<Shell>, &'static mut VisualTestContext) {
-    shell_window_of(rig, bots, team(owner))
+fn shell_window(rig: &Rig, owner: bool) -> (Entity<Shell>, &'static mut VisualTestContext) {
+    shell_window_of(rig, team(owner))
 }
 
-fn shell_window_of(rig: &Rig, bots: bool, team: Team) -> (Entity<Shell>, &'static mut VisualTestContext) {
+fn shell_window_of(rig: &Rig, team: Team) -> (Entity<Shell>, &'static mut VisualTestContext) {
     rig.cx.update(teams_ui::window::init);
-    rig.cx.update(|cx| cx.set_global(BotsFlag(bots)));
     *rig.core.teams.lock().unwrap() = Some(vec![team]);
     let parts = ShellParts {
         core: rig.cx.read(|cx| rig.bridge.read(cx).core()),
@@ -154,17 +152,13 @@ fn writes(rig: &Rig) -> Vec<TeamWrite> {
 }
 
 #[test]
-fn an_owner_is_offered_create_only_while_the_bots_are_shown_and_the_cloud_serves_webhooks() {
+fn an_owner_is_offered_create_only_while_the_cloud_serves_webhooks() {
     let rig = Rig::start();
-    let (_shell, cx) = window(&rig, true, true);
+    let (_shell, cx) = window(&rig, true);
     assert!(bounds(cx, "manage-create-webhook").is_some());
 
     let rig = Rig::start();
-    let (_shell, cx) = window(&rig, false, true);
-    assert!(bounds(cx, "manage-create-webhook").is_none(), "behind NGTEAMS_BOTS");
-
-    let rig = Rig::start();
-    let (_shell, cx) = window(&rig, true, false);
+    let (_shell, cx) = window(&rig, false);
     assert!(bounds(cx, "manage-create-webhook").is_none(), "a member makes none");
 
     let rig = Rig::start();
@@ -172,7 +166,7 @@ fn an_owner_is_offered_create_only_while_the_bots_are_shown_and_the_cloud_serves
         outgoing_webhooks: false,
         ..teams_core::Capabilities::ALL
     });
-    let (_shell, cx) = window(&rig, true, true);
+    let (_shell, cx) = window(&rig, true);
     assert!(
         bounds(cx, "manage-create-webhook").is_none(),
         "an own server that doesn't serve them"
@@ -186,7 +180,7 @@ fn an_owner_is_offered_create_only_while_the_bots_are_shown_and_the_cloud_serves
         .lock()
         .unwrap()
         .insert(TEAM.to_owned(), vec![hook("Build bot", true, false)]);
-    let (_shell, cx) = window(&rig, true, true);
+    let (_shell, cx) = window(&rig, true);
     assert!(bounds(cx, "manage-tab-apps").is_some());
     assert!(bounds(cx, "manage-create-webhook").is_some());
     assert!(bounds(cx, "manage-get-apps").is_none(), "no store to get apps from");
@@ -196,7 +190,7 @@ fn an_owner_is_offered_create_only_while_the_bots_are_shown_and_the_cloud_serves
 #[test]
 fn create_sends_the_form_then_shows_the_token_once_with_copy() {
     let rig = Rig::start();
-    let (shell, cx) = window(&rig, true, true);
+    let (shell, cx) = window(&rig, true);
     click(cx, "manage-create-webhook");
     assert!(bounds(cx, "webhook-dialog").is_some());
     assert!(bounds(cx, "webhook-send").is_some());
@@ -249,7 +243,7 @@ fn create_sends_the_form_then_shows_the_token_once_with_copy() {
 fn a_name_the_team_has_is_told_in_teams_words() {
     let rig = Rig::start();
     *rig.core.team_refusal.lock().unwrap() = Some("OutgoingWebhookNameAlreadyExists".to_owned());
-    let (shell, cx) = window(&rig, true, true);
+    let (shell, cx) = window(&rig, true);
     click(cx, "manage-create-webhook");
     type_in(cx, "webhook-name", "Build bot");
     type_in(cx, "webhook-url", "https://hooks.example.test/build");
@@ -264,7 +258,7 @@ fn a_name_the_team_has_is_told_in_teams_words() {
 fn the_dialog_stays_until_the_create_is_answered_so_the_token_is_not_lost() {
     let rig = Rig::start();
     *rig.core.hold_team_writes.lock().unwrap() = true;
-    let (shell, cx) = window(&rig, true, true);
+    let (shell, cx) = window(&rig, true);
     click(cx, "manage-create-webhook");
     type_in(cx, "webhook-name", "Build bot");
     type_in(cx, "webhook-url", "https://hooks.example.test/build");
@@ -305,7 +299,7 @@ fn a_webhooks_row_shows_its_picture_edit_sends_what_changed_and_remove_asks_firs
         .unwrap()
         .insert(HOOK.to_owned(), PNG.to_vec());
     *rig.core.team_written.lock().unwrap() = Some(TeamWritten::default());
-    let (_shell, cx) = window(&rig, true, true);
+    let (_shell, cx) = window(&rig, true);
     assert!(bounds(cx, "manage-webhook-0").is_some());
     assert_eq!(pictures_asked(&rig), [HOOK], "the row's picture");
 
@@ -356,7 +350,7 @@ fn a_webhook_others_manage_has_no_menu_and_the_read_only_mode_offers_nothing() {
         .lock()
         .unwrap()
         .insert(TEAM.to_owned(), vec![hook("Lunch", false, false)]);
-    let (_shell, cx) = window(&rig, true, true);
+    let (_shell, cx) = window(&rig, true);
     assert!(bounds(cx, "manage-webhook-0").is_some());
     assert!(bounds(cx, "manage-webhook-more-0").is_none());
 
@@ -366,7 +360,7 @@ fn a_webhook_others_manage_has_no_menu_and_the_read_only_mode_offers_nothing() {
         .lock()
         .unwrap()
         .insert(TEAM.to_owned(), vec![hook("Build bot", true, false)]);
-    let (_shell, cx) = window(&rig, true, false);
+    let (_shell, cx) = window(&rig, false);
     assert!(bounds(cx, "manage-webhook-0").is_some());
     assert!(
         bounds(cx, "manage-webhook-more-0").is_none(),
@@ -380,7 +374,7 @@ fn a_webhook_others_manage_has_no_menu_and_the_read_only_mode_offers_nothing() {
         .lock()
         .unwrap()
         .insert(TEAM.to_owned(), vec![hook("Build bot", true, false)]);
-    let (_shell, cx) = window(&rig, true, true);
+    let (_shell, cx) = window(&rig, true);
     assert!(bounds(cx, "manage-webhook-0").is_some());
     assert!(bounds(cx, "manage-webhook-more-0").is_none());
     assert!(bounds(cx, "manage-create-webhook").is_none());
@@ -398,7 +392,7 @@ fn save_waits_for_the_picked_picture_and_then_sends_it() {
         .unwrap()
         .insert(TEAM.to_owned(), vec![hook("Build bot", true, false)]);
     *rig.core.team_written.lock().unwrap() = Some(TeamWritten::default());
-    let (shell, cx) = window(&rig, true, true);
+    let (shell, cx) = window(&rig, true);
     click(cx, "manage-webhook-more-0");
     click(cx, "manage-webhook-edit");
     click(cx, "webhook-upload");
@@ -439,7 +433,7 @@ fn an_archived_team_offers_no_create_and_no_edit_or_remove() {
         archived: true,
         ..team(true)
     };
-    let (shell, cx) = shell_window_of(&rig, true, archived);
+    let (shell, cx) = shell_window_of(&rig, archived);
     cx.update(|window, cx| {
         shell.update(cx, |shell, cx| {
             shell.open_manage_team(TEAM.to_owned(), ManageTab::Apps, window, cx);
@@ -469,7 +463,7 @@ fn a_wrong_or_too_big_picture_is_refused_with_words_and_not_sent() {
     std::fs::write(&big, [PNG, &vec![0; 1024 * 1024]].concat()).unwrap();
     let rig = Rig::start();
     *rig.core.team_written.lock().unwrap() = Some(TeamWritten::default());
-    let (shell, cx) = window(&rig, true, true);
+    let (shell, cx) = window(&rig, true);
     click(cx, "manage-create-webhook");
     type_in(cx, "webhook-name", "Build bot");
     type_in(cx, "webhook-url", "https://hooks.example.test/build");
@@ -514,11 +508,7 @@ fn message(id: i64, sender: &str, name: &str) -> teams_store::Message {
 }
 
 /// A channel of the team opened without Manage team, so only the channel's own read makes the webhook known.
-fn in_channel(
-    bots: bool,
-    served: teams_core::Capabilities,
-    channel: &str,
-) -> (Rig, Entity<Shell>, &'static mut VisualTestContext) {
+fn in_channel(served: teams_core::Capabilities, channel: &str) -> (Rig, Entity<Shell>, &'static mut VisualTestContext) {
     let rig = Rig::start();
     *rig.core.capabilities.lock().unwrap() = Some(served);
     rig.core
@@ -538,7 +528,7 @@ fn in_channel(
             message(101, common::LAB_B, "Lab Bee"),
         ],
     );
-    let (shell, cx) = shell_window(&rig, bots, true);
+    let (shell, cx) = shell_window(&rig, true);
     let channel = channel.to_owned();
     cx.update(|window, cx| shell.update(cx, |shell, cx| shell.open_channel_id(channel, window, cx)));
     cx.run_until_parked();
@@ -555,15 +545,11 @@ fn posts_box(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> Entity<teams_
 #[test]
 fn a_webhooks_reply_carries_its_name_picture_and_the_app_mark() {
     for served in [teams_core::Capabilities::ALL, APPS_OFF] {
-        let (rig, _shell, cx) = in_channel(true, served, TEAM);
+        let (rig, _shell, cx) = in_channel(served, TEAM);
         assert!(bounds(cx, "app-mark-100").is_some(), "the webhook's message");
         assert!(bounds(cx, "app-mark-101").is_none(), "a person's");
         assert!(pictures_asked(&rig).iter().any(|asked| asked == HOOK), "its picture");
     }
-
-    let (rig, _shell, cx) = in_channel(false, teams_core::Capabilities::ALL, TEAM);
-    assert!(bounds(cx, "app-mark-100").is_none(), "behind NGTEAMS_BOTS");
-    assert!(pictures_asked(&rig).is_empty());
 }
 
 fn offered(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> (Entity<teams_ui::compose::Compose>, Vec<String>) {
@@ -589,21 +575,21 @@ fn offered(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> (Entity<teams_u
 
 #[test]
 fn a_private_channels_picker_offers_no_webhook() {
-    let (_rig, shell, cx) = in_channel(true, teams_core::Capabilities::ALL, PRIVATE);
+    let (_rig, shell, cx) = in_channel(teams_core::Capabilities::ALL, PRIVATE);
     let (_, offered) = offered(&shell, cx);
     assert!(offered.is_empty(), "{offered:?}");
 }
 
 #[test]
 fn the_channels_picker_offers_the_teams_webhook_without_the_app_catalogue() {
-    let (_rig, shell, cx) = in_channel(true, APPS_OFF, TEAM);
+    let (_rig, shell, cx) = in_channel(APPS_OFF, TEAM);
     let (_, offered) = offered(&shell, cx);
     assert_eq!(offered, ["Build bot"]);
 }
 
 #[test]
 fn the_channels_picker_offers_the_teams_webhook_and_sends_a_bots_mention() {
-    let (rig, shell, cx) = in_channel(true, teams_core::Capabilities::ALL, TEAM);
+    let (rig, shell, cx) = in_channel(teams_core::Capabilities::ALL, TEAM);
     let (_, offered) = offered(&shell, cx);
     assert_eq!(offered, ["Build bot"]);
     cx.simulate_keystrokes("enter");

@@ -1,5 +1,5 @@
 //! Manage apps (`teams_ui::app_admin`) in the settings, on GPUI's test context over a made-up server: the page shows
-//! only for an account that has the service and only with `NGTEAMS_BOTS=1`; its list and search; registering a bot
+//! only for an account that has the service; its list and search; registering a bot
 //! (its id and secret shown once, then its SDK settings), uploading a package, turning an app off, changing its
 //! endpoint and mode and who may use it, a new secret and a deletion, what each asks of the service and what a refusal
 //! says; the trace; the page going once the account is no administrator any more.
@@ -20,7 +20,6 @@ use teams_auth::admin::{
 };
 use teams_ui::app_admin::sdk::Sdk;
 use teams_ui::app_admin::{AppAdmin, AppDialog, AppProblem, BotConnection, BotForm, DialogKind, ManageApps};
-use teams_ui::bots_flag::BotsFlag;
 use teams_ui::settings::{SettingsFile, SettingsModel};
 use teams_ui::settings_view::{Page, SettingsView};
 use teams_ui::user_admin::AdminProblem;
@@ -353,11 +352,10 @@ impl Opened {
 /// The account's service as the settings read it: the app hands it in or takes it away (`Accounts::set_app_admin`).
 type Held = Rc<RefCell<Option<Arc<dyn AppAdmin>>>>;
 
-/// The settings of an account whose service is what `held` holds, with the bots shown or not.
-fn opened_with(held: &Held, bots: bool, cx: &mut TestAppContext) -> Opened {
+/// The settings of an account whose service is what `held` holds.
+fn opened_with(held: &Held, cx: &mut TestAppContext) -> Opened {
     cx.update(teams_ui::window::init);
     cx.update(theme::init);
-    cx.update(|cx| cx.set_global(BotsFlag(bots)));
     let dir = tempfile::tempdir().unwrap();
     let file = SettingsFile::new(dir.path().join("settings.toml"));
     let written = Written::default();
@@ -395,15 +393,15 @@ fn page_opened(cx: &mut TestAppContext) -> (Arc<Server>, Opened) {
         app(NOTES, "Made-up Notes", true),
         app("00000000-0000-4000-8000-0000000000b2", "Made-up Tab", false),
     ]);
-    let mut opened = opened_with(&held(&server), true, cx);
+    let mut opened = opened_with(&held(&server), cx);
     opened.click("settings-page-apps");
     (server, opened)
 }
 
 #[gpui::test]
-fn the_page_is_offered_only_with_the_service_and_the_bots_shown(cx: &mut TestAppContext) {
+fn the_page_is_offered_only_with_the_service(cx: &mut TestAppContext) {
     let none: Held = Rc::new(RefCell::new(None));
-    let mut microsoft = opened_with(&none, true, cx);
+    let mut microsoft = opened_with(&none, cx);
     assert!(!microsoft.shows("settings-page-apps"));
     let view = microsoft.view.clone();
     microsoft
@@ -412,14 +410,6 @@ fn the_page_is_offered_only_with_the_service_and_the_bots_shown(cx: &mut TestApp
     microsoft.settle();
     assert_eq!(microsoft.page(), Page::General);
     assert!(microsoft.cx.read(|cx| !view.read(cx).offers(Page::Apps, cx)));
-}
-
-#[gpui::test]
-fn the_page_is_hidden_while_the_bots_are(cx: &mut TestAppContext) {
-    let server = Server::with(Vec::new());
-    let mut hidden = opened_with(&held(&server), false, cx);
-    assert!(!hidden.shows("settings-page-apps"));
-    assert!(server.asked().is_empty());
 }
 
 #[gpui::test]
@@ -453,7 +443,7 @@ fn the_list_shows_the_apps_and_the_search_narrows_it(cx: &mut TestAppContext) {
 fn an_empty_server_says_how_to_start_and_a_failed_read_can_be_tried_again(cx: &mut TestAppContext) {
     let server = Server::with(Vec::new());
     server.refuse_next(AppProblem::Account(AdminProblem::Unreachable));
-    let mut opened = opened_with(&held(&server), true, cx);
+    let mut opened = opened_with(&held(&server), cx);
     opened.click("settings-page-apps");
     assert!(opened.shows("apps-problem"));
     opened.click("apps-retry");
@@ -720,7 +710,7 @@ fn the_keyboard_walks_the_list_and_opens_an_app(cx: &mut TestAppContext) {
 fn the_page_goes_once_the_account_is_no_administrator(cx: &mut TestAppContext) {
     let server = Server::with(vec![app(NOTES, "Made-up Notes", true)]);
     let held = held(&server);
-    let mut opened = opened_with(&held, true, cx);
+    let mut opened = opened_with(&held, cx);
     opened.click("settings-page-apps");
     assert_eq!(opened.page(), Page::Apps);
     held.borrow_mut().take();
@@ -807,7 +797,7 @@ fn a_bot_that_fails_is_marked_and_its_details_say_why(cx: &mut TestAppContext) {
         ..failing()
     });
     let server = Server::with(vec![notes, quiet]);
-    let mut opened = opened_with(&held(&server), true, cx);
+    let mut opened = opened_with(&held(&server), cx);
     opened.click("settings-page-apps");
     // the row's mark is the unit test's (`marks`); here the details
     opened.click_owned(&format!("app-row-{NOTES}"));
@@ -879,7 +869,7 @@ fn an_app_that_is_off_offers_no_test(cx: &mut TestAppContext) {
     let mut notes = app(NOTES, "Made-up Notes", true);
     notes.enabled = false;
     let server = Server::with(vec![notes]);
-    let mut opened = opened_with(&held(&server), true, cx);
+    let mut opened = opened_with(&held(&server), cx);
     opened.click("settings-page-apps");
     opened.click_owned(&format!("app-row-{NOTES}"));
     opened.click("app-dialog-test");

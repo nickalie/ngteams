@@ -1056,6 +1056,7 @@ fn a_cloud_without_apps_offers_no_apps_tab() {
     let rig = Rig::start();
     *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
         apps: false,
+        outgoing_webhooks: false,
         ..teams_core::Capabilities::ALL
     });
     let (shell, cx) = shell_window(&rig, vec![team(OWNED, "Alpha", true)]);

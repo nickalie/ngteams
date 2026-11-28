@@ -1,6 +1,6 @@
 //! A bot's chat's header, as browser Teams draws one (the Workflows bot's, lab shots of 2026-11-14): the app's icon on
 //! its tile and the app's name, then its tabs, Chat underlined and About, which opens the app's details
-//! ([`crate::apps_page::details`]) while the Store is offered (`NGTEAMS_BOTS=1` and a cloud that serves apps). An app's
+//! ([`crate::apps_page::details`]) while the Store is offered (a cloud that serves apps). An app's
 //! other tabs (Workflows' Home and Templates) are its web pages, which the app doesn't host. No call, no people.
 
 use super::apps::apps_offered;
@@ -17,7 +17,7 @@ impl Shell {
         let bot = row.bot.as_ref()?;
         // the list's rule: the Workflows bot keeps its own icon
         let lead = crate::chat_list::chat_avatar(row, palette, Size::Size(px(TILE)), HEADER_AVATAR);
-        let about = (bot.app.is_some() && apps_offered(self.core.as_ref(), cx)).then(|| {
+        let about = (bot.app.is_some() && apps_offered(self.core.as_ref())).then(|| {
             let chat = id.to_owned();
             bot_tab("chat-bot-tab-about", "About", false, palette)
                 .on_click(cx.listener(move |this, _, window, cx| this.open_bot_about(&chat, window, cx)))

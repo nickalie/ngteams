@@ -37,6 +37,13 @@ built for your desktop instead of a web page in a wrapper.
 - Channel posts and threads, favorites, notification preferences and channel management
 - Cards and Workflows, as they appear in Teams
 
+**Apps and bots**
+- The Store: find an app, add it for yourself, to a chat or to a team, and remove it again
+- Chat with a bot, fill in its cards and press their buttons, and @mention a bot in a group chat or a channel
+- Search and action commands from the message box's **+** (Actions and apps) and from a message's More actions, with
+  the app's dialog in the window
+- Sign in to a bot's service from its sign-in card
+
 **Sounds**
 - A sound, a volume and an off switch for each of 23 events, far beyond Teams' three dropdowns: messages, mentions, channel posts, missed calls, ringing, people joining and leaving, recording, screen sharing, raised hands and more
 - Built-in sound packs, your own packs from a folder or a `.zip`, or any WAV, OGG or MP3 of yours for a single sound ([how to make a pack](docs/sound-packs.md))
@@ -253,6 +260,11 @@ on your server. Your Microsoft 365 accounts and your own server's accounts sit s
 
 Add the other people in **Settings → Manage users**. Deployment, backups, TLS and scaling are in
 [docs/server.md](docs/server.md#operations).
+
+Your server runs bots too, built with Microsoft's Teams SDK, the Microsoft 365 Agents SDK or the Bot Framework SDK,
+with no Azure account. Register a bot in **Settings → Manage apps**, point the bot at your server, and people add it
+from the **Store**. The steps, each SDK's settings and a sample bot per SDK are in
+[docs/server.md](docs/server.md#bots-step-by-step) and [packaging/server/bots](packaging/server/bots).
 
 ## Keyboard shortcuts
 

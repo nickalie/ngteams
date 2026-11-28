@@ -1,6 +1,5 @@
-//! The Apps tab's outgoing webhooks (`docs/protocol/bots.md`, "Outgoing webhooks"), while the bots are shown
-//! (`NGTEAMS_BOTS=1`) and the account's cloud serves them ([`teams_core::Capabilities::outgoing_webhooks`]):
-//! "Create an outgoing webhook" for an owner, and a row per webhook of the team ([`Core::outgoing_webhooks`]) with its
+//! The Apps tab's outgoing webhooks (`docs/protocol/bots.md`, "Outgoing webhooks"), while the account's cloud serves
+//! them ([`teams_core::Capabilities::outgoing_webhooks`]): "Create an outgoing webhook" for an owner, and a row per webhook of the team ([`Core::outgoing_webhooks`]) with its
 //! picture, its name and "Outgoing webhook". For an owner, a webhook the server lets the account manage has a "..."
 //! with Edit and Remove; Remove asks first.
 
@@ -30,18 +29,18 @@ pub struct ShownWebhook {
 
 impl ManageTeam {
     /// Whether the tab shows the team's outgoing webhooks.
-    pub(super) fn webhooks_on(&self, cx: &gpui::App) -> bool {
-        crate::bots_flag::bots_on(cx) && self.core.capabilities().outgoing_webhooks
+    pub(super) fn webhooks_on(&self) -> bool {
+        self.core.capabilities().outgoing_webhooks
     }
 
     /// Whether Manage team has an Apps tab: for the app catalogue, or for the outgoing webhooks.
-    pub(super) fn apps_shown_at_all(&self, cx: &gpui::App) -> bool {
-        self.core.capabilities().apps || self.webhooks_on(cx)
+    pub(super) fn apps_shown_at_all(&self) -> bool {
+        self.core.capabilities().apps || self.webhooks_on()
     }
 
     /// Reads the team's webhooks, then their pictures.
     pub(super) fn read_webhooks(&mut self, cx: &mut Context<Self>) {
-        if !self.webhooks_on(cx) {
+        if !self.webhooks_on() {
             self.webhooks = Some(Vec::new());
             return;
         }
@@ -80,7 +79,7 @@ impl ManageTeam {
 
     /// "Create an outgoing webhook", for an owner of a team that isn't archived.
     pub(super) fn create_webhook_button(&self, team: &Team, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let can = self.webhooks_on(cx) && team.owner && !team.archived && !self.core.read_only();
+        let can = self.webhooks_on() && team.owner && !team.archived && !self.core.read_only();
         let team = team.clone();
         can.then(|| {
             selected_by(

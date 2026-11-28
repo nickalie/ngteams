@@ -13,8 +13,7 @@
 //!   after the members and before Everyone, and not the notification-only bot nor a bot the chat does not have; the
 //!   mention picked is sent as a bot's mention with its app's id; a bot with an odd and very long name; a received
 //!   message that mentions a bot the chat does not have.
-//! - **With `NGTEAMS_BOTS` unset** (a second run): no bot in the picker and no About; the bot chats keep their names.
-//! - **An own server's account** (a third run, on the real `ngteams-server` binary when it is built): its one
+//! - **An own server's account** (a second run, on the real `ngteams-server` binary when it is built): its one
 //!   registered app is not added to the group chat, so the picker offers no bot and nothing shows broken.
 //!
 //! Every name, id and text is made up. Screenshots are kept under `target/ui-shots/qa-bot-chats-*.png`, in Teams Light
@@ -75,7 +74,7 @@ const ORIGIN_ENV: &str = "NGTEAMS_QA_BOT_CHATS_ORIGIN";
 const TROUTER_ENV: &str = "NGTEAMS_QA_BOT_CHATS_TROUTER";
 const TOKEN_ENV: &str = "NGTEAMS_QA_BOT_CHATS_TOKEN";
 const DIR_ENV: &str = "NGTEAMS_QA_BOT_CHATS_DIR";
-/// `flag-off` (no `NGTEAMS_BOTS`) or `own` (an own server's account); else the ordinary app with the bots shown.
+/// `own` (an own server's account); else the ordinary app.
 const MODE_ENV: &str = "NGTEAMS_QA_BOT_CHATS_MODE";
 const CA_ENV: &str = "NGTEAMS_QA_BOT_CHATS_CA";
 /// The file in the app's directory the parent asks the child about its views through.
@@ -178,7 +177,7 @@ fn parent() -> SandboxResult {
         return Ok(());
     };
     let only = std::env::var("QA_BOT_CHATS_ONLY").unwrap_or_default();
-    for mode in ["", "flag-off", "own"] {
+    for mode in ["", "own"] {
         if !only.is_empty() && only != mode && !(only == "bots" && mode.is_empty()) {
             continue;
         }
@@ -187,10 +186,6 @@ fn parent() -> SandboxResult {
             "" => {
                 let service = Service::start(&runtime)?;
                 walk(&sandbox, &runtime, &service, dir.path())
-            }
-            "flag-off" => {
-                let service = Service::start(&runtime)?;
-                flag_off(&sandbox, &runtime, &service, dir.path())
             }
             _ => own_server(&sandbox, dir.path()),
         };
@@ -206,7 +201,7 @@ fn parent() -> SandboxResult {
     Ok(())
 }
 
-/// The walk of the ordinary app, the bots shown.
+/// The walk of the ordinary app.
 fn walk(sandbox: &Sandbox, runtime: &tokio::runtime::Runtime, service: &Service, dir: &Path) -> SandboxResult {
     let mut run = AppRun::launch(sandbox, &service.env(), dir, "")?;
     let outcome = (|| -> SandboxResult {
@@ -775,60 +770,6 @@ fn expect_bot_mention(sent: &Value, bot: &str, app: &str, name: &str) {
     });
 }
 
-// --- the bots hidden ---
-
-/// The app without `NGTEAMS_BOTS`: the bot chats keep their names, no bot in the picker, no About.
-fn flag_off(sandbox: &Sandbox, runtime: &tokio::runtime::Runtime, service: &Service, dir: &Path) -> SandboxResult {
-    let mut run = AppRun::launch(sandbox, &service.env(), dir, "flag-off")?;
-    let outcome = (|| -> SandboxResult {
-        let mut ctx = Walk {
-            run: &mut run,
-            sandbox,
-            runtime,
-            service,
-        };
-        let rows = ctx.run.until_list("the bot chats named", |rows| {
-            row(rows, &service.helper_chat).is_some_and(|row| row["name"] == HELPER)
-        });
-        expect(rows.is_ok(), || {
-            "with the bots hidden, the bot's chat is not named by its app".to_owned()
-        });
-        ctx.run.open(&service.helper_chat)?;
-        ctx.run.until_chat("the bot's messages", |state| {
-            state["items"].as_array().is_some_and(|items| !items.is_empty())
-        })?;
-        thread::sleep(SETTLE);
-        let shot = ctx.shot("off-chat")?;
-        ctx.shots("off-chat")?;
-        if let Some((x, y)) = about_tab(&load(&shot)?) {
-            ctx.run.click(x, y)?;
-            thread::sleep(SETTLE);
-            let state = ctx.run.state_in("chat")?;
-            expect(state["dialog"] == false, || {
-                "with the bots hidden, a click on the header's About opens the app's details".to_owned()
-            });
-        }
-        ctx.run.open(&service.group)?;
-        thread::sleep(SETTLE);
-        ctx.type_in_box("Who runs this @")?;
-        let state = ctx
-            .run
-            .until_chat("the picker", |state| state["picker"]["loading"] == false)?;
-        let offered = names(&state);
-        expect(offered == ["Lab B", "Everyone"], || {
-            format!("with the bots hidden, the group chat's picker offers {offered:?}, expected [Lab B, Everyone]")
-        });
-        ctx.shots("off-picker")?;
-        ctx.clear_box()?;
-        step("with the bots hidden: no bot in the picker, no About");
-        Ok(())
-    })();
-    if let Err(error) = outcome {
-        return Err(run.fail(sandbox, &*error));
-    }
-    run.quit(sandbox)
-}
-
 // --- an own server's account ---
 
 const OWN_UPN: &str = "dana@own.example.test";
@@ -1174,9 +1115,6 @@ impl AppRun {
             (MODE_ENV, mode),
         ];
         vars.extend(env.iter().map(|(name, value)| (*name, value.as_str())));
-        if mode != "flag-off" {
-            vars.push((teams_ui::bots_flag::BOTS_ENV, "1"));
-        }
         let child = sandbox.spawn_with_fds(&std::env::current_exe()?, &[], &vars, &[writer.as_fd()])?;
         drop(writer);
         let mut running = Running::new(child)?;

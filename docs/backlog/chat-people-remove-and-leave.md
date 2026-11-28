@@ -19,5 +19,5 @@ yet:
   account's own MRI, and for the box something more (hiding the conversation, removing its history for the account).
   Capture both, held back, before building it; the store then has to keep a chat the account left (its reads answer
   403) as the conversation list already treats one (`docs/protocol/chat.md`).
-- **Add agents** (both kinds of chat): adds a bot or a Copilot agent to the chat. Apps and bots in chats are being
-  built behind `NGTEAMS_BOTS` (`docs/protocol/bots.md`); look at it with that.
+- **Add agents** (both kinds of chat): adds a bot or a Copilot agent to the chat. Apps and bots in chats are built
+  (`docs/protocol/bots.md`); look at it with that.

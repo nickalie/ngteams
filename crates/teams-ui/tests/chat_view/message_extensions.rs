@@ -1,15 +1,14 @@
-//! Message extensions in a chat with the bots shown (`NGTEAMS_BOTS=1`, `teams_ui::apps_flyout`,
+//! Message extensions in a chat (`teams_ui::apps_flyout`,
 //! `teams_ui::app_dialog`), on GPUI's test context over the fake engine and the synthetic apps of
 //! `tests/fixtures/bots/extension-apps.json`: the compose box's Actions and apps (its list, its search, its keys, "Get
 //! more apps"), an app's search and a result's card in the box, the message sent with the card, an action command's
-//! dialog asked for, a message's "More actions" with the apps' commands, and none of it without the flag or in
+//! dialog asked for, a message's "More actions" with the apps' commands, and none of it where the cloud serves no apps or in
 //! read-only mode. Every app, bot and id here is synthetic.
 
 use gpui::{Entity, Modifiers, VisualTestContext};
 use serde_json::json;
 use teams_core::Action;
 use teams_proto::{InvokeAnswer, InvokeKind};
-use teams_ui::bots_flag::BotsFlag;
 use teams_ui::chat_view::{ChatView, ChatViewEvent, MessageAction};
 
 use super::common::{LAB_A, LAB_B, Rig};
@@ -18,13 +17,19 @@ use super::{AB, NOON, chat_window, draw, message, rig_with, trace};
 const FINDER: &str = "00000000-0000-4000-8000-00000000e001";
 const ID: &str = "701";
 
-fn apps_rig(flag: bool) -> Rig {
-    apps_rig_with(flag, vec![message(ID, LAB_B, "<p>A made-up order</p>", NOON)])
+/// The rig, its cloud serving apps or not (`apps`).
+fn apps_rig(apps: bool) -> Rig {
+    apps_rig_with(apps, vec![message(ID, LAB_B, "<p>A made-up order</p>", NOON)])
 }
 
-fn apps_rig_with(flag: bool, messages: Vec<teams_store::Message>) -> Rig {
+fn apps_rig_with(apps: bool, messages: Vec<teams_store::Message>) -> Rig {
     let rig = rig_with(messages);
-    rig.cx.update(|cx| cx.set_global(BotsFlag(flag)));
+    if !apps {
+        *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+            apps: false,
+            ..teams_core::Capabilities::ALL
+        });
+    }
     *rig.core.extension_apps.lock().unwrap() =
         teams_proto::extension_apps(teams_mock::extension_apps_answer().to_string().as_bytes());
     rig
@@ -328,7 +333,7 @@ fn more_actions_lists_the_apps_commands_and_an_offer_opens_its_details() {
 }
 
 #[test]
-fn without_the_flag_or_in_read_only_mode_there_is_no_app() {
+fn without_the_apps_service_or_in_read_only_mode_there_is_no_app() {
     let rig = apps_rig(false);
     let (view, cx) = window(&rig);
     click(cx, "compose-apps");

@@ -1,4 +1,4 @@
-//! The Store (`NGTEAMS_BOTS=1`) as a user meets it, in the UI sandbox (`harness = false`: GPUI runs on the process's
+//! The Store as a user meets it, in the UI sandbox (`harness = false`: GPUI runs on the process's
 //! main thread). QA of task 226; the own server's side is in `apps_window_own.rs`.
 //!
 //! The test runs itself again inside the sandbox as the app of lab account a, its engine on the mock (`teams-mock`,
@@ -215,7 +215,7 @@ fn run_checks(sandbox: &Sandbox) -> SandboxResult<usize> {
 impl<'a> Qa<'a> {
     /// The app started in the sandbox in `mode`, with `env` for the child too, its window drawn.
     pub(super) fn start(sandbox: &'a Sandbox, mode: &str, env: &[(&str, &str)]) -> SandboxResult<Self> {
-        let mut vars = vec![(CHILD_ENV, mode), (teams_ui::bots_flag::BOTS_ENV, "1")];
+        let mut vars = vec![(CHILD_ENV, mode)];
         vars.extend_from_slice(env);
         let child = sandbox.spawn_with_fds(&std::env::current_exe()?, &[], &vars, &[])?;
         let mut running = Running::new(child)?;

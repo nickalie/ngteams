@@ -1,4 +1,4 @@
-//! A bot's card with the bots shown (`NGTEAMS_BOTS=1`, `teams_ui::bot_card`), on GPUI's test context over the fake
+//! A bot's card (`teams_ui::bot_card`), on GPUI's test context over the fake
 //! engine: its inputs drawn, their checks, a button that asks the bot with the answers, each answer shown (a card in
 //! the card's place, a message, an error, a sign-in request, a bot not reached), `imBack` posting the user's message,
 //! the refresh by itself and by hand, the suggested actions over the compose box, and read-only mode, which asks
@@ -12,7 +12,6 @@ use teams_core::{Action, EngineError, Event};
 use teams_proto::bot::TaskDialog;
 use teams_proto::{InvokeAnswer, InvokeKind};
 use teams_store::Message;
-use teams_ui::bots_flag::BotsFlag;
 use teams_ui::chat_view::{ChatView, ChatViewEvent};
 
 use super::common::{LAB_A, Rig};
@@ -44,11 +43,9 @@ fn card_message(id: &str, card: &Value) -> Message {
     )
 }
 
-/// The rig with `messages`, the bots shown.
+/// The rig with `messages`.
 fn bots_rig(messages: Vec<Message>) -> Rig {
-    let rig = rig_with(messages);
-    rig.cx.update(|cx| cx.set_global(BotsFlag(true)));
-    rig
+    rig_with(messages)
 }
 
 /// The chat view in a window tall enough for the whole order form.
@@ -348,8 +345,12 @@ fn refresh_card_in_more_options_runs_it_by_hand() {
 }
 
 #[test]
-fn without_the_bots_no_refresh_is_offered_or_run() {
+fn without_the_apps_service_no_refresh_is_offered_or_run() {
     let rig = rig_with(vec![card_message(ID, &refresh_card(&[LAB_A]))]);
+    *rig.core.capabilities.lock().unwrap() = Some(teams_core::Capabilities {
+        apps: false,
+        ..teams_core::Capabilities::ALL
+    });
     let (view, cx) = tall_window(&rig);
     view.update(cx, |view, cx| view.toggle_options(ID, cx));
     assert!(bounds(cx, "action-refresh-card").is_none());
@@ -1030,8 +1031,9 @@ fn a_code_stays_after_a_server_error_and_the_bots_error_then_signs_in() {
 }
 
 #[test]
-fn without_the_bots_a_sign_in_card_opens_in_teams_and_offers_no_code() {
+fn in_read_only_mode_a_sign_in_card_opens_in_teams_and_offers_no_code() {
     let rig = rig_with(vec![oauth_message(ID)]);
+    *rig.core.read_only.lock().unwrap() = true;
     let (_view, cx) = tall_window(&rig);
     click(cx, &format!("card-{ID}-c0a0"));
     assert_eq!(

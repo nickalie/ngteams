@@ -2954,9 +2954,8 @@ const STEPS: [Step; 5 + 378 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5 + 11] = [
     ("live-channel-renamed-dark", |shell, _, cx| {
         fixed_theme(shell, Some(teams_ui::theme::DARK_KEY), cx);
     }),
-    // the rail's Store (`NGTEAMS_BOTS=1`): the org's app and the popular ones, in Teams Light and Dark
+    // the rail's Store: the org's app and the popular ones, in Teams Light and Dark
     ("apps-store", |shell, window, cx| {
-        cx.set_global(teams_ui::bots_flag::BotsFlag(true));
         fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
         shell.update(cx, |shell, cx| shell.open_apps(window, cx));
     }),
@@ -3097,9 +3096,8 @@ const STEPS: [Step; 5 + 378 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5 + 11] = [
             shell.open_chat_apps(AB_CHAT.to_owned(), window, cx);
         });
     }),
-    // Manage team > Apps' "Create an outgoing webhook" (`NGTEAMS_BOTS=1`), filled in, in Teams Light and Dark
+    // Manage team > Apps' "Create an outgoing webhook", filled in, in Teams Light and Dark
     ("webhook-create", |shell, window, cx| {
-        cx.set_global(teams_ui::bots_flag::BotsFlag(true));
         fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
         shell.update(cx, Shell::close_team_dialog);
         shell.update(cx, |shell, cx| {
@@ -3199,7 +3197,6 @@ const STEPS: [Step; 5 + 378 + 8 + 5 + 15 + 7 + 6 + 12 + 10 + 5 + 11] = [
     // 297's Q5)
     ("group-call-chat", |shell, window, cx| {
         fixed_theme(shell, Some(teams_ui::theme::LIGHT_KEY), cx);
-        cx.set_global(teams_ui::bots_flag::BotsFlag(false));
         shell.update(cx, Shell::close_team_dialog);
         shell.update(cx, |shell, cx| {
             shell.show_chats(window, cx);

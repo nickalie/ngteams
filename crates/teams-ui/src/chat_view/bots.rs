@@ -1,4 +1,4 @@
-//! A chat's bot cards and suggested actions, behind `NGTEAMS_BOTS=1` ([`crate::bots_flag`]):
+//! A chat's bot cards and suggested actions:
 //!
 //! - **Cards**: each card message keeps its bot state ([`CardBot`]) while the view lives: its answers, its buttons'
 //!   asks and what the bot answered ([`crate::bot_card`]). A card whose `refresh` names the account runs it by itself
@@ -38,8 +38,8 @@ pub const REFRESH_CARD: &str = "Refresh card";
 pub(super) struct HeldCards {
     /// Toggled elements, opened cards.
     pub(super) states: HashMap<String, CardState>,
-    /// Each card message's bot state, made as it is first drawn; none while the bots aren't shown.
-    bots: Option<RefCell<HashMap<String, HeldBot>>>,
+    /// Each card message's bot state, made as it is first drawn.
+    bots: RefCell<HashMap<String, HeldBot>>,
     /// The apps' message actions "More actions" lists ([`super::app_actions`]).
     pub(super) app_actions: super::app_actions::AppActions,
 }
@@ -53,25 +53,20 @@ struct HeldBot {
 }
 
 impl HeldCards {
-    pub(super) fn new(cx: &App) -> Self {
+    pub(super) fn new() -> Self {
         Self {
             states: HashMap::new(),
-            bots: crate::bots_flag::bots_on(cx).then(RefCell::default),
+            bots: RefCell::default(),
             app_actions: super::app_actions::AppActions::default(),
         }
-    }
-
-    /// Whether the bots' cards and suggested actions are shown (`NGTEAMS_BOTS=1`, [`crate::bots_flag`]).
-    pub(super) const fn shows_bots(&self) -> bool {
-        self.bots.is_some()
     }
 }
 
 impl ChatView {
-    /// Whether this chat's cards take answers and ask their bot: the bots are shown and the account's cloud serves
-    /// bot invokes (`Capabilities::apps`); else the cards are read and drawn as without the flag.
+    /// Whether this chat's cards take answers and ask their bot: the account's cloud serves bot invokes
+    /// (`Capabilities::apps`); else the cards are only read and drawn.
     pub(super) fn asks_bots(&self) -> bool {
-        self.held_cards.shows_bots() && self.core.capabilities().apps
+        self.core.capabilities().apps
     }
 
     /// Where a message's bot is asked and its user's answers go: a channel's post's chain, else the view's own place.
@@ -89,7 +84,7 @@ impl ChatView {
         if !self.asks_bots() {
             return None;
         }
-        let bots = self.held_cards.bots.as_ref()?;
+        let bots = &self.held_cards.bots;
         let cards = cards_of(item);
         let old = {
             let mut held = bots.borrow_mut();
@@ -141,7 +136,7 @@ impl ChatView {
         Some(bot)
     }
 
-    /// What `item`'s cards are drawn with besides their state: its bot state, while the bots are shown.
+    /// What `item`'s cards are drawn with besides their state: its bot state.
     pub(super) fn bot_hook(&self, item: &MessageItem, cx: &mut Context<Self>) -> Option<BotHook> {
         Some(BotHook {
             bot: self.card_bot(item, cx)?,
@@ -192,16 +187,12 @@ impl ChatView {
         bot.update(cx, |bot, cx| bot.press(card, &key, pressed, &inputs, cx));
     }
 
-    /// "Refresh card" for the more-options menu of `message`, when the bots are shown, the app writes and a card of
+    /// "Refresh card" for the more-options menu of `message`, when the app writes and a card of
     /// the message has a `refresh`.
     pub(super) fn refresh_entry(&self, message: &str, palette: Palette, cx: &mut Context<Self>) -> Option<AnyElement> {
         let item = self.message_items().find(|item| item.id == message)?;
         let offered = self.asks_bots() && !self.core.read_only() && !item.actions().is_empty() && {
-            let bot = self
-                .held_cards
-                .bots
-                .as_ref()
-                .and_then(|bots| bots.borrow().get(message).map(|held| held.bot.clone()));
+            let bot = self.held_cards.bots.borrow().get(message).map(|held| held.bot.clone());
             shown_cards(item, bot.as_ref(), cx)
                 .iter()
                 .any(|card| card.refresh.is_some())

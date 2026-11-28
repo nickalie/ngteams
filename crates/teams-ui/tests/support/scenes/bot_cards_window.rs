@@ -1,4 +1,4 @@
-//! A bot's cards in a chat with the bots shown (`NGTEAMS_BOTS=1`), rendered in the private UI sandbox over synthetic
+//! A bot's cards in a chat, rendered in the private UI sandbox over synthetic
 //! data in Teams Light and Dark: a card's inputs, a required one left empty, the bot's card in the card's place, its
 //! message, its error and its sign-in request under the card, the suggested actions over the compose box, the card in
 //! read-only mode, "Refresh card" in a message's menu, and a sign-in card with its code field. Screenshots go to
@@ -32,7 +32,6 @@ use teams_proto::InvokeAnswer;
 use teams_store::Message;
 use teams_ui::{
     Core, Models, ShellParts, ViewTrace,
-    bots_flag::BotsFlag,
     chat_view::ChatView,
     settings::{Settings, SettingsModel},
     theme::{self, Appearance, DARK_KEY, LIGHT_KEY},
@@ -291,7 +290,6 @@ fn child(mode: &str) -> SandboxResult {
     let application = fixture::application().with_assets(teams_ui::AppAssets);
     application.run(move |cx: &mut App| {
         teams_ui::window::init(cx);
-        cx.set_global(BotsFlag(true));
         theme::set_appearance(
             &Appearance {
                 theme,

@@ -872,7 +872,7 @@ and its Trouter delivery (fixture `app-card.json` is written from it, with made-
   only changes the surfaces.
 - **Other sites**: a Vimeo link got no app card. It got an ordinary link preview (`previewenabled: true`, the
   `urlp/v1/url/image/Thumbnail` picture, [Link previews](#link-previews)).
-- **A message extension's card** (behind `NGTEAMS_BOTS=1`): the native client sends a card chosen from an app's
+- **A message extension's card**: the native client sends a card chosen from an app's
   search or dialog in the same form (`teams_proto::chat::AppCard`, `MessageText::with_cards`): the span after the
   text, `\n` before it as the read-back has it, and the entry in `properties.cards`; a message without one sends `[]`
   as before. Unseen for a message extension: `docs/protocol/bots.md`, "Message extensions".
@@ -913,10 +913,10 @@ for its shape only.
   client runs them as invokes on its own chat service, `POST v1/agents/28:<bot>/invoke` ([bots.md](bots.md)); a
   Microsoft account's invoke carries its Teams service token for that service, never a token for the app. The
   native client reads what each button carries (its `data`, `verb`, `msteams` kind) and a card's inputs and
-  `refresh`. With the bots shown (`NGTEAMS_BOTS=1`, until the bots work is done) it draws the inputs and its buttons
-  ask the bot, as [bots.md](bots.md) says. In read-only mode the inputs are drawn but take nothing, and a button opens
-  the message in Teams on the web. Without the bots shown, a button opens the message in Teams on the web, and a card
-  with an input says it has content it can't show.
+  `refresh`. It draws the inputs and its buttons ask the bot, as [bots.md](bots.md) says. In read-only mode the inputs
+  are drawn but take nothing, and a button opens the message in Teams on the web. For an own server that doesn't
+  serve apps, a card draws no part that sends to the bot, and a card with an input says it has content it can't
+  show.
 
 ## Forwarded messages
 
@@ -1309,7 +1309,7 @@ The bundle names more `mentionType`s than `person` (`bot` with an `appId`, `ever
 **A bot's mention** (from the bundle and the Bot Framework's documentation, **unseen**: no bot in the lab tenant can
 be mentioned within the lab rule, `docs/protocol/bots.md`): the span as a person's, and the entry `{"@type":
 "http://schema.skype.com/Mention", "itemid": "0", "mri": "28:<bot id>", "mentionType": "bot", "displayName": "<the
-app's name>", "appId": "<the app's id>"}`. The native client sends it in that form behind `NGTEAMS_BOTS=1`
+app's name>", "appId": "<the app's id>"}`. The native client sends it in that form
 (`MessageText::new_with_bots`): its picker offers, after a group chat's members, the bots of the apps added to the chat
 (`chats/<chat>/apps/chatentitlements`, those `Installed`) or to a channel's team (`teams/apps/aggregatedEntitlements`)
 whose definition gives the bot the `groupChat` or `team` scope and doesn't make it notification-only, by the app's name
@@ -1317,7 +1317,7 @@ and icon. A capture that differs changes the client and the own server together.
 
 Mention wire entries name an MRI. A person mention reaches that person; an `everyone` entry naming the destination
 group chat reaches its members; a `bot` entry reaches its `28:` bot, one of the chat's participants. The native
-composer builds the captured person and `everyone` forms, and the unseen bot form only behind `NGTEAMS_BOTS=1`; the
+composer builds the captured person and `everyone` forms, and the unseen bot form; the
 agent's lab check must include these recipients. There is no membership classifier on the outgoing request.
 
 ## A mention of everyone (abc-everyone)

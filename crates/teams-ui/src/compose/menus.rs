@@ -233,7 +233,7 @@ impl Compose {
     /// The rows `kind` lists now.
     pub(super) fn menu_items(&self, kind: MenuKind, cx: &App) -> Vec<Item> {
         let fit = self.fit(cx);
-        let apps = self.offers_apps(cx);
+        let apps = self.offers_apps();
         let hidden = |items: &mut Vec<Item>| {
             items.extend(fit.hidden.iter().flat_map(|tool| items_of(*tool, apps)));
             items.push(Item::Customize);
@@ -403,7 +403,7 @@ impl Compose {
     /// the open menu no longer shows its tool's state, the menu is built again after this frame.
     pub(super) fn menus_follow_tools(&self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = &self.menu else { return };
-        if !self.has_button(menu.kind, &self.fit(cx), cx) {
+        if !self.has_button(menu.kind, &self.fit(cx)) {
             cx.defer_in(window, Self::close_menu_without_button);
         } else if menu.rows != self.menu_rows(menu.kind, cx) {
             cx.defer_in(window, Self::refresh_menu);
@@ -411,10 +411,10 @@ impl Compose {
     }
 
     /// Whether the row shows the button of the menu `kind`.
-    fn has_button(&self, kind: MenuKind, fit: &Fit, cx: &App) -> bool {
+    fn has_button(&self, kind: MenuKind, fit: &Fit) -> bool {
         match kind {
             MenuKind::More => !fit.more.is_empty(),
-            MenuKind::Plus => fit.row.contains(&Tool::Apps) && !self.offers_apps(cx),
+            MenuKind::Plus => fit.row.contains(&Tool::Apps) && !self.offers_apps(),
         }
     }
 
@@ -422,7 +422,7 @@ impl Compose {
     /// row, else in the text.
     fn close_menu_without_button(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(menu) = &self.menu
-            && !self.has_button(menu.kind, &self.fit(cx), cx)
+            && !self.has_button(menu.kind, &self.fit(cx))
         {
             self.menu_closed(false, window, cx);
         }

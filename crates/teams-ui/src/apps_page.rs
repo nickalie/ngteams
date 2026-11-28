@@ -1,4 +1,4 @@
-//! The rail's Store, as browser Teams has it (`docs/protocol/apps.md`), behind `NGTEAMS_BOTS=1` ([`crate::bots_flag::bots_on`]):
+//! The rail's Store, as browser Teams has it (`docs/protocol/apps.md`):
 //!
 //! - **Store**: "Do more in Teams" with "Search agents and apps", then "Added by your org" (the organization's apps)
 //!   and "Popular on Teams", each app a tile (its picture, name, maker, a line about it, its rating; an app the

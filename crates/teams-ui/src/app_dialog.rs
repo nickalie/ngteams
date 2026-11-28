@@ -1,4 +1,4 @@
-//! An app's dialog (Teams' task module, `docs/protocol/bots.md`), behind `NGTEAMS_BOTS=1` ([`crate::bots_flag`]),
+//! An app's dialog (Teams' task module, `docs/protocol/bots.md`),
 //! over the window as Teams opens it from a message extension's action command (the compose box's "Actions and apps",
 //! a message's "More actions") or a card's `task/fetch` button:
 //!

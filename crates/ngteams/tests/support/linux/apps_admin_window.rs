@@ -1,4 +1,4 @@
-//! Manage apps (`NGTEAMS_BOTS=1`) as an own server's administrator meets it, in the UI sandbox (`harness = false`:
+//! Manage apps as an own server's administrator meets it, in the UI sandbox (`harness = false`:
 //! GPUI runs on the process's main thread).
 //!
 //! The test runs itself again inside the sandbox as the app of the administrator of an in-process `ngteams-server`
@@ -151,7 +151,7 @@ fn run_checks(sandbox: &Sandbox) -> SandboxResult<usize> {
 
 impl<'a> Qa<'a> {
     fn start(sandbox: &'a Sandbox) -> SandboxResult<Self> {
-        let vars = [(CHILD_ENV, "app"), (teams_ui::bots_flag::BOTS_ENV, "1")];
+        let vars = [(CHILD_ENV, "app")];
         let child = sandbox.spawn_with_fds(&std::env::current_exe()?, &[], &vars, &[])?;
         let mut running = Running::new(child)?;
         running

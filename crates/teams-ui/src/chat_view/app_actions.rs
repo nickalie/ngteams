@@ -1,4 +1,4 @@
-//! Apps' message actions and dialogs in a chat, behind `NGTEAMS_BOTS=1` for an account whose cloud serves apps
+//! Apps' message actions and dialogs in a chat for an account whose cloud serves apps
 //! (`docs/protocol/bots.md`, "Message extensions"):
 //!
 //! - **"More actions"** on a message lists the message extension commands that run on a message
@@ -33,7 +33,7 @@ pub(super) struct AppActions {
 }
 
 impl ChatView {
-    /// Whether a message's menu offers apps' actions: the bots are shown, the account's cloud serves apps, and the
+    /// Whether a message's menu offers apps' actions: the account's cloud serves apps, and the
     /// app writes.
     fn offers_app_actions(&self) -> bool {
         self.asks_bots() && !self.core.read_only()

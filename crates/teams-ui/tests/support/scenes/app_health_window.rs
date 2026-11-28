@@ -1,4 +1,4 @@
-//! Manage apps (`NGTEAMS_BOTS=1`) with each bot's delivery health, rendered in the private UI sandbox over a made-up
+//! Manage apps with each bot's delivery health, rendered in the private UI sandbox over a made-up
 //! server in Teams Light and Dark: the list with a failing and a paused bot marked, and the details of a failing, a
 //! paused, a healthy and a new bot, each after a test activity (taken, refused by the address guard, not answered).
 //! Screenshots go to `target/ui-shots/app-health-*.png`. Never reaches a tenant or a server.
@@ -22,7 +22,6 @@ use teams_auth::admin::{
 use teams_ui::app_admin::{AppAdmin, AppProblem, BotConnection, BotForm, DialogKind, ManageApps};
 use teams_ui::{
     ViewTrace,
-    bots_flag::BotsFlag,
     theme::{self, Appearance, DARK_KEY, LIGHT_KEY},
     window::KitRoot,
 };
@@ -297,7 +296,6 @@ fn child(mode: &str) -> SandboxResult {
     let application = fixture::application().with_assets(teams_ui::AppAssets);
     application.run(move |cx: &mut App| {
         teams_ui::window::init(cx);
-        cx.set_global(BotsFlag(true));
         theme::set_appearance(
             &Appearance {
                 theme,
