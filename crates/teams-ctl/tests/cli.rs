@@ -1008,10 +1008,24 @@ fn download_with_two_selections_is_a_usage_error_and_a_refusal_exits_1() {
 }
 
 #[cfg(unix)]
+fn not_utf_8_folder() -> OsString {
+    use std::os::unix::ffi::OsStringExt as _;
+    OsString::from_vec(b"/tmp/not-\xffutf-8".to_vec())
+}
+
+#[cfg(windows)]
+fn not_utf_8_folder() -> OsString {
+    use std::os::windows::ffi::OsStringExt as _;
+    let unpaired_surrogate = 0xD800;
+    let mut wide: Vec<u16> = r"C:\not-".encode_utf16().collect();
+    wide.push(unpaired_surrogate);
+    wide.extend("utf-8".encode_utf16());
+    OsString::from_wide(&wide)
+}
+
 #[test]
 fn a_download_folder_that_is_not_utf_8_exits_2_before_connecting() {
-    use std::os::unix::ffi::OsStringExt as _;
-    let out = OsString::from_vec(b"/tmp/not-\xffutf-8".to_vec());
+    let out = not_utf_8_folder();
     let cli = Cli::try_parse_from([
         OsString::from("ngteamsctl"),
         OsString::from("download"),
