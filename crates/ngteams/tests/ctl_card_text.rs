@@ -21,7 +21,7 @@ use gpui::TestAppContext;
 use ngteams::accounts::{Runner, Started};
 use ngteams::accounts_file::{PersonalAccount, PersonalPaths};
 use ngteams::app::{self, Launch};
-use ngteams::ctl::reads::{MessageText, text_of};
+use ngteams::ctl::reads::{ReadText, text_of};
 use ngteams::setup::Setup;
 use serde_json::{Value, json};
 use teams_auth::authz::{AuthzClient, Region};
@@ -221,14 +221,14 @@ fn a_card_without_text_says_sent_a_card_and_a_link_s_app_card_follows_the_text()
     let picture = card(&json!([{"contentType": ADAPTIVE, "content": {"type": "AdaptiveCard",
         "body": [{"type": "Image", "url": "https://example.invalid/graph.png"}]}}]));
     let read = |message_type, content: &str, properties| text_of(&stored(message_type, content, properties));
-    let sent_a_card = MessageText {
+    let sent_a_card = ReadText {
         text: "Sent a card".to_owned(),
         card: true,
     };
     assert_eq!(read(CARD_TYPE, &picture, None), Some(sent_a_card.clone()));
     assert_eq!(
-        read(CARD_TYPE, "<URIObject>no card</URIObject>", None).map(|text| text.card),
-        Some(false)
+        read(CARD_TYPE, "<URIObject>no card</URIObject>", None),
+        Some(sent_a_card.clone())
     );
 
     let app_card = json!({"cards": [{"contentType": ADAPTIVE, "content": {"type": "AdaptiveCard",
@@ -236,7 +236,7 @@ fn a_card_without_text_says_sent_a_card_and_a_link_s_app_card_follows_the_text()
     .to_string();
     assert_eq!(
         read("RichText/Html", "<p>see this</p>", Some(&app_card)),
-        Some(MessageText {
+        Some(ReadText {
             text: "see this\nA video title".to_owned(),
             card: true,
         })
@@ -245,14 +245,14 @@ fn a_card_without_text_says_sent_a_card_and_a_link_s_app_card_follows_the_text()
         json!({"cards": [{"contentType": ADAPTIVE, "content": {"type": "AdaptiveCard", "body": []}}]}).to_string();
     assert_eq!(
         read("Text", "plain ", Some(&empty_app_card)),
-        Some(MessageText {
+        Some(ReadText {
             text: "plain".to_owned(),
             card: true,
         })
     );
     assert_eq!(
         read("RichText/Html", "<p>only text</p>", None),
-        Some(MessageText {
+        Some(ReadText {
             text: "only text".to_owned(),
             card: false,
         })

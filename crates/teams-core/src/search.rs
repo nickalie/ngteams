@@ -26,17 +26,21 @@ pub fn search_text(message: &Message) -> String {
         String::new()
     } else if message.message_type == "Text" {
         // plain text: its `<` and `&` are the text's own
-        message.content.clone()
+        with_cards(message, message.content.clone())
     } else if message.message_type == CARD_TYPE {
         card_message_text(&message.content).unwrap_or_default()
     } else if message.message_type.starts_with("RichText") {
         let text = with_everyone_shown(parse_html(&message.content), message.properties.as_deref()).plain_text();
-        match message_cards_text(&message.message_type, &message.content, message.properties.as_deref()) {
-            Some(cards) if !cards.is_empty() => format!("{}\n{cards}", text.trim_end()),
-            _ => text,
-        }
+        with_cards(message, text)
     } else {
         String::new()
+    }
+}
+
+fn with_cards(message: &Message, text: String) -> String {
+    match message_cards_text(&message.message_type, &message.content, message.properties.as_deref()) {
+        Some(cards) if !cards.is_empty() => format!("{}\n{cards}", text.trim_end()),
+        _ => text,
     }
 }
 

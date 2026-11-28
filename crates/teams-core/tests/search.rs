@@ -125,6 +125,9 @@ fn a_card_is_found_by_the_text_on_it() {
         .to_string(),
     );
     assert_eq!(search_text(&linked), "see the video\nA video title");
+    let mut plain = message(CHAT, "10", "Text", "see the video ");
+    plain.properties.clone_from(&linked.properties);
+    assert_eq!(search_text(&plain), "see the video\nA video title");
     linked.properties = Some(
         r#"{"cards": [{"contentType": "application/vnd.microsoft.card.adaptive",
         "content": {"type": "AdaptiveCard", "body": []}}]}"#

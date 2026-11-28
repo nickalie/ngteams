@@ -76,24 +76,24 @@ fn connector_text(card: &Value) -> String {
     let mut lines = Lines::default();
     let title = string_of(card, "title");
     if let Some(title) = &title {
-        lines.markdown(title);
+        lines.connector(title);
     }
     if let Some(summary) = string_of(card, "summary").filter(|summary| Some(summary) != title.as_ref()) {
-        lines.markdown(&summary);
+        lines.connector(&summary);
     }
     if let Some(text) = string_of(card, "text") {
-        lines.markdown(&text);
+        lines.connector(&text);
     }
     for section in array_of(card, "sections") {
         for key in ["activityTitle", "activitySubtitle", "activityText", "title", "text"] {
             if let Some(text) = string_of(section, key) {
-                lines.markdown(&text);
+                lines.connector(&text);
             }
         }
         for fact in array_of(section, "facts") {
             lines.fact(
-                str_of(fact, "name").unwrap_or_default(),
-                str_of(fact, "value").unwrap_or_default(),
+                &connector_plain(str_of(fact, "name").unwrap_or_default()),
+                &connector_plain(str_of(fact, "value").unwrap_or_default()),
             );
         }
         lines.connector_actions(section);
@@ -120,6 +120,12 @@ impl Lines {
 
     fn markdown(&mut self, text: &str) {
         self.push(&plain(text));
+    }
+
+    fn connector(&mut self, text: &str) {
+        for line in connector_plain(text).lines() {
+            self.markdown(line);
+        }
     }
 
     fn fact(&mut self, title: &str, value: &str) {
@@ -221,6 +227,15 @@ fn open_uri(action: &Value) -> Option<&str> {
         .or_else(|| targets.first())
         .and_then(|target| str_of(target, "uri"))
         .filter(|url| is_link(url))
+}
+
+/// A connector card's text, which can hold HTML (`<br/>`, `&#x274C;`) in its markdown, with that HTML read.
+fn connector_plain(text: &str) -> String {
+    if text.contains(['<', '&']) {
+        parse_html(text).plain_text()
+    } else {
+        text.to_owned()
+    }
 }
 
 /// A card text's markdown as plain text, its date and time functions written in UTC.

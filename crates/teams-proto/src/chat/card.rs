@@ -1775,7 +1775,7 @@ fn escape_into(html: &mut String, text: &str) {
     }
 }
 
-/// A card message's plain words, for a search or a notification: its texts' and facts' in order, without markdown.
+/// A card message's plain words, for a copy or a notification: its texts' and facts' in order, without markdown.
 #[must_use]
 pub fn plain_words(message: &CardMessage) -> Vec<String> {
     let mut words = Vec::new();

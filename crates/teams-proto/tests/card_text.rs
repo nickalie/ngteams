@@ -179,6 +179,21 @@ fn a_connector_card_gives_its_title_text_sections_facts_and_actions() {
 }
 
 #[test]
+fn a_connector_card_s_html_breaks_and_entities_are_read() {
+    let text = text_of(&json!([{"contentType": CONNECTOR, "content": {
+        "title": "api: &#x274C; down",
+        "sections": [{
+            "text": "&#x274C; - `[STATUS] == 200`<br/>&#x2705; - `[RESPONSE_TIME] < 300`<br/>",
+            "facts": [{"name": "<b>host</b>", "value": "a &amp; b"}],
+        }, {"text": "**a < b** and 1 & 2"}],
+    }}]));
+    assert_eq!(
+        text,
+        "api: \u{274C} down\n\u{274C} - `[STATUS] == 200`\n\u{2705} - `[RESPONSE_TIME] < 300`\nhost: a & b\na < b and 1 & 2"
+    );
+}
+
+#[test]
 fn a_link_s_app_cards_give_their_text() {
     let cards = json!([{"appId": "synthetic-app", "appName": "Synthetic", "attachment": null,
         "contentType": ADAPTIVE, "content": {"type": "AdaptiveCard",

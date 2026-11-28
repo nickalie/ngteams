@@ -187,21 +187,21 @@ async fn cursor_at(core: &dyn Core, chat: &Conversation, id: &str) -> Result<Pag
 /// A message's text as `messages` gives it, and whether it carries cards; `None` for one it leaves out (see the
 /// module docs).
 #[must_use]
-pub fn text_of(message: &Message) -> Option<MessageText> {
+pub fn text_of(message: &Message) -> Option<ReadText> {
     if message.delete_time.is_some() {
-        return Some(MessageText::default());
+        return Some(ReadText::default());
     }
     match system_message::preview(&message.message_type, &message.content, &message.conversation_id) {
         Preview::Skipped => None,
-        Preview::Said(text) => Some(MessageText { text, card: false }),
+        Preview::Said(text) => Some(ReadText { text, card: false }),
         Preview::Text if !chat_list::is_text(message) => None,
         Preview::Text => Some(plain_text(message)),
     }
 }
 
-/// A message's text, and whether it carries cards.
+/// A message's text, and whether it carries cards: a card message, or a text message with a link's app cards.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct MessageText {
+pub struct ReadText {
     pub text: String,
     pub card: bool,
 }
@@ -209,7 +209,7 @@ pub struct MessageText {
 /// A text message's whole text, read from its sanitized rich text (as it came for a `Text` message), without the
 /// line breaks that end it, then the text of its cards ([`message_cards_text`]); Teams' "Sent a card" for a card
 /// message whose cards give no text.
-fn plain_text(message: &Message) -> MessageText {
+fn plain_text(message: &Message) -> ReadText {
     let cards = message_cards_text(&message.message_type, &message.content, message.properties.as_deref());
     let own = if message.message_type == CARD_TYPE {
         String::new()
@@ -224,9 +224,9 @@ fn plain_text(message: &Message) -> MessageText {
         None if own.is_empty() && message.message_type == CARD_TYPE => SENT_A_CARD.to_owned(),
         None => own,
     };
-    MessageText {
+    ReadText {
         text,
-        card: cards.is_some(),
+        card: cards.is_some() || message.message_type == CARD_TYPE,
     }
 }
 
@@ -440,7 +440,7 @@ impl Names {
     }
 
     /// `message` as a row, its text `text`.
-    async fn row(&mut self, core: &dyn Core, message: &Message, text: MessageText) -> MessageRow {
+    async fn row(&mut self, core: &dyn Core, message: &Message, text: ReadText) -> MessageRow {
         let me = core.me();
         let sender_name = match &message.sender {
             Some(sender) => self.name(core, sender, message.sender_name.as_deref()).await,

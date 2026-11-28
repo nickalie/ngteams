@@ -474,7 +474,9 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   for each text, fact (`title: value`) or button (a link's button as `title (link)`), in the order of the card,
   containers and columns too. This includes Adaptive, hero, thumbnail and Office 365 connector (`MessageCard`) cards,
   and the app cards of a link after the message's text. Dates are in UTC. A card with no text says "Sent a card". In
-  the table such a row starts with `(card)`; in JSON it has `"card": true`. `search` finds a card by its text.
+  `messages` and `search` mark each card message (also one whose cards cannot be read) and each message with a link's
+  app cards: in the table such a row starts with `(card)`; in JSON it has `"card": true`. The `message` event has no
+  such mark. `search` finds a card by its text.
 - **Downloads**: `messages` lists the attachments of each message after its text, `[<index>: <name>, <type>]`
   (in JSON, `attachments` with `index`, `name`, `kind` `file` or `picture`, and `file_type`; files first, then the
   pictures in the text). `download` saves them in `--out` (the current folder without it; made when it is not there). The app
