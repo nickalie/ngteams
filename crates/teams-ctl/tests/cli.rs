@@ -859,6 +859,7 @@ fn calendar_row(id: &str, subject: &str, joinable: bool) -> CalendarRow {
         joinable,
         location: joinable.then(|| s("Microsoft Teams Meeting")),
         organizer: Some(s("Avery Example")),
+        ..CalendarRow::default()
     }
 }
 
@@ -919,7 +920,7 @@ fn calendar_cases() -> Vec<Case> {
             args: &["calendar", "show", "AAMk-sync"],
             account: None,
             request: Request::CalendarEvent { event: s("AAMk-sync") },
-            response: Response::CalendarEvent(calendar_row("AAMk-sync", "Weekly sync", true)),
+            response: Response::CalendarEvent(Box::new(calendar_row("AAMk-sync", "Weekly sync", true))),
             shows: &[
                 "subject:   Weekly sync",
                 "location:  Microsoft Teams Meeting",

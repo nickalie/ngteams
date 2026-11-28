@@ -488,7 +488,7 @@ pub enum Response {
     Calendar {
         events: Vec<CalendarRow>,
     },
-    CalendarEvent(CalendarRow),
+    CalendarEvent(Box<CalendarRow>),
     /// The files a `download` saved, in the order of the message.
     Downloaded {
         files: Vec<SavedFile>,
@@ -880,7 +880,7 @@ pub struct CallRow {
 }
 
 /// A calendar event.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each is a flag of its own the event carries: all day, cancelled, a Teams meeting, joinable"
@@ -905,6 +905,53 @@ pub struct CalendarRow {
     pub location: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub organizer: Option<String>,
+    /// The fields below only `calendar show` fills, from the event read whole; a list leaves them out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organizer_address: Option<String>,
+    /// The account's answer, as the event card says it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<EventAnswer>,
+    /// Who it invites (the organizer not among them), required ones first as the event names them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attendees: Vec<AttendeeRow>,
+    /// The Teams meeting's join link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join_url: Option<String>,
+    /// The id of the series it belongs to, which `calendar show` also takes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub series: Option<String>,
+    /// How the series repeats, in the scheduling form's words ("Occurs every Tuesday starting 10/27/2026").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recurrence: Option<String>,
+    /// Its text, plain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
+/// Someone an event invites.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttendeeRow {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(default)]
+    pub optional: bool,
+    /// Their answer: only the organizer's copy of an event tells it, as the event card shows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<EventAnswer>,
+}
+
+/// An answer to an invitation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EventAnswer {
+    /// The account organizes it.
+    Organizer,
+    Accepted,
+    Tentative,
+    Declined,
+    NotResponded,
 }
 
 /// An error answer: its code and a message for a person.

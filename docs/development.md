@@ -426,7 +426,7 @@ ngteamsctl search <words…> [--limit N]
 ngteamsctl members <chat>
 ngteamsctl activity [--filter unread|mentions|reactions|missed-calls|replies|voicemail|apps] [--search <words>] [--limit N]
 ngteamsctl calendar [--today | --from YYYY-MM-DD [--to YYYY-MM-DD]]
-ngteamsctl calendar show <event-id>
+ngteamsctl calendar show <event-id>         # the event card's details: attendees, answers, join link, series, text
 
 ngteamsctl window show|hide|toggle|focus    # hide needs a tray item (no_tray)
 ngteamsctl activate
@@ -496,6 +496,13 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   the message's only attachment is saved. A picture is saved as `image-<index>` with the extension of its format. A
   name never leaves the folder, and a file that is there already (or its `<name>.part`) is replaced only with
   `--force` (else `file_exists`). A download not done in an hour answers `timeout` and goes on in the app. The read-only app downloads too: a download is a read.
+- **Calendar**: `calendar` rows give the time, the flags, the location and the organizer. `calendar show` reads
+  the event whole and adds what the event card shows: the organizer's address, the answer of the account, the
+  attendees (optional ones marked), the join link, the series id, how the series repeats (the summary of the
+  scheduling form; for an occurrence, from its series) and the text as plain text. Only the organizer's copy tells
+  the answer of each attendee, so the other copies give no attendee answers. In JSON, these are the optional fields
+  `organizer_address`, `response`, `attendees` (`name`, `address`, `optional`, `response`), `join_url`, `series`,
+  `recurrence` and `body`. An answer is `organizer`, `accepted`, `tentative`, `declined` or `not_responded`.
 - **Calls** are asked as the call buttons ask them (the one-call rule, the call window and devices apply) and answer
   with the call's row once the engine took it. `mute` and `camera` with `on`/`off` change only what differs.
   `join meeting` opens the pre-join as the calendar's Join does; `--now` joins at once (microphone on, camera off).

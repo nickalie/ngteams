@@ -155,6 +155,12 @@ impl Repeat {
         }
     }
 
+    /// Teams' summary of the series an event read gives, from its first day; `None` when that day doesn't read.
+    #[must_use]
+    pub fn summary_of(recurrence: &Recurrence) -> Option<String> {
+        Some(Self::of(recurrence).summary(civil_date(recurrence.start)?))
+    }
+
     /// Teams' summary of it, for a series starting on `start`: "Occurs every Tuesday starting 10/27/2026", with "until
     /// <date>" when it ends.
     #[must_use]
@@ -811,6 +817,24 @@ mod tests {
             weekly.moved(tuesday, date(10, 29)).pattern,
             Preset::Weekly.pattern(date(10, 29))
         );
+    }
+
+    #[test]
+    fn a_read_series_is_summed_up_from_its_first_day_as_written() {
+        let tuesday = date(10, 27);
+        let read = Repeat::preset(Preset::Weekly, tuesday).recurrence(tuesday, None);
+        assert_eq!(
+            Repeat::summary_of(&read).as_deref(),
+            Some("Occurs every Tuesday starting 10/27/2026")
+        );
+        let unreadable = Recurrence {
+            start: teams_proto::ZonedTime {
+                ms: i64::MAX,
+                offset_minutes: 60,
+            },
+            ..read
+        };
+        assert_eq!(Repeat::summary_of(&unreadable), None);
     }
 
     #[test]

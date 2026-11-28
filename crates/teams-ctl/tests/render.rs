@@ -7,10 +7,10 @@
 use std::collections::BTreeSet;
 
 use teams_ctl::protocol::{
-    AccountRow, AttachmentKind, AttachmentRow, CalendarRow, CallRow, ChannelRow, ChatRow, Connection, CtlError,
-    CtlEvent, EmailPerson, EmailRow, ErrorCode, EventLine, Hello, HistoryEnd, ManualStatus, MessageRow, MessageSource,
-    OutboxRow, OutboxState, OwnStatus, PersonRow, ReactionRow, Response, SavedFile, SyncReport, TeamRow, UiState, View,
-    WindowState,
+    AccountRow, AttachmentKind, AttachmentRow, AttendeeRow, CalendarRow, CallRow, ChannelRow, ChatRow, Connection,
+    CtlError, CtlEvent, EmailPerson, EmailRow, ErrorCode, EventAnswer, EventLine, Hello, HistoryEnd, ManualStatus,
+    MessageRow, MessageSource, OutboxRow, OutboxState, OwnStatus, PersonRow, ReactionRow, Response, SavedFile,
+    SyncReport, TeamRow, UiState, View, WindowState,
 };
 use teams_ctl::render::{error, event, kinds, text};
 
@@ -48,6 +48,7 @@ fn calendar_row(online: bool) -> CalendarRow {
         joinable: online,
         location: None,
         organizer: Some(s("Lab B")),
+        ..CalendarRow::default()
     }
 }
 
@@ -98,7 +99,7 @@ fn the_answers_of_later_commands_read_plainly() {
     );
     assert!(rows[1].ends_with("online,joinable  Standup"), "{calendar}");
     assert!(rows[2].ends_with("-                Standup"), "{calendar}");
-    let event = text(&Response::CalendarEvent(calendar_row(true)));
+    let event = text(&Response::CalendarEvent(Box::new(calendar_row(true))));
     assert!(
         event.contains("subject:   Standup\n") && event.contains("location:  -\n"),
         "{event}"
@@ -106,6 +107,60 @@ fn the_answers_of_later_commands_read_plainly() {
     assert!(event.ends_with("organizer: Lab B\n"), "{event}");
     assert_eq!(text(&Response::Done), "");
     assert_eq!(text(&Response::Subscribed), "");
+}
+
+#[test]
+fn an_event_read_whole_lists_its_details_its_attendees_and_its_text() {
+    let attendee = |name: Option<&str>, address: Option<&str>, optional, response| AttendeeRow {
+        name: name.map(s),
+        address: address.map(s),
+        optional,
+        response,
+    };
+    let event = CalendarRow {
+        organizer_address: Some(s("b@lab.invalid")),
+        response: Some(EventAnswer::Tentative),
+        attendees: vec![
+            attendee(Some("Lab C"), Some("c@lab.invalid"), false, Some(EventAnswer::Accepted)),
+            attendee(None, Some("d@lab.invalid"), true, Some(EventAnswer::NotResponded)),
+            attendee(
+                Some("e@lab.invalid"),
+                Some("e@lab.invalid"),
+                false,
+                Some(EventAnswer::Declined),
+            ),
+            attendee(Some("Lab F"), None, true, None),
+            attendee(None, None, false, Some(EventAnswer::Organizer)),
+        ],
+        join_url: Some(s("https://teams.microsoft.com/l/meetup-join/synthetic")),
+        series: Some(s("AAMk-series")),
+        recurrence: Some(s("Occurs every Tuesday")),
+        body: Some(s("Agenda\n\u{1b}[2J one\n")),
+        ..calendar_row(true)
+    };
+    let shown = text(&Response::CalendarEvent(Box::new(event)));
+    for line in [
+        "organizer:  Lab B <b@lab.invalid>\n",
+        "response:   tentative\n",
+        "recurrence: Occurs every Tuesday\n",
+        "series:     AAMk-series\n",
+        "join:       https://teams.microsoft.com/l/meetup-join/synthetic\n",
+        "attendee:   Lab C <c@lab.invalid> (accepted)\n",
+        "attendee:   d@lab.invalid (optional, not responded)\n",
+        "attendee:   e@lab.invalid (declined)\n",
+        "attendee:   Lab F (optional)\n",
+        "attendee:   - (organizer)\n",
+    ] {
+        assert!(shown.contains(line), "{line}: {shown}");
+    }
+    assert!(shown.ends_with("(organizer)\n\nAgenda\n\\u{1b}[2J one\n"), "{shown}");
+    let address_only = CalendarRow {
+        organizer: None,
+        organizer_address: Some(s("b@lab.invalid")),
+        body: Some(s("  ")),
+        ..calendar_row(false)
+    };
+    assert!(text(&Response::CalendarEvent(Box::new(address_only))).ends_with("organizer: b@lab.invalid\n"));
 }
 
 #[test]
@@ -657,7 +712,7 @@ fn rarer_answers_read_plainly() {
         organizer: None,
         ..calendar_row(false)
     };
-    let placed = text(&Response::CalendarEvent(placed));
+    let placed = text(&Response::CalendarEvent(Box::new(placed)));
     assert!(placed.contains("location:  Room 1\norganizer: -\n"), "{placed}");
     let calling = UiState {
         shown: None,

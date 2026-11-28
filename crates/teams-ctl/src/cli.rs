@@ -20,7 +20,7 @@
 //!   `hangup`, `mute` and `camera` answer with the call's row as the app shows it once the engine took the ask, the
 //!   app answering within [`CALL_ANSWER`]. They default to the account ringing or in the call.
 //! - **Calendar**: `calendar` lists the account's events of today, or of the days `--from` and `--to` name;
-//!   `calendar show <id>` one event. `join meeting <id>` opens a meeting's pre-join as the calendar's Join does, and
+//!   `calendar show <id>` one event read whole, as the event card shows it. `join meeting <id>` opens a meeting's pre-join as the calendar's Join does, and
 //!   with `--now` joins it as the pre-join's Join now does, answering with the call's row as `join` does.
 //! - **Events**: `events --follow` prints every event the filters let through until the app closes the stream;
 //!   without `--follow`, `events` prints the first one and exits. `wait <kind>` prints the first event of that kind
@@ -397,7 +397,9 @@ pub enum JoinCommand {
 /// `calendar show`.
 #[derive(Debug, Subcommand)]
 pub enum CalendarCommand {
-    /// One event, by its id as `calendar` lists it.
+    /// One event, by its id as `calendar` lists it, read whole as the event card shows it: the organizer and your
+    /// answer, how its series repeats, its join link, who it invites (optional ones marked) and, on your own meeting,
+    /// how each answered, and its text.
     Show { event: String },
 }
 

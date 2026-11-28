@@ -170,6 +170,8 @@ Meeting"`).
 ### Changing, cancelling, deleting
 
 - `GET v2.0/me/calendars/events/<id>?shouldDecryptData=true` (a read): one event whole, as the form opens on it.
+  `ngteamsctl calendar show` uses the same read. For an occurrence, it also reads the series master, because only
+  the master carries the recurrence.
 - `PUT v2.0/me/calendars/events/<id>?isOnlineMeeting=<bool>` with `{"updatedCalendarEvent": <the event>}`: the
   event as read with the form's fields over it; its update goes to every attendee (and a cancellation to one taken
   off). The bundle expects `204`.

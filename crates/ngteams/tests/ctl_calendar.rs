@@ -31,7 +31,9 @@ use teams_core::account::AccountEngine;
 use teams_core::engine::{self, EngineHandle, EngineOptions, Parts};
 use teams_core::{CallFloor, Outbox};
 use teams_ctl::ClientError;
-use teams_ctl::protocol::{CalendarRow, CtlError, ErrorCode, Request, Response, calendar_window, local_today};
+use teams_ctl::protocol::{
+    AttendeeRow, CalendarRow, CtlError, ErrorCode, EventAnswer, Request, Response, calendar_window, local_today,
+};
 use teams_mock::{CHAT_BASE, ChatServiceMock, ECHO, LAB_A, MIDDLE_TIER_BASE, TENANT};
 use teams_proto::{Author, Client, Credentials, HttpTransport, MAX_CALENDAR_WINDOW_MS, Mri};
 use teams_store::Store;
@@ -342,12 +344,90 @@ fn an_event_s_details_are_read_whole_and_an_unknown_one_is_the_engine_s_error() 
     }) else {
         panic!("the event wasn't read");
     };
-    assert_eq!(shown, listed);
+    assert_eq!(
+        CalendarRow {
+            id: shown.id.clone(),
+            subject: shown.subject.clone(),
+            start: shown.start,
+            end: shown.end,
+            all_day: shown.all_day,
+            cancelled: shown.cancelled,
+            online: shown.online,
+            joinable: shown.joinable,
+            location: shown.location.clone(),
+            organizer: shown.organizer.clone(),
+            ..CalendarRow::default()
+        },
+        listed,
+        "the list's row, and more"
+    );
+    // someone else's meeting: the account's answer, and no answer of the others (only the organizer's copy has them)
+    assert_eq!(shown.response, Some(EventAnswer::Accepted));
+    assert_eq!(shown.organizer_address.as_deref(), Some("someone@example.com"));
+    assert_eq!((shown.series.as_deref(), shown.recurrence.as_deref()), (None, None));
+    assert!(
+        shown.attendees.iter().all(|attendee| attendee.response.is_none()),
+        "{shown:#?}"
+    );
+    assert_eq!(shown.attendees.len(), 4, "{shown:#?}");
     let unknown = lab.refused(Request::CalendarEvent {
         event: "AAMkNoSuchEvent".to_owned(),
     });
     assert_eq!(unknown.code, ErrorCode::Engine, "{unknown:?}");
     assert!(unknown.message.contains("AAMkNoSuchEvent"), "{}", unknown.message);
+}
+
+#[test]
+fn an_own_series_occurrence_shows_its_text_attendees_answers_join_link_and_recurrence() {
+    let lab = Lab::start(true);
+    let listed = lab.event("Code review");
+    let Ok(Response::CalendarEvent(shown)) = lab.ask(Request::CalendarEvent {
+        event: listed.id.clone(),
+    }) else {
+        panic!("the event wasn't read");
+    };
+    assert_eq!(shown.body.as_deref(), Some("Made-up notes"));
+    assert_eq!(shown.response, Some(EventAnswer::Organizer));
+    assert_eq!(shown.series.as_deref(), Some("AAMkMadeUpSeriesreview"));
+    let recurrence = shown.recurrence.as_deref().unwrap_or_default();
+    assert!(
+        recurrence.starts_with("Occurs every Wednesday starting "),
+        "{recurrence}"
+    );
+    assert!(
+        shown.join_url.as_deref().is_some_and(
+            |link| link.starts_with("https://teams.microsoft.com/l/meetup-join/19%3ameeting_MadeUpMeeting")
+        ),
+        "{shown:#?}"
+    );
+    let attendee = |name: &str, address: &str, optional, response| AttendeeRow {
+        name: Some(name.to_owned()),
+        address: Some(address.to_owned()),
+        optional,
+        response: Some(response),
+    };
+    assert_eq!(
+        shown.attendees,
+        [
+            attendee("Avery Example", "avery@example.com", false, EventAnswer::Accepted),
+            attendee("Lab Account A", "a@example.com", false, EventAnswer::Accepted),
+            attendee("Riley Placeholder", "riley@example.com", false, EventAnswer::Tentative),
+            attendee("Casey Madeup", "casey@example.com", true, EventAnswer::NotResponded),
+        ]
+    );
+    // the list's rows stay as they were
+    let json = serde_json::to_value(&listed).unwrap();
+    for detail in [
+        "response",
+        "attendees",
+        "join_url",
+        "series",
+        "recurrence",
+        "body",
+        "organizer_address",
+    ] {
+        assert!(json.get(detail).is_none(), "{detail}: {json}");
+    }
 }
 
 #[test]
@@ -412,4 +492,89 @@ fn an_app_without_calls_lists_no_event_joinable_and_joins_none() {
     let event = lab.event("Product all hands");
     assert_eq!(lab.refused(join_meeting(&event.id, false)).code, ErrorCode::NoCalling);
     assert_eq!(lab.refused(join_meeting(&event.id, true)).code, ErrorCode::NoCalling);
+}
+
+/// A made-up event of an attendee's copy, read from `entry`'s fields over a plain one.
+fn full_event(entry: &serde_json::Value, body_html: Option<&str>, optional: &[&str]) -> teams_core::FullEvent {
+    let mut fields = serde_json::json!({
+        "objectId": "AAMkMadeUpCopy",
+        "subject": "Copy",
+        "startTime": "2026-11-02T10:00:00Z",
+        "endTime": "2026-11-02T10:30:00Z",
+        "organizerName": "Riley Placeholder",
+        "organizerAddress": "Riley@example.com",
+        "attendees": [
+            {"name": "Riley Placeholder", "address": "riley@example.com", "status": {"response": "Organizer"}},
+            {"name": "Avery Example", "address": "Avery@example.com", "status": {"response": "Accepted"}},
+            {"address": "casey@example.com", "type": "Optional", "status": {"response": "Declined"}},
+        ],
+    });
+    for (key, value) in entry.as_object().unwrap() {
+        fields[key] = value.clone();
+    }
+    teams_core::FullEvent {
+        event: teams_core::CalendarEvent::stored(&fields.to_string()).unwrap(),
+        raw: serde_json::Map::new(),
+        body_html: body_html.map(str::to_owned),
+        reminder_minutes: None,
+        categories: Vec::new(),
+        optional: optional.iter().map(|address| (*address).to_owned()).collect(),
+        recurrence: None,
+    }
+}
+
+#[test]
+fn an_attendee_s_copy_shows_no_answers_of_others_and_its_preview_for_an_empty_text() {
+    use ngteams::ctl::calendar::shown;
+    let copy = full_event(
+        &serde_json::json!({"myResponseType": "None", "eventType": "Occurrence", "bodyPreview": " Made-up preview "}),
+        Some("<div> </div>"),
+        &["avery@example.com"],
+    );
+    let row = shown(&copy, None, true);
+    assert_eq!(row.response, None, "no answer asked");
+    assert_eq!(row.body.as_deref(), Some("Made-up preview"));
+    assert_eq!(row.recurrence.as_deref(), Some("Part of a series"));
+    assert_eq!(row.organizer_address.as_deref(), Some("Riley@example.com"));
+    let attendees: Vec<(Option<&str>, bool)> = row
+        .attendees
+        .iter()
+        .map(|attendee| (attendee.address.as_deref(), attendee.optional))
+        .collect();
+    assert_eq!(
+        attendees,
+        [(Some("Avery@example.com"), true), (Some("casey@example.com"), true)],
+        "the organizer left out, the optional ones by type or by the event's list"
+    );
+    assert!(row.attendees.iter().all(|attendee| attendee.response.is_none()));
+    for (answer, expected) in [
+        ("NotResponded", Some(EventAnswer::NotResponded)),
+        ("Declined", Some(EventAnswer::Declined)),
+        ("Organizer", Some(EventAnswer::Organizer)),
+        ("SomethingNew", None),
+    ] {
+        let copy = full_event(&serde_json::json!({"myResponseType": answer}), None, &[]);
+        let row = shown(&copy, Some("Occurs every day".to_owned()), false);
+        assert_eq!(row.response, expected, "{answer}");
+        assert_eq!(row.body, None);
+        assert_eq!(row.recurrence.as_deref(), Some("Occurs every day"));
+    }
+    let organizer = full_event(
+        &serde_json::json!({"isOrganizer": true, "organizerAddress": "", "myResponseType": "Organizer"}),
+        Some("<p>Line one</p><p>Line two</p>"),
+        &[],
+    );
+    let row = shown(&organizer, None, false);
+    assert_eq!(row.body.as_deref(), Some("Line one\nLine two"));
+    assert_eq!(row.recurrence, None);
+    let answers: Vec<Option<EventAnswer>> = row.attendees.iter().map(|attendee| attendee.response).collect();
+    assert_eq!(
+        answers,
+        [
+            Some(EventAnswer::Organizer),
+            Some(EventAnswer::Accepted),
+            Some(EventAnswer::Declined)
+        ],
+        "without the organizer's address, nobody is left out"
+    );
 }

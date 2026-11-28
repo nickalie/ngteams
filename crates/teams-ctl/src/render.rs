@@ -14,9 +14,10 @@ use std::io::{self, Write};
 use chrono::{DateTime, Local};
 
 use crate::protocol::{
-    AccountRow, ActivityRow, AppStatus, AttachmentKind, AttachmentRow, CalendarRow, CallRow, ChatRow, CtlError,
-    CtlEvent, EmailPerson, EmailRow, EventLine, HistoryEnd, MemberRow, MessageRow, OutboxRow, OutboxState, OwnStatus,
-    PersonRow, ReactionRow, Response, SavedFile, SyncReport, TeamRow, UiState, Unread, View, WindowState,
+    AccountRow, ActivityRow, AppStatus, AttachmentKind, AttachmentRow, AttendeeRow, CalendarRow, CallRow, ChatRow,
+    CtlError, CtlEvent, EmailPerson, EmailRow, EventAnswer, EventLine, HistoryEnd, MemberRow, MessageRow, OutboxRow,
+    OutboxState, OwnStatus, PersonRow, ReactionRow, Response, SavedFile, SyncReport, TeamRow, UiState, Unread, View,
+    WindowState,
 };
 
 /// Print `response` for a person.
@@ -601,16 +602,73 @@ fn calendar_table(events: &[CalendarRow]) -> String {
     table(&["ID", "START", "END", "FLAGS", "SUBJECT"], rows)
 }
 
+/// One event: its row's fields, then what `calendar show` read whole (each when there is one), each attendee on a line
+/// of its own, and its text below, its line breaks kept.
 fn calendar_event(event: &CalendarRow) -> String {
-    record(&[
+    let organizer = match (&event.organizer, &event.organizer_address) {
+        (Some(name), Some(address)) if name != address => format!("{name} <{address}>"),
+        (Some(name), _) => name.clone(),
+        (None, Some(address)) => address.clone(),
+        (None, None) => "-".to_owned(),
+    };
+    let mut fields = vec![
         ("id", event.id.clone()),
         ("subject", event.subject.clone()),
         ("start", stamp(event.start)),
         ("end", stamp(event.end)),
         ("flags", calendar_flags(event)),
         ("location", event.location.clone().unwrap_or_else(|| "-".to_owned())),
-        ("organizer", event.organizer.clone().unwrap_or_else(|| "-".to_owned())),
-    ])
+        ("organizer", organizer),
+    ];
+    let detail = [
+        ("response", event.response.map(|answer| answer_words(answer).to_owned())),
+        ("recurrence", event.recurrence.clone()),
+        ("series", event.series.clone()),
+        ("join", event.join_url.clone()),
+    ];
+    fields.extend(detail.into_iter().filter_map(|(key, value)| Some((key, value?))));
+    fields.extend(
+        event
+            .attendees
+            .iter()
+            .map(|attendee| ("attendee", attendee_line(attendee))),
+    );
+    let mut text = record(&fields);
+    if let Some(body) = event.body.as_deref().map(str::trim).filter(|body| !body.is_empty()) {
+        let _ = writeln!(text, "\n{}", shown(body, true));
+    }
+    text
+}
+
+/// An attendee as `calendar show` lists them: `Name <address>`, then optional and their answer when known.
+fn attendee_line(attendee: &AttendeeRow) -> String {
+    let who = match (&attendee.name, &attendee.address) {
+        (Some(name), Some(address)) if name != address => format!("{name} <{address}>"),
+        (Some(who), _) | (None, Some(who)) => who.clone(),
+        (None, None) => "-".to_owned(),
+    };
+    let notes: Vec<&str> = [
+        attendee.optional.then_some("optional"),
+        attendee.response.map(answer_words),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if notes.is_empty() {
+        who
+    } else {
+        format!("{who} ({})", notes.join(", "))
+    }
+}
+
+fn answer_words(answer: EventAnswer) -> &'static str {
+    match answer {
+        EventAnswer::Organizer => "organizer",
+        EventAnswer::Accepted => "accepted",
+        EventAnswer::Tentative => "tentative",
+        EventAnswer::Declined => "declined",
+        EventAnswer::NotResponded => "not responded",
+    }
 }
 
 fn calendar_flags(event: &CalendarRow) -> String {
