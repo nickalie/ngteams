@@ -7,7 +7,7 @@ added: 2026-11-16
 
 Step 4 of `own_server_nodes_window` checks that `srv-b` can read the file `srv-a` sent on the other node. Its probe
 calls `EngineRequests::file_stream` in the app process. It does not click the card. The card's own actions for an own
-server's file (a click, "Open in desktop app", "Download": through the engine, `teams_ui::files::OwnFile`) are tested
+server's file (a click, "Open in desktop app", "Download": through the engine, `teams_ui::files::EngineFile`) are tested
 in `crates/teams-ui/tests/chat_view/files.rs` on GPUI's test platform, with a fake engine.
 
 To test them end to end, the window test needs:

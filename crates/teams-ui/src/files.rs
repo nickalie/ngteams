@@ -609,13 +609,12 @@ impl FileCard {
 
     /// The file read through `source`'s engine by its sharing link, else its own: when it has an engine and a link.
     fn engine_file(&self) -> Option<EngineFile> {
-        let link = self.file.open_link()?.to_owned();
-        Some(EngineFile::new(link, self.file.name.clone(), self.source.clone()?))
+        EngineFile::of(&self.file, self.source.as_ref()?)
     }
 
     /// How "Download" gets the file (see [`Download`]); none when it has no link.
     fn download(&self) -> Option<Download> {
-        download_of_file(&self.file, self.source.as_ref())
+        Download::of(&self.file, self.source.as_ref())
     }
 
     /// How far the file's download through its engine got, as a line under its card; none without one this run.
@@ -688,24 +687,19 @@ pub(crate) enum Download {
 }
 
 impl Download {
+    /// How "Download" gets `file`, read through `source`'s engine when there is one.
+    pub(crate) fn of(file: &SharedFile, source: Option<&PictureSource>) -> Option<Self> {
+        match source {
+            Some(source) => EngineFile::of(file, source).map(Self::Engine),
+            None => file.download_link().map(Self::Browser),
+        }
+    }
+
     pub(crate) fn start(&self, cx: &mut App) {
         match self {
             Self::Engine(file) => file.download(cx),
             Self::Browser(link) => cx.open_url(link),
         }
-    }
-}
-
-/// How "Download" gets `file`, read through `source`'s engine when there is one (see [`Download`]).
-pub(crate) fn download_of_file(file: &SharedFile, source: Option<&PictureSource>) -> Option<Download> {
-    let link = file.open_link()?.to_owned();
-    match source {
-        Some(source) => Some(Download::Engine(EngineFile::new(
-            link,
-            file.name.clone(),
-            source.clone(),
-        ))),
-        None => file.download_link().map(Download::Browser),
     }
 }
 
@@ -812,6 +806,12 @@ impl EngineFile {
     #[must_use]
     pub fn new(link: String, name: String, source: PictureSource) -> Self {
         Self { link, name, source }
+    }
+
+    /// `file` read through the engine of `source` by its sharing link, else its own; none when it has no link.
+    pub(crate) fn of(file: &SharedFile, source: &PictureSource) -> Option<Self> {
+        let link = file.open_link()?.to_owned();
+        Some(Self::new(link, file.name.clone(), source.clone()))
     }
 
     /// Open in desktop app: saved in a new folder (see [`new_folder_in`]) in a folder of the user's alone (the

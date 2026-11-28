@@ -149,7 +149,7 @@ impl<C: Credentials + 'static> FileContents<C> {
                 // asked for and let go before it was answered (the player sought elsewhere)
                 () = reply.closed() => return,
             };
-            let (body, start) = match opened {
+            let opened = match opened {
                 Ok(opened) => opened,
                 Err(error) => {
                     let _ = reply.send(Err(error));
@@ -157,6 +157,15 @@ impl<C: Credentials + 'static> FileContents<C> {
                 }
             };
             let (tell, pieces) = mpsc::channel(STREAM_PIECES);
+            let Some((body, start)) = opened else {
+                let _ = reply.send(Ok(FileStream {
+                    offset,
+                    len: 0,
+                    total: 0,
+                    pieces,
+                }));
+                return;
+            };
             let stream = FileStream {
                 offset,
                 len: start.len,
@@ -239,23 +248,26 @@ async fn hand_on(mut body: FileBody, tell: &mpsc::Sender<Result<Vec<u8>, EngineE
 }
 
 /// A stream of the part of `file` asked for, as [`read_range`] reads a part: at the link known, else one read now; a
-/// link the host refused is read again once.
+/// link the host refused is read again once. `None` for an empty file, which has no byte to ask for.
 async fn open_stream<C: Credentials + 'static>(
     client: &Arc<Client<HttpTransport<C>>>,
     links: &Links,
     file: &FileDownload,
     offset: u64,
     len: u64,
-) -> Result<(FileBody, StreamStart), EngineError> {
+) -> Result<Option<(FileBody, StreamStart)>, EngineError> {
     let mut fresh = false;
     loop {
         let content = link(client, links, file).await?;
+        if content.size == 0 {
+            return Ok(None);
+        }
         // a read past the end asks for the file's last byte, which tells its size
         let len = len.min(content.size.saturating_sub(offset)).max(1);
         match client.transport().file_stream(&content.link, offset, len).await {
             Ok(body) => {
                 let start = body.start().ok_or(EngineError::FileUnavailable)?;
-                return Ok((body, start));
+                return Ok(Some((body, start)));
             }
             Err(HttpError::Status(answer)) if matches!(answer.status(), 401 | 403) && !fresh => {
                 // the link expired: forget it and ask Graph again

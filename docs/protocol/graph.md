@@ -83,9 +83,11 @@ reads, and a file the account can't read is just a card without its picture.
 A video a message carries is played in its card, as Teams plays it. The web client plays it through SharePoint's own
 media API (Stream's player, a SharePoint token); the native client asks for no SharePoint token and reads the file's
 bytes through Graph's documented download link instead. No capture or probe shows these reads either: they are our own
-reach, and a file the account can't read says so in its card and offers the browser.
+reach, and a file the account can't read says so in its card and offers the browser. "Download" of a file card or of
+the video player reads the same way (streamed, below) and saves the bytes, with a line under the card; an empty file
+(`size` 0) asks the host for no byte.
 
-- **The item**: `GET https://graph.microsoft.com/v1.0/shares/u!<sharing link>/driveItem` with the account's Graph
+- **The item**: `GET https://graph.microsoft.com/v1.0/shares/u!<sharing link, else the file's own address>/driveItem` with the account's Graph
   token and `Prefer: redeemSharingLink`, the sharing token as the thumbnails' (`teams_proto::FileDownload`). The answer is documented as the file's
   `driveItem`; the native client reads its `size` and its `@microsoft.graph.downloadUrl`, "a URL that can be used to
   download this file's content", pre-authenticated (a `tempauth` in its query) and short-lived (about an hour). The

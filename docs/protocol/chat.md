@@ -1122,8 +1122,9 @@ its shape (two files, made-up names and links). No lab capture holds a received 
   has content it can't show. It draws the card from the name, the extension and the
   links (the line under the name is the entry's `chicletBreadcrumbs`, `<team> > <channel>`, as b's Teams drew
   `personal > <owner's alias>` in the lab capture; else the path of the file's site), opens the sharing link in the
-  browser on a click, offers "Open in browser", "Download" (the sharing link with
-  `download=1`) and "Copy link", and reads a video's or an image's picture from Graph by the sharing link
+  browser on a click, offers "Open in browser", "Download" (saved through the account's engine: Graph's item by
+  the sharing link, else by the file's own address, then the download link, with a line under the card; the sharing
+  link with `download=1` only for a card drawn with no engine) and "Copy link", and reads a video's or an image's picture from Graph by the sharing link
   ([graph.md](graph.md#a-shared-files-thumbnail)). A video is played in its card (by GStreamer),
   its bytes read by ranges at the download link Graph hands out ([graph.md](graph.md#a-shared-files-content)); both
   Graph reads redeem a link for specific people as Teams' read does ([graph.md](graph.md#a-link-for-specific-people)). Share

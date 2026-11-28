@@ -1572,7 +1572,7 @@ impl VideoPlayer {
     fn more(&self) -> AnyElement {
         let id = self.id.clone();
         let open = self.file.open_link().map(str::to_owned);
-        let download = crate::files::download_of_file(&self.file, Some(&self.source));
+        let download = crate::files::Download::of(&self.file, Some(&self.source));
         let button = Button::new(SharedString::from(format!("video-more-button-{id}")))
             .ghost()
             .icon(Glyph::MORE.icon().size(px(18.0)).text_color(gpui::rgb(ON_VIDEO)))

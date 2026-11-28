@@ -363,3 +363,19 @@ async fn a_file_with_no_sharing_link_is_streamed_whole_by_its_own_address() {
     );
     rig.handle.shutdown();
 }
+
+#[tokio::test]
+async fn an_empty_file_streams_no_bytes_and_asks_its_host_for_none() {
+    let rig = running_engine().await;
+    answer(
+        &rig.server,
+        &item_path(),
+        ResponseTemplate::new(200).set_body_json(item(0)),
+    )
+    .await;
+    let mut stream = rig.handle.file_stream(SHARE, 0, 1_000).await.unwrap();
+    assert_eq!((stream.offset, stream.len, stream.total), (0, 0, 0));
+    assert!(collect(&mut stream).await.is_empty());
+    assert_eq!(count(&rig.server, DOWNLOAD).await, 0);
+    rig.handle.shutdown();
+}
