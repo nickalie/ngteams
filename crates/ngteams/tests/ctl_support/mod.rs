@@ -158,9 +158,27 @@ pub fn pumped<T: Send + 'static>(cx: &TestAppContext, work: impl FnOnce() -> T +
     thread.join().unwrap()
 }
 
+/// [`pumped`] while GPUI's clock goes on by `step` at each turn: work that waits on an app timer.
+pub fn pumped_advancing<T: Send + 'static>(
+    cx: &TestAppContext,
+    step: Duration,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    let thread = thread::spawn(work);
+    pump_while_running(cx, &thread, Some(step));
+    thread.join().unwrap()
+}
+
 pub fn pump_until_done<T>(cx: &TestAppContext, thread: &JoinHandle<T>) {
+    pump_while_running(cx, thread, None);
+}
+
+fn pump_while_running<T>(cx: &TestAppContext, thread: &JoinHandle<T>, step: Option<Duration>) {
     let start = Instant::now();
     while !thread.is_finished() {
+        if let Some(step) = step {
+            cx.executor().advance_clock(step);
+        }
         cx.run_until_parked();
         assert!(start.elapsed() < WAIT, "the client wasn't answered in time");
         thread::sleep(Duration::from_millis(2));

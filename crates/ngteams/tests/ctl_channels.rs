@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::Parser as _;
-use ctl_support::{pump_until, pumped, quit};
+use ctl_support::{pump_until, pumped, pumped_advancing, quit};
 use gpui::TestAppContext;
 use ngteams::accounts::{Runner, Started};
 use ngteams::accounts_file::{PersonalAccount, PersonalPaths};
@@ -137,17 +137,22 @@ impl Lab {
 
     /// `ngteamsctl <args>` as the binary runs it: its exit code, its stdout and its stderr.
     fn ctl(&self, args: &[&str]) -> (u8, String, String) {
+        pumped(&self.cx, self.ctl_run(args))
+    }
+
+    /// The run of `ngteamsctl <args>` on the client's own thread.
+    fn ctl_run(&self, args: &[&str]) -> impl FnOnce() -> (u8, String, String) + Send + 'static {
         let args: Vec<String> = ["ngteamsctl", "--socket", self.socket.to_str().unwrap()]
             .into_iter()
             .chain(args.iter().copied())
             .map(str::to_owned)
             .collect();
-        pumped(&self.cx, move || {
+        move || {
             let parsed = Cli::try_parse_from(&args).unwrap();
             let (mut out, mut err) = (Vec::new(), Vec::new());
             let exit = cli::run(&parsed, &Env::default(), &mut out, &mut err) as u8;
             (exit, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
-        })
+        }
     }
 
     /// The JSON answer of `ngteamsctl --json <args>`, which must succeed.
@@ -453,28 +458,7 @@ fn teams_says_at_once_when_their_read_failed() {
 impl Lab {
     /// [`Self::ctl`] while the app's clock goes on by `step` at each turn: a read that waits on an app timer.
     fn ctl_ticking(&self, args: &[&str], step: Duration) -> (u8, String, String) {
-        let args: Vec<String> = ["ngteamsctl", "--socket", self.socket.to_str().unwrap()]
-            .into_iter()
-            .chain(args.iter().copied())
-            .map(str::to_owned)
-            .collect();
-        let thread = std::thread::spawn(move || {
-            let parsed = Cli::try_parse_from(&args).unwrap();
-            let (mut out, mut err) = (Vec::new(), Vec::new());
-            let exit = cli::run(&parsed, &Env::default(), &mut out, &mut err) as u8;
-            (exit, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
-        });
-        let start = Instant::now();
-        while !thread.is_finished() {
-            self.cx.executor().advance_clock(step);
-            self.cx.run_until_parked();
-            assert!(
-                start.elapsed() < Duration::from_secs(60),
-                "the client was not answered in time"
-            );
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        thread.join().unwrap()
+        pumped_advancing(&self.cx, step, self.ctl_run(args))
     }
 
     /// The posts the mock took: a write that reached the service.
@@ -552,13 +536,23 @@ fn a_channel_sync_slower_than_its_bound_answers_the_stored_rows_and_goes_on() {
     assert!(!out.contains(LATE_POST), "{answer}");
     assert_eq!(row(&answer, POST)["replies"], 2, "the stored rows: {answer}");
 
-    // the slow sync goes on in the engine and stores the late post
-    std::thread::sleep(Duration::from_secs(5));
-    let stored = lab.json(&["messages", TEAM_CHANNEL, "--limit", "1"]);
-    assert!(
-        rows(&stored)[0]["text"].as_str().unwrap().contains(LATE_POST),
-        "{stored}"
-    );
+    // the slow sync goes on in the engine and stores the late post; a store read starts no sync of its own
+    let start = Instant::now();
+    loop {
+        let stored = lab.requests.messages(TEAM_CHANNEL, None, 1).blocking_wait().unwrap();
+        if stored
+            .messages
+            .first()
+            .is_some_and(|newest| newest.content.contains(LATE_POST))
+        {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "the slow sync stored no late post: {stored:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 #[test]
