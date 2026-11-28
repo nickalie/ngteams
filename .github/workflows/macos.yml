@@ -79,7 +79,9 @@ jobs:
         run: >-
           cargo test --locked -p ngteams --lib accounts_file::paths && cargo test --locked -p ngteams --test lab_mode
       - name: Sign-in guard and worker protocol, without a window
-        run: cargo test --locked -p teams-signin --lib --test classify --test gate -- --test-threads=1
+        run: cargo test --locked -p teams-signin --lib --test gate -- --test-threads=1
+      - name: The sign-in bound's request rules, host list and host gate
+        run: cargo test --locked -p teams-app --test classify --test signin_bound -- --test-threads=1
       - name: Notifications' tags and actions, and the Dock's badge server (no notification center reached)
         run: cargo test --locked -p teams-ui --lib desktop::macos
       # the factory's H.264 codec list aborts a binary linked without -ObjC (.cargo/config.toml)

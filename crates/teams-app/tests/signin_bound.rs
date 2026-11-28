@@ -7,7 +7,7 @@ use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 
-use teams_app::signin_bound::egress::{GateLog, HostGate, request_line};
+use teams_app::signin_bound::egress::{BlackHole, GateLog, HostGate};
 use teams_app::signin_bound::hosts::{ENTRA_HOSTS, SignInHosts};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -109,13 +109,27 @@ fn this_test_build_has_the_offline_bounds() {
 }
 
 #[test]
-fn a_request_line_without_its_fields_gives_question_marks() {
-    assert_eq!(
-        request_line("CONNECT a.example.test:443 HTTP/1.1"),
-        ("CONNECT", "a.example.test:443")
-    );
-    assert_eq!(request_line("GET"), ("GET", "?"));
-    assert_eq!(request_line(""), ("?", "?"));
+fn the_black_hole_refuses_and_logs_each_request_line_with_question_marks_for_missing_fields() -> TestResult {
+    let log = Arc::new(Recorded::default());
+    let proxy = BlackHole::start(Arc::clone(&log))?;
+    let address = proxy.uri().trim_start_matches("http://").to_owned();
+    for (request, logged) in [
+        (
+            "CONNECT a.example.test:443 HTTP/1.1\r\n\r\n",
+            "refuse CONNECT a.example.test:443",
+        ),
+        ("GET\r\n\r\n", "refuse GET ?"),
+        ("", "refuse ? ?"),
+    ] {
+        let mut stream = TcpStream::connect(&address)?;
+        stream.write_all(request.as_bytes())?;
+        stream.shutdown(std::net::Shutdown::Write)?;
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer)?;
+        assert!(answer.starts_with("HTTP/1.1 403"), "{request:?}: {answer}");
+        assert_eq!(log.lines().last().map(String::as_str), Some(logged));
+    }
+    Ok(())
 }
 
 /// A local server that answers each connection's first line with `echo: <line>` and closes.

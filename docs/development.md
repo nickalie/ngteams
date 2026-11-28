@@ -902,7 +902,8 @@ synchronous/POST redirects, main/frame/immediate-about-blank constructor restric
 proxy tunnel counts, redirect-code redaction and profile/process cleanup. Synthetic evidence stays in the ignored
 `target/windows-signin-smoke-*` directories. No account, credential or tenant is used.
 
-Display-free Windows checks use `cargo test -p teams-signin --lib --test classify --test gate --test native_worker`.
+Display-free Windows checks use `cargo test -p teams-signin --lib --test gate --test native_worker` and
+`cargo test -p teams-app --test classify --test signin_bound`.
 The normal lab application builds and opens the native Microsoft sign-in page. Signed-in feature validation is separate from these offline synthetic contracts.
 
 ### Windows application contracts

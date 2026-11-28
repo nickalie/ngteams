@@ -30,10 +30,11 @@ fn bound_windows_refuse_foreign_pages_and_report_data_failures_before_the_servic
     let again = cx.update(|cx| super::windows_for(&setup, cx));
     let refused = window(&setup, &windows)(request("https://example.test/authorize"));
     assert!(matches!(refused, SignInAnswer::Failed(reason) if reason.contains("isn't on the sign-in window's hosts")));
-    let mut broken = setup.clone();
     let file = root.path().join("not-a-directory");
     std::fs::write(&file, b"_synthetic obstruction").unwrap();
-    broken.paths = crate::accounts_file::PersonalPaths::new(file.clone(), file);
+    let broken = setup
+        .clone()
+        .with_paths(crate::accounts_file::PersonalPaths::new(file.clone(), file));
     let refused = window(&broken, &again)(request("https://login.microsoftonline.com/authorize"));
     assert!(matches!(refused, SignInAnswer::Failed(reason) if reason.contains("personal data dir")));
     assert_eq!(cx.update(|cx| cx.windows().len()), 0);

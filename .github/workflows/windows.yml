@@ -128,5 +128,7 @@ jobs:
       - name: Lints
         run: cargo clippy --locked -p teams-signin --all-targets -- -D warnings
       - name: Offline guard and worker tests without a GUI or tenant
-        run: cargo test --locked -p teams-signin --lib --test classify --test gate --test native_worker
+        run: cargo test --locked -p teams-signin --lib --test gate --test native_worker
+      - name: The sign-in bound's request rules, host list and host gate
+        run: cargo test --locked -p teams-app --test classify --test signin_bound
       # Native browser windows are exercised only in the explicitly authorized win11 VM console.

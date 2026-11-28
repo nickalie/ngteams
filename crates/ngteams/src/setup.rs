@@ -6,7 +6,7 @@
 //! (`crate::signin`). A build of one account's `account.toml` and `region.json` is moved into these files when the
 //! setup is made (`PersonalPaths::migrate_single_account`).
 
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 
 use crate::accounts_file::{FromEnv as _, OwnServer, PersonalAccount, PersonalError, PersonalPaths};
 use crate::secrets::AppSecrets;
@@ -34,12 +34,6 @@ impl Deref for Setup {
     }
 }
 
-impl DerefMut for Setup {
-    fn deref_mut(&mut self) -> &mut AccountFiles {
-        &mut self.files
-    }
-}
-
 impl Setup {
     /// From the environment, migrating any earlier single-account files.
     ///
@@ -59,6 +53,13 @@ impl Setup {
             files: AccountFiles::new(paths),
             secrets: AppSecrets::personal(),
         })
+    }
+
+    /// The same setup over other paths, as they are (no migration).
+    #[cfg(test)]
+    pub(crate) fn with_paths(mut self, paths: PersonalPaths) -> Self {
+        self.files = AccountFiles::new(paths);
+        self
     }
 
     /// Uses the startup-selected credential backend for every account operation.

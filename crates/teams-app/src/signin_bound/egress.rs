@@ -1,6 +1,6 @@
 //! The sign-in window's network session goes only through its host gate. The gate opens HTTPS tunnels to the
 //! configured sign-in hosts and logs each connection without headers or bodies, through the window's [`GateLog`] (the
-//! desktop's guard). The desktop's offline tests use a refusing proxy of `teams-signin` instead.
+//! desktop's guard). Offline tests use the refusing proxy (`BlackHole`, only with `test-support`) instead.
 
 use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
@@ -11,15 +11,14 @@ use std::time::Duration;
 use super::hosts::SignInHosts;
 
 /// How long the gate (and a refusing proxy) waits for a connection's request line.
-pub const READ_TIMEOUT: Duration = Duration::from_secs(5);
+const READ_TIMEOUT: Duration = Duration::from_secs(5);
 /// The longest request line it reads.
-pub const LINE_LIMIT: u64 = 8 * 1024;
+const LINE_LIMIT: u64 = 8 * 1024;
 /// The answer to a connection the gate (or a refusing proxy) refuses.
-pub const REFUSAL: &[u8] = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+const REFUSAL: &[u8] = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
 /// The method and target of a proxy request line, `?` for what isn't there.
-#[must_use]
-pub fn request_line(line: &str) -> (&str, &str) {
+fn request_line(line: &str) -> (&str, &str) {
     let mut fields = line.split_whitespace();
     (fields.next().unwrap_or("?"), fields.next().unwrap_or("?"))
 }
@@ -151,4 +150,53 @@ fn authority(target: &str) -> Option<(String, u16)> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-');
     valid.then(|| (host.to_ascii_lowercase(), port))
+}
+
+/// The refusing proxy of offline tests, on `127.0.0.1`.
+#[cfg(feature = "test-support")]
+#[derive(Debug)]
+pub struct BlackHole {
+    port: u16,
+}
+
+#[cfg(feature = "test-support")]
+impl BlackHole {
+    /// Binds a port on `127.0.0.1` and refuses every connection to it, each logged through `guard`, until the
+    /// process exits.
+    ///
+    /// # Errors
+    /// The port can't be bound.
+    pub fn start<L: GateLog + Send + Sync + 'static>(guard: Arc<L>) -> io::Result<Self> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = listener.local_addr()?.port();
+        thread::Builder::new().name("signin-egress".into()).spawn(move || {
+            for stream in listener.incoming().map_while(Result::ok) {
+                let guard = Arc::clone(&guard);
+                let _ = thread::Builder::new()
+                    .name("signin-egress-conn".into())
+                    .spawn(move || refuse(guard.as_ref(), &stream));
+            }
+        })?;
+        Ok(Self { port })
+    }
+
+    /// The proxy's URI, for the network session's proxy settings.
+    #[must_use]
+    pub fn uri(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+}
+
+/// Logs what the connection asked for and refuses it; a line that can't be read is logged as `?`.
+#[cfg(feature = "test-support")]
+fn refuse(guard: &impl GateLog, stream: &TcpStream) {
+    let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
+    let mut line = Vec::new();
+    let _ = BufReader::new(stream).take(LINE_LIMIT).read_until(b'\n', &mut line);
+    let line = String::from_utf8_lossy(&line);
+    let (method, target) = request_line(&line);
+    guard.refuse(method, target);
+    let mut stream = stream;
+    let _ = stream.write_all(REFUSAL);
+    let _ = stream.flush();
 }
