@@ -21,10 +21,11 @@
 //! - **A narrow window**: the flyout and a dialog.
 //! - **More runs**: an account with no apps; the read-only mode; an own server's account on the
 //!   real `ngteams-server` binary with one registered app: the "+" opens the flyout with no app, and its "Get more
-//!   apps" opens the Store.
+//!   apps" opens the Store; an own server without apps, before and after a restart
+//!   (`qa_message_extensions_apps_off.rs`).
 //!
 //! Every name, id and text is made up. Screenshots are kept under `target/ui-shots/qa-me-*.png`, in Teams Light and
-//! Dark. `QA_ME_ONLY` (a run's name: `walk`, `no-apps`, `read-only`, `own`) runs only that run. Without
+//! Dark. `QA_ME_ONLY` (a run's name: `walk`, `no-apps`, `read-only`, `own`, `apps-off`) runs only that run. Without
 //! weston 15, niri or `dbus-daemon` it says so and passes, unless `GPUI_SMOKE_REQUIRE=1`.
 
 use std::io::{self, BufRead as _, BufReader, Write as _};
@@ -40,6 +41,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use gpui::{App, AsyncApp, Entity, Window, WindowHandle, WindowingModes};
 use ngteams::app::{self, Launch};
+#[path = "qa_message_extensions_apps_off.rs"]
+mod apps_off;
 #[path = "../own_server_binary.rs"]
 #[expect(
     dead_code,
@@ -193,7 +196,7 @@ fn parent() -> SandboxResult {
         return Ok(());
     };
     let only = std::env::var("QA_ME_ONLY").unwrap_or_default();
-    for mode in ["walk", "no-apps", "read-only", "own"] {
+    for mode in ["walk", "no-apps", "read-only", "own", "apps-off"] {
         if !only.is_empty() && only != mode {
             continue;
         }
@@ -212,7 +215,8 @@ fn parent() -> SandboxResult {
                 let service = Service::start(&runtime, true)?;
                 hidden(&sandbox, &runtime, &service, dir.path(), mode)
             }
-            _ => own_server(&sandbox, dir.path()),
+            "own" => own_server(&sandbox, dir.path()),
+            _ => apps_off::run(&sandbox, dir.path()),
         };
         if let Err(error) = outcome {
             return Err(format!("{error}{}", sandbox.logs()).into());
@@ -1118,42 +1122,59 @@ impl Walk<'_> {
         name: &str,
         fixture_apps: Option<&Service>,
     ) -> SandboxResult<Option<Rect>> {
-        let still = load(&self.shot(&format!("{name}-still"))?)?;
-        self.run.input.move_to(bubble.x0 + 40, bubble.y0 + 12)?;
-        thread::sleep(SETTLE);
-        let png = self.sandbox.screenshot("qa-me-hover.png", false)?;
-        fs::copy(&png, shots_dir()?.join(format!("qa-me-{name}-hover-light.png")))?;
-        let hover = load(&png)?;
-        let region = Rect {
-            x0: PANE_X,
-            y0: bubble.y0.saturating_sub(70),
-            x1: 1280,
-            y1: bubble.y0 + 20,
-        };
-        let Some(bar) = changed_box(&still, &hover, region) else {
-            note(format!("no hover bar over the message ({})", png.display()));
-            return Ok(None);
-        };
-        if let Some(service) = fixture_apps {
-            self.runtime.block_on(service.mock.answer_next(
-                "POST",
-                "users/apps/aggregatedEntitlements",
-                200,
-                &teams_mock::extension_apps_answer(),
-            ));
-        }
-        self.run.click(bar.x1.saturating_sub(14), bar.y0 + bar.height() / 2)?;
-        thread::sleep(SETTLE);
-        let menu = load(&self.shot(&format!("{name}-menu"))?)?;
-        let whole = Rect {
-            x0: 0,
-            y0: 0,
-            x1: menu.width(),
-            y1: menu.height(),
-        };
-        Ok(changed_box(&hover, &menu, whole).filter(|menu| menu.height() > 40))
+        let runtime = self.runtime;
+        message_menu(self.run, self.sandbox, bubble, name, || {
+            if let Some(service) = fixture_apps {
+                runtime.block_on(service.mock.answer_next(
+                    "POST",
+                    "users/apps/aggregatedEntitlements",
+                    200,
+                    &teams_mock::extension_apps_answer(),
+                ));
+            }
+        })
     }
+}
 
+/// Hovers the message whose bubble is `bubble` and clicks its hover bar's More options, `before_click` just before the
+/// click; the menu's bounds.
+fn message_menu(
+    run: &mut AppRun,
+    sandbox: &Sandbox,
+    bubble: Rect,
+    name: &str,
+    before_click: impl FnOnce(),
+) -> SandboxResult<Option<Rect>> {
+    let still = load(&run.shot(sandbox, &format!("qa-me-{name}-still-light.png"))?)?;
+    run.input.move_to(bubble.x0 + 40, bubble.y0 + 12)?;
+    thread::sleep(SETTLE);
+    let png = sandbox.screenshot("qa-me-hover.png", false)?;
+    fs::copy(&png, shots_dir()?.join(format!("qa-me-{name}-hover-light.png")))?;
+    let hover = load(&png)?;
+    let region = Rect {
+        x0: PANE_X,
+        y0: bubble.y0.saturating_sub(70),
+        x1: 1280,
+        y1: bubble.y0 + 20,
+    };
+    let Some(bar) = changed_box(&still, &hover, region) else {
+        note(format!("no hover bar over the message ({})", png.display()));
+        return Ok(None);
+    };
+    before_click();
+    run.click(bar.x1.saturating_sub(14), bar.y0 + bar.height() / 2)?;
+    thread::sleep(SETTLE);
+    let menu = load(&run.shot(sandbox, &format!("qa-me-{name}-menu-light.png"))?)?;
+    let whole = Rect {
+        x0: 0,
+        y0: 0,
+        x1: menu.width(),
+        y1: menu.height(),
+    };
+    Ok(changed_box(&hover, &menu, whole).filter(|menu| menu.height() > 40))
+}
+
+impl Walk<'_> {
     /// Opens b's message's More options, then its More actions; the list's bounds.
     fn open_more_actions(&mut self, name: &str) -> SandboxResult<Option<Rect>> {
         let shot = load(&self.shot(&format!("{name}-chat"))?)?;
