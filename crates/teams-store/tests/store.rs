@@ -1587,7 +1587,7 @@ fn the_forgotten_threads_migration_keeps_the_conversations_and_forgets_none() ->
 
     let mut store = open(&dir)?;
     assert_eq!(store.schema_version()?, SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 29);
+    assert_eq!(SCHEMA_VERSION, 30);
     assert_eq!(store.conversation(GROUP)?.map(|stored| stored.version), Some(3));
     assert_eq!(store.forgotten_thread(GROUP)?, None);
     store.forget_conversation(GROUP)?;

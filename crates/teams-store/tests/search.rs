@@ -103,7 +103,7 @@ fn the_migration_creates_the_index_and_fills_nothing() -> Result<(), StoreError>
 
     let store = Store::open(&store_path(&dir))?;
     assert_eq!(store.schema_version()?, SCHEMA_VERSION);
-    assert_eq!(SCHEMA_VERSION, 29);
+    assert_eq!(SCHEMA_VERSION, 30);
     let raw = rusqlite::Connection::open(store_path(&dir)).expect("open directly");
     let tables: Vec<String> = raw
         .prepare("SELECT name FROM sqlite_master WHERE name IN ('message_search', 'search_entries') ORDER BY name")
@@ -526,6 +526,36 @@ fn the_everyone_migration_indexes_a_message_that_mentions_everyone_again() -> Re
     assert_eq!(
         pending.iter().map(|message| message.id.as_str()).collect::<Vec<_>>(),
         ["1001"]
+    );
+    Ok(())
+}
+
+#[test]
+fn the_card_migration_indexes_the_cards_again() -> Result<(), StoreError> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut store = with_chats(&dir)?;
+    let mut card = message(GROUP, "1001", 1, "Card - access it on the web", 1_000);
+    card.message_type = "RichText/Media_Card".to_owned();
+    let mut app_card = message(GROUP, "1002", 1, "a link with a card", 2_000);
+    app_card.message_type = "RichText/Html".to_owned();
+    app_card.properties = Some(r#"{"cards":"[]"}"#.to_owned());
+    store_indexed(&mut store, &card)?;
+    store_indexed(&mut store, &app_card)?;
+    store_indexed(&mut store, &message(GROUP, "1003", 1, "a plain card word", 3_000))?;
+    drop(store);
+    // the store as schema 29 left it, a card indexed by its fallback text
+    let raw = rusqlite::Connection::open(store_path(&dir)).expect("open directly");
+    raw.execute_batch("PRAGMA user_version = 29;")
+        .expect("back to schema 29");
+    drop(raw);
+
+    let store = Store::open(&store_path(&dir))?;
+    assert_eq!(store.schema_version()?, SCHEMA_VERSION);
+    assert_eq!(found(&store, "card"), ["1003"]);
+    let pending = store.messages_to_index(None, 10)?;
+    assert_eq!(
+        pending.iter().map(|message| message.id.as_str()).collect::<Vec<_>>(),
+        ["1001", "1002"]
     );
     Ok(())
 }

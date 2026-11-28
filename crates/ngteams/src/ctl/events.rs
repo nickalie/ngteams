@@ -536,7 +536,7 @@ fn new_message(message: &Message, applied: Applied, source: Source, me: &str, cu
         message: message.id.clone(),
         sender: message.sender.clone(),
         sender_name: message.sender_name.clone().filter(|name| !name.trim().is_empty()),
-        text: text_of(message)?,
+        text: text_of(message)?.text,
         from_me: message.sender.as_deref() == Some(me),
         mentions_me: Mentions::of_message(message, me).names_me(),
         source,

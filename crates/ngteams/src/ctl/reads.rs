@@ -3,7 +3,8 @@
 //! - `chats`: the chats the chat list lists, the latest activity first, each named, previewed and counted as its row
 //!   is ([`chat_list::build_row`]); `unread_only` keeps those with anything unread.
 //! - `messages`: a chat's messages, the newest first, as plain text: the text messages and the lines Teams says in a
-//!   chat ("Meeting started", …) as the chat list's preview reads them ([`system_message::preview`]); the rest
+//!   chat ("Meeting started", …) as the chat list's preview reads them ([`system_message::preview`]); a card's text is
+//!   the text on it, one line for each text, fact or button (`teams_proto::chat::card::card_message_text`); the rest
 //!   (a thread's events, a call's records) left out. `before` pages back from a message. The answer stops before a
 //!   message that would take its line over the wire's cap ([`MAX_LINE`]): fewer than asked, the client pages on from
 //!   the last one. Each row lists the message's attachments as `download` names them ([`super::download`]).
@@ -30,6 +31,7 @@ use teams_ctl::protocol::{
     ActivityRow, ChatRow, CtlError, ErrorCode, MemberRow, MessageRow, Outcome, Request, Response, ResponseLine, Unread,
     UnreadRow,
 };
+use teams_proto::chat::card::{CARD_TYPE, message_cards_text};
 use teams_proto::chat::parse_html;
 use teams_store::{Conversation, Message, PageCursor};
 use teams_ui::activity_view;
@@ -182,29 +184,49 @@ async fn cursor_at(core: &dyn Core, chat: &Conversation, id: &str) -> Result<Pag
     }
 }
 
-/// A message's text as `messages` gives it, or `None` for one it leaves out (see the module docs).
+/// A message's text as `messages` gives it, and whether it carries cards; `None` for one it leaves out (see the
+/// module docs).
 #[must_use]
-pub fn text_of(message: &Message) -> Option<String> {
+pub fn text_of(message: &Message) -> Option<MessageText> {
     if message.delete_time.is_some() {
-        return Some(String::new());
+        return Some(MessageText::default());
     }
     match system_message::preview(&message.message_type, &message.content, &message.conversation_id) {
         Preview::Skipped => None,
-        Preview::Said(said) => Some(said),
+        Preview::Said(text) => Some(MessageText { text, card: false }),
         Preview::Text if !chat_list::is_text(message) => None,
         Preview::Text => Some(plain_text(message)),
     }
 }
 
+/// A message's text, and whether it carries cards.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MessageText {
+    pub text: String,
+    pub card: bool,
+}
+
 /// A text message's whole text, read from its sanitized rich text (as it came for a `Text` message), without the
-/// line breaks that end it; Teams' "Sent a card" for a card.
-fn plain_text(message: &Message) -> String {
-    if message.message_type == teams_proto::chat::card::CARD_TYPE {
-        SENT_A_CARD.to_owned()
+/// line breaks that end it, then the text of its cards ([`message_cards_text`]); Teams' "Sent a card" for a card
+/// message whose cards give no text.
+fn plain_text(message: &Message) -> MessageText {
+    let cards = message_cards_text(&message.message_type, &message.content, message.properties.as_deref());
+    let own = if message.message_type == CARD_TYPE {
+        String::new()
     } else if message.message_type == "Text" {
         message.content.trim_end().to_owned()
     } else {
         parse_html(&message.content).plain_text().trim_end().to_owned()
+    };
+    let text = match cards.as_deref().filter(|cards| !cards.is_empty()) {
+        Some(cards) if own.is_empty() => cards.to_owned(),
+        Some(cards) => format!("{own}\n{cards}"),
+        None if own.is_empty() && message.message_type == CARD_TYPE => SENT_A_CARD.to_owned(),
+        None => own,
+    };
+    MessageText {
+        text,
+        card: cards.is_some(),
     }
 }
 
@@ -418,7 +440,7 @@ impl Names {
     }
 
     /// `message` as a row, its text `text`.
-    async fn row(&mut self, core: &dyn Core, message: &Message, text: String) -> MessageRow {
+    async fn row(&mut self, core: &dyn Core, message: &Message, text: MessageText) -> MessageRow {
         let me = core.me();
         let sender_name = match &message.sender {
             Some(sender) => self.name(core, sender, message.sender_name.as_deref()).await,
@@ -430,7 +452,8 @@ impl Names {
             sender: message.sender.clone(),
             sender_name,
             at: message.arrival_time,
-            text,
+            text: text.text,
+            card: text.card,
             edited: message.edit_time.is_some(),
             deleted: message.delete_time.is_some(),
             from_me: message.sender.as_deref() == Some(me),

@@ -29,6 +29,9 @@
 //! Nothing here reads the network: a picture is kept as its link, a view asks the engine for it. A link is kept only
 //! when it is `http`, `https`, `mailto` or `tel`.
 //!
+//! A card's text ([`card_message_text`], [`cards_text`]) is what a reader of the text alone gets: the text of each
+//! element and action the model reads, and of an Office 365 connector card ([`CONNECTOR`]), which no view draws yet.
+//!
 //! A text's markdown ([`markdown_html`]) is Adaptive Cards' subset: `**bold**`, `_italic_` or `*italic*`, `~~struck~~`,
 //! `[text](link)`, `- ` or `* ` bulleted and `1. ` numbered lists, a blank line between paragraphs (a single line
 //! break is a space, as Teams' renderer's markdown has it); it becomes HTML that `parse_html` reads like any message's.
@@ -37,6 +40,9 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::Value;
+
+mod text;
+pub use text::{CONNECTOR, card_message_text, cards_text, message_cards_text};
 
 /// The message type of a card.
 pub const CARD_TYPE: &str = "RichText/Media_Card";
@@ -631,13 +637,18 @@ pub fn card_message_with_inputs(content: &str) -> Option<CardMessage> {
     read_message(content, true)
 }
 
-fn read_message(content: &str, inputs: bool) -> Option<CardMessage> {
+/// The activity JSON of a card message's `content`; `None` when it carries none.
+fn activity(content: &str) -> Option<Value> {
     let encoded = swift_b64(content)?;
     if encoded.len() > MAX_SWIFT {
         return None;
     }
     let bytes = STANDARD.decode(encoded.trim()).ok()?;
-    let activity: Value = serde_json::from_slice(&bytes).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn read_message(content: &str, inputs: bool) -> Option<CardMessage> {
+    let activity = activity(content)?;
     let attachments = activity.get("attachments")?.as_array()?;
     let mut message = CardMessage::default();
     for attachment in attachments {

@@ -470,6 +470,11 @@ ngteamsctl wait <kind> [--match REGEX] [--timeout SECONDS] [--chat C] [--from WH
   `events --follow --kind outbox` or `messages <chat>` before writing it again. `send` takes plain text; markdown and
   mentions aren't parsed. `status set` chooses as the status menu does, kept in the settings; `reset` hands the
   status back to the app.
+- **Cards**: `messages`, `search` and the `message` event give a card's text, not Teams' "Sent a card": one line
+  for each text, fact (`title: value`) or button (a link's button as `title (link)`), in the order of the card,
+  containers and columns too. This includes Adaptive, hero, thumbnail and Office 365 connector (`MessageCard`) cards,
+  and the app cards of a link after the message's text. Dates are in UTC. A card with no text says "Sent a card". In
+  the table such a row starts with `(card)`; in JSON it has `"card": true`. `search` finds a card by its text.
 - **Downloads**: `messages` lists the attachments of each message after its text, `[<index>: <name>, <type>]`
   (in JSON, `attachments` with `index`, `name`, `kind` `file` or `picture`, and `file_type`; files first, then the
   pictures in the text). `download` saves them in `--out` (the current folder without it; made when it is not there). The app

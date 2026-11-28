@@ -468,6 +468,7 @@ fn control_characters_from_the_app_are_shown_escaped() {
         sender_name: Some(s("Lab\u{1b}]0;x\u{7}B")),
         at: 1_700_000_000_000,
         text: s("one\u{1b}[2J\ttwo\u{9b}\nthree"),
+        card: false,
         edited: false,
         deleted: false,
         from_me: false,
@@ -594,6 +595,7 @@ fn rows_without_their_optional_values_read_plainly() {
         sender_name: None,
         at: i64::MAX,
         text: s("gone"),
+        card: false,
         edited: false,
         deleted: true,
         from_me: true,
@@ -745,7 +747,8 @@ fn a_message_lists_its_attachments_after_its_text_and_a_download_its_saved_files
         sender: None,
         sender_name: Some(s("Lab B")),
         at: 1_700_000_000_000,
-        text: s("see\u{1b} these"),
+        text: s("see\u{1b} these\nfacts: two"),
+        card: true,
         edited: false,
         deleted: false,
         from_me: false,
@@ -760,7 +763,7 @@ fn a_message_lists_its_attachments_after_its_text_and_a_download_its_saved_files
     });
     let row = table.lines().nth(1).unwrap();
     assert!(
-        row.ends_with("see\\u{1b} these [1: report ↵ .pdf, pdf] [2: picture\\u{7}-2.png, picture]"),
+        row.ends_with("(card) see\\u{1b} these ↵ facts: two [1: report ↵ .pdf, pdf] [2: picture\\u{7}-2.png, picture]"),
         "{table}"
     );
 

@@ -231,6 +231,7 @@ fn message(id: &str, text: &str) -> MessageRow {
         sender_name: Some("Lab B".to_owned()),
         at: 1_700_000_000_000,
         text: text.to_owned(),
+        card: false,
         edited: true,
         deleted: false,
         from_me: false,

@@ -26,6 +26,8 @@
 //!   without `--follow`, `events` prints the first one and exits. `wait <kind>` prints the first event of that kind
 //!   whose JSON line matches `--match`, within `--timeout` (which the connect and the subscribe spend too). A kind
 //!   that names no event kind is a usage error. A refused subscription is an error answer like any other.
+//! - **Cards**: a message's text is the text on its cards ([`crate::protocol::MessageRow::card`]); the table marks such
+//!   a row `(card)`.
 //! - **Downloads**: `messages` lists the attachments of each message. `download` asks the app to save them in the
 //!   folder `--out` names (the current folder without it), sent as an absolute path. The app reads the files, so the
 //!   client gets no token. `--name`, `--index` or `--all` selects them, and an existing file is replaced only with
@@ -99,7 +101,7 @@ pub enum Command {
         #[arg(long, value_name = "N")]
         limit: Option<u32>,
     },
-    /// A chat's messages, the newest first.
+    /// A chat's messages, the newest first. A card's text is the text on the card: each text, fact and button.
     Messages {
         /// The chat's id or title.
         chat: String,
@@ -113,7 +115,7 @@ pub enum Command {
     Download(DownloadArgs),
     /// The unread counts the badge shows: per chat and the total.
     Unread,
-    /// The account's messages that match a query.
+    /// The account's messages that match a query, cards by the text on them.
     Search {
         /// The words searched for.
         #[arg(required = true, num_args = 1..)]

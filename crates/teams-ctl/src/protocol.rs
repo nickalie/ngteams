@@ -548,7 +548,11 @@ pub struct MessageRow {
     pub sender_name: Option<String>,
     /// When it arrived (ms).
     pub at: i64,
+    /// Its text; a card's is the text on its cards, one line for each text, fact or button.
     pub text: String,
+    /// It carries cards: a card message, or a text message with a link's app cards. Left out when `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub card: bool,
     #[serde(default)]
     pub edited: bool,
     #[serde(default)]

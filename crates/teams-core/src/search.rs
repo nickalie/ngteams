@@ -4,13 +4,15 @@
 //!
 //! - **The text** ([`search_text`]): a rich-text message's sanitized [`RichText`](teams_proto::chat::RichText) read
 //!   as the reader sees it (its runs, mentions' names, links' text, images' `alt`, a quote's text), a `Text`
-//!   message's content as it came; none for a deleted message or one that isn't text (a thread event, a call's
+//!   message's content as it came, a card's text as a reader reads it (`teams_proto::chat::card::card_message_text`;
+//!   a link's app cards after the text); none for a deleted message or one that isn't text (a thread event, a call's
 //!   record, a call's media message: a recording's or a transcript's record, whose ids aren't text). Every message the core stores goes through [`crate::Outbox::receive`], which indexes it in the same
 //!   write ([`Store::upsert_message_indexed`]): an edit replaces its text, a delete removes it.
 //! - **The backfill** ([`Backfill`]): the stored messages the index doesn't hold at their version, a bounded batch at
 //!   a time ([`INDEX_BATCH`]), in the store's fixed order, from the engine's loop between its other work. The store
 //!   keeps what is indexed, so a backfill that stopped goes on at the next start where it was.
 
+use teams_proto::chat::card::{CARD_TYPE, card_message_text, message_cards_text};
 use teams_proto::chat::{is_call_media, parse_html, with_everyone_shown};
 use teams_store::{IndexCursor, IndexText, Message, Store, StoreError};
 
@@ -25,8 +27,14 @@ pub fn search_text(message: &Message) -> String {
     } else if message.message_type == "Text" {
         // plain text: its `<` and `&` are the text's own
         message.content.clone()
+    } else if message.message_type == CARD_TYPE {
+        card_message_text(&message.content).unwrap_or_default()
     } else if message.message_type.starts_with("RichText") {
-        with_everyone_shown(parse_html(&message.content), message.properties.as_deref()).plain_text()
+        let text = with_everyone_shown(parse_html(&message.content), message.properties.as_deref()).plain_text();
+        match message_cards_text(&message.message_type, &message.content, message.properties.as_deref()) {
+            Some(cards) if !cards.is_empty() => format!("{}\n{cards}", text.trim_end()),
+            _ => text,
+        }
     } else {
         String::new()
     }

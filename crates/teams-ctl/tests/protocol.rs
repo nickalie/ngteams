@@ -269,7 +269,7 @@ const RESPONSE_LINES: &[&str] = &[
     r#"{"id":6,"ok":{"kind":"chats","chats":[{"id":"19:x@thread.v2","title":"Lab B","chat_type":"one_on_one","unread":2,"last_activity":1700000000000,"preview":"hi"},{"id":"19:y@thread.v2","title":"Group","chat_type":"group","unread":0}]}}"#,
     r#"{"id":7,"ok":{"kind":"messages","messages":[{"id":"1700000000000","chat":"19:x@thread.v2","sender":"8:orgid:b","sender_name":"Lab B","at":1700000000000,"text":"hello\nthere","edited":true,"deleted":false,"from_me":false,"mentions_me":true}]}}"#,
     r#"{"id":8,"ok":{"kind":"unread","total":3,"chats":[{"chat":"19:x@thread.v2","title":"Lab B","count":3}]}}"#,
-    r#"{"id":9,"ok":{"kind":"search","messages":[{"id":"1","chat":"19:x@thread.v2","at":1,"text":"budget","edited":false,"deleted":false,"from_me":true,"mentions_me":false}]}}"#,
+    r#"{"id":9,"ok":{"kind":"search","messages":[{"id":"1","chat":"19:x@thread.v2","at":1,"text":"budget\nseverity: critical","card":true,"edited":false,"deleted":false,"from_me":true,"mentions_me":false}]}}"#,
     r#"{"id":10,"ok":{"kind":"members","members":[{"mri":"8:orgid:b","name":"Lab B","role":"Admin"},{"mri":"8:orgid:c"}]}}"#,
     r#"{"id":11,"ok":{"kind":"ui_state","shown":"a@lab.invalid","view":"chat","chat":"19:x@thread.v2","chat_title":"Lab B","window":"shown","call_window":false}}"#,
     r#"{"id":12,"ok":{"kind":"ui_state","view":"channel","window":"tray","call_window":true}}"#,

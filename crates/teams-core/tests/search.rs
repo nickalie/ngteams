@@ -96,6 +96,43 @@ fn a_message_is_found_by_the_text_its_reader_sees() {
     }
 }
 
+#[test]
+fn a_card_is_found_by_the_text_on_it() {
+    use base64::Engine as _;
+    let activity = serde_json::json!({"attachments": [{"contentType": "application/vnd.microsoft.card.adaptive",
+        "content": {"type": "AdaptiveCard", "body": [{"type": "TextBlock", "text": "**DiskFull** on db-1"}]}}]});
+    let b64 = base64::engine::general_purpose::STANDARD.encode(activity.to_string());
+    let content =
+        format!("<URIObject type=\"SWIFT.1\">Card - access it on the web<Swift b64=\"{b64}\"></Swift></URIObject>");
+    assert_eq!(
+        search_text(&message(GROUP, "7", "RichText/Media_Card", &content)),
+        "DiskFull on db-1"
+    );
+    assert_eq!(
+        search_text(&message(
+            GROUP,
+            "8",
+            "RichText/Media_Card",
+            "<URIObject>no card</URIObject>"
+        )),
+        ""
+    );
+
+    let mut linked = message(CHAT, "9", "RichText/Html", "<p>see the video</p>");
+    linked.properties = Some(
+        serde_json::json!({"cards": [{"contentType": "application/vnd.microsoft.card.adaptive",
+            "content": {"type": "AdaptiveCard", "body": [{"type": "TextBlock", "text": "A video title"}]}}]})
+        .to_string(),
+    );
+    assert_eq!(search_text(&linked), "see the video\nA video title");
+    linked.properties = Some(
+        r#"{"cards": [{"contentType": "application/vnd.microsoft.card.adaptive",
+        "content": {"type": "AdaptiveCard", "body": []}}]}"#
+            .to_owned(),
+    );
+    assert_eq!(search_text(&linked).trim_end(), "see the video");
+}
+
 fn store_path(dir: &tempfile::TempDir) -> PathBuf {
     dir.path().join("store").join("a.sqlite")
 }

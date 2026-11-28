@@ -334,6 +334,7 @@ fn message_text(message: &MessageRow) -> String {
         (message.deleted, "(deleted) "),
         (message.edited, "(edited) "),
         (message.mentions_me, "(@me) "),
+        (message.card, "(card) "),
     ] {
         if on {
             text.push_str(flag);
