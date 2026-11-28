@@ -311,7 +311,7 @@ impl Classifier {
     /// return paths ([`OwnKind::EntraMultiFactor`], any query: no capture showed them), and a `POST` to any path of the
     /// identity provider's hosts `hosts` names ([`OwnKind::IdentityProvider`]).
     #[must_use]
-    pub fn personal(hosts: &crate::hosts::SignInHosts) -> Self {
+    pub fn personal(hosts: &super::hosts::SignInHosts) -> Self {
         let mut classifier = Self::sign_in();
         classifier.own.extend(MULTI_FACTOR.iter().map(|path| {
             OwnRule::new(

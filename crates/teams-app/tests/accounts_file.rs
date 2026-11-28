@@ -1,7 +1,7 @@
 //! Account-file parsing, persistence, permissions and legacy migration, using synthetic identities.
 
-use ngteams::accounts_file::{PersonalAccount, PersonalError, PersonalPaths};
 use std::fs;
+use teams_app::accounts::{PersonalAccount, PersonalError, PersonalPaths};
 #[path = "../../teams-platform/tests/support/privacy.rs"]
 mod privacy;
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -299,7 +299,7 @@ const GUID_T: &str = "00000000-0000-4000-8000-0000000000a2";
 
 #[test]
 fn an_own_servers_account_sits_beside_the_microsoft_one_of_the_same_upn() -> TestResult {
-    use ngteams::accounts_file::OwnServer;
+    use teams_app::accounts::OwnServer;
     let dir = tempfile::tempdir()?;
     let paths = paths_in(&dir);
     let upn = "someone@example.test";
@@ -382,7 +382,7 @@ fn kept_apart_when_saved_and_removed(paths: &PersonalPaths, own: &PersonalAccoun
 
 #[test]
 fn an_own_server_is_an_https_origin_with_an_absolute_ca_file() -> TestResult {
-    use ngteams::accounts_file::OwnServer;
+    use teams_app::accounts::OwnServer;
     let good = format!("upn = \"someone@example.test\"\nserver = \"{SERVER}\"\n");
     assert!(PersonalAccount::parse(&good).is_ok());
     for bad in [
@@ -422,5 +422,108 @@ fn an_own_server_is_an_https_origin_with_an_absolute_ca_file() -> TestResult {
     let paths = paths_in(&saved);
     account.save(&paths)?;
     assert_eq!(PersonalAccount::load_all(&paths)?, [account]);
+    Ok(())
+}
+
+#[test]
+fn an_account_names_its_files_its_server_s_host_and_its_mri() -> TestResult {
+    use teams_app::accounts::OwnServer;
+    let dir = tempfile::tempdir()?;
+    let paths = paths_in(&dir);
+    assert_eq!(paths.settings_file(), paths.data_dir().join("settings.toml"));
+    assert_eq!(paths.log_dir(), paths.data_dir().join("logs"));
+
+    let microsoft = signed_in("someone@example.test", GUID_X)?;
+    assert_eq!(
+        microsoft.mri().map(|mri| mri.as_str().to_owned()),
+        Some(format!("8:orgid:{GUID_X}"))
+    );
+    assert_eq!(microsoft.server_host(), None);
+    assert!(PersonalAccount::pending("someone@example.test")?.mri().is_none());
+    let shown = format!("{microsoft:?}");
+    assert!(
+        shown.contains("someone@example.test") && !shown.contains(GUID_X),
+        "{shown}"
+    );
+
+    let own = PersonalAccount::pending_on("someone@example.test", &OwnServer::parse(SERVER, "")?)?;
+    assert_eq!(own.server_host().as_deref(), Some("chat.example.test:8443"));
+    let https_port = PersonalAccount::pending_on(
+        "someone@example.test",
+        &OwnServer::parse("https://chat.example.test", "")?,
+    )?;
+    assert_eq!(https_port.server_host().as_deref(), Some("chat.example.test"));
+
+    let accounts = [microsoft.clone(), own.clone()];
+    assert_eq!(
+        PersonalAccount::named(&accounts, "SOMEONE@example.test"),
+        Some(&microsoft)
+    );
+    assert_eq!(PersonalAccount::named(&accounts, &own.id()), Some(&own));
+    assert_eq!(PersonalAccount::named(&accounts, "nobody@example.test"), None);
+    Ok(())
+}
+
+#[test]
+fn the_account_files_take_up_an_entry_held_and_leave_one_the_user_wrote_into() -> TestResult {
+    use teams_app::accounts::{AccountFiles, OwnServer};
+    let dir = tempfile::tempdir()?;
+    let files = AccountFiles::new(paths_in(&dir));
+    let pending = files.ask_for("someone@example.test")?;
+    assert_eq!(files.ask_for("SOMEONE@example.test")?, pending);
+    assert_eq!(files.as_held(&pending)?, pending);
+    let elsewhere = PersonalAccount::pending("nobody@example.test")?;
+    assert_eq!(
+        files.as_held(&elsewhere)?,
+        elsewhere,
+        "an account the file doesn't hold is as given"
+    );
+    assert_eq!(files.pending_upns()?, ["someone@example.test"]);
+    assert!(files.signed_in_accounts()?.is_empty());
+
+    let ca = dir.path().join("ca.pem");
+    let server = OwnServer::parse(SERVER, "")?;
+    let own = files.ask_for_on("someone@example.test", &server)?;
+    assert_eq!(files.ask_for_on("someone@example.test", &server)?, own);
+    let with_ca = OwnServer::parse(SERVER, &ca.display().to_string())?;
+    let taken_up = files.ask_for_on("someone@example.test", &with_ca)?;
+    assert_eq!(
+        taken_up.ca_file.as_deref(),
+        Some(ca.as_path()),
+        "a CA file given now replaces the entry's"
+    );
+    assert_eq!(
+        files.pending_upns()?,
+        ["someone@example.test"],
+        "an own server's account isn't listed"
+    );
+
+    // the entry the user wrote more into stays; a bare one goes
+    assert!(!files.abandon(&taken_up.id())?);
+    assert!(files.abandon("someone@example.test")?);
+    assert!(!files.abandon("nobody@example.test")?);
+    assert_eq!(files.accounts()?, [taken_up]);
+    Ok(())
+}
+
+#[test]
+fn an_accounts_file_that_cant_be_parsed_fails_every_change_and_read() -> TestResult {
+    use teams_app::accounts::{AccountFiles, OwnServer};
+    let dir = tempfile::tempdir()?;
+    let files = AccountFiles::new(paths_in(&dir));
+    fs::create_dir_all(files.paths.config_dir())?;
+    fs::write(files.paths.accounts_file(), "not = [valid\n")?;
+    let account = PersonalAccount::pending("someone@example.test")?;
+    let server = OwnServer::parse(SERVER, "")?;
+    assert!(files.accounts().is_err());
+    assert!(files.signed_in_accounts().is_err());
+    assert!(files.pending_upns().is_err());
+    assert!(files.ask_for("someone@example.test").is_err());
+    assert!(files.ask_for_on("someone@example.test", &server).is_err());
+    assert!(files.as_held(&account).is_err());
+    assert!(files.abandon("someone@example.test").is_err());
+    assert!(PersonalAccount::find(&files.paths, "someone@example.test").is_err());
+    assert!(PersonalAccount::remove(&files.paths, "someone@example.test").is_err());
+    assert!(account.save(&files.paths).is_err());
     Ok(())
 }

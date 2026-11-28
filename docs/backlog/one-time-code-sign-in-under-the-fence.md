@@ -1,6 +1,6 @@
 ---
 worth: later
-where: crates/teams-signin/src/classify.rs (SIGN_IN), crates/proto-lab/src/commands/login.rs
+where: crates/teams-app/src/signin_bound/classify.rs (SIGN_IN), crates/proto-lab/src/commands/login.rs
 added: 2026-10-20
 ---
 # Can a sign-in enter a one-time code?

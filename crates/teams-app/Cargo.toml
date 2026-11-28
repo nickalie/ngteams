@@ -1,6 +1,6 @@
 [package]
 name = "teams-app"
-description = "The app shell without GPUI, shared by the desktop and the phone app: the settings file's data and its private I/O, the AI choices the settings keep, the languages and the reaction keys"
+description = "The app shell without GPUI, shared by the desktop and the phone app: the accounts file, the sign-in steps and their bound, the settings file's data and its private I/O, the AI choices the settings keep, the languages and the reaction keys"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,8 @@ license.workspace = true
 [dependencies]
 # a model choice is kept in the desktop's model catalog too
 serde.workspace = true
+# the sign-in: the authorize request, the code exchange, authz, the region and the token store
+teams-auth.workspace = true
 # a manual status as the own-presence policy's choice (without `calls`: no call media)
 teams-core.workspace = true
 # the diagnostic log's level, kept in the settings
@@ -29,7 +31,25 @@ toml.workspace = true
 # an AI provider's base URL checked
 url.workspace = true
 
+[features]
+# the sign-in bound of any hosts on a local port, for offline tests; ngteams refuses a build with it
+test-support = []
+
 [dev-dependencies]
+# the made-up ID token of a sign-in
+base64.workspace = true
+# the own server's TLS front in the sign-in tests
+rustls.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt"] }
+tokio-rustls.workspace = true
+# the local token endpoint and authz of a sign-in
+wiremock.workspace = true
+# an own server's certificate authority, for its `ca_file` (`tests/accounts_file.rs`)
+rcgen = { workspace = true, features = ["pem"] }
+# the region file read back
+serde_json.workspace = true
+# the offline sign-in bound of a local port
+teams-app = { path = ".", features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]

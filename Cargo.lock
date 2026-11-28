@@ -8145,6 +8145,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "teams-app",
  "teams-auth",
  "teams-call",
  "teams-core",
@@ -12609,7 +12610,13 @@ dependencies = [
 name = "teams-app"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
+ "rcgen",
+ "rustls",
  "serde",
+ "serde_json",
+ "teams-app",
+ "teams-auth",
  "teams-core",
  "teams-log",
  "teams-media-types",
@@ -12618,8 +12625,11 @@ dependencies = [
  "teams-theme",
  "tempfile",
  "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
  "toml 1.1.8+spec-1.1.0",
  "url",
+ "wiremock",
 ]
 
 [[package]]
@@ -12894,6 +12904,7 @@ dependencies = [
  "rcgen",
  "serde",
  "serde_json",
+ "teams-app",
  "teams-auth",
  "teams-log",
  "teams-platform",

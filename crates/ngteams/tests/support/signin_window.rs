@@ -52,38 +52,6 @@ fn a_bound_request_with_an_unusable_redirect_is_refused_before_any_engine() {
 }
 
 #[test]
-fn region_persistence_keeps_existing_data_on_creation_or_publication_failure() {
-    let root = tempfile::tempdir().unwrap();
-    let region = Region::default();
-    let path = root.path().join("region.json");
-    let staging = root.path().join(format!("region.json.{}.new", std::process::id()));
-    std::fs::write(&path, b"synthetic previous region").unwrap();
-    std::fs::write(&staging, b"synthetic existing staging file").unwrap();
-    assert!(matches!(save_region(&path, &region), Err(SignInError::Region { path: failed, .. }) if failed == path));
-    assert_eq!(std::fs::read(&path).unwrap(), b"synthetic previous region");
-    assert_eq!(std::fs::read(&staging).unwrap(), b"synthetic existing staging file");
-    std::fs::remove_file(&staging).unwrap();
-    save_region(&path, &region).unwrap();
-    let saved = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(Region::from_json(&saved), Some(region.clone()));
-    assert!(!staging.exists());
-    // Rename cannot publish over a nonempty directory; only our newly created staging file is removed.
-    std::fs::remove_file(&path).unwrap();
-    std::fs::create_dir(&path).unwrap();
-    std::fs::write(path.join("sentinel"), b"synthetic retained content").unwrap();
-    assert!(save_region(&path, &region).is_err());
-    assert_eq!(
-        std::fs::read(path.join("sentinel")).unwrap(),
-        b"synthetic retained content"
-    );
-    assert!(!staging.exists());
-    let blocked = root.path().join("blocked-parent");
-    std::fs::write(&blocked, b"synthetic obstruction").unwrap();
-    assert!(save_region(&blocked.join("region.json"), &region).is_err());
-    assert_eq!(std::fs::read(&blocked).unwrap(), b"synthetic obstruction");
-}
-
-#[test]
 fn a_bound_valid_request_without_a_foreground_service_fails_without_opening_a_page() {
     let root = tempfile::tempdir().unwrap();
     let (setup, _) = crate::app::tests::setup(root.path(), 2);

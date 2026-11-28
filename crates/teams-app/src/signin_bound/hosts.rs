@@ -114,7 +114,7 @@ impl SignInHosts {
             && url.port_or_known_default().is_some_and(|port| self.admits(host, port))
     }
 
-    /// The identity provider's hosts (each also takes a `POST` on any path, `crate::classify::Classifier::personal`).
+    /// The identity provider's hosts (each also takes a `POST` on any path, `super::classify::Classifier::personal`).
     #[must_use]
     pub fn idp_hosts(&self) -> &[String] {
         &self.idp

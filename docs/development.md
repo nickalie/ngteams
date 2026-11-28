@@ -59,7 +59,7 @@ store keeps which messages show translated, so they stay so in a later run. See 
 | `crates/teams-sdp` | Teams' SDP dialect and group media control plane, without a media engine |
 | `crates/teams-media-types` | the media's plain types that the settings keep (device kinds, noise levels, stock background keys), without the media |
 | `crates/teams-ui` | GPUI views/models over `Core`, rich-text editor/rendering, accounts, calendar, notifications and call windows |
-| `crates/teams-app` | the app shell without GPUI, for the desktop and the phone app: the settings file's data and private I/O, AI choices, languages and reaction keys |
+| `crates/teams-app` | the app shell without GPUI, for the desktop and the phone app: the accounts file (its paths given by the host), the sign-in steps over the host's window, the sign-in bound (hosts, request rules, host gate), the settings file's data and private I/O, AI choices, languages and reaction keys |
 | `crates/teams-theme` | the theme catalog without GPUI: the palettes, the seven built-in themes and the appearance choice |
 | `crates/teams-ctl` | `ngteamsctl` and the control socket's protocol, socket paths, line codec and client (no GPUI); the app's server is `crates/ngteams/src/ctl/` |
 | `crates/teams-log` | private rotated diagnostic files, full debug HTTP/frame records and logger-owned credential redaction |

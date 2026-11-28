@@ -50,7 +50,10 @@ pub fn marker_name(installed: Option<&str>, lab_build: Option<&str>) -> &'static
 /// Whether this binary was built with any crate's test-support (`cargo test`, `--all-targets`, `--all-features`).
 #[must_use]
 pub fn test_support() -> bool {
-    teams_proto::test_support_enabled() || teams_signin::test_support_enabled() || teams_update::test_support_enabled()
+    teams_proto::test_support_enabled()
+        || teams_signin::test_support_enabled()
+        || teams_app::signin_bound::test_support_enabled()
+        || teams_update::test_support_enabled()
 }
 
 /// The initial gate, independent of app/broker mode so the inherited WPE worker can start.

@@ -22,6 +22,8 @@ gpui-pre.workspace = true
 gpui-pre-platform.workspace = true
 # the app's own lines in its diagnostic log; capped at `debug` at compile time like teams-trouter's
 log = { workspace = true, features = ["max_level_debug", "release_max_level_debug"] }
+# the app shell shared with the phone app: the accounts file and the sign-in steps
+teams-app.workspace = true
 # the sign-in (the window's protocol, the code exchange, authz and the region), the session, the Secret Service
 teams-auth.workspace = true
 # the read-only mode's descriptors (the broker's socket, the view trace): whether one handed in is open
@@ -96,7 +98,7 @@ teams-trouter = { workspace = true, features = ["test-support"] }
 teams-ui = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
 wiremock.workspace = true
-# an own server's certificate authority, for its `ca_file` (`tests/accounts_file.rs`, `tests/accounts_window.rs`)
+# an own server's certificate authority, for its `ca_file` (`tests/accounts_window.rs`)
 rcgen = { workspace = true, features = ["pem"] }
 # a token request's own error, for what the Manage users page says of it (`tests/support/own_admin_tokens.rs`)
 reqwest.workspace = true
